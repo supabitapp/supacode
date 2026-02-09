@@ -32,12 +32,15 @@ struct CommandPaletteFeature {
   @CasePathable
   enum Delegate: Equatable {
     case selectWorktree(Worktree.ID)
+    case selectTask(CodingTask.ID)
     case checkForUpdates
     case openSettings
     case newWorktree
+    case newTask
     case openRepository
     case removeWorktree(Worktree.ID, Repository.ID)
     case archiveWorktree(Worktree.ID, Repository.ID)
+    case archiveTask(CodingTask.ID)
     case refreshWorktrees
     case openPullRequest(Worktree.ID)
     case markPullRequestReady(Worktree.ID)
@@ -186,6 +189,12 @@ struct CommandPaletteFeature {
         kind: .newWorktree
       ),
       CommandPaletteItem(
+        id: CommandPaletteItemID.globalNewTask,
+        title: "New Task",
+        subtitle: nil,
+        kind: .newTask
+      ),
+      CommandPaletteItem(
         id: CommandPaletteItemID.globalRefreshWorktrees,
         title: "Refresh Worktrees",
         subtitle: nil,
@@ -221,6 +230,26 @@ struct CommandPaletteFeature {
         )
       )
     }
+
+    for (repositoryID, tasks) in repositories.tasksByRepository {
+      let repositoryName = repositories.repositoryName(for: repositoryID) ?? "Repository"
+      for task in tasks {
+        guard !repositories.isTaskArchived(task.id),
+          !repositories.deletingTaskIDs.contains(task.id)
+        else { continue }
+        let title = "\(repositoryName) / \(task.name)"
+        let subtitle = task.variants.map { AgentProvider.byID[$0.agentID]?.name ?? $0.agentID }.joined(separator: ", ")
+        items.append(
+          CommandPaletteItem(
+            id: CommandPaletteItemID.taskSelect(task.id),
+            title: title,
+            subtitle: subtitle,
+            kind: .taskSelect(task.id)
+          )
+        )
+      }
+    }
+
     return items
   }
 
@@ -363,6 +392,7 @@ private enum CommandPaletteItemID {
   static let globalOpenSettings = "global.open-settings"
   static let globalOpenRepository = "global.open-repository"
   static let globalNewWorktree = "global.new-worktree"
+  static let globalNewTask = "global.new-task"
   static let globalRefreshWorktrees = "global.refresh-worktrees"
 
   static var globalIDs: [CommandPaletteItem.ID] {
@@ -371,12 +401,17 @@ private enum CommandPaletteItemID {
       globalOpenSettings,
       globalOpenRepository,
       globalNewWorktree,
+      globalNewTask,
       globalRefreshWorktrees,
     ]
   }
 
   static func worktreeSelect(_ worktreeID: Worktree.ID) -> CommandPaletteItem.ID {
     "worktree.\(worktreeID).select"
+  }
+
+  static func taskSelect(_ taskID: CodingTask.ID) -> CommandPaletteItem.ID {
+    "task.\(taskID).select"
   }
 
   static func pullRequestIDs(repositoryID: Repository.ID) -> [CommandPaletteItem.ID] {
@@ -451,18 +486,24 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
   switch kind {
   case .worktreeSelect(let id):
     return .selectWorktree(id)
+  case .taskSelect(let id):
+    return .selectTask(id)
   case .checkForUpdates:
     return .checkForUpdates
   case .openSettings:
     return .openSettings
   case .newWorktree:
     return .newWorktree
+  case .newTask:
+    return .newTask
   case .openRepository:
     return .openRepository
   case .removeWorktree(let worktreeID, let repositoryID):
     return .removeWorktree(worktreeID, repositoryID)
   case .archiveWorktree(let worktreeID, let repositoryID):
     return .archiveWorktree(worktreeID, repositoryID)
+  case .archiveTask(let taskID):
+    return .archiveTask(taskID)
   case .refreshWorktrees:
     return .refreshWorktrees
   case .openPullRequest(let worktreeID):

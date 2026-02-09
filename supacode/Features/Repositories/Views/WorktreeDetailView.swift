@@ -15,19 +15,29 @@ struct WorktreeDetailView: View {
     let repositories = state.repositories
     let selectedRow = repositories.selectedRow(for: repositories.selectedWorktreeID)
     let selectedWorktree = repositories.worktree(for: repositories.selectedWorktreeID)
+    let selectedTask = repositories.selectedTask
+    let selectedVariant = repositories.selectedVariant
+    let variantWorktree: Worktree? = selectedVariant.flatMap { repositories.worktree(for: $0.worktreeID) }
+    let activeWorktree = selectedWorktree ?? variantWorktree
     let loadingInfo = loadingInfo(for: selectedRow, repositories: repositories)
-    let hasActiveWorktree = selectedWorktree != nil && loadingInfo == nil
+    let hasActiveWorktree = activeWorktree != nil && loadingInfo == nil
     let openActionSelection = state.openActionSelection
     let runScriptEnabled = hasActiveWorktree
-    let runScriptIsRunning = selectedWorktree.flatMap { state.runScriptStatusByWorktreeID[$0.id] } == true
+    let runScriptIsRunning = activeWorktree.flatMap { state.runScriptStatusByWorktreeID[$0.id] } == true
     let notificationGroups = repositories.toolbarNotificationGroups(terminalManager: terminalManager)
     let unseenNotificationWorktreeCount = notificationGroups.reduce(0) { count, repository in
       count + repository.unseenWorktreeCount
     }
     let content = Group {
-      if repositories.isShowingArchivedWorktrees {
+      if repositories.isShowingArchivedWorktrees || repositories.isShowingArchivedTasks {
         ArchivedWorktreesDetailView(
           store: store.scope(state: \.repositories, action: \.repositories)
+        )
+      } else if let selectedTask {
+        taskDetailContent(
+          task: selectedTask,
+          selectedVariant: selectedVariant,
+          repositories: repositories
         )
       } else if let loadingInfo {
         WorktreeLoadingView(info: loadingInfo)
@@ -54,7 +64,8 @@ struct WorktreeDetailView: View {
     }
     .toolbar(removing: .title)
     .toolbar {
-      if hasActiveWorktree, let selectedWorktree {
+      if hasActiveWorktree, let activeWorktree = activeWorktree ?? selectedWorktree {
+        let selectedWorktree = activeWorktree
         let pullRequest = repositories.worktreeInfo(for: selectedWorktree.id)?.pullRequest
         let matchesBranch =
           if let pullRequest {
@@ -142,6 +153,60 @@ struct WorktreeDetailView: View {
       runScript: runScriptEnabled ? { store.send(.runScript) } : nil,
       stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil
     )
+  }
+
+  @ViewBuilder
+  private func taskDetailContent(
+    task: CodingTask,
+    selectedVariant: TaskVariant?,
+    repositories: RepositoriesFeature.State
+  ) -> some View {
+    let allPending = task.variants.allSatisfy {
+      $0.status == .creatingWorktree || $0.status == .pending
+    }
+    if allPending {
+      VStack(spacing: 12) {
+        ProgressView()
+        Text("Creating worktrees for \"\(task.name)\"...")
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if let variant = selectedVariant,
+      let worktreeID = variant.worktreeID,
+      let worktree = repositories.worktree(for: worktreeID)
+    {
+      VStack(spacing: 0) {
+        if task.isMultiAgent {
+          VariantTabBarView(
+            task: task,
+            selectedVariantID: variant.id,
+            onSelect: { variantID in
+              store.send(.repositories(.selectVariant(taskID: task.id, variantID: variantID)))
+            },
+            terminalManager: terminalManager
+          )
+          Divider()
+        }
+        WorktreeTerminalTabsView(
+          worktree: worktree,
+          manager: terminalManager,
+          shouldRunSetupScript: false,
+          forceAutoFocus: false,
+          createTab: { store.send(.newTerminal) }
+        )
+        .id(worktree.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    } else {
+      VStack(spacing: 12) {
+        Image(systemName: "list.bullet.clipboard")
+          .font(.largeTitle)
+          .foregroundStyle(.secondary)
+        Text("No active variant for \"\(task.name)\"")
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
   }
 
   private func selectToolbarNotification(

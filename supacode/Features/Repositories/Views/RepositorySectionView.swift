@@ -62,16 +62,16 @@ struct RepositorySectionView: View {
           .help("Repository options ")
           .disabled(isRemovingRepository)
           Button {
-            store.send(.createRandomWorktreeInRepository(repository.id))
+            store.send(.presentTaskCreationSheet(repository.id))
           } label: {
-            Label("New Worktree", systemImage: "plus")
+            Label("New Task", systemImage: "plus")
               .labelStyle(.iconOnly)
               .frame(maxHeight: .infinity)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
           .foregroundStyle(.secondary)
-          .help("New Worktree (\(AppShortcuts.newWorktree.display))")
+          .help("New Task (\(AppShortcuts.newWorktree.display))")
           .disabled(isRemovingRepository)
           Button {
             toggleExpanded()
@@ -106,6 +106,11 @@ struct RepositorySectionView: View {
       .preferredColorScheme(colorScheme)
 
       if isExpanded {
+        TaskRowsView(
+          repository: repository,
+          isExpanded: isExpanded,
+          store: store
+        )
         WorktreeRowsView(
           repository: repository,
           isExpanded: isExpanded,

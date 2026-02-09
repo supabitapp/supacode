@@ -40,6 +40,17 @@ struct RepositoriesFeature {
     var isRefreshingWorktrees = false
     var statusToast: StatusToast?
     @Presents var alert: AlertState<Alert>?
+
+    // Task state
+    var tasksByRepository: [Repository.ID: IdentifiedArrayOf<CodingTask>] = [:]
+    var pendingTasks: [PendingTask] = []
+    var deletingTaskIDs: Set<CodingTask.ID> = []
+    var archivedTaskIDs: [CodingTask.ID] = []
+    var taskOrderByRepository: [Repository.ID: [CodingTask.ID]] = [:]
+    var lastFocusedTaskID: CodingTask.ID?
+    var selectedVariantIDByTask: [CodingTask.ID: TaskVariant.ID] = [:]
+    var isTaskCreationSheetPresented = false
+    var taskCreationRepositoryID: Repository.ID?
   }
 
   enum Action {
@@ -116,6 +127,27 @@ struct RepositoriesFeature {
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case alert(PresentationAction<Alert>)
+
+    // Task actions
+    case presentTaskCreationSheet(Repository.ID)
+    case dismissTaskCreationSheet
+    case createTaskWithConfig(TaskCreationConfig)
+    case variantWorktreeCreated(taskID: CodingTask.ID, variantID: TaskVariant.ID, worktree: Worktree)
+    case variantWorktreeFailed(taskID: CodingTask.ID, variantID: TaskVariant.ID, error: String)
+    case selectTask(CodingTask.ID?)
+    case selectVariant(taskID: CodingTask.ID, variantID: TaskVariant.ID)
+    case requestDeleteTask(CodingTask.ID, Repository.ID)
+    case deleteTaskConfirmed(CodingTask.ID, Repository.ID)
+    case taskDeleted(CodingTask.ID, repositoryID: Repository.ID)
+    case archiveTask(CodingTask.ID)
+    case unarchiveTask(CodingTask.ID)
+    case selectArchivedTasks
+    case sendPromptToAllVariants(CodingTask.ID, prompt: String)
+    case tasksLoaded([CodingTask])
+    case archivedTaskIDsLoaded([CodingTask.ID])
+    case taskOrderByRepositoryLoaded([Repository.ID: [CodingTask.ID]])
+    case lastFocusedTaskIDLoaded(CodingTask.ID?)
+
     case delegate(Delegate)
   }
 
@@ -141,11 +173,26 @@ struct RepositoriesFeature {
     case success(String)
   }
 
+  struct TaskCreationConfig: Equatable {
+    let repositoryID: Repository.ID
+    let name: String
+    let initialPrompt: String
+    let autoApprove: Bool
+    let baseBranch: String
+    let agentRuns: [AgentRun]
+
+    struct AgentRun: Equatable {
+      let agentID: String
+      let count: Int
+    }
+  }
+
   enum Alert: Equatable {
     case confirmArchiveWorktree(Worktree.ID, Repository.ID)
     case confirmDeleteWorktree(Worktree.ID, Repository.ID)
     case confirmDeleteWorktrees([DeleteWorktreeTarget])
     case confirmRemoveRepository(Repository.ID)
+    case confirmDeleteTask(CodingTask.ID, Repository.ID)
   }
 
   enum PullRequestAction: Equatable {
@@ -163,6 +210,9 @@ struct RepositoriesFeature {
     case repositoriesChanged(IdentifiedArrayOf<Repository>)
     case openRepositorySettings(Repository.ID)
     case worktreeCreated(Worktree)
+    case selectedTaskChanged(CodingTask?, selectedVariant: TaskVariant?)
+    case variantReady(CodingTask, TaskVariant)
+    case sendPromptToVariant(TaskVariant, prompt: String)
   }
 
   @Dependency(\.analyticsClient) private var analyticsClient
@@ -183,11 +233,19 @@ struct RepositoriesFeature {
           let repositoryOrderIDs = await repositoryPersistence.loadRepositoryOrderIDs()
           let worktreeOrderByRepository =
             await repositoryPersistence.loadWorktreeOrderByRepository()
+          let tasks = await repositoryPersistence.loadTasks()
+          let archivedTaskIDs = await repositoryPersistence.loadArchivedTaskIDs()
+          let taskOrderByRepository = await repositoryPersistence.loadTaskOrderByRepository()
+          let lastFocusedTaskID = await repositoryPersistence.loadLastFocusedTaskID()
           await send(.pinnedWorktreeIDsLoaded(pinned))
           await send(.archivedWorktreeIDsLoaded(archived))
           await send(.repositoryOrderIDsLoaded(repositoryOrderIDs))
           await send(.worktreeOrderByRepositoryLoaded(worktreeOrderByRepository))
           await send(.lastFocusedWorktreeIDLoaded(lastFocused))
+          await send(.tasksLoaded(tasks))
+          await send(.archivedTaskIDsLoaded(archivedTaskIDs))
+          await send(.taskOrderByRepositoryLoaded(taskOrderByRepository))
+          await send(.lastFocusedTaskIDLoaded(lastFocusedTaskID))
           await send(.loadPersistedRepositories)
         }
 
@@ -1650,6 +1708,320 @@ struct RepositoriesFeature {
       case .openRepositorySettings(let repositoryID):
         return .send(.delegate(.openRepositorySettings(repositoryID)))
 
+      // MARK: - Task Actions
+
+      case .presentTaskCreationSheet(let repositoryID):
+        state.taskCreationRepositoryID = repositoryID
+        state.isTaskCreationSheetPresented = true
+        return .none
+
+      case .dismissTaskCreationSheet:
+        state.isTaskCreationSheetPresented = false
+        state.taskCreationRepositoryID = nil
+        return .none
+
+      case .createTaskWithConfig(let config):
+        state.isTaskCreationSheetPresented = false
+        state.taskCreationRepositoryID = nil
+        let taskID = uuid().uuidString
+        var variants: IdentifiedArrayOf<TaskVariant> = []
+        for agentRun in config.agentRuns {
+          for runIndex in 0..<agentRun.count {
+            let variantID = uuid().uuidString
+            let suffix = agentRun.count > 1 ? "-\(runIndex + 1)" : ""
+            let variantShortHash = String(variantID.prefix(4)).lowercased()
+            let variantName = "\(config.name)-\(agentRun.agentID)\(suffix)-\(variantShortHash)"
+            let branchName = "supacode/\(variantName)"
+            let variant = TaskVariant(
+              id: variantID,
+              taskID: taskID,
+              agentID: agentRun.agentID,
+              name: variantName,
+              branchName: branchName,
+              worktreeID: nil,
+              status: .creatingWorktree,
+              createdAt: .now
+            )
+            variants.append(variant)
+          }
+        }
+        let codingTask = CodingTask(
+          id: taskID,
+          repositoryID: config.repositoryID,
+          name: config.name,
+          initialPrompt: config.initialPrompt,
+          autoApprove: config.autoApprove,
+          baseBranch: config.baseBranch,
+          variants: variants,
+          createdAt: .now
+        )
+        if state.tasksByRepository[config.repositoryID] == nil {
+          state.tasksByRepository[config.repositoryID] = []
+        }
+        state.tasksByRepository[config.repositoryID]?.append(codingTask)
+        state.selection = .task(taskID)
+        if let firstVariant = variants.first {
+          state.selectedVariantIDByTask[taskID] = firstVariant.id
+        }
+
+        let allTasks = state.tasksByRepository.values.flatMap { $0 }
+        let repositoryID = config.repositoryID
+        let gitClient = gitClient
+        let repositoryPersistence = repositoryPersistence
+        var effects: [Effect<Action>] = [
+          .run { _ in
+            await repositoryPersistence.saveTasks(Array(allTasks))
+          },
+        ]
+
+        guard let repository = state.repositories[id: repositoryID] else {
+          return .merge(effects)
+        }
+        let repoRoot = repository.rootURL
+        @Shared(.repositorySettings(repoRoot)) var repositorySettings
+        let baseRef = config.baseBranch.isEmpty
+          ? (repositorySettings.worktreeBaseRef ?? "")
+          : config.baseBranch
+        let copyIgnored = repositorySettings.copyIgnoredOnWorktreeCreate
+        let copyUntracked = repositorySettings.copyUntrackedOnWorktreeCreate
+
+        for variant in variants {
+          let variantName = variant.name
+          let taskIDCapture = taskID
+          let variantIDCapture = variant.id
+          effects.append(
+            .run { send in
+              do {
+                let worktree = try await gitClient.createWorktree(
+                  variantName,
+                  repoRoot,
+                  copyIgnored,
+                  copyUntracked,
+                  baseRef
+                )
+                await send(.variantWorktreeCreated(
+                  taskID: taskIDCapture,
+                  variantID: variantIDCapture,
+                  worktree: worktree
+                ))
+              } catch {
+                await send(.variantWorktreeFailed(
+                  taskID: taskIDCapture,
+                  variantID: variantIDCapture,
+                  error: error.localizedDescription
+                ))
+              }
+            }
+          )
+        }
+        return .merge(effects)
+
+      case .variantWorktreeCreated(let taskID, let variantID, let worktree):
+        guard let tasks = state.tasksByRepository.first(where: { $0.value[id: taskID] != nil }),
+          var task = tasks.value[id: taskID],
+          var variant = task.variants[id: variantID]
+        else {
+          return .none
+        }
+        variant.worktreeID = worktree.id
+        variant.status = .ready
+        task.variants[id: variantID] = variant
+        let repoID = task.repositoryID
+        state.tasksByRepository[repoID]?[id: taskID] = task
+        insertWorktree(worktree, repositoryID: repoID, state: &state)
+
+        let allTasks = state.tasksByRepository.values.flatMap { $0 }
+        let repositoryPersistence = repositoryPersistence
+        let readyTask = task
+        let readyVariant = variant
+        return .merge(
+          .run { _ in
+            await repositoryPersistence.saveTasks(Array(allTasks))
+          },
+          .send(.delegate(.variantReady(readyTask, readyVariant)))
+        )
+
+      case .variantWorktreeFailed(let taskID, let variantID, let error):
+        guard var task = state.tasksByRepository.values.flatMap({ $0 }).first(where: { $0.id == taskID }),
+          var variant = task.variants[id: variantID]
+        else {
+          return .none
+        }
+        variant.status = .failed
+        task.variants[id: variantID] = variant
+        state.tasksByRepository[task.repositoryID]?[id: taskID] = task
+        let allTasks = state.tasksByRepository.values.flatMap { $0 }
+        let repositoryPersistence = repositoryPersistence
+        return .merge(
+          .run { _ in
+            await repositoryPersistence.saveTasks(Array(allTasks))
+          },
+          .send(
+            .presentAlert(
+              title: "Failed to create worktree for variant",
+              message: error
+            )
+          )
+        )
+
+      case .selectTask(let taskID):
+        if let taskID {
+          state.selection = .task(taskID)
+          state.lastFocusedTaskID = taskID
+          let task = state.task(for: taskID)
+          let variant: TaskVariant? = {
+            if let variantID = state.selectedVariantIDByTask[taskID],
+              let v = task?.variants[id: variantID]
+            {
+              return v
+            }
+            return task?.variants.first
+          }()
+          if let variant {
+            state.selectedVariantIDByTask[taskID] = variant.id
+          }
+          let repositoryPersistence = repositoryPersistence
+          return .merge(
+            .send(.delegate(.selectedTaskChanged(task, selectedVariant: variant))),
+            .run { _ in
+              await repositoryPersistence.saveLastFocusedTaskID(taskID)
+            }
+          )
+        } else {
+          state.selection = nil
+          return .send(.delegate(.selectedTaskChanged(nil, selectedVariant: nil)))
+        }
+
+      case .selectVariant(let taskID, let variantID):
+        state.selectedVariantIDByTask[taskID] = variantID
+        let task = state.task(for: taskID)
+        let variant = task?.variants[id: variantID]
+        return .send(.delegate(.selectedTaskChanged(task, selectedVariant: variant)))
+
+      case .requestDeleteTask(let taskID, let repositoryID):
+        guard let task = state.task(for: taskID) else {
+          return .none
+        }
+        state.alert = AlertState {
+          TextState("Delete Task?")
+        } actions: {
+          ButtonState(role: .destructive, action: .confirmDeleteTask(taskID, repositoryID)) {
+            TextState("Delete")
+          }
+          ButtonState(role: .cancel) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState(
+            "This will delete \"\(task.name)\" and all its \(task.variants.count) variant worktree(s)."
+          )
+        }
+        return .none
+
+      case .deleteTaskConfirmed(let taskID, let repositoryID):
+        state.deletingTaskIDs.insert(taskID)
+        guard let task = state.tasksByRepository[repositoryID]?[id: taskID] else {
+          state.deletingTaskIDs.remove(taskID)
+          return .none
+        }
+        let gitClient = gitClient
+        let worktrees: [Worktree] = task.variants.compactMap { variant in
+          guard let worktreeID = variant.worktreeID else { return nil }
+          return state.repositories[id: repositoryID]?.worktrees[id: worktreeID]
+        }
+        return .run { send in
+          for worktree in worktrees {
+            _ = try? await gitClient.removeWorktree(worktree, true)
+          }
+          await send(.taskDeleted(taskID, repositoryID: repositoryID))
+        }
+
+      case .taskDeleted(let taskID, let repositoryID):
+        state.deletingTaskIDs.remove(taskID)
+        if let task = state.tasksByRepository[repositoryID]?[id: taskID] {
+          for variant in task.variants {
+            if let worktreeID = variant.worktreeID {
+              removeWorktree(worktreeID, repositoryID: repositoryID, state: &state)
+            }
+          }
+        }
+        state.tasksByRepository[repositoryID]?.remove(id: taskID)
+        state.selectedVariantIDByTask.removeValue(forKey: taskID)
+        state.archivedTaskIDs.removeAll { $0 == taskID }
+        if var order = state.taskOrderByRepository[repositoryID] {
+          order.removeAll { $0 == taskID }
+          state.taskOrderByRepository[repositoryID] = order.isEmpty ? nil : order
+        }
+        if state.selection == .task(taskID) {
+          state.selection = nil
+        }
+        let allTasks = state.tasksByRepository.values.flatMap { $0 }
+        let archivedTaskIDs = state.archivedTaskIDs
+        let taskOrderByRepository = state.taskOrderByRepository
+        let repositoryPersistence = repositoryPersistence
+        return .run { _ in
+          await repositoryPersistence.saveTasks(Array(allTasks))
+          await repositoryPersistence.saveArchivedTaskIDs(archivedTaskIDs)
+          await repositoryPersistence.saveTaskOrderByRepository(taskOrderByRepository)
+        }
+
+      case .archiveTask(let taskID):
+        guard !state.archivedTaskIDs.contains(taskID) else { return .none }
+        state.archivedTaskIDs.append(taskID)
+        if state.selection == .task(taskID) {
+          state.selection = nil
+        }
+        let archivedTaskIDs = state.archivedTaskIDs
+        let repositoryPersistence = repositoryPersistence
+        return .run { _ in
+          await repositoryPersistence.saveArchivedTaskIDs(archivedTaskIDs)
+        }
+
+      case .unarchiveTask(let taskID):
+        state.archivedTaskIDs.removeAll { $0 == taskID }
+        let archivedTaskIDs = state.archivedTaskIDs
+        let repositoryPersistence = repositoryPersistence
+        return .run { _ in
+          await repositoryPersistence.saveArchivedTaskIDs(archivedTaskIDs)
+        }
+
+      case .selectArchivedTasks:
+        state.selection = .archivedTasks
+        return .none
+
+      case .sendPromptToAllVariants(let taskID, let prompt):
+        guard let task = state.task(for: taskID) else { return .none }
+        let readyVariants = task.variants.filter { $0.status == .ready && $0.worktreeID != nil }
+        var effects: [Effect<Action>] = []
+        for variant in readyVariants {
+          effects.append(.send(.delegate(.sendPromptToVariant(variant, prompt: prompt))))
+        }
+        return effects.isEmpty ? .none : .merge(effects)
+
+      case .tasksLoaded(let tasks):
+        for task in tasks {
+          if state.tasksByRepository[task.repositoryID] == nil {
+            state.tasksByRepository[task.repositoryID] = []
+          }
+          state.tasksByRepository[task.repositoryID]?.updateOrAppend(task)
+        }
+        return .none
+
+      case .archivedTaskIDsLoaded(let ids):
+        state.archivedTaskIDs = ids
+        return .none
+
+      case .taskOrderByRepositoryLoaded(let order):
+        state.taskOrderByRepository = order
+        return .none
+
+      case .lastFocusedTaskIDLoaded(let taskID):
+        state.lastFocusedTaskID = taskID
+        return .none
+
+      case .alert(.presented(.confirmDeleteTask(let taskID, let repositoryID))):
+        return .send(.deleteTaskConfirmed(taskID, repositoryID))
+
       case .alert(.dismiss):
         state.alert = nil
         return .none
@@ -2193,6 +2565,147 @@ extension RepositoriesFeature.State {
       .compactMap { repositoriesByID[$0] }
       .flatMap { worktreeRows(in: $0) }
   }
+
+  // MARK: - Task Helpers
+
+  var selectedTaskID: CodingTask.ID? {
+    selection?.taskID
+  }
+
+  var isShowingArchivedTasks: Bool {
+    selection == .archivedTasks
+  }
+
+  var archivedTaskIDSet: Set<CodingTask.ID> {
+    Set(archivedTaskIDs)
+  }
+
+  func isTaskArchived(_ id: CodingTask.ID) -> Bool {
+    archivedTaskIDSet.contains(id)
+  }
+
+  var selectedTask: CodingTask? {
+    guard let taskID = selectedTaskID else { return nil }
+    for tasks in tasksByRepository.values {
+      if let task = tasks[id: taskID] {
+        return task
+      }
+    }
+    return nil
+  }
+
+  var selectedVariant: TaskVariant? {
+    guard let task = selectedTask,
+      let variantID = selectedVariantIDByTask[task.id],
+      let variant = task.variants[id: variantID]
+    else {
+      return selectedTask?.variants.first
+    }
+    return variant
+  }
+
+  var worktreeIDToTaskVariant: [Worktree.ID: (taskID: CodingTask.ID, variantID: TaskVariant.ID)] {
+    var mapping: [Worktree.ID: (taskID: CodingTask.ID, variantID: TaskVariant.ID)] = [:]
+    for tasks in tasksByRepository.values {
+      for task in tasks {
+        for variant in task.variants {
+          if let worktreeID = variant.worktreeID {
+            mapping[worktreeID] = (taskID: task.id, variantID: variant.id)
+          }
+        }
+      }
+    }
+    return mapping
+  }
+
+  func task(for id: CodingTask.ID?) -> CodingTask? {
+    guard let id else { return nil }
+    for tasks in tasksByRepository.values {
+      if let task = tasks[id: id] {
+        return task
+      }
+    }
+    return nil
+  }
+
+  func taskRowSections(
+    in repository: Repository
+  ) -> (tasks: [TaskRowModel], pending: [TaskRowModel]) {
+    let tasks = tasksByRepository[repository.id] ?? []
+    let orderedIDs = taskOrderByRepository[repository.id] ?? []
+    let archivedSet = archivedTaskIDSet
+
+    let orderedIDSet = Set(orderedIDs)
+    var seen: Set<CodingTask.ID> = []
+    var orderedTasks: [CodingTask] = []
+
+    for id in orderedIDs {
+      if let task = tasks[id: id],
+        !archivedSet.contains(id),
+        seen.insert(id).inserted
+      {
+        orderedTasks.append(task)
+      }
+    }
+    for task in tasks {
+      if !orderedIDSet.contains(task.id),
+        !archivedSet.contains(task.id),
+        seen.insert(task.id).inserted
+      {
+        orderedTasks.append(task)
+      }
+    }
+
+    let taskRows = orderedTasks.map { task in
+      let agents = task.variants.map(\.agentID)
+      let agentNames = agents.compactMap { AgentProvider.byID[$0]?.name }
+      let summary = agentSummaryString(agentNames)
+      return TaskRowModel(
+        id: task.id,
+        repositoryID: task.repositoryID,
+        name: task.name,
+        agentSummary: summary,
+        variantCount: task.variants.count,
+        isPending: task.variants.allSatisfy { $0.status == .creatingWorktree || $0.status == .pending },
+        isDeleting: deletingTaskIDs.contains(task.id)
+      )
+    }
+
+    let pendingRows = pendingTasks.filter { $0.repositoryID == repository.id }.map { pending in
+      TaskRowModel(
+        id: pending.id,
+        repositoryID: pending.repositoryID,
+        name: pending.name,
+        agentSummary: "",
+        variantCount: 0,
+        isPending: true,
+        isDeleting: false
+      )
+    }
+
+    return (tasks: taskRows, pending: pendingRows)
+  }
+
+  var canCreateTask: Bool {
+    !repositories.isEmpty
+  }
+
+  func repositoryForTaskCreation() -> Repository? {
+    if let selectedTaskID,
+      let task = task(for: selectedTaskID)
+    {
+      return repositories[id: task.repositoryID]
+    }
+    if let selectedWorktreeID {
+      for repository in repositories where repository.worktrees[id: selectedWorktreeID] != nil {
+        return repository
+      }
+    }
+    if repositories.count == 1 {
+      return repositories.first
+    }
+    return nil
+  }
 }
 
 struct WorktreeRowSections {
@@ -2218,6 +2731,20 @@ private struct FailedWorktreeCleanup {
   let didUpdatePinned: Bool
   let didUpdateOrder: Bool
   let worktree: Worktree?
+}
+
+private func agentSummaryString(_ names: [String]) -> String {
+  let counts = names.reduce(into: [:]) { counts, name in
+    counts[name, default: 0] += 1
+  }
+  var parts: [String] = []
+  var seen: Set<String> = []
+  for name in names {
+    guard seen.insert(name).inserted else { continue }
+    let count = counts[name] ?? 1
+    parts.append(count > 1 ? "\(name) x\(count)" : name)
+  }
+  return parts.joined(separator: ", ")
 }
 
 private func removePendingWorktree(_ id: String, state: inout RepositoriesFeature.State) {

@@ -21,6 +21,8 @@ struct TerminalClient {
     case prune(Set<Worktree.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
+    case launchAgent(Worktree, agentCLI: String, flags: [String], prompt: String?)
+    case sendInputToWorktree(Worktree, input: String)
   }
 
   enum Event: Equatable {

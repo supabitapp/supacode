@@ -13,12 +13,22 @@ struct SidebarListView: View {
         if store.isShowingArchivedWorktrees {
           return .archivedWorktrees
         }
+        if store.state.isShowingArchivedTasks {
+          return .archivedTasks
+        }
+        if let taskID = store.state.selectedTaskID {
+          return .task(taskID)
+        }
         return store.selectedWorktreeID.map(SidebarSelection.worktree)
       },
       set: { newValue in
         switch newValue {
         case .archivedWorktrees:
           store.send(.selectArchivedWorktrees)
+        case .archivedTasks:
+          store.send(.selectArchivedTasks)
+        case .task(let id):
+          store.send(.selectTask(id))
         case .worktree(let id):
           store.send(.selectWorktree(id))
         case .repository(let id):
@@ -134,11 +144,32 @@ struct SidebarListView: View {
       if isNavigationKey { return .ignored }
       let hasCommandModifier = keyPress.modifiers.contains(.command)
       if hasCommandModifier { return .ignored }
-      guard let worktreeID = store.selectedWorktreeID,
+      let worktreeID: Worktree.ID? = {
+        if let id = store.selectedWorktreeID {
+          return id
+        }
+        if let variant = store.state.selectedVariant {
+          return variant.worktreeID
+        }
+        return nil
+      }()
+      guard let worktreeID,
         let terminalState = terminalManager.stateIfExists(for: worktreeID)
       else { return .ignored }
       terminalState.focusAndInsertText(keyPress.characters)
       return .handled
+    }
+    .sheet(isPresented: Binding(
+      get: { store.state.isTaskCreationSheetPresented },
+      set: { isPresented in
+        if !isPresented {
+          store.send(.dismissTaskCreationSheet)
+        }
+      }
+    )) {
+      if let repositoryID = store.state.taskCreationRepositoryID {
+        TaskCreationSheet(store: store, repositoryID: repositoryID)
+      }
     }
   }
 }

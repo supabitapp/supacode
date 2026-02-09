@@ -25,10 +25,13 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case checkForUpdates
     case openRepository
     case worktreeSelect(Worktree.ID)
+    case taskSelect(CodingTask.ID)
     case openSettings
     case newWorktree
+    case newTask
     case removeWorktree(Worktree.ID, Repository.ID)
     case archiveWorktree(Worktree.ID, Repository.ID)
+    case archiveTask(CodingTask.ID)
     case refreshWorktrees
     case openPullRequest(Worktree.ID)
     case markPullRequestReady(Worktree.ID)
@@ -43,7 +46,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
 
   var isGlobal: Bool {
     switch kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees:
+    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .newTask, .refreshWorktrees:
       return true
     case .openPullRequest,
       .markPullRequestReady,
@@ -52,7 +55,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .rerunFailedJobs,
       .openFailingCheckDetails:
       return true
-    case .worktreeSelect, .removeWorktree, .archiveWorktree:
+    case .worktreeSelect, .taskSelect, .removeWorktree, .archiveWorktree, .archiveTask:
       return false
     #if DEBUG
       case .debugTestToast:
@@ -63,7 +66,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
 
   var isRootAction: Bool {
     switch kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees:
+    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .newTask, .refreshWorktrees:
       return true
     case .openPullRequest,
       .markPullRequestReady,
@@ -72,8 +75,10 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .rerunFailedJobs,
       .openFailingCheckDetails,
       .worktreeSelect,
+      .taskSelect,
       .removeWorktree,
-      .archiveWorktree:
+      .archiveWorktree,
+      .archiveTask:
       return false
     #if DEBUG
       case .debugTestToast:
@@ -90,7 +95,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       return AppShortcuts.openRepository
     case .openSettings:
       return AppShortcuts.openSettings
-    case .newWorktree:
+    case .newWorktree, .newTask:
       return AppShortcuts.newWorktree
     case .refreshWorktrees:
       return AppShortcuts.refreshWorktrees
@@ -102,8 +107,10 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .rerunFailedJobs,
       .openFailingCheckDetails,
       .worktreeSelect,
+      .taskSelect,
       .removeWorktree,
-      .archiveWorktree:
+      .archiveWorktree,
+      .archiveTask:
       return nil
     #if DEBUG
       case .debugTestToast:

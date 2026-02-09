@@ -340,13 +340,13 @@ private struct CommandPaletteRowView: View {
 
   private var badge: String? {
     switch row.kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees,
+    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .newTask, .refreshWorktrees,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .copyCiFailureLogs,
-      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect:
+      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect, .taskSelect:
       return nil
     case .removeWorktree:
       return "Remove"
-    case .archiveWorktree:
+    case .archiveWorktree, .archiveTask:
       return "Archive"
     #if DEBUG
       case .debugTestToast:
@@ -363,7 +363,7 @@ private struct CommandPaletteRowView: View {
       return "folder"
     case .openSettings:
       return "gearshape"
-    case .newWorktree:
+    case .newWorktree, .newTask:
       return "plus"
     case .refreshWorktrees:
       return "arrow.clockwise"
@@ -379,11 +379,11 @@ private struct CommandPaletteRowView: View {
       return "arrow.counterclockwise"
     case .openFailingCheckDetails:
       return "exclamationmark.triangle"
-    case .worktreeSelect:
+    case .worktreeSelect, .taskSelect:
       return nil
     case .removeWorktree:
       return "trash"
-    case .archiveWorktree:
+    case .archiveWorktree, .archiveTask:
       return "archivebox"
     #if DEBUG
       case .debugTestToast:
@@ -394,11 +394,11 @@ private struct CommandPaletteRowView: View {
 
   private var emphasis: Bool {
     switch row.kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees,
+    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .newTask, .refreshWorktrees,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .copyCiFailureLogs,
       .rerunFailedJobs, .openFailingCheckDetails:
       return true
-    case .worktreeSelect, .removeWorktree, .archiveWorktree:
+    case .worktreeSelect, .taskSelect, .removeWorktree, .archiveWorktree, .archiveTask:
       return false
     #if DEBUG
       case .debugTestToast:
@@ -476,6 +476,8 @@ private struct CommandPaletteRowView: View {
     switch row.kind {
     case .worktreeSelect:
       base = "Switch to \(row.title)"
+    case .taskSelect:
+      base = "Switch to \(row.title)"
     case .checkForUpdates:
       base = "Check for Updates"
     case .openRepository:
@@ -484,11 +486,15 @@ private struct CommandPaletteRowView: View {
       base = "Open Settings"
     case .newWorktree:
       base = "New Worktree"
+    case .newTask:
+      base = "New Task"
     case .refreshWorktrees:
       base = "Refresh Worktrees"
     case .removeWorktree:
       base = "Remove \(row.title)"
     case .archiveWorktree:
+      base = "Archive \(row.title)"
+    case .archiveTask:
       base = "Archive \(row.title)"
     case .openPullRequest:
       base = "Open pull request on GitHub"

@@ -57,14 +57,16 @@ struct WorktreeCommands: Commands {
       )
       .help("Open Pull Request on GitHub (\(AppShortcuts.openPullRequest.display))")
       .disabled(pullRequestURL == nil || !githubIntegrationEnabled)
-      Button("New Worktree", systemImage: "plus") {
-        store.send(.repositories(.createRandomWorktree))
+      Button("New Task", systemImage: "plus") {
+        if let repository = repositories.repositoryForTaskCreation() {
+          store.send(.repositories(.presentTaskCreationSheet(repository.id)))
+        }
       }
       .keyboardShortcut(
         AppShortcuts.newWorktree.keyEquivalent, modifiers: AppShortcuts.newWorktree.modifiers
       )
-      .help("New Worktree (\(AppShortcuts.newWorktree.display))")
-      .disabled(!repositories.canCreateWorktree)
+      .help("New Task (\(AppShortcuts.newWorktree.display))")
+      .disabled(!repositories.canCreateTask)
       Button("Archived Worktrees") {
         store.send(.repositories(.selectArchivedWorktrees))
       }
@@ -73,6 +75,9 @@ struct WorktreeCommands: Commands {
         modifiers: AppShortcuts.archivedWorktrees.modifiers
       )
       .help("Archived Worktrees (\(AppShortcuts.archivedWorktrees.display))")
+      Button("Archived Tasks") {
+        store.send(.repositories(.selectArchivedTasks))
+      }
       Button("Archive Worktree") {
         archiveWorktreeAction?()
       }

@@ -191,6 +191,69 @@ struct AppFeature {
           )
         }
 
+      case .repositories(.delegate(.selectedTaskChanged(let task, let variant))):
+        guard let task, let variant, let worktreeID = variant.worktreeID else {
+          return .merge(
+            .run { _ in
+              await terminalClient.send(.setSelectedWorktreeID(nil))
+            },
+            .run { _ in
+              await worktreeInfoWatcher.send(.setSelectedWorktreeID(nil))
+            }
+          )
+        }
+        let worktreesForWatcher = state.repositories.worktreesForInfoWatcher()
+        let rootURL = URL(fileURLWithPath: task.repositoryID).standardizedFileURL
+        @Shared(.repositorySettings(rootURL)) var repoSettings
+        let settings = repoSettings
+        return .merge(
+          .run { _ in
+            await terminalClient.send(.setSelectedWorktreeID(worktreeID))
+          },
+          .run { _ in
+            await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktreeID))
+          },
+          .run { _ in
+            await worktreeInfoWatcher.send(.setWorktrees(worktreesForWatcher))
+          },
+          .send(.worktreeSettingsLoaded(settings, worktreeID: worktreeID))
+        )
+
+      case .repositories(.delegate(.variantReady(let task, let variant))):
+        guard let worktreeID = variant.worktreeID,
+          let worktree = state.repositories.worktree(for: worktreeID)
+        else {
+          return .none
+        }
+        guard let agent = AgentProvider.byID[variant.agentID] else {
+          return .run { _ in
+            await terminalClient.send(
+              .ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: false)
+            )
+          }
+        }
+        var buildFlags: [String] = []
+        if task.autoApprove, let flag = agent.autoApproveFlag {
+          buildFlags.append(flag)
+        }
+        let flags = buildFlags
+        let prompt: String? = task.initialPrompt.isEmpty ? nil : task.initialPrompt
+        return .run { _ in
+          await terminalClient.send(
+            .launchAgent(worktree, agentCLI: agent.cli, flags: flags, prompt: prompt)
+          )
+        }
+
+      case .repositories(.delegate(.sendPromptToVariant(let variant, let prompt))):
+        guard let worktreeID = variant.worktreeID,
+          let worktree = state.repositories.worktree(for: worktreeID)
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.sendInputToWorktree(worktree, input: prompt))
+        }
+
       case .repositories(.delegate(.repositoriesChanged(let repositories))):
         let ids = Set(repositories.flatMap { $0.worktrees.map(\.id) })
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(from: repositories)
@@ -566,6 +629,18 @@ struct AppFeature {
 
       case .commandPalette(.delegate(.newWorktree)):
         return .send(.repositories(.createRandomWorktree))
+
+      case .commandPalette(.delegate(.selectTask(let taskID))):
+        return .send(.repositories(.selectTask(taskID)))
+
+      case .commandPalette(.delegate(.newTask)):
+        guard let repository = state.repositories.repositoryForTaskCreation() else {
+          return .none
+        }
+        return .send(.repositories(.presentTaskCreationSheet(repository.id)))
+
+      case .commandPalette(.delegate(.archiveTask(let taskID))):
+        return .send(.repositories(.archiveTask(taskID)))
 
       case .commandPalette(.delegate(.openRepository)):
         return .send(.repositories(.setOpenPanelPresented(true)))

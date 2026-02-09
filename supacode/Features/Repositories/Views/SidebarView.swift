@@ -24,16 +24,30 @@ struct SidebarView: View {
       }
     }()
     let archiveWorktreeAction: (() -> Void)? = {
-      guard let selectedRow, selectedRow.isRemovable, !selectedRow.isMainWorktree else { return nil }
-      return {
-        store.send(.requestArchiveWorktree(selectedRow.id, selectedRow.repositoryID))
+      if let selectedRow, selectedRow.isRemovable, !selectedRow.isMainWorktree {
+        return {
+          store.send(.requestArchiveWorktree(selectedRow.id, selectedRow.repositoryID))
+        }
       }
+      if let selectedTask = state.selectedTask {
+        return {
+          store.send(.archiveTask(selectedTask.id))
+        }
+      }
+      return nil
     }()
     let deleteWorktreeAction: (() -> Void)? = {
-      guard let selectedRow, selectedRow.isRemovable else { return nil }
-      return {
-        store.send(.requestDeleteWorktree(selectedRow.id, selectedRow.repositoryID))
+      if let selectedRow, selectedRow.isRemovable {
+        return {
+          store.send(.requestDeleteWorktree(selectedRow.id, selectedRow.repositoryID))
+        }
       }
+      if let selectedTask = state.selectedTask {
+        return {
+          store.send(.requestDeleteTask(selectedTask.id, selectedTask.repositoryID))
+        }
+      }
+      return nil
     }()
     SidebarListView(store: store, expandedRepoIDs: $expandedRepoIDs, terminalManager: terminalManager)
       .focusedSceneValue(\.confirmWorktreeAction, confirmWorktreeAction)

@@ -8,6 +8,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   var copyIgnoredOnWorktreeCreate: Bool
   var copyUntrackedOnWorktreeCreate: Bool
   var pullRequestMergeStrategy: PullRequestMergeStrategy
+  var defaultAgentIDs: [String]
 
   private enum CodingKeys: String, CodingKey {
     case setupScript
@@ -17,6 +18,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     case copyIgnoredOnWorktreeCreate
     case copyUntrackedOnWorktreeCreate
     case pullRequestMergeStrategy
+    case defaultAgentIDs
   }
 
   static let `default` = RepositorySettings(
@@ -26,7 +28,8 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     worktreeBaseRef: nil,
     copyIgnoredOnWorktreeCreate: false,
     copyUntrackedOnWorktreeCreate: false,
-    pullRequestMergeStrategy: .merge
+    pullRequestMergeStrategy: .merge,
+    defaultAgentIDs: ["claude"]
   )
 
   init(
@@ -36,7 +39,8 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     worktreeBaseRef: String?,
     copyIgnoredOnWorktreeCreate: Bool,
     copyUntrackedOnWorktreeCreate: Bool,
-    pullRequestMergeStrategy: PullRequestMergeStrategy
+    pullRequestMergeStrategy: PullRequestMergeStrategy,
+    defaultAgentIDs: [String] = ["claude"]
   ) {
     self.setupScript = setupScript
     self.runScript = runScript
@@ -45,6 +49,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     self.copyIgnoredOnWorktreeCreate = copyIgnoredOnWorktreeCreate
     self.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
+    self.defaultAgentIDs = defaultAgentIDs
   }
 
   init(from decoder: Decoder) throws {
@@ -75,5 +80,10 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
         PullRequestMergeStrategy.self,
         forKey: .pullRequestMergeStrategy
       ) ?? Self.default.pullRequestMergeStrategy
+    defaultAgentIDs =
+      try container.decodeIfPresent(
+        [String].self,
+        forKey: .defaultAgentIDs
+      ) ?? Self.default.defaultAgentIDs
   }
 }

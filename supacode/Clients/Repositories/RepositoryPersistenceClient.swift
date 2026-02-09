@@ -15,6 +15,14 @@ struct RepositoryPersistenceClient {
   var saveWorktreeOrderByRepository: @Sendable ([Repository.ID: [Worktree.ID]]) async -> Void
   var loadLastFocusedWorktreeID: @Sendable () async -> Worktree.ID?
   var saveLastFocusedWorktreeID: @Sendable (Worktree.ID?) async -> Void
+  var loadTasks: @Sendable () async -> [CodingTask]
+  var saveTasks: @Sendable ([CodingTask]) async -> Void
+  var loadArchivedTaskIDs: @Sendable () async -> [CodingTask.ID]
+  var saveArchivedTaskIDs: @Sendable ([CodingTask.ID]) async -> Void
+  var loadTaskOrderByRepository: @Sendable () async -> [Repository.ID: [CodingTask.ID]]
+  var saveTaskOrderByRepository: @Sendable ([Repository.ID: [CodingTask.ID]]) async -> Void
+  var loadLastFocusedTaskID: @Sendable () async -> CodingTask.ID?
+  var saveLastFocusedTaskID: @Sendable (CodingTask.ID?) async -> Void
 }
 
 extension RepositoryPersistenceClient: DependencyKey {
@@ -82,6 +90,49 @@ extension RepositoryPersistenceClient: DependencyKey {
         $sharedLastFocused.withLock {
           $0 = id
         }
+      },
+      loadTasks: {
+        @Shared(.appStorage("codingTasks")) var tasks: Data?
+        guard let data = tasks else { return [] }
+        return (try? JSONDecoder().decode([CodingTask].self, from: data)) ?? []
+      },
+      saveTasks: { tasks in
+        @Shared(.appStorage("codingTasks")) var sharedTasks: Data?
+        let data = try? JSONEncoder().encode(tasks)
+        $sharedTasks.withLock {
+          $0 = data
+        }
+      },
+      loadArchivedTaskIDs: {
+        @Shared(.appStorage("archivedTaskIDs")) var archived: [CodingTask.ID] = []
+        return archived
+      },
+      saveArchivedTaskIDs: { ids in
+        @Shared(.appStorage("archivedTaskIDs")) var sharedArchived: [CodingTask.ID] = []
+        $sharedArchived.withLock {
+          $0 = ids
+        }
+      },
+      loadTaskOrderByRepository: {
+        @Shared(.appStorage("taskOrderByRepository")) var order: [Repository.ID: [CodingTask.ID]] = [:]
+        return order
+      },
+      saveTaskOrderByRepository: { order in
+        @Shared(.appStorage("taskOrderByRepository"))
+        var sharedOrder: [Repository.ID: [CodingTask.ID]] = [:]
+        $sharedOrder.withLock {
+          $0 = order
+        }
+      },
+      loadLastFocusedTaskID: {
+        @Shared(.appStorage("lastFocusedTaskID")) var lastFocused: CodingTask.ID?
+        return lastFocused
+      },
+      saveLastFocusedTaskID: { id in
+        @Shared(.appStorage("lastFocusedTaskID")) var sharedLastFocused: CodingTask.ID?
+        $sharedLastFocused.withLock {
+          $0 = id
+        }
       }
     )
   }()
@@ -97,7 +148,15 @@ extension RepositoryPersistenceClient: DependencyKey {
     loadWorktreeOrderByRepository: { [:] },
     saveWorktreeOrderByRepository: { _ in },
     loadLastFocusedWorktreeID: { nil },
-    saveLastFocusedWorktreeID: { _ in }
+    saveLastFocusedWorktreeID: { _ in },
+    loadTasks: { [] },
+    saveTasks: { _ in },
+    loadArchivedTaskIDs: { [] },
+    saveArchivedTaskIDs: { _ in },
+    loadTaskOrderByRepository: { [:] },
+    saveTaskOrderByRepository: { _ in },
+    loadLastFocusedTaskID: { nil },
+    saveLastFocusedTaskID: { _ in }
   )
 }
 
