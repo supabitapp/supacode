@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import Sharing
 
@@ -195,6 +196,19 @@ final class WorktreeTerminalManager {
 
   func stateIfExists(for worktreeID: Worktree.ID) -> WorktreeTerminalState? {
     states[worktreeID]
+  }
+
+  func allSurfaceViews() -> [GhosttySurfaceView] {
+    states.values.flatMap { $0.allSurfaceViews() }
+  }
+
+  func surfaceView(id: UUID) -> GhosttySurfaceView? {
+    for state in states.values {
+      if let view = state.surfaceView(id: id) {
+        return view
+      }
+    }
+    return nil
   }
 
   func focusedTaskStatus(for worktreeID: Worktree.ID) -> WorktreeTaskStatus? {

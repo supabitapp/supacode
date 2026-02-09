@@ -49,6 +49,14 @@ final class WorktreeTerminalState {
     )
   }
 
+  func allSurfaceViews() -> [GhosttySurfaceView] {
+    Array(surfaces.values)
+  }
+
+  func surfaceView(id: UUID) -> GhosttySurfaceView? {
+    surfaces[id]
+  }
+
   var focusedTaskStatus: WorktreeTaskStatus {
     guard let tabId = tabManager.selectedTabId else { return .idle }
     if tabIsRunningById[tabId] == true {

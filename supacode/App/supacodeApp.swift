@@ -113,6 +113,7 @@ struct SupacodeApp: App {
     _ghosttyShortcuts = State(initialValue: shortcuts)
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
     _terminalManager = State(initialValue: terminalManager)
+    TerminalIntentRegistry.shared.terminalManager = terminalManager
     let worktreeInfoWatcher = WorktreeInfoWatcherManager()
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()

@@ -6,6 +6,9 @@ import Observation
 final class GhosttySurfaceState {
   var title: String?
   var pwd: String?
+  var inferredForegroundProcess: String?
+  var inferredProcessCategory: TerminalProcessCategory?
+  var inferredShellState: TerminalShellState?
   var promptTitle: ghostty_action_prompt_title_e?
   var progressState: ghostty_action_progress_report_state_e?
   var progressValue: Int?

@@ -167,6 +167,7 @@ final class GhosttySurfaceBridge {
     case GHOSTTY_ACTION_SET_TITLE:
       if let title = string(from: action.action.set_title.title) {
         state.title = title
+        updateInferredTerminalState()
         onTitleChange?(title)
         if let surfaceView {
           NSAccessibility.post(element: surfaceView, notification: .titleChanged)
@@ -180,6 +181,7 @@ final class GhosttySurfaceBridge {
 
     case GHOSTTY_ACTION_PWD:
       state.pwd = string(from: action.action.pwd.pwd)
+      updateInferredTerminalState()
       if let surfaceView {
         NSAccessibility.post(element: surfaceView, notification: .valueChanged)
         // VoiceOver does not reliably re-read the label on `.valueChanged` alone.
@@ -221,10 +223,16 @@ final class GhosttySurfaceBridge {
           guard let self, !Task.isCancelled else { return }
           self.state.progressState = nil
           self.state.progressValue = nil
+          self.updateInferredTerminalState()
           self.onProgressReport?(GHOSTTY_PROGRESS_STATE_REMOVE)
         }
       }
+      let previousShellState = state.inferredShellState
+      updateInferredTerminalState()
       onProgressReport?(report.state)
+      if previousShellState != state.inferredShellState, let surfaceView {
+        NSAccessibility.post(element: surfaceView, notification: .titleChanged)
+      }
       return true
 
     case GHOSTTY_ACTION_COMMAND_FINISHED:
@@ -250,6 +258,16 @@ final class GhosttySurfaceBridge {
     default:
       return false
     }
+  }
+
+  private func updateInferredTerminalState() {
+    let inferredProcess = TerminalForegroundProcessInference.infer(
+      fromTitle: state.title,
+      pwd: state.pwd
+    )
+    state.inferredForegroundProcess = inferredProcess
+    state.inferredProcessCategory = inferredProcess.map { TerminalProcessClassifier.category(for: $0) }
+    state.inferredShellState = TerminalProcessClassifier.shellState(from: state.progressState)
   }
 
   private func handleMouseAndLink(_ action: ghostty_action_s) -> Bool {

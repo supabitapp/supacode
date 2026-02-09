@@ -221,13 +221,36 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func accessibilityLabel() -> String? {
+    let inferredProcess = bridge.state.inferredForegroundProcess?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let processLabel = inferredProcess.isEmpty ? nil : TerminalProcessClassifier.displayName(for: inferredProcess)
+    let shellState = bridge.state.inferredShellState
+
     let title = bridge.state.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if !title.isEmpty {
+      if let processLabel {
+        if shellState == .idle, bridge.state.inferredProcessCategory == .shell {
+          return "\(processLabel) (idle) - \(title)"
+        }
+        return "\(processLabel) - \(title)"
+      }
       return title
     }
     let pwd = bridge.state.pwd?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if !pwd.isEmpty {
+      if let processLabel {
+        if shellState == .idle, bridge.state.inferredProcessCategory == .shell {
+          return "\(processLabel) (idle) - \(pwd)"
+        }
+        return "\(processLabel) - \(pwd)"
+      }
       return pwd
+    }
+    if let processLabel {
+      if shellState == .idle, bridge.state.inferredProcessCategory == .shell {
+        return "\(processLabel) (idle) - Terminal pane"
+      }
+      return "\(processLabel) - Terminal pane"
     }
     return "Terminal pane"
   }
@@ -237,7 +260,30 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func accessibilityHelp() -> String? {
-    accessibilityPaneIndexHelp
+    let parts: [String] = {
+      var parts: [String] = []
+      if let accessibilityPaneIndexHelp {
+        parts.append(accessibilityPaneIndexHelp)
+      }
+      if let inferredProcess = bridge.state.inferredForegroundProcess,
+        !inferredProcess.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      {
+        let name = TerminalProcessClassifier.displayName(for: inferredProcess)
+        switch bridge.state.inferredShellState {
+        case .some(.idle):
+          parts.append("Idle: \(name)")
+        case .some(.running):
+          parts.append("Running: \(name)")
+        case .some(.waitingForInput):
+          parts.append("Waiting for input: \(name)")
+        case .none:
+          parts.append(name)
+        }
+      }
+      return parts
+    }()
+    guard !parts.isEmpty else { return nil }
+    return parts.joined(separator: " - ")
   }
 
   override func becomeFirstResponder() -> Bool {
