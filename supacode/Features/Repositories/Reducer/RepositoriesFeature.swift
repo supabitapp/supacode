@@ -37,6 +37,7 @@ struct RepositoriesFeature {
     var lastFocusedWorktreeID: Worktree.ID?
     var shouldRestoreLastFocusedWorktree = false
     var shouldSelectFirstAfterReload = false
+    var isRefreshingWorktrees = false
     var statusToast: StatusToast?
     @Presents var alert: AlertState<Alert>?
   }
@@ -217,6 +218,7 @@ struct RepositoriesFeature {
 
       case .loadPersistedRepositories:
         state.alert = nil
+        state.isRefreshingWorktrees = false
         return .run { send in
           let loadedPaths = await repositoryPersistence.loadRoots()
           let rootPaths = RepositoryPathNormalizer.normalize(loadedPaths)
@@ -234,15 +236,20 @@ struct RepositoriesFeature {
         .cancellable(id: CancelID.load, cancelInFlight: true)
 
       case .refreshWorktrees:
+        state.isRefreshingWorktrees = true
         return .send(.reloadRepositories(animated: false))
 
       case .reloadRepositories(let animated):
         state.alert = nil
         let roots = state.repositoryRoots
-        guard !roots.isEmpty else { return .none }
+        guard !roots.isEmpty else {
+          state.isRefreshingWorktrees = false
+          return .none
+        }
         return loadRepositories(roots, animated: animated)
 
       case .repositoriesLoaded(let repositories, let failures, let roots, let animated):
+        state.isRefreshingWorktrees = false
         let previousSelection = state.selectedWorktreeID
         let previousSelectedWorktree = state.worktree(for: previousSelection)
         let incomingRepositories = IdentifiedArray(uniqueElements: repositories)
@@ -339,6 +346,7 @@ struct RepositoriesFeature {
         .cancellable(id: CancelID.load, cancelInFlight: true)
 
       case .openRepositoriesFinished(let repositories, let failures, let invalidRoots, let roots):
+        state.isRefreshingWorktrees = false
         let previousSelection = state.selectedWorktreeID
         let previousSelectedWorktree = state.worktree(for: previousSelection)
         let applyResult = applyRepositories(

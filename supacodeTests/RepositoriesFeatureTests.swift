@@ -8,6 +8,60 @@ import Testing
 
 @MainActor
 struct RepositoriesFeatureTests {
+  @Test func refreshWorktreesSetsRefreshingStateUntilLoadCompletes() async {
+    let worktree = makeWorktree(id: "/tmp/repo/main", name: "main")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.worktrees = { _ in [worktree] }
+    }
+
+    await store.send(.refreshWorktrees) {
+      $0.isRefreshingWorktrees = true
+    }
+    await store.receive(\.reloadRepositories)
+    await store.receive(\.repositoriesLoaded) {
+      $0.isRefreshingWorktrees = false
+      $0.isInitialLoadComplete = true
+    }
+  }
+
+  @Test func refreshWorktreesWithoutRootsStopsRefreshingImmediately() async {
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.refreshWorktrees) {
+      $0.isRefreshingWorktrees = true
+    }
+    await store.receive(\.reloadRepositories) {
+      $0.isRefreshingWorktrees = false
+    }
+  }
+
+  @Test func repositoriesLoadedClearsRefreshingState() async {
+    let worktree = makeWorktree(id: "/tmp/repo/main", name: "main")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.isRefreshingWorktrees = true
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .repositoriesLoaded(
+        [repository],
+        failures: [],
+        roots: [repository.rootURL],
+        animated: false
+      )
+    ) {
+      $0.isRefreshingWorktrees = false
+      $0.isInitialLoadComplete = true
+    }
+  }
+
   @Test func selectWorktreeSendsDelegate() async {
     let worktree = makeWorktree(id: "/tmp/wt", name: "fox")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
