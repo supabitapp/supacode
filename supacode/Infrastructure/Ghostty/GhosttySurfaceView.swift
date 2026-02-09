@@ -229,7 +229,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     let title = bridge.state.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if !title.isEmpty {
       if let processLabel {
-        if shellState == .idle, bridge.state.inferredProcessCategory == .shell {
+        if shellState == .idle || shellState == .waitingForInput,
+          bridge.state.inferredProcessCategory == .shell
+        {
           return "\(processLabel) (idle) - \(title)"
         }
         return "\(processLabel) - \(title)"
@@ -239,7 +241,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     let pwd = bridge.state.pwd?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if !pwd.isEmpty {
       if let processLabel {
-        if shellState == .idle, bridge.state.inferredProcessCategory == .shell {
+        if shellState == .idle || shellState == .waitingForInput,
+          bridge.state.inferredProcessCategory == .shell
+        {
           return "\(processLabel) (idle) - \(pwd)"
         }
         return "\(processLabel) - \(pwd)"
@@ -247,7 +251,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
       return pwd
     }
     if let processLabel {
-      if shellState == .idle, bridge.state.inferredProcessCategory == .shell {
+      if shellState == .idle || shellState == .waitingForInput,
+        bridge.state.inferredProcessCategory == .shell
+      {
         return "\(processLabel) (idle) - Terminal pane"
       }
       return "\(processLabel) - Terminal pane"

@@ -20,11 +20,9 @@ struct GetTerminalDetailsIntent: AppIntent {
 
   @MainActor
   func perform() async throws -> some IntentResult & ReturnsValue<TerminalEntity> {
-    // Rebuild from the current surface view (if it still exists) to keep details fresh.
-    if let view = terminal.surfaceView {
-      return .result(value: TerminalEntity(view))
+    guard let view = terminal.surfaceView else {
+      throw TerminalIntentError.terminalNoLongerAvailable(id: terminal.id)
     }
-    return .result(value: terminal)
+    return .result(value: TerminalEntity(view))
   }
 }
-

@@ -266,8 +266,13 @@ final class GhosttySurfaceBridge {
       pwd: state.pwd
     )
     state.inferredForegroundProcess = inferredProcess
-    state.inferredProcessCategory = inferredProcess.map { TerminalProcessClassifier.category(for: $0) }
-    state.inferredShellState = TerminalProcessClassifier.shellState(from: state.progressState)
+    let category = inferredProcess.map { TerminalProcessClassifier.category(for: $0) }
+    state.inferredProcessCategory = category
+    let shellState = TerminalProcessClassifier.shellState(
+      progressState: state.progressState,
+      processCategory: category ?? .other
+    )
+    state.inferredShellState = shellState
   }
 
   private func handleMouseAndLink(_ action: ghostty_action_s) -> Bool {

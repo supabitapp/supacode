@@ -3,6 +3,12 @@ import Foundation
 @MainActor
 final class TerminalIntentRegistry {
   static let shared = TerminalIntentRegistry()
-  weak var terminalManager: WorktreeTerminalManager?
-}
 
+  var terminalManager: WorktreeTerminalManager?
+
+  private init() {}
+
+  func setTerminalManager(_ terminalManager: WorktreeTerminalManager) {
+    self.terminalManager = terminalManager
+  }
+}

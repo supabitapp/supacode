@@ -47,7 +47,10 @@ enum TerminalProcessClassifier {
     return .other
   }
 
-  static func shellState(from progressState: ghostty_action_progress_report_state_e?) -> TerminalShellState {
+  static func shellState(
+    progressState: ghostty_action_progress_report_state_e?,
+    processCategory: TerminalProcessCategory
+  ) -> TerminalShellState {
     switch progressState {
     case .some(GHOSTTY_PROGRESS_STATE_SET),
       .some(GHOSTTY_PROGRESS_STATE_INDETERMINATE),
@@ -55,6 +58,10 @@ enum TerminalProcessClassifier {
       .some(GHOSTTY_PROGRESS_STATE_ERROR):
       return .running
     default:
+      // With no progress report active, shells are typically at a prompt.
+      if processCategory == .shell {
+        return .waitingForInput
+      }
       return .idle
     }
   }
@@ -119,23 +126,28 @@ enum TerminalForegroundProcessInference {
     }
 
     // Heuristic: many apps set window title to "NAME ..." or "... - NAME".
-    if rawTitle.localizedCaseInsensitiveContains("vim") { return "vim" }
-    if rawTitle.localizedCaseInsensitiveContains("emacs") { return "emacs" }
+    if rawTitle.range(of: #"\bvim\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return "vim" }
+    if rawTitle.range(of: #"\bemacs\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return "emacs" }
 
     // Split on common separators and grab the first plausible token.
     let separators: [Character] = ["-", "|", ":"]
     let firstChunk = rawTitle.split(whereSeparator: { separators.contains($0) }).first.map(String.init) ?? rawTitle
-    let candidate = firstChunk
+    let tokens = firstChunk
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .split(whereSeparator: \.isWhitespace)
-      .first
       .map(String.init)
+    guard !tokens.isEmpty else { return nil }
 
-    guard let candidate else { return nil }
-    let token = normalizeToken(candidate)
-    guard isPlausibleExecutableToken(token) else { return nil }
+    // Try the first couple of tokens to handle prompt prefixes like "[git] claude ...".
+    for rawToken in tokens.prefix(2) {
+      let token = normalizeToken(rawToken)
+      guard !token.isEmpty else { continue }
+      if isPlausibleExecutableToken(token) {
+        return token
+      }
+    }
 
-    return token
+    return nil
   }
 
   private static func normalizeToken(_ token: String) -> String {

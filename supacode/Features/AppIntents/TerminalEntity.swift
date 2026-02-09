@@ -46,17 +46,24 @@ struct TerminalEntity: AppEntity {
     title = rawTitle.isEmpty ? (rawPwd ?? "Terminal pane") : rawTitle
     workingDirectory = rawPwd
 
-    let inferredProcess = TerminalForegroundProcessInference.infer(
-      fromTitle: view.bridge.state.title,
-      pwd: view.bridge.state.pwd
-    )
+    let inferredProcess =
+      view.bridge.state.inferredForegroundProcess
+      ?? TerminalForegroundProcessInference.infer(fromTitle: view.bridge.state.title, pwd: view.bridge.state.pwd)
     foregroundProcess = inferredProcess
 
-    let internalCategory = inferredProcess.map { TerminalProcessClassifier.category(for: $0) } ?? .other
-    processCategory = ProcessCategory(rawValue: internalCategory.rawValue) ?? .other
+    let internalCategory =
+      view.bridge.state.inferredProcessCategory
+      ?? inferredProcess.map { TerminalProcessClassifier.category(for: $0) }
+      ?? .other
+    processCategory = ProcessCategory(internalCategory)
 
-    let internalShellState = TerminalProcessClassifier.shellState(from: view.bridge.state.progressState)
-    shellState = ShellState(rawValue: internalShellState.rawValue) ?? .idle
+    let internalShellState =
+      view.bridge.state.inferredShellState
+      ?? TerminalProcessClassifier.shellState(
+        progressState: view.bridge.state.progressState,
+        processCategory: internalCategory
+      )
+    shellState = ShellState(internalShellState)
   }
 }
 
@@ -79,6 +86,23 @@ extension TerminalEntity {
       .ssh: .init(title: "SSH"),
       .other: .init(title: "Other"),
     ]
+
+    init(_ category: TerminalProcessCategory) {
+      switch category {
+      case .shell:
+        self = .shell
+      case .editor:
+        self = .editor
+      case .aiTool:
+        self = .aiTool
+      case .pager:
+        self = .pager
+      case .ssh:
+        self = .ssh
+      case .other:
+        self = .other
+      }
+    }
   }
 
   enum ShellState: String, AppEnum {
@@ -93,6 +117,17 @@ extension TerminalEntity {
       .running: .init(title: "Running"),
       .waitingForInput: .init(title: "Waiting for Input"),
     ]
+
+    init(_ shellState: TerminalShellState) {
+      switch shellState {
+      case .idle:
+        self = .idle
+      case .running:
+        self = .running
+      case .waitingForInput:
+        self = .waitingForInput
+      }
+    }
   }
 }
 
@@ -112,7 +147,10 @@ struct TerminalQuery: EntityStringQuery, EnumerableEntityQuery {
     return all.filter { view in
       let title = view.bridge.state.title ?? ""
       let pwd = view.bridge.state.pwd ?? ""
-      let inferred = TerminalForegroundProcessInference.infer(fromTitle: title, pwd: pwd) ?? ""
+      let inferred =
+        view.bridge.state.inferredForegroundProcess
+        ?? TerminalForegroundProcessInference.infer(fromTitle: title, pwd: pwd)
+        ?? ""
       return title.localizedCaseInsensitiveContains(query)
         || pwd.localizedCaseInsensitiveContains(query)
         || inferred.localizedCaseInsensitiveContains(query)
@@ -136,4 +174,3 @@ struct TerminalQuery: EntityStringQuery, EnumerableEntityQuery {
     return views.sorted { $0.id.uuidString < $1.id.uuidString }
   }
 }
-
