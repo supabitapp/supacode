@@ -4,8 +4,15 @@ import SwiftUI
 
 struct WorktreeDetailView: View {
   @Bindable var store: StoreOf<AppFeature>
+  @Bindable var worktreeDiffStore: StoreOf<WorktreeDiffFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
+
+  init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager) {
+    self.store = store
+    worktreeDiffStore = store.scope(state: \.worktreeDiff, action: \.worktreeDiff)
+    self.terminalManager = terminalManager
+  }
 
   var body: some View {
     detailBody(state: store.state)
@@ -95,8 +102,14 @@ struct WorktreeDetailView: View {
         )
       }
     }
+    .inspector(
+      isPresented: $worktreeDiffStore.isPresented.sending(\.setPresented)
+    ) {
+      WorktreeDiffInspectorView(store: worktreeDiffStore)
+    }
     let actions = makeFocusedActions(
       hasActiveWorktree: hasActiveWorktree,
+      selectedWorktree: selectedWorktree,
       runScriptEnabled: runScriptEnabled,
       runScriptIsRunning: runScriptIsRunning
     )
@@ -119,15 +132,39 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.endSearchAction, actions.endSearch)
       .focusedSceneValue(\.runScriptAction, actions.runScript)
       .focusedSceneValue(\.stopRunScriptAction, actions.stopRunScript)
+      .focusedSceneValue(\.toggleChangesPanelAction, actions.toggleChangesPanel)
   }
 
   private func makeFocusedActions(
     hasActiveWorktree: Bool,
+    selectedWorktree: Worktree?,
     runScriptEnabled: Bool,
     runScriptIsRunning: Bool
   ) -> FocusedActions {
     func action(_ appAction: AppFeature.Action) -> (() -> Void)? {
       hasActiveWorktree ? { store.send(appAction) } : nil
+    }
+    let toggleChangesPanel: (() -> Void)?
+    if hasActiveWorktree, let selectedWorktree {
+      toggleChangesPanel = {
+        if store.worktreeDiff.isPresented {
+          store.send(.worktreeDiff(.setPresented(false)))
+        } else {
+          store.send(
+            .worktreeDiff(
+              .setActiveWorktree(
+                WorktreeDiffFeature.ActiveWorktree(
+                  id: selectedWorktree.id,
+                  rootURL: selectedWorktree.workingDirectory
+                )
+              )
+            )
+          )
+          store.send(.worktreeDiff(.setPresented(true)))
+        }
+      }
+    } else {
+      toggleChangesPanel = nil
     }
     return FocusedActions(
       openSelectedWorktree: action(.openSelectedWorktree),
@@ -140,7 +177,8 @@ struct WorktreeDetailView: View {
       navigateSearchPrevious: action(.navigateSearchPrevious),
       endSearch: action(.endSearch),
       runScript: runScriptEnabled ? { store.send(.runScript) } : nil,
-      stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil
+      stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil,
+      toggleChangesPanel: toggleChangesPanel
     )
   }
 
@@ -174,6 +212,7 @@ struct WorktreeDetailView: View {
     let endSearch: (() -> Void)?
     let runScript: (() -> Void)?
     let stopRunScript: (() -> Void)?
+    let toggleChangesPanel: (() -> Void)?
   }
 
   fileprivate struct WorktreeToolbarState {

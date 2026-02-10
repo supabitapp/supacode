@@ -24,6 +24,7 @@ struct AppFeature {
     var settings: SettingsFeature.State
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
+    var worktreeDiff = WorktreeDiffFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
     var selectedRunScript: String = ""
     var runScriptDraft: String = ""
@@ -51,6 +52,7 @@ struct AppFeature {
     case settings(SettingsFeature.Action)
     case updates(UpdatesFeature.Action)
     case commandPalette(CommandPaletteFeature.Action)
+    case worktreeDiff(WorktreeDiffFeature.Action)
     case openActionSelectionChanged(OpenWorktreeAction)
     case worktreeSettingsLoaded(RepositorySettings, worktreeID: Worktree.ID)
     case openSelectedWorktree
@@ -130,6 +132,7 @@ struct AppFeature {
         let lastFocusedWorktreeID = worktree?.id
         let repositoryPersistence = repositoryPersistence
         let worktreesForWatcher = state.repositories.worktreesForInfoWatcher()
+        let isDiffPresented = state.worktreeDiff.isPresented
         guard let worktree else {
           state.openActionSelection = .finder
           state.selectedRunScript = ""
@@ -146,6 +149,9 @@ struct AppFeature {
               await worktreeInfoWatcher.send(.setWorktrees(worktreesForWatcher))
             },
           ]
+          if isDiffPresented {
+            effects.append(.send(.worktreeDiff(.setActiveWorktree(nil))))
+          }
           if !state.repositories.isShowingArchivedWorktrees {
             effects.insert(
               .run { _ in
@@ -160,8 +166,13 @@ struct AppFeature {
         let worktreeID = worktree.id
         state.runScriptDraft = ""
         state.isRunScriptPromptPresented = false
+        let diffActive = WorktreeDiffFeature.ActiveWorktree(id: worktreeID, rootURL: worktree.workingDirectory)
         @Shared(.repositorySettings(rootURL)) var repositorySettings
         let settings = repositorySettings
+        let sync = Effect<Action>.concatenate(
+          isDiffPresented ? .send(.worktreeDiff(.setActiveWorktree(diffActive))) : .none,
+          .send(.worktreeSettingsLoaded(settings, worktreeID: worktreeID))
+        )
         return .merge(
           .run { _ in
             await repositoryPersistence.saveLastFocusedWorktreeID(lastFocusedWorktreeID)
@@ -175,7 +186,7 @@ struct AppFeature {
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktreesForWatcher))
           },
-          .send(.worktreeSettingsLoaded(settings, worktreeID: worktreeID))
+          sync
         )
 
       case .repositories(.delegate(.worktreeCreated(let worktree))):
@@ -202,6 +213,7 @@ struct AppFeature {
           return .merge(
             .send(.settings(.setSelection(.general))),
             .send(.commandPalette(.pruneRecency(recencyIDs))),
+            .send(.worktreeDiff(.pruneWorktrees(ids))),
             .run { _ in
               await terminalClient.send(.prune(ids))
             },
@@ -212,6 +224,7 @@ struct AppFeature {
         }
         return .merge(
           .send(.commandPalette(.pruneRecency(recencyIDs))),
+          .send(.worktreeDiff(.pruneWorktrees(ids))),
           .run { _ in
             await terminalClient.send(.prune(ids))
           },
@@ -605,6 +618,9 @@ struct AppFeature {
       case .commandPalette:
         return .none
 
+      case .worktreeDiff:
+        return .none
+
       case .terminalEvent(.notificationReceived(let worktreeID, _, _)):
         var effects: [Effect<Action>] = [
           .send(.repositories(.worktreeNotificationReceived(worktreeID)))
@@ -666,6 +682,9 @@ struct AppFeature {
     }
     Scope(state: \.commandPalette, action: \.commandPalette) {
       CommandPaletteFeature()
+    }
+    Scope(state: \.worktreeDiff, action: \.worktreeDiff) {
+      WorktreeDiffFeature()
     }
   }
 }
