@@ -109,7 +109,6 @@ struct WorktreeDetailView: View {
     }
     let actions = makeFocusedActions(
       hasActiveWorktree: hasActiveWorktree,
-      selectedWorktree: selectedWorktree,
       runScriptEnabled: runScriptEnabled,
       runScriptIsRunning: runScriptIsRunning
     )
@@ -137,34 +136,11 @@ struct WorktreeDetailView: View {
 
   private func makeFocusedActions(
     hasActiveWorktree: Bool,
-    selectedWorktree: Worktree?,
     runScriptEnabled: Bool,
     runScriptIsRunning: Bool
   ) -> FocusedActions {
     func action(_ appAction: AppFeature.Action) -> (() -> Void)? {
       hasActiveWorktree ? { store.send(appAction) } : nil
-    }
-    let toggleChangesPanel: (() -> Void)?
-    if hasActiveWorktree, let selectedWorktree {
-      toggleChangesPanel = {
-        if store.worktreeDiff.isPresented {
-          store.send(.worktreeDiff(.setPresented(false)))
-        } else {
-          store.send(
-            .worktreeDiff(
-              .setActiveWorktree(
-                WorktreeDiffFeature.ActiveWorktree(
-                  id: selectedWorktree.id,
-                  rootURL: selectedWorktree.workingDirectory
-                )
-              )
-            )
-          )
-          store.send(.worktreeDiff(.setPresented(true)))
-        }
-      }
-    } else {
-      toggleChangesPanel = nil
     }
     return FocusedActions(
       openSelectedWorktree: action(.openSelectedWorktree),
@@ -178,7 +154,9 @@ struct WorktreeDetailView: View {
       endSearch: action(.endSearch),
       runScript: runScriptEnabled ? { store.send(.runScript) } : nil,
       stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil,
-      toggleChangesPanel: toggleChangesPanel
+      toggleChangesPanel: hasActiveWorktree
+        ? { store.send(.worktreeDiff(.setPresented(!store.worktreeDiff.isPresented))) }
+        : nil
     )
   }
 

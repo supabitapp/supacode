@@ -618,6 +618,17 @@ struct AppFeature {
       case .commandPalette:
         return .none
 
+      case .worktreeDiff(.setPresented(true)):
+        if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
+          state.worktreeDiff.activeWorktree = WorktreeDiffFeature.ActiveWorktree(
+            id: selectedWorktree.id,
+            rootURL: selectedWorktree.workingDirectory
+          )
+        } else {
+          state.worktreeDiff.activeWorktree = nil
+        }
+        return .none
+
       case .worktreeDiff:
         return .none
 
