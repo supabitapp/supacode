@@ -13,13 +13,15 @@ struct ContentView: View {
   @Bindable var store: StoreOf<AppFeature>
   @Bindable var repositoriesStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  let diffManager: WorktreeDiffManager
   @Environment(\.scenePhase) private var scenePhase
   @State private var leftSidebarVisibility: NavigationSplitViewVisibility = .all
 
-  init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager) {
+  init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager, diffManager: WorktreeDiffManager) {
     self.store = store
     repositoriesStore = store.scope(state: \.repositories, action: \.repositories)
     self.terminalManager = terminalManager
+    self.diffManager = diffManager
   }
 
   var body: some View {
@@ -37,7 +39,7 @@ struct ContentView: View {
           SidebarView(store: repositoriesStore, terminalManager: terminalManager)
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
-          WorktreeDetailView(store: store, terminalManager: terminalManager)
+          WorktreeDetailView(store: store, terminalManager: terminalManager, diffManager: diffManager)
         }
         .navigationSplitViewStyle(.automatic)
       } else {

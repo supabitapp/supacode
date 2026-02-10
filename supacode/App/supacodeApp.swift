@@ -71,6 +71,7 @@ struct SupacodeApp: App {
   @State private var terminalManager: WorktreeTerminalManager
   @State private var worktreeInfoWatcher: WorktreeInfoWatcherManager
   @State private var commandKeyObserver: CommandKeyObserver
+  @State private var diffManager: WorktreeDiffManager
   @State private var store: StoreOf<AppFeature>
 
   @MainActor init() {
@@ -117,6 +118,8 @@ struct SupacodeApp: App {
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()
     _commandKeyObserver = State(initialValue: keyObserver)
+    let diffManager = WorktreeDiffManager()
+    _diffManager = State(initialValue: diffManager)
     let appStore = Store(
       initialState: AppFeature.State(settings: SettingsFeature.State(settings: initialSettings))
     ) {
@@ -139,6 +142,14 @@ struct SupacodeApp: App {
           worktreeInfoWatcher.eventStream()
         }
       )
+      values.diffClient = DiffClient(
+        send: { command in
+          diffManager.handleCommand(command)
+        },
+        events: {
+          diffManager.eventStream()
+        }
+      )
     }
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
@@ -152,7 +163,7 @@ struct SupacodeApp: App {
   var body: some Scene {
     Window("Supacode", id: "main") {
       GhosttyColorSchemeSyncView(ghostty: ghostty) {
-        ContentView(store: store, terminalManager: terminalManager)
+        ContentView(store: store, terminalManager: terminalManager, diffManager: diffManager)
           .environment(ghosttyShortcuts)
           .environment(commandKeyObserver)
       }
@@ -163,6 +174,7 @@ struct SupacodeApp: App {
     .commands {
       WorktreeCommands(store: store)
       SidebarCommands()
+      DiffCommands()
       TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
         Button("Command Palette") {

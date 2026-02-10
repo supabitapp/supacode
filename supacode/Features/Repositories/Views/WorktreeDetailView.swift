@@ -5,7 +5,9 @@ import SwiftUI
 struct WorktreeDetailView: View {
   @Bindable var store: StoreOf<AppFeature>
   let terminalManager: WorktreeTerminalManager
+  let diffManager: WorktreeDiffManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @State private var diffSplitRatio: CGFloat = 0.5
 
   var body: some View {
     detailBody(state: store.state)
@@ -32,22 +34,11 @@ struct WorktreeDetailView: View {
       } else if let loadingInfo {
         WorktreeLoadingView(info: loadingInfo)
       } else if let selectedWorktree {
-        let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
-        let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-        WorktreeTerminalTabsView(
+        worktreeContent(
           worktree: selectedWorktree,
-          manager: terminalManager,
-          shouldRunSetupScript: shouldRunSetupScript,
-          forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) }
+          repositories: repositories,
+          isDiffVisible: state.diff.isPanelVisible
         )
-        .id(selectedWorktree.id)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-          if shouldFocusTerminal {
-            store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
-          }
-        }
       } else {
         EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
       }
@@ -119,6 +110,45 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.endSearchAction, actions.endSearch)
       .focusedSceneValue(\.runScriptAction, actions.runScript)
       .focusedSceneValue(\.stopRunScriptAction, actions.stopRunScript)
+      .focusedSceneValue(\.toggleDiffPanelAction, actions.toggleDiffPanel)
+  }
+
+  @ViewBuilder
+  private func worktreeContent(
+    worktree: Worktree,
+    repositories: RepositoriesFeature.State,
+    isDiffVisible: Bool
+  ) -> some View {
+    let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
+    let shouldFocusTerminal = repositories.shouldFocusTerminal(for: worktree.id)
+    let terminalView = WorktreeTerminalTabsView(
+      worktree: worktree,
+      manager: terminalManager,
+      shouldRunSetupScript: shouldRunSetupScript,
+      forceAutoFocus: shouldFocusTerminal,
+      createTab: { store.send(.newTerminal) }
+    )
+    .id(worktree.id)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .onAppear {
+      if shouldFocusTerminal {
+        store.send(.repositories(.consumeTerminalFocus(worktree.id)))
+      }
+    }
+    if isDiffVisible {
+      SplitView(.horizontal, $diffSplitRatio, dividerColor: Color(nsColor: .separatorColor)) {
+        terminalView
+      } right: {
+        DiffPanelView(
+          store: store.scope(state: \.diff, action: \.diff),
+          diffState: diffManager.diffState(for: worktree.id)
+        )
+      } onEqualize: {
+        diffSplitRatio = 0.5
+      }
+    } else {
+      terminalView
+    }
   }
 
   private func makeFocusedActions(
@@ -140,7 +170,8 @@ struct WorktreeDetailView: View {
       navigateSearchPrevious: action(.navigateSearchPrevious),
       endSearch: action(.endSearch),
       runScript: runScriptEnabled ? { store.send(.runScript) } : nil,
-      stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil
+      stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil,
+      toggleDiffPanel: hasActiveWorktree ? { store.send(.toggleDiffPanel) } : nil
     )
   }
 
@@ -174,6 +205,7 @@ struct WorktreeDetailView: View {
     let endSearch: (() -> Void)?
     let runScript: (() -> Void)?
     let stopRunScript: (() -> Void)?
+    let toggleDiffPanel: (() -> Void)?
   }
 
   fileprivate struct WorktreeToolbarState {

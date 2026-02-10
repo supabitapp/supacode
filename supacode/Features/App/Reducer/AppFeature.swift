@@ -24,6 +24,7 @@ struct AppFeature {
     var settings: SettingsFeature.State
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
+    var diff = DiffFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
     var selectedRunScript: String = ""
     var runScriptDraft: String = ""
@@ -72,6 +73,8 @@ struct AppFeature {
     case endSearch
     case alert(PresentationAction<Alert>)
     case terminalEvent(TerminalClient.Event)
+    case diff(DiffFeature.Action)
+    case toggleDiffPanel
   }
 
   enum Alert: Equatable {
@@ -85,6 +88,7 @@ struct AppFeature {
   @Dependency(\.settingsWindowClient) private var settingsWindowClient
   @Dependency(\.terminalClient) private var terminalClient
   @Dependency(\.worktreeInfoWatcher) private var worktreeInfoWatcher
+  @Dependency(\.diffClient) private var diffClient
 
   var body: some Reducer<State, Action> {
     let core = Reduce<State, Action> { state, action in
@@ -101,6 +105,11 @@ struct AppFeature {
           .run { send in
             for await event in await worktreeInfoWatcher.events() {
               await send(.repositories(.worktreeInfoEvent(event)))
+            }
+          },
+          .run { send in
+            for await event in await diffClient.events() {
+              await send(.diff(.diffEvent(event)))
             }
           }
         )
@@ -145,6 +154,9 @@ struct AppFeature {
             .run { _ in
               await worktreeInfoWatcher.send(.setWorktrees(worktreesForWatcher))
             },
+            .run { _ in
+              await diffClient.send(.setSelectedWorktreeID(nil))
+            },
           ]
           if !state.repositories.isShowingArchivedWorktrees {
             effects.insert(
@@ -174,6 +186,9 @@ struct AppFeature {
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktreesForWatcher))
+          },
+          .run { _ in
+            await diffClient.send(.setSelectedWorktreeID(worktree.id))
           },
           .send(.worktreeSettingsLoaded(settings, worktreeID: worktreeID))
         )
@@ -207,6 +222,12 @@ struct AppFeature {
             },
             .run { _ in
               await worktreeInfoWatcher.send(.setWorktrees(worktrees))
+            },
+            .run { _ in
+              await diffClient.send(.prune(ids))
+            },
+            .run { _ in
+              await diffClient.send(.setWorktrees(worktrees))
             }
           )
         }
@@ -217,6 +238,12 @@ struct AppFeature {
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
+          },
+          .run { _ in
+            await diffClient.send(.prune(ids))
+          },
+          .run { _ in
+            await diffClient.send(.setWorktrees(worktrees))
           }
         )
 
@@ -651,6 +678,12 @@ struct AppFeature {
 
       case .terminalEvent:
         return .none
+
+      case .toggleDiffPanel:
+        return .send(.diff(.togglePanel))
+
+      case .diff:
+        return .none
       }
     }
     core
@@ -666,6 +699,9 @@ struct AppFeature {
     }
     Scope(state: \.commandPalette, action: \.commandPalette) {
       CommandPaletteFeature()
+    }
+    Scope(state: \.diff, action: \.diff) {
+      DiffFeature()
     }
   }
 }
