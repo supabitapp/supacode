@@ -164,6 +164,7 @@ struct WorktreeDetailView: View {
     let allPending = task.variants.allSatisfy {
       $0.status == .creatingWorktree || $0.status == .pending
     }
+    let isSplitMode = repositories.isVariantSplitMode(for: task.id)
     if allPending {
       VStack(spacing: 12) {
         ProgressView()
@@ -171,6 +172,45 @@ struct WorktreeDetailView: View {
           .foregroundStyle(.secondary)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if isSplitMode, task.isMultiAgent {
+      let readyVariants: [(variant: TaskVariant, worktree: Worktree)] = task.variants.compactMap {
+        variant in
+        guard let worktreeID = variant.worktreeID,
+          let worktree = repositories.worktree(for: worktreeID)
+        else { return nil }
+        return (variant: variant, worktree: worktree)
+      }
+      let ratios = repositories.variantSplitRatios(for: task.id)
+      VStack(spacing: 0) {
+        VariantTabBarView(
+          task: task,
+          selectedVariantID: selectedVariant?.id,
+          isSplitMode: true,
+          onSelect: { variantID in
+            store.send(.repositories(.selectVariant(taskID: task.id, variantID: variantID)))
+          },
+          onToggleSplitMode: {
+            store.send(.repositories(.toggleVariantSplitMode(taskID: task.id)))
+          },
+          terminalManager: terminalManager
+        )
+        Divider()
+        VariantSplitContentView(
+          variants: readyVariants,
+          ratios: ratios,
+          focusedVariantID: selectedVariant?.id,
+          terminalManager: terminalManager,
+          onSelectVariant: { variantID in
+            store.send(.repositories(.selectVariant(taskID: task.id, variantID: variantID)))
+          },
+          onSetRatio: { index, ratio in
+            store.send(
+              .repositories(.setVariantSplitRatio(taskID: task.id, index: index, ratio: ratio))
+            )
+          },
+          createTab: { store.send(.newTerminal) }
+        )
+      }
     } else if let variant = selectedVariant,
       let worktreeID = variant.worktreeID,
       let worktree = repositories.worktree(for: worktreeID)
@@ -180,8 +220,12 @@ struct WorktreeDetailView: View {
           VariantTabBarView(
             task: task,
             selectedVariantID: variant.id,
+            isSplitMode: false,
             onSelect: { variantID in
               store.send(.repositories(.selectVariant(taskID: task.id, variantID: variantID)))
+            },
+            onToggleSplitMode: {
+              store.send(.repositories(.toggleVariantSplitMode(taskID: task.id)))
             },
             terminalManager: terminalManager
           )

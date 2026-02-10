@@ -4,18 +4,44 @@ import SwiftUI
 struct VariantTabBarView: View {
   let task: CodingTask
   let selectedVariantID: TaskVariant.ID?
+  let isSplitMode: Bool
   let onSelect: (TaskVariant.ID) -> Void
+  let onToggleSplitMode: () -> Void
   let terminalManager: WorktreeTerminalManager
 
   var body: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
-      HStack(spacing: 2) {
-        ForEach(task.variants) { variant in
-          variantTab(variant)
+    HStack(spacing: 0) {
+      if !isSplitMode {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 2) {
+            ForEach(task.variants) { variant in
+              variantTab(variant)
+            }
+          }
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
         }
+      } else {
+        Text(task.name)
+          .font(.caption)
+          .fontWeight(.medium)
+          .lineLimit(1)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+        Spacer()
       }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
+      Button {
+        onToggleSplitMode()
+      } label: {
+        Image(systemName: isSplitMode ? "rectangle.stack" : "rectangle.split.2x1")
+          .font(.caption)
+          .accessibilityHidden(true)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help(isSplitMode ? "Switch to tab mode" : "Switch to split view")
     }
     .background(.bar)
   }

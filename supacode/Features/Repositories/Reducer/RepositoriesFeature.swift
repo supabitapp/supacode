@@ -49,6 +49,8 @@ struct RepositoriesFeature {
     var taskOrderByRepository: [Repository.ID: [CodingTask.ID]] = [:]
     var lastFocusedTaskID: CodingTask.ID?
     var selectedVariantIDByTask: [CodingTask.ID: TaskVariant.ID] = [:]
+    var variantSplitModeByTask: [CodingTask.ID: Bool] = [:]
+    var variantSplitRatiosByTask: [CodingTask.ID: [CGFloat]] = [:]
     var isTaskCreationSheetPresented = false
     var taskCreationRepositoryID: Repository.ID?
   }
@@ -142,6 +144,8 @@ struct RepositoriesFeature {
     case archiveTask(CodingTask.ID)
     case unarchiveTask(CodingTask.ID)
     case selectArchivedTasks
+    case toggleVariantSplitMode(taskID: CodingTask.ID)
+    case setVariantSplitRatio(taskID: CodingTask.ID, index: Int, ratio: CGFloat)
     case sendPromptToAllVariants(CodingTask.ID, prompt: String)
     case tasksLoaded([CodingTask])
     case archivedTaskIDsLoaded([CodingTask.ID])
@@ -1898,6 +1902,27 @@ struct RepositoriesFeature {
         let variant = task?.variants[id: variantID]
         return .send(.delegate(.selectedTaskChanged(task, selectedVariant: variant)))
 
+      case .toggleVariantSplitMode(let taskID):
+        let current = state.variantSplitModeByTask[taskID] ?? false
+        state.variantSplitModeByTask[taskID] = !current
+        if !current {
+          let readyCount =
+            state.task(for: taskID)?.variants.filter { $0.worktreeID != nil }.count ?? 0
+          if state.variantSplitRatiosByTask[taskID] == nil, readyCount > 1 {
+            state.variantSplitRatiosByTask[taskID] = Array(
+              repeating: 0.5,
+              count: readyCount - 1
+            )
+          }
+        }
+        return .none
+
+      case .setVariantSplitRatio(let taskID, let index, let ratio):
+        if state.variantSplitRatiosByTask[taskID] != nil {
+          state.variantSplitRatiosByTask[taskID]![index] = ratio
+        }
+        return .none
+
       case .requestDeleteTask(let taskID, let repositoryID):
         guard let task = state.task(for: taskID) else {
           return .none
@@ -1947,6 +1972,8 @@ struct RepositoriesFeature {
         }
         state.tasksByRepository[repositoryID]?.remove(id: taskID)
         state.selectedVariantIDByTask.removeValue(forKey: taskID)
+        state.variantSplitModeByTask.removeValue(forKey: taskID)
+        state.variantSplitRatiosByTask.removeValue(forKey: taskID)
         state.archivedTaskIDs.removeAll { $0 == taskID }
         if var order = state.taskOrderByRepository[repositoryID] {
           order.removeAll { $0 == taskID }
@@ -2602,6 +2629,14 @@ extension RepositoriesFeature.State {
       return selectedTask?.variants.first
     }
     return variant
+  }
+
+  func isVariantSplitMode(for taskID: CodingTask.ID) -> Bool {
+    variantSplitModeByTask[taskID] ?? false
+  }
+
+  func variantSplitRatios(for taskID: CodingTask.ID) -> [CGFloat] {
+    variantSplitRatiosByTask[taskID] ?? []
   }
 
   var worktreeIDToTaskVariant: [Worktree.ID: (taskID: CodingTask.ID, variantID: TaskVariant.ID)] {
