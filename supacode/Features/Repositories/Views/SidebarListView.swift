@@ -20,7 +20,8 @@ struct SidebarListView: View {
         case .archivedWorktrees:
           store.send(.selectArchivedWorktrees)
         case .worktree(let id):
-          store.send(.selectWorktree(id))
+          let isMouseEvent = NSApp.currentEvent?.type == .leftMouseUp
+          store.send(.selectWorktree(id, focusTerminal: isMouseEvent))
         case .repository(let id):
           guard let repo = store.state.repositories[id: id],
             !store.state.isRemovingRepository(repo)
