@@ -30,7 +30,25 @@ make test      # Run tests
 make format    # Run swift-format
 ```
 
+## Supacode Home Directory
+
+Supacode stores its state under `~/.supacode` by default.
+
+You can set a custom storage directory in `Settings > Advanced > Storage`.
+Changes require an app restart.
+
+You can also override the storage directory for a single launch:
+
+```bash
+SUPACODE_HOME=/tmp/supacode-home /Applications/Supacode.app/Contents/MacOS/supacode
+```
+
+Override precedence is:
+
+1. `SUPACODE_HOME` environment variable
+2. Saved Settings override
+3. Default `~/.supacode`
+
 ## Contributing
 
 Be civilized, I review every single line personally, so I assume you have done the same urself before submitting a PR.
-

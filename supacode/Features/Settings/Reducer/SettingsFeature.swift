@@ -19,6 +19,10 @@ struct SettingsFeature {
     var githubIntegrationEnabled: Bool
     var deleteBranchOnDeleteWorktree: Bool
     var automaticallyArchiveMergedWorktrees: Bool
+    var supacodeHomeDirectoryOverrideDraft = ""
+    var supacodeHomeDirectoryValidationError: String?
+    var isSupacodeHomeDirectoryRestartRequired = false
+    var effectiveSupacodeHomeDirectoryPath = SupacodePaths.baseDirectory.path(percentEncoded: false)
     var selection: SettingsSection? = .general
     var repositorySettings: RepositorySettingsFeature.State?
 
@@ -63,6 +67,9 @@ struct SettingsFeature {
   enum Action: BindableAction {
     case task
     case settingsLoaded(GlobalSettings)
+    case supacodeHomeDirectoryDraftChanged(String)
+    case applySupacodeHomeDirectoryOverride
+    case resetSupacodeHomeDirectoryOverride
     case setSelection(SettingsSection?)
     case repositorySettings(RepositorySettingsFeature.Action)
     case delegate(Delegate)
@@ -75,6 +82,7 @@ struct SettingsFeature {
   }
 
   @Dependency(\.analyticsClient) private var analyticsClient
+  @Dependency(\.supacodeHomeOverridePersistence) private var supacodeHomeOverridePersistence
 
   var body: some Reducer<State, Action> {
     BindingReducer()
@@ -110,7 +118,60 @@ struct SettingsFeature {
         state.githubIntegrationEnabled = normalizedSettings.githubIntegrationEnabled
         state.deleteBranchOnDeleteWorktree = normalizedSettings.deleteBranchOnDeleteWorktree
         state.automaticallyArchiveMergedWorktrees = normalizedSettings.automaticallyArchiveMergedWorktrees
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        let persistedOverride = supacodeHomeOverridePersistence.load()
+        if let persistedOverride,
+          let normalizedPersistedOverride = SupacodePaths.normalizedBaseDirectoryOverride(
+            persistedOverride,
+            homeDirectory: homeDirectory
+          )
+        {
+          state.supacodeHomeDirectoryOverrideDraft = normalizedPersistedOverride.path(percentEncoded: false)
+        } else {
+          state.supacodeHomeDirectoryOverrideDraft = ""
+        }
+        state.effectiveSupacodeHomeDirectoryPath = SupacodePaths.baseDirectory.path(percentEncoded: false)
+        state.supacodeHomeDirectoryValidationError = nil
+        state.isSupacodeHomeDirectoryRestartRequired = false
         return .send(.delegate(.settingsChanged(normalizedSettings)))
+
+      case .supacodeHomeDirectoryDraftChanged(let draft):
+        state.supacodeHomeDirectoryOverrideDraft = draft
+        state.supacodeHomeDirectoryValidationError = nil
+        return .none
+
+      case .applySupacodeHomeDirectoryOverride:
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        let trimmedDraft = state.supacodeHomeDirectoryOverrideDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDraft.isEmpty else {
+          supacodeHomeOverridePersistence.save(nil)
+          state.supacodeHomeDirectoryOverrideDraft = ""
+          state.supacodeHomeDirectoryValidationError = nil
+          state.isSupacodeHomeDirectoryRestartRequired = true
+          return .none
+        }
+        guard
+          let normalizedOverride = SupacodePaths.normalizedBaseDirectoryOverride(
+            trimmedDraft,
+            homeDirectory: homeDirectory
+          )
+        else {
+          state.supacodeHomeDirectoryValidationError = "Enter an absolute path, for example /tmp/supacode."
+          return .none
+        }
+        let normalizedPath = normalizedOverride.path(percentEncoded: false)
+        supacodeHomeOverridePersistence.save(normalizedPath)
+        state.supacodeHomeDirectoryOverrideDraft = normalizedPath
+        state.supacodeHomeDirectoryValidationError = nil
+        state.isSupacodeHomeDirectoryRestartRequired = true
+        return .none
+
+      case .resetSupacodeHomeDirectoryOverride:
+        supacodeHomeOverridePersistence.save(nil)
+        state.supacodeHomeDirectoryOverrideDraft = ""
+        state.supacodeHomeDirectoryValidationError = nil
+        state.isSupacodeHomeDirectoryRestartRequired = true
+        return .none
 
       case .binding:
         let settings = state.globalSettings

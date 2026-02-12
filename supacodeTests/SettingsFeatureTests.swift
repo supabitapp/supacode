@@ -169,4 +169,100 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
   }
+
+  @Test(.dependencies) func loadingSettingsLoadsSupacodeHomeDirectoryOverride() async {
+    let storedOverride = LockIsolated<String?>("/tmp/supacode-custom")
+    let store = withDependencies {
+      $0.supacodeHomeOverridePersistence = SupacodeHomeOverridePersistence(
+        load: { storedOverride.value },
+        save: { storedOverride.setValue($0) }
+      )
+    } operation: {
+      TestStore(initialState: SettingsFeature.State()) {
+        SettingsFeature()
+      }
+    }
+
+    await store.send(.settingsLoaded(.default)) {
+      $0.supacodeHomeDirectoryOverrideDraft = "/tmp/supacode-custom"
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
+  @Test(.dependencies) func applyingSupacodeHomeDirectoryOverridePersistsNormalizedPath() async {
+    let storedOverride = LockIsolated<String?>(nil)
+    let store = withDependencies {
+      $0.supacodeHomeOverridePersistence = SupacodeHomeOverridePersistence(
+        load: { storedOverride.value },
+        save: { storedOverride.setValue($0) }
+      )
+    } operation: {
+      TestStore(initialState: SettingsFeature.State()) {
+        SettingsFeature()
+      }
+    }
+
+    await store.send(.supacodeHomeDirectoryDraftChanged(" ~/.supacode-alt ")) {
+      $0.supacodeHomeDirectoryOverrideDraft = " ~/.supacode-alt "
+    }
+    let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    let expectedPath = SupacodePaths.normalizedBaseDirectoryOverride(
+      " ~/.supacode-alt ",
+      homeDirectory: homeDirectory
+    )?.path(percentEncoded: false)
+    await store.send(.applySupacodeHomeDirectoryOverride) {
+      $0.supacodeHomeDirectoryOverrideDraft = expectedPath ?? ""
+      $0.isSupacodeHomeDirectoryRestartRequired = true
+    }
+
+    #expect(storedOverride.value == expectedPath)
+  }
+
+  @Test(.dependencies) func applyingInvalidSupacodeHomeDirectoryOverrideShowsValidationError() async {
+    let storedOverride = LockIsolated<String?>(nil)
+    let store = withDependencies {
+      $0.supacodeHomeOverridePersistence = SupacodeHomeOverridePersistence(
+        load: { storedOverride.value },
+        save: { storedOverride.setValue($0) }
+      )
+    } operation: {
+      TestStore(initialState: SettingsFeature.State()) {
+        SettingsFeature()
+      }
+    }
+
+    await store.send(.supacodeHomeDirectoryDraftChanged("relative/path")) {
+      $0.supacodeHomeDirectoryOverrideDraft = "relative/path"
+    }
+    await store.send(.applySupacodeHomeDirectoryOverride) {
+      $0.supacodeHomeDirectoryValidationError = "Enter an absolute path, for example /tmp/supacode."
+    }
+
+    #expect(storedOverride.value == nil)
+  }
+
+  @Test(.dependencies) func resettingSupacodeHomeDirectoryOverrideClearsPersistedValue() async {
+    let storedOverride = LockIsolated<String?>("/tmp/supacode-custom")
+    let store = withDependencies {
+      $0.supacodeHomeOverridePersistence = SupacodeHomeOverridePersistence(
+        load: { storedOverride.value },
+        save: { storedOverride.setValue($0) }
+      )
+    } operation: {
+      TestStore(initialState: SettingsFeature.State()) {
+        SettingsFeature()
+      }
+    }
+
+    await store.send(.settingsLoaded(.default)) {
+      $0.supacodeHomeDirectoryOverrideDraft = "/tmp/supacode-custom"
+    }
+    await store.receive(\.delegate.settingsChanged)
+    await store.send(.resetSupacodeHomeDirectoryOverride) {
+      $0.supacodeHomeDirectoryOverrideDraft = ""
+      $0.isSupacodeHomeDirectoryRestartRequired = true
+    }
+
+    #expect(storedOverride.value == nil)
+  }
 }
