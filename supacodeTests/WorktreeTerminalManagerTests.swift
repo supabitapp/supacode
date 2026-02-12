@@ -195,6 +195,30 @@ struct WorktreeTerminalManagerTests {
     #expect(calls.map(\.1) == [false, true, false])
   }
 
+  @Test func worktreeStatusIsRunningWhenAnyTabIsRunning() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let stream = manager.eventStream()
+
+    _ = state.createTab()
+    let firstSurfaceID = await nextFocusChangedSurfaceID(stream, worktreeID: worktree.id)
+    _ = state.createTab()
+    _ = await nextFocusChangedSurfaceID(stream, worktreeID: worktree.id)
+
+    #expect(manager.focusedTaskStatus(for: worktree.id) == .idle)
+    #expect(firstSurfaceID != nil)
+    guard let firstSurfaceID else {
+      return
+    }
+
+    #expect(state.setAgentWorkingStatus(surfaceID: firstSurfaceID, isWorking: true))
+    #expect(manager.focusedTaskStatus(for: worktree.id) == .running)
+
+    #expect(state.setAgentWorkingStatus(surfaceID: firstSurfaceID, isWorking: false))
+    #expect(manager.focusedTaskStatus(for: worktree.id) == .idle)
+  }
+
   private func makeWorktree() -> Worktree {
     Worktree(
       id: "/tmp/repo/wt-1",
@@ -211,6 +235,22 @@ struct WorktreeTerminalManagerTests {
   ) async -> TerminalClient.Event? {
     for await event in stream where predicate(event) {
       return event
+    }
+    return nil
+  }
+
+  private func nextFocusChangedSurfaceID(
+    _ stream: AsyncStream<TerminalClient.Event>,
+    worktreeID: Worktree.ID
+  ) async -> UUID? {
+    let event = await nextEvent(stream) { event in
+      if case .focusChanged(let eventWorktreeID, _) = event {
+        return eventWorktreeID == worktreeID
+      }
+      return false
+    }
+    if case .focusChanged(_, let surfaceID)? = event {
+      return surfaceID
     }
     return nil
   }
