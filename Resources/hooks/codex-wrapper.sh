@@ -45,26 +45,5 @@ cleanup_signal() {
   fi
 }
 
-child_pid=""
-forward_signal() {
-  local signal="$1"
-  if [[ -n "$child_pid" ]]; then
-    kill "-$signal" "$child_pid" 2>/dev/null || true
-  fi
-}
-
 trap cleanup_signal EXIT
-trap 'forward_signal INT; exit 130' INT
-trap 'forward_signal TERM; exit 143' TERM
-trap 'forward_signal HUP; exit 129' HUP
-trap 'forward_signal QUIT; exit 131' QUIT
-
-"$real_codex" -c "notify=[\"bash\",\"$HOME/.supacode/hooks/notify.sh\"]" "$@" &
-child_pid=$!
-
-exit_code=0
-if ! wait "$child_pid"; then
-  exit_code=$?
-fi
-child_pid=""
-exit "$exit_code"
+"$real_codex" -c "notify=[\"bash\",\"$HOME/.supacode/hooks/notify.sh\"]" "$@"
