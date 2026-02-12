@@ -30,4 +30,38 @@ if [[ -z "$real_claude" ]]; then
   exit 1
 fi
 
-exec "$real_claude" --settings "$HOME/.supacode/hooks/claude-settings.json" "$@"
+surface_id="${SUPACODE_SURFACE_ID:-}"
+signal_file=""
+if [[ -n "$surface_id" ]]; then
+  signal_file="$HOME/.supacode/hooks/signals/$surface_id"
+fi
+
+cleanup_signal() {
+  if [[ -n "$signal_file" ]]; then
+    rm -f "$signal_file"
+  fi
+}
+
+child_pid=""
+forward_signal() {
+  local signal="$1"
+  if [[ -n "$child_pid" ]]; then
+    kill "-$signal" "$child_pid" 2>/dev/null || true
+  fi
+}
+
+trap cleanup_signal EXIT
+trap 'forward_signal INT; exit 130' INT
+trap 'forward_signal TERM; exit 143' TERM
+trap 'forward_signal HUP; exit 129' HUP
+trap 'forward_signal QUIT; exit 131' QUIT
+
+"$real_claude" --settings "$HOME/.supacode/hooks/claude-settings.json" "$@" &
+child_pid=$!
+
+exit_code=0
+if ! wait "$child_pid"; then
+  exit_code=$?
+fi
+child_pid=""
+exit "$exit_code"

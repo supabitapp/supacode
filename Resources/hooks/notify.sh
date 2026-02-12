@@ -36,7 +36,7 @@ case "$event_name" in
   UserPromptSubmit|Start|agent-turn-start)
     printf 'working\n' > "$signal_file"
     ;;
-  Stop|agent-turn-complete)
+  Stop)
     rm -f "$signal_file"
     ;;
   *)
