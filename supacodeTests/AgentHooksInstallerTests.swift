@@ -64,7 +64,6 @@ struct AgentHooksInstallerTests {
           .path(percentEncoded: false)
       )
     )
-
     let renderedSettings = try String(
       contentsOf: AgentHooksInstaller.hooksDirectory
         .appending(path: "claude-settings.json", directoryHint: .notDirectory),

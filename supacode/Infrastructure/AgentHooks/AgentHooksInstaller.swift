@@ -14,14 +14,25 @@ nonisolated enum AgentHooksInstaller {
     hooksDirectory.appending(path: "bin", directoryHint: .isDirectory)
   }
 
+  static var runtimeDirectory: URL {
+    if let signalsDirectoryOverride {
+      return signalsDirectoryOverride.deletingLastPathComponent()
+    }
+    if let baseDirectoryOverride {
+      return baseDirectoryOverride
+    }
+    return SupacodePaths.resolvedTemporaryDirectory(appending: "supacode-agent-hooks")
+  }
+
   static var signalsDirectory: URL {
     if let signalsDirectoryOverride {
       return signalsDirectoryOverride
     }
-    if let baseDirectoryOverride {
-      return baseDirectoryOverride.appending(path: "signals", directoryHint: .isDirectory)
-    }
-    return SupacodePaths.resolvedTemporaryDirectory(appending: "supacode-agent-hooks/signals")
+    return runtimeDirectory.appending(path: "signals", directoryHint: .isDirectory)
+  }
+
+  static var logFileURL: URL {
+    runtimeDirectory.appending(path: "hooks.log", directoryHint: .notDirectory)
   }
 
   static var isInstalled: Bool {

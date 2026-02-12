@@ -31,19 +31,24 @@ if [[ -z "$real_codex" ]]; then
 fi
 
 surface_id="${SUPACODE_SURFACE_ID:-}"
-signal_file=""
-if [[ -n "$surface_id" ]]; then
-  signals_dir="${SUPACODE_HOOK_SIGNALS_DIR:-${TMPDIR:-/tmp}/supacode-agent-hooks/signals}"
-  mkdir -p "$signals_dir"
-  signal_file="$signals_dir/$surface_id"
-  printf 'working\n' > "$signal_file"
-fi
+signals_dir="${SUPACODE_HOOK_SIGNALS_DIR:-${TMPDIR:-/tmp}/supacode-agent-hooks/signals}"
+signal_file="$signals_dir/$surface_id"
+log_path="${SUPACODE_HOOK_LOG_PATH:-}"
+
+log_line() {
+  if [[ -n "$log_path" ]]; then
+    mkdir -p "$(dirname "$log_path")"
+    printf '%s codex-wrapper %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" >> "$log_path"
+  fi
+}
 
 cleanup_signal() {
-  if [[ -n "$signal_file" ]]; then
+  if [[ -n "$surface_id" ]]; then
     rm -f "$signal_file"
+    log_line "cleanup surface=$surface_id"
   fi
 }
 
 trap cleanup_signal EXIT
+log_line "start surface=$surface_id args=$*"
 "$real_codex" -c "notify=[\"bash\",\"$HOME/.supacode/hooks/notify.sh\"]" "$@"

@@ -787,6 +787,8 @@ final class WorktreeTerminalState {
       envVars["PATH"] = mergedPath(prepending: agentHooksBinPath, to: currentPath)
       envVars["SUPACODE_HOOK_SIGNALS_DIR"] =
         AgentHooksInstaller.signalsDirectory.path(percentEncoded: false)
+      envVars["SUPACODE_HOOK_LOG_PATH"] =
+        AgentHooksInstaller.logFileURL.path(percentEncoded: false)
     }
 
     return envVars
