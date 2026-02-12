@@ -245,7 +245,7 @@ struct AppFeature {
             rootURL: repository.rootURL,
             settings: repositorySettings
           )
-        case .general, .notifications, .worktree, .updates, .advanced, .github:
+        case .general, .notifications, .worktree, .updates, .advanced, .codingAgents, .github:
           state.settings.repositorySettings = nil
         }
         return .none
@@ -286,6 +286,14 @@ struct AppFeature {
           ),
           .run { _ in
             await terminalClient.send(.setNotificationsEnabled(settings.inAppNotificationsEnabled))
+          },
+          .run { _ in
+            await terminalClient.send(
+              .setAgentHookIntegrations(
+                claudeEnabled: settings.claudeCodeIntegrationEnabled,
+                codexEnabled: settings.codexIntegrationEnabled
+              )
+            )
           },
           .run { _ in
             await MainActor.run {

@@ -17,6 +17,8 @@ final class WorktreeTerminalState {
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   private var tabIsRunningById: [TerminalTabID: Bool] = [:]
+  private var agentWorkingSurfaceIDs: Set<UUID> = []
+  private var agentHooksBinPath: String?
   private var runScriptTabId: TerminalTabID?
   private var pendingSetupScript: Bool
   private var isEnsuringInitialTab = false
@@ -51,7 +53,7 @@ final class WorktreeTerminalState {
 
   var focusedTaskStatus: WorktreeTaskStatus {
     guard let tabId = tabManager.selectedTabId else { return .idle }
-    if tabIsRunningById[tabId] == true {
+    if isTabRunning(tabId) {
       return .running
     }
     return .idle
@@ -59,6 +61,43 @@ final class WorktreeTerminalState {
 
   var isRunScriptRunning: Bool {
     runScriptTabId != nil
+  }
+
+  func setAgentHooksBinPath(_ path: String?) {
+    agentHooksBinPath = path
+  }
+
+  @discardableResult
+  func setAgentWorkingStatus(surfaceID: UUID, isWorking: Bool) -> Bool {
+    guard surfaces[surfaceID] != nil else {
+      return false
+    }
+
+    let didChange: Bool
+    if isWorking {
+      didChange = agentWorkingSurfaceIDs.insert(surfaceID).inserted
+    } else {
+      didChange = agentWorkingSurfaceIDs.remove(surfaceID) != nil
+    }
+
+    if didChange {
+      if let tabID = tabId(containing: surfaceID) {
+        tabManager.updateDirty(tabID, isDirty: isTabRunning(tabID))
+      }
+      emitTaskStatusIfChanged()
+    }
+    return true
+  }
+
+  func clearAgentWorkingStatus() {
+    guard !agentWorkingSurfaceIDs.isEmpty else {
+      return
+    }
+    agentWorkingSurfaceIDs.removeAll()
+    for tab in tabManager.tabs {
+      tabManager.updateDirty(tab.id, isDirty: isTabRunning(tab.id))
+    }
+    emitTaskStatusIfChanged()
   }
 
   func ensureInitialTab(focusing: Bool) {
@@ -451,6 +490,7 @@ final class WorktreeTerminalState {
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
+    agentWorkingSurfaceIDs.removeAll()
     setRunScriptTabId(nil)
     tabManager.closeAll()
   }
@@ -546,12 +586,15 @@ final class WorktreeTerminalState {
     context: ghostty_surface_context_e
   ) -> GhosttySurfaceView {
     let inherited = inheritedSurfaceConfig(fromSurfaceId: inheritingFromSurfaceId, context: context)
+    let surfaceID = UUID()
     let view = GhosttySurfaceView(
+      id: surfaceID,
       runtime: runtime,
       workingDirectory: inherited.workingDirectory ?? worktree.workingDirectory,
       initialInput: initialInput,
       fontSize: inherited.fontSize,
-      context: context
+      context: context,
+      additionalEnvVars: envVars(for: surfaceID)
     )
     view.bridge.onTitleChange = { [weak self, weak view] title in
       guard let self, let view else { return }
@@ -693,6 +736,7 @@ final class WorktreeTerminalState {
     for surface in tree.leaves() {
       surface.closeSurface()
       surfaces.removeValue(forKey: surface.id)
+      agentWorkingSurfaceIDs.remove(surface.id)
     }
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     tabIsRunningById.removeValue(forKey: tabId)
@@ -718,8 +762,42 @@ final class WorktreeTerminalState {
       isRunningProgressState(surface.bridge.state.progressState)
     }
     tabIsRunningById[tabId] = isRunningNow
-    tabManager.updateDirty(tabId, isDirty: isRunningNow)
+    tabManager.updateDirty(tabId, isDirty: isTabRunning(tabId))
     emitTaskStatusIfChanged()
+  }
+
+  private func isTabRunning(_ tabId: TerminalTabID) -> Bool {
+    if tabIsRunningById[tabId] == true {
+      return true
+    }
+    guard let tree = trees[tabId] else {
+      return false
+    }
+    return tree.leaves().contains { surface in
+      agentWorkingSurfaceIDs.contains(surface.id)
+    }
+  }
+
+  private func envVars(for surfaceID: UUID) -> [String: String] {
+    var envVars: [String: String] = [
+      "SUPACODE_SURFACE_ID": surfaceID.uuidString
+    ]
+
+    if let agentHooksBinPath {
+      let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+      envVars["PATH"] = mergedPath(prepending: agentHooksBinPath, to: currentPath)
+    }
+
+    return envVars
+  }
+
+  private func mergedPath(prepending prefix: String, to currentPath: String) -> String {
+    let currentComponents =
+      currentPath
+      .split(separator: ":")
+      .map(String.init)
+      .filter { !$0.isEmpty && $0 != prefix }
+    return ([prefix] + currentComponents).joined(separator: ":")
   }
 
   private func emitTaskStatusIfChanged() {
@@ -818,6 +896,7 @@ final class WorktreeTerminalState {
     let newTree = tree.removing(node)
     view.closeSurface()
     surfaces.removeValue(forKey: view.id)
+    agentWorkingSurfaceIDs.remove(view.id)
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
@@ -825,6 +904,7 @@ final class WorktreeTerminalState {
       if tabId == runScriptTabId {
         setRunScriptTabId(nil)
       }
+      emitTaskStatusIfChanged()
       return
     }
     trees[tabId] = newTree

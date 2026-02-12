@@ -17,6 +17,8 @@ struct SettingsFeature {
     var analyticsEnabled: Bool
     var crashReportsEnabled: Bool
     var githubIntegrationEnabled: Bool
+    var claudeCodeIntegrationEnabled: Bool
+    var codexIntegrationEnabled: Bool
     var deleteBranchOnDeleteWorktree: Bool
     var automaticallyArchiveMergedWorktrees: Bool
     var selection: SettingsSection? = .general
@@ -36,6 +38,8 @@ struct SettingsFeature {
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
       githubIntegrationEnabled = settings.githubIntegrationEnabled
+      claudeCodeIntegrationEnabled = settings.claudeCodeIntegrationEnabled
+      codexIntegrationEnabled = settings.codexIntegrationEnabled
       deleteBranchOnDeleteWorktree = settings.deleteBranchOnDeleteWorktree
       automaticallyArchiveMergedWorktrees = settings.automaticallyArchiveMergedWorktrees
     }
@@ -54,6 +58,8 @@ struct SettingsFeature {
         analyticsEnabled: analyticsEnabled,
         crashReportsEnabled: crashReportsEnabled,
         githubIntegrationEnabled: githubIntegrationEnabled,
+        claudeCodeIntegrationEnabled: claudeCodeIntegrationEnabled,
+        codexIntegrationEnabled: codexIntegrationEnabled,
         deleteBranchOnDeleteWorktree: deleteBranchOnDeleteWorktree,
         automaticallyArchiveMergedWorktrees: automaticallyArchiveMergedWorktrees
       )
@@ -108,6 +114,8 @@ struct SettingsFeature {
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
         state.githubIntegrationEnabled = normalizedSettings.githubIntegrationEnabled
+        state.claudeCodeIntegrationEnabled = normalizedSettings.claudeCodeIntegrationEnabled
+        state.codexIntegrationEnabled = normalizedSettings.codexIntegrationEnabled
         state.deleteBranchOnDeleteWorktree = normalizedSettings.deleteBranchOnDeleteWorktree
         state.automaticallyArchiveMergedWorktrees = normalizedSettings.automaticallyArchiveMergedWorktrees
         return .send(.delegate(.settingsChanged(normalizedSettings)))

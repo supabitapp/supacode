@@ -39,6 +39,8 @@ struct SettingsView: View {
             .tag(SettingsSection.updates)
           Label("Advanced", systemImage: "gearshape.2")
             .tag(SettingsSection.advanced)
+          Label("Coding Agents", systemImage: "cpu")
+            .tag(SettingsSection.codingAgents)
           Label("GitHub", systemImage: "arrow.triangle.branch")
             .tag(SettingsSection.github)
 
@@ -85,6 +87,12 @@ struct SettingsView: View {
           AdvancedSettingsView(store: settingsStore)
             .navigationTitle("Advanced")
             .navigationSubtitle("Analytics and diagnostics")
+        }
+      case .codingAgents:
+        SettingsDetailView {
+          CodingAgentsSettingsView(store: settingsStore)
+            .navigationTitle("Coding Agents")
+            .navigationSubtitle("Claude Code and Codex activity detection")
         }
       case .github:
         SettingsDetailView {

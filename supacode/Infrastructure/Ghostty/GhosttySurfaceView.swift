@@ -12,7 +12,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private let runtime: GhosttyRuntime
-  let id = UUID()
+  let id: UUID
   let bridge: GhosttySurfaceBridge
   private(set) var surface: ghostty_surface_t?
   private var surfaceRef: GhosttyRuntime.SurfaceReference?
@@ -20,6 +20,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private let initialInputCString: UnsafeMutablePointer<CChar>?
   private let fontSize: Float32
   private let context: ghostty_surface_context_e
+  private let additionalEnvVars: [String: String]
   private var trackingArea: NSTrackingArea?
   private var lastBackingSize: CGSize = .zero
   private var lastPerformKeyEvent: TimeInterval?
@@ -92,16 +93,20 @@ final class GhosttySurfaceView: NSView, Identifiable {
   override var acceptsFirstResponder: Bool { true }
 
   init(
+    id: UUID = UUID(),
     runtime: GhosttyRuntime,
     workingDirectory: URL?,
     initialInput: String? = nil,
     fontSize: Float32? = nil,
-    context: ghostty_surface_context_e
+    context: ghostty_surface_context_e,
+    additionalEnvVars: [String: String] = [:]
   ) {
+    self.id = id
     self.runtime = runtime
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0
     self.context = context
+    self.additionalEnvVars = additionalEnvVars
     if let workingDirectory {
       let path = workingDirectory.path(percentEncoded: false)
       workingDirectoryCString = path.withCString { strdup($0) }
@@ -638,7 +643,58 @@ final class GhosttySurfaceView: NSView, Identifiable {
     config.working_directory = workingDirectoryCString.map { UnsafePointer($0) }
     config.initial_input = initialInputCString.map { UnsafePointer($0) }
     config.context = context
-    surface = ghostty_surface_new(app, &config)
+    if additionalEnvVars.isEmpty {
+      surface = ghostty_surface_new(app, &config)
+      bridge.surface = surface
+      updateSurfaceSize()
+      return
+    }
+
+    let sortedEnvVars = additionalEnvVars.keys.sorted().map { key in
+      (key, additionalEnvVars[key] ?? "")
+    }
+
+    var keyPointers: [UnsafeMutablePointer<CChar>?] = []
+    var valuePointers: [UnsafeMutablePointer<CChar>?] = []
+    keyPointers.reserveCapacity(sortedEnvVars.count)
+    valuePointers.reserveCapacity(sortedEnvVars.count)
+
+    for (key, value) in sortedEnvVars {
+      keyPointers.append(strdup(key))
+      valuePointers.append(strdup(value))
+    }
+
+    defer {
+      for pointer in keyPointers {
+        if let pointer {
+          free(pointer)
+        }
+      }
+      for pointer in valuePointers {
+        if let pointer {
+          free(pointer)
+        }
+      }
+    }
+
+    var envVars: [ghostty_env_var_s] = []
+    envVars.reserveCapacity(sortedEnvVars.count)
+    for index in sortedEnvVars.indices {
+      envVars.append(
+        ghostty_env_var_s(
+          key: keyPointers[index].map { UnsafePointer($0) },
+          value: valuePointers[index].map { UnsafePointer($0) }
+        )
+      )
+    }
+
+    let envVarCount = envVars.count
+    envVars.withUnsafeMutableBufferPointer { buffer in
+      var configWithEnvVars = config
+      configWithEnvVars.env_vars = buffer.baseAddress
+      configWithEnvVars.env_var_count = envVarCount
+      surface = ghostty_surface_new(app, &configWithEnvVars)
+    }
     bridge.surface = surface
     updateSurfaceSize()
   }

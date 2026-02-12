@@ -106,6 +106,8 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.analyticsEnabled == true)
     #expect(settings.global.crashReportsEnabled == true)
     #expect(settings.global.githubIntegrationEnabled == true)
+    #expect(settings.global.claudeCodeIntegrationEnabled == false)
+    #expect(settings.global.codexIntegrationEnabled == false)
     #expect(settings.global.deleteBranchOnDeleteWorktree == true)
     #expect(settings.global.automaticallyArchiveMergedWorktrees == false)
     #expect(settings.global.defaultEditorID == OpenWorktreeAction.automaticSettingsID)

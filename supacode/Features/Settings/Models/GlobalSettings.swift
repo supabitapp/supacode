@@ -11,6 +11,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   var analyticsEnabled: Bool
   var crashReportsEnabled: Bool
   var githubIntegrationEnabled: Bool
+  var claudeCodeIntegrationEnabled: Bool
+  var codexIntegrationEnabled: Bool
   var deleteBranchOnDeleteWorktree: Bool
   var automaticallyArchiveMergedWorktrees: Bool
 
@@ -27,6 +29,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     analyticsEnabled: true,
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,
+    claudeCodeIntegrationEnabled: false,
+    codexIntegrationEnabled: false,
     deleteBranchOnDeleteWorktree: true,
     automaticallyArchiveMergedWorktrees: false
   )
@@ -44,6 +48,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     analyticsEnabled: Bool,
     crashReportsEnabled: Bool,
     githubIntegrationEnabled: Bool,
+    claudeCodeIntegrationEnabled: Bool,
+    codexIntegrationEnabled: Bool,
     deleteBranchOnDeleteWorktree: Bool,
     automaticallyArchiveMergedWorktrees: Bool
   ) {
@@ -59,6 +65,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.analyticsEnabled = analyticsEnabled
     self.crashReportsEnabled = crashReportsEnabled
     self.githubIntegrationEnabled = githubIntegrationEnabled
+    self.claudeCodeIntegrationEnabled = claudeCodeIntegrationEnabled
+    self.codexIntegrationEnabled = codexIntegrationEnabled
     self.deleteBranchOnDeleteWorktree = deleteBranchOnDeleteWorktree
     self.automaticallyArchiveMergedWorktrees = automaticallyArchiveMergedWorktrees
   }
@@ -95,6 +103,12 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     githubIntegrationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .githubIntegrationEnabled)
       ?? Self.default.githubIntegrationEnabled
+    claudeCodeIntegrationEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .claudeCodeIntegrationEnabled)
+      ?? Self.default.claudeCodeIntegrationEnabled
+    codexIntegrationEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .codexIntegrationEnabled)
+      ?? Self.default.codexIntegrationEnabled
     deleteBranchOnDeleteWorktree =
       try container.decodeIfPresent(Bool.self, forKey: .deleteBranchOnDeleteWorktree)
       ?? Self.default.deleteBranchOnDeleteWorktree

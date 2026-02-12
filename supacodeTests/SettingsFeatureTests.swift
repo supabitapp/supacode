@@ -23,6 +23,8 @@ struct SettingsFeatureTests {
       analyticsEnabled: false,
       crashReportsEnabled: true,
       githubIntegrationEnabled: true,
+      claudeCodeIntegrationEnabled: false,
+      codexIntegrationEnabled: false,
       deleteBranchOnDeleteWorktree: false,
       automaticallyArchiveMergedWorktrees: true
     )
@@ -47,6 +49,8 @@ struct SettingsFeatureTests {
       $0.analyticsEnabled = false
       $0.crashReportsEnabled = true
       $0.githubIntegrationEnabled = true
+      $0.claudeCodeIntegrationEnabled = false
+      $0.codexIntegrationEnabled = false
       $0.deleteBranchOnDeleteWorktree = false
       $0.automaticallyArchiveMergedWorktrees = true
     }
@@ -67,6 +71,8 @@ struct SettingsFeatureTests {
       analyticsEnabled: true,
       crashReportsEnabled: false,
       githubIntegrationEnabled: true,
+      claudeCodeIntegrationEnabled: false,
+      codexIntegrationEnabled: false,
       deleteBranchOnDeleteWorktree: true,
       automaticallyArchiveMergedWorktrees: false
     )
@@ -93,6 +99,8 @@ struct SettingsFeatureTests {
       analyticsEnabled: initialSettings.analyticsEnabled,
       crashReportsEnabled: initialSettings.crashReportsEnabled,
       githubIntegrationEnabled: initialSettings.githubIntegrationEnabled,
+      claudeCodeIntegrationEnabled: initialSettings.claudeCodeIntegrationEnabled,
+      codexIntegrationEnabled: initialSettings.codexIntegrationEnabled,
       deleteBranchOnDeleteWorktree: initialSettings.deleteBranchOnDeleteWorktree,
       automaticallyArchiveMergedWorktrees: initialSettings.automaticallyArchiveMergedWorktrees
     )
@@ -142,6 +150,8 @@ struct SettingsFeatureTests {
       analyticsEnabled: true,
       crashReportsEnabled: false,
       githubIntegrationEnabled: true,
+      claudeCodeIntegrationEnabled: false,
+      codexIntegrationEnabled: false,
       deleteBranchOnDeleteWorktree: true,
       automaticallyArchiveMergedWorktrees: true
     )
@@ -159,6 +169,8 @@ struct SettingsFeatureTests {
       $0.analyticsEnabled = true
       $0.crashReportsEnabled = false
       $0.githubIntegrationEnabled = true
+      $0.claudeCodeIntegrationEnabled = false
+      $0.codexIntegrationEnabled = false
       $0.deleteBranchOnDeleteWorktree = true
       $0.automaticallyArchiveMergedWorktrees = true
       $0.selection = selection

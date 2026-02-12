@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import Sharing
 
@@ -5,15 +6,40 @@ import Sharing
 @Observable
 final class WorktreeTerminalManager {
   private let runtime: GhosttyRuntime
+  private let agentHookSignalMonitor: AgentHookSignalMonitor
+  private let synchronizeAgentHooks: (Bool, Bool) throws -> Void
+  private let agentHooksInstalled: () -> Bool
+  private let agentHooksBinPathProvider: () -> String
   private var states: [Worktree.ID: WorktreeTerminalState] = [:]
   private var notificationsEnabled = true
   private var lastNotificationIndicatorCount: Int?
   private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
   private var pendingEvents: [TerminalClient.Event] = []
+  private var agentHooksBinPath: String?
   var selectedWorktreeID: Worktree.ID?
 
-  init(runtime: GhosttyRuntime) {
+  init(
+    runtime: GhosttyRuntime,
+    agentHookSignalMonitor: AgentHookSignalMonitor? = nil,
+    synchronizeAgentHooks: @escaping (Bool, Bool) throws -> Void = { claudeEnabled, codexEnabled in
+      try AgentHooksInstaller.synchronize(
+        claudeEnabled: claudeEnabled,
+        codexEnabled: codexEnabled
+      )
+    },
+    agentHooksInstalled: @escaping () -> Bool = { AgentHooksInstaller.isInstalled },
+    agentHooksBinPathProvider: @escaping () -> String = {
+      AgentHooksInstaller.binDirectory.path(percentEncoded: false)
+    }
+  ) {
     self.runtime = runtime
+    self.agentHookSignalMonitor = agentHookSignalMonitor ?? AgentHookSignalMonitor()
+    self.synchronizeAgentHooks = synchronizeAgentHooks
+    self.agentHooksInstalled = agentHooksInstalled
+    self.agentHooksBinPathProvider = agentHooksBinPathProvider
+    self.agentHookSignalMonitor.onStatusChanged = { [weak self] surfaceID, isWorking in
+      self?.handleAgentHookSignal(surfaceID: surfaceID, isWorking: isWorking)
+    }
   }
 
   func handleCommand(_ command: TerminalClient.Command) {
@@ -81,6 +107,8 @@ final class WorktreeTerminalManager {
         previousState.setAllSurfacesOccluded()
       }
       selectedWorktreeID = id
+    case .setAgentHookIntegrations(let claudeEnabled, let codexEnabled):
+      setAgentHookIntegrations(claudeEnabled: claudeEnabled, codexEnabled: codexEnabled)
     default:
       return
     }
@@ -121,6 +149,7 @@ final class WorktreeTerminalManager {
       worktree: worktree,
       runSetupScript: runSetupScript
     )
+    state.setAgentHooksBinPath(agentHooksBinPath)
     state.setNotificationsEnabled(notificationsEnabled)
     state.isSelected = { [weak self] in
       self?.selectedWorktreeID == worktree.id
@@ -236,6 +265,43 @@ final class WorktreeTerminalManager {
     if count != lastNotificationIndicatorCount {
       lastNotificationIndicatorCount = count
       emit(.notificationIndicatorChanged(count: count))
+    }
+  }
+
+  private func setAgentHookIntegrations(claudeEnabled: Bool, codexEnabled: Bool) {
+    do {
+      try synchronizeAgentHooks(claudeEnabled, codexEnabled)
+    } catch {
+      for state in states.values {
+        state.clearAgentWorkingStatus()
+        state.setAgentHooksBinPath(nil)
+      }
+      agentHooksBinPath = nil
+      agentHookSignalMonitor.stopPolling()
+      return
+    }
+
+    let hasIntegrationEnabled = claudeEnabled || codexEnabled
+    if hasIntegrationEnabled && agentHooksInstalled() {
+      agentHooksBinPath = agentHooksBinPathProvider()
+      for state in states.values {
+        state.setAgentHooksBinPath(agentHooksBinPath)
+      }
+      agentHookSignalMonitor.startPolling()
+      return
+    }
+
+    agentHooksBinPath = nil
+    for state in states.values {
+      state.clearAgentWorkingStatus()
+      state.setAgentHooksBinPath(nil)
+    }
+    agentHookSignalMonitor.stopPolling()
+  }
+
+  private func handleAgentHookSignal(surfaceID: UUID, isWorking: Bool) {
+    for state in states.values where state.setAgentWorkingStatus(surfaceID: surfaceID, isWorking: isWorking) {
+      return
     }
   }
 }

@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": [
+          "bash",
+          "__NOTIFY_PATH__"
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": [
+          "bash",
+          "__NOTIFY_PATH__"
+        ]
+      }
+    ]
+  }
+}

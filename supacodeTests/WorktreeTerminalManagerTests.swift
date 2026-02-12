@@ -176,6 +176,25 @@ struct WorktreeTerminalManagerTests {
     #expect(manager.hasUnseenNotifications(for: worktree.id) == false)
   }
 
+  @Test func setAgentHookIntegrationsCallsSynchronizer() {
+    var calls: [(Bool, Bool)] = []
+    let manager = WorktreeTerminalManager(
+      runtime: GhosttyRuntime(),
+      synchronizeAgentHooks: { claudeEnabled, codexEnabled in
+        calls.append((claudeEnabled, codexEnabled))
+      },
+      agentHooksInstalled: { true },
+      agentHooksBinPathProvider: { "/tmp/.supacode/hooks/bin" }
+    )
+
+    manager.handleCommand(.setAgentHookIntegrations(claudeEnabled: true, codexEnabled: false))
+    manager.handleCommand(.setAgentHookIntegrations(claudeEnabled: false, codexEnabled: true))
+    manager.handleCommand(.setAgentHookIntegrations(claudeEnabled: false, codexEnabled: false))
+
+    #expect(calls.map(\.0) == [true, false, false])
+    #expect(calls.map(\.1) == [false, true, false])
+  }
+
   private func makeWorktree() -> Worktree {
     Worktree(
       id: "/tmp/repo/wt-1",

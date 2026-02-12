@@ -21,6 +21,7 @@ struct TerminalClient {
     case prune(Set<Worktree.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
+    case setAgentHookIntegrations(claudeEnabled: Bool, codexEnabled: Bool)
   }
 
   enum Event: Equatable {
