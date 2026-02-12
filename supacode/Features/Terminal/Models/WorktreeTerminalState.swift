@@ -52,8 +52,7 @@ final class WorktreeTerminalState {
   }
 
   var focusedTaskStatus: WorktreeTaskStatus {
-    guard let tabId = tabManager.selectedTabId else { return .idle }
-    if isTabRunning(tabId) {
+    if tabManager.tabs.contains(where: { isTabRunning($0.id) }) {
       return .running
     }
     return .idle
@@ -786,6 +785,8 @@ final class WorktreeTerminalState {
     if let agentHooksBinPath {
       let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
       envVars["PATH"] = mergedPath(prepending: agentHooksBinPath, to: currentPath)
+      envVars["SUPACODE_HOOK_SIGNALS_DIR"] =
+        AgentHooksInstaller.signalsDirectory.path(percentEncoded: false)
     }
 
     return envVars

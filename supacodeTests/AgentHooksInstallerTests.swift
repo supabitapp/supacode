@@ -39,10 +39,12 @@ struct AgentHooksInstallerTests {
 
     AgentHooksInstaller.baseDirectoryOverride = tempRoot
     AgentHooksInstaller.resourceDirectoryOverride = resourcesDirectory
+    AgentHooksInstaller.signalsDirectoryOverride = tempRoot.appending(path: "signals", directoryHint: .isDirectory)
 
     defer {
       AgentHooksInstaller.baseDirectoryOverride = nil
       AgentHooksInstaller.resourceDirectoryOverride = nil
+      AgentHooksInstaller.signalsDirectoryOverride = nil
       try? fileManager.removeItem(at: tempRoot)
     }
 
@@ -108,10 +110,12 @@ struct AgentHooksInstallerTests {
 
     AgentHooksInstaller.baseDirectoryOverride = tempRoot
     AgentHooksInstaller.resourceDirectoryOverride = resourcesDirectory
+    AgentHooksInstaller.signalsDirectoryOverride = tempRoot.appending(path: "signals", directoryHint: .isDirectory)
 
     defer {
       AgentHooksInstaller.baseDirectoryOverride = nil
       AgentHooksInstaller.resourceDirectoryOverride = nil
+      AgentHooksInstaller.signalsDirectoryOverride = nil
       try? fileManager.removeItem(at: tempRoot)
     }
 

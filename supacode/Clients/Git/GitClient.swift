@@ -580,11 +580,7 @@ struct GitClient {
     guard fileManager.fileExists(atPath: worktreePath) else {
       return nil
     }
-    let candidates = [
-      URL(filePath: "/tmp", directoryHint: .isDirectory),
-      fileManager.temporaryDirectory,
-    ]
-    for baseURL in candidates {
+    for baseURL in SupacodePaths.temporaryDirectoryCandidates {
       let trashBaseURL = baseURL.appending(
         path: "supacode-worktree-trash",
         directoryHint: URL.DirectoryHint.isDirectory

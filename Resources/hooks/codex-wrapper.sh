@@ -33,7 +33,7 @@ fi
 surface_id="${SUPACODE_SURFACE_ID:-}"
 signal_file=""
 if [[ -n "$surface_id" ]]; then
-  signals_dir="$HOME/.supacode/hooks/signals"
+  signals_dir="${SUPACODE_HOOK_SIGNALS_DIR:-${TMPDIR:-/tmp}/supacode-agent-hooks/signals}"
   mkdir -p "$signals_dir"
   signal_file="$signals_dir/$surface_id"
   printf 'working\n' > "$signal_file"

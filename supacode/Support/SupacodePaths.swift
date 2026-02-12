@@ -20,4 +20,31 @@ nonisolated enum SupacodePaths {
   static var settingsURL: URL {
     baseDirectory.appending(path: "settings.json", directoryHint: .notDirectory)
   }
+
+  static var temporaryDirectoryCandidates: [URL] {
+    let fileManager = FileManager.default
+    let candidates = [
+      URL(filePath: "/tmp", directoryHint: .isDirectory),
+      fileManager.temporaryDirectory,
+    ]
+    var seenPaths: Set<String> = []
+    return candidates.filter { candidate in
+      let path = candidate.standardizedFileURL.path(percentEncoded: false)
+      return seenPaths.insert(path).inserted
+    }
+  }
+
+  static func resolvedTemporaryDirectory(appending relativePath: String) -> URL {
+    let fileManager = FileManager.default
+    for baseURL in temporaryDirectoryCandidates {
+      let directoryURL = baseURL.appending(path: relativePath, directoryHint: .isDirectory)
+      do {
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        return directoryURL
+      } catch {
+        continue
+      }
+    }
+    return fileManager.temporaryDirectory.appending(path: relativePath, directoryHint: .isDirectory)
+  }
 }

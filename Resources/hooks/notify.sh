@@ -6,7 +6,7 @@ if [[ -z "$surface_id" ]]; then
   exit 0
 fi
 
-signals_dir="$HOME/.supacode/hooks/signals"
+signals_dir="${SUPACODE_HOOK_SIGNALS_DIR:-${TMPDIR:-/tmp}/supacode-agent-hooks/signals}"
 mkdir -p "$signals_dir"
 signal_file="$signals_dir/$surface_id"
 

@@ -3,6 +3,7 @@ import Foundation
 nonisolated enum AgentHooksInstaller {
   nonisolated(unsafe) static var baseDirectoryOverride: URL?
   nonisolated(unsafe) static var resourceDirectoryOverride: URL?
+  nonisolated(unsafe) static var signalsDirectoryOverride: URL?
 
   static var hooksDirectory: URL {
     let baseDirectory = baseDirectoryOverride ?? SupacodePaths.baseDirectory
@@ -14,7 +15,13 @@ nonisolated enum AgentHooksInstaller {
   }
 
   static var signalsDirectory: URL {
-    hooksDirectory.appending(path: "signals", directoryHint: .isDirectory)
+    if let signalsDirectoryOverride {
+      return signalsDirectoryOverride
+    }
+    if let baseDirectoryOverride {
+      return baseDirectoryOverride.appending(path: "signals", directoryHint: .isDirectory)
+    }
+    return SupacodePaths.resolvedTemporaryDirectory(appending: "supacode-agent-hooks/signals")
   }
 
   static var isInstalled: Bool {
@@ -42,6 +49,10 @@ nonisolated enum AgentHooksInstaller {
     let hooksPath = hooksDirectory.path(percentEncoded: false)
     if fileManager.fileExists(atPath: hooksPath) {
       try fileManager.removeItem(at: hooksDirectory)
+    }
+    let signalsPath = signalsDirectory.path(percentEncoded: false)
+    if fileManager.fileExists(atPath: signalsPath) {
+      try fileManager.removeItem(at: signalsDirectory)
     }
   }
 

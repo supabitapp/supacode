@@ -33,7 +33,8 @@ fi
 surface_id="${SUPACODE_SURFACE_ID:-}"
 signal_file=""
 if [[ -n "$surface_id" ]]; then
-  signal_file="$HOME/.supacode/hooks/signals/$surface_id"
+  signals_dir="${SUPACODE_HOOK_SIGNALS_DIR:-${TMPDIR:-/tmp}/supacode-agent-hooks/signals}"
+  signal_file="$signals_dir/$surface_id"
 fi
 
 cleanup_signal() {
