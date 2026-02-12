@@ -10,6 +10,8 @@ struct WorktreeCommands: Commands {
   @FocusedValue(\.deleteWorktreeAction) private var deleteWorktreeAction
   @FocusedValue(\.runScriptAction) private var runScriptAction
   @FocusedValue(\.stopRunScriptAction) private var stopRunScriptAction
+  @FocusedValue(\.sidebarHotkeyTargets) private var sidebarHotkeyTargets
+  @FocusedValue(\.executeSidebarHotkeyTargetAction) private var executeSidebarHotkeyTargetAction
 
   init(store: StoreOf<AppFeature>) {
     self.store = store
@@ -17,7 +19,7 @@ struct WorktreeCommands: Commands {
 
   var body: some Commands {
     let repositories = store.repositories
-    let orderedRows = repositories.orderedWorktreeRows()
+    let hotkeyTargets = worktreeHotkeyTargets
     let pullRequestURL = selectedPullRequestURL
     let githubIntegrationEnabled = store.settings.githubIntegrationEnabled
     let archiveShortcut = KeyboardShortcut(.delete, modifiers: .command).display
@@ -25,7 +27,7 @@ struct WorktreeCommands: Commands {
     CommandMenu("Worktrees") {
       ForEach(worktreeShortcuts.indices, id: \.self) { index in
         let shortcut = worktreeShortcuts[index]
-        worktreeShortcutButton(index: index, shortcut: shortcut, orderedRows: orderedRows)
+        worktreeShortcutButton(index: index, shortcut: shortcut, hotkeyTargets: hotkeyTargets)
       }
     }
     CommandGroup(replacing: .newItem) {
@@ -135,23 +137,44 @@ struct WorktreeCommands: Commands {
   private func worktreeShortcutButton(
     index: Int,
     shortcut: AppShortcut,
-    orderedRows: [WorktreeRowModel]
+    hotkeyTargets: [SidebarHotkeyTarget]
   ) -> some View {
-    let row = orderedRows.indices.contains(index) ? orderedRows[index] : nil
-    let title = worktreeShortcutTitle(index: index, row: row)
+    let target = hotkeyTargets.indices.contains(index) ? hotkeyTargets[index] : nil
+    let title = worktreeShortcutTitle(index: index, target: target)
     return Button(title) {
-      guard let row else { return }
-      store.send(.repositories(.selectWorktree(row.id)))
+      guard let target else { return }
+      if let executeSidebarHotkeyTargetAction {
+        executeSidebarHotkeyTargetAction(index)
+        return
+      }
+      if case .worktree(let worktreeID, _, _, _) = target {
+        store.send(.repositories(.selectWorktree(worktreeID)))
+      }
     }
     .keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
     .help("Switch to \(title) (\(shortcut.display))")
-    .disabled(row == nil)
+    .disabled(target == nil)
   }
 
-  private func worktreeShortcutTitle(index: Int, row: WorktreeRowModel?) -> String {
-    guard let row else { return "Worktree \(index + 1)" }
-    let repositoryName = store.repositories.repositoryName(for: row.repositoryID) ?? "Repository"
-    return "\(repositoryName) — \(row.name)"
+  private func worktreeShortcutTitle(index: Int, target: SidebarHotkeyTarget?) -> String {
+    guard let target else { return "Worktree \(index + 1)" }
+    return target.title
+  }
+
+  private var worktreeHotkeyTargets: [SidebarHotkeyTarget] {
+    if let sidebarHotkeyTargets {
+      return Array(sidebarHotkeyTargets.prefix(worktreeShortcuts.count))
+    }
+    let orderedRows = store.repositories.orderedWorktreeRows()
+    return orderedRows.prefix(worktreeShortcuts.count).map { row in
+      let repositoryName = store.repositories.repositoryName(for: row.repositoryID) ?? "Repository"
+      return .worktree(
+        id: row.id,
+        repositoryID: row.repositoryID,
+        repositoryName: repositoryName,
+        worktreeName: row.name
+      )
+    }
   }
 }
 
@@ -201,6 +224,16 @@ extension FocusedValues {
     get { self[StopRunScriptActionKey.self] }
     set { self[StopRunScriptActionKey.self] = newValue }
   }
+
+  var sidebarHotkeyTargets: [SidebarHotkeyTarget]? {
+    get { self[SidebarHotkeyTargetsKey.self] }
+    set { self[SidebarHotkeyTargetsKey.self] = newValue }
+  }
+
+  var executeSidebarHotkeyTargetAction: ((Int) -> Void)? {
+    get { self[ExecuteSidebarHotkeyTargetActionKey.self] }
+    set { self[ExecuteSidebarHotkeyTargetActionKey.self] = newValue }
+  }
 }
 
 private struct RunScriptActionKey: FocusedValueKey {
@@ -209,4 +242,12 @@ private struct RunScriptActionKey: FocusedValueKey {
 
 private struct StopRunScriptActionKey: FocusedValueKey {
   typealias Value = () -> Void
+}
+
+private struct SidebarHotkeyTargetsKey: FocusedValueKey {
+  typealias Value = [SidebarHotkeyTarget]
+}
+
+private struct ExecuteSidebarHotkeyTargetActionKey: FocusedValueKey {
+  typealias Value = (Int) -> Void
 }

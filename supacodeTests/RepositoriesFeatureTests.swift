@@ -385,6 +385,78 @@ struct RepositoriesFeatureTests {
     )
   }
 
+  @Test func sidebarHotkeyTargetsShowCollapsedRepositoryTarget() {
+    let repoA = makeRepository(
+      id: "/tmp/repo-a",
+      name: "Repo A",
+      worktrees: [
+        makeWorktree(id: "/tmp/repo-a/main", name: "main", repoRoot: "/tmp/repo-a"),
+        makeWorktree(id: "/tmp/repo-a/feature", name: "feature", repoRoot: "/tmp/repo-a"),
+      ]
+    )
+    let repoB = makeRepository(
+      id: "/tmp/repo-b",
+      name: "Repo B",
+      worktrees: [
+        makeWorktree(id: "/tmp/repo-b/main", name: "main", repoRoot: "/tmp/repo-b")
+      ]
+    )
+    var state = makeState(repositories: [repoA, repoB])
+    state.repositoryOrderIDs = [repoA.id, repoB.id]
+
+    expectNoDifference(
+      state.sidebarHotkeyTargets(expandedRepoIDs: [repoB.id]),
+      [
+        .repository(id: repoA.id, name: "Repo A"),
+        .worktree(
+          id: "/tmp/repo-b/main",
+          repositoryID: repoB.id,
+          repositoryName: "Repo B",
+          worktreeName: "main"
+        ),
+      ]
+    )
+  }
+
+  @Test func sidebarHotkeyTargetsSwitchFromRepositoryToWorktreeWhenExpanded() {
+    let repo = makeRepository(
+      id: "/tmp/repo-a",
+      name: "Repo A",
+      worktrees: [
+        makeWorktree(id: "/tmp/repo-a/main", name: "main", repoRoot: "/tmp/repo-a"),
+        makeWorktree(id: "/tmp/repo-a/feature", name: "feature", repoRoot: "/tmp/repo-a"),
+      ]
+    )
+    let state = makeState(repositories: [repo])
+
+    let collapsedTargets = state.sidebarHotkeyTargets(expandedRepoIDs: [])
+    let expandedTargets = state.sidebarHotkeyTargets(expandedRepoIDs: [repo.id])
+
+    expectNoDifference(
+      collapsedTargets,
+      [
+        .repository(id: repo.id, name: "Repo A")
+      ]
+    )
+    expectNoDifference(
+      expandedTargets,
+      [
+        .worktree(
+          id: "/tmp/repo-a/main",
+          repositoryID: repo.id,
+          repositoryName: "Repo A",
+          worktreeName: "main"
+        ),
+        .worktree(
+          id: "/tmp/repo-a/feature",
+          repositoryID: repo.id,
+          repositoryName: "Repo A",
+          worktreeName: "feature"
+        ),
+      ]
+    )
+  }
+
   @Test func orderedRepositoryRootsAppendMissing() {
     let repoA = makeRepository(id: "/tmp/repo-a", worktrees: [])
     let repoB = makeRepository(id: "/tmp/repo-b", worktrees: [])
@@ -833,11 +905,11 @@ struct RepositoriesFeatureTests {
     )
   }
 
-  private func makeRepository(id: String, worktrees: [Worktree]) -> Repository {
+  private func makeRepository(id: String, name: String = "repo", worktrees: [Worktree]) -> Repository {
     Repository(
       id: id,
       rootURL: URL(fileURLWithPath: id),
-      name: "repo",
+      name: name,
       worktrees: IdentifiedArray(uniqueElements: worktrees)
     )
   }

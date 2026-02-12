@@ -6,8 +6,11 @@ struct RepositorySectionView: View {
   let showsTopSeparator: Bool
   let isDragActive: Bool
   @Binding var expandedRepoIDs: Set<Repository.ID>
+  let shortcutIndex: Int?
+  let worktreeShortcutIndexByID: [Worktree.ID: Int]
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Environment(\.colorScheme) private var colorScheme
   @State private var isHovering = false
 
@@ -34,7 +37,8 @@ struct RepositorySectionView: View {
       HStack {
         RepoHeaderRow(
           name: repository.name,
-          isRemoving: isRemovingRepository
+          isRemoving: isRemovingRepository,
+          shortcutHint: commandKeyObserver.isPressed && !isExpanded ? repositoryShortcutHint(for: shortcutIndex) : nil
         )
         .frame(maxWidth: .infinity, alignment: .leading)
         if isRemovingRepository && !isDragging {
@@ -122,6 +126,7 @@ struct RepositorySectionView: View {
         WorktreeRowsView(
           repository: repository,
           isExpanded: isExpanded,
+          shortcutIndexByID: worktreeShortcutIndexByID,
           store: store,
           terminalManager: terminalManager
         )
@@ -131,5 +136,10 @@ struct RepositorySectionView: View {
 
   private var headerCellHeight: CGFloat {
     46
+  }
+
+  private func repositoryShortcutHint(for index: Int?) -> String? {
+    guard let index, AppShortcuts.worktreeSelection.indices.contains(index) else { return nil }
+    return AppShortcuts.worktreeSelection[index].display
   }
 }

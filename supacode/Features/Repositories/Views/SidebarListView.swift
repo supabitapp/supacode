@@ -4,6 +4,8 @@ import SwiftUI
 struct SidebarListView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   @Binding var expandedRepoIDs: Set<Repository.ID>
+  let repoShortcutIndexByID: [Repository.ID: Int]
+  let worktreeShortcutIndexByID: [Worktree.ID: Int]
   let terminalManager: WorktreeTerminalManager
   @State private var isDragActive = false
 
@@ -49,6 +51,8 @@ struct SidebarListView: View {
             showsTopSeparator: index > 0,
             isDragActive: isDragActive,
             expandedRepoIDs: $expandedRepoIDs,
+            shortcutIndex: repoShortcutIndexByID[repository.id],
+            worktreeShortcutIndexByID: worktreeShortcutIndexByID,
             store: store,
             terminalManager: terminalManager
           )
@@ -97,6 +101,8 @@ struct SidebarListView: View {
               showsTopSeparator: index > 0,
               isDragActive: isDragActive,
               expandedRepoIDs: $expandedRepoIDs,
+              shortcutIndex: repoShortcutIndexByID[repository.id],
+              worktreeShortcutIndexByID: worktreeShortcutIndexByID,
               store: store,
               terminalManager: terminalManager
             )

@@ -5,6 +5,7 @@ import SwiftUI
 struct WorktreeRowsView: View {
   let repository: Repository
   let isExpanded: Bool
+  let shortcutIndexByID: [Worktree.ID: Int]
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
@@ -23,10 +24,6 @@ struct WorktreeRowsView: View {
     let sections = state.worktreeRowSections(in: repository)
     let isRepositoryRemoving = state.isRemovingRepository(repository)
     let showShortcutHints = commandKeyObserver.isPressed
-    let allRows = showShortcutHints ? state.orderedWorktreeRows() : []
-    let shortcutIndexByID = Dictionary(
-      uniqueKeysWithValues: allRows.enumerated().map { ($0.element.id, $0.offset) }
-    )
     let rowIDs = sections.allRows.map(\.id)
     return rowsGroup(
       sections: sections,
