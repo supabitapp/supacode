@@ -9,14 +9,14 @@ struct PullRequestStatusButton: View {
       let breakdown = PullRequestCheckBreakdown(checks: model.statusChecks)
       let showsChecksRing = breakdown.total > 0 && model.state != "MERGED"
       HStack(spacing: 6) {
-        if showsChecksRing {
-          PullRequestChecksRingView(breakdown: breakdown)
-        }
         PullRequestBadgeView(
           text: model.badgeText,
           color: model.badgeColor
         )
         .layoutPriority(1)
+        if showsChecksRing {
+          PullRequestChecksRingView(breakdown: breakdown)
+        }
         if let detailText = model.detailText {
           Text(
             commandKeyObserver.isPressed

@@ -15,7 +15,11 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
       guard let branch = aliasMap[alias] else {
         continue
       }
-      let candidates = connection.nodes.filter { $0.matches(owner: normalizedOwner, repo: normalizedRepo) }
+      let upstreamCandidates = connection.nodes.filter { $0.matches(owner: normalizedOwner, repo: normalizedRepo) }
+      let candidates =
+        upstreamCandidates.isEmpty
+        ? connection.nodes.filter { $0.headRepository != nil }
+        : upstreamCandidates
       if let node = candidates.max(by: { left, right in
         let leftRank = left.stateRank
         let rightRank = right.stateRank

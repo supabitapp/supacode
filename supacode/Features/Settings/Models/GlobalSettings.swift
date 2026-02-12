@@ -2,6 +2,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   var appearanceMode: AppearanceMode
   var defaultEditorID: String
   var confirmBeforeQuit: Bool
+  var updateChannel: UpdateChannel
   var updatesAutomaticallyCheckForUpdates: Bool
   var updatesAutomaticallyDownloadUpdates: Bool
   var inAppNotificationsEnabled: Bool
@@ -17,6 +18,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     appearanceMode: .dark,
     defaultEditorID: OpenWorktreeAction.automaticSettingsID,
     confirmBeforeQuit: true,
+    updateChannel: .stable,
     updatesAutomaticallyCheckForUpdates: true,
     updatesAutomaticallyDownloadUpdates: false,
     inAppNotificationsEnabled: true,
@@ -33,6 +35,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     appearanceMode: AppearanceMode,
     defaultEditorID: String,
     confirmBeforeQuit: Bool,
+    updateChannel: UpdateChannel,
     updatesAutomaticallyCheckForUpdates: Bool,
     updatesAutomaticallyDownloadUpdates: Bool,
     inAppNotificationsEnabled: Bool,
@@ -47,6 +50,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
     self.confirmBeforeQuit = confirmBeforeQuit
+    self.updateChannel = updateChannel
     self.updatesAutomaticallyCheckForUpdates = updatesAutomaticallyCheckForUpdates
     self.updatesAutomaticallyDownloadUpdates = updatesAutomaticallyDownloadUpdates
     self.inAppNotificationsEnabled = inAppNotificationsEnabled
@@ -68,6 +72,9 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmBeforeQuit =
       try container.decodeIfPresent(Bool.self, forKey: .confirmBeforeQuit)
       ?? Self.default.confirmBeforeQuit
+    updateChannel =
+      try container.decodeIfPresent(UpdateChannel.self, forKey: .updateChannel)
+      ?? Self.default.updateChannel
     updatesAutomaticallyCheckForUpdates = try container.decode(Bool.self, forKey: .updatesAutomaticallyCheckForUpdates)
     updatesAutomaticallyDownloadUpdates = try container.decode(Bool.self, forKey: .updatesAutomaticallyDownloadUpdates)
     inAppNotificationsEnabled =

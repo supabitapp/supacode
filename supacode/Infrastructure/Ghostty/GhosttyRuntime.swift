@@ -145,7 +145,9 @@ final class GhosttyRuntime {
   func reloadConfig(soft: Bool, target: ghostty_target_s) {
     guard let app else { return }
     if soft, let config {
-      applyConfig(config, target: target, app: app)
+      guard let clone = ghostty_config_clone(config) else { return }
+      applyConfig(clone, target: target, app: app)
+      ghostty_config_free(clone)
       return
     }
     guard let config = Self.loadConfig() else { return }
@@ -201,7 +203,7 @@ final class GhosttyRuntime {
 
   private static func wakeup(_ userdata: UnsafeMutableRawPointer?) {
     guard let runtime = runtime(from: userdata) else { return }
-    Task { @MainActor in
+    DispatchQueue.main.async {
       runtime.tick()
     }
   }
@@ -210,19 +212,27 @@ final class GhosttyRuntime {
     _ app: ghostty_app_t, target: ghostty_target_s, action: ghostty_action_s
   ) -> Bool {
     if let runtime = runtime(fromApp: app) {
-      if action.tag == GHOSTTY_ACTION_CONFIG_CHANGE {
+      if action.tag == GHOSTTY_ACTION_CONFIG_CHANGE, target.tag == GHOSTTY_TARGET_APP {
         let config = action.action.config_change.config
         guard let clone = ghostty_config_clone(config) else { return false }
-        Task { @MainActor in
+        let work = {
           runtime.setConfig(clone)
           runtime.onConfigChange?()
           NotificationCenter.default.post(name: .ghosttyRuntimeConfigDidChange, object: runtime)
         }
+        if Thread.isMainThread {
+          work()
+        } else {
+          DispatchQueue.main.async { work() }
+        }
       }
       if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG {
         let soft = action.action.reload_config.soft
-        Task { @MainActor in
-          runtime.reloadConfig(soft: soft, target: target)
+        let work = { runtime.reloadConfig(soft: soft, target: target) }
+        if Thread.isMainThread {
+          work()
+        } else {
+          DispatchQueue.main.async { work() }
         }
       }
     }
@@ -232,7 +242,7 @@ final class GhosttyRuntime {
     if Thread.isMainThread {
       return bridge.handleAction(target: target, action: action)
     }
-    Task { @MainActor in
+    DispatchQueue.main.async {
       _ = bridge.handleAction(target: target, action: action)
     }
     return false
@@ -243,14 +253,19 @@ final class GhosttyRuntime {
     location: ghostty_clipboard_e,
     state: UnsafeMutableRawPointer?
   ) {
-    guard let bridge = surfaceBridge(fromUserdata: userdata), let surface = bridge.surface else {
-      return
-    }
-    let value = NSPasteboard.ghostty(location)?.getOpinionatedStringContents() ?? ""
-    Task { @MainActor in
+    let work = {
+      guard let bridge = surfaceBridge(fromUserdata: userdata), let surface = bridge.surface else {
+        return
+      }
+      let value = NSPasteboard.ghostty(location)?.getOpinionatedStringContents() ?? ""
       value.withCString { ptr in
         ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
       }
+    }
+    if Thread.isMainThread {
+      work()
+    } else {
+      DispatchQueue.main.async { work() }
     }
   }
 
@@ -260,15 +275,20 @@ final class GhosttyRuntime {
     state: UnsafeMutableRawPointer?,
     request: ghostty_clipboard_request_e
   ) {
-    guard let bridge = surfaceBridge(fromUserdata: userdata), let surface = bridge.surface else {
-      return
-    }
     guard let string else { return }
     let value = String(cString: string)
-    Task { @MainActor in
+    let work = {
+      guard let bridge = surfaceBridge(fromUserdata: userdata), let surface = bridge.surface else {
+        return
+      }
       value.withCString { ptr in
         ghostty_surface_complete_clipboard_request(surface, ptr, state, true)
       }
+    }
+    if Thread.isMainThread {
+      work()
+    } else {
+      DispatchQueue.main.async { work() }
     }
   }
 
@@ -329,6 +349,14 @@ final class GhosttyRuntime {
     guard let config else { return nil }
     let trigger = ghostty_config_trigger(config, action, UInt(action.lengthOfBytes(using: .utf8)))
     return Self.keyboardShortcut(for: trigger)
+  }
+
+  func focusFollowsMouse() -> Bool {
+    guard let config else { return false }
+    var value = false
+    let key = "focus-follows-mouse"
+    _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+    return value
   }
 
   func shouldShowScrollbar() -> Bool {

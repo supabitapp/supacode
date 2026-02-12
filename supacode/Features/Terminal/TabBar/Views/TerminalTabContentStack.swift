@@ -23,6 +23,7 @@ struct TerminalTabContentStack<Content: View>: View {
           .opacity(tab.id == selectedTabId ? 1 : 0)
           .zIndex(tab.id == selectedTabId ? 1 : 0)
           .allowsHitTesting(tab.id == selectedTabId)
+          .accessibilityHidden(tab.id != selectedTabId)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)

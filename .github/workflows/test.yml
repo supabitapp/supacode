@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: macos-26
+    permissions:
+      contents: read
     env:
       MISE_HTTP_TIMEOUT: 120
       MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -17,34 +19,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - name: Mise cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/mise
-            ~/.cache/mise
-          key: ${{ runner.os }}-${{ runner.arch }}-mise-${{ hashFiles('mise.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-mise-
-      - run: brew install mise 2>/dev/null
-      - run: mise install
-      - name: Ghostty cache key
-        run: |
-          set -euo pipefail
-          GHOSTTY_SHA=$(git -C ThirdParty/ghostty rev-parse HEAD)
-          printf '%s\n' "GHOSTTY_SHA=$GHOSTTY_SHA" >> "$GITHUB_ENV"
-      - name: Ghostty cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            Frameworks/GhosttyKit.xcframework
-            Resources/ghostty
-            Resources/terminfo
-          key: ${{ runner.os }}-${{ runner.arch }}-ghostty-${{ env.GHOSTTY_SHA }}
-      - name: Build ghostty
-        run: |
-          set -euo pipefail
-          make build-ghostty-xcframework
+      - uses: ./.github/actions/setup-macos
       - run: make lint
       - run: make build-app
       - run: make test

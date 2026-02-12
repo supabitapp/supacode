@@ -35,6 +35,15 @@ struct SidebarFooterView: View {
       .menuIndicator(.hidden)
       .help("Help")
       Button {
+        store.send(.refreshWorktrees)
+      } label: {
+        Image(systemName: "arrow.clockwise")
+          .symbolEffect(.rotate, options: .repeating, isActive: store.state.isRefreshingWorktrees)
+          .accessibilityLabel("Refresh Worktrees")
+      }
+      .help("Refresh Worktrees (\(AppShortcuts.refreshWorktrees.display))")
+      .disabled(store.state.repositoryRoots.isEmpty && !store.state.isRefreshingWorktrees)
+      Button {
         store.send(.selectArchivedWorktrees)
       } label: {
         Image(systemName: "archivebox")

@@ -28,8 +28,10 @@ struct ToolbarNotificationsPopoverButton: View {
         Image(systemName: unseenWorktreeCount > 0 ? "bell.badge.fill" : "bell.fill")
           .foregroundStyle(unseenWorktreeCount > 0 ? .orange : .secondary)
           .accessibilityHidden(true)
-        Text(notificationCount, format: .number)
-          .font(.caption.monospacedDigit())
+        if notificationCount > 0 {
+          Text(notificationCount, format: .number)
+            .font(.caption.monospacedDigit())
+        }
       }
     }
     .help("Notifications. Hover or click to show all notifications.")

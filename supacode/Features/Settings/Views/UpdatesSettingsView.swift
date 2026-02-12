@@ -8,6 +8,12 @@ struct UpdatesSettingsView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Form {
+        Section("Update Channel") {
+          Picker("Channel", selection: $settingsStore.updateChannel) {
+            Text("Stable").tag(UpdateChannel.stable)
+            Text("Tip").tag(UpdateChannel.tip)
+          }
+        }
         Section("Automatic Updates") {
           Toggle(
             "Check for updates automatically",

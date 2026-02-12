@@ -13,10 +13,12 @@ GHOSTTY_XCFRAMEWORK_PATH := $(CURRENT_MAKEFILE_DIR)/Frameworks/GhosttyKit.xcfram
 GHOSTTY_RESOURCE_PATH := $(CURRENT_MAKEFILE_DIR)/Resources/ghostty
 GHOSTTY_TERMINFO_PATH := $(CURRENT_MAKEFILE_DIR)/Resources/terminfo
 GHOSTTY_BUILD_OUTPUTS := $(GHOSTTY_XCFRAMEWORK_PATH) $(GHOSTTY_RESOURCE_PATH) $(GHOSTTY_TERMINFO_PATH)
+SPM_CACHE_DIR := /tmp/supacode-spm-cache/SourcePackages
 VERSION ?=
 BUILD ?=
+XCODEBUILD_FLAGS ?=
 .DEFAULT_GOAL := help
-.PHONY: serve build-ghostty-xcframework build-app run-app install-dev-build sync-ghostty-resources format lint check test update-wt bump-version bump-and-release install-git-hooks
+.PHONY: build-ghostty-xcframework build-app run-app install-dev-build archive export-archive format lint check test update-wt bump-version bump-and-release
 
 help:  # Display this help.
 	@-+echo "Run make with one of the following targets:"
@@ -38,7 +40,7 @@ $(GHOSTTY_BUILD_OUTPUTS):
 	rsync -a --delete "$$terminfo_src/" "$$terminfo_dst/"
 
 build-app: build-ghostty-xcframework # Build the macOS app (Debug)
-	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation 2>&1 | mise exec -- xcsift -qw --format toon'
+	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) 2>&1 | mise exec -- xcsift -qw --format toon'
 
 run-app: build-app # Build then launch (Debug) with log streaming
 	@settings="$$(xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
@@ -62,8 +64,14 @@ install-dev-build: build-app # install dev build to /Applications
 	ditto "$$src" "$$dst"; \
 	echo "installed $$dst"
 
+archive: build-ghostty-xcframework # Archive Release build for distribution
+	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Release -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcsift -qw --format toon'
+
+export-archive: # Export xarchive
+	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | mise exec -- xcsift -qw --format toon'
+
 test: build-ghostty-xcframework
-	xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation 2>&1
+	xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) 2>&1
 
 format: # Format code with swift-format (local only)
 	swift-format -p --in-place --recursive --configuration ./.swift-format.json supacode supacodeTests
@@ -124,3 +132,15 @@ bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUIL
 
 bump-and-release: bump-version # Bump version and push tags to trigger release
 	git push --follow-tags
+	@tag="$$(git describe --tags --abbrev=0)"; \
+	repo="$$(gh repo view --json nameWithOwner -q .nameWithOwner)"; \
+	prev="$$(gh release view --json tagName -q .tagName 2>/dev/null || echo '')"; \
+	tmp=$$(mktemp); \
+	if [ -n "$$prev" ]; then \
+		gh api "repos/$$repo/releases/generate-notes" -f tag_name="$$tag" -f previous_tag_name="$$prev" --jq '.body' > "$$tmp"; \
+	else \
+		gh api "repos/$$repo/releases/generate-notes" -f tag_name="$$tag" --jq '.body' > "$$tmp"; \
+	fi; \
+	$${EDITOR:-vim} "$$tmp"; \
+	gh release create "$$tag" --notes-file "$$tmp"; \
+	rm -f "$$tmp"

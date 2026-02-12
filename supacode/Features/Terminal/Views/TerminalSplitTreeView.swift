@@ -274,3 +274,83 @@ struct TerminalSplitTreeView: View {
     }
   }
 }
+
+// MARK: - Accessibility Container
+
+/// Wraps the SwiftUI split tree in an AppKit view so we can expose an ordered
+/// list of terminal panes to assistive technologies.
+struct TerminalSplitTreeAXContainer: NSViewRepresentable {
+  let tree: SplitTree<GhosttySurfaceView>
+  let action: (TerminalSplitTreeView.Operation) -> Void
+
+  func makeNSView(context: Context) -> TerminalSplitAXContainerView {
+    TerminalSplitAXContainerView()
+  }
+
+  func updateNSView(_ nsView: TerminalSplitAXContainerView, context: Context) {
+    let visibleNode = tree.zoomed ?? tree.root
+    let visiblePanes = visibleNode?.leaves() ?? []
+    nsView.update(
+      rootView: AnyView(TerminalSplitTreeView(tree: tree, action: action)),
+      panes: visiblePanes
+    )
+  }
+}
+
+@MainActor
+final class TerminalSplitAXContainerView: NSView {
+  private var hostingView: NSHostingView<AnyView>?
+  private var panes: [GhosttySurfaceView] = []
+  private var panesLabel: String = "Terminal split: 0 panes"
+  private var lastPaneIDs: [UUID] = []
+
+  func update(rootView: AnyView, panes: [GhosttySurfaceView]) {
+    if let hostingView {
+      hostingView.rootView = rootView
+    } else {
+      let hostingView = NSHostingView(rootView: rootView)
+      hostingView.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(hostingView)
+      NSLayoutConstraint.activate([
+        hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+        hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        hostingView.topAnchor.constraint(equalTo: topAnchor),
+        hostingView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      ])
+      self.hostingView = hostingView
+    }
+
+    let newPaneIDs = panes.map(\.id)
+    self.panes = panes
+    panesLabel = "Terminal split: \(panes.count) pane" + (panes.count == 1 ? "" : "s")
+
+    for (index, pane) in panes.enumerated() {
+      pane.setAccessibilityPaneIndex(index: index + 1, total: panes.count)
+      // Expose panes as direct children of this split group for predictable navigation.
+      pane.setAccessibilityParent(self)
+    }
+
+    if newPaneIDs != lastPaneIDs {
+      lastPaneIDs = newPaneIDs
+      // Assistive tech may cache the AX tree; nudge it to re-query when pane membership/order changes.
+      NSAccessibility.post(element: self, notification: .layoutChanged)
+    }
+  }
+
+  override func isAccessibilityElement() -> Bool {
+    true
+  }
+
+  override func accessibilityRole() -> NSAccessibility.Role? {
+    // AppKit doesn't provide a named constant for this role.
+    NSAccessibility.Role(rawValue: "AXSplitGroup")
+  }
+
+  override func accessibilityLabel() -> String? {
+    panesLabel
+  }
+
+  override func accessibilityChildren() -> [Any]? {
+    panes
+  }
+}

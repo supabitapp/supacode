@@ -26,6 +26,8 @@ struct AppFeature {
     var commandPalette = CommandPaletteFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
     var selectedRunScript: String = ""
+    var runScriptDraft: String = ""
+    var isRunScriptPromptPresented = false
     var runScriptStatusByWorktreeID: [Worktree.ID: Bool] = [:]
     var notificationIndicatorCount: Int = 0
     @Presents var alert: AlertState<Alert>?
@@ -57,6 +59,9 @@ struct AppFeature {
     case requestQuit
     case newTerminal
     case runScript
+    case runScriptDraftChanged(String)
+    case runScriptPromptPresented(Bool)
+    case saveRunScriptAndRun
     case stopRunScript
     case closeTab
     case closeSurface
@@ -128,6 +133,8 @@ struct AppFeature {
         guard let worktree else {
           state.openActionSelection = .finder
           state.selectedRunScript = ""
+          state.runScriptDraft = ""
+          state.isRunScriptPromptPresented = false
           var effects: [Effect<Action>] = [
             .run { _ in
               await terminalClient.send(.setSelectedWorktreeID(nil))
@@ -151,6 +158,8 @@ struct AppFeature {
         }
         let rootURL = worktree.repositoryRootURL
         let worktreeID = worktree.id
+        state.runScriptDraft = ""
+        state.isRunScriptPromptPresented = false
         @Shared(.repositorySettings(rootURL)) var repositorySettings
         let settings = repositorySettings
         return .merge(
@@ -269,6 +278,7 @@ struct AppFeature {
           .send(
             .updates(
               .applySettings(
+                updateChannel: settings.updateChannel,
                 automaticallyChecks: settings.updatesAutomaticallyCheckForUpdates,
                 automaticallyDownloads: settings.updatesAutomaticallyDownloadUpdates
               )
@@ -382,15 +392,11 @@ struct AppFeature {
         }
         let trimmed = state.selectedRunScript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-          state.alert = AlertState {
-            TextState("No Run Script Configured")
-          } actions: {
-            ButtonState(role: .cancel, action: .dismiss) {
-              TextState("OK")
-            }
-          } message: {
-            TextState("Configure a run script in Repository Settings.")
+          if state.isRunScriptPromptPresented {
+            return .none
           }
+          state.runScriptDraft = state.selectedRunScript
+          state.isRunScriptPromptPresented = true
           return .none
         }
         analyticsClient.capture("script_run", nil)
@@ -398,6 +404,39 @@ struct AppFeature {
         return .run { _ in
           await terminalClient.send(.runScript(worktree, script: script))
         }
+
+      case .runScriptDraftChanged(let script):
+        state.runScriptDraft = script
+        return .none
+
+      case .runScriptPromptPresented(let isPresented):
+        state.isRunScriptPromptPresented = isPresented
+        if !isPresented {
+          state.runScriptDraft = ""
+        }
+        return .none
+
+      case .saveRunScriptAndRun:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          state.isRunScriptPromptPresented = false
+          state.runScriptDraft = ""
+          return .none
+        }
+        let script = state.runScriptDraft
+        let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+          return .none
+        }
+        let rootURL = worktree.repositoryRootURL
+        @Shared(.repositorySettings(rootURL)) var repositorySettings
+        $repositorySettings.withLock { $0.runScript = script }
+        if state.settings.repositorySettings?.rootURL == rootURL {
+          state.settings.repositorySettings?.settings.runScript = script
+        }
+        state.selectedRunScript = script
+        state.isRunScriptPromptPresented = false
+        state.runScriptDraft = ""
+        return .send(.runScript)
 
       case .stopRunScript:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {

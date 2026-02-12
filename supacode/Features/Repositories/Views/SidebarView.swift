@@ -1,21 +1,30 @@
 import ComposableArchitecture
+import Sharing
 import SwiftUI
 
 struct SidebarView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @State private var expandedRepoIDs: Set<Repository.ID>
-
-  init(store: StoreOf<RepositoriesFeature>, terminalManager: WorktreeTerminalManager) {
-    self.store = store
-    self.terminalManager = terminalManager
-    let repositoryIDs = Set(store.repositories.map(\.id))
-    let pendingRepositoryIDs = Set(store.pendingWorktrees.map(\.repositoryID))
-    _expandedRepoIDs = State(initialValue: repositoryIDs.union(pendingRepositoryIDs))
-  }
+  @Shared(.appStorage("sidebarCollapsedRepositoryIDs")) private var collapsedRepositoryIDs: [Repository.ID] = []
 
   var body: some View {
     let state = store.state
+    let repositoryIDs = Set(state.repositories.map(\.id))
+    let pendingRepositoryIDs = Set(state.pendingWorktrees.map(\.repositoryID))
+    let collapsedSet = Set(collapsedRepositoryIDs).intersection(repositoryIDs)
+    let expandedRepoIDs = repositoryIDs.subtracting(collapsedSet).union(pendingRepositoryIDs)
+    let expandedRepoIDsBinding = Binding<Set<Repository.ID>>(
+      get: {
+        expandedRepoIDs
+      },
+      set: { newValue in
+        let collapsed = repositoryIDs.subtracting(newValue)
+        $collapsedRepositoryIDs.withLock {
+          $0 = Array(collapsed).sorted()
+        }
+      }
+    )
+    let visibleHotkeyRows = state.orderedWorktreeRows(includingRepositoryIDs: expandedRepoIDs)
     let selectedRow = state.selectedRow(for: state.selectedWorktreeID)
     let confirmWorktreeAction: (() -> Void)? = {
       guard let alert = state.confirmWorktreeAlert else { return nil }
@@ -35,9 +44,16 @@ struct SidebarView: View {
         store.send(.requestDeleteWorktree(selectedRow.id, selectedRow.repositoryID))
       }
     }()
-    SidebarListView(store: store, expandedRepoIDs: $expandedRepoIDs, terminalManager: terminalManager)
+    SidebarListView(store: store, expandedRepoIDs: expandedRepoIDsBinding, terminalManager: terminalManager)
       .focusedSceneValue(\.confirmWorktreeAction, confirmWorktreeAction)
       .focusedSceneValue(\.archiveWorktreeAction, archiveWorktreeAction)
       .focusedSceneValue(\.deleteWorktreeAction, deleteWorktreeAction)
+      .focusedSceneValue(\.visibleHotkeyWorktreeRows, visibleHotkeyRows)
+      .onChange(of: repositoryIDs) { _, newValue in
+        let collapsed = Set(collapsedRepositoryIDs).intersection(newValue)
+        $collapsedRepositoryIDs.withLock {
+          $0 = Array(collapsed).sorted()
+        }
+      }
   }
 }

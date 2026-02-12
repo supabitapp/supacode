@@ -10,6 +10,7 @@ struct WorktreeCommands: Commands {
   @FocusedValue(\.deleteWorktreeAction) private var deleteWorktreeAction
   @FocusedValue(\.runScriptAction) private var runScriptAction
   @FocusedValue(\.stopRunScriptAction) private var stopRunScriptAction
+  @FocusedValue(\.visibleHotkeyWorktreeRows) private var visibleHotkeyWorktreeRows
 
   init(store: StoreOf<AppFeature>) {
     self.store = store
@@ -17,7 +18,7 @@ struct WorktreeCommands: Commands {
 
   var body: some Commands {
     let repositories = store.repositories
-    let orderedRows = repositories.orderedWorktreeRows()
+    let orderedRows = visibleHotkeyWorktreeRows ?? repositories.orderedWorktreeRows()
     let pullRequestURL = selectedPullRequestURL
     let githubIntegrationEnabled = store.settings.githubIntegrationEnabled
     let archiveShortcut = KeyboardShortcut(.delete, modifiers: .command).display
@@ -201,6 +202,11 @@ extension FocusedValues {
     get { self[StopRunScriptActionKey.self] }
     set { self[StopRunScriptActionKey.self] = newValue }
   }
+
+  var visibleHotkeyWorktreeRows: [WorktreeRowModel]? {
+    get { self[VisibleHotkeyWorktreeRowsKey.self] }
+    set { self[VisibleHotkeyWorktreeRowsKey.self] = newValue }
+  }
 }
 
 private struct RunScriptActionKey: FocusedValueKey {
@@ -209,4 +215,8 @@ private struct RunScriptActionKey: FocusedValueKey {
 
 private struct StopRunScriptActionKey: FocusedValueKey {
   typealias Value = () -> Void
+}
+
+private struct VisibleHotkeyWorktreeRowsKey: FocusedValueKey {
+  typealias Value = [WorktreeRowModel]
 }

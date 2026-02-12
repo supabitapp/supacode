@@ -14,6 +14,7 @@ struct SettingsFeatureTests {
       appearanceMode: .dark,
       defaultEditorID: OpenWorktreeAction.automaticSettingsID,
       confirmBeforeQuit: true,
+      updateChannel: .stable,
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
       inAppNotificationsEnabled: false,
@@ -37,6 +38,7 @@ struct SettingsFeatureTests {
       $0.appearanceMode = .dark
       $0.defaultEditorID = OpenWorktreeAction.automaticSettingsID
       $0.confirmBeforeQuit = true
+      $0.updateChannel = .stable
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
       $0.inAppNotificationsEnabled = false
@@ -56,6 +58,7 @@ struct SettingsFeatureTests {
       appearanceMode: .system,
       defaultEditorID: OpenWorktreeAction.automaticSettingsID,
       confirmBeforeQuit: true,
+      updateChannel: .stable,
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: false,
       inAppNotificationsEnabled: false,
@@ -81,6 +84,7 @@ struct SettingsFeatureTests {
       appearanceMode: .light,
       defaultEditorID: initialSettings.defaultEditorID,
       confirmBeforeQuit: initialSettings.confirmBeforeQuit,
+      updateChannel: initialSettings.updateChannel,
       updatesAutomaticallyCheckForUpdates: initialSettings.updatesAutomaticallyCheckForUpdates,
       updatesAutomaticallyDownloadUpdates: initialSettings.updatesAutomaticallyDownloadUpdates,
       inAppNotificationsEnabled: initialSettings.inAppNotificationsEnabled,
@@ -129,6 +133,7 @@ struct SettingsFeatureTests {
       appearanceMode: .light,
       defaultEditorID: OpenWorktreeAction.automaticSettingsID,
       confirmBeforeQuit: false,
+      updateChannel: .tip,
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
       inAppNotificationsEnabled: false,
@@ -145,6 +150,7 @@ struct SettingsFeatureTests {
       $0.appearanceMode = .light
       $0.defaultEditorID = OpenWorktreeAction.automaticSettingsID
       $0.confirmBeforeQuit = false
+      $0.updateChannel = .tip
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
       $0.inAppNotificationsEnabled = false

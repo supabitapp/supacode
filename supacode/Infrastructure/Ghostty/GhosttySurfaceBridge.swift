@@ -168,6 +168,9 @@ final class GhosttySurfaceBridge {
       if let title = string(from: action.action.set_title.title) {
         state.title = title
         onTitleChange?(title)
+        if let surfaceView {
+          NSAccessibility.post(element: surfaceView, notification: .titleChanged)
+        }
       }
       return true
 
@@ -177,6 +180,15 @@ final class GhosttySurfaceBridge {
 
     case GHOSTTY_ACTION_PWD:
       state.pwd = string(from: action.action.pwd.pwd)
+      if let surfaceView {
+        NSAccessibility.post(element: surfaceView, notification: .valueChanged)
+        // VoiceOver does not reliably re-read the label on `.valueChanged` alone.
+        // If the surface view's label falls back to PWD, post `.titleChanged` to trigger re-announcement.
+        let title = state.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if title.isEmpty {
+          NSAccessibility.post(element: surfaceView, notification: .titleChanged)
+        }
+      }
       return true
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:

@@ -83,7 +83,7 @@ private func message(for date: Date) -> String {
   let style = timeStyle(for: hour)
   let day = Calendar.current.component(.day, from: date)
   let index = (day + hour) % style.messages.count
-  return style.messages[index]
+  return "\(style.messages[index]) (Open Command Palette (⌘P))"
 }
 
 private let morningMessages = [

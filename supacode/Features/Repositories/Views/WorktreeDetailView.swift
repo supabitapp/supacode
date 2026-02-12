@@ -18,9 +18,7 @@ struct WorktreeDetailView: View {
     let loadingInfo = loadingInfo(for: selectedRow, repositories: repositories)
     let hasActiveWorktree = selectedWorktree != nil && loadingInfo == nil
     let openActionSelection = state.openActionSelection
-    let runScriptConfigured =
-      !state.selectedRunScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let runScriptEnabled = hasActiveWorktree && runScriptConfigured
+    let runScriptEnabled = hasActiveWorktree
     let runScriptIsRunning = selectedWorktree.flatMap { state.runScriptStatusByWorktreeID[$0.id] } == true
     let notificationGroups = repositories.toolbarNotificationGroups(terminalManager: terminalManager)
     let unseenNotificationWorktreeCount = notificationGroups.reduce(0) { count, repository in

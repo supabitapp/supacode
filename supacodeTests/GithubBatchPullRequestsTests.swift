@@ -19,7 +19,7 @@ struct GithubBatchPullRequestsTests {
                   "deletions": 0,
                   "isDraft": false,
                   "reviewDecision": null,
-                  "updatedAt": "2025-01-01T00:00:00Z",
+                  "updatedAt": "2025-01-03T00:00:00Z",
                   "url": "https://github.com/other/repo/pull/1",
                   "headRefName": "feature-a",
                   "headRepository": {
@@ -66,7 +66,7 @@ struct GithubBatchPullRequestsTests {
     #expect(prs["feature-b"] == nil)
   }
 
-  @Test func ignoresForkOnlyMatches() throws {
+  @Test func fallsBackToForkOnlyMatches() throws {
     let json = """
       {
         "data": {
@@ -104,7 +104,62 @@ struct GithubBatchPullRequestsTests {
       owner: "octo",
       repo: "repo"
     )
-    #expect(prs["feature-a"] == nil)
+    #expect(prs["feature-a"]?.number == 9)
+    #expect(prs["feature-a"]?.title == "Fork PR")
+  }
+
+  @Test func ignoresNilHeadRepositoryInFallback() throws {
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 7,
+                  "title": "Head Missing",
+                  "state": "OPEN",
+                  "additions": 1,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2025-01-02T00:00:00Z",
+                  "url": "https://github.com/octo/repo/pull/7",
+                  "headRefName": "feature-a",
+                  "headRepository": null
+                },
+                {
+                  "number": 8,
+                  "title": "Fork PR",
+                  "state": "OPEN",
+                  "additions": 1,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2025-01-01T00:00:00Z",
+                  "url": "https://github.com/fork/repo/pull/8",
+                  "headRefName": "feature-a",
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "fork" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "feature-a"],
+      owner: "octo",
+      repo: "repo"
+    )
+    #expect(prs["feature-a"]?.number == 8)
   }
 
   @Test func prefersOpenOverMergedEvenIfOlder() throws {

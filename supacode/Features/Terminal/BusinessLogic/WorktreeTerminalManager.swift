@@ -76,6 +76,10 @@ final class WorktreeTerminalManager {
     case .setNotificationsEnabled(let enabled):
       setNotificationsEnabled(enabled)
     case .setSelectedWorktreeID(let id):
+      guard id != selectedWorktreeID else { return }
+      if let previousID = selectedWorktreeID, let previousState = states[previousID] {
+        previousState.setAllSurfacesOccluded()
+      }
       selectedWorktreeID = id
     default:
       return

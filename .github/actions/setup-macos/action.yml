@@ -1,0 +1,59 @@
+name: Setup macOS build deps
+description: Install + cache mise tools and GhosttyKit build outputs
+
+runs:
+  using: composite
+  steps:
+    - name: Mise cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.local/share/mise
+          ~/.cache/mise
+        key: ${{ runner.os }}-${{ runner.arch }}-mise-v0-${{ hashFiles('**/mise.toml', '**/.mise.toml', '**/.tool-versions', '**/.config/mise.toml', '**/mise/config.toml', '**/mise.lock', '**/.mise.lock', '**/mise/config.lock', '**/.config/mise.lock', '**/mise.*.toml', '**/.mise.*.toml', '**/.config/mise.*.toml', '**/mise.*.lock', '**/.mise.*.lock', '**/.config/mise.*.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-mise-v0-
+    - run: brew install mise
+      shell: bash
+    - run: mise install
+      shell: bash
+
+    - name: Ghostty cache key
+      shell: bash
+      run: |
+        set -euo pipefail
+        GHOSTTY_SHA="$(git -C ThirdParty/ghostty rev-parse HEAD)"
+        printf '%s\n' "GHOSTTY_SHA=$GHOSTTY_SHA" >> "$GITHUB_ENV"
+    - name: Ghostty cache
+      id: ghostty_cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          Frameworks/GhosttyKit.xcframework
+          Resources/ghostty
+          Resources/terminfo
+        key: ${{ runner.os }}-${{ runner.arch }}-ghostty-${{ env.GHOSTTY_SHA }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-ghostty-
+    - name: Build ghostty
+      if: steps.ghostty_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        make build-ghostty-xcframework
+
+    - name: SPM cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/supacode-spm-cache/SourcePackages
+        key: ${{ runner.os }}-${{ runner.arch }}-spm-v0-${{ hashFiles('**/Package.resolved') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-spm-v0-
+
+    - name: Xcode compilation cache
+      uses: actions/cache@v4
+      with:
+        path: ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+        key: ${{ runner.os }}-${{ runner.arch }}-xcode-compilation-cache-v0
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-xcode-compilation-cache-

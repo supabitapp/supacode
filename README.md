@@ -30,3 +30,7 @@ make test      # Run tests
 make format    # Run swift-format
 ```
 
+## Contributing
+
+Be civilized, I review every single line personally, so I assume you have done the same urself before submitting a PR.
+

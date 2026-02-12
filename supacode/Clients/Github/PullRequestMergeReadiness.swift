@@ -30,9 +30,7 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
       return
     }
 
-    let isMergeable = mergeable == "MERGEABLE"
-    let isClean = mergeStateStatus == "CLEAN"
-    if isMergeable && isClean {
+    if mergeable == "MERGEABLE" {
       self.blockingReason = nil
       return
     }

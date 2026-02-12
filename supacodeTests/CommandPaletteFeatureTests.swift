@@ -439,8 +439,8 @@ struct CommandPaletteFeatureTests {
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(
-        mergeable: "MERGEABLE",
-        mergeStateStatus: "BEHIND"
+        mergeable: "UNKNOWN",
+        mergeStateStatus: "BLOCKED"
       )
     )
 

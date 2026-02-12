@@ -35,15 +35,14 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     appStore?.send(.appLaunched)
   }
 
-  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-    guard let window = mainWindow(from: sender) else {
-      return true
-    }
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    if flag { return true }
+    guard let window = mainWindow(from: sender) else { return true }
     if window.isMiniaturized {
       window.deminiaturize(nil)
     }
     window.makeKeyAndOrderFront(nil)
-    sender.activate(ignoringOtherApps: true)
+    sender.activate()
     return false
   }
 

@@ -1,28 +1,38 @@
-name: Release
+name: Release Tip
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    branches: [main]
+
+  workflow_dispatch: {}
 
 concurrency:
-  group: release
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
   check:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.ref_name == 'main'
+      )
     runs-on: ubuntu-latest
     outputs:
       should_skip: ${{ steps.check.outputs.should_skip }}
     steps:
-      - name: Check if release already has artifacts
+      - name: Check if tip release already exists for this commit
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
         run: |
-          ASSETS=$(gh release view "$TAG" -R "${{ github.repository }}" --json assets --jq '.assets | length')
-          if [ "$ASSETS" -gt 0 ]; then
-            echo "Release $TAG already has $ASSETS assets, skipping"
+          TIP_SHA=$(gh api repos/${{ github.repository }}/git/ref/tags/tip --jq '.object.sha' 2>/dev/null || echo "")
+          ASSET_COUNT=$(gh release view tip -R "${{ github.repository }}" --json assets --jq '.assets | length' 2>/dev/null || echo "0")
+          if [ "$TIP_SHA" = "${{ github.sha }}" ] && [ "$ASSET_COUNT" -gt 0 ]; then
+            echo "Tip already points at ${{ github.sha }} with $ASSET_COUNT assets, skipping"
             echo "should_skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_skip=false" >> "$GITHUB_OUTPUT"
@@ -51,12 +61,17 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
-      - run: echo "TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
-      - name: Override build number for versioning scheme
+      - name: Override build number for tip
         run: |
           BASE=$(awk -F' = ' '/CURRENT_PROJECT_VERSION = [0-9]+/{gsub(/;/,""); print $2; exit}' supacode.xcodeproj/project.pbxproj)
-          BUILD_NUMBER=$((BASE * 1000))
+          OFFSET=${{ github.run_number }}
+          if [ "$OFFSET" -gt 999 ]; then
+            echo "::error::Tip run_number ($OFFSET) exceeds 999. Bump CURRENT_PROJECT_VERSION before the next tip release."
+            exit 1
+          fi
+          BUILD_NUMBER=$((BASE * 1000 + OFFSET))
           sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = $BUILD_NUMBER/g" supacode.xcodeproj/project.pbxproj
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
       - name: Setup keychain
         run: |
           echo "$DEVELOPER_ID_CERT_P12" | base64 --decode > build-cert.p12
@@ -111,13 +126,12 @@ jobs:
           </plist>
           EOF
           make export-archive
-      - name: Re-sign Sparkle framework
+      - name: Re-sign frameworks
         run: |
           set -ex
           APP_PATH="$(find build/export -name "supacode.app" -maxdepth 3 -print -quit)"
           SPARKLE="$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B"
 
-          echo "Using identity: $DEVELOPER_ID_IDENTITY"
           codesign -f -s "$DEVELOPER_ID_IDENTITY_SHA" -o runtime --timestamp -v "$SPARKLE/XPCServices/Installer.xpc"
           codesign -f -s "$DEVELOPER_ID_IDENTITY_SHA" -o runtime --timestamp --preserve-metadata=entitlements -v "$SPARKLE/XPCServices/Downloader.xpc"
           codesign -f -s "$DEVELOPER_ID_IDENTITY_SHA" -o runtime --timestamp -v "$SPARKLE/Updater.app"
@@ -130,12 +144,6 @@ jobs:
           codesign -f -s "$DEVELOPER_ID_IDENTITY_SHA" -o runtime --timestamp -v "$APP_PATH"
 
           codesign -vvv --deep --strict "$APP_PATH"
-          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E "Authority=Developer ID Application|Timestamp="
-          codesign -dv --verbose=4 "$APP_PATH/Contents/MacOS/supacode" 2>&1 | grep -E "Authority=Developer ID Application|Timestamp="
-          codesign -dv --verbose=4 "$SPARKLE/Updater.app/Contents/MacOS/Updater" 2>&1 | grep -E "Authority=Developer ID Application|Timestamp="
-          codesign -dv --verbose=4 "$SPARKLE/XPCServices/Installer.xpc/Contents/MacOS/Installer" 2>&1 | grep -E "Authority=Developer ID Application|Timestamp="
-          codesign -dv --verbose=4 "$SPARKLE/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" 2>&1 | grep -E "Authority=Developer ID Application|Timestamp="
-          echo "Signature verified successfully"
       - name: Store notarization credentials
         run: |
           echo "$APPLE_NOTARIZATION_KEY" > notarization_key.p8
@@ -170,61 +178,45 @@ jobs:
 
           xcrun stapler staple build/supacode.dmg
           xcrun stapler staple "$APP_PATH"
+      - name: Create app zip for Sparkle
+        run: |
+          APP_PATH="$(find build/export -name "supacode.app" -maxdepth 3 -print -quit)"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/supacode.app.zip
-          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist")
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-      - name: Fetch release notes
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Generate tip appcast
         run: |
-          gh release view "$TAG" --json body --jq '.body' > build/release-notes.md
-      - name: Generate appcast with history and deltas
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          MAX_DELTAS=10
-          NOTES_FILE=build/release-notes.md
           STAGING=$(mktemp -d)
-          ARCHIVE=build/supacode.app.zip
-          ARCHIVE_BASE=$(basename "$ARCHIVE")
-          ARCHIVE_BASE="${ARCHIVE_BASE%.zip}"
-          cp "$ARCHIVE" "$STAGING/"
-          cp "$NOTES_FILE" "$STAGING/$ARCHIVE_BASE.md"
-
-          curl -fsSL "https://supacode.sh/download/latest/appcast.xml" -o "$STAGING/appcast.xml" || true
-
-          RELEASE_REPO="supabitapp/supacode"
-          SEEN_VERSIONS=""
-          for i in $(seq 1 $MAX_DELTAS); do
-            PREV_TAG=$(gh release list --limit $i --exclude-drafts --exclude-pre-releases -R "$RELEASE_REPO" --json tagName --jq ".[$((i-1))].tagName" 2>/dev/null || true)
-            if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ]; then
-              echo "Downloading $PREV_TAG for delta generation..."
-              gh release download "$PREV_TAG" -p "supacode.app.zip" -O "$STAGING/supacode-$PREV_TAG.app.zip" -R "$RELEASE_REPO" 2>/dev/null || true
-              if [ -f "$STAGING/supacode-$PREV_TAG.app.zip" ]; then
-                BUNDLE_VERSION=$(unzip -p "$STAGING/supacode-$PREV_TAG.app.zip" "supacode.app/Contents/Info.plist" 2>/dev/null | /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" /dev/stdin 2>/dev/null || echo "")
-                if [ -n "$BUNDLE_VERSION" ] && echo "$SEEN_VERSIONS" | grep -q "^$BUNDLE_VERSION$"; then
-                  echo "Skipping $PREV_TAG (duplicate bundle version $BUNDLE_VERSION)"
-                  rm -f "$STAGING/supacode-$PREV_TAG.app.zip"
-                else
-                  [ -n "$BUNDLE_VERSION" ] && SEEN_VERSIONS="$SEEN_VERSIONS$BUNDLE_VERSION"$'\n'
-                  gh release view "$PREV_TAG" -R "$RELEASE_REPO" --json body --jq '.body' > "$STAGING/supacode-$PREV_TAG.app.md" 2>/dev/null || true
-                fi
-              fi
-            fi
-          done
-
-          printf "%s" "$SPARKLE_PRIVATE_KEY" | tr -d '\r\n\t ' | ./bins/generate_appcast --download-url-prefix "https://supacode.sh/download/$TAG/" --full-release-notes-url "https://github.com/supabitapp/supacode/releases" --embed-release-notes --maximum-versions $MAX_DELTAS --maximum-deltas $MAX_DELTAS --delta-compression lzma --ed-key-file - "$STAGING"
+          cp build/supacode.app.zip "$STAGING/"
+          printf "%s" "$SPARKLE_PRIVATE_KEY" | tr -d '\r\n\t ' | ./bins/generate_appcast \
+            --download-url-prefix "https://supacode.sh/download/tip/" \
+            --maximum-versions 1 \
+            --ed-key-file - "$STAGING"
+          # Inject sparkle:channel tag into the tip item
+          sed -i '' 's|<enclosure |<sparkle:channel>tip</sparkle:channel>\n            <enclosure |' "$STAGING/appcast.xml"
           cp "$STAGING/appcast.xml" build/appcast.xml
-          find "$STAGING" -name "*.delta" -exec cp {} build/ \; 2>/dev/null || true
       - uses: actions/upload-artifact@v6
         with:
           name: build-artifacts
           path: |
-            build/supacode.app.zip
             build/supacode.dmg
+            build/supacode.app.zip
             build/appcast.xml
-            build/*.delta
+
+  tag:
+    runs-on: ubuntu-latest
+    needs: [check, build]
+    if: needs.check.outputs.should_skip != 'true'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GH_RELEASE_TOKEN }}
+      - name: Force-move tip tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa tip -m "Latest Continuous Release" ${{ github.sha }}
+          git push --force origin tip
 
   sentry-dsym:
     runs-on: ubuntu-latest
@@ -246,24 +238,63 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
-    needs: [check, build]
+    needs: [check, build, tag]
     if: needs.check.outputs.should_skip != 'true'
     permissions:
       contents: write
-    env:
-      RELEASE_REPO: supabitapp/supacode
     steps:
-      - run: echo "TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v7
         with:
           name: build-artifacts
           path: build
-      - run: |
-          DELTA_FILES=$(find build -name "*.delta" -type f 2>/dev/null | tr '\n' ' ' || true)
-          gh release upload "$TAG" build/supacode.app.zip build/supacode.dmg build/appcast.xml $DELTA_FILES --clobber -R "$RELEASE_REPO"
+      - name: Update tip release
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: |
-          set -euo pipefail
-          curl -fsSL "https://supacode.sh/download/$TAG/supacode.app.zip" -o /dev/null
-          curl -fsSL "https://supacode.sh/download/$TAG/supacode.dmg" -o /dev/null
+        run: |
+          gh release create tip --prerelease --title 'Supacode Tip ("Nightly")' --target "${{ github.sha }}" --notes "" -R "${{ github.repository }}" 2>/dev/null ||
+          gh release edit tip --prerelease --title 'Supacode Tip ("Nightly")' --target "${{ github.sha }}" -R "${{ github.repository }}"
+          gh release upload tip build/supacode.dmg build/supacode.app.zip build/appcast.xml --clobber -R "${{ github.repository }}"
+      - name: Merge tip item into production appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST_TAG=$(gh release list --exclude-drafts --exclude-pre-releases -R "${{ github.repository }}" --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No stable release found, skipping appcast merge"
+            exit 0
+          fi
+          gh release download "$LATEST_TAG" -p "appcast.xml" -O stable_appcast.xml -R "${{ github.repository }}" 2>/dev/null || exit 0
+
+          python3 - stable_appcast.xml build/appcast.xml merged_appcast.xml <<'PYEOF'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          ET.register_namespace('sparkle', 'http://www.andymatuschak.org/xml-namespaces/sparkle')
+          ET.register_namespace('dc', 'http://purl.org/dc/elements/1.1/')
+
+          stable_path, tip_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+          stable_tree = ET.parse(stable_path)
+          stable_root = stable_tree.getroot()
+          tip_tree = ET.parse(tip_path)
+          tip_root = tip_tree.getroot()
+
+          ns = {'sparkle': 'http://www.andymatuschak.org/xml-namespaces/sparkle'}
+          stable_channel = stable_root.find('.//channel')
+
+          # Remove existing tip items from stable appcast
+          for item in stable_channel.findall('item'):
+              ch = item.find('sparkle:channel', ns)
+              if ch is not None and ch.text == 'tip':
+                  stable_channel.remove(item)
+
+          # Add new tip items from tip appcast
+          tip_channel = tip_root.find('.//channel')
+          for item in tip_channel.findall('item'):
+              stable_channel.append(item)
+
+          stable_tree.write(out_path, xml_declaration=True, encoding='utf-8')
+          PYEOF
+
+          mv merged_appcast.xml appcast.xml
+          gh release upload "$LATEST_TAG" appcast.xml --clobber -R "${{ github.repository }}"

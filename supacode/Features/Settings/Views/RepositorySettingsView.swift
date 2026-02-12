@@ -3,6 +3,8 @@ import SwiftUI
 
 struct RepositorySettingsView: View {
   @Bindable var store: StoreOf<RepositorySettingsFeature>
+  @State private var isBranchPickerPresented = false
+  @State private var branchSearchText = ""
 
   var body: some View {
     let baseRefOptions =
@@ -11,18 +13,34 @@ struct RepositorySettingsView: View {
     Form {
       Section {
         if store.isBranchDataLoaded {
-          Picker(
-            "Branch new workspaces from",
-            selection: $store.settings.worktreeBaseRef
-          ) {
-            Text("Automatic (\(store.defaultWorktreeBaseRef))")
-              .tag(String?.none)
-            ForEach(baseRefOptions, id: \.self) { ref in
-              Text(ref)
-                .tag(Optional(ref))
+          Button {
+            branchSearchText = ""
+            isBranchPickerPresented = true
+          } label: {
+            HStack {
+              Text(store.settings.worktreeBaseRef ?? "Automatic (\(store.defaultWorktreeBaseRef))")
+                .foregroundStyle(.primary)
+              Spacer()
+              Image(systemName: "chevron.up.chevron.down")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .accessibilityHidden(true)
             }
+            .contentShape(Rectangle())
           }
-          .labelsHidden()
+          .buttonStyle(.plain)
+          .popover(isPresented: $isBranchPickerPresented) {
+            BranchPickerPopover(
+              searchText: $branchSearchText,
+              options: baseRefOptions,
+              automaticLabel: "Automatic (\(store.defaultWorktreeBaseRef))",
+              selection: store.settings.worktreeBaseRef,
+              onSelect: { ref in
+                store.settings.worktreeBaseRef = ref
+                isBranchPickerPresented = false
+              }
+            )
+          }
         } else {
           ProgressView()
             .controlSize(.small)
@@ -124,5 +142,68 @@ struct RepositorySettingsView: View {
     .task {
       store.send(.task)
     }
+  }
+}
+
+private struct BranchPickerPopover: View {
+  @Binding var searchText: String
+  let options: [String]
+  let automaticLabel: String
+  let selection: String?
+  let onSelect: (String?) -> Void
+  @FocusState private var isSearchFocused: Bool
+
+  var filteredOptions: [String] {
+    if searchText.isEmpty { return options }
+    return options.filter { $0.localizedCaseInsensitiveContains(searchText) }
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      TextField("Filter branches...", text: $searchText)
+        .textFieldStyle(.roundedBorder)
+        .focused($isSearchFocused)
+        .padding(8)
+      Divider()
+      List {
+        Button {
+          onSelect(nil)
+        } label: {
+          HStack {
+            Text(automaticLabel)
+            Spacer()
+            if selection == nil {
+              Image(systemName: "checkmark")
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            }
+          }
+          .padding(.vertical, 6)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        ForEach(filteredOptions, id: \.self) { ref in
+          Button {
+            onSelect(ref)
+          } label: {
+            HStack {
+              Text(ref)
+              Spacer()
+              if selection == ref {
+                Image(systemName: "checkmark")
+                  .foregroundStyle(.tint)
+                  .accessibilityHidden(true)
+              }
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .listStyle(.plain)
+    }
+    .frame(width: 300, height: 350)
+    .onAppear { isSearchFocused = true }
   }
 }

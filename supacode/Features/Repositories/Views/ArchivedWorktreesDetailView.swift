@@ -46,10 +46,10 @@ struct ArchivedWorktreesDetailView: View {
       )
     } else {
       List(selection: $selectedArchivedWorktreeIDs) {
-        ForEach(groups, id: \.repository.id) { group in
+        ForEach(Array(groups.enumerated()), id: \.element.repository.id) { index, group in
           Section {
             if !collapsedRepositoryIDs.contains(group.repository.id) {
-              ForEach(group.worktrees) { worktree in
+              ForEach(group.worktrees, id: \.id) { worktree in
                 ArchivedWorktreeRowView(
                   worktree: worktree,
                   info: store.state.worktreeInfo(for: worktree.id),
@@ -62,6 +62,8 @@ struct ArchivedWorktreesDetailView: View {
                 )
                 .tag(worktree.id)
                 .typeSelectEquivalent("")
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
               }
             }
           } header: {
@@ -69,6 +71,7 @@ struct ArchivedWorktreesDetailView: View {
               name: group.repository.name,
               worktreeCount: group.worktrees.count,
               isCollapsed: collapsedRepositoryIDs.contains(group.repository.id),
+              showsTopSeparator: index > 0,
               onToggle: { toggleSection(group.repository.id) }
             )
           }
@@ -110,6 +113,7 @@ private struct ArchivedWorktreeSectionHeader: View {
   let name: String
   let worktreeCount: Int
   let isCollapsed: Bool
+  let showsTopSeparator: Bool
   let onToggle: () -> Void
 
   var body: some View {
@@ -123,13 +127,25 @@ private struct ArchivedWorktreeSectionHeader: View {
           .foregroundStyle(.secondary)
           .accessibilityHidden(true)
         Text(name)
+          .font(.headline)
           .foregroundStyle(.primary)
-        Spacer()
-        Text("\(worktreeCount)")
-          .monospacedDigit()
+          .lineLimit(1)
+        Text("(\(worktreeCount))")
+          .font(.headline)
           .foregroundStyle(.secondary)
+        Spacer()
       }
+      .padding(.top, 6)
       .contentShape(.rect)
+    }
+    .overlay(alignment: .top) {
+      if showsTopSeparator {
+        Rectangle()
+          .fill(.secondary)
+          .frame(height: 1)
+          .frame(maxWidth: .infinity)
+          .accessibilityHidden(true)
+      }
     }
     .buttonStyle(.plain)
     .help(isCollapsed ? "Expand repository section" : "Collapse repository section")

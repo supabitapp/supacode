@@ -10,11 +10,23 @@ struct TerminalTabLabelView: View {
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
-      if let icon = tab.icon {
-        Image(systemName: icon)
-          .imageScale(.small)
-          .foregroundStyle(isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)
-          .accessibilityHidden(true)
+      if tab.isDirty || tab.icon != nil {
+        ZStack {
+          if tab.isDirty {
+            ProgressView()
+              .controlSize(.small)
+              .tint(isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)
+          } else if let icon = tab.icon {
+            Image(systemName: icon)
+              .imageScale(.small)
+              .foregroundStyle(isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)
+          }
+        }
+        .frame(
+          width: TerminalTabBarMetrics.closeButtonSize,
+          height: TerminalTabBarMetrics.closeButtonSize
+        )
+        .accessibilityHidden(true)
       }
       Text(tab.title)
         .font(.caption)
@@ -24,13 +36,6 @@ struct TerminalTabLabelView: View {
       ZStack {
         if showsShortcutHint, let shortcutHint {
           ShortcutHintView(text: shortcutHint, color: TerminalTabBarColors.inactiveText)
-        } else if tab.isDirty && !isHoveringTab && !isHoveringClose {
-          Circle()
-            .fill(TerminalTabBarColors.dirtyIndicator)
-            .frame(
-              width: TerminalTabBarMetrics.dirtyIndicatorSize,
-              height: TerminalTabBarMetrics.dirtyIndicatorSize
-            )
         }
       }
     }

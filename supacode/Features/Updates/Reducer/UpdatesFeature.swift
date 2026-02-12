@@ -10,6 +10,7 @@ struct UpdatesFeature {
 
   enum Action {
     case applySettings(
+      updateChannel: UpdateChannel,
       automaticallyChecks: Bool,
       automaticallyDownloads: Bool
     )
@@ -22,10 +23,11 @@ struct UpdatesFeature {
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
-      case .applySettings(let checks, let downloads):
+      case .applySettings(let channel, let checks, let downloads):
         let checkInBackground = !state.didConfigureUpdates
         state.didConfigureUpdates = true
         return .run { _ in
+          await updaterClient.setUpdateChannel(channel)
           await updaterClient.configure(checks, downloads, checkInBackground)
         }
 

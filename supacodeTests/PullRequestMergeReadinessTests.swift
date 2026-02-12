@@ -48,10 +48,10 @@ struct PullRequestMergeReadinessTests {
     #expect(readiness.label == "2 checks failed")
   }
 
-  @Test func mergeReadinessIsMergeableWhenCleanAndMergeable() {
+  @Test func mergeReadinessIsMergeableWhenMergeable() {
     let pullRequest = makePullRequest(
       mergeable: "MERGEABLE",
-      mergeStateStatus: "CLEAN"
+      mergeStateStatus: "BEHIND"
     )
 
     let readiness = PullRequestMergeReadiness(pullRequest: pullRequest)
@@ -63,7 +63,7 @@ struct PullRequestMergeReadinessTests {
 
   @Test func mergeReadinessFallsBackToBlockedForOtherStates() {
     let pullRequest = makePullRequest(
-      mergeable: "MERGEABLE",
+      mergeable: "UNKNOWN",
       mergeStateStatus: "BEHIND"
     )
 

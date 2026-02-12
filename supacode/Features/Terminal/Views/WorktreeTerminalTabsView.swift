@@ -14,6 +14,13 @@ struct WorktreeTerminalTabsView: View {
       TerminalTabBarView(
         manager: state.tabManager,
         createTab: createTab,
+        splitHorizontally: {
+          _ = state.performBindingActionOnFocusedSurface("new_split:down")
+        },
+        splitVertically: {
+          _ = state.performBindingActionOnFocusedSurface("new_split:right")
+        },
+        canSplit: state.tabManager.selectedTabId != nil,
         closeTab: { tabId in
           state.closeTab(tabId)
         },
@@ -29,7 +36,7 @@ struct WorktreeTerminalTabsView: View {
       )
       if let selectedId = state.tabManager.selectedTabId {
         TerminalTabContentStack(tabs: state.tabManager.tabs, selectedTabId: selectedId) { tabId in
-          TerminalSplitTreeView(tree: state.splitTree(for: tabId)) { operation in
+          TerminalSplitTreeAXContainer(tree: state.splitTree(for: tabId)) { operation in
             state.performSplitOperation(operation, in: tabId)
           }
         }
