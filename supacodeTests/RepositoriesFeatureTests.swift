@@ -457,6 +457,44 @@ struct RepositoriesFeatureTests {
     )
   }
 
+  @Test func sidebarHotkeyTargetsExcludeRemovingRepositories() {
+    let repoA = makeRepository(
+      id: "/tmp/repo-a",
+      name: "Repo A",
+      worktrees: [
+        makeWorktree(id: "/tmp/repo-a/main", name: "main", repoRoot: "/tmp/repo-a")
+      ]
+    )
+    let repoB = makeRepository(
+      id: "/tmp/repo-b",
+      name: "Repo B",
+      worktrees: [
+        makeWorktree(id: "/tmp/repo-b/main", name: "main", repoRoot: "/tmp/repo-b")
+      ]
+    )
+    var state = makeState(repositories: [repoA, repoB])
+    state.repositoryOrderIDs = [repoA.id, repoB.id]
+    state.removingRepositoryIDs = [repoA.id]
+
+    expectNoDifference(
+      state.sidebarHotkeyTargets(expandedRepoIDs: []),
+      [
+        .repository(id: repoB.id, name: "Repo B")
+      ]
+    )
+    expectNoDifference(
+      state.sidebarHotkeyTargets(expandedRepoIDs: [repoA.id, repoB.id]),
+      [
+        .worktree(
+          id: "/tmp/repo-b/main",
+          repositoryID: repoB.id,
+          repositoryName: "Repo B",
+          worktreeName: "main"
+        ),
+      ]
+    )
+  }
+
   @Test func orderedRepositoryRootsAppendMissing() {
     let repoA = makeRepository(id: "/tmp/repo-a", worktrees: [])
     let repoB = makeRepository(id: "/tmp/repo-b", worktrees: [])

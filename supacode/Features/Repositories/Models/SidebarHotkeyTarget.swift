@@ -28,6 +28,9 @@ extension RepositoriesFeature.State {
     var targets: [SidebarHotkeyTarget] = []
     for repositoryID in orderedRepositoryIDs() {
       guard let repository = repositoriesByID[repositoryID] else { continue }
+      if removingRepositoryIDs.contains(repositoryID) {
+        continue
+      }
       if expandedRepoIDs.contains(repositoryID) {
         for row in worktreeRows(in: repository) {
           targets.append(
