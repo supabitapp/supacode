@@ -12,11 +12,8 @@ struct GhosttyColorSchemeSyncView<Content: View>: View {
 
   var body: some View {
     content
-      .task {
+      .task(id: colorScheme) {
         apply(colorScheme)
-      }
-      .onChange(of: colorScheme) { _, newValue in
-        apply(newValue)
       }
   }
 

@@ -9,7 +9,6 @@ struct WorktreeRowsView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
-  @Environment(\.colorScheme) private var colorScheme
   @State private var draggingWorktreeIDs: Set<Worktree.ID> = []
   @State private var hoveredWorktreeID: Worktree.ID?
 
@@ -134,8 +133,6 @@ struct WorktreeRowsView: View {
     }
     .contentShape(.dragPreview, .rect)
     .contentShape(.interaction, .rect)
-    .environment(\.colorScheme, colorScheme)
-    .preferredColorScheme(colorScheme)
     .onHover { hovering in
       if hovering {
         hoveredWorktreeID = row.id

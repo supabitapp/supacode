@@ -31,18 +31,27 @@ final class WindowAppearanceView: NSView {
     guard let window else {
       return
     }
-    switch colorScheme {
+    let targetName: NSAppearance.Name? = switch colorScheme {
     case .none:
-      window.appearance = nil
+      nil
     case .some(let scheme):
       switch scheme {
       case .light:
-        window.appearance = NSAppearance(named: .aqua)
+        .aqua
       case .dark:
-        window.appearance = NSAppearance(named: .darkAqua)
+        .darkAqua
       @unknown default:
-        window.appearance = nil
+        nil
       }
+    }
+    if window.appearance?.name == targetName {
+      return
+    }
+    switch targetName {
+    case .some(let name):
+      window.appearance = NSAppearance(named: name)
+    case .none:
+      window.appearance = nil
     }
   }
 }

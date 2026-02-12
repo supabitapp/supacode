@@ -122,6 +122,9 @@ final class GhosttyRuntime {
       scheme == .dark
       ? GHOSTTY_COLOR_SCHEME_DARK
       : GHOSTTY_COLOR_SCHEME_LIGHT
+    if lastColorScheme == ghosttyScheme {
+      return
+    }
     lastColorScheme = ghosttyScheme
     ghostty_app_set_color_scheme(app, ghosttyScheme)
     applyColorSchemeToSurfaces(ghosttyScheme)

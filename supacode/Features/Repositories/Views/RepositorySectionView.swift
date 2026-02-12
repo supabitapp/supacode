@@ -9,7 +9,6 @@ struct RepositorySectionView: View {
   @Binding var expandedRepoIDs: Set<Repository.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @Environment(\.colorScheme) private var colorScheme
   @State private var isHovering = false
 
   var body: some View {
@@ -116,8 +115,6 @@ struct RepositorySectionView: View {
       .contentShape(.dragPreview, .rect)
       .tag(SidebarSelection.repository(repository.id))
       .listRowBackground(Color.clear)
-      .environment(\.colorScheme, colorScheme)
-      .preferredColorScheme(colorScheme)
 
       if isExpanded {
         WorktreeRowsView(
