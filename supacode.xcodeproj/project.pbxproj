@@ -18,6 +18,7 @@
 		D6A1CB312F1F4ABF004FDABD /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6A1CB2F2F1F4A48004FDABD /* GhosttyKit.xcframework */; };
 		D6A1CB362F1F4ACB004FDABD /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6A1CB342F1F4AC2004FDABD /* Carbon.framework */; };
 		D6D054282F2E3EBF00D70ED5 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = D6D054272F2E3EBF00D70ED5 /* PostHog */; };
+		D6EB92EF2F3E34E500423A80 /* hooks in Resources */ = {isa = PBXBuildFile; fileRef = D6EB92EE2F3E34E500423A80 /* hooks */; };
 		DFE570C142184CC387C1BC78 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B5698573F7354B14B940EA60 /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -38,6 +39,7 @@
 		D69CE04A2F1F378200584C57 /* supacode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = supacode.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D6A1CB2F2F1F4A48004FDABD /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
 		D6A1CB342F1F4AC2004FDABD /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
+		D6EB92EE2F3E34E500423A80 /* hooks */ = {isa = PBXFileReference; lastKnownFileType = folder; name = hooks; path = Resources/hooks; sourceTree = "<group>"; };
 		D6F821012F1FCBC1004B4174 /* supacodeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = supacodeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -97,6 +99,7 @@
 		D69CE0412F1F378200584C57 = {
 			isa = PBXGroup;
 			children = (
+				D6EB92EE2F3E34E500423A80 /* hooks */,
 				D64162AD2F23CAF100260CA3 /* ghostty */,
 				D64162AF2F23CAF100260CA3 /* git-wt */,
 				D64162AE2F23CAF100260CA3 /* terminfo */,
@@ -232,6 +235,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D6EB92EF2F3E34E500423A80 /* hooks in Resources */,
 				D64162B02F23CAF100260CA3 /* ghostty in Resources */,
 				D64162B12F23CAF100260CA3 /* terminfo in Resources */,
 				D64162B22F23CAF100260CA3 /* git-wt in Resources */,
