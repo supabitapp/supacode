@@ -20,7 +20,7 @@ nonisolated struct ShellClient {
   ) async throws -> ShellOutput {
     var output: ShellOutput?
     for try await event in runLoginStream(executableURL, arguments, currentDirectoryURL, log: log) {
-      if case let .completed(shellOutput) = event {
+      if case .completed(let shellOutput) = event {
         output = shellOutput
       }
     }
