@@ -619,13 +619,17 @@ struct RepositoriesFeature {
                 progress: progress
               )
             )
-            let creationResult = try await gitClient.createWorktree(
+            let creationStream = gitClient.createWorktree(
               name,
               repository.rootURL,
               copyIgnored,
               copyUntracked,
-              resolvedBaseRef,
-              { copyProgress in
+              resolvedBaseRef
+            )
+            var createdWorktree: Worktree?
+            for try await event in creationStream {
+              switch event {
+              case .copyProgress(let copyProgress):
                 progress.copyProgressReport = copyProgress
                 await send(
                   .pendingWorktreeProgressUpdated(
@@ -633,16 +637,24 @@ struct RepositoriesFeature {
                     progress: progress
                   )
                 )
+              case .completed(let creationResult):
+                createdWorktree = creationResult.worktree
               }
-            )
-            let newWorktree = creationResult.worktree
-            await send(
-              .createRandomWorktreeSucceeded(
-                newWorktree,
-                repositoryID: repository.id,
-                pendingID: pendingID
+            }
+            if let newWorktree = createdWorktree {
+              await send(
+                .createRandomWorktreeSucceeded(
+                  newWorktree,
+                  repositoryID: repository.id,
+                  pendingID: pendingID
+                )
               )
-            )
+            } else {
+              throw GitClientError.commandFailed(
+                command: "worktree create",
+                message: "Worktree creation completed without result"
+              )
+            }
           } catch {
             await send(
               .createRandomWorktreeFailed(

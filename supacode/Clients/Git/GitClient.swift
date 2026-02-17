@@ -39,6 +39,11 @@ nonisolated struct GitWorktreeCreationResult: Hashable, Sendable {
   let copyProgressReport: String?
 }
 
+enum GitWorktreeCreationEvent: Sendable {
+  case copyProgress(String)
+  case completed(GitWorktreeCreationResult)
+}
+
 struct GitClient {
   private struct WorktreeSortEntry {
     let worktree: Worktree
@@ -226,9 +231,8 @@ struct GitClient {
     in repoRoot: URL,
     copyIgnored: Bool,
     copyUntracked: Bool,
-    baseRef: String,
-    progress: @MainActor @Sendable (String) async -> Void = { _ in }
-  ) async throws -> GitWorktreeCreationResult {
+    baseRef: String
+  ) -> AsyncThrowingStream<GitWorktreeCreationEvent, Error> {
     let repositoryRootURL = repoRoot.standardizedFileURL
     let wtURL = try wtScriptURL()
     let baseDir = SupacodePaths.repositoryDirectory(for: repositoryRootURL)
@@ -248,44 +252,77 @@ struct GitClient {
     }
     arguments.append(name)
     var copyProgressReport: String?
-    let output = try await runLoginShellProcessOutput(
-      operation: .worktreeCreate,
-      executableURL: wtURL,
-      arguments: arguments,
-      currentDirectoryURL: repoRoot,
-      onStderrLine: { line in
-        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedLine.isEmpty {
-          return
+    return AsyncThrowingStream { continuation in
+      Task.detached {
+        do {
+          var output: ShellOutput?
+          do {
+            for try await event in runLoginShellProcessOutput(
+              operation: .worktreeCreate,
+              executableURL: wtURL,
+              arguments: arguments,
+              currentDirectoryURL: repoRoot
+            ) {
+              switch event {
+              case .stdoutLine:
+                break
+              case .stderrLine(let line):
+                let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedLine.isEmpty {
+                  continue
+                }
+                let report = parseCopyProgressLine(trimmedLine) ?? trimmedLine
+                copyProgressReport = report
+                continuation.yield(.copyProgress(report))
+              case .completed(let shellOutput):
+                output = shellOutput
+              }
+            }
+          } catch {
+            continuation.finish(throwing: error)
+            return
+          }
+          guard let output else {
+            let command = ([wtURL.lastPathComponent] + arguments).joined(separator: " ")
+            continuation.finish(throwing: GitClientError.commandFailed(command: command, message: "Empty output"))
+            return
+          }
+          let pathLine = output.stdout.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
+          if pathLine.isEmpty {
+            let command = ([wtURL.lastPathComponent] + arguments).joined(separator: " ")
+            continuation.finish(
+              throwing: GitClientError.commandFailed(command: command, message: "Empty output")
+            )
+            return
+          }
+          let worktreeURL = URL(fileURLWithPath: pathLine).standardizedFileURL
+          let detail = Self.relativePath(from: repositoryRootURL, to: worktreeURL)
+          let id = worktreeURL.path(percentEncoded: false)
+          let resourceValues = try? worktreeURL.resourceValues(forKeys: [
+            .creationDateKey, .contentModificationDateKey,
+          ])
+          let createdAt = resourceValues?.creationDate ?? resourceValues?.contentModificationDate
+          continuation.yield(
+            .completed(
+              GitWorktreeCreationResult(
+                worktree: Worktree(
+                  id: id,
+                  name: name,
+                  detail: detail,
+                  workingDirectory: worktreeURL,
+                  repositoryRootURL: repositoryRootURL,
+                  createdAt: createdAt
+                ),
+                copyProgressReport: copyProgressReport
+              )
+            )
+          )
+          continuation.finish()
+        } catch {
+          continuation.finish(throwing: error)
         }
-        let report = parseCopyProgressLine(trimmedLine) ?? trimmedLine
-        copyProgressReport = report
-        await progress(report)
       }
-    )
-    let pathLine = output.stdout.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
-    if pathLine.isEmpty {
-      let command = ([wtURL.lastPathComponent] + arguments).joined(separator: " ")
-      throw GitClientError.commandFailed(command: command, message: "Empty output")
     }
-    let worktreeURL = URL(fileURLWithPath: pathLine).standardizedFileURL
-    let detail = Self.relativePath(from: repositoryRootURL, to: worktreeURL)
-    let id = worktreeURL.path(percentEncoded: false)
-    let resourceValues = try? worktreeURL.resourceValues(forKeys: [
-      .creationDateKey, .contentModificationDateKey,
-    ])
-    let createdAt = resourceValues?.creationDate ?? resourceValues?.contentModificationDate
-    return GitWorktreeCreationResult(
-      worktree: Worktree(
-        id: id,
-        name: name,
-        detail: detail,
-        workingDirectory: worktreeURL,
-        repositoryRootURL: repositoryRootURL,
-        createdAt: createdAt
-      ),
-      copyProgressReport: copyProgressReport
-    )
   }
 
   nonisolated func renameBranch(in worktreeURL: URL, to branchName: String) async throws {
@@ -581,19 +618,24 @@ struct GitClient {
     operation: GitOperation,
     executableURL: URL,
     arguments: [String],
-    currentDirectoryURL: URL?,
-    onStderrLine: @MainActor @Sendable (String) async -> Void = { _ in }
-  ) async throws -> ShellOutput {
+    currentDirectoryURL: URL?
+  ) -> AsyncThrowingStream<ShellProcessEvent, Error> {
     let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
-    do {
-      return try await shell.runLogin(
-        executableURL,
-        arguments,
-        currentDirectoryURL,
-        onStderrLine: onStderrLine
-      )
-    } catch {
-      throw wrapShellError(error, operation: operation, command: command)
+    return AsyncThrowingStream { continuation in
+      Task.detached {
+        do {
+          for try await event in shell.runLoginStream(
+            executableURL,
+            arguments,
+            currentDirectoryURL
+          ) {
+            continuation.yield(event)
+          }
+          continuation.finish()
+        } catch {
+          continuation.finish(throwing: wrapShellError(error, operation: operation, command: command))
+        }
+      }
     }
   }
 

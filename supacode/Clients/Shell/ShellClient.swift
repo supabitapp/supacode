@@ -2,6 +2,12 @@ import ComposableArchitecture
 import Darwin
 import Foundation
 
+enum ShellProcessEvent: Sendable {
+  case stdoutLine(String)
+  case stderrLine(String)
+  case completed(ShellOutput)
+}
+
 nonisolated struct ShellClient {
   var run: @Sendable (URL, [String], URL?) async throws -> ShellOutput
   var runLoginImpl: @Sendable (URL, [String], URL?, Bool) async throws -> ShellOutput
@@ -12,16 +18,25 @@ nonisolated struct ShellClient {
     _ currentDirectoryURL: URL?,
     log: Bool = true
   ) async throws -> ShellOutput {
-    try await runLoginImpl(executableURL, arguments, currentDirectoryURL, log)
+    var output: ShellOutput?
+    for try await event in runLoginStream(executableURL, arguments, currentDirectoryURL, log: log) {
+      if case let .completed(shellOutput) = event {
+        output = shellOutput
+      }
+    }
+    guard let output else {
+      let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
+      throw ShellClientError(command: command, stdout: "", stderr: "", exitCode: -1)
+    }
+    return output
   }
 
-  func runLogin(
+  func runLoginStream(
     _ executableURL: URL,
     _ arguments: [String],
     _ currentDirectoryURL: URL?,
-    log: Bool = true,
-    onStderrLine: @escaping @Sendable @MainActor (String) async -> Void
-  ) async throws -> ShellOutput {
+    log: Bool = true
+  ) -> AsyncThrowingStream<ShellProcessEvent, Error> {
     let shellURL = URL(fileURLWithPath: defaultShellPath())
     let execCommand = shellExecCommand(for: shellURL)
     let shellArguments =
@@ -31,11 +46,10 @@ nonisolated struct ShellClient {
       let cmd = shellArguments.joined(separator: " ")
       shellLogger.debug("runLogin cwd=\(cwd) cmd=\(shellURL.path) \(cmd)")
     }
-    return try await runProcess(
+    return runProcessStream(
       executableURL: shellURL,
       arguments: shellArguments,
-      currentDirectoryURL: currentDirectoryURL,
-      onStderrLine: onStderrLine
+      currentDirectoryURL: currentDirectoryURL
     )
   }
 }
@@ -86,39 +100,67 @@ private nonisolated let shellLogger = SupaLogger("Shell")
 nonisolated private func runProcess(
   executableURL: URL,
   arguments: [String],
-  currentDirectoryURL: URL?,
-  onStderrLine: (@MainActor (String) async -> Void)? = nil
+  currentDirectoryURL: URL?
 ) async throws -> ShellOutput {
-  try await Task.detached {
-    let process = Process()
-    process.executableURL = executableURL
-    process.arguments = arguments
-    process.currentDirectoryURL = currentDirectoryURL
-    let outputPipe = Pipe()
-    let errorPipe = Pipe()
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = outputPipe
-    process.standardError = errorPipe
-    let outputHandle = outputPipe.fileHandleForReading
-    let errorHandle = errorPipe.fileHandleForReading
+  let stream = runProcessStream(
+    executableURL: executableURL,
+    arguments: arguments,
+    currentDirectoryURL: currentDirectoryURL
+  )
+  var output: ShellOutput?
+  for try await event in stream {
+    switch event {
+    case .stdoutLine:
+      break
+    case .stderrLine:
+      break
+    case .completed(let shellOutput):
+      output = shellOutput
+    }
+  }
+  guard let output else {
+    let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
+    throw ShellClientError(command: command, stdout: "", stderr: "", exitCode: -1)
+  }
+  return output
+}
 
-    if let onStderrLine {
-      let stderrTask = Task.detached {
-        var stderr = ""
-        for await line in errorHandle.bytes.lines {
-          stderr.append(contentsOf: line)
-          stderr.append("\n")
-          await onStderrLine(line)
-        }
-        return stderr.trimmingCharacters(in: .newlines)
-      }
+nonisolated private func runProcessStream(
+  executableURL: URL,
+  arguments: [String],
+  currentDirectoryURL: URL?
+) -> AsyncThrowingStream<ShellProcessEvent, Error> {
+  AsyncThrowingStream { continuation in
+    Task.detached {
+      let process = Process()
+      process.executableURL = executableURL
+      process.arguments = arguments
+      process.currentDirectoryURL = currentDirectoryURL
+      let outputPipe = Pipe()
+      let errorPipe = Pipe()
+      process.standardInput = FileHandle.nullDevice
+      process.standardOutput = outputPipe
+      process.standardError = errorPipe
+      let outputHandle = outputPipe.fileHandleForReading
+      let errorHandle = errorPipe.fileHandleForReading
+
       let stdoutTask = Task.detached {
         var stdout = ""
         for await line in outputHandle.bytes.lines {
+          continuation.yield(.stdoutLine(line))
           stdout.append(contentsOf: line)
           stdout.append("\n")
         }
         return stdout.trimmingCharacters(in: .newlines)
+      }
+      let stderrTask = Task.detached {
+        var stderr = ""
+        for await line in errorHandle.bytes.lines {
+          continuation.yield(.stderrLine(line))
+          stderr.append(contentsOf: line)
+          stderr.append("\n")
+        }
+        return stderr.trimmingCharacters(in: .newlines)
       }
       do {
         try process.run()
@@ -130,42 +172,31 @@ nonisolated private func runProcess(
           let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
           let stdoutTrimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
           let stderrTrimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-          throw ShellClientError(
-            command: command,
-            stdout: stdoutTrimmed,
-            stderr: stderrTrimmed,
-            exitCode: exitCode
+          continuation.finish(
+            throwing: ShellClientError(
+              command: command,
+              stdout: stdoutTrimmed,
+              stderr: stderrTrimmed,
+              exitCode: exitCode
+            )
           )
+          return
         }
-        return ShellOutput(
-          stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
-          stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
-          exitCode: exitCode
+        continuation.yield(
+          .completed(
+            ShellOutput(
+              stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+              stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+              exitCode: exitCode
+            )
+          )
         )
+        continuation.finish()
       } catch {
-        stderrTask.cancel()
-        stdoutTask.cancel()
-        throw error
+        continuation.finish(throwing: error)
       }
     }
-
-    try process.run()
-    process.waitUntilExit()
-    let stdoutTask = Task.detached { outputHandle.readDataToEndOfFile() }
-    let stderrTask = Task.detached { errorHandle.readDataToEndOfFile() }
-    let outputData = await stdoutTask.value
-    let errorData = await stderrTask.value
-    let stdout = (String(bytes: outputData, encoding: .utf8) ?? "")
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    let stderr = (String(bytes: errorData, encoding: .utf8) ?? "")
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    let exitCode = process.terminationStatus
-    if exitCode != 0 {
-      let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
-      throw ShellClientError(command: command, stdout: stdout, stderr: stderr, exitCode: exitCode)
-    }
-    return ShellOutput(stdout: stdout, stderr: stderr, exitCode: exitCode)
-  }.value
+  }
 }
 
 nonisolated private func shellExecCommand(for shellURL: URL) -> String {
