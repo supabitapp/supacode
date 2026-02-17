@@ -142,7 +142,9 @@ nonisolated private func runProcessStream(
       process.standardOutput = outputPipe
       process.standardError = errorPipe
       let outputHandle = outputPipe.fileHandleForReading
+      let outputWriteHandle = outputPipe.fileHandleForWriting
       let errorHandle = errorPipe.fileHandleForReading
+      let errorWriteHandle = errorPipe.fileHandleForWriting
 
       let stdoutTask = Task.detached {
         var stdout = ""
@@ -172,6 +174,9 @@ nonisolated private func runProcessStream(
       }
       do {
         try process.run()
+        // Close parent write-ends after launch so read-side EOF is driven by child process termination.
+        outputWriteHandle.closeFile()
+        errorWriteHandle.closeFile()
         process.waitUntilExit()
         let stdout = await stdoutTask.value
         let stderr = await stderrTask.value
@@ -201,6 +206,8 @@ nonisolated private func runProcessStream(
         )
         continuation.finish()
       } catch {
+        outputWriteHandle.closeFile()
+        errorWriteHandle.closeFile()
         continuation.finish(throwing: error)
       }
     }
