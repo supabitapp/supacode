@@ -146,19 +146,27 @@ nonisolated private func runProcessStream(
 
       let stdoutTask = Task.detached {
         var stdout = ""
-        for await line in outputHandle.bytes.lines {
-          continuation.yield(.stdoutLine(line))
-          stdout.append(contentsOf: line)
-          stdout.append("\n")
+        do {
+          for try await line in outputHandle.bytes.lines {
+            continuation.yield(.stdoutLine(line))
+            stdout.append(contentsOf: line)
+            stdout.append("\n")
+          }
+        } catch {
+          return stdout.trimmingCharacters(in: .newlines)
         }
         return stdout.trimmingCharacters(in: .newlines)
       }
       let stderrTask = Task.detached {
         var stderr = ""
-        for await line in errorHandle.bytes.lines {
-          continuation.yield(.stderrLine(line))
-          stderr.append(contentsOf: line)
-          stderr.append("\n")
+        do {
+          for try await line in errorHandle.bytes.lines {
+            continuation.yield(.stderrLine(line))
+            stderr.append(contentsOf: line)
+            stderr.append("\n")
+          }
+        } catch {
+          return stderr.trimmingCharacters(in: .newlines)
         }
         return stderr.trimmingCharacters(in: .newlines)
       }

@@ -234,7 +234,6 @@ struct GitClient {
     baseRef: String
   ) -> AsyncThrowingStream<GitWorktreeCreationEvent, Error> {
     let repositoryRootURL = repoRoot.standardizedFileURL
-    let wtURL = try wtScriptURL()
     let baseDir = SupacodePaths.repositoryDirectory(for: repositoryRootURL)
     var arguments = ["--base-dir", baseDir.path(percentEncoded: false), "sw"]
     if copyIgnored {
@@ -255,6 +254,7 @@ struct GitClient {
     return AsyncThrowingStream { continuation in
       Task.detached {
         do {
+          let wtURL = try wtScriptURL()
           var output: ShellOutput?
           do {
             for try await event in runLoginShellProcessOutput(
