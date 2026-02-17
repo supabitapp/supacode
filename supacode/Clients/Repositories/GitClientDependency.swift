@@ -18,8 +18,7 @@ struct GitClientDependency {
       _ copyIgnored: Bool,
       _ copyUntracked: Bool,
       _ baseRef: String
-    ) async throws
-      -> Worktree
+    ) async throws -> GitWorktreeCreationResult
   var removeWorktree: @Sendable (_ worktree: Worktree, _ deleteBranch: Bool) async throws -> URL
   var isBareRepository: @Sendable (_ repoRoot: URL) async throws -> Bool
   var branchName: @Sendable (URL) async -> String?

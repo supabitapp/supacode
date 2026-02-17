@@ -34,6 +34,11 @@ enum GitClientError: LocalizedError {
   }
 }
 
+nonisolated struct GitWorktreeCreationResult: Hashable, Sendable {
+  let worktree: Worktree
+  let copyProgressReport: String?
+}
+
 struct GitClient {
   private struct WorktreeSortEntry {
     let worktree: Worktree
@@ -222,7 +227,7 @@ struct GitClient {
     copyIgnored: Bool,
     copyUntracked: Bool,
     baseRef: String
-  ) async throws -> Worktree {
+  ) async throws -> GitWorktreeCreationResult {
     let repositoryRootURL = repoRoot.standardizedFileURL
     let wtURL = try wtScriptURL()
     let baseDir = SupacodePaths.repositoryDirectory(for: repositoryRootURL)
@@ -233,22 +238,29 @@ struct GitClient {
     if copyUntracked {
       arguments.append("--copy-untracked")
     }
+    if copyIgnored || copyUntracked {
+      arguments.append("--verbose")
+    }
     if !baseRef.isEmpty {
       arguments.append("--from")
       arguments.append(baseRef)
     }
     arguments.append(name)
-    let output = try await runLoginShellProcess(
+    let output = try await runLoginShellProcessOutput(
       operation: .worktreeCreate,
       executableURL: wtURL,
       arguments: arguments,
       currentDirectoryURL: repoRoot
     )
-    let pathLine = output.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
+    let pathLine = output.stdout.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
     if pathLine.isEmpty {
       let command = ([wtURL.lastPathComponent] + arguments).joined(separator: " ")
       throw GitClientError.commandFailed(command: command, message: "Empty output")
     }
+    let copyProgressReport =
+      copyIgnored || copyUntracked
+      ? parseCopyProgressReport(from: output.stderr)
+      : nil
     let worktreeURL = URL(fileURLWithPath: pathLine).standardizedFileURL
     let detail = Self.relativePath(from: repositoryRootURL, to: worktreeURL)
     let id = worktreeURL.path(percentEncoded: false)
@@ -256,13 +268,16 @@ struct GitClient {
       .creationDateKey, .contentModificationDateKey,
     ])
     let createdAt = resourceValues?.creationDate ?? resourceValues?.contentModificationDate
-    return Worktree(
-      id: id,
-      name: name,
-      detail: detail,
-      workingDirectory: worktreeURL,
-      repositoryRootURL: repositoryRootURL,
-      createdAt: createdAt
+    return GitWorktreeCreationResult(
+      worktree: Worktree(
+        id: id,
+        name: name,
+        detail: detail,
+        workingDirectory: worktreeURL,
+        repositoryRootURL: repositoryRootURL,
+        createdAt: createdAt
+      ),
+      copyProgressReport: copyProgressReport
     )
   }
 
@@ -553,6 +568,56 @@ struct GitClient {
     } catch {
       throw wrapShellError(error, operation: operation, command: command)
     }
+  }
+
+  nonisolated private func runLoginShellProcessOutput(
+    operation: GitOperation,
+    executableURL: URL,
+    arguments: [String],
+    currentDirectoryURL: URL?
+  ) async throws -> ShellOutput {
+    let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
+    do {
+      return try await shell.runLogin(executableURL, arguments, currentDirectoryURL)
+    } catch {
+      throw wrapShellError(error, operation: operation, command: command)
+    }
+  }
+
+  nonisolated private func parseCopyProgressReport(from output: String) -> String? {
+    for line in output.split(whereSeparator: \.isNewline).reversed() {
+      if let parsed = parseCopyProgressLine(String(line)) {
+        return parsed
+      }
+    }
+    return nil
+  }
+
+  nonisolated private func parseCopyProgressLine(_ line: String) -> String? {
+    let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmedLine.hasPrefix("[") else { return nil }
+    guard let closeBracket = trimmedLine.firstIndex(of: "]") else { return nil }
+    let rawCounter = String(trimmedLine[trimmedLine.index(after: trimmedLine.startIndex)..<closeBracket])
+    let counterParts = rawCounter.split(separator: "/")
+    guard counterParts.count == 2,
+      Int(counterParts[0]) != nil,
+      Int(counterParts[1]) != nil
+    else {
+      return nil
+    }
+    let remainder = trimmedLine[trimmedLine.index(after: closeBracket)...]
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let fileStartIndex: String.Index
+    if remainder.hasPrefix("copy ") {
+      fileStartIndex = remainder.index(remainder.startIndex, offsetBy: 5)
+    } else if remainder.hasPrefix("would copy ") {
+      fileStartIndex = remainder.index(remainder.startIndex, offsetBy: 11)
+    } else {
+      return nil
+    }
+    let fileName = String(remainder[fileStartIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !fileName.isEmpty else { return nil }
+    return "\(rawCounter) \(fileName)"
   }
 
   nonisolated private static func relativePath(from base: URL, to target: URL) -> String {

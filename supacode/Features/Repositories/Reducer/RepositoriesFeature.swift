@@ -619,13 +619,23 @@ struct RepositoriesFeature {
                 progress: progress
               )
             )
-            let newWorktree = try await gitClient.createWorktree(
+            let creationResult = try await gitClient.createWorktree(
               name,
               repository.rootURL,
               copyIgnored,
               copyUntracked,
               resolvedBaseRef
             )
+            if let copyProgressReport = creationResult.copyProgressReport {
+              progress.copyProgressReport = copyProgressReport
+              await send(
+                .pendingWorktreeProgressUpdated(
+                  id: pendingID,
+                  progress: progress
+                )
+              )
+            }
+            let newWorktree = creationResult.worktree
             await send(
               .createRandomWorktreeSucceeded(
                 newWorktree,

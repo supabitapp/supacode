@@ -4,6 +4,7 @@ nonisolated struct WorktreeCreationProgress: Hashable, Sendable {
   var baseRef: String?
   var copyIgnored: Bool?
   var copyUntracked: Bool?
+  var copyProgressReport: String?
   var ignoredFilesToCopyCount: Int?
   var untrackedFilesToCopyCount: Int?
 
@@ -13,6 +14,7 @@ nonisolated struct WorktreeCreationProgress: Hashable, Sendable {
     baseRef: String? = nil,
     copyIgnored: Bool? = nil,
     copyUntracked: Bool? = nil,
+    copyProgressReport: String? = nil,
     ignoredFilesToCopyCount: Int? = nil,
     untrackedFilesToCopyCount: Int? = nil
   ) {
@@ -21,6 +23,7 @@ nonisolated struct WorktreeCreationProgress: Hashable, Sendable {
     self.baseRef = baseRef
     self.copyIgnored = copyIgnored
     self.copyUntracked = copyUntracked
+    self.copyProgressReport = copyProgressReport
     self.ignoredFilesToCopyCount = ignoredFilesToCopyCount
     self.untrackedFilesToCopyCount = untrackedFilesToCopyCount
   }
@@ -52,11 +55,23 @@ nonisolated struct WorktreeCreationProgress: Hashable, Sendable {
         let untrackedCount = untrackedFilesToCopyCount ?? 0
         copyDetails.append("copying \(untrackedCount) untracked files")
       }
+      let baseText =
+        if let copyProgressReport, !copyProgressReport.isEmpty {
+          " Latest copy: \(copyProgressReport)"
+        } else {
+          ""
+        }
       let copySummary = copyDetails.joined(separator: " and ")
-      return if copySummary.isEmpty {
-        "Creating from \(baseRefBranchDisplay)."
+      let summary =
+        if copySummary.isEmpty {
+          "Creating from \(baseRefBranchDisplay)."
+        } else {
+          "Creating from \(baseRefBranchDisplay). \(copySummary)"
+        }
+      return if baseText.isEmpty {
+        summary
       } else {
-        "Creating from \(baseRefBranchDisplay). \(copySummary)"
+        "\(summary)\(baseText)"
       }
     }
   }
