@@ -17,7 +17,8 @@ struct GitClientDependency {
       _ repoRoot: URL,
       _ copyIgnored: Bool,
       _ copyUntracked: Bool,
-      _ baseRef: String
+      _ baseRef: String,
+      _ progress: @MainActor @Sendable (String) async -> Void
     ) async throws -> GitWorktreeCreationResult
   var removeWorktree: @Sendable (_ worktree: Worktree, _ deleteBranch: Bool) async throws -> URL
   var isBareRepository: @Sendable (_ repoRoot: URL) async throws -> Bool
@@ -38,13 +39,14 @@ extension GitClientDependency: DependencyKey {
     automaticWorktreeBaseRef: { await GitClient().automaticWorktreeBaseRef(for: $0) },
     ignoredFileCount: { try await GitClient().ignoredFileCount(for: $0) },
     untrackedFileCount: { try await GitClient().untrackedFileCount(for: $0) },
-    createWorktree: { name, repoRoot, copyIgnored, copyUntracked, baseRef in
+    createWorktree: { name, repoRoot, copyIgnored, copyUntracked, baseRef, progress in
       try await GitClient().createWorktree(
         named: name,
         in: repoRoot,
         copyIgnored: copyIgnored,
         copyUntracked: copyUntracked,
-        baseRef: baseRef
+        baseRef: baseRef,
+        progress: progress
       )
     },
     removeWorktree: { worktree, deleteBranch in

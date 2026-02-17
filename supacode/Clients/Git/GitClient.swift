@@ -226,7 +226,8 @@ struct GitClient {
     in repoRoot: URL,
     copyIgnored: Bool,
     copyUntracked: Bool,
-    baseRef: String
+    baseRef: String,
+    progress: @MainActor @Sendable (String) async -> Void = { _ in }
   ) async throws -> GitWorktreeCreationResult {
     let repositoryRootURL = repoRoot.standardizedFileURL
     let wtURL = try wtScriptURL()
@@ -246,21 +247,27 @@ struct GitClient {
       arguments.append(baseRef)
     }
     arguments.append(name)
+    var copyProgressReport: String?
     let output = try await runLoginShellProcessOutput(
       operation: .worktreeCreate,
       executableURL: wtURL,
       arguments: arguments,
-      currentDirectoryURL: repoRoot
+      currentDirectoryURL: repoRoot,
+      onStderrLine: { line in
+        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedLine.isEmpty {
+          return
+        }
+        let report = parseCopyProgressLine(trimmedLine) ?? trimmedLine
+        copyProgressReport = report
+        await progress(report)
+      }
     )
     let pathLine = output.stdout.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
     if pathLine.isEmpty {
       let command = ([wtURL.lastPathComponent] + arguments).joined(separator: " ")
       throw GitClientError.commandFailed(command: command, message: "Empty output")
     }
-    let copyProgressReport =
-      copyIgnored || copyUntracked
-      ? parseCopyProgressReport(from: output.stderr)
-      : nil
     let worktreeURL = URL(fileURLWithPath: pathLine).standardizedFileURL
     let detail = Self.relativePath(from: repositoryRootURL, to: worktreeURL)
     let id = worktreeURL.path(percentEncoded: false)
@@ -574,23 +581,20 @@ struct GitClient {
     operation: GitOperation,
     executableURL: URL,
     arguments: [String],
-    currentDirectoryURL: URL?
+    currentDirectoryURL: URL?,
+    onStderrLine: @MainActor @Sendable (String) async -> Void = { _ in }
   ) async throws -> ShellOutput {
     let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
     do {
-      return try await shell.runLogin(executableURL, arguments, currentDirectoryURL)
+      return try await shell.runLogin(
+        executableURL,
+        arguments,
+        currentDirectoryURL,
+        onStderrLine: onStderrLine
+      )
     } catch {
       throw wrapShellError(error, operation: operation, command: command)
     }
-  }
-
-  nonisolated private func parseCopyProgressReport(from output: String) -> String? {
-    for line in output.split(whereSeparator: \.isNewline).reversed() {
-      if let parsed = parseCopyProgressLine(String(line)) {
-        return parsed
-      }
-    }
-    return nil
   }
 
   nonisolated private func parseCopyProgressLine(_ line: String) -> String? {

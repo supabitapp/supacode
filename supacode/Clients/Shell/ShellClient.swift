@@ -14,6 +14,30 @@ nonisolated struct ShellClient {
   ) async throws -> ShellOutput {
     try await runLoginImpl(executableURL, arguments, currentDirectoryURL, log)
   }
+
+  func runLogin(
+    _ executableURL: URL,
+    _ arguments: [String],
+    _ currentDirectoryURL: URL?,
+    log: Bool = true,
+    onStderrLine: @escaping @Sendable @MainActor (String) async -> Void
+  ) async throws -> ShellOutput {
+    let shellURL = URL(fileURLWithPath: defaultShellPath())
+    let execCommand = shellExecCommand(for: shellURL)
+    let shellArguments =
+      ["-l", "-c", execCommand, "--", executableURL.path(percentEncoded: false)] + arguments
+    if log {
+      let cwd = currentDirectoryURL?.path(percentEncoded: false) ?? "nil"
+      let cmd = shellArguments.joined(separator: " ")
+      shellLogger.debug("runLogin cwd=\(cwd) cmd=\(shellURL.path) \(cmd)")
+    }
+    return try await runProcess(
+      executableURL: shellURL,
+      arguments: shellArguments,
+      currentDirectoryURL: currentDirectoryURL,
+      onStderrLine: onStderrLine
+    )
+  }
 }
 
 extension ShellClient: DependencyKey {
@@ -62,7 +86,8 @@ private nonisolated let shellLogger = SupaLogger("Shell")
 nonisolated private func runProcess(
   executableURL: URL,
   arguments: [String],
-  currentDirectoryURL: URL?
+  currentDirectoryURL: URL?,
+  onStderrLine: (@MainActor (String) async -> Void)? = nil
 ) async throws -> ShellOutput {
   try await Task.detached {
     let process = Process()
@@ -76,10 +101,58 @@ nonisolated private func runProcess(
     process.standardError = errorPipe
     let outputHandle = outputPipe.fileHandleForReading
     let errorHandle = errorPipe.fileHandleForReading
+
+    if let onStderrLine {
+      let stderrTask = Task.detached {
+        var stderr = ""
+        for await line in errorHandle.bytes.lines {
+          stderr.append(contentsOf: line)
+          stderr.append("\n")
+          await onStderrLine(line)
+        }
+        return stderr.trimmingCharacters(in: .newlines)
+      }
+      let stdoutTask = Task.detached {
+        var stdout = ""
+        for await line in outputHandle.bytes.lines {
+          stdout.append(contentsOf: line)
+          stdout.append("\n")
+        }
+        return stdout.trimmingCharacters(in: .newlines)
+      }
+      do {
+        try process.run()
+        process.waitUntilExit()
+        let stdout = await stdoutTask.value
+        let stderr = await stderrTask.value
+        let exitCode = process.terminationStatus
+        if exitCode != 0 {
+          let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
+          let stdoutTrimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+          let stderrTrimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+          throw ShellClientError(
+            command: command,
+            stdout: stdoutTrimmed,
+            stderr: stderrTrimmed,
+            exitCode: exitCode
+          )
+        }
+        return ShellOutput(
+          stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+          stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+          exitCode: exitCode
+        )
+      } catch {
+        stderrTask.cancel()
+        stdoutTask.cancel()
+        throw error
+      }
+    }
+
     try process.run()
+    process.waitUntilExit()
     let stdoutTask = Task.detached { outputHandle.readDataToEndOfFile() }
     let stderrTask = Task.detached { errorHandle.readDataToEndOfFile() }
-    process.waitUntilExit()
     let outputData = await stdoutTask.value
     let errorData = await stderrTask.value
     let stdout = (String(bytes: outputData, encoding: .utf8) ?? "")

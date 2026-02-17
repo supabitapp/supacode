@@ -624,17 +624,17 @@ struct RepositoriesFeature {
               repository.rootURL,
               copyIgnored,
               copyUntracked,
-              resolvedBaseRef
-            )
-            if let copyProgressReport = creationResult.copyProgressReport {
-              progress.copyProgressReport = copyProgressReport
-              await send(
-                .pendingWorktreeProgressUpdated(
-                  id: pendingID,
-                  progress: progress
+              resolvedBaseRef,
+              { copyProgress in
+                progress.copyProgressReport = copyProgress
+                await send(
+                  .pendingWorktreeProgressUpdated(
+                    id: pendingID,
+                    progress: progress
+                  )
                 )
-              )
-            }
+              }
+            )
             let newWorktree = creationResult.worktree
             await send(
               .createRandomWorktreeSucceeded(
