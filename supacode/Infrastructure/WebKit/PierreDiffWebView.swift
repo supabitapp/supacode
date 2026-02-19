@@ -13,6 +13,7 @@ struct PierreDiffWebView: NSViewRepresentable {
     let configuration = WKWebViewConfiguration()
     configuration.defaultWebpagePreferences.allowsContentJavaScript = true
     let webView = WKWebView(frame: .zero, configuration: configuration)
+    webView.isInspectable = true
     webView.navigationDelegate = context.coordinator
     webView.setValue(false, forKey: "drawsBackground")
     context.coordinator.attach(webView)
