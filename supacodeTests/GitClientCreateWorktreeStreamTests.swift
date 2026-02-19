@@ -36,6 +36,35 @@ nonisolated final class GitShellInvocationRecorder: @unchecked Sendable {
 }
 
 struct GitClientCreateWorktreeStreamTests {
+  @Test func repoRootUsesExistingDirectoryEvenWhenURLLacksDirectoryHint() async throws {
+    let directoryPath = "/tmp/repo-root-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(atPath: directoryPath, withIntermediateDirectories: true)
+    defer {
+      try? FileManager.default.removeItem(atPath: directoryPath)
+    }
+
+    let recorder = GitShellInvocationRecorder()
+    let shell = ShellClient(
+      run: { _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },
+      runLoginImpl: { executableURL, arguments, currentDirectoryURL, _ in
+        recorder.record(
+          executableURL: executableURL,
+          arguments: arguments,
+          currentDirectoryURL: currentDirectoryURL
+        )
+        return ShellOutput(stdout: directoryPath, stderr: "", exitCode: 0)
+      }
+    )
+    let client = GitClient(shell: shell)
+    let repoURL = URL(string: "file://\(directoryPath)")!
+    #expect(!repoURL.hasDirectoryPath)
+
+    _ = try await client.repoRoot(for: repoURL)
+
+    let snapshot = recorder.snapshot()
+    #expect(snapshot.currentDirectoryURL?.path(percentEncoded: false) == directoryPath)
+  }
+
   @Test func createWorktreeStreamAddsVerboseWhenCopyingFiles() async throws {
     let recorder = GitShellInvocationRecorder()
     let shell = ShellClient(
