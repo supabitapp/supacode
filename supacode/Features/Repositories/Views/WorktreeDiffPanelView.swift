@@ -13,12 +13,23 @@ struct WorktreeDiffPanelView: View {
       } else {
         nil
       }
+    let hasPatch = patch?.isEmpty == false
     ZStack {
       PierreDiffWebView(
         patch: patch,
         theme: colorScheme == .dark ? .dark : .light
       )
-      if state.isLoading || !isSelectedWorktreeState {
+      if state.isLoading && hasPatch {
+        VStack {
+          HStack {
+            Spacer()
+            ProgressView()
+              .controlSize(.small)
+          }
+          Spacer()
+        }
+        .padding(8)
+      } else if state.isLoading || !isSelectedWorktreeState {
         ProgressView()
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if let errorMessage = state.errorMessage, isSelectedWorktreeState {
@@ -27,7 +38,7 @@ struct WorktreeDiffPanelView: View {
           systemImage: "exclamationmark.triangle",
           description: Text(errorMessage)
         )
-      } else {
+      } else if !hasPatch {
         ContentUnavailableView(
           "No Changes",
           systemImage: "checkmark.circle",
