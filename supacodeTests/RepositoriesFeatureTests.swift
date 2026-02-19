@@ -75,6 +75,76 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
 
+  @Test func refreshWorktreeDiffLoadsDiffPanel() async {
+    let worktree = makeWorktree(id: "/tmp/wt", name: "fox")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let patch = """
+      diff --git a/file.txt b/file.txt
+      index 0000000..1111111 100644
+      --- a/file.txt
+      +++ b/file.txt
+      @@ -0,0 +1 @@
+      +hello
+      """
+    let gate = LockIsolated<CheckedContinuation<Void, Never>?>(nil)
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(worktree.id)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.diffPatch = { _, _ in
+        await withCheckedContinuation { continuation in
+          gate.withValue { $0 = continuation }
+        }
+        return patch
+      }
+    }
+
+    await store.send(.refreshWorktreeDiff(worktreeID: worktree.id, debounce: false)) {
+      $0.worktreeDiffPanel.worktreeID = worktree.id
+      $0.worktreeDiffPanel.isLoading = true
+    }
+    while gate.withValue({ $0 == nil }) {
+      await Task.yield()
+    }
+    gate.withValue {
+      $0?.resume()
+      $0 = nil
+    }
+    await store.receive(\.worktreeDiffLoaded) {
+      $0.worktreeDiffPanel.worktreeID = worktree.id
+      $0.worktreeDiffPanel.patch = patch
+      $0.worktreeDiffPanel.isLoading = false
+      $0.worktreeDiffPanel.errorMessage = nil
+    }
+
+    #expect(store.state.worktreeDiffPanel.worktreeID == worktree.id)
+    #expect(store.state.worktreeDiffPanel.patch == patch)
+    #expect(store.state.worktreeDiffPanel.isLoading == false)
+    #expect(store.state.worktreeDiffPanel.errorMessage == nil)
+  }
+
+  @Test func worktreeDiffLoadedIgnoresNonSelectedWorktree() async {
+    let selectedWorktree = makeWorktree(id: "/tmp/wt/selected", name: "selected")
+    let otherWorktree = makeWorktree(id: "/tmp/wt/other", name: "other")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [selectedWorktree, otherWorktree])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(selectedWorktree.id)
+    state.worktreeDiffPanel = RepositoriesFeature.WorktreeDiffPanelState(
+      worktreeID: selectedWorktree.id,
+      patch: "selected patch",
+      isLoading: false,
+      errorMessage: nil,
+    )
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.worktreeDiffLoaded(worktreeID: otherWorktree.id, patch: "other patch"))
+    #expect(store.state.worktreeDiffPanel.worktreeID == selectedWorktree.id)
+    #expect(store.state.worktreeDiffPanel.patch == "selected patch")
+  }
+
   @Test func createRandomWorktreeWithoutRepositoriesShowsAlert() async {
     let store = TestStore(initialState: RepositoriesFeature.State()) {
       RepositoriesFeature()

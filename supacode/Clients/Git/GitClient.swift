@@ -17,6 +17,7 @@ enum GitOperation: String {
   case branchRename = "branch_rename"
   case branchDelete = "branch_delete"
   case lineChanges = "line_changes"
+  case diffPatch = "diff_patch"
   case remoteInfo = "remote_info"
 }
 
@@ -419,6 +420,21 @@ struct GitClient {
     } catch {
       return nil
     }
+  }
+
+  nonisolated func diffPatch(at worktreeURL: URL, baseRef: String = "HEAD") async throws -> String {
+    let path = worktreeURL.path(percentEncoded: false)
+    return try await runGit(
+      operation: .diffPatch,
+      arguments: [
+        "-C",
+        path,
+        "diff",
+        baseRef,
+        "--patch",
+        "--no-color",
+      ]
+    )
   }
 
   nonisolated private func isWorktreeIndexLocked(_ worktreeURL: URL) async -> Bool {

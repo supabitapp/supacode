@@ -32,6 +32,7 @@ struct GitClientDependency: Sendable {
   var isBareRepository: @Sendable (_ repoRoot: URL) async throws -> Bool
   var branchName: @Sendable (URL) async -> String?
   var lineChanges: @Sendable (URL) async -> (added: Int, removed: Int)?
+  var diffPatch: @Sendable (_ worktreeURL: URL, _ baseRef: String) async throws -> String
   var renameBranch: @Sendable (_ worktreeURL: URL, _ branchName: String) async throws -> Void
   var remoteInfo: @Sendable (_ repositoryRoot: URL) async -> GithubRemoteInfo?
 }
@@ -73,6 +74,9 @@ extension GitClientDependency: DependencyKey {
     },
     branchName: { await GitClient().branchName(for: $0) },
     lineChanges: { await GitClient().lineChanges(at: $0) },
+    diffPatch: { worktreeURL, baseRef in
+      try await GitClient().diffPatch(at: worktreeURL, baseRef: baseRef)
+    },
     renameBranch: { worktreeURL, branchName in
       try await GitClient().renameBranch(in: worktreeURL, to: branchName)
     },

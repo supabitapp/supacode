@@ -10,6 +10,7 @@ private enum CancelID {
   static let toastAutoDismiss = "repositories.toastAutoDismiss"
   static let githubIntegrationAvailability = "repositories.githubIntegrationAvailability"
   static let githubIntegrationRecovery = "repositories.githubIntegrationRecovery"
+  static let worktreeDiffRefresh = "repositories.worktreeDiffRefresh"
   static func delayedPRRefresh(_ worktreeID: Worktree.ID) -> String {
     "repositories.delayedPRRefresh.\(worktreeID)"
   }
@@ -18,6 +19,7 @@ private enum CancelID {
 private nonisolated let githubIntegrationRecoveryInterval: Duration = .seconds(15)
 private nonisolated let worktreeCreationProgressLineLimit = 200
 private nonisolated let worktreeCreationProgressUpdateStride = 20
+private nonisolated let worktreeDiffRefreshDebounceDuration: Duration = .milliseconds(350)
 
 nonisolated struct WorktreeCreationProgressUpdateThrottle {
   private let stride: Int
@@ -64,6 +66,7 @@ struct RepositoriesFeature {
     var worktreeInfoByID: [Worktree.ID: WorktreeInfoEntry] = [:]
     var worktreeOrderByRepository: [Repository.ID: [Worktree.ID]] = [:]
     var isOpenPanelPresented = false
+    var worktreeDiffPanel = WorktreeDiffPanelState()
     var isInitialLoadComplete = false
     var pendingWorktrees: [PendingWorktree] = []
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
@@ -96,6 +99,13 @@ struct RepositoriesFeature {
   struct PendingPullRequestRefresh: Equatable {
     var repositoryRootURL: URL
     var worktreeIDs: [Worktree.ID]
+  }
+
+  struct WorktreeDiffPanelState: Equatable {
+    var worktreeID: Worktree.ID?
+    var patch: String?
+    var isLoading = false
+    var errorMessage: String?
   }
 
   enum Action {
@@ -166,6 +176,9 @@ struct RepositoriesFeature {
     case worktreeNotificationReceived(Worktree.ID)
     case worktreeBranchNameLoaded(worktreeID: Worktree.ID, name: String)
     case worktreeLineChangesLoaded(worktreeID: Worktree.ID, added: Int, removed: Int)
+    case refreshWorktreeDiff(worktreeID: Worktree.ID, debounce: Bool)
+    case worktreeDiffLoaded(worktreeID: Worktree.ID, patch: String)
+    case worktreeDiffFailed(worktreeID: Worktree.ID, message: String)
     case refreshGithubIntegrationAvailability
     case githubIntegrationAvailabilityUpdated(Bool)
     case repositoryPullRequestRefreshCompleted(Repository.ID)
@@ -1469,17 +1482,23 @@ struct RepositoriesFeature {
           }
           let worktreeURL = worktree.workingDirectory
           let gitClient = gitClient
-          return .run { send in
-            if let changes = await gitClient.lineChanges(worktreeURL) {
-              await send(
-                .worktreeLineChangesLoaded(
-                  worktreeID: worktreeID,
-                  added: changes.added,
-                  removed: changes.removed
+          var effects: [Effect<Action>] = [
+            .run { send in
+              if let changes = await gitClient.lineChanges(worktreeURL) {
+                await send(
+                  .worktreeLineChangesLoaded(
+                    worktreeID: worktreeID,
+                    added: changes.added,
+                    removed: changes.removed
+                  )
                 )
-              )
-            }
+              }
+            },
+          ]
+          if state.selectedWorktreeID == worktreeID {
+            effects.append(.send(.refreshWorktreeDiff(worktreeID: worktreeID, debounce: true)))
           }
+          return .merge(effects)
         case .repositoryPullRequestRefresh(let repositoryRootURL, let worktreeIDs):
           let worktrees = worktreeIDs.compactMap { state.worktree(for: $0) }
           guard let firstWorktree = worktrees.first,
@@ -1633,6 +1652,49 @@ struct RepositoriesFeature {
           removed: removed,
           state: &state
         )
+        return .none
+
+      case .refreshWorktreeDiff(let worktreeID, let debounce):
+        guard state.selectedWorktreeID == worktreeID,
+          let worktree = state.worktree(for: worktreeID)
+        else {
+          return .none
+        }
+        state.worktreeDiffPanel.worktreeID = worktreeID
+        state.worktreeDiffPanel.isLoading = true
+        state.worktreeDiffPanel.errorMessage = nil
+        let worktreeURL = worktree.workingDirectory
+        let gitClient = gitClient
+        return .run { send in
+          if debounce {
+            try? await ContinuousClock().sleep(for: worktreeDiffRefreshDebounceDuration)
+          }
+          do {
+            let patch = try await gitClient.diffPatch(worktreeURL, "HEAD")
+            await send(.worktreeDiffLoaded(worktreeID: worktreeID, patch: patch))
+          } catch {
+            await send(.worktreeDiffFailed(worktreeID: worktreeID, message: error.localizedDescription))
+          }
+        }
+        .cancellable(id: CancelID.worktreeDiffRefresh, cancelInFlight: true)
+
+      case .worktreeDiffLoaded(let worktreeID, let patch):
+        guard state.selectedWorktreeID == worktreeID else {
+          return .none
+        }
+        state.worktreeDiffPanel.worktreeID = worktreeID
+        state.worktreeDiffPanel.patch = patch
+        state.worktreeDiffPanel.isLoading = false
+        state.worktreeDiffPanel.errorMessage = nil
+        return .none
+
+      case .worktreeDiffFailed(let worktreeID, let message):
+        guard state.selectedWorktreeID == worktreeID else {
+          return .none
+        }
+        state.worktreeDiffPanel.worktreeID = worktreeID
+        state.worktreeDiffPanel.isLoading = false
+        state.worktreeDiffPanel.errorMessage = message
         return .none
 
       case .repositoryPullRequestsLoaded(let repositoryID, let pullRequestsByWorktreeID):

@@ -1,11 +1,17 @@
 import AppKit
 import ComposableArchitecture
+import Sharing
 import SwiftUI
 
 struct WorktreeDetailView: View {
   @Bindable var store: StoreOf<AppFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @Shared(.appStorage("worktreeDiffPanelWidth")) private var worktreeDiffPanelWidth = 420.0
+  @Shared(.appStorage("worktreeDiffPanelIsVisible")) private var isWorktreeDiffPanelVisible = true
+  @State private var diffPanelDragStartWidth: Double?
+  private static let minDiffPanelWidth = 280.0
+  private static let maxDiffPanelWidth = 960.0
 
   var body: some View {
     detailBody(state: store.state)
@@ -24,38 +30,17 @@ struct WorktreeDetailView: View {
     let openActionSelection = state.openActionSelection
     let runScriptEnabled = hasActiveWorktree
     let runScriptIsRunning = selectedWorktree.flatMap { state.runScriptStatusByWorktreeID[$0.id] } == true
+    let isDiffPanelVisible = hasActiveWorktree && isWorktreeDiffPanelVisible
     let notificationGroups = repositories.toolbarNotificationGroups(terminalManager: terminalManager)
     let unseenNotificationWorktreeCount = notificationGroups.reduce(0) { count, repository in
       count + repository.unseenWorktreeCount
     }
-    let content = Group {
-      if repositories.isShowingArchivedWorktrees {
-        ArchivedWorktreesDetailView(
-          store: store.scope(state: \.repositories, action: \.repositories)
-        )
-      } else if let loadingInfo {
-        WorktreeLoadingView(info: loadingInfo)
-      } else if let selectedWorktree {
-        let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
-        let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-        WorktreeTerminalTabsView(
-          worktree: selectedWorktree,
-          manager: terminalManager,
-          shouldRunSetupScript: shouldRunSetupScript,
-          forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) }
-        )
-        .id(selectedWorktree.id)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-          if shouldFocusTerminal {
-            store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
-          }
-        }
-      } else {
-        EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
-      }
-    }
+    let content = detailContent(
+      repositories: repositories,
+      loadingInfo: loadingInfo,
+      selectedWorktree: selectedWorktree,
+      isDiffPanelVisible: isDiffPanelVisible
+    )
     .toolbar(removing: .title)
     .toolbar {
       if hasActiveWorktree, let selectedWorktree {
@@ -74,6 +59,7 @@ struct WorktreeDetailView: View {
           unseenNotificationWorktreeCount: unseenNotificationWorktreeCount,
           openActionSelection: openActionSelection,
           showExtras: commandKeyObserver.isPressed,
+          isDiffPanelVisible: isDiffPanelVisible,
           runScriptEnabled: runScriptEnabled,
           runScriptIsRunning: runScriptIsRunning
         )
@@ -94,6 +80,11 @@ struct WorktreeDetailView: View {
           },
           onSelectNotification: selectToolbarNotification,
           onDismissAllNotifications: { dismissAllToolbarNotifications(in: notificationGroups) },
+          onToggleDiffPanel: {
+            $isWorktreeDiffPanelVisible.withLock { value in
+              value.toggle()
+            }
+          },
           onRunScript: { store.send(.runScript) },
           onStopRunScript: { store.send(.stopRunScript) }
         )
@@ -105,6 +96,103 @@ struct WorktreeDetailView: View {
       runScriptIsRunning: runScriptIsRunning
     )
     return applyFocusedActions(content: content, actions: actions)
+  }
+
+  @ViewBuilder
+  private func detailContent(
+    repositories: RepositoriesFeature.State,
+    loadingInfo: WorktreeLoadingInfo?,
+    selectedWorktree: Worktree?,
+    isDiffPanelVisible: Bool
+  ) -> some View {
+    if repositories.isShowingArchivedWorktrees {
+      ArchivedWorktreesDetailView(
+        store: store.scope(state: \.repositories, action: \.repositories)
+      )
+    } else if let loadingInfo {
+      WorktreeLoadingView(info: loadingInfo)
+    } else if let selectedWorktree {
+      let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
+      let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
+      let terminalContent = WorktreeTerminalTabsView(
+        worktree: selectedWorktree,
+        manager: terminalManager,
+        shouldRunSetupScript: shouldRunSetupScript,
+        forceAutoFocus: shouldFocusTerminal,
+        createTab: { store.send(.newTerminal) }
+      )
+      .id(selectedWorktree.id)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .onAppear {
+        if shouldFocusTerminal {
+          store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
+        }
+      }
+      .task(id: "\(selectedWorktree.id)-\(isDiffPanelVisible)") {
+        guard isDiffPanelVisible else {
+          return
+        }
+        store.send(.repositories(.refreshWorktreeDiff(worktreeID: selectedWorktree.id, debounce: false)))
+      }
+      if isDiffPanelVisible {
+        HStack(spacing: 0) {
+          terminalContent
+          diffPanelResizeHandle
+          WorktreeDiffPanelView(
+            state: repositories.worktreeDiffPanel,
+            selectedWorktreeID: selectedWorktree.id
+          )
+          .frame(width: clampedWorktreeDiffPanelWidth)
+          .frame(maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        terminalContent
+      }
+    } else {
+      EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
+    }
+  }
+
+  private var clampedWorktreeDiffPanelWidth: CGFloat {
+    let clampedWidth = min(
+      Self.maxDiffPanelWidth,
+      max(Self.minDiffPanelWidth, worktreeDiffPanelWidth)
+    )
+    return CGFloat(clampedWidth)
+  }
+
+  private var diffPanelResizeHandle: some View {
+    ZStack {
+      Divider()
+      Color.clear
+        .frame(width: 8)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .gesture(
+          DragGesture(minimumDistance: 0)
+            .onChanged { value in
+              if diffPanelDragStartWidth == nil {
+                diffPanelDragStartWidth = Double(clampedWorktreeDiffPanelWidth)
+              }
+              guard let startWidth = diffPanelDragStartWidth else {
+                return
+              }
+              let nextWidth = min(
+                Self.maxDiffPanelWidth,
+                max(Self.minDiffPanelWidth, startWidth - value.translation.width)
+              )
+              $worktreeDiffPanelWidth.withLock { current in
+                current = nextWidth
+              }
+            }
+            .onEnded { _ in
+              diffPanelDragStartWidth = nil
+            }
+        )
+    }
+    .frame(width: 8)
+    .frame(maxHeight: .infinity)
   }
 
   private func applyFocusedActions<Content: View>(
@@ -188,6 +276,7 @@ struct WorktreeDetailView: View {
     let unseenNotificationWorktreeCount: Int
     let openActionSelection: OpenWorktreeAction
     let showExtras: Bool
+    let isDiffPanelVisible: Bool
     let runScriptEnabled: Bool
     let runScriptIsRunning: Bool
 
@@ -197,6 +286,10 @@ struct WorktreeDetailView: View {
 
     var stopRunScriptHelpText: String {
       "Stop Script (\(AppShortcuts.stopRunScript.display))"
+    }
+
+    var toggleDiffPanelHelpText: String {
+      isDiffPanelVisible ? "Hide Diff Panel" : "Show Diff Panel"
     }
   }
 
@@ -208,6 +301,7 @@ struct WorktreeDetailView: View {
     let onCopyPath: () -> Void
     let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
     let onDismissAllNotifications: () -> Void
+    let onToggleDiffPanel: () -> Void
     let onRunScript: () -> Void
     let onStopRunScript: () -> Void
 
@@ -248,6 +342,15 @@ struct WorktreeDetailView: View {
           openActionSelection: toolbarState.openActionSelection,
           showExtras: toolbarState.showExtras
         )
+      }
+      ToolbarSpacer(.fixed)
+      ToolbarItem {
+        Button {
+          onToggleDiffPanel()
+        } label: {
+          Image(systemName: toolbarState.isDiffPanelVisible ? "rectangle.righthalf.inset.filled" : "rectangle")
+        }
+        .help(toolbarState.toggleDiffPanelHelpText)
       }
       ToolbarSpacer(.fixed)
 
@@ -433,6 +536,7 @@ private struct WorktreeToolbarPreview: View {
       unseenNotificationWorktreeCount: 0,
       openActionSelection: .finder,
       showExtras: false,
+      isDiffPanelVisible: true,
       runScriptEnabled: true,
       runScriptIsRunning: false
     )
@@ -455,6 +559,7 @@ private struct WorktreeToolbarPreview: View {
         onCopyPath: {},
         onSelectNotification: { _, _ in },
         onDismissAllNotifications: {},
+        onToggleDiffPanel: {},
         onRunScript: {},
         onStopRunScript: {}
       )
