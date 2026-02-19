@@ -103,9 +103,44 @@ struct RepositoriesFeature {
 
   struct WorktreeDiffPanelState: Equatable {
     var worktreeID: Worktree.ID?
-    var patch: String?
+    var patchByWorktreeID: [Worktree.ID: String] = [:]
     var isLoading = false
     var errorMessage: String?
+
+    init(
+      worktreeID: Worktree.ID? = nil,
+      patch: String? = nil,
+      patchByWorktreeID: [Worktree.ID: String] = [:],
+      isLoading: Bool = false,
+      errorMessage: String? = nil
+    ) {
+      self.worktreeID = worktreeID
+      self.patchByWorktreeID = patchByWorktreeID
+      if let worktreeID, let patch {
+        self.patchByWorktreeID[worktreeID] = patch
+      }
+      self.isLoading = isLoading
+      self.errorMessage = errorMessage
+    }
+
+    var patch: String? {
+      get {
+        guard let worktreeID else {
+          return nil
+        }
+        return patchByWorktreeID[worktreeID]
+      }
+      set {
+        guard let worktreeID else {
+          return
+        }
+        if let newValue {
+          patchByWorktreeID[worktreeID] = newValue
+        } else {
+          patchByWorktreeID.removeValue(forKey: worktreeID)
+        }
+      }
+    }
   }
 
   enum Action {
@@ -1660,13 +1695,9 @@ struct RepositoriesFeature {
         else {
           return .none
         }
-        let isSwitchingWorktree = state.worktreeDiffPanel.worktreeID != worktreeID
         state.worktreeDiffPanel.worktreeID = worktreeID
         state.worktreeDiffPanel.isLoading = true
         state.worktreeDiffPanel.errorMessage = nil
-        if isSwitchingWorktree {
-          state.worktreeDiffPanel.patch = nil
-        }
         let worktreeURL = worktree.workingDirectory
         let gitClient = gitClient
         return .run { send in
