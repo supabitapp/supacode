@@ -8,8 +8,6 @@ const state = {
   theme: "light",
 };
 
-let sheet;
-
 if (typeof HTMLElement !== "undefined" && customElements.get(DIFFS_TAG_NAME) == null) {
   class DiffsContainerElement extends HTMLElement {
     constructor() {
@@ -18,11 +16,9 @@ if (typeof HTMLElement !== "undefined" && customElements.get(DIFFS_TAG_NAME) == 
         return;
       }
       const shadowRoot = this.attachShadow({ mode: "open" });
-      if (sheet == null) {
-        sheet = new CSSStyleSheet();
-        sheet.replaceSync(baseStyles);
-      }
-      shadowRoot.adoptedStyleSheets = [sheet];
+      const style = document.createElement("style");
+      style.textContent = baseStyles;
+      shadowRoot.append(style);
     }
   }
 

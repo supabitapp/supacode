@@ -5,7 +5,7 @@ import { build } from "esbuild";
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(rootDir, "src");
-const outputDir = resolve(rootDir, "../../supacode/Resources/PierrePanel");
+const outputDir = resolve(rootDir, "../../Resources/PierrePanel");
 
 await mkdir(outputDir, { recursive: true });
 

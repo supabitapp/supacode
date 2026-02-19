@@ -9,8 +9,8 @@ bun run build
 
 This writes:
 
-- `supacode/Resources/PierrePanel/index.html`
-- `supacode/Resources/PierrePanel/panel.css`
-- `supacode/Resources/PierrePanel/panel.js`
+- `Resources/PierrePanel/index.html`
+- `Resources/PierrePanel/panel.css`
+- `Resources/PierrePanel/panel.js`
 
-To update Pierre, change `@pierre/diffs` in `package.json`, run the build again, and commit updated files in both `tools/pierre-panel/` and `supacode/Resources/PierrePanel/`.
+To update Pierre, change `@pierre/diffs` in `package.json`, run the build again, and commit updated files in both `tools/pierre-panel/` and `Resources/PierrePanel/`.
