@@ -13,7 +13,7 @@ await build({
   entryPoints: [join(srcDir, "panel.js")],
   bundle: true,
   minify: true,
-  format: "esm",
+  format: "iife",
   target: ["safari17"],
   outfile: join(outputDir, "panel.js"),
 });
