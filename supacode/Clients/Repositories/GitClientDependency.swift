@@ -16,6 +16,7 @@ struct GitClientDependency: Sendable {
     @Sendable (
       _ name: String,
       _ repoRoot: URL,
+      _ repositoryName: String?,
       _ copyIgnored: Bool,
       _ copyUntracked: Bool,
       _ baseRef: String
@@ -25,6 +26,7 @@ struct GitClientDependency: Sendable {
     @Sendable (
       _ name: String,
       _ repoRoot: URL,
+      _ repositoryName: String?,
       _ copyIgnored: Bool,
       _ copyUntracked: Bool,
       _ baseRef: String
@@ -51,19 +53,21 @@ extension GitClientDependency: DependencyKey {
     automaticWorktreeBaseRef: { await GitClient().automaticWorktreeBaseRef(for: $0) },
     ignoredFileCount: { try await GitClient().ignoredFileCount(for: $0) },
     untrackedFileCount: { try await GitClient().untrackedFileCount(for: $0) },
-    createWorktree: { name, repoRoot, copyIgnored, copyUntracked, baseRef in
+    createWorktree: { name, repoRoot, repositoryName, copyIgnored, copyUntracked, baseRef in
       try await GitClient().createWorktree(
         named: name,
         in: repoRoot,
+        repositoryName: repositoryName,
         copyIgnored: copyIgnored,
         copyUntracked: copyUntracked,
         baseRef: baseRef
       )
     },
-    createWorktreeStream: { name, repoRoot, copyIgnored, copyUntracked, baseRef in
+    createWorktreeStream: { name, repoRoot, repositoryName, copyIgnored, copyUntracked, baseRef in
       GitClient().createWorktreeStream(
         named: name,
         in: repoRoot,
+        repositoryName: repositoryName,
         copyIgnored: copyIgnored,
         copyUntracked: copyUntracked,
         baseRef: baseRef

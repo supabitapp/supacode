@@ -10,7 +10,35 @@ struct RepositorySettingsView: View {
     let baseRefOptions =
       store.branchOptions.isEmpty ? [store.defaultWorktreeBaseRef] : store.branchOptions
     let settings = $store.settings
+    let repositoryName = Binding(
+      get: { store.repositoryNameDraft },
+      set: { store.send(.repositoryNameDraftChanged($0)) }
+    )
     Form {
+      Section {
+        TextField("Repository name", text: repositoryName)
+          .textFieldStyle(.roundedBorder)
+        HStack(spacing: 8) {
+          Button("Apply") {
+            store.send(.applyRepositoryName)
+          }
+          .help("Apply repository name changes (no keyboard shortcut).")
+          Button("Use Default") {
+            store.send(.resetRepositoryNameToDefault)
+          }
+          .help("Reset to the repository folder name (no keyboard shortcut).")
+        }
+        if let message = store.repositoryNameValidationMessage {
+          Text(message)
+            .foregroundStyle(.red)
+        }
+      } header: {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Repository Name")
+          Text("Used for sidebar labels and worktree directory naming.")
+            .foregroundStyle(.secondary)
+        }
+      }
       Section {
         if store.isBranchDataLoaded {
           Button {

@@ -7,11 +7,37 @@ import Testing
 @testable import supacode
 
 struct RepositorySettingsKeyTests {
+  @Test func encodingOmitsNilRepositoryName() throws {
+    let data = try JSONEncoder().encode(RepositorySettings.default)
+    let json = String(bytes: data, encoding: .utf8) ?? ""
+
+    #expect(!json.contains("repositoryName"))
+  }
+
   @Test func encodingOmitsNilWorktreeBaseRef() throws {
     let data = try JSONEncoder().encode(RepositorySettings.default)
     let json = String(bytes: data, encoding: .utf8) ?? ""
 
     #expect(!json.contains("worktreeBaseRef"))
+  }
+
+  @Test func decodingMissingRepositoryNameDefaultsToNil() throws {
+    let data = Data(
+      """
+      {
+        "copyIgnoredOnWorktreeCreate": false,
+        "copyUntrackedOnWorktreeCreate": false,
+        "openActionID": "automatic",
+        "pullRequestMergeStrategy": "merge",
+        "runScript": "npm run dev",
+        "setupScript": "echo setup"
+      }
+      """.utf8
+    )
+
+    let settings = try JSONDecoder().decode(RepositorySettings.self, from: data)
+
+    #expect(settings.repositoryName == nil)
   }
 
   @Test(.dependencies) func loadCreatesDefaultAndPersists() throws {

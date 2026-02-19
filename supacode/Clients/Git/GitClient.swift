@@ -238,6 +238,7 @@ struct GitClient {
   nonisolated func createWorktree(
     named name: String,
     in repoRoot: URL,
+    repositoryName: String?,
     copyIgnored: Bool,
     copyUntracked: Bool,
     baseRef: String
@@ -246,6 +247,7 @@ struct GitClient {
     for try await event in createWorktreeStream(
       named: name,
       in: repoRoot,
+      repositoryName: repositoryName,
       copyIgnored: copyIgnored,
       copyUntracked: copyUntracked,
       baseRef: baseRef
@@ -261,6 +263,7 @@ struct GitClient {
         ([wtURL.lastPathComponent]
         + createWorktreeArguments(
           repositoryRootURL: repositoryRootURL,
+          repositoryName: repositoryName,
           name: name,
           copyIgnored: copyIgnored,
           copyUntracked: copyUntracked,
@@ -274,6 +277,7 @@ struct GitClient {
   nonisolated func createWorktreeStream(
     named name: String,
     in repoRoot: URL,
+    repositoryName: String?,
     copyIgnored: Bool,
     copyUntracked: Bool,
     baseRef: String
@@ -285,6 +289,7 @@ struct GitClient {
           let wtURL = try wtScriptURL()
           let arguments = createWorktreeArguments(
             repositoryRootURL: repositoryRootURL,
+            repositoryName: repositoryName,
             name: name,
             copyIgnored: copyIgnored,
             copyUntracked: copyUntracked,
@@ -356,12 +361,16 @@ struct GitClient {
 
   nonisolated private func createWorktreeArguments(
     repositoryRootURL: URL,
+    repositoryName: String?,
     name: String,
     copyIgnored: Bool,
     copyUntracked: Bool,
     baseRef: String
   ) -> [String] {
-    let baseDir = SupacodePaths.repositoryDirectory(for: repositoryRootURL)
+    let baseDir = SupacodePaths.repositoryDirectory(
+      for: repositoryRootURL,
+      configuredName: repositoryName
+    )
     var arguments = ["--base-dir", baseDir.path(percentEncoded: false), "sw"]
     if copyIgnored {
       arguments.append("--copy-ignored")

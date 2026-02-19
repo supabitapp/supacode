@@ -505,6 +505,22 @@ struct AppFeature {
         @Shared(.repositorySettings(rootURL)) var repositorySettings
         return .send(.worktreeSettingsLoaded(repositorySettings, worktreeID: worktreeID))
 
+      case .settings(.repositorySettings(.delegate(.repositoryNameChanged(let rootURL)))):
+        let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
+        @Shared(.repositorySettings(rootURL)) var repositorySettings
+        let repositoryName = Repository.name(
+          for: rootURL.standardizedFileURL,
+          configuredName: repositorySettings.repositoryName
+        )
+        return .send(
+          .repositories(
+            .repositoryNameChanged(
+              repositoryID: repositoryID,
+              name: repositoryName
+            )
+          )
+        )
+
       case .worktreeSettingsLoaded(let settings, let worktreeID):
         guard state.repositories.selectedWorktreeID == worktreeID else {
           return .none

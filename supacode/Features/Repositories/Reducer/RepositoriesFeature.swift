@@ -220,6 +220,7 @@ struct RepositoriesFeature {
     case dismissToast
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
+    case repositoryNameChanged(repositoryID: Repository.ID, name: String)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
@@ -805,6 +806,7 @@ struct RepositoriesFeature {
         let previousSelection = state.selectedWorktreeID
         let pendingID = "pending:\(uuid().uuidString)"
         @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
+        let repositoryName = repositorySettings.repositoryName
         let selectedBaseRef = repositorySettings.worktreeBaseRef
         let copyIgnoredOnWorktreeCreate = repositorySettings.copyIgnoredOnWorktreeCreate
         let copyUntrackedOnWorktreeCreate = repositorySettings.copyUntrackedOnWorktreeCreate
@@ -971,6 +973,7 @@ struct RepositoriesFeature {
             let stream = createWorktreeStream(
               name,
               repository.rootURL,
+              repositoryName,
               copyIgnored,
               copyUntracked,
               resolvedBaseRef
@@ -2346,6 +2349,10 @@ struct RepositoriesFeature {
       case .openRepositorySettings(let repositoryID):
         return .send(.delegate(.openRepositorySettings(repositoryID)))
 
+      case .repositoryNameChanged(let repositoryID, let name):
+        updateRepositoryName(repositoryID, name: name, state: &state)
+        return .send(.delegate(.repositoriesChanged(state.repositories)))
+
       case .alert(.dismiss):
         state.alert = nil
         return .none
@@ -2422,12 +2429,19 @@ struct RepositoriesFeature {
   private func loadRepositoriesData(_ roots: [URL]) async -> ([Repository], [LoadFailure]) {
     var loaded: [Repository] = []
     var failures: [LoadFailure] = []
+    @Shared(.settingsFile) var settingsFile
     for root in roots {
       let normalizedRoot = root.standardizedFileURL
       let rootID = normalizedRoot.path(percentEncoded: false)
+      let configuredName = $settingsFile.withLock { settings in
+        settings.repositories[rootID]?.repositoryName
+      }
       do {
         let worktrees = try await gitClient.worktrees(root)
-        let name = Repository.name(for: normalizedRoot)
+        let name = Repository.name(
+          for: normalizedRoot,
+          configuredName: configuredName
+        )
         let repository = Repository(
           id: rootID,
           rootURL: normalizedRoot,
@@ -3045,7 +3059,14 @@ private func cleanupFailedWorktree(
     )
   }
   let repositoryRootURL = URL(fileURLWithPath: repositoryID).standardizedFileURL
-  let baseDirectory = SupacodePaths.repositoryDirectory(for: repositoryRootURL).standardizedFileURL
+  @Shared(.settingsFile) var settingsFile
+  let configuredRepositoryName = $settingsFile.withLock { settings in
+    settings.repositories[repositoryID]?.repositoryName
+  }
+  let baseDirectory = SupacodePaths.repositoryDirectory(
+    for: repositoryRootURL,
+    configuredName: configuredRepositoryName
+  ).standardizedFileURL
   let worktreeURL =
     baseDirectory
     .appending(path: name, directoryHint: .isDirectory)
@@ -3163,6 +3184,23 @@ private func updateWorktreeName(
     state.repositories[index] = repository
     return
   }
+}
+
+private func updateRepositoryName(
+  _ repositoryID: Repository.ID,
+  name: String,
+  state: inout RepositoriesFeature.State
+) {
+  guard let index = state.repositories.index(id: repositoryID) else { return }
+  var repository = state.repositories[index]
+  guard repository.name != name else { return }
+  repository = Repository(
+    id: repository.id,
+    rootURL: repository.rootURL,
+    name: name,
+    worktrees: repository.worktrees
+  )
+  state.repositories[index] = repository
 }
 
 private func updateWorktreeLineChanges(

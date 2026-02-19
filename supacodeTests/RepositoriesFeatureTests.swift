@@ -442,7 +442,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
       $0.gitClient.ignoredFileCount = { _ in 2 }
       $0.gitClient.untrackedFileCount = { _ in 1 }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.outputLine(ShellStreamLine(source: .stderr, text: "[1/2] copy .env")))
           continuation.yield(.outputLine(ShellStreamLine(source: .stderr, text: "[2/2] copy .cache")))
@@ -481,7 +481,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
       $0.gitClient.ignoredFileCount = { _ in 2 }
       $0.gitClient.untrackedFileCount = { _ in 1 }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.outputLine(ShellStreamLine(source: .stderr, text: "[1/2] copy .env")))
           continuation.finish(throwing: GitClientError.commandFailed(command: "wt sw", message: "boom"))
@@ -1863,6 +1863,30 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [worktree.id]
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+  }
+
+  @Test func repositoryNameChangedUpdatesInMemoryRepositoryName() async {
+    let worktree = makeWorktree(id: "/tmp/repo/main", name: "main")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .repositoryNameChanged(
+        repositoryID: repository.id,
+        name: "workspace-repo"
+      )
+    ) {
+      let existing = $0.repositories[id: repository.id]
+      $0.repositories[id: repository.id] = Repository(
+        id: existing?.id ?? repository.id,
+        rootURL: existing?.rootURL ?? repository.rootURL,
+        name: "workspace-repo",
+        worktrees: existing?.worktrees ?? repository.worktrees
+      )
+    }
+    await store.receive(\.delegate.repositoriesChanged)
   }
 
   private func makeWorktree(

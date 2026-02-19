@@ -66,6 +66,7 @@ struct GitClientCreateWorktreeStreamTests {
     for try await _ in client.createWorktreeStream(
       named: "swift-otter",
       in: repoRoot,
+      repositoryName: nil,
       copyIgnored: true,
       copyUntracked: false,
       baseRef: "origin/main"
@@ -74,11 +75,62 @@ struct GitClientCreateWorktreeStreamTests {
     let snapshot = recorder.snapshot()
     #expect(snapshot.currentDirectoryURL == repoRoot)
     #expect(snapshot.arguments.contains("sw"))
+    #expect(
+      snapshot.arguments.contains(
+        SupacodePaths.repositoryDirectory(for: repoRoot, configuredName: nil).path(percentEncoded: false)
+      )
+    )
     #expect(snapshot.arguments.contains("--copy-ignored"))
     #expect(snapshot.arguments.contains("--verbose"))
     #expect(snapshot.arguments.contains("--from"))
     #expect(snapshot.arguments.contains("origin/main"))
     #expect(snapshot.arguments.contains("swift-otter"))
+  }
+
+  @Test func createWorktreeStreamUsesConfiguredRepositoryNameForBaseDirectory() async throws {
+    let recorder = GitShellInvocationRecorder()
+    let shell = ShellClient(
+      run: { _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },
+      runStream: { _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(ShellOutput(stdout: "", stderr: "", exitCode: 0)))
+          continuation.finish()
+        }
+      },
+      runLoginStreamImpl: { executableURL, arguments, currentDirectoryURL, _ in
+        recorder.record(
+          executableURL: executableURL,
+          arguments: arguments,
+          currentDirectoryURL: currentDirectoryURL
+        )
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.line(ShellStreamLine(source: .stdout, text: "/tmp/repo/swift-otter")))
+          continuation.yield(.finished(ShellOutput(stdout: "/tmp/repo/swift-otter", stderr: "", exitCode: 0)))
+          continuation.finish()
+        }
+      }
+    )
+    let client = GitClient(shell: shell)
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+
+    for try await _ in client.createWorktreeStream(
+      named: "swift-otter",
+      in: repoRoot,
+      repositoryName: "workspace-repo",
+      copyIgnored: false,
+      copyUntracked: false,
+      baseRef: ""
+    ) {}
+
+    let snapshot = recorder.snapshot()
+    #expect(
+      snapshot.arguments.contains(
+        SupacodePaths.repositoryDirectory(for: repoRoot, configuredName: "workspace-repo").path(
+          percentEncoded: false
+        )
+      )
+    )
   }
 
   @Test func createWorktreeStreamForwardsOutputLines() async throws {
@@ -108,6 +160,7 @@ struct GitClientCreateWorktreeStreamTests {
     for try await event in client.createWorktreeStream(
       named: "swift-otter",
       in: repoRoot,
+      repositoryName: nil,
       copyIgnored: true,
       copyUntracked: true,
       baseRef: ""
@@ -153,6 +206,7 @@ struct GitClientCreateWorktreeStreamTests {
     for try await event in client.createWorktreeStream(
       named: "new-wt",
       in: repoRoot,
+      repositoryName: nil,
       copyIgnored: false,
       copyUntracked: false,
       baseRef: ""
@@ -184,6 +238,7 @@ struct GitClientCreateWorktreeStreamTests {
     for try await event in client.createWorktreeStream(
       named: "new-wt",
       in: repoRoot,
+      repositoryName: nil,
       copyIgnored: false,
       copyUntracked: false,
       baseRef: ""
@@ -226,6 +281,7 @@ struct GitClientCreateWorktreeStreamTests {
       for try await _ in client.createWorktreeStream(
         named: "new-wt",
         in: repoRoot,
+        repositoryName: nil,
         copyIgnored: false,
         copyUntracked: false,
         baseRef: ""
@@ -266,6 +322,7 @@ struct GitClientCreateWorktreeStreamTests {
       _ = try await client.createWorktree(
         named: "new-wt",
         in: repoRoot,
+        repositoryName: nil,
         copyIgnored: false,
         copyUntracked: false,
         baseRef: ""
@@ -302,6 +359,7 @@ struct GitClientCreateWorktreeStreamTests {
     let worktree = try await client.createWorktree(
       named: "new-wt",
       in: repoRoot,
+      repositoryName: nil,
       copyIgnored: false,
       copyUntracked: false,
       baseRef: ""
@@ -329,6 +387,7 @@ struct GitClientCreateWorktreeStreamTests {
     let worktree = try await client.createWorktree(
       named: "new-wt",
       in: repoRoot,
+      repositoryName: nil,
       copyIgnored: false,
       copyUntracked: false,
       baseRef: ""
