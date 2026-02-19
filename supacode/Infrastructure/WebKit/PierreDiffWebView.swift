@@ -2,7 +2,7 @@ import SwiftUI
 import WebKit
 
 struct PierreDiffWebView: NSViewRepresentable {
-  let patch: String
+  let patch: String?
   let theme: PierreDiffTheme
 
   func makeCoordinator() -> Coordinator {
@@ -35,7 +35,7 @@ struct PierreDiffWebView: NSViewRepresentable {
       bridge.loadPanel()
     }
 
-    func update(patch: String, theme: PierreDiffTheme) {
+    func update(patch: String?, theme: PierreDiffTheme) {
       guard let bridge else {
         return
       }
@@ -45,7 +45,11 @@ struct PierreDiffWebView: NSViewRepresentable {
       }
       if latestPatch != patch {
         latestPatch = patch
-        bridge.renderPatch(patch)
+        if let patch, !patch.isEmpty {
+          bridge.renderPatch(patch)
+        } else {
+          bridge.clear()
+        }
       }
     }
 
@@ -58,7 +62,11 @@ struct PierreDiffWebView: NSViewRepresentable {
         bridge.setTheme(latestTheme)
       }
       if let latestPatch {
-        bridge.renderPatch(latestPatch)
+        if latestPatch.isEmpty {
+          bridge.clear()
+        } else {
+          bridge.renderPatch(latestPatch)
+        }
       } else {
         bridge.clear()
       }

@@ -1660,9 +1660,13 @@ struct RepositoriesFeature {
         else {
           return .none
         }
+        let isSwitchingWorktree = state.worktreeDiffPanel.worktreeID != worktreeID
         state.worktreeDiffPanel.worktreeID = worktreeID
         state.worktreeDiffPanel.isLoading = true
         state.worktreeDiffPanel.errorMessage = nil
+        if isSwitchingWorktree {
+          state.worktreeDiffPanel.patch = nil
+        }
         let worktreeURL = worktree.workingDirectory
         let gitClient = gitClient
         return .run { send in
