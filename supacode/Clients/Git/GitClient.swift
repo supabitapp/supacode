@@ -711,15 +711,6 @@ struct GitClient {
     if path.hasDirectoryPath {
       return path
     }
-    var isDirectory = ObjCBool(false)
-    if FileManager.default.fileExists(
-      atPath: path.path(percentEncoded: false),
-      isDirectory: &isDirectory
-    ),
-      isDirectory.boolValue
-    {
-      return path
-    }
     return path.deletingLastPathComponent()
   }
 

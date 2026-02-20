@@ -261,47 +261,28 @@ nonisolated private func shellExecCommand(for shellURL: URL) -> String {
   }
 }
 
-nonisolated func loginShellPath(
-  environmentShell: String?,
-  passwdShell: String?
-) -> String {
-  let supportedShells: Set<String> = ["bash", "zsh", "fish"]
-  if let environmentShell, !environmentShell.isEmpty {
-    let shellName = URL(fileURLWithPath: environmentShell).lastPathComponent.lowercased()
-    if supportedShells.contains(shellName) {
-      shellLogger.info("Using SHELL env: \(environmentShell)")
-      return environmentShell
-    }
-    shellLogger.info("Ignoring unsupported SHELL env: \(environmentShell)")
-  }
-  if let passwdShell, !passwdShell.isEmpty {
-    let shellName = URL(fileURLWithPath: passwdShell).lastPathComponent.lowercased()
-    if supportedShells.contains(shellName) {
-      shellLogger.info("Using passwd shell: \(passwdShell)")
-      return passwdShell
-    }
-    shellLogger.info("Ignoring unsupported passwd shell: \(passwdShell)")
-  }
-  shellLogger.info("Using fallback: /bin/zsh")
-  return "/bin/zsh"
-}
-
 nonisolated private func defaultShellPath() -> String {
-  let environmentShell = ProcessInfo.processInfo.environment["SHELL"]
+  if let env = ProcessInfo.processInfo.environment["SHELL"], !env.isEmpty {
+    shellLogger.info("Using SHELL env: \(env)")
+    return env
+  }
+
   var pwd = passwd()
   var result: UnsafeMutablePointer<passwd>?
   let bufSize = sysconf(_SC_GETPW_R_SIZE_MAX)
   let size = bufSize > 0 ? Int(bufSize) : 1024
   var buffer = [CChar](repeating: 0, count: size)
   let lookup = getpwuid_r(getuid(), &pwd, &buffer, buffer.count, &result)
-  let passwdShell: String?
   if lookup == 0, let result, let shell = result.pointee.pw_shell {
     let value = String(cString: shell)
-    passwdShell = value.isEmpty ? nil : value
-  } else {
-    passwdShell = nil
+    if !value.isEmpty {
+      shellLogger.info("Using passwd shell: \(value)")
+      return value
+    }
   }
-  return loginShellPath(environmentShell: environmentShell, passwdShell: passwdShell)
+
+  shellLogger.info("Using fallback: /bin/zsh")
+  return "/bin/zsh"
 }
 
 private actor ShellOutputAccumulator {
