@@ -300,6 +300,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     if !window.styleMask.contains(.fullScreen), opacity < 1 {
       window.isOpaque = false
       window.backgroundColor = .white.withAlphaComponent(0.001)
+      clearHostingViewBackground(window)
       if let app = runtime.app {
         ghostty_set_window_background_blur(
           app,
@@ -310,6 +311,27 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     window.isOpaque = true
     window.backgroundColor = runtime.backgroundColor().withAlphaComponent(1)
+  }
+
+  private func clearHostingViewBackground(_ window: NSWindow) {
+    guard let contentView = window.contentView else { return }
+    contentView.wantsLayer = true
+    contentView.layer?.backgroundColor = CGColor.clear
+    clearOpaqueSubviewBackgrounds(contentView)
+  }
+
+  private func clearOpaqueSubviewBackgrounds(_ view: NSView) {
+    for subview in view.subviews {
+      if let layer = subview.layer, subview !== self {
+        let className = String(describing: type(of: subview))
+        if className.contains("Hosting") || className.contains("LayoutHost")
+          || className.contains("PlatformGroup")
+        {
+          layer.backgroundColor = CGColor.clear
+        }
+      }
+      clearOpaqueSubviewBackgrounds(subview)
+    }
   }
 
   func focusDidChange(_ focused: Bool) {
