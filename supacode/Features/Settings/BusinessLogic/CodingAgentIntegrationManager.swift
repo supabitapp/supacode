@@ -150,7 +150,6 @@ struct CodingAgentIntegrationManager {
   private func codexWrapperScript(paths: IntegrationPaths) -> String {
     let binPath = shellSingleQuoted(paths.binDirectory.path(percentEncoded: false))
     let notifyPath = shellSingleQuoted(paths.notifyScriptURL.path(percentEncoded: false))
-    let eventsDirectoryPath = shellSingleQuoted(paths.eventsDirectory.path(percentEncoded: false))
     return """
       #!/bin/bash
       set -euo pipefail
@@ -178,21 +177,6 @@ struct CodingAgentIntegrationManager {
       if [ -z "$REAL_BIN" ]; then
         echo "Supacode: codex not found in PATH." >&2
         exit 127
-      fi
-
-      EVENTS_DIR="${SUPACODE_AGENT_EVENTS_DIR:-\(eventsDirectoryPath)}"
-      WORKTREE_ID="${SUPACODE_WORKTREE_ID:-}"
-      if [ -n "$WORKTREE_ID" ]; then
-        mkdir -p "$EVENTS_DIR" >/dev/null 2>&1
-        TS="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-        CWD="$(pwd -P 2>/dev/null || pwd)"
-        ESC_WORKTREE_ID="${WORKTREE_ID//\\\\/\\\\\\\\}"
-        ESC_WORKTREE_ID="${ESC_WORKTREE_ID//\\"/\\\\\\"}"
-        ESC_CWD="${CWD//\\\\/\\\\\\\\}"
-        ESC_CWD="${ESC_CWD//\\"/\\\\\\"}"
-        printf '{"timestamp":"%s","eventType":"Start","worktreeID":"%s","cwd":"%s"}\\n' \
-          "$TS" "$ESC_WORKTREE_ID" "$ESC_CWD" \
-          >> "$EVENTS_DIR/agent-events.jsonl" 2>/dev/null
       fi
 
       NOTIFY_PATH=\(notifyPath)
@@ -263,6 +247,7 @@ struct CodingAgentIntegrationManager {
       hooks: [
         "UserPromptSubmit": [.init(matcher: nil, hooks: [hook])],
         "Stop": [.init(matcher: nil, hooks: [hook])],
+        "SessionEnd": [.init(matcher: nil, hooks: [hook])],
         "PermissionRequest": [.init(matcher: "*", hooks: [hook])],
       ]
     )

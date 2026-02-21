@@ -40,6 +40,7 @@ struct CodingAgentIntegrationManagerTests {
     #expect(notify.contains("agent-turn-complete"))
     #expect(settings.contains("UserPromptSubmit"))
     #expect(settings.contains("PermissionRequest"))
+    #expect(settings.contains("SessionEnd"))
   }
 
   @Test func enableCodexCreatesExpectedFiles() throws {
@@ -67,7 +68,6 @@ struct CodingAgentIntegrationManagerTests {
     #expect(wrapper.contains("SUPACODE_AGENT_INTEGRATION_V1"))
     #expect(wrapper.contains("SUPACODE_HOOKS_BIN"))
     #expect(wrapper.contains("${SUPACODE_HOOKS_BIN%/}"))
-    #expect(wrapper.contains("agent-events.jsonl"))
     #expect(wrapper.contains("notify=["))
   }
 
