@@ -14,6 +14,8 @@ import Sentry
 import Sharing
 import SwiftUI
 
+private let appLogger = SupaLogger("App")
+
 private enum GhosttyCLI {
   static let argv: [UnsafeMutablePointer<CChar>?] = {
     var args: [UnsafeMutablePointer<CChar>?] = []
@@ -30,6 +32,7 @@ private enum GhosttyCLI {
 @MainActor
 final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   var appStore: StoreOf<AppFeature>?
+  var socketServer: SocketServer?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     appStore?.send(.appLaunched)
@@ -48,6 +51,10 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     false
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    socketServer?.stop()
   }
 
   private func mainWindow(from sender: NSApplication) -> NSWindow? {
@@ -80,6 +87,7 @@ struct SupacodeApp: App {
   @State private var terminalManager: WorktreeTerminalManager
   @State private var worktreeInfoWatcher: WorktreeInfoWatcherManager
   @State private var commandKeyObserver: CommandKeyObserver
+  @State private var socketServer: SocketServer?
   @State private var store: StoreOf<AppFeature>
 
   @MainActor init() {
@@ -122,6 +130,21 @@ struct SupacodeApp: App {
     _ghosttyShortcuts = State(initialValue: shortcuts)
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
     _terminalManager = State(initialValue: terminalManager)
+    setenv("SUPACODE_SOCKET_PATH", SupacodePaths.socketPath, 1)
+    let socketCommandHandler = SocketCommandHandler(terminalManager: terminalManager)
+    let socketServer = SocketServer(path: SupacodePaths.socketPath) { request in
+      await MainActor.run {
+        socketCommandHandler.handle(request)
+      }
+    }
+    do {
+      try socketServer.start()
+      appLogger.info("Socket API listening at \(SupacodePaths.socketPath)")
+      _socketServer = State(initialValue: socketServer)
+    } catch {
+      appLogger.warning("Socket API failed to start: \(error.localizedDescription)")
+      _socketServer = State(initialValue: nil)
+    }
     let worktreeInfoWatcher = WorktreeInfoWatcherManager()
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()
@@ -151,6 +174,7 @@ struct SupacodeApp: App {
     }
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
+    appDelegate.socketServer = socketServer
     SettingsWindowManager.shared.configure(
       store: appStore,
       ghosttyShortcuts: shortcuts,

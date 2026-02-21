@@ -277,6 +277,14 @@ final class WorktreeTerminalState {
   }
 
   @discardableResult
+  func createSplitOnFocusedSurface(direction: GhosttySplitAction.NewDirection) -> Bool {
+    guard let focusedId = currentFocusedSurfaceId() else {
+      return false
+    }
+    return performSplitAction(.newSplit(direction: direction), for: focusedId)
+  }
+
+  @discardableResult
   func performBindingActionOnFocusedSurface(_ action: String) -> Bool {
     guard let tabId = tabManager.selectedTabId,
       let focusedId = focusedSurfaceIdByTab[tabId],
