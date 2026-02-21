@@ -467,6 +467,12 @@ struct RepositoriesFeatureTests {
   }
 
   @Test(.dependencies) func createWorktreeInRepositoryWaitsForSetupScriptCompletion() async throws {
+    struct SetupInvocation {
+      let executableURL: URL
+      let arguments: [String]
+      let log: Bool
+    }
+
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
@@ -475,9 +481,11 @@ struct RepositoriesFeatureTests {
       name: "swift-otter",
       repoRoot: repoRoot
     )
+    let expectedSetupShellURL = ShellClient.testValue.loginShellURL()
     @Shared(.repositorySettings(URL(fileURLWithPath: repoRoot))) var repositorySettings
     $repositorySettings.withLock { $0.setupScript = "echo setup" }
     let setupContinuation = LockIsolated<AsyncThrowingStream<ShellStreamEvent, Error>.Continuation?>(nil)
+    let setupInvocation = LockIsolated<SetupInvocation?>(nil)
     let store = TestStore(initialState: makeState(repositories: [repository])) {
       RepositoriesFeature()
     } withDependencies: {
@@ -492,8 +500,11 @@ struct RepositoriesFeatureTests {
         }
       }
       $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
-      $0.shellClient.runLoginStreamImpl = { _, _, _, _ in
+      $0.shellClient.runLoginStreamImpl = { executableURL, arguments, _, log in
         AsyncThrowingStream { continuation in
+          setupInvocation.withValue {
+            $0 = SetupInvocation(executableURL: executableURL, arguments: arguments, log: log)
+          }
           setupContinuation.withValue { $0 = continuation }
           continuation.yield(.line(ShellStreamLine(source: .stdout, text: "setup line")))
         }
@@ -529,6 +540,9 @@ struct RepositoriesFeatureTests {
     #expect(store.state.pendingWorktrees.count == 1)
     #expect(store.state.pendingWorktrees.first?.progress.stage == .runningSetupScript)
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] == nil)
+    #expect(setupInvocation.value?.executableURL == expectedSetupShellURL)
+    #expect(setupInvocation.value?.arguments == ["-lc", "echo setup"])
+    #expect(setupInvocation.value?.log == false)
 
     setupContinuation.withValue { continuation in
       continuation?.yield(.finished(ShellOutput(stdout: "", stderr: "", exitCode: 0)))

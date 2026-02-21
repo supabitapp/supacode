@@ -66,6 +66,10 @@ nonisolated struct ShellClient: Sendable {
   ) -> AsyncThrowingStream<ShellStreamEvent, Error> {
     runLoginStreamImpl(executableURL, arguments, currentDirectoryURL, log)
   }
+
+  func loginShellURL() -> URL {
+    URL(fileURLWithPath: defaultShellPath())
+  }
 }
 
 extension ShellClient: DependencyKey {
