@@ -33,6 +33,8 @@ struct SettingsView: View {
             .tag(SettingsSection.general)
           Label("Notifications", systemImage: "bell")
             .tag(SettingsSection.notifications)
+          Label("Coding Agents", systemImage: "terminal")
+            .tag(SettingsSection.codingAgents)
           Label("Worktree", systemImage: "archivebox")
             .tag(SettingsSection.worktree)
           Label("Updates", systemImage: "arrow.down.circle")
@@ -67,6 +69,12 @@ struct SettingsView: View {
           NotificationsSettingsView(store: settingsStore)
             .navigationTitle("Notifications")
             .navigationSubtitle("In-app alerts and delivery")
+        }
+      case .codingAgents:
+        SettingsDetailView {
+          CodingAgentsSettingsView()
+            .navigationTitle("Coding Agents")
+            .navigationSubtitle("Hook integration and progress status")
         }
       case .worktree:
         SettingsDetailView {

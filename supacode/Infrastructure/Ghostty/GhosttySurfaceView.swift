@@ -18,6 +18,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var surfaceRef: GhosttyRuntime.SurfaceReference?
   private let workingDirectoryCString: UnsafeMutablePointer<CChar>?
   private let initialInputCString: UnsafeMutablePointer<CChar>?
+  private let environmentCStrings: [UnsafeMutablePointer<CChar>]
+  private let environmentVars: [ghostty_env_var_s]
   private let fontSize: Float32
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
@@ -97,6 +99,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     runtime: GhosttyRuntime,
     workingDirectory: URL?,
     initialInput: String? = nil,
+    environment: [String: String] = [:],
     fontSize: Float32? = nil,
     context: ghostty_surface_context_e
   ) {
@@ -115,6 +118,27 @@ final class GhosttySurfaceView: NSView, Identifiable {
     } else {
       initialInputCString = nil
     }
+    let sortedEnvironment = environment.sorted { lhs, rhs in
+      lhs.key < rhs.key
+    }
+    var environmentCStrings: [UnsafeMutablePointer<CChar>] = []
+    var environmentVars: [ghostty_env_var_s] = []
+    environmentCStrings.reserveCapacity(sortedEnvironment.count * 2)
+    environmentVars.reserveCapacity(sortedEnvironment.count)
+    for (key, value) in sortedEnvironment {
+      let keyCString = key.withCString { strdup($0) }!
+      let valueCString = value.withCString { strdup($0) }!
+      environmentCStrings.append(keyCString)
+      environmentCStrings.append(valueCString)
+      environmentVars.append(
+        ghostty_env_var_s(
+          key: UnsafePointer(keyCString),
+          value: UnsafePointer(valueCString)
+        )
+      )
+    }
+    self.environmentCStrings = environmentCStrings
+    self.environmentVars = environmentVars
     super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
     wantsLayer = true
     bridge.surfaceView = self
@@ -149,6 +173,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     if let initialInputCString {
       free(initialInputCString)
+    }
+    for pointer in environmentCStrings {
+      free(pointer)
     }
   }
 
@@ -713,7 +740,17 @@ final class GhosttySurfaceView: NSView, Identifiable {
     config.working_directory = workingDirectoryCString.map { UnsafePointer($0) }
     config.initial_input = initialInputCString.map { UnsafePointer($0) }
     config.context = context
-    surface = ghostty_surface_new(app, &config)
+    if environmentVars.isEmpty {
+      config.env_vars = nil
+      config.env_var_count = 0
+      surface = ghostty_surface_new(app, &config)
+    } else {
+      environmentVars.withUnsafeBufferPointer { buffer in
+        config.env_vars = UnsafeMutablePointer(mutating: buffer.baseAddress)
+        config.env_var_count = buffer.count
+        surface = ghostty_surface_new(app, &config)
+      }
+    }
     bridge.surface = surface
     lastOcclusion = nil
     lastSurfaceFocus = nil

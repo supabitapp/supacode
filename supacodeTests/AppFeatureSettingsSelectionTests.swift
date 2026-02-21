@@ -72,4 +72,30 @@ struct AppFeatureSettingsSelectionTests {
       $0.settings.repositorySettings = nil
     }
   }
+
+  @Test func selectingCodingAgentsClearsRepositorySettingsState() async {
+    let repository = Repository(
+      id: "repo-id",
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      name: "Repo",
+      worktrees: []
+    )
+    var state = AppFeature.State(
+      repositories: RepositoriesFeature.State(repositories: [repository]),
+      settings: SettingsFeature.State()
+    )
+    state.settings.selection = .repository(repository.id)
+    state.settings.repositorySettings = RepositorySettingsFeature.State(
+      rootURL: repository.rootURL,
+      settings: .default
+    )
+    let store = TestStore(initialState: state) {
+      AppFeature()
+    }
+
+    await store.send(.settings(.setSelection(.codingAgents))) {
+      $0.settings.selection = .codingAgents
+      $0.settings.repositorySettings = nil
+    }
+  }
 }

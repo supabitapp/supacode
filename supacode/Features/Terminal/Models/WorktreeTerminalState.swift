@@ -579,6 +579,7 @@ final class WorktreeTerminalState {
       runtime: runtime,
       workingDirectory: inherited.workingDirectory ?? worktree.workingDirectory,
       initialInput: initialInput,
+      environment: terminalEnvironment(),
       fontSize: inherited.fontSize,
       context: context
     )
@@ -632,6 +633,27 @@ final class WorktreeTerminalState {
     }
     surfaces[view.id] = view
     return view
+  }
+
+  private func terminalEnvironment() -> [String: String] {
+    let hooksBinPath = SupacodePaths.agentHooksBinDirectory.path(percentEncoded: false)
+    let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    let hasPrefix =
+      currentPath
+      .split(separator: ":")
+      .contains { String($0) == hooksBinPath }
+    let path: String
+    if currentPath.isEmpty {
+      path = hooksBinPath
+    } else if hasPrefix {
+      path = currentPath
+    } else {
+      path = "\(hooksBinPath):\(currentPath)"
+    }
+    return [
+      "PATH": path,
+      "SUPACODE_AGENT_HOOKS": "1",
+    ]
   }
 
   private struct InheritedSurfaceConfig: Equatable {
