@@ -176,13 +176,10 @@ struct AppFeature {
         )
 
       case .repositories(.delegate(.worktreeCreated(let worktree))):
-        let shouldRunSetupScript =
-          state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
         return .run { _ in
           await terminalClient.send(
             .ensureInitialTab(
               worktree,
-              runSetupScriptIfNew: shouldRunSetupScript,
               focusing: false
             )
           )
@@ -311,14 +308,11 @@ struct AppFeature {
         }
         analyticsClient.capture("worktree_opened", ["action": action.settingsID])
         if action == .editor {
-          let shouldRunSetupScript =
-            state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
           return .run { _ in
             await terminalClient.send(
               .createTabWithInput(
                 worktree,
-                input: "$EDITOR",
-                runSetupScriptIfNew: shouldRunSetupScript
+                input: "$EDITOR"
               )
             )
           }
@@ -373,9 +367,8 @@ struct AppFeature {
           return .none
         }
         analyticsClient.capture("terminal_tab_created", nil)
-        let shouldRunSetupScript = state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
         return .run { _ in
-          await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+          await terminalClient.send(.createTab(worktree))
         }
 
       case .runScript:
@@ -641,9 +634,6 @@ struct AppFeature {
           .send(.repositories(.selectWorktree(worktreeID))),
           .send(.commandPalette(.setPresented(true)))
         )
-      case .terminalEvent(.setupScriptConsumed(let worktreeID)):
-        return .send(.repositories(.consumeSetupScript(worktreeID)))
-
       case .terminalEvent:
         return .none
       }

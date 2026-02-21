@@ -20,6 +20,7 @@ private enum CancelID {
 private nonisolated let githubIntegrationRecoveryInterval: Duration = .seconds(15)
 private nonisolated let worktreeCreationProgressLineLimit = 200
 private nonisolated let worktreeCreationProgressUpdateStride = 20
+private nonisolated let setupScriptShellURL = URL(fileURLWithPath: "/bin/sh")
 
 nonisolated struct WorktreeCreationProgressUpdateThrottle {
   private let stride: Int
@@ -68,7 +69,6 @@ struct RepositoriesFeature {
     var isOpenPanelPresented = false
     var isInitialLoadComplete = false
     var pendingWorktrees: [PendingWorktree] = []
-    var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
     var removingRepositoryIDs: Set<Repository.ID> = []
@@ -176,7 +176,6 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       name: String?
     )
-    case consumeSetupScript(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
     case requestArchiveWorktree(Worktree.ID, Repository.ID)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
@@ -284,6 +283,7 @@ struct RepositoriesFeature {
   @Dependency(GithubCLIClient.self) private var githubCLI
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
+  @Dependency(ShellClient.self) private var shellClient
   @Dependency(\.uuid) private var uuid
 
   var body: some Reducer<State, Action> {
@@ -804,6 +804,7 @@ struct RepositoriesFeature {
         let selectedBaseRef = repositorySettings.worktreeBaseRef
         let copyIgnoredOnWorktreeCreate = repositorySettings.copyIgnoredOnWorktreeCreate
         let copyUntrackedOnWorktreeCreate = repositorySettings.copyUntrackedOnWorktreeCreate
+        let repositorySetupScript = normalizedSetupScript(repositorySettings.setupScript)
         state.pendingWorktrees.append(
           PendingWorktree(
             id: pendingID,
@@ -815,6 +816,7 @@ struct RepositoriesFeature {
         let existingNames = Set(repository.worktrees.map { $0.name.lowercased() })
         let createWorktreeStream = gitClient.createWorktreeStream
         let isValidBranchName = gitClient.isValidBranchName
+        let shellClient = shellClient
         return .run { send in
           var newWorktreeName: String?
           var progress = WorktreeCreationProgress(stage: .loadingLocalBranches)
@@ -996,6 +998,85 @@ struct RepositoriesFeature {
                     )
                   )
                 }
+                if let setupScript = repositorySetupScript {
+                  progress.stage = .runningSetupScript
+                  progress.latestOutputLine = nil
+                  progress.outputLines = []
+                  await send(
+                    .pendingWorktreeProgressUpdated(
+                      id: pendingID,
+                      progress: progress
+                    )
+                  )
+                  var setupProgressUpdateThrottle = WorktreeCreationProgressUpdateThrottle(
+                    stride: worktreeCreationProgressUpdateStride
+                  )
+                  do {
+                    let setupStream = shellClient.runLoginStream(
+                      setupScriptShellURL,
+                      ["-lc", setupScript],
+                      newWorktree.workingDirectory
+                    )
+                    for try await setupEvent in setupStream {
+                      switch setupEvent {
+                      case .line(let setupLine):
+                        let line = setupLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !line.isEmpty else {
+                          continue
+                        }
+                        progress.appendOutputLine(line, maxLines: worktreeCreationProgressLineLimit)
+                        if setupProgressUpdateThrottle.recordLine() {
+                          await send(
+                            .pendingWorktreeProgressUpdated(
+                              id: pendingID,
+                              progress: progress
+                            )
+                          )
+                        }
+                      case .finished:
+                        if setupProgressUpdateThrottle.flush() {
+                          await send(
+                            .pendingWorktreeProgressUpdated(
+                              id: pendingID,
+                              progress: progress
+                            )
+                          )
+                        }
+                      }
+                    }
+                    if setupProgressUpdateThrottle.flush() {
+                      await send(
+                        .pendingWorktreeProgressUpdated(
+                          id: pendingID,
+                          progress: progress
+                        )
+                      )
+                    }
+                  } catch {
+                    if setupProgressUpdateThrottle.flush() {
+                      await send(
+                        .pendingWorktreeProgressUpdated(
+                          id: pendingID,
+                          progress: progress
+                        )
+                      )
+                    }
+                    await send(
+                      .createRandomWorktreeSucceeded(
+                        newWorktree,
+                        repositoryID: repository.id,
+                        pendingID: pendingID
+                      )
+                    )
+                    await send(
+                      .presentAlert(
+                        title: "Setup script failed",
+                        message: error.localizedDescription
+                      )
+                    )
+                    return
+                  }
+                }
                 await send(
                   .createRandomWorktreeSucceeded(
                     newWorktree,
@@ -1052,7 +1133,6 @@ struct RepositoriesFeature {
         let pendingID
       ):
         analyticsClient.capture("worktree_created", nil)
-        state.pendingSetupScriptWorktreeIDs.insert(worktree.id)
         state.pendingTerminalFocusWorktreeIDs.insert(worktree.id)
         removePendingWorktree(pendingID, state: &state)
         if state.selection == .worktree(pendingID) {
@@ -1124,10 +1204,6 @@ struct RepositoriesFeature {
           )
         }
         return .merge(effects)
-
-      case .consumeSetupScript(let id):
-        state.pendingSetupScriptWorktreeIDs.remove(id)
-        return .none
 
       case .consumeTerminalFocus(let id):
         state.pendingTerminalFocusWorktreeIDs.remove(id)
@@ -1452,7 +1528,6 @@ struct RepositoriesFeature {
         withAnimation(.easeOut(duration: 0.2)) {
           state.deletingWorktreeIDs.remove(worktreeID)
           state.pendingWorktrees.removeAll { $0.id == worktreeID }
-          state.pendingSetupScriptWorktreeIDs.remove(worktreeID)
           state.pendingTerminalFocusWorktreeIDs.remove(worktreeID)
           state.worktreeInfoByID.removeValue(forKey: worktreeID)
           state.pinnedWorktreeIDs.removeAll { $0 == worktreeID }
@@ -2498,9 +2573,6 @@ struct RepositoriesFeature {
     }
     let availableWorktreeIDs = Set(repositories.flatMap { $0.worktrees.map(\.id) })
     let filteredDeletingIDs = state.deletingWorktreeIDs.intersection(availableWorktreeIDs)
-    let filteredSetupScriptIDs = state.pendingSetupScriptWorktreeIDs.filter {
-      availableWorktreeIDs.contains($0)
-    }
     let filteredFocusIDs = state.pendingTerminalFocusWorktreeIDs.filter {
       availableWorktreeIDs.contains($0)
     }
@@ -2513,7 +2585,6 @@ struct RepositoriesFeature {
         state.repositories = identifiedRepositories
         state.pendingWorktrees = filteredPendingWorktrees
         state.deletingWorktreeIDs = filteredDeletingIDs
-        state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
         state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
         state.worktreeInfoByID = filteredWorktreeInfo
       }
@@ -2521,7 +2592,6 @@ struct RepositoriesFeature {
       state.repositories = identifiedRepositories
       state.pendingWorktrees = filteredPendingWorktrees
       state.deletingWorktreeIDs = filteredDeletingIDs
-      state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
       state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
       state.worktreeInfoByID = filteredWorktreeInfo
     }
@@ -3129,7 +3199,6 @@ private func cleanupWorktreeState(
 ) -> WorktreeCleanupStateResult {
   let didRemoveWorktree = removeWorktree(worktreeID, repositoryID: repositoryID, state: &state)
   state.pendingWorktrees.removeAll { $0.id == worktreeID }
-  state.pendingSetupScriptWorktreeIDs.remove(worktreeID)
   state.pendingTerminalFocusWorktreeIDs.remove(worktreeID)
   state.deletingWorktreeIDs.remove(worktreeID)
   state.worktreeInfoByID.removeValue(forKey: worktreeID)
@@ -3155,6 +3224,14 @@ private func cleanupWorktreeState(
     didUpdatePinned: didUpdatePinned,
     didUpdateOrder: didUpdateOrder
   )
+}
+
+private func normalizedSetupScript(_ script: String) -> String? {
+  let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !trimmed.isEmpty else {
+    return nil
+  }
+  return script
 }
 
 private func updateWorktreeName(

@@ -3,7 +3,6 @@ import CoreGraphics
 import Foundation
 import GhosttyKit
 import Observation
-import Sharing
 
 @MainActor
 @Observable
@@ -16,15 +15,11 @@ final class WorktreeTerminalState {
   let tabManager: TerminalTabManager
   private let runtime: GhosttyRuntime
   private let worktree: Worktree
-  @ObservationIgnored
-  @SharedReader private var repositorySettings: RepositorySettings
   private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   var tabIsRunningById: [TerminalTabID: Bool] = [:]
   private var runScriptTabId: TerminalTabID?
-  private var pendingSetupScript: Bool
-  private var isEnsuringInitialTab = false
   private var lastReportedTaskStatus: WorktreeTaskStatus?
   private var lastEmittedFocusSurfaceId: UUID?
   var notifications: [WorktreeTerminalNotification] = []
@@ -41,17 +36,11 @@ final class WorktreeTerminalState {
   var onTaskStatusChanged: ((WorktreeTaskStatus) -> Void)?
   var onRunScriptStatusChanged: ((Bool) -> Void)?
   var onCommandPaletteToggle: (() -> Void)?
-  var onSetupScriptConsumed: (() -> Void)?
 
-  init(runtime: GhosttyRuntime, worktree: Worktree, runSetupScript: Bool = false) {
+  init(runtime: GhosttyRuntime, worktree: Worktree) {
     self.runtime = runtime
     self.worktree = worktree
-    self.pendingSetupScript = runSetupScript
     self.tabManager = TerminalTabManager()
-    _repositorySettings = SharedReader(
-      wrappedValue: RepositorySettings.default,
-      .repositorySettings(worktree.repositoryRootURL)
-    )
   }
 
   var taskStatus: WorktreeTaskStatus {
@@ -64,28 +53,12 @@ final class WorktreeTerminalState {
 
   func ensureInitialTab(focusing: Bool) {
     guard tabManager.tabs.isEmpty else { return }
-    guard !isEnsuringInitialTab else { return }
-    isEnsuringInitialTab = true
-    Task {
-      let setupScript: String?
-      if pendingSetupScript {
-        setupScript = repositorySettings.setupScript
-      } else {
-        setupScript = nil
-      }
-      await MainActor.run {
-        if tabManager.tabs.isEmpty {
-          _ = createTab(focusing: focusing, setupScript: setupScript)
-        }
-        isEnsuringInitialTab = false
-      }
-    }
+    _ = createTab(focusing: focusing)
   }
 
   @discardableResult
   func createTab(
     focusing: Bool = true,
-    setupScript: String? = nil,
     initialInput: String? = nil,
     inheritingFromSurfaceId: UUID? = nil
   ) -> TerminalTabID? {
@@ -95,23 +68,7 @@ final class WorktreeTerminalState {
       : GHOSTTY_SURFACE_CONTEXT_TAB
     let resolvedInheritanceSurfaceId = inheritingFromSurfaceId ?? currentFocusedSurfaceId()
     let title = "\(worktree.name) \(nextTabIndex())"
-    let setupInput = setupScriptInput(setupScript: setupScript)
-    let commandInput = initialInput.flatMap { runScriptInput($0) }
-    let resolvedInput: String?
-    switch (setupInput, commandInput) {
-    case (nil, nil):
-      resolvedInput = nil
-    case (let setupInput?, nil):
-      resolvedInput = setupInput
-    case (nil, let commandInput?):
-      resolvedInput = commandInput
-    case (let setupInput?, let commandInput?):
-      resolvedInput = setupInput + commandInput
-    }
-    let shouldConsumeSetupScript = pendingSetupScript && setupScript != nil
-    if shouldConsumeSetupScript {
-      pendingSetupScript = false
-    }
+    let resolvedInput = initialInput.flatMap { runScriptInput($0) }
     let tabId = createTab(
       TabCreation(
         title: title,
@@ -123,9 +80,6 @@ final class WorktreeTerminalState {
         context: context
       )
     )
-    if shouldConsumeSetupScript, tabId != nil {
-      onSetupScriptConsumed?()
-    }
     return tabId
   }
 
@@ -521,31 +475,6 @@ final class WorktreeTerminalState {
     let previousHasUnseen = hasUnseenNotification
     notifications.removeAll()
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
-  }
-
-  func needsSetupScript() -> Bool {
-    pendingSetupScript
-  }
-
-  func enableSetupScriptIfNeeded() {
-    if pendingSetupScript {
-      return
-    }
-    if tabManager.tabs.isEmpty {
-      pendingSetupScript = true
-    }
-  }
-
-  private func setupScriptInput(setupScript: String?) -> String? {
-    guard pendingSetupScript, let script = setupScript else { return nil }
-    let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.isEmpty {
-      return nil
-    }
-    if script.hasSuffix("\n") {
-      return script
-    }
-    return "\(script)\n"
   }
 
   private func runScriptInput(_ script: String) -> String? {

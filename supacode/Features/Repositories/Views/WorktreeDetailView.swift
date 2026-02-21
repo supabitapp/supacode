@@ -143,12 +143,10 @@ struct WorktreeDetailView: View {
     } else if let loadingInfo {
       WorktreeLoadingView(info: loadingInfo)
     } else if let selectedWorktree {
-      let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
       let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
       WorktreeTerminalTabsView(
         worktree: selectedWorktree,
         manager: terminalManager,
-        shouldRunSetupScript: shouldRunSetupScript,
         forceAutoFocus: shouldFocusTerminal,
         createTab: { store.send(.newTerminal) }
       )
@@ -396,10 +394,12 @@ struct WorktreeDetailView: View {
       let pending = repositories.pendingWorktree(for: selectedWorktreeID)
       let progress = pending?.progress
       let displayName = progress?.worktreeName ?? selectedRow.name
+      let loadingState: WorktreeLoadingState =
+        progress?.stage == .runningSetupScript ? .settingUp : .creating
       return WorktreeLoadingInfo(
         name: displayName,
         repositoryName: repositoryName,
-        state: .creating,
+        state: loadingState,
         statusTitle: progress?.titleText ?? selectedRow.name,
         statusDetail: progress?.detailText ?? selectedRow.detail,
         statusLines: progress?.liveOutputLines ?? []

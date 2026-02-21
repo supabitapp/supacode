@@ -4,13 +4,12 @@ import SwiftUI
 struct WorktreeTerminalTabsView: View {
   let worktree: Worktree
   let manager: WorktreeTerminalManager
-  let shouldRunSetupScript: Bool
   let forceAutoFocus: Bool
   let createTab: () -> Void
   @State private var windowActivity = WindowActivityState.inactive
 
   var body: some View {
-    let state = manager.state(for: worktree) { shouldRunSetupScript }
+    let state = manager.state(for: worktree)
     VStack(spacing: 0) {
       TerminalTabBarView(
         manager: state.tabManager,

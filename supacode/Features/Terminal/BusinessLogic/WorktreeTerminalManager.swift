@@ -1,5 +1,4 @@
 import Observation
-import Sharing
 
 private let terminalLogger = SupaLogger("Terminal")
 
@@ -30,14 +29,14 @@ final class WorktreeTerminalManager {
 
   private func handleTabCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
-    case .createTab(let worktree, let runSetupScriptIfNew):
-      Task { createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew) }
-    case .createTabWithInput(let worktree, let input, let runSetupScriptIfNew):
+    case .createTab(let worktree):
+      Task { createTabAsync(in: worktree) }
+    case .createTabWithInput(let worktree, let input):
       Task {
-        createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, initialInput: input)
+        createTabAsync(in: worktree, initialInput: input)
       }
-    case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
-      let state = state(for: worktree) { runSetupScriptIfNew }
+    case .ensureInitialTab(let worktree, let focusing):
+      let state = state(for: worktree)
       state.ensureInitialTab(focusing: focusing)
     case .runScript(let worktree, let script):
       _ = state(for: worktree).runScript(script)
@@ -108,21 +107,13 @@ final class WorktreeTerminalManager {
     return stream
   }
 
-  func state(
-    for worktree: Worktree,
-    runSetupScriptIfNew: () -> Bool = { false }
-  ) -> WorktreeTerminalState {
+  func state(for worktree: Worktree) -> WorktreeTerminalState {
     if let existing = states[worktree.id] {
-      if runSetupScriptIfNew() {
-        existing.enableSetupScriptIfNeeded()
-      }
       return existing
     }
-    let runSetupScript = runSetupScriptIfNew()
     let state = WorktreeTerminalState(
       runtime: runtime,
-      worktree: worktree,
-      runSetupScript: runSetupScript
+      worktree: worktree
     )
     state.setNotificationsEnabled(notificationsEnabled)
     state.isSelected = { [weak self] in
@@ -152,9 +143,6 @@ final class WorktreeTerminalManager {
     state.onCommandPaletteToggle = { [weak self] in
       self?.emit(.commandPaletteToggleRequested(worktreeID: worktree.id))
     }
-    state.onSetupScriptConsumed = { [weak self] in
-      self?.emit(.setupScriptConsumed(worktreeID: worktree.id))
-    }
     states[worktree.id] = state
     terminalLogger.info("Created terminal state for worktree \(worktree.id)")
     return state
@@ -162,19 +150,10 @@ final class WorktreeTerminalManager {
 
   private func createTabAsync(
     in worktree: Worktree,
-    runSetupScriptIfNew: Bool,
     initialInput: String? = nil
   ) {
-    let state = state(for: worktree) { runSetupScriptIfNew }
-    let setupScript: String?
-    if state.needsSetupScript() {
-      @SharedReader(.repositorySettings(worktree.repositoryRootURL))
-      var settings = RepositorySettings.default
-      setupScript = settings.setupScript
-    } else {
-      setupScript = nil
-    }
-    _ = state.createTab(setupScript: setupScript, initialInput: initialInput)
+    let state = state(for: worktree)
+    _ = state.createTab(initialInput: initialInput)
   }
 
   @discardableResult

@@ -461,10 +461,155 @@ struct RepositoriesFeatureTests {
     #expect(store.state.pendingWorktrees.isEmpty)
     #expect(store.state.selection == .worktree(createdWorktree.id))
     #expect(store.state.sidebarSelectedWorktreeIDs == [createdWorktree.id])
-    #expect(store.state.pendingSetupScriptWorktreeIDs.contains(createdWorktree.id))
     #expect(store.state.pendingTerminalFocusWorktreeIDs.contains(createdWorktree.id))
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
     #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func createWorktreeInRepositoryWaitsForSetupScriptCompletion() async throws {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter",
+      name: "swift-otter",
+      repoRoot: repoRoot
+    )
+    @Shared(.repositorySettings(URL(fileURLWithPath: repoRoot))) var repositorySettings
+    $repositorySettings.withLock { $0.setupScript = "echo setup" }
+    let setupContinuation = LockIsolated<AsyncThrowingStream<ShellStreamEvent, Error>.Continuation?>(nil)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+      $0.shellClient.runLoginStreamImpl = { _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          setupContinuation.withValue { $0 = continuation }
+          continuation.yield(.line(ShellStreamLine(source: .stdout, text: "setup line")))
+        }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .createWorktreeInRepository(
+        repositoryID: repository.id,
+        nameSource: .explicit("swift-otter"),
+        baseRefSource: .explicit("origin/main")
+      )
+    )
+
+    var reachedSetupStage = false
+    for _ in 0..<20 {
+      if store.state.pendingWorktrees.first?.progress.stage == .runningSetupScript {
+        reachedSetupStage = true
+        break
+      }
+      await store.receive(\.pendingWorktreeProgressUpdated)
+    }
+    for _ in 0..<20 {
+      if setupContinuation.value != nil {
+        break
+      }
+      await Task.yield()
+    }
+
+    #expect(reachedSetupStage == true)
+    #expect(setupContinuation.value != nil)
+    #expect(store.state.pendingWorktrees.count == 1)
+    #expect(store.state.pendingWorktrees.first?.progress.stage == .runningSetupScript)
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] == nil)
+
+    setupContinuation.withValue { continuation in
+      continuation?.yield(.finished(ShellOutput(stdout: "", stderr: "", exitCode: 0)))
+      continuation?.finish()
+    }
+
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(store.state.pendingWorktrees.isEmpty)
+    #expect(store.state.selection == .worktree(createdWorktree.id))
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func createWorktreeInRepositorySetupFailureShowsAlertAndKeepsWorktree() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter",
+      name: "swift-otter",
+      repoRoot: repoRoot
+    )
+    @Shared(.repositorySettings(URL(fileURLWithPath: repoRoot))) var repositorySettings
+    $repositorySettings.withLock { $0.setupScript = "echo setup" }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+      $0.shellClient.runLoginStreamImpl = { _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.line(ShellStreamLine(source: .stdout, text: "setup line")))
+          continuation.finish(
+            throwing: ShellClientError(
+              command: "setup",
+              stdout: "",
+              stderr: "boom",
+              exitCode: 1
+            )
+          )
+        }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .createWorktreeInRepository(
+        repositoryID: repository.id,
+        nameSource: .explicit("swift-otter"),
+        baseRefSource: .explicit("origin/main")
+      )
+    )
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Setup script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Command failed: setup\nstderr:\nboom")
+    }
+
+    #expect(store.state.pendingWorktrees.isEmpty)
+    #expect(store.state.selection == .worktree(createdWorktree.id))
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert == expectedAlert)
   }
 
   @Test(.dependencies) func createRandomWorktreeInRepositoryStreamFailureRemovesPendingWorktree() async {
@@ -1198,7 +1343,6 @@ struct RepositoriesFeatureTests {
     var initialState = makeState(repositories: [repository])
     initialState.selection = .worktree(mainWorktree.id)
     initialState.deletingWorktreeIDs = [removedWorktree.id]
-    initialState.pendingSetupScriptWorktreeIDs = [removedWorktree.id]
     initialState.pendingTerminalFocusWorktreeIDs = [removedWorktree.id]
     initialState.pendingWorktrees = [
       PendingWorktree(
@@ -1226,7 +1370,6 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.deletingWorktreeIDs = []
-      $0.pendingSetupScriptWorktreeIDs = []
       $0.pendingTerminalFocusWorktreeIDs = []
       $0.pendingWorktrees = []
       $0.pinnedWorktreeIDs = []
@@ -1305,7 +1448,6 @@ struct RepositoriesFeatureTests {
         pendingID: pendingID
       )
     ) {
-      $0.pendingSetupScriptWorktreeIDs.insert(newWorktree.id)
       $0.pendingTerminalFocusWorktreeIDs.insert(newWorktree.id)
       $0.pendingWorktrees = []
       $0.selection = .worktree(newWorktree.id)

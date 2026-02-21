@@ -10,17 +10,17 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
-    state.onSetupScriptConsumed?()
+    state.onTabCreated?()
 
     let stream = manager.eventStream()
     let event = await nextEvent(stream) { event in
-      if case .setupScriptConsumed = event {
+      if case .tabCreated = event {
         return true
       }
       return false
     }
 
-    #expect(event == .setupScriptConsumed(worktreeID: worktree.id))
+    #expect(event == .tabCreated(worktreeID: worktree.id))
   }
 
   @Test func emitsEventsAfterStreamCreated() async {
@@ -31,17 +31,17 @@ struct WorktreeTerminalManagerTests {
     let stream = manager.eventStream()
     let eventTask = Task {
       await nextEvent(stream) { event in
-        if case .setupScriptConsumed = event {
+        if case .tabCreated = event {
           return true
         }
         return false
       }
     }
 
-    state.onSetupScriptConsumed?()
+    state.onTabCreated?()
 
     let event = await eventTask.value
-    #expect(event == .setupScriptConsumed(worktreeID: worktree.id))
+    #expect(event == .tabCreated(worktreeID: worktree.id))
   }
 
   @Test func notificationIndicatorUsesCurrentCountOnStreamStart() async {
@@ -71,11 +71,11 @@ struct WorktreeTerminalManagerTests {
     var iterator = stream.makeAsyncIterator()
 
     let first = await iterator.next()
-    state.onSetupScriptConsumed?()
+    state.onTabCreated?()
     let second = await iterator.next()
 
     #expect(first == .notificationIndicatorChanged(count: 0))
-    #expect(second == .setupScriptConsumed(worktreeID: worktree.id))
+    #expect(second == .tabCreated(worktreeID: worktree.id))
   }
 
   @Test func taskStatusReflectsAnyRunningTab() {

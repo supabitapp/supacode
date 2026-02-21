@@ -3,9 +3,18 @@ import SwiftUI
 struct WorktreeLoadingView: View {
   let info: WorktreeLoadingInfo
   private let bottomAnchorID = "worktree-loading-bottom"
+  private var actionLabel: String {
+    switch info.state {
+    case .creating:
+      "Creating"
+    case .settingUp:
+      "Setting up"
+    case .removing:
+      "Removing"
+    }
+  }
 
   var body: some View {
-    let actionLabel = info.state == .creating ? "Creating" : "Removing"
     let fallbackStatus =
       if let repositoryName = info.repositoryName {
         "\(actionLabel) worktree in \(repositoryName)"

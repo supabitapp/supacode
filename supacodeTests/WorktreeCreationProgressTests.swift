@@ -83,4 +83,20 @@ struct WorktreeCreationProgressTests {
     #expect(progress.liveOutputLines == ["[3/5] copy README.md", "[4/5] copy build.log", "[5/5] copy output.bin"])
     #expect(progress.detailText == "[5/5] copy output.bin")
   }
+
+  @Test func runningSetupScriptUsesSetupLabelsAndStreamsLiveOutput() {
+    var progress = WorktreeCreationProgress(
+      stage: .runningSetupScript,
+      worktreeName: "swift-otter"
+    )
+
+    #expect(progress.titleText == "Setting up swift-otter")
+    #expect(progress.detailText == "Running setup script")
+
+    progress.appendOutputLine("stdout: installing deps", maxLines: 3)
+    progress.appendOutputLine("stderr: warning", maxLines: 3)
+
+    #expect(progress.detailText == "stderr: warning")
+    #expect(progress.liveOutputLines == ["stdout: installing deps", "stderr: warning"])
+  }
 }

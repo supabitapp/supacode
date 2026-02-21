@@ -1,50 +1,15 @@
 import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
-import IdentifiedCollections
 import Testing
 
 @testable import supacode
 
 @MainActor
 struct AppFeatureTerminalSetupScriptTests {
-  @Test(.dependencies) func newTerminalConsumesSetupScriptAndSendsCreateTabWithFlag() async {
+  @Test(.dependencies) func newTerminalSendsCreateTabForSelectedWorktree() async {
     let worktree = makeWorktree()
-    let repositoriesState = makeRepositoriesState(
-      worktree: worktree,
-      pendingSetupScript: true,
-      selected: true
-    )
-    let sent = LockIsolated<[TerminalClient.Command]>([])
-    let store = TestStore(
-      initialState: AppFeature.State(
-        repositories: repositoriesState,
-        settings: SettingsFeature.State()
-      )
-    ) {
-      AppFeature()
-    } withDependencies: {
-      $0.terminalClient.send = { command in
-        sent.withValue { $0.append(command) }
-      }
-    }
-
-    await store.send(.newTerminal)
-    await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
-    await store.receive(\.repositories.consumeSetupScript) {
-      $0.repositories.pendingSetupScriptWorktreeIDs.remove(worktree.id)
-    }
-    await store.finish()
-    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true)])
-  }
-
-  @Test(.dependencies) func newTerminalWithoutSetupScriptDoesNotConsume() async {
-    let worktree = makeWorktree()
-    let repositoriesState = makeRepositoriesState(
-      worktree: worktree,
-      pendingSetupScript: false,
-      selected: true
-    )
+    let repositoriesState = makeRepositoriesState(worktree: worktree, selected: true)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -61,60 +26,12 @@ struct AppFeatureTerminalSetupScriptTests {
 
     await store.send(.newTerminal)
     await store.finish()
-    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: false)])
+    #expect(sent.value == [.createTab(worktree)])
   }
 
-  @Test(.dependencies) func tabCreatedDoesNotConsumeSetupScript() async {
+  @Test(.dependencies) func worktreeCreatedTriggersEnsureInitialTab() async {
     let worktree = makeWorktree()
-    let repositoriesState = makeRepositoriesState(
-      worktree: worktree,
-      pendingSetupScript: true,
-      selected: true
-    )
-    let store = TestStore(
-      initialState: AppFeature.State(
-        repositories: repositoriesState,
-        settings: SettingsFeature.State()
-      )
-    ) {
-      AppFeature()
-    }
-
-    await store.send(.terminalEvent(.tabCreated(worktreeID: worktree.id)))
-    #expect(store.state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id))
-    await store.finish()
-  }
-
-  @Test(.dependencies) func setupScriptConsumedEventClearsPending() async {
-    let worktree = makeWorktree()
-    let repositoriesState = makeRepositoriesState(
-      worktree: worktree,
-      pendingSetupScript: true,
-      selected: true
-    )
-    let store = TestStore(
-      initialState: AppFeature.State(
-        repositories: repositoriesState,
-        settings: SettingsFeature.State()
-      )
-    ) {
-      AppFeature()
-    }
-
-    await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
-    await store.receive(\.repositories.consumeSetupScript) {
-      $0.repositories.pendingSetupScriptWorktreeIDs.remove(worktree.id)
-    }
-    await store.finish()
-  }
-
-  @Test(.dependencies) func worktreeCreatedTriggersEnsureInitialTabWithSetupScriptFlag() async {
-    let worktree = makeWorktree()
-    let repositoriesState = makeRepositoriesState(
-      worktree: worktree,
-      pendingSetupScript: true,
-      selected: false
-    )
+    let repositoriesState = makeRepositoriesState(worktree: worktree, selected: false)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -133,18 +50,14 @@ struct AppFeatureTerminalSetupScriptTests {
     await store.finish()
     #expect(
       sent.value == [
-        .ensureInitialTab(worktree, runSetupScriptIfNew: true, focusing: false)
+        .ensureInitialTab(worktree, focusing: false)
       ]
     )
   }
 
-  @Test(.dependencies) func worktreeCreatedSkipsSetupScriptFlagWhenNotPending() async {
+  @Test(.dependencies) func openWorktreeEditorSendsCreateTabWithInput() async {
     let worktree = makeWorktree()
-    let repositoriesState = makeRepositoriesState(
-      worktree: worktree,
-      pendingSetupScript: false,
-      selected: false
-    )
+    let repositoriesState = makeRepositoriesState(worktree: worktree, selected: true)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -159,11 +72,11 @@ struct AppFeatureTerminalSetupScriptTests {
       }
     }
 
-    await store.send(.repositories(.delegate(.worktreeCreated(worktree))))
+    await store.send(.openWorktree(.editor))
     await store.finish()
     #expect(
       sent.value == [
-        .ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: false)
+        .createTabWithInput(worktree, input: "$EDITOR")
       ]
     )
   }
@@ -180,7 +93,6 @@ struct AppFeatureTerminalSetupScriptTests {
 
   private func makeRepositoriesState(
     worktree: Worktree,
-    pendingSetupScript: Bool,
     selected: Bool
   ) -> RepositoriesFeature.State {
     let repository = Repository(
@@ -193,9 +105,6 @@ struct AppFeatureTerminalSetupScriptTests {
     repositoriesState.repositories = [repository]
     if selected {
       repositoriesState.selection = .worktree(worktree.id)
-    }
-    if pendingSetupScript {
-      repositoriesState.pendingSetupScriptWorktreeIDs = [worktree.id]
     }
     return repositoriesState
   }

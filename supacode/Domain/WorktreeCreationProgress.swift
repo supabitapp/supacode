@@ -32,6 +32,12 @@ nonisolated struct WorktreeCreationProgress: Hashable, Sendable {
   }
 
   var titleText: String {
+    if stage == .runningSetupScript {
+      if let worktreeName, !worktreeName.isEmpty {
+        return "Setting up \(worktreeName)"
+      }
+      return "Setting up worktree"
+    }
     if let worktreeName, !worktreeName.isEmpty {
       return "Creating \(worktreeName)"
     }
@@ -70,11 +76,19 @@ nonisolated struct WorktreeCreationProgress: Hashable, Sendable {
       } else {
         "Creating from \(baseRefBranchDisplay). \(copySummary)"
       }
+    case .runningSetupScript:
+      if let outputLine = outputLines.last, !outputLine.isEmpty {
+        return outputLine
+      }
+      if let latestOutputLine, !latestOutputLine.isEmpty {
+        return latestOutputLine
+      }
+      return "Running setup script"
     }
   }
 
   var liveOutputLines: [String] {
-    guard stage == .creatingWorktree else {
+    guard stage == .creatingWorktree || stage == .runningSetupScript else {
       return []
     }
     if !outputLines.isEmpty {
@@ -119,4 +133,5 @@ nonisolated enum WorktreeCreationStage: Hashable, Sendable {
   case checkingRepositoryMode
   case resolvingBaseReference
   case creatingWorktree
+  case runningSetupScript
 }
