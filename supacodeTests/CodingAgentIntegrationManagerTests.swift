@@ -20,17 +20,23 @@ struct CodingAgentIntegrationManagerTests {
       .appending(path: "claude", directoryHint: .notDirectory)
     let notifyURL = SupacodePaths.agentNotifyScriptURL(in: baseDirectory)
     let settingsURL = SupacodePaths.agentClaudeSettingsURL(in: baseDirectory)
+    let eventsDirectory = SupacodePaths.agentEventsDirectory(in: baseDirectory)
 
     #expect(FileManager.default.isExecutableFile(atPath: wrapperURL.path(percentEncoded: false)))
     #expect(FileManager.default.isExecutableFile(atPath: notifyURL.path(percentEncoded: false)))
     #expect(FileManager.default.fileExists(atPath: settingsURL.path(percentEncoded: false)))
+    #expect(FileManager.default.fileExists(atPath: eventsDirectory.path(percentEncoded: false)))
 
     let wrapper = try String(contentsOf: wrapperURL, encoding: .utf8)
     let notify = try String(contentsOf: notifyURL, encoding: .utf8)
     let settings = try String(contentsOf: settingsURL, encoding: .utf8)
 
     #expect(wrapper.contains("SUPACODE_AGENT_INTEGRATION_V1"))
+    #expect(wrapper.contains("SUPACODE_HOOKS_BIN"))
+    #expect(wrapper.contains("${SUPACODE_HOOKS_BIN%/}"))
     #expect(wrapper.contains("--settings"))
+    #expect(notify.contains("agent-events.jsonl"))
+    #expect(notify.contains("worktreeID"))
     #expect(notify.contains("agent-turn-complete"))
     #expect(settings.contains("UserPromptSubmit"))
     #expect(settings.contains("PermissionRequest"))
@@ -51,12 +57,17 @@ struct CodingAgentIntegrationManagerTests {
     let wrapperURL = SupacodePaths.agentHooksBinDirectory(in: baseDirectory)
       .appending(path: "codex", directoryHint: .notDirectory)
     let notifyURL = SupacodePaths.agentNotifyScriptURL(in: baseDirectory)
+    let eventsDirectory = SupacodePaths.agentEventsDirectory(in: baseDirectory)
 
     #expect(FileManager.default.isExecutableFile(atPath: wrapperURL.path(percentEncoded: false)))
     #expect(FileManager.default.isExecutableFile(atPath: notifyURL.path(percentEncoded: false)))
+    #expect(FileManager.default.fileExists(atPath: eventsDirectory.path(percentEncoded: false)))
 
     let wrapper = try String(contentsOf: wrapperURL, encoding: .utf8)
     #expect(wrapper.contains("SUPACODE_AGENT_INTEGRATION_V1"))
+    #expect(wrapper.contains("SUPACODE_HOOKS_BIN"))
+    #expect(wrapper.contains("${SUPACODE_HOOKS_BIN%/}"))
+    #expect(wrapper.contains("agent-events.jsonl"))
     #expect(wrapper.contains("notify=["))
   }
 
@@ -87,6 +98,9 @@ struct CodingAgentIntegrationManagerTests {
     #expect(
       !FileManager.default.fileExists(
         atPath: SupacodePaths.agentClaudeSettingsURL(in: baseDirectory).path(percentEncoded: false)))
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: SupacodePaths.agentEventsLogURL(in: baseDirectory).path(percentEncoded: false)))
   }
 
   @Test func statusRequiresOwnedWrappers() throws {

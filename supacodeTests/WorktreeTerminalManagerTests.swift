@@ -104,6 +104,37 @@ struct WorktreeTerminalManagerTests {
     #expect(manager.taskStatus(for: worktree.id) == .idle)
   }
 
+  @Test func agentEventsUpdateTaskStatus() async throws {
+    let eventsDirectory = try makeTemporaryDirectory(named: "supacode-agent-events")
+    defer { try? FileManager.default.removeItem(at: eventsDirectory) }
+    let eventsLogURL = eventsDirectory.appending(path: "agent-events.jsonl", directoryHint: .notDirectory)
+    FileManager.default.createFile(atPath: eventsLogURL.path(percentEncoded: false), contents: Data())
+
+    let manager = WorktreeTerminalManager(
+      runtime: GhosttyRuntime(),
+      agentEventsLogURL: eventsLogURL,
+      agentEventPollIntervalNanoseconds: 10_000_000
+    )
+    let worktree = makeWorktree()
+    _ = manager.state(for: worktree)
+
+    let stream = manager.eventStream()
+
+    try appendAgentEvent(to: eventsLogURL, worktreeID: worktree.id, eventType: "Start")
+    let runningEvent = await nextEvent(stream) { event in
+      event == .taskStatusChanged(worktreeID: worktree.id, status: .running)
+    }
+    #expect(runningEvent == .taskStatusChanged(worktreeID: worktree.id, status: .running))
+    #expect(manager.taskStatus(for: worktree.id) == .running)
+
+    try appendAgentEvent(to: eventsLogURL, worktreeID: worktree.id, eventType: "Stop")
+    let idleEvent = await nextEvent(stream) { event in
+      event == .taskStatusChanged(worktreeID: worktree.id, status: .idle)
+    }
+    #expect(idleEvent == .taskStatusChanged(worktreeID: worktree.id, status: .idle))
+    #expect(manager.taskStatus(for: worktree.id) == .idle)
+  }
+
   @Test func hasUnseenNotificationsReflectsUnreadEntries() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
@@ -210,6 +241,24 @@ struct WorktreeTerminalManagerTests {
       workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-1"),
       repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
     )
+  }
+
+  private func makeTemporaryDirectory(named prefix: String) throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: "\(prefix)-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  private func appendAgentEvent(to url: URL, worktreeID: String, eventType: String) throws {
+    let line =
+      "{\"timestamp\":\"2026-02-21T00:00:00.000Z\",\"eventType\":\"\(eventType)\","
+      + "\"worktreeID\":\"\(worktreeID)\",\"cwd\":\"/tmp\"}\n"
+    let data = Data(line.utf8)
+    let fileHandle = try FileHandle(forWritingTo: url)
+    defer { try? fileHandle.close() }
+    try fileHandle.seekToEnd()
+    try fileHandle.write(contentsOf: data)
   }
 
   private func nextEvent(

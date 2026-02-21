@@ -39,6 +39,7 @@ struct CodingAgentIntegrationManager {
     let paths = IntegrationPaths(baseDirectory: baseDirectory)
     try fileManager.createDirectory(at: paths.binDirectory, withIntermediateDirectories: true)
     try fileManager.createDirectory(at: paths.scriptsDirectory, withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: paths.eventsDirectory, withIntermediateDirectories: true)
     try writeText(
       notifyScript(paths: paths),
       to: paths.notifyScriptURL,
@@ -79,6 +80,7 @@ struct CodingAgentIntegrationManager {
     let currentStatus = try status()
     if !currentStatus.isEnabled {
       try removeIfExists(paths.notifyScriptURL)
+      try removeIfExists(paths.eventsLogURL)
     }
   }
 
@@ -116,6 +118,7 @@ struct CodingAgentIntegrationManager {
       #!/bin/bash
       set -euo pipefail
       SUPACODE_AGENT_INTEGRATION_MARKER=\(ownershipMarker)
+      SUPACODE_HOOKS_BIN=\(binPath)
 
       find_real_binary() {
         local name="$1"
@@ -123,7 +126,7 @@ struct CodingAgentIntegrationManager {
         for dir in $PATH; do
           [ -z "$dir" ] && continue
           dir="${dir%/}"
-          if [ "$dir" = \(binPath) ]; then
+          if [ "$dir" = "${SUPACODE_HOOKS_BIN%/}" ]; then
             continue
           fi
           if [ -x "$dir/$name" ] && [ ! -d "$dir/$name" ]; then
@@ -147,10 +150,12 @@ struct CodingAgentIntegrationManager {
   private func codexWrapperScript(paths: IntegrationPaths) -> String {
     let binPath = shellSingleQuoted(paths.binDirectory.path(percentEncoded: false))
     let notifyPath = shellSingleQuoted(paths.notifyScriptURL.path(percentEncoded: false))
+    let eventsDirectoryPath = shellSingleQuoted(paths.eventsDirectory.path(percentEncoded: false))
     return """
       #!/bin/bash
       set -euo pipefail
       SUPACODE_AGENT_INTEGRATION_MARKER=\(ownershipMarker)
+      SUPACODE_HOOKS_BIN=\(binPath)
 
       find_real_binary() {
         local name="$1"
@@ -158,7 +163,7 @@ struct CodingAgentIntegrationManager {
         for dir in $PATH; do
           [ -z "$dir" ] && continue
           dir="${dir%/}"
-          if [ "$dir" = \(binPath) ]; then
+          if [ "$dir" = "${SUPACODE_HOOKS_BIN%/}" ]; then
             continue
           fi
           if [ -x "$dir/$name" ] && [ ! -d "$dir/$name" ]; then
@@ -175,17 +180,35 @@ struct CodingAgentIntegrationManager {
         exit 127
       fi
 
-      printf '\\033]9;4;3;0\\a'
+      EVENTS_DIR="${SUPACODE_AGENT_EVENTS_DIR:-\(eventsDirectoryPath)}"
+      WORKTREE_ID="${SUPACODE_WORKTREE_ID:-}"
+      if [ -n "$WORKTREE_ID" ]; then
+        mkdir -p "$EVENTS_DIR" >/dev/null 2>&1
+        TS="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+        CWD="$(pwd -P 2>/dev/null || pwd)"
+        ESC_WORKTREE_ID="${WORKTREE_ID//\\\\/\\\\\\\\}"
+        ESC_WORKTREE_ID="${ESC_WORKTREE_ID//\\"/\\\\\\"}"
+        ESC_CWD="${CWD//\\\\/\\\\\\\\}"
+        ESC_CWD="${ESC_CWD//\\"/\\\\\\"}"
+        printf '{"timestamp":"%s","eventType":"Start","worktreeID":"%s","cwd":"%s"}\\n' \
+          "$TS" "$ESC_WORKTREE_ID" "$ESC_CWD" \
+          >> "$EVENTS_DIR/agent-events.jsonl" 2>/dev/null
+      fi
+
       NOTIFY_PATH=\(notifyPath)
       exec "$REAL_BIN" -c "notify=[\\"bash\\",\\"${NOTIFY_PATH}\\"]" "$@"
       """
   }
 
   private func notifyScript(paths: IntegrationPaths) -> String {
+    let eventsDirectoryPath = shellSingleQuoted(paths.eventsDirectory.path(percentEncoded: false))
     return """
       #!/bin/bash
       set -euo pipefail
       SUPACODE_AGENT_INTEGRATION_MARKER=\(ownershipMarker)
+      EVENTS_DIR="${SUPACODE_AGENT_EVENTS_DIR:-\(eventsDirectoryPath)}"
+      WORKTREE_ID="${SUPACODE_WORKTREE_ID:-}"
+      [ -z "$WORKTREE_ID" ] && exit 0
 
       if [ -n "${1:-}" ]; then
         INPUT="$1"
@@ -207,15 +230,29 @@ struct CodingAgentIntegrationManager {
 
       case "$EVENT_TYPE" in
         UserPromptSubmit|Start|agent-turn-start)
-          printf '\\033]9;4;3;0\\a'
+          EVENT_TYPE="Start"
           ;;
         PermissionRequest)
-          printf '\\033]9;4;4;100\\a'
+          EVENT_TYPE="PermissionRequest"
           ;;
-        Stop|agent-turn-complete)
-          printf '\\033]9;4;0;0\\a'
+        Stop|agent-turn-complete|SessionEnd|session-end)
+          EVENT_TYPE="Stop"
+          ;;
+        *)
+          exit 0
           ;;
       esac
+
+      mkdir -p "$EVENTS_DIR" >/dev/null 2>&1
+      TS="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+      CWD="$(pwd -P 2>/dev/null || pwd)"
+      ESC_WORKTREE_ID="${WORKTREE_ID//\\\\/\\\\\\\\}"
+      ESC_WORKTREE_ID="${ESC_WORKTREE_ID//\\"/\\\\\\"}"
+      ESC_CWD="${CWD//\\\\/\\\\\\\\}"
+      ESC_CWD="${ESC_CWD//\\"/\\\\\\"}"
+      printf '{"timestamp":"%s","eventType":"%s","worktreeID":"%s","cwd":"%s"}\\n' \
+        "$TS" "$EVENT_TYPE" "$ESC_WORKTREE_ID" "$ESC_CWD" \
+        >> "$EVENTS_DIR/agent-events.jsonl" 2>/dev/null
       """
   }
 
@@ -247,6 +284,8 @@ private struct IntegrationPaths {
   let hooksDirectory: URL
   let binDirectory: URL
   let scriptsDirectory: URL
+  let eventsDirectory: URL
+  let eventsLogURL: URL
   let notifyScriptURL: URL
   let claudeSettingsURL: URL
 
@@ -254,6 +293,8 @@ private struct IntegrationPaths {
     hooksDirectory = SupacodePaths.agentHooksDirectory(in: baseDirectory)
     binDirectory = SupacodePaths.agentHooksBinDirectory(in: baseDirectory)
     scriptsDirectory = SupacodePaths.agentHooksScriptsDirectory(in: baseDirectory)
+    eventsDirectory = SupacodePaths.agentEventsDirectory(in: baseDirectory)
+    eventsLogURL = SupacodePaths.agentEventsLogURL(in: baseDirectory)
     notifyScriptURL = SupacodePaths.agentNotifyScriptURL(in: baseDirectory)
     claudeSettingsURL = SupacodePaths.agentClaudeSettingsURL(in: baseDirectory)
   }

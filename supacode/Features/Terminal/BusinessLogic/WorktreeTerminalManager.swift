@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import Sharing
 
@@ -7,15 +8,29 @@ private let terminalLogger = SupaLogger("Terminal")
 @Observable
 final class WorktreeTerminalManager {
   private let runtime: GhosttyRuntime
+  private let agentEventsLogURL: URL
+  private let agentEventPollIntervalNanoseconds: UInt64
   private var states: [Worktree.ID: WorktreeTerminalState] = [:]
   private var notificationsEnabled = true
   private var lastNotificationIndicatorCount: Int?
   private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
   private var pendingEvents: [TerminalClient.Event] = []
+  private var agentEventPollTask: Task<Void, Never>?
   var selectedWorktreeID: Worktree.ID?
 
-  init(runtime: GhosttyRuntime) {
+  init(
+    runtime: GhosttyRuntime,
+    agentEventsLogURL: URL = SupacodePaths.agentEventsLogURL,
+    agentEventPollIntervalNanoseconds: UInt64 = 300_000_000
+  ) {
     self.runtime = runtime
+    self.agentEventsLogURL = agentEventsLogURL
+    self.agentEventPollIntervalNanoseconds = agentEventPollIntervalNanoseconds
+    startAgentEventPolling()
+  }
+
+  isolated deinit {
+    agentEventPollTask?.cancel()
   }
 
   func handleCommand(_ command: TerminalClient.Command) {
@@ -236,6 +251,97 @@ final class WorktreeTerminalManager {
     eventContinuation.yield(event)
   }
 
+  private func startAgentEventPolling() {
+    let logURL = agentEventsLogURL
+    let pollInterval = agentEventPollIntervalNanoseconds
+    agentEventPollTask?.cancel()
+    agentEventPollTask = Task.detached(priority: .utility) { [weak self] in
+      var offset = Self.initialAgentEventOffset(at: logURL)
+      var buffer = Data()
+      while !Task.isCancelled {
+        let (chunk, newOffset) = Self.readAgentEventChunk(at: logURL, offset: offset)
+        offset = newOffset
+        if !chunk.isEmpty {
+          buffer.append(chunk)
+          let events = Self.parseAgentEvents(from: &buffer)
+          if !events.isEmpty {
+            await self?.applyAgentEvents(events)
+          }
+        }
+        try? await Task.sleep(nanoseconds: pollInterval)
+      }
+    }
+  }
+
+  private func applyAgentEvents(_ events: [AgentHookEvent]) {
+    for event in events {
+      states[event.worktreeID]?.handleAgentLifecycleEvent(event.eventType)
+    }
+  }
+
+  nonisolated private static func initialAgentEventOffset(at url: URL) -> UInt64 {
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false)),
+      let fileSize = attributes[.size] as? NSNumber
+    else {
+      return 0
+    }
+    return fileSize.uint64Value
+  }
+
+  nonisolated private static func readAgentEventChunk(at url: URL, offset: UInt64) -> (Data, UInt64) {
+    let path = url.path(percentEncoded: false)
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+      let fileSize = attributes[.size] as? NSNumber
+    else {
+      return (Data(), 0)
+    }
+
+    let totalBytes = fileSize.uint64Value
+    let safeOffset = min(offset, totalBytes)
+    guard totalBytes > safeOffset else {
+      return (Data(), safeOffset)
+    }
+
+    guard let fileHandle = try? FileHandle(forReadingFrom: url) else {
+      return (Data(), safeOffset)
+    }
+    defer { try? fileHandle.close() }
+
+    do {
+      try fileHandle.seek(toOffset: safeOffset)
+      let data = try fileHandle.readToEnd() ?? Data()
+      return (data, safeOffset + UInt64(data.count))
+    } catch {
+      return (Data(), safeOffset)
+    }
+  }
+
+  nonisolated private static func parseAgentEvents(from buffer: inout Data) -> [AgentHookEvent] {
+    var events: [AgentHookEvent] = []
+    while let newlineRange = buffer.range(of: Data([0x0a])) {
+      let lineData = buffer.subdata(in: buffer.startIndex..<newlineRange.lowerBound)
+      buffer.removeSubrange(buffer.startIndex...newlineRange.lowerBound)
+      guard !lineData.isEmpty else { continue }
+      if let event = parseAgentEvent(lineData) {
+        events.append(event)
+      }
+    }
+    return events
+  }
+
+  nonisolated private static func parseAgentEvent(_ lineData: Data) -> AgentHookEvent? {
+    guard let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+      let eventType = object["eventType"] as? String
+    else {
+      return nil
+    }
+    let worktreeID = (object["worktreeID"] as? String) ?? (object["worktreeId"] as? String)
+    guard let worktreeID, !worktreeID.isEmpty else {
+      return nil
+    }
+    return AgentHookEvent(worktreeID: worktreeID, eventType: eventType)
+  }
+
   private func emitNotificationIndicatorCountIfNeeded() {
     let count = states.values.reduce(0) { count, state in
       count + (state.hasUnseenNotification ? 1 : 0)
@@ -245,4 +351,9 @@ final class WorktreeTerminalManager {
       emit(.notificationIndicatorChanged(count: count))
     }
   }
+}
+
+private struct AgentHookEvent: Sendable {
+  let worktreeID: Worktree.ID
+  let eventType: String
 }

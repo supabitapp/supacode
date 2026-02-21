@@ -60,4 +60,20 @@ nonisolated enum SupacodePaths {
   static var agentClaudeSettingsURL: URL {
     agentClaudeSettingsURL(in: baseDirectory)
   }
+
+  static func agentEventsDirectory(in baseDirectory: URL) -> URL {
+    agentHooksDirectory(in: baseDirectory).appending(path: "events", directoryHint: .isDirectory)
+  }
+
+  static var agentEventsDirectory: URL {
+    agentEventsDirectory(in: baseDirectory)
+  }
+
+  static func agentEventsLogURL(in baseDirectory: URL) -> URL {
+    agentEventsDirectory(in: baseDirectory).appending(path: "agent-events.jsonl", directoryHint: .notDirectory)
+  }
+
+  static var agentEventsLogURL: URL {
+    agentEventsLogURL(in: baseDirectory)
+  }
 }

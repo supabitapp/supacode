@@ -22,6 +22,7 @@ final class WorktreeTerminalState {
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   var tabIsRunningById: [TerminalTabID: Bool] = [:]
+  private var agentIsRunning = false
   private var runScriptTabId: TerminalTabID?
   private var pendingSetupScript: Bool
   private var isEnsuringInitialTab = false
@@ -55,7 +56,7 @@ final class WorktreeTerminalState {
   }
 
   var taskStatus: WorktreeTaskStatus {
-    tabIsRunningById.values.contains(true) ? .running : .idle
+    (agentIsRunning || tabIsRunningById.values.contains(true)) ? .running : .idle
   }
 
   var isRunScriptRunning: Bool {
@@ -304,6 +305,9 @@ final class WorktreeTerminalState {
     let wasRunScriptTab = tabId == runScriptTabId
     removeTree(for: tabId)
     tabManager.closeTab(tabId)
+    if tabManager.tabs.isEmpty {
+      agentIsRunning = false
+    }
     if let selected = tabManager.selectedTabId {
       focusSurface(in: selected)
     } else {
@@ -480,6 +484,7 @@ final class WorktreeTerminalState {
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
+    agentIsRunning = false
     setRunScriptTabId(nil)
     tabManager.closeAll()
   }
@@ -637,6 +642,7 @@ final class WorktreeTerminalState {
 
   private func terminalEnvironment() -> [String: String] {
     let hooksBinPath = SupacodePaths.agentHooksBinDirectory.path(percentEncoded: false)
+    let eventsDirectoryPath = SupacodePaths.agentEventsDirectory.path(percentEncoded: false)
     let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
     let hasPrefix =
       currentPath
@@ -653,7 +659,26 @@ final class WorktreeTerminalState {
     return [
       "PATH": path,
       "SUPACODE_AGENT_HOOKS": "1",
+      "SUPACODE_WORKTREE_ID": worktree.id,
+      "SUPACODE_AGENT_EVENTS_DIR": eventsDirectoryPath,
     ]
+  }
+
+  func handleAgentLifecycleEvent(_ eventType: String) {
+    let normalized = eventType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let isRunning: Bool
+    switch normalized {
+    case "start", "userpromptsubmit", "agent-turn-start", "permissionrequest":
+      isRunning = true
+    case "stop", "agent-turn-complete", "sessionend", "session-end":
+      isRunning = false
+    default:
+      return
+    }
+    if isRunning != agentIsRunning {
+      agentIsRunning = isRunning
+      emitTaskStatusIfChanged()
+    }
   }
 
   private struct InheritedSurfaceConfig: Equatable {
@@ -873,6 +898,8 @@ final class WorktreeTerminalState {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
       tabManager.closeTab(tabId)
+      agentIsRunning = false
+      emitTaskStatusIfChanged()
       if tabId == runScriptTabId {
         setRunScriptTabId(nil)
       }
