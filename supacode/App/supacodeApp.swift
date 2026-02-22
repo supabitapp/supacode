@@ -14,6 +14,17 @@ import Sentry
 import Sharing
 import SwiftUI
 
+enum ShortcutRestartState {
+  static let launchOverrides: [String: AppShortcutOverride] = {
+    @Shared(.settingsFile) var settingsFile
+    return settingsFile.global.shortcutOverrides
+  }()
+
+  static func requiresRestart(current: [String: AppShortcutOverride]) -> Bool {
+    current != launchOverrides
+  }
+}
+
 private enum GhosttyCLI {
   static let argv: [UnsafeMutablePointer<CChar>?] = {
     @Shared(.settingsFile) var settingsFile

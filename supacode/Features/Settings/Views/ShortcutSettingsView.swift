@@ -39,8 +39,28 @@ struct ShortcutSettingsView: View {
     ]
   }
 
+  private var needsRestart: Bool {
+    ShortcutRestartState.requiresRestart(current: store.shortcutOverrides)
+  }
+
   var body: some View {
     VStack(alignment: .leading) {
+      if needsRestart {
+        HStack(spacing: 8) {
+          Image(systemName: "arrow.trianglehead.2.counterclockwise")
+            .foregroundStyle(.secondary)
+          Text("Restart required to apply shortcut changes to the terminal")
+            .font(.callout)
+          Spacer()
+          Button("Restart") {
+            relaunch()
+          }
+          .help("Restart Supacode to apply shortcut changes")
+        }
+        .padding(12)
+        .background(.quinary, in: .rect(cornerRadius: 8))
+        .padding([.horizontal, .top])
+      }
       Form {
         ForEach(groups, id: \.title) { group in
           Section(group.title) {
@@ -72,5 +92,14 @@ struct ShortcutSettingsView: View {
         store.send(.setShortcutOverride(name: name, override: newValue))
       }
     )
+  }
+
+  private func relaunch() {
+    let url = Bundle.main.bundleURL
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.createsNewApplicationInstance = true
+    NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in
+      NSApplication.shared.terminate(nil)
+    }
   }
 }
