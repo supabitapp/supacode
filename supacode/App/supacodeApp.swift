@@ -16,10 +16,12 @@ import SwiftUI
 
 private enum GhosttyCLI {
   static let argv: [UnsafeMutablePointer<CChar>?] = {
+    @Shared(.settingsFile) var settingsFile
+    let settings = settingsFile.global
     var args: [UnsafeMutablePointer<CChar>?] = []
     let executable = CommandLine.arguments.first ?? "supacode"
     args.append(strdup(executable))
-    for keybindArgument in AppShortcuts.ghosttyCLIKeybindArguments {
+    for keybindArgument in AppShortcuts.ghosttyCLIKeybindArguments(from: settings) {
       args.append(strdup(keybindArgument))
     }
     args.append(nil)

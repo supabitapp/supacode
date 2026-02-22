@@ -1,20 +1,35 @@
 import SwiftUI
 
 struct AppShortcut {
+  let name: String
   let keyEquivalent: KeyEquivalent
   let modifiers: EventModifiers
   private let ghosttyKeyName: String
 
-  init(key: Character, modifiers: EventModifiers) {
+  init(name: String, key: Character, modifiers: EventModifiers) {
+    self.name = name
     self.keyEquivalent = KeyEquivalent(key)
     self.modifiers = modifiers
     self.ghosttyKeyName = String(key).lowercased()
   }
 
-  init(keyEquivalent: KeyEquivalent, ghosttyKeyName: String, modifiers: EventModifiers) {
+  init(name: String, keyEquivalent: KeyEquivalent, ghosttyKeyName: String, modifiers: EventModifiers) {
+    self.name = name
     self.keyEquivalent = keyEquivalent
     self.modifiers = modifiers
     self.ghosttyKeyName = ghosttyKeyName
+  }
+
+  init(name: String, override: AppShortcutOverride) {
+    self.name = name
+    self.keyEquivalent = override.keyboardShortcut.key
+    self.modifiers = override.eventModifiers
+    self.ghosttyKeyName = override.ghosttyKeybind.split(separator: "+").last.map(String.init) ?? ""
+  }
+
+  func effective(from settings: GlobalSettings) -> AppShortcut {
+    guard let override = settings.shortcutOverrides[name] else { return self }
+    return AppShortcut(name: name, override: override)
   }
 
   var keyboardShortcut: KeyboardShortcut {
@@ -78,34 +93,36 @@ enum AppShortcuts {
     TabSelectionBinding(unicode: "0", physical: "digit_0", tabIndex: 10),
   ]
 
-  static let newWorktree = AppShortcut(key: "n", modifiers: .command)
-  static let openSettings = AppShortcut(key: ",", modifiers: .command)
-  static let openFinder = AppShortcut(key: "o", modifiers: .command)
-  static let copyPath = AppShortcut(key: "c", modifiers: [.command, .shift])
-  static let openRepository = AppShortcut(key: "o", modifiers: [.command, .shift])
-  static let openPullRequest = AppShortcut(key: "g", modifiers: [.command, .control])
-  static let toggleLeftSidebar = AppShortcut(key: "[", modifiers: .command)
-  static let refreshWorktrees = AppShortcut(key: "r", modifiers: [.command, .shift])
-  static let runScript = AppShortcut(key: "r", modifiers: .command)
-  static let stopRunScript = AppShortcut(key: ".", modifiers: .command)
-  static let checkForUpdates = AppShortcut(key: "u", modifiers: .command)
-  static let archivedWorktrees = AppShortcut(key: "a", modifiers: [.command, .control])
+  static let newWorktree = AppShortcut(name: "newWorktree", key: "n", modifiers: .command)
+  static let openSettings = AppShortcut(name: "openSettings", key: ",", modifiers: .command)
+  static let openFinder = AppShortcut(name: "openFinder", key: "o", modifiers: .command)
+  static let copyPath = AppShortcut(name: "copyPath", key: "c", modifiers: [.command, .shift])
+  static let openRepository = AppShortcut(name: "openRepository", key: "o", modifiers: [.command, .shift])
+  static let openPullRequest = AppShortcut(name: "openPullRequest", key: "g", modifiers: [.command, .control])
+  static let toggleLeftSidebar = AppShortcut(name: "toggleLeftSidebar", key: "[", modifiers: .command)
+  static let refreshWorktrees = AppShortcut(name: "refreshWorktrees", key: "r", modifiers: [.command, .shift])
+  static let runScript = AppShortcut(name: "runScript", key: "r", modifiers: .command)
+  static let stopRunScript = AppShortcut(name: "stopRunScript", key: ".", modifiers: .command)
+  static let checkForUpdates = AppShortcut(name: "checkForUpdates", key: "u", modifiers: .command)
+  static let archivedWorktrees = AppShortcut(name: "archivedWorktrees", key: "a", modifiers: [.command, .control])
   static let selectNextWorktree = AppShortcut(
+    name: "selectNextWorktree",
     keyEquivalent: .downArrow, ghosttyKeyName: "arrow_down", modifiers: [.command, .control]
   )
   static let selectPreviousWorktree = AppShortcut(
+    name: "selectPreviousWorktree",
     keyEquivalent: .upArrow, ghosttyKeyName: "arrow_up", modifiers: [.command, .control]
   )
-  static let selectWorktree1 = AppShortcut(key: "1", modifiers: [.control])
-  static let selectWorktree2 = AppShortcut(key: "2", modifiers: [.control])
-  static let selectWorktree3 = AppShortcut(key: "3", modifiers: [.control])
-  static let selectWorktree4 = AppShortcut(key: "4", modifiers: [.control])
-  static let selectWorktree5 = AppShortcut(key: "5", modifiers: [.control])
-  static let selectWorktree6 = AppShortcut(key: "6", modifiers: [.control])
-  static let selectWorktree7 = AppShortcut(key: "7", modifiers: [.control])
-  static let selectWorktree8 = AppShortcut(key: "8", modifiers: [.control])
-  static let selectWorktree9 = AppShortcut(key: "9", modifiers: [.control])
-  static let selectWorktree0 = AppShortcut(key: "0", modifiers: [.control])
+  static let selectWorktree1 = AppShortcut(name: "selectWorktree1", key: "1", modifiers: [.control])
+  static let selectWorktree2 = AppShortcut(name: "selectWorktree2", key: "2", modifiers: [.control])
+  static let selectWorktree3 = AppShortcut(name: "selectWorktree3", key: "3", modifiers: [.control])
+  static let selectWorktree4 = AppShortcut(name: "selectWorktree4", key: "4", modifiers: [.control])
+  static let selectWorktree5 = AppShortcut(name: "selectWorktree5", key: "5", modifiers: [.control])
+  static let selectWorktree6 = AppShortcut(name: "selectWorktree6", key: "6", modifiers: [.control])
+  static let selectWorktree7 = AppShortcut(name: "selectWorktree7", key: "7", modifiers: [.control])
+  static let selectWorktree8 = AppShortcut(name: "selectWorktree8", key: "8", modifiers: [.control])
+  static let selectWorktree9 = AppShortcut(name: "selectWorktree9", key: "9", modifiers: [.control])
+  static let selectWorktree0 = AppShortcut(name: "selectWorktree0", key: "0", modifiers: [.control])
   static let worktreeSelection: [AppShortcut] = [
     selectWorktree1,
     selectWorktree2,
@@ -126,8 +143,8 @@ enum AppShortcuts {
     ]
   }
 
-  static var ghosttyCLIKeybindArguments: [String] {
-    all.map(\.ghosttyUnbindArgument) + tabSelectionGhosttyKeybindArguments
+  static func ghosttyCLIKeybindArguments(from settings: GlobalSettings) -> [String] {
+    effectiveAll(from: settings).map(\.ghosttyUnbindArgument) + tabSelectionGhosttyKeybindArguments
   }
 
   static let all: [AppShortcut] = [
@@ -156,4 +173,8 @@ enum AppShortcuts {
     selectWorktree9,
     selectWorktree0,
   ]
+
+  static func effectiveAll(from settings: GlobalSettings) -> [AppShortcut] {
+    all.map { $0.effective(from: settings) }
+  }
 }

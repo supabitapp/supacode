@@ -58,7 +58,7 @@ struct AppShortcutsTests {
   }
 
   @Test func ghosttyCLIArgumentsKeepWorktreeUnbindsAndTabBinds() {
-    let arguments = AppShortcuts.ghosttyCLIKeybindArguments
+    let arguments = AppShortcuts.ghosttyCLIKeybindArguments(from: .default)
 
     for shortcut in AppShortcuts.worktreeSelection {
       #expect(arguments.contains(shortcut.ghosttyUnbindArgument))
@@ -71,5 +71,48 @@ struct AppShortcutsTests {
     for argument in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map({ "--keybind=ctrl+digit_\($0)=unbind" }) {
       #expect(arguments.contains(argument) == false)
     }
+  }
+
+  @Test func namePropertyReturnsCorrectValues() {
+    #expect(AppShortcuts.toggleLeftSidebar.name == "toggleLeftSidebar")
+    #expect(AppShortcuts.newWorktree.name == "newWorktree")
+    #expect(AppShortcuts.openSettings.name == "openSettings")
+    #expect(AppShortcuts.selectNextWorktree.name == "selectNextWorktree")
+    #expect(AppShortcuts.selectWorktree1.name == "selectWorktree1")
+  }
+
+  @Test func effectiveReturnsDefaultWhenNoOverrideExists() {
+    let settings = GlobalSettings.default
+    let shortcut = AppShortcuts.toggleLeftSidebar
+    let effective = shortcut.effective(from: settings)
+    #expect(effective.name == shortcut.name)
+    #expect(effective.keyEquivalent == shortcut.keyEquivalent)
+    #expect(effective.modifiers == shortcut.modifiers)
+    #expect(effective.ghosttyKeybind == shortcut.ghosttyKeybind)
+  }
+
+  @Test func effectiveReturnsOverriddenShortcut() {
+    let override = AppShortcutOverride(keyCode: 0x00, modifiers: [.command, .shift])
+    var settings = GlobalSettings.default
+    settings.shortcutOverrides = ["toggleLeftSidebar": override]
+    let effective = AppShortcuts.toggleLeftSidebar.effective(from: settings)
+    #expect(effective.name == "toggleLeftSidebar")
+    #expect(effective.keyEquivalent == KeyEquivalent("a"))
+    #expect(effective.modifiers == [.command, .shift])
+    #expect(effective.ghosttyKeybind == "shift+super+a")
+  }
+
+  @Test func effectiveAllResolvesOverridesAndDefaults() {
+    let override = AppShortcutOverride(keyCode: 0x01, modifiers: [.command, .shift])
+    var settings = GlobalSettings.default
+    settings.shortcutOverrides = ["newWorktree": override]
+    let effective = AppShortcuts.effectiveAll(from: settings)
+    let newWorktree = effective.first { $0.name == "newWorktree" }
+    let openSettings = effective.first { $0.name == "openSettings" }
+    #expect(newWorktree?.keyEquivalent == KeyEquivalent("s"))
+    #expect(newWorktree?.modifiers == [.command, .shift])
+    #expect(newWorktree?.ghosttyKeybind == "shift+super+s")
+    #expect(openSettings?.keyEquivalent == AppShortcuts.openSettings.keyEquivalent)
+    #expect(openSettings?.modifiers == AppShortcuts.openSettings.modifiers)
   }
 }
