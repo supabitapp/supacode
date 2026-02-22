@@ -53,6 +53,7 @@ struct SettingsFeatureTests {
       $0.deleteBranchOnDeleteWorktree = false
       $0.automaticallyArchiveMergedWorktrees = true
       $0.promptForWorktreeCreation = true
+      $0.shortcutOverrides = [:]
     }
     await store.receive(\.delegate.settingsChanged)
   }
@@ -190,11 +191,67 @@ struct SettingsFeatureTests {
       $0.deleteBranchOnDeleteWorktree = true
       $0.automaticallyArchiveMergedWorktrees = true
       $0.promptForWorktreeCreation = false
+      $0.shortcutOverrides = [:]
       $0.selection = selection
       $0.repositorySettings = RepositorySettingsFeature.State(
         rootURL: rootURL,
         settings: .default
       )
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
+  @Test(.dependencies) func settingShortcutOverridePersists() async {
+    let initialSettings = GlobalSettings.default
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    let override = AppShortcutOverride(keyCode: 0, modifiers: .command)
+    await store.send(.setShortcutOverride(name: "newWorktree", override: override)) {
+      $0.shortcutOverrides = ["newWorktree": override]
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    expectNoDifference(settingsFile.global.shortcutOverrides, ["newWorktree": override])
+  }
+
+  @Test(.dependencies) func clearingShortcutOverridePersists() async {
+    let override = AppShortcutOverride(keyCode: 0, modifiers: .command)
+    var initialSettings = GlobalSettings.default
+    initialSettings.shortcutOverrides = ["newWorktree": override]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.setShortcutOverride(name: "newWorktree", override: nil)) {
+      $0.shortcutOverrides = [:]
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    expectNoDifference(settingsFile.global.shortcutOverrides, [:])
+  }
+
+  @Test(.dependencies) func initialStateLoadsExistingOverrides() async {
+    let override = AppShortcutOverride(keyCode: 12, modifiers: [.command, .shift])
+    var settings = GlobalSettings.default
+    settings.shortcutOverrides = ["openFinder": override]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.task)
+    await store.receive(\.settingsLoaded) {
+      $0.shortcutOverrides = ["openFinder": override]
     }
     await store.receive(\.delegate.settingsChanged)
   }

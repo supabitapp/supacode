@@ -45,6 +45,17 @@ struct AppShortcut {
     "--keybind=\(ghosttyKeybind)=unbind"
   }
 
+  var displayName: String {
+    var result = ""
+    for (index, char) in name.enumerated() {
+      if index > 0 && char.isUppercase {
+        result.append(" ")
+      }
+      result.append(index == 0 ? char.uppercased() : String(char))
+    }
+    return result
+  }
+
   var display: String {
     let parts = displayModifierParts + [keyEquivalent.display]
     return parts.joined()

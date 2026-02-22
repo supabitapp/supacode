@@ -1,7 +1,7 @@
 import Carbon.HIToolbox
 import SwiftUI
 
-struct AppShortcutOverride: Codable, Equatable, Sendable {
+nonisolated struct AppShortcutOverride: Codable, Equatable, Sendable {
   var keyCode: UInt16
   var modifiers: ModifierFlags
 
