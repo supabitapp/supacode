@@ -187,11 +187,12 @@ struct SupacodeApp: App {
       SidebarCommands()
       TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
+        let cmdPalette = AppShortcuts.commandPalette.effective(from: store.settings.globalSettings)
         Button("Command Palette") {
           store.send(.commandPalette(.togglePresented))
         }
-        .keyboardShortcut("p", modifiers: .command)
-        .help("Command Palette (⌘P)")
+        .keyboardShortcut(cmdPalette.keyEquivalent, modifiers: cmdPalette.modifiers)
+        .help("Command Palette (\(cmdPalette.display))")
       }
       UpdateCommands(store: store.scope(state: \.updates, action: \.updates))
       CommandGroup(replacing: .windowArrangement) {

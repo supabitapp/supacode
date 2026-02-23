@@ -115,7 +115,25 @@ enum AppShortcuts {
   static let runScript = AppShortcut(name: "runScript", key: "r", modifiers: .command)
   static let stopRunScript = AppShortcut(name: "stopRunScript", key: ".", modifiers: .command)
   static let checkForUpdates = AppShortcut(name: "checkForUpdates", key: "u", modifiers: .command)
+  static let archiveWorktree = AppShortcut(
+    name: "archiveWorktree",
+    keyEquivalent: .delete, ghosttyKeyName: "backspace", modifiers: .command
+  )
+  static let deleteWorktree = AppShortcut(
+    name: "deleteWorktree",
+    keyEquivalent: .delete, ghosttyKeyName: "backspace", modifiers: [.command, .shift]
+  )
+  static let confirmWorktreeAction = AppShortcut(
+    name: "confirmWorktreeAction",
+    keyEquivalent: .return, ghosttyKeyName: "return", modifiers: .command
+  )
   static let archivedWorktrees = AppShortcut(name: "archivedWorktrees", key: "a", modifiers: [.command, .control])
+  static let find = AppShortcut(name: "find", key: "f", modifiers: .command)
+  static let findNext = AppShortcut(name: "findNext", key: "g", modifiers: .command)
+  static let findPrevious = AppShortcut(name: "findPrevious", key: "g", modifiers: [.command, .shift])
+  static let hideFindBar = AppShortcut(name: "hideFindBar", key: "f", modifiers: [.command, .shift])
+  static let useSelectionForFind = AppShortcut(name: "useSelectionForFind", key: "e", modifiers: .command)
+  static let commandPalette = AppShortcut(name: "commandPalette", key: "p", modifiers: .command)
   static let selectNextWorktree = AppShortcut(
     name: "selectNextWorktree",
     keyEquivalent: .downArrow, ghosttyKeyName: "arrow_down", modifiers: [.command, .control]
@@ -170,7 +188,16 @@ enum AppShortcuts {
     runScript,
     stopRunScript,
     checkForUpdates,
+    archiveWorktree,
+    deleteWorktree,
+    confirmWorktreeAction,
     archivedWorktrees,
+    find,
+    findNext,
+    findPrevious,
+    hideFindBar,
+    useSelectionForFind,
+    commandPalette,
     selectNextWorktree,
     selectPreviousWorktree,
     selectWorktree1,

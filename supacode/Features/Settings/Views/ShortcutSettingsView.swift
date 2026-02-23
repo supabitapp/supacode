@@ -18,12 +18,22 @@ struct ShortcutSettingsView: View {
         AppShortcuts.newWorktree,
         AppShortcuts.refreshWorktrees,
         AppShortcuts.archivedWorktrees,
+        AppShortcuts.archiveWorktree,
+        AppShortcuts.deleteWorktree,
+        AppShortcuts.confirmWorktreeAction,
         AppShortcuts.selectNextWorktree,
         AppShortcuts.selectPreviousWorktree,
       ]),
       ShortcutGroup(title: "Worktree Selection", shortcuts:
         AppShortcuts.worktreeSelection
       ),
+      ShortcutGroup(title: "Find", shortcuts: [
+        AppShortcuts.find,
+        AppShortcuts.findNext,
+        AppShortcuts.findPrevious,
+        AppShortcuts.hideFindBar,
+        AppShortcuts.useSelectionForFind,
+      ]),
       ShortcutGroup(title: "Actions", shortcuts: [
         AppShortcuts.openFinder,
         AppShortcuts.openRepository,
@@ -33,6 +43,7 @@ struct ShortcutSettingsView: View {
         AppShortcuts.stopRunScript,
       ]),
       ShortcutGroup(title: "General", shortcuts: [
+        AppShortcuts.commandPalette,
         AppShortcuts.openSettings,
         AppShortcuts.checkForUpdates,
       ]),

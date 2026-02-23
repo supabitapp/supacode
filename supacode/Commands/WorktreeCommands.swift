@@ -24,8 +24,9 @@ struct WorktreeCommands: Commands {
     let orderedRows = visibleHotkeyWorktreeRows ?? repositories.orderedWorktreeRows()
     let pullRequestURL = selectedPullRequestURL
     let githubIntegrationEnabled = store.settings.githubIntegrationEnabled
-    let archiveShortcut = KeyboardShortcut(.delete, modifiers: .command).display
-    let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
+    let archive = AppShortcuts.archiveWorktree.effective(from: globalSettings)
+    let deleteWt = AppShortcuts.deleteWorktree.effective(from: globalSettings)
+    let confirm = AppShortcuts.confirmWorktreeAction.effective(from: globalSettings)
     let selectNext = AppShortcuts.selectNextWorktree.effective(from: globalSettings)
     let selectPrevious = AppShortcuts.selectPreviousWorktree.effective(from: globalSettings)
     let openRepo = AppShortcuts.openRepository.effective(from: globalSettings)
@@ -109,20 +110,20 @@ struct WorktreeCommands: Commands {
       Button("Archive Worktree") {
         archiveWorktreeAction?()
       }
-      .keyboardShortcut(.delete, modifiers: .command)
-      .help("Archive Worktree (\(archiveShortcut))")
+      .keyboardShortcut(archive.keyEquivalent, modifiers: archive.modifiers)
+      .help("Archive Worktree (\(archive.display))")
       .disabled(archiveWorktreeAction == nil)
       Button("Delete Worktree") {
         deleteWorktreeAction?()
       }
-      .keyboardShortcut(.delete, modifiers: [.command, .shift])
-      .help("Delete Worktree (\(deleteShortcut))")
+      .keyboardShortcut(deleteWt.keyEquivalent, modifiers: deleteWt.modifiers)
+      .help("Delete Worktree (\(deleteWt.display))")
       .disabled(deleteWorktreeAction == nil)
       Button("Confirm Worktree Action") {
         confirmWorktreeAction?()
       }
-      .keyboardShortcut(.return, modifiers: .command)
-      .help("Confirm Worktree Action (⌘↩)")
+      .keyboardShortcut(confirm.keyEquivalent, modifiers: confirm.modifiers)
+      .help("Confirm Worktree Action (\(confirm.display))")
       .disabled(confirmWorktreeAction == nil)
       Button("Refresh Worktrees") {
         store.send(.repositories(.refreshWorktrees))

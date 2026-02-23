@@ -1,3 +1,4 @@
+import Sharing
 import SwiftUI
 
 struct TerminalCommands: Commands {
@@ -10,8 +11,15 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.navigateSearchNextAction) private var navigateSearchNextAction
   @FocusedValue(\.navigateSearchPreviousAction) private var navigateSearchPreviousAction
   @FocusedValue(\.endSearchAction) private var endSearchAction
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some Commands {
+    let globalSettings = settingsFile.global
+    let findShortcut = AppShortcuts.find.effective(from: globalSettings)
+    let findNextShortcut = AppShortcuts.findNext.effective(from: globalSettings)
+    let findPrevShortcut = AppShortcuts.findPrevious.effective(from: globalSettings)
+    let hideFindShortcut = AppShortcuts.hideFindBar.effective(from: globalSettings)
+    let useSelectionShortcut = AppShortcuts.useSelectionForFind.effective(from: globalSettings)
     CommandGroup(after: .newItem) {
       Button("New Terminal") {
         newTerminalAction?()
@@ -37,19 +45,22 @@ struct TerminalCommands: Commands {
       Button("Find...") {
         startSearchAction?()
       }
-      .keyboardShortcut("f", modifiers: .command)
+      .keyboardShortcut(findShortcut.keyEquivalent, modifiers: findShortcut.modifiers)
+      .help("Find (\(findShortcut.display))")
       .disabled(startSearchAction == nil)
 
       Button("Find Next") {
         navigateSearchNextAction?()
       }
-      .keyboardShortcut("g", modifiers: .command)
+      .keyboardShortcut(findNextShortcut.keyEquivalent, modifiers: findNextShortcut.modifiers)
+      .help("Find Next (\(findNextShortcut.display))")
       .disabled(navigateSearchNextAction == nil)
 
       Button("Find Previous") {
         navigateSearchPreviousAction?()
       }
-      .keyboardShortcut("g", modifiers: [.command, .shift])
+      .keyboardShortcut(findPrevShortcut.keyEquivalent, modifiers: findPrevShortcut.modifiers)
+      .help("Find Previous (\(findPrevShortcut.display))")
       .disabled(navigateSearchPreviousAction == nil)
 
       Divider()
@@ -57,7 +68,8 @@ struct TerminalCommands: Commands {
       Button("Hide Find Bar") {
         endSearchAction?()
       }
-      .keyboardShortcut("f", modifiers: [.command, .shift])
+      .keyboardShortcut(hideFindShortcut.keyEquivalent, modifiers: hideFindShortcut.modifiers)
+      .help("Hide Find Bar (\(hideFindShortcut.display))")
       .disabled(endSearchAction == nil)
 
       Divider()
@@ -65,7 +77,8 @@ struct TerminalCommands: Commands {
       Button("Use Selection for Find") {
         searchSelectionAction?()
       }
-      .keyboardShortcut("e", modifiers: .command)
+      .keyboardShortcut(useSelectionShortcut.keyEquivalent, modifiers: useSelectionShortcut.modifiers)
+      .help("Use Selection for Find (\(useSelectionShortcut.display))")
       .disabled(searchSelectionAction == nil)
     }
   }
