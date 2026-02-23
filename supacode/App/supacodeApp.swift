@@ -130,20 +130,28 @@ struct SupacodeApp: App {
     _ghosttyShortcuts = State(initialValue: shortcuts)
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
     _terminalManager = State(initialValue: terminalManager)
-    setenv("SUPACODE_SOCKET_PATH", SupacodePaths.socketPath, 1)
-    let socketCommandHandler = SocketCommandHandler(terminalManager: terminalManager)
-    let socketServer = SocketServer(path: SupacodePaths.socketPath) { request in
-      await MainActor.run {
-        socketCommandHandler.handle(request)
-      }
-    }
-    do {
-      try socketServer.start()
-      appLogger.info("Socket API listening at \(SupacodePaths.socketPath)")
-      _socketServer = State(initialValue: socketServer)
-    } catch {
-      appLogger.warning("Socket API failed to start: \(error.localizedDescription)")
+    let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    let configuredSocketServer: SocketServer?
+    if isRunningTests {
+      configuredSocketServer = nil
       _socketServer = State(initialValue: nil)
+    } else {
+      setenv("SUPACODE_SOCKET_PATH", SupacodePaths.socketPath, 1)
+      let socketCommandHandler = SocketCommandHandler(terminalManager: terminalManager)
+      let socketServer = SocketServer(path: SupacodePaths.socketPath) { request in
+        await MainActor.run {
+          socketCommandHandler.handle(request)
+        }
+      }
+      do {
+        try socketServer.start()
+        appLogger.info("Socket API listening at \(SupacodePaths.socketPath)")
+        _socketServer = State(initialValue: socketServer)
+      } catch {
+        appLogger.warning("Socket API failed to start: \(error.localizedDescription)")
+        _socketServer = State(initialValue: nil)
+      }
+      configuredSocketServer = socketServer
     }
     let worktreeInfoWatcher = WorktreeInfoWatcherManager()
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
@@ -174,7 +182,7 @@ struct SupacodeApp: App {
     }
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
-    appDelegate.socketServer = socketServer
+    appDelegate.socketServer = configuredSocketServer
     SettingsWindowManager.shared.configure(
       store: appStore,
       ghosttyShortcuts: shortcuts,
