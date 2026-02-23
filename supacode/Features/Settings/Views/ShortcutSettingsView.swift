@@ -78,7 +78,7 @@ struct ShortcutSettingsView: View {
             ForEach(group.shortcuts, id: \.name) { shortcut in
               HStack {
                 Text(shortcut.displayName)
-                  .frame(minWidth: 180, alignment: .leading)
+                Spacer()
                 ShortcutRecorderView(
                   shortcutName: shortcut.name,
                   defaultShortcut: shortcut,
