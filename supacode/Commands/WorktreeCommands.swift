@@ -41,19 +41,13 @@ struct WorktreeCommands: Commands {
       Button("Select Next Worktree") {
         store.send(.repositories(.selectNextWorktree))
       }
-      .keyboardShortcut(
-        selectNext.keyEquivalent,
-        modifiers: selectNext.modifiers
-      )
+      .appKeyboardShortcut(selectNext)
       .help("Select Next Worktree (\(selectNext.display))")
       .disabled(orderedRows.isEmpty)
       Button("Select Previous Worktree") {
         store.send(.repositories(.selectPreviousWorktree))
       }
-      .keyboardShortcut(
-        selectPrevious.keyEquivalent,
-        modifiers: selectPrevious.modifiers
-      )
+      .appKeyboardShortcut(selectPrevious)
       .help("Select Previous Worktree (\(selectPrevious.display))")
       .disabled(orderedRows.isEmpty)
       Divider()
@@ -66,18 +60,12 @@ struct WorktreeCommands: Commands {
       Button("Open Repository...", systemImage: "folder") {
         store.send(.repositories(.setOpenPanelPresented(true)))
       }
-      .keyboardShortcut(
-        openRepo.keyEquivalent,
-        modifiers: openRepo.modifiers
-      )
+      .appKeyboardShortcut(openRepo)
       .help("Open Repository (\(openRepo.display))")
       Button("Open Worktree") {
         openSelectedWorktreeAction?()
       }
-      .keyboardShortcut(
-        openWorktree.keyEquivalent,
-        modifiers: openWorktree.modifiers
-      )
+      .appKeyboardShortcut(openWorktree)
       .help("Open Worktree (\(openWorktree.display))")
       .disabled(openSelectedWorktreeAction == nil)
       Button("Open Pull Request on GitHub") {
@@ -85,71 +73,54 @@ struct WorktreeCommands: Commands {
           NSWorkspace.shared.open(pullRequestURL)
         }
       }
-      .keyboardShortcut(
-        openPR.keyEquivalent,
-        modifiers: openPR.modifiers
-      )
+      .appKeyboardShortcut(openPR)
       .help("Open Pull Request on GitHub (\(openPR.display))")
       .disabled(pullRequestURL == nil || !githubIntegrationEnabled)
       Button("New Worktree", systemImage: "plus") {
         store.send(.repositories(.createRandomWorktree))
       }
-      .keyboardShortcut(
-        newWt.keyEquivalent, modifiers: newWt.modifiers
-      )
+      .appKeyboardShortcut(newWt)
       .help("New Worktree (\(newWt.display))")
       .disabled(!repositories.canCreateWorktree)
       Button("Archived Worktrees") {
         store.send(.repositories(.selectArchivedWorktrees))
       }
-      .keyboardShortcut(
-        archived.keyEquivalent,
-        modifiers: archived.modifiers
-      )
+      .appKeyboardShortcut(archived)
       .help("Archived Worktrees (\(archived.display))")
       Button("Archive Worktree") {
         archiveWorktreeAction?()
       }
-      .keyboardShortcut(archive.keyEquivalent, modifiers: archive.modifiers)
+      .appKeyboardShortcut(archive)
       .help("Archive Worktree (\(archive.display))")
       .disabled(archiveWorktreeAction == nil)
       Button("Delete Worktree") {
         deleteWorktreeAction?()
       }
-      .keyboardShortcut(deleteWt.keyEquivalent, modifiers: deleteWt.modifiers)
+      .appKeyboardShortcut(deleteWt)
       .help("Delete Worktree (\(deleteWt.display))")
       .disabled(deleteWorktreeAction == nil)
       Button("Confirm Worktree Action") {
         confirmWorktreeAction?()
       }
-      .keyboardShortcut(confirm.keyEquivalent, modifiers: confirm.modifiers)
+      .appKeyboardShortcut(confirm)
       .help("Confirm Worktree Action (\(confirm.display))")
       .disabled(confirmWorktreeAction == nil)
       Button("Refresh Worktrees") {
         store.send(.repositories(.refreshWorktrees))
       }
-      .keyboardShortcut(
-        refresh.keyEquivalent,
-        modifiers: refresh.modifiers
-      )
+      .appKeyboardShortcut(refresh)
       .help("Refresh Worktrees (\(refresh.display))")
       Divider()
       Button("Run Script") {
         runScriptAction?()
       }
-      .keyboardShortcut(
-        run.keyEquivalent,
-        modifiers: run.modifiers
-      )
+      .appKeyboardShortcut(run)
       .help("Run Script (\(run.display))")
       .disabled(runScriptAction == nil)
       Button("Stop Script") {
         stopRunScriptAction?()
       }
-      .keyboardShortcut(
-        stop.keyEquivalent,
-        modifiers: stop.modifiers
-      )
+      .appKeyboardShortcut(stop)
       .help("Stop Script (\(stop.display))")
       .disabled(stopRunScriptAction == nil)
     }
@@ -177,7 +148,7 @@ struct WorktreeCommands: Commands {
       guard let row else { return }
       store.send(.repositories(.selectWorktree(row.id)))
     }
-    .keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
+    .appKeyboardShortcut(shortcut)
     .help("Switch to \(title) (\(shortcut.display))")
     .disabled(row == nil)
   }

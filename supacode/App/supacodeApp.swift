@@ -191,7 +191,7 @@ struct SupacodeApp: App {
         Button("Command Palette") {
           store.send(.commandPalette(.togglePresented))
         }
-        .keyboardShortcut(cmdPalette.keyEquivalent, modifiers: cmdPalette.modifiers)
+        .appKeyboardShortcut(cmdPalette)
         .help("Command Palette (\(cmdPalette.display))")
       }
       UpdateCommands(store: store.scope(state: \.updates, action: \.updates))

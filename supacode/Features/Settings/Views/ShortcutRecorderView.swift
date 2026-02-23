@@ -12,8 +12,13 @@ struct ShortcutRecorderView: View {
   @State private var isRecording = false
   @State private var conflictWarning: String?
 
+  private var isUnbound: Bool {
+    override?.isUnbound == true
+  }
+
   private var displayText: String {
     if let override {
+      if override.isUnbound { return "Unbound" }
       return override.displayString
     }
     return defaultShortcut.display
@@ -24,6 +29,7 @@ struct ShortcutRecorderView: View {
       HStack(spacing: 8) {
         Text(isRecording ? "Press shortcut..." : displayText)
           .font(.body.monospaced())
+          .foregroundStyle(isUnbound ? .secondary : .primary)
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
           .background(
@@ -56,6 +62,14 @@ struct ShortcutRecorderView: View {
           }
         }
         .help(isRecording ? "Cancel recording" : "Record a new shortcut")
+
+        if !isUnbound {
+          Button("Unbind") {
+            override = .unbound
+            conflictWarning = nil
+          }
+          .help("Remove this shortcut")
+        }
 
         if override != nil {
           Button("Reset") {

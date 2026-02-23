@@ -45,21 +45,21 @@ struct TerminalCommands: Commands {
       Button("Find...") {
         startSearchAction?()
       }
-      .keyboardShortcut(findShortcut.keyEquivalent, modifiers: findShortcut.modifiers)
+      .appKeyboardShortcut(findShortcut)
       .help("Find (\(findShortcut.display))")
       .disabled(startSearchAction == nil)
 
       Button("Find Next") {
         navigateSearchNextAction?()
       }
-      .keyboardShortcut(findNextShortcut.keyEquivalent, modifiers: findNextShortcut.modifiers)
+      .appKeyboardShortcut(findNextShortcut)
       .help("Find Next (\(findNextShortcut.display))")
       .disabled(navigateSearchNextAction == nil)
 
       Button("Find Previous") {
         navigateSearchPreviousAction?()
       }
-      .keyboardShortcut(findPrevShortcut.keyEquivalent, modifiers: findPrevShortcut.modifiers)
+      .appKeyboardShortcut(findPrevShortcut)
       .help("Find Previous (\(findPrevShortcut.display))")
       .disabled(navigateSearchPreviousAction == nil)
 
@@ -68,7 +68,7 @@ struct TerminalCommands: Commands {
       Button("Hide Find Bar") {
         endSearchAction?()
       }
-      .keyboardShortcut(hideFindShortcut.keyEquivalent, modifiers: hideFindShortcut.modifiers)
+      .appKeyboardShortcut(hideFindShortcut)
       .help("Hide Find Bar (\(hideFindShortcut.display))")
       .disabled(endSearchAction == nil)
 
@@ -77,7 +77,7 @@ struct TerminalCommands: Commands {
       Button("Use Selection for Find") {
         searchSelectionAction?()
       }
-      .keyboardShortcut(useSelectionShortcut.keyEquivalent, modifiers: useSelectionShortcut.modifiers)
+      .appKeyboardShortcut(useSelectionShortcut)
       .help("Use Selection for Find (\(useSelectionShortcut.display))")
       .disabled(searchSelectionAction == nil)
     }

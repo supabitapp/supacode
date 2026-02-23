@@ -4,12 +4,14 @@ struct AppShortcut {
   let name: String
   let keyEquivalent: KeyEquivalent
   let modifiers: EventModifiers
+  let isUnbound: Bool
   private let ghosttyKeyName: String
 
   init(name: String, key: Character, modifiers: EventModifiers) {
     self.name = name
     self.keyEquivalent = KeyEquivalent(key)
     self.modifiers = modifiers
+    self.isUnbound = false
     self.ghosttyKeyName = String(key).lowercased()
   }
 
@@ -17,14 +19,22 @@ struct AppShortcut {
     self.name = name
     self.keyEquivalent = keyEquivalent
     self.modifiers = modifiers
+    self.isUnbound = false
     self.ghosttyKeyName = ghosttyKeyName
   }
 
   init(name: String, override: AppShortcutOverride) {
     self.name = name
-    self.keyEquivalent = override.keyboardShortcut.key
-    self.modifiers = override.eventModifiers
-    self.ghosttyKeyName = override.ghosttyKeybind.split(separator: "+").last.map(String.init) ?? ""
+    self.isUnbound = override.isUnbound
+    if override.isUnbound {
+      self.keyEquivalent = KeyEquivalent("?")
+      self.modifiers = []
+      self.ghosttyKeyName = ""
+    } else {
+      self.keyEquivalent = override.keyboardShortcut.key
+      self.modifiers = override.eventModifiers
+      self.ghosttyKeyName = override.ghosttyKeybind.split(separator: "+").last.map(String.init) ?? ""
+    }
   }
 
   func effective(from settings: GlobalSettings) -> AppShortcut {
@@ -57,6 +67,7 @@ struct AppShortcut {
   }
 
   var display: String {
+    if isUnbound { return "Unbound" }
     let parts = displayModifierParts + [keyEquivalent.display]
     return parts.joined()
   }
@@ -214,5 +225,16 @@ enum AppShortcuts {
 
   static func effectiveAll(from settings: GlobalSettings) -> [AppShortcut] {
     all.map { $0.effective(from: settings) }
+  }
+}
+
+extension View {
+  @ViewBuilder
+  func appKeyboardShortcut(_ shortcut: AppShortcut) -> some View {
+    if shortcut.isUnbound {
+      self
+    } else {
+      self.keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
+    }
   }
 }

@@ -11,9 +11,7 @@ struct SidebarCommands: Commands {
       Button("Toggle Left Sidebar") {
         toggleLeftSidebarAction?()
       }
-      .keyboardShortcut(
-        toggleLeftSidebar.keyEquivalent, modifiers: toggleLeftSidebar.modifiers
-      )
+      .appKeyboardShortcut(toggleLeftSidebar)
       .help("Toggle Left Sidebar (\(toggleLeftSidebar.display))")
       .disabled(toggleLeftSidebarAction == nil)
     }
