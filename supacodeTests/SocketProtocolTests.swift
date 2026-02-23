@@ -55,4 +55,10 @@ struct SocketProtocolTests {
 
     #expect(decoded == response)
   }
+
+  @Test func parsedMethodMapsKnownWireMethods() {
+    let request = SocketRequest(id: "44", method: "split.close", params: nil)
+
+    #expect(request.parsedMethod == .splitClose)
+  }
 }

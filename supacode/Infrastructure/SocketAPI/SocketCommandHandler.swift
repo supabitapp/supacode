@@ -14,20 +14,20 @@ final class SocketCommandHandler {
   }
 
   func handle(_ request: SocketRequest) -> SocketResponse {
-    switch request.method {
-    case "system.ping":
+    switch request.parsedMethod {
+    case .systemPing:
       return .success(id: request.id, result: .object(["pong": .bool(true)]))
-    case "tab.list":
+    case .tabList:
       return handleTabList(request)
-    case "tab.create":
+    case .tabCreate:
       return handleTabCreate(request)
-    case "tab.close":
+    case .tabClose:
       return handleTabClose(request)
-    case "split.create":
+    case .splitCreate:
       return handleSplitCreate(request)
-    case "split.close":
+    case .splitClose:
       return handleSplitClose(request)
-    default:
+    case nil:
       return .failure(
         id: request.id,
         code: .methodNotFound,

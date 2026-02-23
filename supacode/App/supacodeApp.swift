@@ -130,9 +130,12 @@ struct SupacodeApp: App {
     _ghosttyShortcuts = State(initialValue: shortcuts)
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
     _terminalManager = State(initialValue: terminalManager)
-    let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    let launchMode = AppLaunchMode.detect(
+      environment: ProcessInfo.processInfo.environment,
+      processName: ProcessInfo.processInfo.processName
+    )
     let configuredSocketServer: SocketServer?
-    if isRunningTests {
+    if launchMode == .testing {
       configuredSocketServer = nil
       _socketServer = State(initialValue: nil)
     } else {

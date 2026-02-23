@@ -1,6 +1,6 @@
 import Foundation
 
-enum SocketErrorCode: String, Codable, Sendable {
+nonisolated enum SocketErrorCode: String, Codable, Sendable {
   case invalidRequest = "invalid_request"
   case invalidParams = "invalid_params"
   case methodNotFound = "method_not_found"
@@ -8,13 +8,26 @@ enum SocketErrorCode: String, Codable, Sendable {
   case operationFailed = "operation_failed"
 }
 
-struct SocketRequest: Codable, Sendable, Equatable {
+nonisolated enum SocketMethod: String, Codable, Sendable {
+  case systemPing = "system.ping"
+  case tabList = "tab.list"
+  case tabCreate = "tab.create"
+  case tabClose = "tab.close"
+  case splitCreate = "split.create"
+  case splitClose = "split.close"
+}
+
+nonisolated struct SocketRequest: Codable, Sendable, Equatable {
   let id: String?
   let method: String
   let params: [String: SocketValue]?
+
+  var parsedMethod: SocketMethod? {
+    SocketMethod(rawValue: method)
+  }
 }
 
-struct SocketResponse: Codable, Sendable, Equatable {
+nonisolated struct SocketResponse: Codable, Sendable, Equatable {
   let id: String?
   let isSuccess: Bool
   let result: SocketValue?
@@ -41,12 +54,12 @@ struct SocketResponse: Codable, Sendable, Equatable {
   }
 }
 
-struct SocketErrorPayload: Codable, Sendable, Equatable {
+nonisolated struct SocketErrorPayload: Codable, Sendable, Equatable {
   let code: String
   let message: String
 }
 
-enum SocketValue: Codable, Sendable, Equatable {
+nonisolated enum SocketValue: Codable, Sendable, Equatable {
   case string(String)
   case int(Int)
   case bool(Bool)

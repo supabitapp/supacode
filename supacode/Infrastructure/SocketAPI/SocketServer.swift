@@ -1,16 +1,66 @@
 import Darwin
 import Foundation
 
+nonisolated final class SocketConnectionRegistry: @unchecked Sendable {
+  private struct Entry {
+    let fileDescriptor: Int32
+    let task: Task<Void, Never>
+  }
+
+  private let lock = NSLock()
+  private var entries: [UUID: Entry] = [:]
+
+  func addConnection(operation: @escaping @Sendable () async -> Void, fileDescriptor: Int32) {
+    let connectionID = UUID()
+
+    lock.lock()
+    let task = Task.detached(priority: .background) { [self] in
+      await operation()
+      removeConnection(id: connectionID)
+    }
+    entries[connectionID] = Entry(fileDescriptor: fileDescriptor, task: task)
+    lock.unlock()
+  }
+
+  func cancelAndCloseAll() {
+    lock.lock()
+    let snapshot = Array(entries.values)
+    entries.removeAll()
+    lock.unlock()
+
+    for entry in snapshot {
+      entry.task.cancel()
+      _ = Darwin.close(entry.fileDescriptor)
+    }
+  }
+
+  private func removeConnection(id: UUID) {
+    lock.lock()
+    entries.removeValue(forKey: id)
+    lock.unlock()
+  }
+}
+
 @MainActor
 final class SocketServer {
   private let path: String
+  private let maxRequestLineBytes: Int
+  private let maxPendingBufferBytes: Int
   private let onRequest: @Sendable (SocketRequest) async -> SocketResponse
 
   private var listenFD: Int32 = -1
   private var acceptTask: Task<Void, Never>?
+  private let connectionRegistry = SocketConnectionRegistry()
 
-  init(path: String, onRequest: @escaping @Sendable (SocketRequest) async -> SocketResponse) {
+  init(
+    path: String,
+    maxRequestLineBytes: Int = 64 * 1024,
+    maxPendingBufferBytes: Int = 128 * 1024,
+    onRequest: @escaping @Sendable (SocketRequest) async -> SocketResponse
+  ) {
     self.path = path
+    self.maxRequestLineBytes = maxRequestLineBytes
+    self.maxPendingBufferBytes = maxPendingBufferBytes
     self.onRequest = onRequest
   }
 
@@ -25,8 +75,17 @@ final class SocketServer {
       listenFD = listenSocketFD
 
       let handler = onRequest
+      let maxRequestLineBytes = self.maxRequestLineBytes
+      let maxPendingBufferBytes = self.maxPendingBufferBytes
+      let connectionRegistry = self.connectionRegistry
       acceptTask = Task.detached(priority: .background) {
-        await Self.acceptLoop(listenFD: listenSocketFD, onRequest: handler)
+        Self.acceptLoop(
+          listenFD: listenSocketFD,
+          maxRequestLineBytes: maxRequestLineBytes,
+          maxPendingBufferBytes: maxPendingBufferBytes,
+          connectionRegistry: connectionRegistry,
+          onRequest: handler
+        )
       }
     } catch {
       cleanupSocket()
@@ -37,6 +96,7 @@ final class SocketServer {
   func stop() {
     acceptTask?.cancel()
     acceptTask = nil
+    connectionRegistry.cancelAndCloseAll()
     cleanupSocket()
   }
 
@@ -123,8 +183,11 @@ final class SocketServer {
     }
   }
 
-  private static func acceptLoop(
+  nonisolated private static func acceptLoop(
     listenFD: Int32,
+    maxRequestLineBytes: Int,
+    maxPendingBufferBytes: Int,
+    connectionRegistry: SocketConnectionRegistry,
     onRequest: @escaping @Sendable (SocketRequest) async -> SocketResponse
   ) {
     while !Task.isCancelled {
@@ -137,14 +200,24 @@ final class SocketServer {
         break
       }
 
-      Task.detached(priority: .background) {
-        await handleConnection(connectionFD: connectionFD, onRequest: onRequest)
-      }
+      connectionRegistry.addConnection(
+        operation: {
+          await handleConnection(
+            connectionFD: connectionFD,
+            maxRequestLineBytes: maxRequestLineBytes,
+            maxPendingBufferBytes: maxPendingBufferBytes,
+            onRequest: onRequest
+          )
+        },
+        fileDescriptor: connectionFD
+      )
     }
   }
 
-  private static func handleConnection(
+  nonisolated private static func handleConnection(
     connectionFD: Int32,
+    maxRequestLineBytes: Int,
+    maxPendingBufferBytes: Int,
     onRequest: @escaping @Sendable (SocketRequest) async -> SocketResponse
   ) async {
     defer {
@@ -173,6 +246,30 @@ final class SocketServer {
       }
 
       pending.append(buffer, count: readCount)
+      if pending.count > maxPendingBufferBytes {
+        try? writeResponseLine(
+          .failure(
+            id: nil,
+            code: .invalidRequest,
+            message: "Request exceeds maximum allowed size"
+          ),
+          encoder: encoder,
+          fileDescriptor: connectionFD
+        )
+        return
+      }
+      if pending.firstIndex(of: 0x0A) == nil && pending.count > maxRequestLineBytes {
+        try? writeResponseLine(
+          .failure(
+            id: nil,
+            code: .invalidRequest,
+            message: "Request line exceeds maximum allowed size"
+          ),
+          encoder: encoder,
+          fileDescriptor: connectionFD
+        )
+        return
+      }
 
       while let newlineIndex = pending.firstIndex(of: 0x0A) {
         let line = pending[..<newlineIndex]
@@ -180,6 +277,19 @@ final class SocketServer {
 
         if line.isEmpty {
           continue
+        }
+
+        if line.count > maxRequestLineBytes {
+          try? writeResponseLine(
+            .failure(
+              id: nil,
+              code: .invalidRequest,
+              message: "Request line exceeds maximum allowed size"
+            ),
+            encoder: encoder,
+            fileDescriptor: connectionFD
+          )
+          return
         }
 
         let requestData = Data(line)
@@ -197,9 +307,7 @@ final class SocketServer {
         }
 
         do {
-          var responseData = try encoder.encode(response)
-          responseData.append(0x0A)
-          try writeAll(responseData, to: connectionFD)
+          try writeResponseLine(response, encoder: encoder, fileDescriptor: connectionFD)
         } catch {
           return
         }
@@ -207,7 +315,17 @@ final class SocketServer {
     }
   }
 
-  private static func writeAll(_ data: Data, to fileDescriptor: Int32) throws {
+  nonisolated private static func writeResponseLine(
+    _ response: SocketResponse,
+    encoder: JSONEncoder,
+    fileDescriptor: Int32
+  ) throws {
+    var responseData = try encoder.encode(response)
+    responseData.append(0x0A)
+    try writeAll(responseData, to: fileDescriptor)
+  }
+
+  nonisolated private static func writeAll(_ data: Data, to fileDescriptor: Int32) throws {
     try data.withUnsafeBytes { rawBuffer in
       guard let baseAddress = rawBuffer.baseAddress else { return }
       var totalWritten = 0
