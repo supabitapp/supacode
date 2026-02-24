@@ -145,6 +145,8 @@ extension AppShortcutOverride {
     }
   }
 
+  // TODO: This assumes US QWERTY layout. Use UCKeyTranslate / TISCopyCurrentKeyboardInputSource
+  // to dynamically resolve display characters based on the active keyboard layout.
   // swiftlint:disable:next cyclomatic_complexity function_body_length
   private func displayCharacter(for code: UInt16) -> String {
     switch Int(code) {
