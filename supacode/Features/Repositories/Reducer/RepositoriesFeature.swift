@@ -137,6 +137,7 @@ struct RepositoriesFeature {
     case selectWorktree(Worktree.ID?, focusTerminal: Bool = false)
     case selectNextWorktree
     case selectPreviousWorktree
+    case goToNextNotification
     case requestRenameBranch(Worktree.ID, String)
     case createRandomWorktree
     case createRandomWorktreeInRepository(Repository.ID)
@@ -284,6 +285,7 @@ struct RepositoriesFeature {
   @Dependency(GithubCLIClient.self) private var githubCLI
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
+  @Dependency(TerminalClient.self) private var terminalClient
   @Dependency(\.uuid) private var uuid
 
   var body: some Reducer<State, Action> {
@@ -555,6 +557,14 @@ struct RepositoriesFeature {
       case .selectPreviousWorktree:
         guard let id = state.worktreeID(byOffset: -1) else { return .none }
         return .send(.selectWorktree(id))
+
+      case .goToNextNotification:
+        let worktreesWithNotifications = terminalClient.worktreeIDsWithUnseenNotifications()
+        guard let first = worktreesWithNotifications.first else {
+          return .send(.showToast(.success("No unread notifications")))
+        }
+        terminalClient.send(.markAllNotificationsRead(first.worktreeID))
+        return .send(.selectWorktree(first.worktreeID))
 
       case .requestRenameBranch(let worktreeID, let branchName):
         guard let worktree = state.worktree(for: worktreeID) else { return .none }

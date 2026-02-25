@@ -1908,6 +1908,85 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
 
+  // MARK: - Go To Next Notification
+
+  @Test func goToNextNotificationSelectsWorktreeWithOldestNotification() async {
+    let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
+    let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
+    let wt3 = makeWorktree(id: "/tmp/wt3", name: "gamma")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2, wt3])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(wt1.id)
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0[TerminalClient.self].worktreeIDsWithUnseenNotifications = {
+        [
+          (worktreeID: wt3.id, oldestUnreadDate: Date(timeIntervalSince1970: 1000)),
+          (worktreeID: wt2.id, oldestUnreadDate: Date(timeIntervalSince1970: 2000)),
+        ]
+      }
+      $0[TerminalClient.self].send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.goToNextNotification)
+    await store.receive(\.selectWorktree) {
+      $0.selection = .worktree(wt3.id)
+      $0.sidebarSelectedWorktreeIDs = [wt3.id]
+    }
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    #expect(sentCommands.value == [.markAllNotificationsRead(wt3.id)])
+  }
+
+  @Test func goToNextNotificationShowsToastWhenNoNotifications() async {
+    let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(wt1.id)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0[TerminalClient.self].worktreeIDsWithUnseenNotifications = { [] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.goToNextNotification)
+    await store.receive(\.showToast) {
+      $0.statusToast = .success("No unread notifications")
+    }
+    await store.finish()
+  }
+
+  @Test func goToNextNotificationMarksNotificationsRead() async {
+    let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
+    let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(wt1.id)
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0[TerminalClient.self].worktreeIDsWithUnseenNotifications = {
+        [(worktreeID: wt2.id, oldestUnreadDate: Date(timeIntervalSince1970: 1000))]
+      }
+      $0[TerminalClient.self].send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.goToNextNotification)
+    await store.receive(\.selectWorktree) {
+      $0.selection = .worktree(wt2.id)
+      $0.sidebarSelectedWorktreeIDs = [wt2.id]
+    }
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    #expect(sentCommands.value == [.markAllNotificationsRead(wt2.id)])
+  }
+
   private func makeWorktree(
     id: String,
     name: String,
