@@ -38,6 +38,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case copyCiFailureLogs(Worktree.ID)
     case rerunFailedJobs(Worktree.ID)
     case openFailingCheckDetails(Worktree.ID)
+    case goToNextNotification
     #if DEBUG
       case debugTestToast(RepositoriesFeature.StatusToast)
     #endif
@@ -45,7 +46,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
 
   var isGlobal: Bool {
     switch kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees:
+    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees, .goToNextNotification:
       return true
     case .openPullRequest,
       .markPullRequestReady,
@@ -67,7 +68,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
 
   var isRootAction: Bool {
     switch kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees:
+    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees, .goToNextNotification:
       return true
     case .openPullRequest,
       .markPullRequestReady,
@@ -102,6 +103,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       return AppShortcuts.refreshWorktrees
     case .openPullRequest:
       return AppShortcuts.openPullRequest
+    case .goToNextNotification:
+      return AppShortcuts.goToNextNotification
     case .markPullRequestReady,
       .mergePullRequest,
       .closePullRequest,

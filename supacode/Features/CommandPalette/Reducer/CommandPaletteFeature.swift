@@ -47,6 +47,7 @@ struct CommandPaletteFeature {
     case copyCiFailureLogs(Worktree.ID)
     case rerunFailedJobs(Worktree.ID)
     case openFailingCheckDetails(Worktree.ID)
+    case goToNextNotification
     #if DEBUG
       case debugTestToast(RepositoriesFeature.StatusToast)
     #endif
@@ -192,6 +193,12 @@ struct CommandPaletteFeature {
         title: "Refresh Worktrees",
         subtitle: nil,
         kind: .refreshWorktrees
+      ),
+      CommandPaletteItem(
+        id: CommandPaletteItemID.globalGoToNextNotification,
+        title: "Go to Next Notification",
+        subtitle: nil,
+        kind: .goToNextNotification
       ),
     ]
     if let selectedWorktreeID = repositories.selectedWorktreeID,
@@ -413,6 +420,7 @@ private enum CommandPaletteItemID {
   static let globalOpenRepository = "global.open-repository"
   static let globalNewWorktree = "global.new-worktree"
   static let globalRefreshWorktrees = "global.refresh-worktrees"
+  static let globalGoToNextNotification = "global.go-to-next-notification"
 
   static var globalIDs: [CommandPaletteItem.ID] {
     [
@@ -421,6 +429,7 @@ private enum CommandPaletteItemID {
       globalOpenRepository,
       globalNewWorktree,
       globalRefreshWorktrees,
+      globalGoToNextNotification,
     ]
   }
 
@@ -524,6 +533,8 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
     return .archiveWorktree(worktreeID, repositoryID)
   case .refreshWorktrees:
     return .refreshWorktrees
+  case .goToNextNotification:
+    return .goToNextNotification
   case .openPullRequest,
     .markPullRequestReady,
     .mergePullRequest,
@@ -567,7 +578,8 @@ private func pullRequestDelegateAction(
     .openRepository,
     .removeWorktree,
     .archiveWorktree,
-    .refreshWorktrees:
+    .refreshWorktrees,
+    .goToNextNotification:
     return nil
   #if DEBUG
     case .debugTestToast:

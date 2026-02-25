@@ -96,6 +96,7 @@ enum AppShortcuts {
   static let selectPreviousWorktree = AppShortcut(
     keyEquivalent: .upArrow, ghosttyKeyName: "arrow_up", modifiers: [.command, .control]
   )
+  static let goToNextNotification = AppShortcut(key: "p", modifiers: [.command, .shift])
   static let selectWorktree1 = AppShortcut(key: "1", modifiers: [.control])
   static let selectWorktree2 = AppShortcut(key: "2", modifiers: [.control])
   static let selectWorktree3 = AppShortcut(key: "3", modifiers: [.control])
@@ -145,6 +146,7 @@ enum AppShortcuts {
     archivedWorktrees,
     selectNextWorktree,
     selectPreviousWorktree,
+    goToNextNotification,
     selectWorktree1,
     selectWorktree2,
     selectWorktree3,

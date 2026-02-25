@@ -343,7 +343,7 @@ private struct CommandPaletteRowView: View {
     case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
       .copyCiFailureLogs,
-      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect:
+      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect, .goToNextNotification:
       return nil
     case .removeWorktree:
       return "Remove"
@@ -384,6 +384,8 @@ private struct CommandPaletteRowView: View {
       return "arrow.counterclockwise"
     case .openFailingCheckDetails:
       return "exclamationmark.triangle"
+    case .goToNextNotification:
+      return "bell.badge"
     case .worktreeSelect:
       return nil
     case .removeWorktree:
@@ -402,7 +404,7 @@ private struct CommandPaletteRowView: View {
     case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .refreshWorktrees,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
       .copyCiFailureLogs,
-      .rerunFailedJobs, .openFailingCheckDetails:
+      .rerunFailedJobs, .openFailingCheckDetails, .goToNextNotification:
       return true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       return false
@@ -512,6 +514,8 @@ private struct CommandPaletteRowView: View {
       base = "Re-run failed jobs"
     case .openFailingCheckDetails:
       base = "Open failing check details"
+    case .goToNextNotification:
+      base = "Go to Next Notification"
     #if DEBUG
       case .debugTestToast:
         base = row.title

@@ -572,6 +572,9 @@ struct AppFeature {
       case .commandPalette(.delegate(.refreshWorktrees)):
         return .send(.repositories(.refreshWorktrees))
 
+      case .commandPalette(.delegate(.goToNextNotification)):
+        return .send(.repositories(.goToNextNotification))
+
       case .commandPalette(.delegate(.openPullRequest(let worktreeID))):
         return .send(.repositories(.pullRequestAction(worktreeID, .openOnGithub)))
 

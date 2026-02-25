@@ -42,6 +42,14 @@ struct WorktreeCommands: Commands {
       )
       .help("Select Previous Worktree (\(AppShortcuts.selectPreviousWorktree.display))")
       .disabled(orderedRows.isEmpty)
+      Button("Go to Next Notification") {
+        store.send(.repositories(.goToNextNotification))
+      }
+      .keyboardShortcut(
+        AppShortcuts.goToNextNotification.keyEquivalent,
+        modifiers: AppShortcuts.goToNextNotification.modifiers
+      )
+      .help("Go to Next Notification (\(AppShortcuts.goToNextNotification.display))")
       Divider()
       ForEach(worktreeShortcuts.indices, id: \.self) { index in
         let shortcut = worktreeShortcuts[index]
