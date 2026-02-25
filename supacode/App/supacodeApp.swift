@@ -138,6 +138,9 @@ struct SupacodeApp: App {
         },
         events: {
           terminalManager.eventStream()
+        },
+        worktreeIDsWithUnseenNotifications: {
+          terminalManager.worktreeIDsWithUnseenNotifications()
         }
       )
       values.worktreeInfoWatcher = WorktreeInfoWatcherClient(

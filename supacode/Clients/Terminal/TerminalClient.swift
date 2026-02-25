@@ -4,6 +4,8 @@ import Foundation
 struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
   var events: @MainActor @Sendable () -> AsyncStream<Event>
+  var worktreeIDsWithUnseenNotifications:
+    @MainActor @Sendable () -> [(worktreeID: Worktree.ID, oldestUnreadDate: Date)]
 
   enum Command: Equatable {
     case createTab(Worktree, runSetupScriptIfNew: Bool)
@@ -21,6 +23,7 @@ struct TerminalClient {
     case prune(Set<Worktree.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
+    case markAllNotificationsRead(Worktree.ID)
   }
 
   enum Event: Equatable {
@@ -39,12 +42,16 @@ struct TerminalClient {
 extension TerminalClient: DependencyKey {
   static let liveValue = TerminalClient(
     send: { _ in fatalError("TerminalClient.send not configured") },
-    events: { fatalError("TerminalClient.events not configured") }
+    events: { fatalError("TerminalClient.events not configured") },
+    worktreeIDsWithUnseenNotifications: {
+      fatalError("TerminalClient.worktreeIDsWithUnseenNotifications not configured")
+    }
   )
 
   static let testValue = TerminalClient(
     send: { _ in },
-    events: { AsyncStream { $0.finish() } }
+    events: { AsyncStream { $0.finish() } },
+    worktreeIDsWithUnseenNotifications: { [] }
   )
 }
 

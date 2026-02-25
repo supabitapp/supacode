@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import Sharing
 
@@ -84,6 +85,8 @@ final class WorktreeTerminalManager {
       }
       selectedWorktreeID = id
       terminalLogger.info("Selected worktree \(id ?? "nil")")
+    case .markAllNotificationsRead(let worktreeID):
+      states[worktreeID]?.markAllNotificationsRead()
     default:
       return
     }
@@ -226,6 +229,16 @@ final class WorktreeTerminalManager {
 
   func hasUnseenNotifications(for worktreeID: Worktree.ID) -> Bool {
     states[worktreeID]?.hasUnseenNotification == true
+  }
+
+  func worktreeIDsWithUnseenNotifications() -> [(worktreeID: Worktree.ID, oldestUnreadDate: Date)] {
+    states.compactMap { id, state in
+      guard state.hasUnseenNotification else { return nil }
+      let oldestUnread = state.notifications.first { !$0.isRead }
+      guard let oldestDate = oldestUnread?.createdAt else { return nil }
+      return (worktreeID: id, oldestUnreadDate: oldestDate)
+    }
+    .sorted { $0.oldestUnreadDate < $1.oldestUnreadDate }
   }
 
   func surfaceBackgroundOpacity() -> Double {
