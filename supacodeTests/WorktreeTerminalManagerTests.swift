@@ -202,12 +202,81 @@ struct WorktreeTerminalManagerTests {
     #expect(manager.hasUnseenNotifications(for: worktree.id) == false)
   }
 
-  private func makeWorktree() -> Worktree {
+  @Test func worktreeIDsWithUnseenNotificationsReturnsSortedByOldest() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let wt1 = makeWorktree(id: "/tmp/repo/wt-1", name: "wt-1")
+    let wt2 = makeWorktree(id: "/tmp/repo/wt-2", name: "wt-2")
+    let wt3 = makeWorktree(id: "/tmp/repo/wt-3", name: "wt-3")
+    let state1 = manager.state(for: wt1)
+    let state2 = manager.state(for: wt2)
+    let state3 = manager.state(for: wt3)
+
+    // Notifications are inserted at index 0 (newest first).
+    // wt1: oldest unread at t=3000
+    state1.notifications = [
+      makeNotification(createdAt: Date(timeIntervalSince1970: 3000), isRead: false),
+    ]
+    // wt2: oldest unread at t=1000 (should come first)
+    state2.notifications = [
+      makeNotification(createdAt: Date(timeIntervalSince1970: 2000), isRead: false),
+      makeNotification(createdAt: Date(timeIntervalSince1970: 1000), isRead: false),
+    ]
+    // wt3: oldest unread at t=2500
+    state3.notifications = [
+      makeNotification(createdAt: Date(timeIntervalSince1970: 2500), isRead: false),
+    ]
+
+    let result = manager.worktreeIDsWithUnseenNotifications()
+    #expect(result.map(\.worktreeID) == [wt2.id, wt3.id, wt1.id])
+    #expect(result[0].oldestUnreadDate == Date(timeIntervalSince1970: 1000))
+    #expect(result[1].oldestUnreadDate == Date(timeIntervalSince1970: 2500))
+    #expect(result[2].oldestUnreadDate == Date(timeIntervalSince1970: 3000))
+  }
+
+  @Test func worktreeIDsWithUnseenNotificationsReturnsEmptyWhenAllRead() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    state.notifications = [
+      makeNotification(isRead: true),
+      makeNotification(isRead: true),
+    ]
+
+    let result = manager.worktreeIDsWithUnseenNotifications()
+    #expect(result.isEmpty)
+  }
+
+  @Test func markAllNotificationsReadCommandMarksTargetWorktreeOnly() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let wt1 = makeWorktree(id: "/tmp/repo/wt-1", name: "wt-1")
+    let wt2 = makeWorktree(id: "/tmp/repo/wt-2", name: "wt-2")
+    let state1 = manager.state(for: wt1)
+    let state2 = manager.state(for: wt2)
+
+    state1.notifications = [
+      makeNotification(isRead: false),
+      makeNotification(isRead: false),
+    ]
+    state2.notifications = [
+      makeNotification(isRead: false),
+      makeNotification(isRead: false),
+    ]
+
+    manager.handleCommand(.markAllNotificationsRead(wt1.id))
+
+    #expect(state1.notifications.map(\.isRead) == [true, true])
+    #expect(state2.notifications.map(\.isRead) == [false, false])
+    #expect(manager.hasUnseenNotifications(for: wt1.id) == false)
+    #expect(manager.hasUnseenNotifications(for: wt2.id) == true)
+  }
+
+  private func makeWorktree(id: String = "/tmp/repo/wt-1", name: String = "wt-1") -> Worktree {
     Worktree(
-      id: "/tmp/repo/wt-1",
-      name: "wt-1",
+      id: id,
+      name: name,
       detail: "detail",
-      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-1"),
+      workingDirectory: URL(fileURLWithPath: id),
       repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
     )
   }
@@ -224,12 +293,14 @@ struct WorktreeTerminalManagerTests {
 
   private func makeNotification(
     surfaceId: UUID = UUID(),
+    createdAt: Date = .now,
     isRead: Bool
   ) -> WorktreeTerminalNotification {
     WorktreeTerminalNotification(
       surfaceId: surfaceId,
       title: "Title",
       body: "Body",
+      createdAt: createdAt,
       isRead: isRead
     )
   }

@@ -560,11 +560,12 @@ struct RepositoriesFeature {
 
       case .goToNextNotification:
         let worktreesWithNotifications = terminalClient.worktreeIDsWithUnseenNotifications()
-        guard let first = worktreesWithNotifications.first else {
+        guard let target = worktreesWithNotifications.first(where: { state.worktree(for: $0.worktreeID) != nil })
+        else {
           return .send(.showToast(.success("No unread notifications")))
         }
-        terminalClient.send(.markAllNotificationsRead(first.worktreeID))
-        return .send(.selectWorktree(first.worktreeID))
+        terminalClient.send(.markAllNotificationsRead(target.worktreeID))
+        return .send(.selectWorktree(target.worktreeID))
 
       case .requestRenameBranch(let worktreeID, let branchName):
         guard let worktree = state.worktree(for: worktreeID) else { return .none }

@@ -86,7 +86,11 @@ final class WorktreeTerminalManager {
       selectedWorktreeID = id
       terminalLogger.info("Selected worktree \(id ?? "nil")")
     case .markAllNotificationsRead(let worktreeID):
-      states[worktreeID]?.markAllNotificationsRead()
+      guard let state = states[worktreeID] else {
+        terminalLogger.warning("markAllNotificationsRead: no state for worktree \(worktreeID)")
+        return
+      }
+      state.markAllNotificationsRead()
     default:
       return
     }
@@ -233,8 +237,7 @@ final class WorktreeTerminalManager {
 
   func worktreeIDsWithUnseenNotifications() -> [(worktreeID: Worktree.ID, oldestUnreadDate: Date)] {
     states.compactMap { id, state in
-      guard state.hasUnseenNotification else { return nil }
-      let oldestUnread = state.notifications.first { !$0.isRead }
+      let oldestUnread = state.notifications.last { !$0.isRead }
       guard let oldestDate = oldestUnread?.createdAt else { return nil }
       return (worktreeID: id, oldestUnreadDate: oldestDate)
     }

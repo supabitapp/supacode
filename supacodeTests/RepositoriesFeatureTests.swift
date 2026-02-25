@@ -1987,6 +1987,57 @@ struct RepositoriesFeatureTests {
     #expect(sentCommands.value == [.markAllNotificationsRead(wt2.id)])
   }
 
+  @Test func goToNextNotificationSkipsStaleWorktreeID() async {
+    let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(wt1.id)
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      // Return a stale worktree ID that doesn't exist in state, plus a valid one
+      $0[TerminalClient.self].worktreeIDsWithUnseenNotifications = {
+        [
+          (worktreeID: "/tmp/stale-wt", oldestUnreadDate: Date(timeIntervalSince1970: 500)),
+          (worktreeID: wt1.id, oldestUnreadDate: Date(timeIntervalSince1970: 1000)),
+        ]
+      }
+      $0[TerminalClient.self].send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.goToNextNotification)
+    await store.receive(\.selectWorktree) {
+      $0.selection = .worktree(wt1.id)
+      $0.sidebarSelectedWorktreeIDs = [wt1.id]
+    }
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    #expect(sentCommands.value == [.markAllNotificationsRead(wt1.id)])
+  }
+
+  @Test func goToNextNotificationShowsToastWhenAllWorktreeIDsAreStale() async {
+    let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(wt1.id)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0[TerminalClient.self].worktreeIDsWithUnseenNotifications = {
+        [(worktreeID: "/tmp/stale-wt", oldestUnreadDate: Date(timeIntervalSince1970: 500))]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.goToNextNotification)
+    await store.receive(\.showToast) {
+      $0.statusToast = .success("No unread notifications")
+    }
+    await store.finish()
+  }
+
   private func makeWorktree(
     id: String,
     name: String,
