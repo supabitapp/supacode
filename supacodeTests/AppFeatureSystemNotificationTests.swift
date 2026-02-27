@@ -36,7 +36,7 @@ struct AppFeatureSystemNotificationTests {
       $0.settings.systemNotificationsEnabled = false
     }
 
-    let expectedAlert = AlertState<AppFeature.Alert> {
+    let expectedAlert = AlertState<SettingsFeature.Alert> {
       TextState("Enable Notifications in System Settings")
     } actions: {
       ButtonState(action: .openSystemNotificationSettings) {
@@ -51,7 +51,7 @@ struct AppFeatureSystemNotificationTests {
 
     #expect(authorizationRequests.value == 1)
     #expect(store.state.settings.systemNotificationsEnabled == false)
-    #expect(store.state.alert == expectedAlert)
+    #expect(store.state.settings.alert == expectedAlert)
   }
 
   @Test(.dependencies) func deniedStatusShowsAlertAndOpensSystemSettings() async {
@@ -87,7 +87,7 @@ struct AppFeatureSystemNotificationTests {
       $0.settings.systemNotificationsEnabled = false
     }
 
-    let expectedAlert = AlertState<AppFeature.Alert> {
+    let expectedAlert = AlertState<SettingsFeature.Alert> {
       TextState("Enable Notifications in System Settings")
     } actions: {
       ButtonState(action: .openSystemNotificationSettings) {
@@ -100,12 +100,12 @@ struct AppFeatureSystemNotificationTests {
       TextState("Supacode cannot send system notifications.\n\nError: Authorization status is denied.")
     }
 
-    #expect(authorizationRequests.value == 0)
+    #expect(authorizationRequests.value == 1)
     #expect(store.state.settings.systemNotificationsEnabled == false)
-    #expect(store.state.alert == expectedAlert)
+    #expect(store.state.settings.alert == expectedAlert)
 
-    await store.send(.alert(.presented(.openSystemNotificationSettings))) {
-      $0.alert = nil
+    await store.send(.settings(.alert(.presented(.openSystemNotificationSettings)))) {
+      $0.settings.alert = nil
     }
     await store.finish()
     #expect(openedSettings.value == 1)

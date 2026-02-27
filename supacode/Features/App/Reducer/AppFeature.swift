@@ -72,7 +72,6 @@ struct AppFeature {
   enum Alert: Equatable {
     case dismiss
     case confirmQuit
-    case openSystemNotificationSettings
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -305,10 +304,18 @@ struct AppFeature {
                 )
               }
             case .denied:
-              await send(.systemNotificationsPermissionFailed(errorMessage: "Authorization status is denied."))
+              let result = await systemNotificationClient.requestAuthorization()
+              if !result.granted {
+                await send(.systemNotificationsPermissionFailed(errorMessage: "Authorization status is denied."))
+              }
             }
           }
         )
+
+      case .settings(.delegate(.openSystemNotificationSettings)):
+        return .run { _ in
+          await systemNotificationClient.openSettings()
+        }
 
       case .openActionSelectionChanged(let action):
         state.openActionSelection = action
@@ -548,7 +555,7 @@ struct AppFeature {
         } else {
           message = "Supacode cannot send system notifications while permission is denied."
         }
-        state.alert = AlertState {
+        state.settings.alert = AlertState {
           TextState("Enable Notifications in System Settings")
         } actions: {
           ButtonState(action: .openSystemNotificationSettings) {
@@ -565,12 +572,6 @@ struct AppFeature {
       case .alert(.dismiss):
         state.alert = nil
         return .none
-
-      case .alert(.presented(.openSystemNotificationSettings)):
-        state.alert = nil
-        return .run { _ in
-          await systemNotificationClient.openSettings()
-        }
 
       case .alert(.presented(.confirmQuit)):
         analyticsClient.capture("app_quit", nil)

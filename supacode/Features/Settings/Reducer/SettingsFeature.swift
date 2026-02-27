@@ -23,6 +23,7 @@ struct SettingsFeature {
     var promptForWorktreeCreation: Bool
     var selection: SettingsSection? = .general
     var repositorySettings: RepositorySettingsFeature.State?
+    @Presents var alert: AlertState<Alert>?
 
     init(settings: GlobalSettings = .default) {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
@@ -72,13 +73,20 @@ struct SettingsFeature {
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
     case repositorySettings(RepositorySettingsFeature.Action)
+    case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
+  }
+
+  enum Alert: Equatable {
+    case dismiss
+    case openSystemNotificationSettings
   }
 
   @CasePathable
   enum Delegate: Equatable {
     case settingsChanged(GlobalSettings)
+    case openSystemNotificationSettings
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -133,6 +141,17 @@ struct SettingsFeature {
         return .none
 
       case .repositorySettings:
+        return .none
+
+      case .alert(.dismiss):
+        state.alert = nil
+        return .none
+
+      case .alert(.presented(.openSystemNotificationSettings)):
+        state.alert = nil
+        return .send(.delegate(.openSystemNotificationSettings))
+
+      case .alert:
         return .none
 
       case .delegate:
