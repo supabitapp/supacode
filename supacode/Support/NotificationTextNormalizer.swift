@@ -51,7 +51,11 @@ enum NotificationTextNormalizer {
 
     let type = nodeType(node)
     if literalNodeTypes.contains(type), let literal = cmark_node_get_literal(node) {
-      output.append(String(cString: literal))
+      var text = String(cString: literal)
+      if isLeadingTaskListMarker(node) {
+        text = stripTaskListPrefix(text)
+      }
+      output.append(text)
     }
 
     if type == "softbreak" || type == "linebreak" {
@@ -72,6 +76,32 @@ enum NotificationTextNormalizer {
   private static func nodeType(_ node: CMarkNode) -> String {
     guard let cString = cmark_node_get_type_string(node) else { return "" }
     return String(cString: cString)
+  }
+
+  private static func isLeadingTaskListMarker(_ node: CMarkNode) -> Bool {
+    guard
+      let parent = cmark_node_parent(node),
+      nodeType(parent) == "paragraph",
+      let grandparent = cmark_node_parent(parent),
+      nodeType(grandparent) == "item"
+    else {
+      return false
+    }
+
+    guard let firstParagraphChild = cmark_node_first_child(parent), firstParagraphChild == node else {
+      return false
+    }
+
+    guard let literal = cmark_node_get_literal(node) else { return false }
+    let text = String(cString: literal)
+    return text.hasPrefix("[ ] ") || text.hasPrefix("[x] ") || text.hasPrefix("[X] ")
+  }
+
+  private static func stripTaskListPrefix(_ text: String) -> String {
+    if text.hasPrefix("[ ] ") || text.hasPrefix("[x] ") || text.hasPrefix("[X] ") {
+      return String(text.dropFirst(4))
+    }
+    return text
   }
 
   private static func collapseWhitespace(_ text: String) -> String {
