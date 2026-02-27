@@ -132,8 +132,8 @@ struct AppFeatureSystemNotificationTests {
       .terminalEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
-          title: "Done",
-          body: "Build succeeded"
+          title: "**Done**",
+          body: "Build `succeeded`.\nSee [logs](https://example.com)"
         )
       )
     )
@@ -141,7 +141,7 @@ struct AppFeatureSystemNotificationTests {
 
     #expect(sends.value.count == 1)
     #expect(sends.value.first?.0 == "Done")
-    #expect(sends.value.first?.1 == "Build succeeded")
+    #expect(sends.value.first?.1 == "Build succeeded. See logs")
   }
 
   @Test(.dependencies) func notificationReceivedSkipsLocalSoundWhenSystemNotificationsEnabled() async {

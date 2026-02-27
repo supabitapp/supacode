@@ -654,13 +654,15 @@ struct AppFeature {
         return .none
 
       case .terminalEvent(.notificationReceived(let worktreeID, let title, let body)):
+        let normalizedTitle = NotificationTextNormalizer.normalize(title)
+        let normalizedBody = NotificationTextNormalizer.normalize(body)
         var effects: [Effect<Action>] = [
           .send(.repositories(.worktreeNotificationReceived(worktreeID)))
         ]
-        if state.settings.systemNotificationsEnabled {
+        if state.settings.systemNotificationsEnabled && !(normalizedTitle.isEmpty && normalizedBody.isEmpty) {
           effects.append(
             .run { _ in
-              await systemNotificationClient.send(title, body)
+              await systemNotificationClient.send(normalizedTitle, normalizedBody)
             }
           )
         }
