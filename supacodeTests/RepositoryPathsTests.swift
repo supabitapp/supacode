@@ -60,8 +60,10 @@ struct SupacodePathsTests {
       globalDefaultPath: "/tmp/worktrees",
       repositoryOverridePath: nil
     )
+    let expectedDirectory = URL(filePath: "/tmp/worktrees/repo-alpha", directoryHint: .isDirectory)
+      .standardizedFileURL
 
-    #expect(directory == URL(fileURLWithPath: "/tmp/worktrees/repo-alpha"))
+    #expect(directory == expectedDirectory)
   }
 
   @Test func worktreeBaseDirectoryRepositoryOverrideTakesPrecedence() {
@@ -71,8 +73,10 @@ struct SupacodePathsTests {
       globalDefaultPath: "/tmp/worktrees",
       repositoryOverridePath: "/tmp/repo-alpha-worktrees"
     )
+    let expectedDirectory = URL(filePath: "/tmp/repo-alpha-worktrees", directoryHint: .isDirectory)
+      .standardizedFileURL
 
-    #expect(directory == URL(fileURLWithPath: "/tmp/repo-alpha-worktrees"))
+    #expect(directory == expectedDirectory)
   }
 
   @Test func exampleWorktreePathUsesResolvedBaseDirectory() {
@@ -82,7 +86,10 @@ struct SupacodePathsTests {
       globalDefaultPath: "/tmp/worktrees",
       repositoryOverridePath: nil
     )
+    let expectedPath = URL(filePath: "/tmp/worktrees/repo-alpha/swift-otter", directoryHint: .isDirectory)
+      .standardizedFileURL
+      .path(percentEncoded: false)
 
-    #expect(path == "/tmp/worktrees/repo-alpha/swift-otter")
+    #expect(path == expectedPath)
   }
 }
