@@ -8,9 +8,9 @@ struct MobileAppFeature {
   @ObservableState
   struct State: Equatable {
     var servers = MobileServersFeature.State()
-    var selectedServerID: MobileServer.ID?
     var sessions: IdentifiedArrayOf<MobileSession> = []
     var selectedSessionID: MobileSession.ID?
+    var showServerList = false
     @Presents var serverForm: ServerFormFeature.State?
     var backgroundTaskActive = false
   }
@@ -21,11 +21,13 @@ struct MobileAppFeature {
     case serverForm(PresentationAction<ServerFormFeature.Action>)
     case terminalEvent(MobileTerminalClient.Event)
     case scenePhaseChanged(ScenePhase)
-    case selectServer(MobileServer.ID?)
     case selectSession(MobileSession.ID?)
+    case connectButtonTapped
+    case serverListDismissed
+    case connectToServer(MobileServer.ID)
     case addServerTapped
     case editServerTapped(MobileServer)
-    case openSession(commandOverride: String?)
+    case openSession(serverID: MobileServer.ID, commandOverride: String?)
     case closeSession(MobileSession.ID)
     case switchToSession(Int)
   }
@@ -52,9 +54,6 @@ struct MobileAppFeature {
         )
 
       case .servers(.delegate(.serverDeleted(let id))):
-        if state.selectedServerID == id {
-          state.selectedServerID = state.servers.servers.first?.id
-        }
         let sessionIDs = state.sessions.filter { $0.serverID == id }.map(\.id)
         return .merge(
           sessionIDs.map { sessionID in
@@ -91,7 +90,7 @@ struct MobileAppFeature {
       case .terminalEvent(.sessionClosed(let id)):
         state.sessions.remove(id: id)
         if state.selectedSessionID == id {
-          state.selectedSessionID = sessionsForSelectedServer(state).last?.id
+          state.selectedSessionID = state.sessions.last?.id
         }
         return .none
 
@@ -123,19 +122,21 @@ struct MobileAppFeature {
           return .none
         }
 
-      case .selectServer(let id):
-        state.selectedServerID = id
-        if let id {
-          state.selectedSessionID = sessionsForServer(id, state).first?.id
-          return .run { [terminalClient] _ in
-            await MainActor.run { terminalClient.send(.setSelectedServerID(id)) }
-          }
-        }
-        return .none
-
       case .selectSession(let id):
         state.selectedSessionID = id
         return .none
+
+      case .connectButtonTapped:
+        state.showServerList = true
+        return .none
+
+      case .serverListDismissed:
+        state.showServerList = false
+        return .none
+
+      case .connectToServer(let serverID):
+        state.showServerList = false
+        return .send(.openSession(serverID: serverID, commandOverride: nil))
 
       case .addServerTapped:
         state.serverForm = ServerFormFeature.State(mode: .add)
@@ -145,9 +146,8 @@ struct MobileAppFeature {
         state.serverForm = ServerFormFeature.State(mode: .edit(server))
         return .none
 
-      case .openSession(let commandOverride):
-        guard let serverID = state.selectedServerID,
-          let server = state.servers.servers[id: serverID]
+      case .openSession(let serverID, let commandOverride):
+        guard let server = state.servers.servers[id: serverID]
         else { return .none }
         return .run { [terminalClient, keychainClient, sshKeyClient] _ in
           var identityFilePath: String?
@@ -174,26 +174,13 @@ struct MobileAppFeature {
         }
 
       case .switchToSession(let index):
-        let sessions = sessionsForSelectedServer(state)
-        guard index >= 0, index < sessions.count else { return .none }
-        state.selectedSessionID = sessions[index].id
+        guard index >= 0, index < state.sessions.count else { return .none }
+        state.selectedSessionID = state.sessions[index].id
         return .none
       }
     }
     .ifLet(\.$serverForm, action: \.serverForm) {
       ServerFormFeature()
     }
-  }
-
-  nonisolated private func sessionsForSelectedServer(_ state: State) -> [MobileSession] {
-    guard let serverID = state.selectedServerID else { return [] }
-    return sessionsForServer(serverID, state)
-  }
-
-  nonisolated private func sessionsForServer(
-    _ serverID: MobileServer.ID,
-    _ state: State,
-  ) -> [MobileSession] {
-    state.sessions.filter { $0.serverID == serverID }
   }
 }

@@ -8,11 +8,6 @@ struct MobileKeyboardShortcuts: ViewModifier {
     content
       .background {
         Group {
-          Button("New Session") {
-            store.send(.openSession(commandOverride: nil))
-          }
-          .keyboardShortcut("t", modifiers: .command)
-
           Button("Close Session") {
             if let id = store.selectedSessionID {
               store.send(.closeSession(id))
@@ -20,8 +15,8 @@ struct MobileKeyboardShortcuts: ViewModifier {
           }
           .keyboardShortcut("w", modifiers: .command)
 
-          Button("Add Server") {
-            store.send(.addServerTapped)
+          Button("Connect to Server") {
+            store.send(.connectButtonTapped)
           }
           .keyboardShortcut("n", modifiers: .command)
 

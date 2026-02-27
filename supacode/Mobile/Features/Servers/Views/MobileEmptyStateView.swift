@@ -1,16 +1,16 @@
 import SwiftUI
 
 struct MobileEmptyStateView: View {
-  let onAddServer: () -> Void
+  let onConnect: () -> Void
 
   var body: some View {
     ContentUnavailableView {
-      Label("No Servers", systemImage: "server.rack")
+      Label("No Active Sessions", systemImage: "terminal")
     } description: {
-      Text("Add a server to get started with SSH sessions.")
+      Text("Connect to a server to start a terminal session.")
     } actions: {
-      Button("Add Server", systemImage: "plus") {
-        onAddServer()
+      Button("Connect to Server", systemImage: "server.rack") {
+        onConnect()
       }
       .buttonStyle(.borderedProminent)
     }

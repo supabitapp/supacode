@@ -1,41 +1,34 @@
 import SwiftUI
 
-struct MobileServerRow: View {
-  let server: MobileServer
-  let activeSessionCount: Int
+struct MobileSessionRow: View {
+  let serverName: String
+  let sessionTitle: String
+  let isClosed: Bool
 
   var body: some View {
     HStack(alignment: .center, spacing: 8) {
-      Image(systemName: "server.rack")
-        .symbolVariant(.fill)
-        .foregroundStyle(.secondary)
+      Image(systemName: "terminal")
+        .foregroundStyle(isClosed ? .red : .secondary)
         .font(.caption)
         .frame(width: 16, height: 16)
 
       VStack(alignment: .leading, spacing: 2) {
-        HStack(spacing: 6) {
-          Text(server.displayName)
-            .font(.body)
-            .lineLimit(1)
+        Text(serverName)
+          .font(.body)
+          .lineLimit(1)
 
-          Spacer(minLength: 4)
-
-          if activeSessionCount > 0 {
-            Text("\(activeSessionCount)")
-              .font(.caption2)
-              .fontWeight(.semibold)
-              .monospacedDigit()
-              .foregroundStyle(.white)
-              .padding(.horizontal, 5)
-              .padding(.vertical, 1)
-              .background(.blue, in: Capsule())
-          }
-        }
-
-        Text(server.detailLine)
+        Text(sessionTitle)
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
+      }
+
+      Spacer(minLength: 4)
+
+      if isClosed {
+        Circle()
+          .fill(.red)
+          .frame(width: 6, height: 6)
       }
     }
     .padding(.horizontal, 2)

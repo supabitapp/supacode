@@ -16,16 +16,28 @@ struct MobileContentView: View {
       .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
       .navigationTitle("Supacode")
     } detail: {
-      if store.selectedServerID != nil {
+      if store.selectedSessionID != nil {
         MobileDetailView(
           store: store,
           terminalManager: terminalManager,
         )
       } else {
         MobileEmptyStateView {
-          store.send(.addServerTapped)
+          store.send(.connectButtonTapped)
         }
       }
+    }
+    .sheet(
+      isPresented: Binding(
+        get: { store.showServerList },
+        set: { newValue in
+          if !newValue {
+            store.send(.serverListDismissed)
+          }
+        }
+      )
+    ) {
+      MobileServerListView(store: store)
     }
     .sheet(item: $store.scope(state: \.serverForm, action: \.serverForm)) { formStore in
       MobileServerFormView(store: formStore)

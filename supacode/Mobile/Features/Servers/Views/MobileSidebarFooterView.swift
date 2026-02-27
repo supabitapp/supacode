@@ -1,17 +1,17 @@
 import SwiftUI
 
 struct MobileSidebarFooterView: View {
-  let onAddServer: () -> Void
+  let onConnect: () -> Void
 
   var body: some View {
     HStack {
       Button {
-        onAddServer()
+        onConnect()
       } label: {
-        Label("Add Server", systemImage: "plus.circle")
+        Label("Connect", systemImage: "server.rack")
           .font(.callout)
       }
-      .help("Add Server")
+      .help("Connect to Server")
 
       Spacer()
     }

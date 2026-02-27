@@ -37,6 +37,7 @@
 		D6B0A30D2F1AA00000000001 /* MobileSidebarFooterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20D2F1AA00000000001 /* MobileSidebarFooterView.swift */; };
 		D6B0A30E2F1AA00000000001 /* MobileServerFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20E2F1AA00000000001 /* MobileServerFormView.swift */; };
 		D6B0A30F2F1AA00000000001 /* MobileEmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20F2F1AA00000000001 /* MobileEmptyStateView.swift */; };
+		D6B0A3202F1AA00000000001 /* MobileServerListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2202F1AA00000000001 /* MobileServerListView.swift */; };
 		D6B0A3102F1AA00000000001 /* MobileDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2102F1AA00000000001 /* MobileDetailView.swift */; };
 		D6B0A3112F1AA00000000001 /* MobileTerminalTabBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2112F1AA00000000001 /* MobileTerminalTabBarView.swift */; };
 		D6B0A3122F1AA00000000001 /* MobileTerminalContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2122F1AA00000000001 /* MobileTerminalContentView.swift */; };
@@ -85,6 +86,7 @@
 		D6B0A20D2F1AA00000000001 /* MobileSidebarFooterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSidebarFooterView.swift; sourceTree = "<group>"; };
 		D6B0A20E2F1AA00000000001 /* MobileServerFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileServerFormView.swift; sourceTree = "<group>"; };
 		D6B0A20F2F1AA00000000001 /* MobileEmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEmptyStateView.swift; sourceTree = "<group>"; };
+		D6B0A2202F1AA00000000001 /* MobileServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileServerListView.swift; sourceTree = "<group>"; };
 		D6B0A2102F1AA00000000001 /* MobileDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileDetailView.swift; sourceTree = "<group>"; };
 		D6B0A2112F1AA00000000001 /* MobileTerminalTabBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalTabBarView.swift; sourceTree = "<group>"; };
 		D6B0A2122F1AA00000000001 /* MobileTerminalContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalContentView.swift; sourceTree = "<group>"; };
@@ -120,6 +122,7 @@
 				Mobile/Features/Servers/ServerFormFeature.swift,
 				Mobile/Features/Servers/Views/MobileEmptyStateView.swift,
 				Mobile/Features/Servers/Views/MobileServerFormView.swift,
+				Mobile/Features/Servers/Views/MobileServerListView.swift,
 				Mobile/Features/Servers/Views/MobileServerRow.swift,
 				Mobile/Features/Servers/Views/MobileSidebarFooterView.swift,
 				Mobile/Features/Servers/Views/MobileSidebarView.swift,
@@ -302,6 +305,7 @@
 				D6B0A20E2F1AA00000000001 /* MobileServerFormView.swift */,
 				65E9697C8794452492D024BB /* SSHKeyGenerationView.swift */,
 				D6B0A20F2F1AA00000000001 /* MobileEmptyStateView.swift */,
+				D6B0A2202F1AA00000000001 /* MobileServerListView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -551,6 +555,7 @@
 				D6B0A30D2F1AA00000000001 /* MobileSidebarFooterView.swift in Sources */,
 				D6B0A30E2F1AA00000000001 /* MobileServerFormView.swift in Sources */,
 				D6B0A30F2F1AA00000000001 /* MobileEmptyStateView.swift in Sources */,
+				D6B0A3202F1AA00000000001 /* MobileServerListView.swift in Sources */,
 				D6B0A3102F1AA00000000001 /* MobileDetailView.swift in Sources */,
 				D6B0A3112F1AA00000000001 /* MobileTerminalTabBarView.swift in Sources */,
 				D6B0A3122F1AA00000000001 /* MobileTerminalContentView.swift in Sources */,
