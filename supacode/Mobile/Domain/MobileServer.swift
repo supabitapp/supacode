@@ -7,6 +7,7 @@ struct MobileServer: Identifiable, Codable, Equatable, Hashable, Sendable {
   var username: String
   var port: Int
   var defaultCommand: String
+  var authMethod: SSHAuthMethod
 
   init(
     id: UUID = UUID(),
@@ -15,6 +16,7 @@ struct MobileServer: Identifiable, Codable, Equatable, Hashable, Sendable {
     username: String = "",
     port: Int = 22,
     defaultCommand: String = "",
+    authMethod: SSHAuthMethod = .none,
   ) {
     self.id = id
     self.name = name
@@ -22,6 +24,22 @@ struct MobileServer: Identifiable, Codable, Equatable, Hashable, Sendable {
     self.username = username
     self.port = port
     self.defaultCommand = defaultCommand
+    self.authMethod = authMethod
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, name, host, username, port, defaultCommand, authMethod
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    name = try container.decode(String.self, forKey: .name)
+    host = try container.decode(String.self, forKey: .host)
+    username = try container.decode(String.self, forKey: .username)
+    port = try container.decode(Int.self, forKey: .port)
+    defaultCommand = try container.decode(String.self, forKey: .defaultCommand)
+    authMethod = try container.decodeIfPresent(SSHAuthMethod.self, forKey: .authMethod) ?? .none
   }
 
   var displayName: String {
@@ -53,12 +71,13 @@ struct MobileServer: Identifiable, Codable, Equatable, Hashable, Sendable {
       username: username.trimmingCharacters(in: .whitespacesAndNewlines),
       port: max(1, min(port, 65535)),
       defaultCommand: defaultCommand.trimmingCharacters(in: .whitespacesAndNewlines),
+      authMethod: authMethod,
     )
   }
 }
 
 extension MobileServer {
-  func terminalCommand(overrideCommand: String?) -> String? {
+  func terminalCommand(overrideCommand: String?, identityFilePath: String? = nil) -> String? {
     let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalizedHost.isEmpty else { return nil }
     guard (1 ... 65535).contains(port) else { return nil }
@@ -67,7 +86,11 @@ extension MobileServer {
       ? normalizedHost
       : "\(username.trimmingCharacters(in: .whitespacesAndNewlines))@\(normalizedHost)"
 
-    var command: [String] = ["ssh", "-p", "\(port)", destination]
+    var command: [String] = ["ssh", "-p", "\(port)"]
+    if let identityFilePath {
+      command.append(contentsOf: ["-i", identityFilePath, "-o", "IdentitiesOnly=yes"])
+    }
+    command.append(destination)
     if let override = overrideCommand?.trimmingCharacters(in: .whitespacesAndNewlines),
       !override.isEmpty
     {

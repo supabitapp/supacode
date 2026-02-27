@@ -22,6 +22,25 @@ struct MobileServerFormView: View {
             .autocorrectionDisabled()
         }
 
+        Section("Authentication") {
+          Picker("Method", selection: $store.authType) {
+            ForEach(ServerFormFeature.State.AuthType.allCases, id: \.self) { type in
+              Text(type.rawValue).tag(type)
+            }
+          }
+
+          switch store.authType {
+          case .none:
+            EmptyView()
+          case .password:
+            SecureField("Password", text: $store.password)
+              .textInputAutocapitalization(.never)
+              .autocorrectionDisabled()
+          case .sshKey:
+            sshKeySection
+          }
+        }
+
         Section("Optional") {
           TextField("Default startup command", text: $store.defaultCommand)
             .textInputAutocapitalization(.never)
@@ -34,6 +53,7 @@ struct MobileServerFormView: View {
             .font(.footnote)
         }
       }
+      .task { store.send(.task) }
       .navigationTitle(store.isEditing ? "Edit Server" : "Add Server")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -54,6 +74,28 @@ struct MobileServerFormView: View {
             }
           }
         }
+      }
+      .sheet(item: $store.scope(state: \.keyGeneration, action: \.keyGeneration)) { keyGenStore in
+        SSHKeyGenerationView(store: keyGenStore)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var sshKeySection: some View {
+    if store.availableKeys.isEmpty {
+      Button("Generate New Key") {
+        store.send(.generateKeyTapped)
+      }
+    } else {
+      Picker("Key", selection: $store.selectedKeyID) {
+        Text("Select a key").tag(SSHKey.ID?.none)
+        ForEach(store.availableKeys) { key in
+          Text(key.name).tag(SSHKey.ID?.some(key.id))
+        }
+      }
+      Button("Generate New Key") {
+        store.send(.generateKeyTapped)
       }
     }
   }

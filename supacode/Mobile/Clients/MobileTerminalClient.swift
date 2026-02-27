@@ -6,7 +6,7 @@ struct MobileTerminalClient: Sendable {
   var events: @MainActor @Sendable () -> AsyncStream<Event>
 
   enum Command: Equatable, Sendable {
-    case openSession(MobileServer, commandOverride: String?)
+    case openSession(MobileServer, commandOverride: String?, identityFilePath: String?)
     case closeSession(UUID)
     case setSelectedServerID(MobileServer.ID?)
     case setAppFocus(Bool)

@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import SwiftUI
+import UIKit
 
 @Reducer
 struct MobileAppFeature {
@@ -30,6 +31,8 @@ struct MobileAppFeature {
   }
 
   @Dependency(MobileTerminalClient.self) private var terminalClient
+  @Dependency(\.keychainClient) private var keychainClient
+  @Dependency(\.sshKeyClient) private var sshKeyClient
 
   var body: some ReducerOf<Self> {
     Scope(state: \.servers, action: \.servers) {
@@ -146,8 +149,23 @@ struct MobileAppFeature {
         guard let serverID = state.selectedServerID,
           let server = state.servers.servers[id: serverID]
         else { return .none }
-        return .run { [terminalClient] _ in
-          await MainActor.run { terminalClient.send(.openSession(server, commandOverride: commandOverride)) }
+        return .run { [terminalClient, keychainClient, sshKeyClient] _ in
+          var identityFilePath: String?
+          switch server.authMethod {
+          case .none:
+            break
+          case .password:
+            if let password = try? keychainClient.getString("server.\(server.id.uuidString).password"),
+              !password.isEmpty
+            {
+              await MainActor.run { UIPasteboard.general.string = password }
+            }
+          case .sshKey(let keyID):
+            identityFilePath = try? sshKeyClient.writeIdentityFile(keyID)
+          }
+          await MainActor.run {
+            terminalClient.send(.openSession(server, commandOverride: commandOverride, identityFilePath: identityFilePath))
+          }
         }
 
       case .closeSession(let id):

@@ -21,8 +21,8 @@ final class MobileTerminalSessionManager {
 
   func handleCommand(_ command: MobileTerminalClient.Command) {
     switch command {
-    case .openSession(let server, let commandOverride):
-      guard let session = openSession(server: server, commandOverride: commandOverride) else { return }
+    case .openSession(let server, let commandOverride, let identityFilePath):
+      guard let session = openSession(server: server, commandOverride: commandOverride, identityFilePath: identityFilePath) else { return }
       emit(.sessionOpened(id: session.id, serverID: server.id, title: session.terminalTitle))
     case .closeSession(let id):
       guard let session = sessions.first(where: { $0.id == id }) else { return }
@@ -59,8 +59,9 @@ final class MobileTerminalSessionManager {
   private func openSession(
     server: MobileServer,
     commandOverride: String?,
+    identityFilePath: String? = nil,
   ) -> MobileTerminalSession? {
-    guard let command = server.terminalCommand(overrideCommand: commandOverride) else {
+    guard let command = server.terminalCommand(overrideCommand: commandOverride, identityFilePath: identityFilePath) else {
       return nil
     }
 

@@ -41,6 +41,13 @@
 		D6B0A3112F1AA00000000001 /* MobileTerminalTabBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2112F1AA00000000001 /* MobileTerminalTabBarView.swift */; };
 		D6B0A3122F1AA00000000001 /* MobileTerminalContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2122F1AA00000000001 /* MobileTerminalContentView.swift */; };
 		D6B0A3132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift */; };
+		BDE0F92FB3404A31A60805F2 /* SSHAuthMethod.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A169EA8F5EC40E98ABDBC86 /* SSHAuthMethod.swift */; };
+		842C77BA50FD41E68BEDC0E8 /* SSHKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3240AAD85C144B87AB6D0BCF /* SSHKey.swift */; };
+		69EDEA06659541EFA8E785D5 /* KeychainClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 445BE706CDBB428B871F0E9A /* KeychainClient.swift */; };
+		9FAA8ADDBFFE46909B6EAD82 /* SSHKeyGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C4237365306438A9922BDA1 /* SSHKeyGenerator.swift */; };
+		9661D73395B641A0B09BA5C1 /* SSHKeyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB5061B4BF449C1947D177B /* SSHKeyClient.swift */; };
+		6B1C3E6F1A2242D7B9B39805 /* SSHKeyGenerationFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 207DB16C702343CF87D7BD09 /* SSHKeyGenerationFeature.swift */; };
+		A77D22256CBF4DB9AE567A67 /* SSHKeyGenerationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E9697C8794452492D024BB /* SSHKeyGenerationView.swift */; };
 		D6B0A5012F1AA00000000001 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = D6B0A5022F1AA00000000001 /* ComposableArchitecture */; };
 /* End PBXBuildFile section */
 
@@ -82,6 +89,13 @@
 		D6B0A2112F1AA00000000001 /* MobileTerminalTabBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalTabBarView.swift; sourceTree = "<group>"; };
 		D6B0A2122F1AA00000000001 /* MobileTerminalContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalContentView.swift; sourceTree = "<group>"; };
 		D6B0A2132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileGhosttyTerminalCoordinator.swift; sourceTree = "<group>"; };
+		7A169EA8F5EC40E98ABDBC86 /* SSHAuthMethod.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthMethod.swift; sourceTree = "<group>"; };
+		3240AAD85C144B87AB6D0BCF /* SSHKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKey.swift; sourceTree = "<group>"; };
+		445BE706CDBB428B871F0E9A /* KeychainClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainClient.swift; sourceTree = "<group>"; };
+		7C4237365306438A9922BDA1 /* SSHKeyGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyGenerator.swift; sourceTree = "<group>"; };
+		DEB5061B4BF449C1947D177B /* SSHKeyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyClient.swift; sourceTree = "<group>"; };
+		207DB16C702343CF87D7BD09 /* SSHKeyGenerationFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyGenerationFeature.swift; sourceTree = "<group>"; };
+		65E9697C8794452492D024BB /* SSHKeyGenerationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyGenerationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -92,22 +106,29 @@
 				Mobile/App/MobileContentView.swift,
 				Mobile/App/MobileKeyboardShortcuts.swift,
 				Mobile/App/SupacodeMobileApp.swift,
+				Mobile/Clients/KeychainClient.swift,
 				Mobile/Clients/MobileTerminalClient.swift,
+				Mobile/Clients/SSHKeyClient.swift,
 				Mobile/Clients/ServerCatalogClient.swift,
 				Mobile/Domain/MobileServer.swift,
 				Mobile/Domain/MobileSession.swift,
+				Mobile/Domain/SSHAuthMethod.swift,
+				Mobile/Domain/SSHKey.swift,
 				Mobile/Features/App/MobileAppFeature.swift,
 				Mobile/Features/Servers/MobileServersFeature.swift,
+				Mobile/Features/Servers/SSHKeyGenerationFeature.swift,
 				Mobile/Features/Servers/ServerFormFeature.swift,
 				Mobile/Features/Servers/Views/MobileEmptyStateView.swift,
 				Mobile/Features/Servers/Views/MobileServerFormView.swift,
 				Mobile/Features/Servers/Views/MobileServerRow.swift,
 				Mobile/Features/Servers/Views/MobileSidebarFooterView.swift,
 				Mobile/Features/Servers/Views/MobileSidebarView.swift,
+				Mobile/Features/Servers/Views/SSHKeyGenerationView.swift,
 				Mobile/Features/Terminal/Views/MobileDetailView.swift,
 				Mobile/Features/Terminal/Views/MobileTerminalContentView.swift,
 				Mobile/Features/Terminal/Views/MobileTerminalTabBarView.swift,
 				Mobile/Infrastructure/MobileGhosttyTerminalCoordinator.swift,
+				Mobile/Services/SSHKeyGenerator.swift,
 			);
 			target = D69CE0492F1F378200584C57 /* supacode */;
 		};
@@ -204,6 +225,7 @@
 				D6B0A4012F1AA00000000001 /* App */,
 				D6B0A4022F1AA00000000001 /* Domain */,
 				D6B0A4032F1AA00000000001 /* Clients */,
+				A1B2C3D4E5F6478900000001 /* Services */,
 				D6B0A4042F1AA00000000001 /* Features */,
 				D6B0A40A2F1AA00000000001 /* Infrastructure */,
 			);
@@ -224,6 +246,8 @@
 			isa = PBXGroup;
 			children = (
 				D6B0A2042F1AA00000000001 /* MobileServer.swift */,
+				3240AAD85C144B87AB6D0BCF /* SSHKey.swift */,
+				7A169EA8F5EC40E98ABDBC86 /* SSHAuthMethod.swift */,
 				D6B0A2052F1AA00000000001 /* MobileSession.swift */,
 			);
 			path = Domain;
@@ -234,6 +258,8 @@
 			children = (
 				D6B0A2062F1AA00000000001 /* ServerCatalogClient.swift */,
 				D6B0A2072F1AA00000000001 /* MobileTerminalClient.swift */,
+				DEB5061B4BF449C1947D177B /* SSHKeyClient.swift */,
+				445BE706CDBB428B871F0E9A /* KeychainClient.swift */,
 			);
 			path = Clients;
 			sourceTree = "<group>";
@@ -261,6 +287,7 @@
 			children = (
 				D6B0A2092F1AA00000000001 /* MobileServersFeature.swift */,
 				D6B0A20A2F1AA00000000001 /* ServerFormFeature.swift */,
+				207DB16C702343CF87D7BD09 /* SSHKeyGenerationFeature.swift */,
 				D6B0A4072F1AA00000000001 /* Views */,
 			);
 			path = Servers;
@@ -273,6 +300,7 @@
 				D6B0A20C2F1AA00000000001 /* MobileServerRow.swift */,
 				D6B0A20D2F1AA00000000001 /* MobileSidebarFooterView.swift */,
 				D6B0A20E2F1AA00000000001 /* MobileServerFormView.swift */,
+				65E9697C8794452492D024BB /* SSHKeyGenerationView.swift */,
 				D6B0A20F2F1AA00000000001 /* MobileEmptyStateView.swift */,
 			);
 			path = Views;
@@ -302,6 +330,14 @@
 				D6B0A2132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift */,
 			);
 			path = Infrastructure;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6478900000001 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				7C4237365306438A9922BDA1 /* SSHKeyGenerator.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -497,6 +533,13 @@
 				D6B0A3022F1AA00000000001 /* MobileContentView.swift in Sources */,
 				D6B0A3032F1AA00000000001 /* MobileKeyboardShortcuts.swift in Sources */,
 				D6B0A3042F1AA00000000001 /* MobileServer.swift in Sources */,
+				BDE0F92FB3404A31A60805F2 /* SSHAuthMethod.swift in Sources */,
+				842C77BA50FD41E68BEDC0E8 /* SSHKey.swift in Sources */,
+				69EDEA06659541EFA8E785D5 /* KeychainClient.swift in Sources */,
+				9FAA8ADDBFFE46909B6EAD82 /* SSHKeyGenerator.swift in Sources */,
+				9661D73395B641A0B09BA5C1 /* SSHKeyClient.swift in Sources */,
+				6B1C3E6F1A2242D7B9B39805 /* SSHKeyGenerationFeature.swift in Sources */,
+				A77D22256CBF4DB9AE567A67 /* SSHKeyGenerationView.swift in Sources */,
 				D6B0A3052F1AA00000000001 /* MobileSession.swift in Sources */,
 				D6B0A3062F1AA00000000001 /* ServerCatalogClient.swift in Sources */,
 				D6B0A3072F1AA00000000001 /* MobileTerminalClient.swift in Sources */,
