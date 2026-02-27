@@ -19,6 +19,36 @@
 		D6A1CB362F1F4ACB004FDABD /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6A1CB342F1F4AC2004FDABD /* Carbon.framework */; };
 		D6D054282F2E3EBF00D70ED5 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = D6D054272F2E3EBF00D70ED5 /* PostHog */; };
 		DFE570C142184CC387C1BC78 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B5698573F7354B14B940EA60 /* Sparkle */; };
+		D6B0A1102F1AA00000000001 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = D64162AD2F23CAF100260CA3 /* ghostty */; };
+		D6B0A1112F1AA00000000001 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = D64162AE2F23CAF100260CA3 /* terminfo */; };
+		D6B0A1122F1AA00000000001 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6A1CB2F2F1F4A48004FDABD /* GhosttyKit.xcframework */; };
+		D6B0A3012F1AA00000000001 /* SupacodeMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2012F1AA00000000001 /* SupacodeMobileApp.swift */; };
+		D6B0A3022F1AA00000000001 /* MobileContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2022F1AA00000000001 /* MobileContentView.swift */; };
+		D6B0A3032F1AA00000000001 /* MobileKeyboardShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2032F1AA00000000001 /* MobileKeyboardShortcuts.swift */; };
+		D6B0A3042F1AA00000000001 /* MobileServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2042F1AA00000000001 /* MobileServer.swift */; };
+		D6B0A3052F1AA00000000001 /* MobileSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2052F1AA00000000001 /* MobileSession.swift */; };
+		D6B0A3062F1AA00000000001 /* ServerCatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2062F1AA00000000001 /* ServerCatalogClient.swift */; };
+		D6B0A3072F1AA00000000001 /* MobileTerminalClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2072F1AA00000000001 /* MobileTerminalClient.swift */; };
+		D6B0A3082F1AA00000000001 /* MobileAppFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2082F1AA00000000001 /* MobileAppFeature.swift */; };
+		D6B0A3092F1AA00000000001 /* MobileServersFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2092F1AA00000000001 /* MobileServersFeature.swift */; };
+		D6B0A30A2F1AA00000000001 /* ServerFormFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20A2F1AA00000000001 /* ServerFormFeature.swift */; };
+		D6B0A30B2F1AA00000000001 /* MobileSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20B2F1AA00000000001 /* MobileSidebarView.swift */; };
+		D6B0A30C2F1AA00000000001 /* MobileServerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20C2F1AA00000000001 /* MobileServerRow.swift */; };
+		D6B0A30D2F1AA00000000001 /* MobileSidebarFooterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20D2F1AA00000000001 /* MobileSidebarFooterView.swift */; };
+		D6B0A30E2F1AA00000000001 /* MobileServerFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20E2F1AA00000000001 /* MobileServerFormView.swift */; };
+		D6B0A30F2F1AA00000000001 /* MobileEmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A20F2F1AA00000000001 /* MobileEmptyStateView.swift */; };
+		D6B0A3102F1AA00000000001 /* MobileDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2102F1AA00000000001 /* MobileDetailView.swift */; };
+		D6B0A3112F1AA00000000001 /* MobileTerminalTabBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2112F1AA00000000001 /* MobileTerminalTabBarView.swift */; };
+		D6B0A3122F1AA00000000001 /* MobileTerminalContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2122F1AA00000000001 /* MobileTerminalContentView.swift */; };
+		D6B0A3132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B0A2132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift */; };
+		BDE0F92FB3404A31A60805F2 /* SSHAuthMethod.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A169EA8F5EC40E98ABDBC86 /* SSHAuthMethod.swift */; };
+		842C77BA50FD41E68BEDC0E8 /* SSHKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3240AAD85C144B87AB6D0BCF /* SSHKey.swift */; };
+		69EDEA06659541EFA8E785D5 /* KeychainClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 445BE706CDBB428B871F0E9A /* KeychainClient.swift */; };
+		9FAA8ADDBFFE46909B6EAD82 /* SSHKeyGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C4237365306438A9922BDA1 /* SSHKeyGenerator.swift */; };
+		9661D73395B641A0B09BA5C1 /* SSHKeyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB5061B4BF449C1947D177B /* SSHKeyClient.swift */; };
+		6B1C3E6F1A2242D7B9B39805 /* SSHKeyGenerationFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 207DB16C702343CF87D7BD09 /* SSHKeyGenerationFeature.swift */; };
+		A77D22256CBF4DB9AE567A67 /* SSHKeyGenerationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E9697C8794452492D024BB /* SSHKeyGenerationView.swift */; };
+		D6B0A5012F1AA00000000001 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = D6B0A5022F1AA00000000001 /* ComposableArchitecture */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,6 +69,33 @@
 		D6A1CB2F2F1F4A48004FDABD /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
 		D6A1CB342F1F4AC2004FDABD /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 		D6F821012F1FCBC1004B4174 /* supacodeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = supacodeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D6B0A1062F1AA00000000001 /* supacode-mobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = supacode-mobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D6B0A2012F1AA00000000001 /* SupacodeMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupacodeMobileApp.swift; sourceTree = "<group>"; };
+		D6B0A2022F1AA00000000001 /* MobileContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileContentView.swift; sourceTree = "<group>"; };
+		D6B0A2032F1AA00000000001 /* MobileKeyboardShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileKeyboardShortcuts.swift; sourceTree = "<group>"; };
+		D6B0A2042F1AA00000000001 /* MobileServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileServer.swift; sourceTree = "<group>"; };
+		D6B0A2052F1AA00000000001 /* MobileSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSession.swift; sourceTree = "<group>"; };
+		D6B0A2062F1AA00000000001 /* ServerCatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerCatalogClient.swift; sourceTree = "<group>"; };
+		D6B0A2072F1AA00000000001 /* MobileTerminalClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalClient.swift; sourceTree = "<group>"; };
+		D6B0A2082F1AA00000000001 /* MobileAppFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAppFeature.swift; sourceTree = "<group>"; };
+		D6B0A2092F1AA00000000001 /* MobileServersFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileServersFeature.swift; sourceTree = "<group>"; };
+		D6B0A20A2F1AA00000000001 /* ServerFormFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerFormFeature.swift; sourceTree = "<group>"; };
+		D6B0A20B2F1AA00000000001 /* MobileSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSidebarView.swift; sourceTree = "<group>"; };
+		D6B0A20C2F1AA00000000001 /* MobileServerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileServerRow.swift; sourceTree = "<group>"; };
+		D6B0A20D2F1AA00000000001 /* MobileSidebarFooterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSidebarFooterView.swift; sourceTree = "<group>"; };
+		D6B0A20E2F1AA00000000001 /* MobileServerFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileServerFormView.swift; sourceTree = "<group>"; };
+		D6B0A20F2F1AA00000000001 /* MobileEmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEmptyStateView.swift; sourceTree = "<group>"; };
+		D6B0A2102F1AA00000000001 /* MobileDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileDetailView.swift; sourceTree = "<group>"; };
+		D6B0A2112F1AA00000000001 /* MobileTerminalTabBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalTabBarView.swift; sourceTree = "<group>"; };
+		D6B0A2122F1AA00000000001 /* MobileTerminalContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalContentView.swift; sourceTree = "<group>"; };
+		D6B0A2132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileGhosttyTerminalCoordinator.swift; sourceTree = "<group>"; };
+		7A169EA8F5EC40E98ABDBC86 /* SSHAuthMethod.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthMethod.swift; sourceTree = "<group>"; };
+		3240AAD85C144B87AB6D0BCF /* SSHKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKey.swift; sourceTree = "<group>"; };
+		445BE706CDBB428B871F0E9A /* KeychainClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainClient.swift; sourceTree = "<group>"; };
+		7C4237365306438A9922BDA1 /* SSHKeyGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyGenerator.swift; sourceTree = "<group>"; };
+		DEB5061B4BF449C1947D177B /* SSHKeyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyClient.swift; sourceTree = "<group>"; };
+		207DB16C702343CF87D7BD09 /* SSHKeyGenerationFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyGenerationFeature.swift; sourceTree = "<group>"; };
+		65E9697C8794452492D024BB /* SSHKeyGenerationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyGenerationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -46,6 +103,32 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Mobile/App/MobileContentView.swift,
+				Mobile/App/MobileKeyboardShortcuts.swift,
+				Mobile/App/SupacodeMobileApp.swift,
+				Mobile/Clients/KeychainClient.swift,
+				Mobile/Clients/MobileTerminalClient.swift,
+				Mobile/Clients/SSHKeyClient.swift,
+				Mobile/Clients/ServerCatalogClient.swift,
+				Mobile/Domain/MobileServer.swift,
+				Mobile/Domain/MobileSession.swift,
+				Mobile/Domain/SSHAuthMethod.swift,
+				Mobile/Domain/SSHKey.swift,
+				Mobile/Features/App/MobileAppFeature.swift,
+				Mobile/Features/Servers/MobileServersFeature.swift,
+				Mobile/Features/Servers/SSHKeyGenerationFeature.swift,
+				Mobile/Features/Servers/ServerFormFeature.swift,
+				Mobile/Features/Servers/Views/MobileEmptyStateView.swift,
+				Mobile/Features/Servers/Views/MobileServerFormView.swift,
+				Mobile/Features/Servers/Views/MobileServerRow.swift,
+				Mobile/Features/Servers/Views/MobileSidebarFooterView.swift,
+				Mobile/Features/Servers/Views/MobileSidebarView.swift,
+				Mobile/Features/Servers/Views/SSHKeyGenerationView.swift,
+				Mobile/Features/Terminal/Views/MobileDetailView.swift,
+				Mobile/Features/Terminal/Views/MobileTerminalContentView.swift,
+				Mobile/Features/Terminal/Views/MobileTerminalTabBarView.swift,
+				Mobile/Infrastructure/MobileGhosttyTerminalCoordinator.swift,
+				Mobile/Services/SSHKeyGenerator.swift,
 			);
 			target = D69CE0492F1F378200584C57 /* supacode */;
 		};
@@ -83,6 +166,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D6B0A1082F1AA00000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6B0A1122F1AA00000000001 /* GhosttyKit.xcframework in Frameworks */,
+				D6B0A5012F1AA00000000001 /* ComposableArchitecture in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D6F820FE2F1FCBC1004B4174 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -100,6 +192,7 @@
 				D64162AD2F23CAF100260CA3 /* ghostty */,
 				D64162AF2F23CAF100260CA3 /* git-wt */,
 				D64162AE2F23CAF100260CA3 /* terminfo */,
+				D6B0A1052F1AA00000000001 /* Mobile */,
 				D69CE04C2F1F378200584C57 /* supacode */,
 				D6F821022F1FCBC1004B4174 /* supacodeTests */,
 				D69CE04B2F1F378200584C57 /* Products */,
@@ -112,6 +205,7 @@
 			children = (
 				D69CE04A2F1F378200584C57 /* supacode.app */,
 				D6F821012F1FCBC1004B4174 /* supacodeTests.xctest */,
+				D6B0A1062F1AA00000000001 /* supacode-mobile.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -123,6 +217,127 @@
 				D6A1CB2F2F1F4A48004FDABD /* GhosttyKit.xcframework */,
 			);
 			path = Frameworks;
+			sourceTree = "<group>";
+		};
+		D6B0A1052F1AA00000000001 /* Mobile */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A4012F1AA00000000001 /* App */,
+				D6B0A4022F1AA00000000001 /* Domain */,
+				D6B0A4032F1AA00000000001 /* Clients */,
+				A1B2C3D4E5F6478900000001 /* Services */,
+				D6B0A4042F1AA00000000001 /* Features */,
+				D6B0A40A2F1AA00000000001 /* Infrastructure */,
+			);
+			path = supacode/Mobile;
+			sourceTree = "<group>";
+		};
+		D6B0A4012F1AA00000000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A2012F1AA00000000001 /* SupacodeMobileApp.swift */,
+				D6B0A2022F1AA00000000001 /* MobileContentView.swift */,
+				D6B0A2032F1AA00000000001 /* MobileKeyboardShortcuts.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		D6B0A4022F1AA00000000001 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A2042F1AA00000000001 /* MobileServer.swift */,
+				3240AAD85C144B87AB6D0BCF /* SSHKey.swift */,
+				7A169EA8F5EC40E98ABDBC86 /* SSHAuthMethod.swift */,
+				D6B0A2052F1AA00000000001 /* MobileSession.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		D6B0A4032F1AA00000000001 /* Clients */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A2062F1AA00000000001 /* ServerCatalogClient.swift */,
+				D6B0A2072F1AA00000000001 /* MobileTerminalClient.swift */,
+				DEB5061B4BF449C1947D177B /* SSHKeyClient.swift */,
+				445BE706CDBB428B871F0E9A /* KeychainClient.swift */,
+			);
+			path = Clients;
+			sourceTree = "<group>";
+		};
+		D6B0A4042F1AA00000000001 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A4052F1AA00000000001 /* App */,
+				D6B0A4062F1AA00000000001 /* Servers */,
+				D6B0A4082F1AA00000000001 /* Terminal */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		D6B0A4052F1AA00000000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A2082F1AA00000000001 /* MobileAppFeature.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		D6B0A4062F1AA00000000001 /* Servers */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A2092F1AA00000000001 /* MobileServersFeature.swift */,
+				D6B0A20A2F1AA00000000001 /* ServerFormFeature.swift */,
+				207DB16C702343CF87D7BD09 /* SSHKeyGenerationFeature.swift */,
+				D6B0A4072F1AA00000000001 /* Views */,
+			);
+			path = Servers;
+			sourceTree = "<group>";
+		};
+		D6B0A4072F1AA00000000001 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A20B2F1AA00000000001 /* MobileSidebarView.swift */,
+				D6B0A20C2F1AA00000000001 /* MobileServerRow.swift */,
+				D6B0A20D2F1AA00000000001 /* MobileSidebarFooterView.swift */,
+				D6B0A20E2F1AA00000000001 /* MobileServerFormView.swift */,
+				65E9697C8794452492D024BB /* SSHKeyGenerationView.swift */,
+				D6B0A20F2F1AA00000000001 /* MobileEmptyStateView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		D6B0A4082F1AA00000000001 /* Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A4092F1AA00000000001 /* Views */,
+			);
+			path = Terminal;
+			sourceTree = "<group>";
+		};
+		D6B0A4092F1AA00000000001 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A2102F1AA00000000001 /* MobileDetailView.swift */,
+				D6B0A2112F1AA00000000001 /* MobileTerminalTabBarView.swift */,
+				D6B0A2122F1AA00000000001 /* MobileTerminalContentView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		D6B0A40A2F1AA00000000001 /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				D6B0A2132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift */,
+			);
+			path = Infrastructure;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6478900000001 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				7C4237365306438A9922BDA1 /* SSHKeyGenerator.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -155,6 +370,26 @@
 			);
 			productName = supacode;
 			productReference = D69CE04A2F1F378200584C57 /* supacode.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D6B0A1072F1AA00000000001 /* supacode-mobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D6B0A10D2F1AA00000000001 /* Build configuration list for PBXNativeTarget "supacode-mobile" */;
+			buildPhases = (
+				D6B0A10A2F1AA00000000001 /* Sources */,
+				D6B0A1082F1AA00000000001 /* Frameworks */,
+				D6B0A1092F1AA00000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "supacode-mobile";
+			packageProductDependencies = (
+				D6B0A5022F1AA00000000001 /* ComposableArchitecture */,
+			);
+			productName = "supacode-mobile";
+			productReference = D6B0A1062F1AA00000000001 /* supacode-mobile.app */;
 			productType = "com.apple.product-type.application";
 		};
 		D6F821002F1FCBC1004B4174 /* supacodeTests */ = {
@@ -194,6 +429,9 @@
 					D69CE0492F1F378200584C57 = {
 						CreatedOnToolsVersion = 26.0;
 					};
+					D6B0A1072F1AA00000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 					D6F821002F1FCBC1004B4174 = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = D69CE0492F1F378200584C57;
@@ -223,6 +461,7 @@
 			projectRoot = "";
 			targets = (
 				D69CE0492F1F378200584C57 /* supacode */,
+				D6B0A1072F1AA00000000001 /* supacode-mobile */,
 				D6F821002F1FCBC1004B4174 /* supacodeTests */,
 			);
 		};
@@ -236,6 +475,15 @@
 				D64162B02F23CAF100260CA3 /* ghostty in Resources */,
 				D64162B12F23CAF100260CA3 /* terminfo in Resources */,
 				D64162B22F23CAF100260CA3 /* git-wt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D6B0A1092F1AA00000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6B0A1102F1AA00000000001 /* ghostty in Resources */,
+				D6B0A1112F1AA00000000001 /* terminfo in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -275,6 +523,39 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D6B0A10A2F1AA00000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6B0A3012F1AA00000000001 /* SupacodeMobileApp.swift in Sources */,
+				D6B0A3022F1AA00000000001 /* MobileContentView.swift in Sources */,
+				D6B0A3032F1AA00000000001 /* MobileKeyboardShortcuts.swift in Sources */,
+				D6B0A3042F1AA00000000001 /* MobileServer.swift in Sources */,
+				BDE0F92FB3404A31A60805F2 /* SSHAuthMethod.swift in Sources */,
+				842C77BA50FD41E68BEDC0E8 /* SSHKey.swift in Sources */,
+				69EDEA06659541EFA8E785D5 /* KeychainClient.swift in Sources */,
+				9FAA8ADDBFFE46909B6EAD82 /* SSHKeyGenerator.swift in Sources */,
+				9661D73395B641A0B09BA5C1 /* SSHKeyClient.swift in Sources */,
+				6B1C3E6F1A2242D7B9B39805 /* SSHKeyGenerationFeature.swift in Sources */,
+				A77D22256CBF4DB9AE567A67 /* SSHKeyGenerationView.swift in Sources */,
+				D6B0A3052F1AA00000000001 /* MobileSession.swift in Sources */,
+				D6B0A3062F1AA00000000001 /* ServerCatalogClient.swift in Sources */,
+				D6B0A3072F1AA00000000001 /* MobileTerminalClient.swift in Sources */,
+				D6B0A3082F1AA00000000001 /* MobileAppFeature.swift in Sources */,
+				D6B0A3092F1AA00000000001 /* MobileServersFeature.swift in Sources */,
+				D6B0A30A2F1AA00000000001 /* ServerFormFeature.swift in Sources */,
+				D6B0A30B2F1AA00000000001 /* MobileSidebarView.swift in Sources */,
+				D6B0A30C2F1AA00000000001 /* MobileServerRow.swift in Sources */,
+				D6B0A30D2F1AA00000000001 /* MobileSidebarFooterView.swift in Sources */,
+				D6B0A30E2F1AA00000000001 /* MobileServerFormView.swift in Sources */,
+				D6B0A30F2F1AA00000000001 /* MobileEmptyStateView.swift in Sources */,
+				D6B0A3102F1AA00000000001 /* MobileDetailView.swift in Sources */,
+				D6B0A3112F1AA00000000001 /* MobileTerminalTabBarView.swift in Sources */,
+				D6B0A3122F1AA00000000001 /* MobileTerminalContentView.swift in Sources */,
+				D6B0A3132F1AA00000000001 /* MobileGhosttyTerminalCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -580,6 +861,97 @@
 			};
 			name = Release;
 		};
+		D6B0A10B2F1AA00000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				COMBINE_HIDPI_IMAGES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMPILATION_CACHE_ENABLE_CACHING = YES;
+				CURRENT_PROJECT_VERSION = 107;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = supacode/Info.plist;
+				INFOPLIST_KEY_UIBackgroundModes = (
+					"processing",
+				);
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.6.2;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-lc++abi",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-incomplete-umbrella";
+				PRODUCT_BUNDLE_IDENTIFIER = app.supabit.supacode.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D6B0A10C2F1AA00000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				COMBINE_HIDPI_IMAGES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMPILATION_CACHE_ENABLE_CACHING = NO;
+				CURRENT_PROJECT_VERSION = 107;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = supacode/Info.plist;
+				INFOPLIST_KEY_UIBackgroundModes = (
+					"processing",
+				);
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.6.2;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-lc++abi",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-incomplete-umbrella";
+				PRODUCT_BUNDLE_IDENTIFIER = app.supabit.supacode.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -606,6 +978,15 @@
 			buildConfigurations = (
 				D6F821082F1FCBC1004B4174 /* Debug */,
 				D6F821092F1FCBC1004B4174 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D6B0A10D2F1AA00000000001 /* Build configuration list for PBXNativeTarget "supacode-mobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D6B0A10B2F1AA00000000001 /* Debug */,
+				D6B0A10C2F1AA00000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -698,6 +1079,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D6D054262F2E3EB300D70ED5 /* XCRemoteSwiftPackageReference "posthog-ios" */;
 			productName = PostHog;
+		};
+		D6B0A5022F1AA00000000001 /* ComposableArchitecture */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B43B9188E1D223E6F7344501 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
+			productName = ComposableArchitecture;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
