@@ -15,6 +15,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   var deleteBranchOnDeleteWorktree: Bool
   var automaticallyArchiveMergedWorktrees: Bool
   var promptForWorktreeCreation: Bool
+  var defaultWorktreeBaseDirectoryPath: String?
 
   static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -32,7 +33,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     githubIntegrationEnabled: true,
     deleteBranchOnDeleteWorktree: true,
     automaticallyArchiveMergedWorktrees: false,
-    promptForWorktreeCreation: true
+    promptForWorktreeCreation: true,
+    defaultWorktreeBaseDirectoryPath: nil
   )
 
   init(
@@ -51,7 +53,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     githubIntegrationEnabled: Bool,
     deleteBranchOnDeleteWorktree: Bool,
     automaticallyArchiveMergedWorktrees: Bool,
-    promptForWorktreeCreation: Bool
+    promptForWorktreeCreation: Bool,
+    defaultWorktreeBaseDirectoryPath: String? = nil
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -69,6 +72,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.deleteBranchOnDeleteWorktree = deleteBranchOnDeleteWorktree
     self.automaticallyArchiveMergedWorktrees = automaticallyArchiveMergedWorktrees
     self.promptForWorktreeCreation = promptForWorktreeCreation
+    self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
   }
 
   init(from decoder: any Decoder) throws {
@@ -115,5 +119,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     promptForWorktreeCreation =
       try container.decodeIfPresent(Bool.self, forKey: .promptForWorktreeCreation)
       ?? Self.default.promptForWorktreeCreation
+    defaultWorktreeBaseDirectoryPath =
+      try container.decodeIfPresent(String.self, forKey: .defaultWorktreeBaseDirectoryPath)
+      ?? Self.default.defaultWorktreeBaseDirectoryPath
   }
 }

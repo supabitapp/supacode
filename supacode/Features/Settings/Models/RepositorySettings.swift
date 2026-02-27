@@ -6,6 +6,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   var runScript: String
   var openActionID: String
   var worktreeBaseRef: String?
+  var worktreeBaseDirectoryPath: String?
   var copyIgnoredOnWorktreeCreate: Bool
   var copyUntrackedOnWorktreeCreate: Bool
   var pullRequestMergeStrategy: PullRequestMergeStrategy
@@ -16,6 +17,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     case runScript
     case openActionID
     case worktreeBaseRef
+    case worktreeBaseDirectoryPath
     case copyIgnoredOnWorktreeCreate
     case copyUntrackedOnWorktreeCreate
     case pullRequestMergeStrategy
@@ -27,6 +29,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     runScript: "",
     openActionID: OpenWorktreeAction.automaticSettingsID,
     worktreeBaseRef: nil,
+    worktreeBaseDirectoryPath: nil,
     copyIgnoredOnWorktreeCreate: false,
     copyUntrackedOnWorktreeCreate: false,
     pullRequestMergeStrategy: .merge
@@ -38,6 +41,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     runScript: String,
     openActionID: String,
     worktreeBaseRef: String?,
+    worktreeBaseDirectoryPath: String? = nil,
     copyIgnoredOnWorktreeCreate: Bool,
     copyUntrackedOnWorktreeCreate: Bool,
     pullRequestMergeStrategy: PullRequestMergeStrategy
@@ -47,6 +51,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     self.runScript = runScript
     self.openActionID = openActionID
     self.worktreeBaseRef = worktreeBaseRef
+    self.worktreeBaseDirectoryPath = worktreeBaseDirectoryPath
     self.copyIgnoredOnWorktreeCreate = copyIgnoredOnWorktreeCreate
     self.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
@@ -68,6 +73,8 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
       ?? Self.default.openActionID
     worktreeBaseRef =
       try container.decodeIfPresent(String.self, forKey: .worktreeBaseRef)
+    worktreeBaseDirectoryPath =
+      try container.decodeIfPresent(String.self, forKey: .worktreeBaseDirectoryPath)
     copyIgnoredOnWorktreeCreate =
       try container.decodeIfPresent(
         Bool.self,

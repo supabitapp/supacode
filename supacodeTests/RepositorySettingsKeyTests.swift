@@ -12,6 +12,7 @@ struct RepositorySettingsKeyTests {
     let json = String(bytes: data, encoding: .utf8) ?? ""
 
     #expect(!json.contains("worktreeBaseRef"))
+    #expect(!json.contains("worktreeBaseDirectoryPath"))
   }
 
   @Test(.dependencies) func loadCreatesDefaultAndMigratesToLocal() throws {

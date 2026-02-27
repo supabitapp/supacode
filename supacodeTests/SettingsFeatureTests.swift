@@ -198,4 +198,27 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
   }
+
+  @Test(.dependencies) func settingsLoadedNormalizesDefaultWorktreeBaseDirectoryPath() async {
+    var loaded = GlobalSettings.default
+    loaded.defaultWorktreeBaseDirectoryPath = " ~/worktrees "
+    let expectedPath = FileManager.default.homeDirectoryForCurrentUser
+      .appending(path: "worktrees", directoryHint: .isDirectory)
+      .standardizedFileURL
+      .path(percentEncoded: false)
+    let storage = SettingsTestStorage()
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = settingsFileURL
+    }
+
+    await store.send(.settingsLoaded(loaded)) {
+      $0.defaultWorktreeBaseDirectoryPath = expectedPath
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(store.state.defaultWorktreeBaseDirectoryPath == expectedPath)
+  }
 }

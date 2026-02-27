@@ -66,14 +66,20 @@ struct GitClientCreateWorktreeStreamTests {
     for try await _ in client.createWorktreeStream(
       named: "swift-otter",
       in: repoRoot,
-      copyIgnored: true,
-      copyUntracked: false,
+      baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+      copyFiles: (ignored: true, untracked: false),
       baseRef: "origin/main"
     ) {}
 
     let snapshot = recorder.snapshot()
     #expect(snapshot.currentDirectoryURL == repoRoot)
     #expect(snapshot.arguments.contains("sw"))
+    if let baseDirFlagIndex = snapshot.arguments.firstIndex(of: "--base-dir") {
+      #expect(snapshot.arguments.count > baseDirFlagIndex + 1)
+      #expect(snapshot.arguments[baseDirFlagIndex + 1] == "/tmp/repo/.worktrees")
+    } else {
+      Issue.record("Expected --base-dir in createWorktreeStream arguments")
+    }
     #expect(snapshot.arguments.contains("--copy-ignored"))
     #expect(snapshot.arguments.contains("--verbose"))
     #expect(snapshot.arguments.contains("--from"))
@@ -108,8 +114,8 @@ struct GitClientCreateWorktreeStreamTests {
     for try await event in client.createWorktreeStream(
       named: "swift-otter",
       in: repoRoot,
-      copyIgnored: true,
-      copyUntracked: true,
+      baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+      copyFiles: (ignored: true, untracked: true),
       baseRef: ""
     ) {
       switch event {
@@ -153,8 +159,8 @@ struct GitClientCreateWorktreeStreamTests {
     for try await event in client.createWorktreeStream(
       named: "new-wt",
       in: repoRoot,
-      copyIgnored: false,
-      copyUntracked: false,
+      baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+      copyFiles: (ignored: false, untracked: false),
       baseRef: ""
     ) {
       if case .finished(let worktree) = event {
@@ -184,8 +190,8 @@ struct GitClientCreateWorktreeStreamTests {
     for try await event in client.createWorktreeStream(
       named: "new-wt",
       in: repoRoot,
-      copyIgnored: false,
-      copyUntracked: false,
+      baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+      copyFiles: (ignored: false, untracked: false),
       baseRef: ""
     ) {
       switch event {
@@ -226,8 +232,8 @@ struct GitClientCreateWorktreeStreamTests {
       for try await _ in client.createWorktreeStream(
         named: "new-wt",
         in: repoRoot,
-        copyIgnored: false,
-        copyUntracked: false,
+        baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+        copyFiles: (ignored: false, untracked: false),
         baseRef: ""
       ) {}
       Issue.record("Expected createWorktreeStream to throw when stdout path is missing")
@@ -266,8 +272,8 @@ struct GitClientCreateWorktreeStreamTests {
       _ = try await client.createWorktree(
         named: "new-wt",
         in: repoRoot,
-        copyIgnored: false,
-        copyUntracked: false,
+        baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+        copyFiles: (ignored: false, untracked: false),
         baseRef: ""
       )
       Issue.record("Expected createWorktree to throw")
@@ -302,8 +308,8 @@ struct GitClientCreateWorktreeStreamTests {
     let worktree = try await client.createWorktree(
       named: "new-wt",
       in: repoRoot,
-      copyIgnored: false,
-      copyUntracked: false,
+      baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+      copyFiles: (ignored: false, untracked: false),
       baseRef: ""
     )
 
@@ -329,8 +335,8 @@ struct GitClientCreateWorktreeStreamTests {
     let worktree = try await client.createWorktree(
       named: "new-wt",
       in: repoRoot,
-      copyIgnored: false,
-      copyUntracked: false,
+      baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+      copyFiles: (ignored: false, untracked: false),
       baseRef: ""
     )
 

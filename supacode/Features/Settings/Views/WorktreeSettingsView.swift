@@ -5,9 +5,29 @@ struct WorktreeSettingsView: View {
   @Bindable var store: StoreOf<SettingsFeature>
 
   var body: some View {
+    let exampleRepositoryRoot = FileManager.default.homeDirectoryForCurrentUser
+      .appending(path: "code/my-repo", directoryHint: .isDirectory)
+    let exampleWorktreePath = SupacodePaths.exampleWorktreePath(
+      for: exampleRepositoryRoot,
+      globalDefaultPath: store.defaultWorktreeBaseDirectoryPath,
+      repositoryOverridePath: nil
+    )
     VStack(alignment: .leading) {
       Form {
         Section("Worktree") {
+          VStack(alignment: .leading) {
+            TextField(
+              "Default: current behavior",
+              text: $store.defaultWorktreeBaseDirectoryPath
+            )
+            .textFieldStyle(.roundedBorder)
+            Text("Default directory for new worktrees across repositories. Leave empty to keep current behavior.")
+              .foregroundStyle(.secondary)
+            Text("Example new worktree path: \(exampleWorktreePath)")
+              .foregroundStyle(.secondary)
+              .monospaced()
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
           VStack(alignment: .leading) {
             Toggle(
               "Also delete local branch when deleting a worktree",

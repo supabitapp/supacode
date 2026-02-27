@@ -41,4 +41,48 @@ struct SupacodePathsTests {
 
     #expect(firstDirectory != secondDirectory)
   }
+
+  @Test func worktreeBaseDirectoryDefaultsToLegacyRepositoryDirectory() {
+    let root = URL(fileURLWithPath: "/tmp/work/repo-alpha")
+    let directory = SupacodePaths.worktreeBaseDirectory(
+      for: root,
+      globalDefaultPath: nil,
+      repositoryOverridePath: nil
+    )
+
+    #expect(directory == SupacodePaths.repositoryDirectory(for: root))
+  }
+
+  @Test func worktreeBaseDirectoryUsesGlobalParentDirectory() {
+    let root = URL(fileURLWithPath: "/tmp/work/repo-alpha")
+    let directory = SupacodePaths.worktreeBaseDirectory(
+      for: root,
+      globalDefaultPath: "/tmp/worktrees",
+      repositoryOverridePath: nil
+    )
+
+    #expect(directory == URL(fileURLWithPath: "/tmp/worktrees/repo-alpha"))
+  }
+
+  @Test func worktreeBaseDirectoryRepositoryOverrideTakesPrecedence() {
+    let root = URL(fileURLWithPath: "/tmp/work/repo-alpha")
+    let directory = SupacodePaths.worktreeBaseDirectory(
+      for: root,
+      globalDefaultPath: "/tmp/worktrees",
+      repositoryOverridePath: "/tmp/repo-alpha-worktrees"
+    )
+
+    #expect(directory == URL(fileURLWithPath: "/tmp/repo-alpha-worktrees"))
+  }
+
+  @Test func exampleWorktreePathUsesResolvedBaseDirectory() {
+    let root = URL(fileURLWithPath: "/tmp/work/repo-alpha")
+    let path = SupacodePaths.exampleWorktreePath(
+      for: root,
+      globalDefaultPath: "/tmp/worktrees",
+      repositoryOverridePath: nil
+    )
+
+    #expect(path == "/tmp/worktrees/repo-alpha/swift-otter")
+  }
 }
