@@ -181,7 +181,8 @@ struct RepositoriesFeature {
       pendingID: Worktree.ID,
       previousSelection: Worktree.ID?,
       repositoryID: Repository.ID,
-      name: String?
+      name: String?,
+      baseDirectory: URL
     )
     case consumeSetupScript(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
@@ -873,7 +874,8 @@ struct RepositoriesFeature {
                     pendingID: pendingID,
                     previousSelection: previousSelection,
                     repositoryID: repository.id,
-                    name: nil
+                    name: nil,
+                    baseDirectory: worktreeBaseDirectory
                   )
                 )
                 return
@@ -889,7 +891,8 @@ struct RepositoriesFeature {
                     pendingID: pendingID,
                     previousSelection: previousSelection,
                     repositoryID: repository.id,
-                    name: nil
+                    name: nil,
+                    baseDirectory: worktreeBaseDirectory
                   )
                 )
                 return
@@ -902,7 +905,8 @@ struct RepositoriesFeature {
                     pendingID: pendingID,
                     previousSelection: previousSelection,
                     repositoryID: repository.id,
-                    name: nil
+                    name: nil,
+                    baseDirectory: worktreeBaseDirectory
                   )
                 )
                 return
@@ -915,7 +919,8 @@ struct RepositoriesFeature {
                     pendingID: pendingID,
                     previousSelection: previousSelection,
                     repositoryID: repository.id,
-                    name: nil
+                    name: nil,
+                    baseDirectory: worktreeBaseDirectory
                   )
                 )
                 return
@@ -928,7 +933,8 @@ struct RepositoriesFeature {
                     pendingID: pendingID,
                     previousSelection: previousSelection,
                     repositoryID: repository.id,
-                    name: nil
+                    name: nil,
+                    baseDirectory: worktreeBaseDirectory
                   )
                 )
                 return
@@ -1053,7 +1059,8 @@ struct RepositoriesFeature {
                 pendingID: pendingID,
                 previousSelection: previousSelection,
                 repositoryID: repository.id,
-                name: newWorktreeName
+                name: newWorktreeName,
+                baseDirectory: worktreeBaseDirectory
               )
             )
           }
@@ -1099,23 +1106,16 @@ struct RepositoriesFeature {
         let pendingID,
         let previousSelection,
         let repositoryID,
-        let name
+        let name,
+        let baseDirectory
       ):
         let previousSelectedWorktree = state.worktree(for: previousSelection)
         removePendingWorktree(pendingID, state: &state)
         restoreSelection(previousSelection, pendingID: pendingID, state: &state)
-        let repositoryRootURL = URL(fileURLWithPath: repositoryID).standardizedFileURL
-        @Shared(.settingsFile) var settingsFile
-        @Shared(.repositorySettings(repositoryRootURL)) var repositorySettings
-        let worktreeBaseDirectory = SupacodePaths.worktreeBaseDirectory(
-          for: repositoryRootURL,
-          globalDefaultPath: settingsFile.global.defaultWorktreeBaseDirectoryPath,
-          repositoryOverridePath: repositorySettings.worktreeBaseDirectoryPath
-        )
         let cleanup = cleanupFailedWorktree(
           repositoryID: repositoryID,
           name: name,
-          baseDirectory: worktreeBaseDirectory,
+          baseDirectory: baseDirectory,
           state: &state
         )
         state.alert = messageAlert(title: title, message: message)
