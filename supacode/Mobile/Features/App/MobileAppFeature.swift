@@ -12,6 +12,7 @@ struct MobileAppFeature {
     var selectedSessionID: MobileSession.ID?
     var showServerList = false
     @Presents var serverForm: ServerFormFeature.State?
+    @Presents var connectionAlert: AlertState<Action.ConnectionAlert>?
     var backgroundTaskActive = false
   }
 
@@ -30,6 +31,12 @@ struct MobileAppFeature {
     case openSession(serverID: MobileServer.ID, commandOverride: String?)
     case closeSession(MobileSession.ID)
     case switchToSession(Int)
+    case connectionAlert(PresentationAction<ConnectionAlert>)
+
+    @CasePathable
+    enum ConnectionAlert: Equatable {
+      case editServer(MobileServer.ID)
+    }
   }
 
   @Dependency(MobileTerminalClient.self) private var terminalClient
@@ -102,6 +109,22 @@ struct MobileAppFeature {
         state.sessions[id: id]?.isClosed = true
         return .none
 
+      case .terminalEvent(.connectionFailed(let serverID, let reason)):
+        let serverName = state.servers.servers[id: serverID]?.displayName ?? "Server"
+        state.connectionAlert = AlertState {
+          TextState("Connection Failed")
+        } actions: {
+          ButtonState(action: .editServer(serverID)) {
+            TextState("Edit Server")
+          }
+          ButtonState(role: .cancel) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("\(serverName): \(reason)")
+        }
+        return .none
+
       case .scenePhaseChanged(let phase):
         switch phase {
         case .active:
@@ -149,7 +172,7 @@ struct MobileAppFeature {
       case .openSession(let serverID, let commandOverride):
         guard let server = state.servers.servers[id: serverID]
         else { return .none }
-        return .run { [terminalClient, keychainClient, sshKeyClient] _ in
+        return .run { [terminalClient, keychainClient, sshKeyClient] send in
           var identityFilePath: String?
           switch server.authMethod {
           case .none:
@@ -161,7 +184,14 @@ struct MobileAppFeature {
               await MainActor.run { UIPasteboard.general.string = password }
             }
           case .sshKey(let keyID):
-            identityFilePath = try? sshKeyClient.writeIdentityFile(keyID)
+            do {
+              identityFilePath = try sshKeyClient.writeIdentityFile(keyID)
+            } catch {
+              await send(
+                .terminalEvent(.connectionFailed(serverID: server.id, reason: "Failed to load SSH key: \(error.localizedDescription)"))
+              )
+              return
+            }
           }
           await MainActor.run {
             terminalClient.send(.openSession(server, commandOverride: commandOverride, identityFilePath: identityFilePath))
@@ -177,10 +207,19 @@ struct MobileAppFeature {
         guard index >= 0, index < state.sessions.count else { return .none }
         state.selectedSessionID = state.sessions[index].id
         return .none
+
+      case .connectionAlert(.presented(.editServer(let serverID))):
+        guard let server = state.servers.servers[id: serverID] else { return .none }
+        state.showServerList = true
+        return .send(.editServerTapped(server))
+
+      case .connectionAlert:
+        return .none
       }
     }
     .ifLet(\.$serverForm, action: \.serverForm) {
       ServerFormFeature()
     }
+    .ifLet(\.$connectionAlert, action: \.connectionAlert)
   }
 }

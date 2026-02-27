@@ -2,7 +2,7 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MobileServerListView: View {
-  let store: StoreOf<MobileAppFeature>
+  @Bindable var store: StoreOf<MobileAppFeature>
 
   var body: some View {
     NavigationStack {
@@ -19,6 +19,9 @@ struct MobileServerListView: View {
               server: server,
               onConnect: {
                 store.send(.connectToServer(server.id))
+              },
+              onEdit: {
+                store.send(.editServerTapped(server))
               },
             )
             .swipeActions(edge: .trailing) {
@@ -47,6 +50,9 @@ struct MobileServerListView: View {
           .help("Add Server")
         }
       }
+      .sheet(item: $store.scope(state: \.serverForm, action: \.serverForm)) { formStore in
+        MobileServerFormView(store: formStore)
+      }
     }
   }
 }
@@ -54,6 +60,7 @@ struct MobileServerListView: View {
 private struct MobileServerListRow: View {
   let server: MobileServer
   let onConnect: () -> Void
+  let onEdit: () -> Void
 
   var body: some View {
     HStack {
@@ -69,6 +76,16 @@ private struct MobileServerListRow: View {
       }
 
       Spacer()
+
+      Button {
+        onEdit()
+      } label: {
+        Image(systemName: "pencil.circle")
+          .font(.title3)
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+      .help("Edit Server")
 
       Button {
         onConnect()

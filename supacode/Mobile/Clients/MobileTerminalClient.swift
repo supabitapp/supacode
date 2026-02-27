@@ -17,6 +17,7 @@ struct MobileTerminalClient: Sendable {
     case sessionClosed(id: UUID)
     case sessionTitleChanged(id: UUID, title: String)
     case sessionProcessExited(id: UUID)
+    case connectionFailed(serverID: MobileServer.ID, reason: String)
   }
 }
 

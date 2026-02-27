@@ -39,8 +39,6 @@ struct MobileContentView: View {
     ) {
       MobileServerListView(store: store)
     }
-    .sheet(item: $store.scope(state: \.serverForm, action: \.serverForm)) { formStore in
-      MobileServerFormView(store: formStore)
-    }
+    .alert($store.scope(state: \.connectionAlert, action: \.connectionAlert))
   }
 }

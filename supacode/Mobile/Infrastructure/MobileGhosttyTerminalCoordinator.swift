@@ -22,7 +22,10 @@ final class MobileTerminalSessionManager {
   func handleCommand(_ command: MobileTerminalClient.Command) {
     switch command {
     case .openSession(let server, let commandOverride, let identityFilePath):
-      guard let session = openSession(server: server, commandOverride: commandOverride, identityFilePath: identityFilePath) else { return }
+      guard let session = openSession(server: server, commandOverride: commandOverride, identityFilePath: identityFilePath) else {
+        emit(.connectionFailed(serverID: server.id, reason: "Invalid server configuration. Check hostname and port."))
+        return
+      }
       emit(.sessionOpened(id: session.id, serverID: server.id, title: session.terminalTitle))
     case .closeSession(let id):
       guard let session = sessions.first(where: { $0.id == id }) else { return }
