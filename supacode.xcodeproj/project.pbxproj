@@ -669,8 +669,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftlang/swift-cmark";
 			requirement = {
-				branch = gfm;
-				kind = branch;
+				kind = exactVersion;
+				version = 0.7.1;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
