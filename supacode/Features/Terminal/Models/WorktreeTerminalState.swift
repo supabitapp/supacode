@@ -698,24 +698,22 @@ final class WorktreeTerminalState {
   }
 
   private func appendNotification(title: String, body: String, surfaceId: UUID) {
-    let normalizedTitle = NotificationTextNormalizer.normalize(title)
-    let normalizedBody = NotificationTextNormalizer.normalize(body)
-    guard !(normalizedTitle.isEmpty && normalizedBody.isEmpty) else { return }
+    guard !(title.isEmpty && body.isEmpty) else { return }
     if notificationsEnabled {
       let previousHasUnseen = hasUnseenNotification
       let isRead = isSelected() && isFocusedSurface(surfaceId)
       notifications.insert(
         WorktreeTerminalNotification(
           surfaceId: surfaceId,
-          title: normalizedTitle,
-          body: normalizedBody,
+          title: title,
+          body: body,
           isRead: isRead
         ),
         at: 0
       )
       emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
     }
-    onNotificationReceived?(normalizedTitle, normalizedBody)
+    onNotificationReceived?(title, body)
   }
 
   private func removeTree(for tabId: TerminalTabID) {
