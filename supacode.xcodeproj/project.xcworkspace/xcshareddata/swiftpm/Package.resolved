@@ -1,5 +1,5 @@
 {
-  "originHash" : "296c41175f338e41eab03bab9aa17a7cab425a0ac3a069540ffc2f8803489c5c",
+  "originHash" : "7581263244e839d4376c5f1c087b0dd159f1f858b4efa13b462b7975ad6f0ee4",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -53,6 +53,15 @@
       "state" : {
         "revision" : "cc46202b53476d64e824e0b6612da09d84ffde8e",
         "version" : "1.0.6"
+      }
+    },
+    {
+      "identity" : "swift-cmark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-cmark",
+      "state" : {
+        "branch" : "gfm",
+        "revision" : "924936d0427cb25a61169739a7660230bffa6ea6"
       }
     },
     {
