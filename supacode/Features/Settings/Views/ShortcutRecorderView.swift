@@ -6,11 +6,11 @@ struct ShortcutRecorderView: View {
   let shortcutName: String
   let defaultShortcut: AppShortcut
   @Binding var override: AppShortcutOverride?
-  var existingOverrides: [String: AppShortcutOverride]
-  var allDefaults: [AppShortcut]
 
-  @State private var isRecording = false
-  @State private var conflictWarning: String?
+  let isRecording: Bool
+  let setRecording: (Bool) -> Void
+
+  let warning: String?
 
   private var isUnbound: Bool {
     override?.isUnbound == true
@@ -18,127 +18,102 @@ struct ShortcutRecorderView: View {
 
   private var displayText: String {
     if let override {
-      if override.isUnbound { return "Unbound" }
+      if override.isUnbound { return "—" }
       return override.displayString
     }
     return defaultShortcut.display
   }
 
+  private var displaySymbols: [String] {
+    if isUnbound { return ["—"] }
+    return displayText.map { String($0) }
+  }
+
+  private var isModified: Bool {
+    override != nil
+  }
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 8) {
-        Text(isRecording ? "Press shortcut..." : displayText)
-          .font(.body.monospaced())
-          .foregroundStyle(isUnbound ? .secondary : .primary)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(
-            RoundedRectangle(cornerRadius: 6)
-              .fill(isRecording ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1))
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 6)
-              .strokeBorder(isRecording ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: 1)
-          )
+    HStack(spacing: 6) {
+      if isRecording {
+        recordingCell
+      } else {
+        keycapCell
+      }
+    }
+    .contextMenu {
+      Button("Change Shortcut…") {
+        setRecording(true)
+      }
+      Divider()
+      Button("Unbind") {
+        override = .unbound
+      }
+      .disabled(isUnbound)
+      Button("Reset to Default") {
+        override = nil
+      }
+      .disabled(!isModified)
+    }
+  }
 
-        if isRecording {
-          ShortcutRecorderRepresentable(
-            onRecorded: { recorded in
-              handleRecorded(recorded)
-            },
-            onCancelled: {
-              isRecording = false
-            }
-          )
-          .frame(width: 0, height: 0)
-        }
-
-        Button(isRecording ? "Cancel" : "Record") {
-          if isRecording {
-            isRecording = false
-          } else {
-            conflictWarning = nil
-            isRecording = true
-          }
-        }
-        .help(isRecording ? "Cancel recording" : "Record a new shortcut")
-
-        if !isUnbound {
-          Button("Unbind") {
-            override = .unbound
-            conflictWarning = nil
-          }
-          .help("Remove this shortcut")
-        }
-
-        if override != nil {
-          Button("Reset") {
-            override = nil
-            conflictWarning = nil
-          }
-          .help("Reset to default shortcut")
+  private var keycapCell: some View {
+    HStack(spacing: 3) {
+      if isUnbound {
+        Text("—")
+          .font(.body)
+          .foregroundStyle(.tertiary)
+          .frame(minWidth: 24, minHeight: 22)
+      } else {
+        ForEach(Array(displaySymbols.enumerated()), id: \.offset) { _, symbol in
+          Text(symbol)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(isModified ? .primary : .secondary)
+            .frame(minWidth: 20, minHeight: 22)
+            .background(.quaternary, in: .rect(cornerRadius: 4))
         }
       }
 
-      if let conflictWarning {
-        Text(conflictWarning)
-          .font(.callout)
+      if let warning {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .font(.caption)
           .foregroundStyle(.yellow)
+          .help(warning)
       }
     }
+    .padding(.horizontal, 4)
+    .padding(.vertical, 2)
+    .contentShape(Rectangle())
+    .onTapGesture(count: 2) {
+      setRecording(true)
+    }
+    .help("Double-click to change. Right-click for more options.")
   }
 
-  private func handleRecorded(_ recorded: AppShortcutOverride) {
-    isRecording = false
-    conflictWarning = nil
+  private var recordingCell: some View {
+    HStack(spacing: 6) {
+      Text("Type shortcut…")
+        .font(.callout)
+        .foregroundStyle(.secondary)
 
-    if let warning = reservedWarning(for: recorded) {
-      conflictWarning = warning
+      ShortcutRecorderRepresentable(
+        onRecorded: { recorded in
+          override = recorded
+          setRecording(false)
+        },
+        onCancelled: {
+          setRecording(false)
+        }
+      )
+      .frame(width: 0, height: 0)
     }
-
-    if let conflict = conflictingShortcut(for: recorded) {
-      let existing = conflictWarning.map { $0 + "\n" } ?? ""
-      conflictWarning = existing + conflict
-    }
-
-    override = recorded
-  }
-
-  private func reservedWarning(for shortcut: AppShortcutOverride) -> String? {
-    let reserved: [(keyCode: Int, modifiers: AppShortcutOverride.ModifierFlags, label: String)] = [
-      (kVK_ANSI_Q, .command, "⌘Q"),
-      (kVK_ANSI_W, .command, "⌘W"),
-      (kVK_ANSI_H, .command, "⌘H"),
-      (kVK_ANSI_M, .command, "⌘M"),
-      (kVK_Space, .command, "⌘Space"),
-      (kVK_Tab, .command, "⌘Tab"),
-    ]
-    for entry in reserved
-    where shortcut.keyCode == UInt16(entry.keyCode) && shortcut.modifiers == entry.modifiers {
-      return "\(entry.label) is reserved by the system"
-    }
-    return nil
-  }
-
-  private func conflictingShortcut(for shortcut: AppShortcutOverride) -> String? {
-    for (name, existing) in existingOverrides where name != shortcutName {
-      if existing.keyCode == shortcut.keyCode && existing.modifiers == shortcut.modifiers {
-        let label = allDefaults.first { $0.name == name }
-        let displayName = label?.name ?? name
-        return "Conflicts with \(displayName) (\(existing.displayString))"
-      }
-    }
-
-    for def in allDefaults where def.name != shortcutName {
-      if existingOverrides[def.name] != nil { continue }
-      let defDisplay = def.display
-      let newDisplay = shortcut.displayString
-      if defDisplay == newDisplay {
-        return "Conflicts with \(def.name) (\(defDisplay))"
-      }
-    }
-
-    return nil
+    .padding(.horizontal, 8)
+    .padding(.vertical, 4)
+    .background(Color.accentColor.opacity(0.1), in: .rect(cornerRadius: 6))
+    .overlay(
+      RoundedRectangle(cornerRadius: 6)
+        .strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1)
+    )
   }
 }
 
