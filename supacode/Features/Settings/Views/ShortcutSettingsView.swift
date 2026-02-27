@@ -2,7 +2,7 @@ import ComposableArchitecture
 import SwiftUI
 
 struct ShortcutSettingsView: View {
-  let store: StoreOf<SettingsFeature>
+  @Bindable var store: StoreOf<SettingsFeature>
 
   @State private var recordingShortcutName: String?
   @State private var searchText = ""
@@ -125,10 +125,13 @@ struct ShortcutSettingsView: View {
                 ShortcutRecorderView(
                   shortcutName: shortcut.name,
                   defaultShortcut: shortcut,
-                  override: overrideBinding(for: shortcut.name),
+                  currentOverride: store.shortcutOverrides[shortcut.name],
                   isRecording: recordingShortcutName == shortcut.name,
                   setRecording: { recording in
                     recordingShortcutName = recording ? shortcut.name : nil
+                  },
+                  onOverrideChanged: { newValue in
+                    store.send(.setShortcutOverride(name: shortcut.name, override: newValue))
                   },
                   warning: warningsByName[shortcut.name]
                 )
@@ -183,15 +186,6 @@ struct ShortcutSettingsView: View {
     .padding(12)
     .background(.quinary, in: .rect(cornerRadius: 8))
     .padding([.horizontal, .top])
-  }
-
-  private func overrideBinding(for name: String) -> Binding<AppShortcutOverride?> {
-    Binding(
-      get: { store.shortcutOverrides[name] },
-      set: { newValue in
-        store.send(.setShortcutOverride(name: name, override: newValue))
-      }
-    )
   }
 
   private func relaunch() {

@@ -5,21 +5,23 @@ import SwiftUI
 struct ShortcutRecorderView: View {
   let shortcutName: String
   let defaultShortcut: AppShortcut
-  @Binding var override: AppShortcutOverride?
+  let currentOverride: AppShortcutOverride?
 
   let isRecording: Bool
   let setRecording: (Bool) -> Void
 
+  let onOverrideChanged: (AppShortcutOverride?) -> Void
+
   let warning: String?
 
   private var isUnbound: Bool {
-    override?.isUnbound == true
+    currentOverride?.isUnbound == true
   }
 
   private var displayText: String {
-    if let override {
-      if override.isUnbound { return "—" }
-      return override.displayString
+    if let currentOverride {
+      if currentOverride.isUnbound { return "—" }
+      return currentOverride.displayString
     }
     return defaultShortcut.display
   }
@@ -30,7 +32,7 @@ struct ShortcutRecorderView: View {
   }
 
   private var isModified: Bool {
-    override != nil
+    currentOverride != nil
   }
 
   var body: some View {
@@ -47,11 +49,11 @@ struct ShortcutRecorderView: View {
       }
       Divider()
       Button("Unbind") {
-        override = .unbound
+        onOverrideChanged(.unbound)
       }
       .disabled(isUnbound)
       Button("Reset to Default") {
-        override = nil
+        onOverrideChanged(nil)
       }
       .disabled(!isModified)
     }
@@ -98,7 +100,7 @@ struct ShortcutRecorderView: View {
 
       ShortcutRecorderRepresentable(
         onRecorded: { recorded in
-          override = recorded
+          onOverrideChanged(recorded)
           setRecording(false)
         },
         onCancelled: {
