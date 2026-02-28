@@ -238,6 +238,62 @@ struct SettingsFeatureTests {
     expectNoDifference(settingsFile.global.shortcutOverrides, [:])
   }
 
+  @Test(.dependencies) func disablingShortcutCreatesDisabledOverride() async {
+    let initialSettings = GlobalSettings.default
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.toggleShortcutEnabled(name: "newWorktree", enabled: false)) {
+      $0.shortcutOverrides = ["newWorktree": .disabled]
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.shortcutOverrides["newWorktree"]?.isDisabled == true)
+  }
+
+  @Test(.dependencies) func enablingShortcutRemovesSentinelOverride() async {
+    var initialSettings = GlobalSettings.default
+    initialSettings.shortcutOverrides = ["newWorktree": .disabled]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.toggleShortcutEnabled(name: "newWorktree", enabled: true)) {
+      $0.shortcutOverrides = [:]
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.shortcutOverrides.isEmpty)
+  }
+
+  @Test(.dependencies) func enablingCustomShortcutPreservesKeyBinding() async {
+    let custom = AppShortcutOverride(keyCode: 0x01, modifiers: [.command, .shift], isDisabled: true)
+    var initialSettings = GlobalSettings.default
+    initialSettings.shortcutOverrides = ["newWorktree": custom]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    let expected = AppShortcutOverride(keyCode: 0x01, modifiers: [.command, .shift], isDisabled: false)
+    await store.send(.toggleShortcutEnabled(name: "newWorktree", enabled: true)) {
+      $0.shortcutOverrides = ["newWorktree": expected]
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.shortcutOverrides["newWorktree"]?.isDisabled == false)
+    #expect(settingsFile.global.shortcutOverrides["newWorktree"]?.keyCode == 0x01)
+  }
+
   @Test(.dependencies) func initialStateLoadsExistingOverrides() async {
     let override = AppShortcutOverride(keyCode: 12, modifiers: [.command, .shift])
     var settings = GlobalSettings.default

@@ -4,14 +4,14 @@ struct AppShortcut {
   let name: String
   let keyEquivalent: KeyEquivalent
   let modifiers: EventModifiers
-  let isUnbound: Bool
+  let isDisabled: Bool
   private let ghosttyKeyName: String
 
   init(name: String, key: Character, modifiers: EventModifiers) {
     self.name = name
     self.keyEquivalent = KeyEquivalent(key)
     self.modifiers = modifiers
-    self.isUnbound = false
+    self.isDisabled = false
     self.ghosttyKeyName = String(key).lowercased()
   }
 
@@ -19,14 +19,14 @@ struct AppShortcut {
     self.name = name
     self.keyEquivalent = keyEquivalent
     self.modifiers = modifiers
-    self.isUnbound = false
+    self.isDisabled = false
     self.ghosttyKeyName = ghosttyKeyName
   }
 
   init(name: String, override: AppShortcutOverride) {
     self.name = name
-    self.isUnbound = override.isUnbound
-    if override.isUnbound {
+    self.isDisabled = override.isDisabled
+    if override.isDisabled {
       self.keyEquivalent = KeyEquivalent("?")
       self.modifiers = []
       self.ghosttyKeyName = ""
@@ -67,7 +67,7 @@ struct AppShortcut {
   }
 
   var display: String {
-    if isUnbound { return "Unbound" }
+    if isDisabled { return "Disabled" }
     let parts = displayModifierParts + [keyEquivalent.display]
     return parts.joined()
   }
@@ -184,7 +184,8 @@ enum AppShortcuts {
   }
 
   static func ghosttyCLIKeybindArguments(from settings: GlobalSettings) -> [String] {
-    effectiveAll(from: settings).map(\.ghosttyUnbindArgument) + tabSelectionGhosttyKeybindArguments
+    effectiveAll(from: settings).filter { !$0.isDisabled }.map(\.ghosttyUnbindArgument)
+      + tabSelectionGhosttyKeybindArguments
   }
 
   static let all: [AppShortcut] = [
@@ -231,7 +232,7 @@ enum AppShortcuts {
 extension View {
   @ViewBuilder
   func appKeyboardShortcut(_ shortcut: AppShortcut) -> some View {
-    if shortcut.isUnbound {
+    if shortcut.isDisabled {
       self
     } else {
       self.keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)

@@ -75,6 +75,7 @@ struct SettingsFeature {
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
     case setShortcutOverride(name: String, override: AppShortcutOverride?)
+    case toggleShortcutEnabled(name: String, enabled: Bool)
     case repositorySettings(RepositorySettingsFeature.Action)
     case delegate(Delegate)
     case binding(BindingAction<State>)
@@ -142,6 +143,29 @@ struct SettingsFeature {
           state.shortcutOverrides[name] = override
         } else {
           state.shortcutOverrides.removeValue(forKey: name)
+        }
+        let settings = state.globalSettings
+        @Shared(.settingsFile) var settingsFile
+        $settingsFile.withLock { $0.global = settings }
+        return .send(.delegate(.settingsChanged(settings)))
+
+      case .toggleShortcutEnabled(let name, let enabled):
+        if enabled {
+          if var existing = state.shortcutOverrides[name] {
+            existing.isDisabled = false
+            if existing.keyCode == 0 && existing.modifiers.isEmpty {
+              state.shortcutOverrides.removeValue(forKey: name)
+            } else {
+              state.shortcutOverrides[name] = existing
+            }
+          }
+        } else {
+          if var existing = state.shortcutOverrides[name] {
+            existing.isDisabled = true
+            state.shortcutOverrides[name] = existing
+          } else {
+            state.shortcutOverrides[name] = .disabled
+          }
         }
         let settings = state.globalSettings
         @Shared(.settingsFile) var settingsFile

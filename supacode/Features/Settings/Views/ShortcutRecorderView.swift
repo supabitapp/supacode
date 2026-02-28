@@ -6,6 +6,7 @@ struct ShortcutRecorderView: View {
   let shortcutName: String
   let defaultShortcut: AppShortcut
   let currentOverride: AppShortcutOverride?
+  let isEnabled: Bool
 
   let isRecording: Bool
   let setRecording: (Bool) -> Void
@@ -14,21 +15,15 @@ struct ShortcutRecorderView: View {
 
   let warning: String?
 
-  private var isUnbound: Bool {
-    currentOverride?.isUnbound == true
-  }
-
   private var displayText: String {
-    if let currentOverride {
-      if currentOverride.isUnbound { return "—" }
+    if let currentOverride, !currentOverride.isDisabled {
       return currentOverride.displayString
     }
     return defaultShortcut.display
   }
 
   private var displaySymbols: [String] {
-    if isUnbound { return ["—"] }
-    return displayText.map { String($0) }
+    displayText.map { String($0) }
   }
 
   private var isModified: Bool {
@@ -48,10 +43,6 @@ struct ShortcutRecorderView: View {
         setRecording(true)
       }
       Divider()
-      Button("Unbind") {
-        onOverrideChanged(.unbound)
-      }
-      .disabled(isUnbound)
       Button("Reset to Default") {
         onOverrideChanged(nil)
       }
@@ -61,19 +52,12 @@ struct ShortcutRecorderView: View {
 
   private var keycapCell: some View {
     HStack(spacing: 3) {
-      if isUnbound {
-        Text("—")
-          .font(.body)
-          .foregroundStyle(.tertiary)
-          .frame(minWidth: 24, minHeight: 22)
-      } else {
-        ForEach(Array(displaySymbols.enumerated()), id: \.offset) { _, symbol in
-          Text(symbol)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(isModified ? .primary : .secondary)
-            .frame(minWidth: 20, minHeight: 22)
-            .background(.quaternary, in: .rect(cornerRadius: 4))
-        }
+      ForEach(Array(displaySymbols.enumerated()), id: \.offset) { _, symbol in
+        Text(symbol)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(isEnabled ? (isModified ? .primary : .secondary) : .tertiary)
+          .frame(minWidth: 20, minHeight: 22)
+          .background(.quaternary, in: .rect(cornerRadius: 4))
       }
 
       if let warning {

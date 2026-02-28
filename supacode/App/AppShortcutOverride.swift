@@ -4,7 +4,7 @@ import SwiftUI
 nonisolated struct AppShortcutOverride: Codable, Equatable, Sendable {
   var keyCode: UInt16
   var modifiers: ModifierFlags
-  var isUnbound: Bool
+  var isDisabled: Bool
 
   struct ModifierFlags: OptionSet, Codable, Equatable, Sendable {
     let rawValue: Int
@@ -14,20 +14,37 @@ nonisolated struct AppShortcutOverride: Codable, Equatable, Sendable {
     static let shift = Self(rawValue: 1 << 3)
   }
 
-  init(keyCode: UInt16, modifiers: ModifierFlags, isUnbound: Bool = false) {
+  init(keyCode: UInt16, modifiers: ModifierFlags, isDisabled: Bool = false) {
     self.keyCode = keyCode
     self.modifiers = modifiers
-    self.isUnbound = isUnbound
+    self.isDisabled = isDisabled
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case keyCode
+    case modifiers
+    case isDisabled
+    case isUnbound
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     keyCode = try container.decode(UInt16.self, forKey: .keyCode)
     modifiers = try container.decode(ModifierFlags.self, forKey: .modifiers)
-    isUnbound = try container.decodeIfPresent(Bool.self, forKey: .isUnbound) ?? false
+    isDisabled =
+      try container.decodeIfPresent(Bool.self, forKey: .isDisabled)
+      ?? container.decodeIfPresent(Bool.self, forKey: .isUnbound)
+      ?? false
   }
 
-  static let unbound = AppShortcutOverride(keyCode: 0, modifiers: [], isUnbound: true)
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(keyCode, forKey: .keyCode)
+    try container.encode(modifiers, forKey: .modifiers)
+    try container.encode(isDisabled, forKey: .isDisabled)
+  }
+
+  static let disabled = AppShortcutOverride(keyCode: 0, modifiers: [], isDisabled: true)
 }
 
 extension AppShortcutOverride {
@@ -39,7 +56,7 @@ extension AppShortcutOverride {
     if eventModifiers.contains(.control) { flags.insert(.control) }
     if eventModifiers.contains(.shift) { flags.insert(.shift) }
     self.modifiers = flags
-    self.isUnbound = false
+    self.isDisabled = false
   }
 
   var eventModifiers: SwiftUI.EventModifiers {

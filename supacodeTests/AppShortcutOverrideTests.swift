@@ -83,6 +83,23 @@ struct AppShortcutOverrideTests {
     #expect(override.eventModifiers.contains(.shift))
   }
 
+  @Test func decodesLegacyIsUnboundAsIsDisabled() throws {
+    let json = """
+      {"keyCode": 0, "modifiers": 0, "isUnbound": true}
+      """
+    let data = Data(json.utf8)
+    let decoded = try JSONDecoder().decode(AppShortcutOverride.self, from: data)
+    #expect(decoded.isDisabled == true)
+  }
+
+  @Test func encodesIsDisabledNotIsUnbound() throws {
+    let override = AppShortcutOverride(keyCode: 0, modifiers: [], isDisabled: true)
+    let data = try JSONEncoder().encode(override)
+    let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    #expect(json["isDisabled"] as? Bool == true)
+    #expect(json["isUnbound"] == nil)
+  }
+
   @Test func globalSettingsDecodesWithoutShortcutOverrides() throws {
     let json = """
       {

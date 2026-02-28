@@ -86,7 +86,7 @@ struct ShortcutSettingsView: View {
     for shortcut in AppShortcuts.all {
       let display: String
       if let ovr = overrides[shortcut.name] {
-        if ovr.isUnbound { continue }
+        if ovr.isDisabled { continue }
         display = ovr.displayString
       } else {
         display = shortcut.display
@@ -112,6 +112,10 @@ struct ShortcutSettingsView: View {
     return warnings
   }
 
+  private func isShortcutEnabled(_ name: String) -> Bool {
+    !(store.shortcutOverrides[name]?.isDisabled == true)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       if needsRestart {
@@ -121,11 +125,21 @@ struct ShortcutSettingsView: View {
         ForEach(groups, id: \.title) { group in
           Section(group.title) {
             ForEach(group.shortcuts, id: \.name) { shortcut in
-              LabeledContent {
+              let enabled = isShortcutEnabled(shortcut.name)
+              HStack {
+                Toggle(
+                  shortcut.displayName,
+                  isOn: Binding(
+                    get: { enabled },
+                    set: { store.send(.toggleShortcutEnabled(name: shortcut.name, enabled: $0)) }
+                  )
+                )
+                Spacer()
                 ShortcutRecorderView(
                   shortcutName: shortcut.name,
                   defaultShortcut: shortcut,
                   currentOverride: store.shortcutOverrides[shortcut.name],
+                  isEnabled: enabled,
                   isRecording: recordingShortcutName == shortcut.name,
                   setRecording: { recording in
                     recordingShortcutName = recording ? shortcut.name : nil
@@ -135,8 +149,6 @@ struct ShortcutSettingsView: View {
                   },
                   warning: warningsByName[shortcut.name]
                 )
-              } label: {
-                Text(shortcut.displayName)
               }
             }
           }
@@ -146,7 +158,7 @@ struct ShortcutSettingsView: View {
 
       if hasAnyOverrides {
         HStack {
-          Button("Restore All Defaults") {
+          Button("Restore Defaults") {
             showRestoreConfirmation = true
           }
           .help("Reset all shortcuts to their default values")
