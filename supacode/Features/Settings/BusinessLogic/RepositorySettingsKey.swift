@@ -41,16 +41,18 @@ nonisolated struct RepositorySettingsKey: SharedKey {
     let migratedSettings = $settingsFile.withLock { settings in
       settings.repositories[repositoryID] ?? (context.initialValue ?? .default)
     }
-    do {
-      let encoder = JSONEncoder()
-      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      let data = try encoder.encode(migratedSettings)
-      try repositoryLocalSettingsStorage.save(data, repositorySettingsURL)
-    } catch {
-      let path = repositorySettingsURL.path(percentEncoded: false)
-      SupaLogger("Settings").warning(
-        "Unable to write migrated repository settings to \(path): \(error.localizedDescription)"
-      )
+    if migratedSettings != .default {
+      do {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(migratedSettings)
+        try repositoryLocalSettingsStorage.save(data, repositorySettingsURL)
+      } catch {
+        let path = repositorySettingsURL.path(percentEncoded: false)
+        SupaLogger("Settings").warning(
+          "Unable to write migrated repository settings to \(path): \(error.localizedDescription)"
+        )
+      }
     }
     continuation.resume(returning: migratedSettings)
   }

@@ -14,7 +14,7 @@ struct RepositorySettingsKeyTests {
     #expect(!json.contains("worktreeBaseRef"))
   }
 
-  @Test(.dependencies) func loadCreatesDefaultAndMigratesToLocal() throws {
+  @Test(.dependencies) func loadReturnsDefaultWithoutCreatingLocalWhenLocalAndGlobalAreMissing() throws {
     let globalStorage = SettingsTestStorage()
     let localStorage = RepositoryLocalSettingsTestStorage()
     let rootURL = URL(fileURLWithPath: "/tmp/repo")
@@ -32,10 +32,7 @@ struct RepositorySettingsKeyTests {
     }
 
     #expect(loaded == .default)
-
-    let localData = try #require(localStorage.data(at: localURL))
-    let localDecoded = try JSONDecoder().decode(RepositorySettings.self, from: localData)
-    #expect(localDecoded == .default)
+    #expect(localStorage.data(at: localURL) == nil)
 
     let globalSaved: SettingsFile = withDependencies {
       $0.settingsFileStorage = globalStorage.storage
@@ -47,6 +44,38 @@ struct RepositorySettingsKeyTests {
     }
 
     #expect(globalSaved.repositories[repositoryID] == nil)
+  }
+
+  @Test(.dependencies) func loadReturnsDefaultWithoutCreatingLocalWhenGlobalEntryIsDefault() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let rootURL = URL(fileURLWithPath: "/tmp/repo")
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
+    let localURL = SupacodePaths.repositorySettingsURL(for: rootURL)
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      $settingsFile.withLock {
+        $0.repositories[repositoryID] = .default
+      }
+    }
+
+    let loaded = withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.repositorySettings(rootURL)) var repositorySettings: RepositorySettings
+      return repositorySettings
+    }
+
+    #expect(loaded == .default)
+    #expect(localStorage.data(at: localURL) == nil)
   }
 
   @Test(.dependencies) func saveOverwritesExistingSettingsInLocalFile() throws {
