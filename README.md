@@ -20,6 +20,7 @@ Native terminal coding agents command center.
 make build-ghostty-xcframework   # Build GhosttyKit from Zig source
 make generate-project            # Install packages and generate when manifest inputs changed
 make build-app                   # Generate if needed, then build macOS app (Debug)
+make profile-compile             # Force a clean profiled Debug build and write compile hotspot reports
 make run-app                     # Generate if needed, then build and launch
 ```
 
@@ -31,6 +32,7 @@ make run-app                     # Generate if needed, then build and launch
 make check     # Run swiftformat and swiftlint
 make test      # Generate if needed, then run tests
 make format    # Run swift-format
+make profile-compile-update-baseline  # Refresh the tracked compile-time baseline
 ```
 
 ## Contributing

@@ -18,11 +18,19 @@ GHOSTTY_TERMINFO_PATH := $(CURRENT_MAKEFILE_DIR)/Resources/terminfo
 GHOSTTY_BUILD_OUTPUTS := $(GHOSTTY_XCFRAMEWORK_PATH) $(GHOSTTY_RESOURCE_PATH) $(GHOSTTY_TERMINFO_PATH)
 TUIST_GENERATION_STAMP := $(PROJECT_WORKSPACE)/.tuist-generated-stamp
 TUIST_GENERATION_INPUTS := Project.swift Tuist.swift Tuist/Package.swift Tuist/Package.resolved Configurations/Project.xcconfig mise.toml
+COMPILE_PROFILE_DIR := $(CURRENT_MAKEFILE_DIR)/build/compile-time
+COMPILE_PROFILE_DERIVED_DATA := $(CURRENT_MAKEFILE_DIR)/build/DerivedData/compile-time
+COMPILE_PROFILE_RAW_LOG := $(COMPILE_PROFILE_DIR)/raw.log
+COMPILE_PROFILE_CURRENT := $(COMPILE_PROFILE_DIR)/current.json
+COMPILE_PROFILE_COMPARISON := $(COMPILE_PROFILE_DIR)/comparison.json
+COMPILE_PROFILE_BASELINE := $(CURRENT_MAKEFILE_DIR)/Tools/CompileTimeProfile/Baselines/supacode.debug.json
+COMPILE_PROFILE_SWIFT_FLAGS := $$(inherited) -Xfrontend -debug-time-function-bodies -Xfrontend -debug-time-expression-type-checking -Xfrontend -warn-long-expression-type-checking -Xfrontend 5
+COMPILE_PROFILE_TOP ?= 10
 VERSION ?=
 BUILD ?=
 XCODEBUILD_FLAGS ?=
 .DEFAULT_GOAL := help
-.PHONY: build-ghostty-xcframework generate-project build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
+.PHONY: build-ghostty-xcframework generate-project build-app profile-compile profile-compile-compare profile-compile-update-baseline run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
 
 ifeq ($(CI),)
 TUIST_INSTALL_FLAGS :=
@@ -58,6 +66,23 @@ $(TUIST_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(GHOSTTY_BUILD_OUTPUTS)
 
 build-app: $(TUIST_GENERATION_STAMP) # Build the macOS app (Debug)
 	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation 2>&1 | mise exec -- xcsift -qw --format toon'
+
+profile-compile: $(TUIST_GENERATION_STAMP) # Profile compile hotspots for the macOS app (Debug)
+	@mkdir -p "$(COMPILE_PROFILE_DIR)"
+	@rm -rf "$(COMPILE_PROFILE_DERIVED_DATA)"
+	xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -derivedDataPath "$(COMPILE_PROFILE_DERIVED_DATA)" clean build -skipMacroValidation -showBuildTimingSummary OTHER_SWIFT_FLAGS='$(COMPILE_PROFILE_SWIFT_FLAGS)' 2>&1 | tee "$(COMPILE_PROFILE_RAW_LOG)"
+	swift run --package-path Tools/CompileTimeProfile compile-time-profile normalize --input "$(COMPILE_PROFILE_RAW_LOG)" --output "$(COMPILE_PROFILE_CURRENT)" --repo-root "$(CURRENT_MAKEFILE_DIR)" --top "$(COMPILE_PROFILE_TOP)"
+	@if [ -f "$(COMPILE_PROFILE_BASELINE)" ]; then \
+		swift run --package-path Tools/CompileTimeProfile compile-time-profile compare --baseline "$(COMPILE_PROFILE_BASELINE)" --current "$(COMPILE_PROFILE_CURRENT)" --output "$(COMPILE_PROFILE_COMPARISON)" --repo-root "$(CURRENT_MAKEFILE_DIR)" --top "$(COMPILE_PROFILE_TOP)"; \
+	else \
+		echo "baseline missing at $(COMPILE_PROFILE_BASELINE)"; \
+	fi
+
+profile-compile-compare: profile-compile # Profile compile hotspots and compare with the tracked baseline
+
+profile-compile-update-baseline: profile-compile # Refresh the tracked compile-time baseline from the latest profile run
+	cp "$(COMPILE_PROFILE_CURRENT)" "$(COMPILE_PROFILE_BASELINE)"
+	@echo "updated $(COMPILE_PROFILE_BASELINE)"
 
 run-app: build-app # Build then launch (Debug) with log streaming
 	@settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
