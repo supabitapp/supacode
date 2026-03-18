@@ -69,7 +69,6 @@ struct AppFeature {
   enum Alert: Equatable {
     case dismiss
     case confirmQuit
-    case openSystemNotificationSettings
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -540,37 +539,14 @@ struct AppFeature {
         return .none
 
       case .systemNotificationsPermissionFailed(let errorMessage):
-        let message: String
-        if let errorMessage, !errorMessage.isEmpty {
-          message =
-            "Supacode cannot send system notifications.\n\n"
-            + "Error: \(errorMessage)"
-        } else {
-          message = "Supacode cannot send system notifications while permission is denied."
-        }
-        state.alert = AlertState {
-          TextState("Enable Notifications in System Settings")
-        } actions: {
-          ButtonState(action: .openSystemNotificationSettings) {
-            TextState("Open System Settings")
-          }
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("Cancel")
-          }
-        } message: {
-          TextState(message)
-        }
-        return .send(.settings(.setSystemNotificationsEnabled(false)))
+        return .concatenate(
+          .send(.settings(.setSystemNotificationsEnabled(false))),
+          .send(.settings(.showNotificationPermissionAlert(errorMessage: errorMessage)))
+        )
 
       case .alert(.dismiss):
         state.alert = nil
         return .none
-
-      case .alert(.presented(.openSystemNotificationSettings)):
-        state.alert = nil
-        return .run { _ in
-          await systemNotificationClient.openSettings()
-        }
 
       case .alert(.presented(.confirmQuit)):
         analyticsClient.capture("app_quit", nil)

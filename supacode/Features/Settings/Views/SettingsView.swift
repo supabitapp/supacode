@@ -125,7 +125,7 @@ struct SettingsView: View {
     .frame(minWidth: 750, minHeight: 500)
     .background {
       WindowAppearanceSetter(colorScheme: settingsStore.appearanceMode.colorScheme)
-      WindowLevelSetter(level: .floating)
+      WindowLevelSetter(level: .normal)
     }
     .ignoresSafeArea(.container, edges: .top)
   }

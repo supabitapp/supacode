@@ -35,8 +35,7 @@ struct AppFeatureSystemNotificationTests {
     await store.receive(\.settings.setSystemNotificationsEnabled) {
       $0.settings.systemNotificationsEnabled = false
     }
-
-    let expectedAlert = AlertState<AppFeature.Alert> {
+    let expectedAlert = AlertState<SettingsFeature.Alert> {
       TextState("Enable Notifications in System Settings")
     } actions: {
       ButtonState(action: .openSystemNotificationSettings) {
@@ -48,10 +47,13 @@ struct AppFeatureSystemNotificationTests {
     } message: {
       TextState("Supacode cannot send system notifications.\n\nError: Mock request error")
     }
+    await store.receive(\.settings.showNotificationPermissionAlert) {
+      $0.settings.alert = expectedAlert
+    }
 
     #expect(authorizationRequests.value == 1)
     #expect(store.state.settings.systemNotificationsEnabled == false)
-    #expect(store.state.alert == expectedAlert)
+    #expect(store.state.settings.alert == expectedAlert)
   }
 
   @Test(.dependencies) func deniedStatusShowsAlertAndOpensSystemSettings() async {
@@ -86,8 +88,7 @@ struct AppFeatureSystemNotificationTests {
     await store.receive(\.settings.setSystemNotificationsEnabled) {
       $0.settings.systemNotificationsEnabled = false
     }
-
-    let expectedAlert = AlertState<AppFeature.Alert> {
+    let expectedAlert = AlertState<SettingsFeature.Alert> {
       TextState("Enable Notifications in System Settings")
     } actions: {
       ButtonState(action: .openSystemNotificationSettings) {
@@ -99,13 +100,16 @@ struct AppFeatureSystemNotificationTests {
     } message: {
       TextState("Supacode cannot send system notifications.\n\nError: Authorization status is denied.")
     }
+    await store.receive(\.settings.showNotificationPermissionAlert) {
+      $0.settings.alert = expectedAlert
+    }
 
     #expect(authorizationRequests.value == 0)
     #expect(store.state.settings.systemNotificationsEnabled == false)
-    #expect(store.state.alert == expectedAlert)
+    #expect(store.state.settings.alert == expectedAlert)
 
-    await store.send(.alert(.presented(.openSystemNotificationSettings))) {
-      $0.alert = nil
+    await store.send(.settings(.alert(.presented(.openSystemNotificationSettings)))) {
+      $0.settings.alert = nil
     }
     await store.finish()
     #expect(openedSettings.value == 1)

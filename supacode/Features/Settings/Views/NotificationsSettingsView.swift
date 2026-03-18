@@ -32,6 +32,7 @@ struct NotificationsSettingsView: View {
       }
       .formStyle(.grouped)
     }
+    .alert(store: store.scope(state: \.$alert, action: \.alert))
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 }

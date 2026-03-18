@@ -24,6 +24,7 @@ struct SettingsFeature {
     var defaultWorktreeBaseDirectoryPath: String
     var selection: SettingsSection? = .general
     var repositorySettings: RepositorySettingsFeature.State?
+    @Presents var alert: AlertState<Alert>?
 
     init(settings: GlobalSettings = .default) {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
@@ -77,9 +78,16 @@ struct SettingsFeature {
     case settingsLoaded(GlobalSettings)
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
+    case showNotificationPermissionAlert(errorMessage: String?)
     case repositorySettings(RepositorySettingsFeature.Action)
+    case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
+  }
+
+  enum Alert: Equatable {
+    case dismiss
+    case openSystemNotificationSettings
   }
 
   @CasePathable
@@ -88,6 +96,7 @@ struct SettingsFeature {
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
+  @Dependency(SystemNotificationClient.self) private var systemNotificationClient
 
   var body: some Reducer<State, Action> {
     BindingReducer()
@@ -148,8 +157,44 @@ struct SettingsFeature {
           defaultWorktreeBaseDirectoryPath
         return persist(state)
 
+      case .showNotificationPermissionAlert(let errorMessage):
+        let message: String
+        if let errorMessage, !errorMessage.isEmpty {
+          message =
+            "Supacode cannot send system notifications.\n\n"
+            + "Error: \(errorMessage)"
+        } else {
+          message = "Supacode cannot send system notifications while permission is denied."
+        }
+        state.alert = AlertState {
+          TextState("Enable Notifications in System Settings")
+        } actions: {
+          ButtonState(action: .openSystemNotificationSettings) {
+            TextState("Open System Settings")
+          }
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState(message)
+        }
+        return .none
+
       case .setSelection(let selection):
         state.selection = selection ?? .general
+        return .none
+
+      case .alert(.dismiss):
+        state.alert = nil
+        return .none
+
+      case .alert(.presented(.openSystemNotificationSettings)):
+        state.alert = nil
+        return .run { _ in
+          await systemNotificationClient.openSettings()
+        }
+
+      case .alert:
         return .none
 
       case .repositorySettings:
