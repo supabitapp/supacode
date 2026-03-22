@@ -241,16 +241,15 @@ final class GhosttyRuntime {
     _ userdata: UnsafeMutableRawPointer?,
     _ location: ghostty_clipboard_e,
     _ state: UnsafeMutableRawPointer?
-  ) {
+  ) -> Bool {
     let userdataBits = userdata.map { UInt(bitPattern: $0) }
     let stateBits = state.map { UInt(bitPattern: $0) }
     if Thread.isMainThread {
-      MainActor.assumeIsolated {
+      return MainActor.assumeIsolated {
         readClipboard(userdataBits: userdataBits, location: location, stateBits: stateBits)
       }
-      return
     }
-    DispatchQueue.main.async {
+    return DispatchQueue.main.sync {
       MainActor.assumeIsolated {
         readClipboard(userdataBits: userdataBits, location: location, stateBits: stateBits)
       }
@@ -379,16 +378,19 @@ final class GhosttyRuntime {
     userdataBits: UInt?,
     location: ghostty_clipboard_e,
     stateBits: UInt?
-  ) {
+  ) -> Bool {
     let userdata = userdataBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
     let state = stateBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
     guard let bridge = surfaceBridge(fromUserdata: userdata), let surface = bridge.surface else {
-      return
+      return false
     }
-    let value = NSPasteboard.ghostty(location)?.getOpinionatedStringContents() ?? ""
+    guard let value = NSPasteboard.ghostty(location)?.getOpinionatedStringContents() else {
+      return false
+    }
     value.withCString { ptr in
       ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
     }
+    return true
   }
 
   private static func confirmReadClipboard(
