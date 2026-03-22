@@ -22,7 +22,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        GHOSTTY_CACHE_VERSION="v2"
         GHOSTTY_SHA="$(git -C ThirdParty/ghostty rev-parse HEAD)"
+        printf '%s\n' "GHOSTTY_CACHE_VERSION=$GHOSTTY_CACHE_VERSION" >> "$GITHUB_ENV"
         printf '%s\n' "GHOSTTY_SHA=$GHOSTTY_SHA" >> "$GITHUB_ENV"
     - name: Ghostty cache
       id: ghostty_cache
@@ -32,7 +34,7 @@ runs:
           Frameworks/GhosttyKit.xcframework
           Resources/ghostty
           Resources/terminfo
-        key: ${{ runner.os }}-${{ runner.arch }}-ghostty-${{ env.GHOSTTY_SHA }}
+        key: ${{ runner.os }}-${{ runner.arch }}-ghostty-${{ env.GHOSTTY_CACHE_VERSION }}-${{ env.GHOSTTY_SHA }}
     - name: Build ghostty
       if: steps.ghostty_cache.outputs.cache-hit != 'true'
       shell: bash
