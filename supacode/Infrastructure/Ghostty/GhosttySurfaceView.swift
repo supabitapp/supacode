@@ -11,6 +11,48 @@ final class GhosttySurfaceView: NSView, Identifiable {
     let length: UInt64
   }
 
+  struct KeyboardLayoutChangeSuppression: Equatable {
+    static let relevantModifiers: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+    static let lifetime: TimeInterval = 1
+
+    var keyUpKeyCode: UInt16?
+    var remainingModifiers: NSEvent.ModifierFlags
+    let expiresAt: TimeInterval
+
+    init(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags, timestamp: TimeInterval) {
+      keyUpKeyCode = keyCode
+      remainingModifiers = modifierFlags.intersection(Self.relevantModifiers)
+      expiresAt = timestamp + Self.lifetime
+    }
+
+    var isActive: Bool {
+      keyUpKeyCode != nil || !remainingModifiers.isEmpty
+    }
+
+    mutating func suppressKeyUp(keyCode: UInt16, timestamp: TimeInterval) -> Bool {
+      expireIfNeeded(at: timestamp)
+      guard keyUpKeyCode == keyCode else { return false }
+      keyUpKeyCode = nil
+      return true
+    }
+
+    mutating func suppressFlagsChanged(
+      modifierFlags: NSEvent.ModifierFlags,
+      timestamp: TimeInterval
+    ) -> Bool {
+      expireIfNeeded(at: timestamp)
+      guard !remainingModifiers.isEmpty else { return false }
+      remainingModifiers.formIntersection(modifierFlags.intersection(Self.relevantModifiers))
+      return true
+    }
+
+    private mutating func expireIfNeeded(at timestamp: TimeInterval) {
+      guard timestamp > expiresAt else { return }
+      keyUpKeyCode = nil
+      remainingModifiers = []
+    }
+  }
+
   private final class CachedValue<T> {
     private var value: T?
     private let fetch: () -> T
@@ -60,6 +102,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var currentCursor: NSCursor = .iBeam
   private var focused = false
   private var markedText = NSMutableAttributedString()
+  private var keyboardLayoutChangeSuppression: KeyboardLayoutChangeSuppression?
   private var keyTextAccumulator: [String]?
   private var cellSize: CGSize = .zero
   private var lastScrollbar: ScrollbarState?
@@ -534,6 +577,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
     lastPerformKeyEvent = nil
     interpretKeyEvents([translationEvent])
     if !markedTextBefore, keyboardIdBefore != keyboardLayoutId() {
+      keyboardLayoutChangeSuppression = KeyboardLayoutChangeSuppression(
+        keyCode: event.keyCode,
+        modifierFlags: event.modifierFlags,
+        timestamp: event.timestamp
+      )
       return
     }
     syncPreedit(clearIfNeeded: markedTextBefore)
@@ -561,10 +609,12 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func keyUp(with event: NSEvent) {
+    if suppressKeyboardLayoutChangeKeyUp(event) { return }
     sendKey(action: GHOSTTY_ACTION_RELEASE, event: event)
   }
 
   override func flagsChanged(with event: NSEvent) {
+    if suppressKeyboardLayoutChangeFlagsChanged(event) { return }
     let mod: UInt32
     switch event.keyCode {
     case 0x39: mod = GHOSTTY_MODS_CAPS.rawValue
@@ -1172,6 +1222,26 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     key.text = nil
     return ghostty_surface_key(surface, key)
+  }
+
+  private func suppressKeyboardLayoutChangeKeyUp(_ event: NSEvent) -> Bool {
+    guard var suppression = keyboardLayoutChangeSuppression else { return false }
+    let shouldSuppress = suppression.suppressKeyUp(
+      keyCode: event.keyCode,
+      timestamp: event.timestamp
+    )
+    keyboardLayoutChangeSuppression = suppression.isActive ? suppression : nil
+    return shouldSuppress
+  }
+
+  private func suppressKeyboardLayoutChangeFlagsChanged(_ event: NSEvent) -> Bool {
+    guard var suppression = keyboardLayoutChangeSuppression else { return false }
+    let shouldSuppress = suppression.suppressFlagsChanged(
+      modifierFlags: event.modifierFlags,
+      timestamp: event.timestamp
+    )
+    keyboardLayoutChangeSuppression = suppression.isActive ? suppression : nil
+    return shouldSuppress
   }
 
   func performBindingAction(_ action: String) {

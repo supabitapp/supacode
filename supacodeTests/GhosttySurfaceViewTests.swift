@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -44,5 +45,36 @@ struct GhosttySurfaceViewTests {
         in: content
       ) == nil
     )
+  }
+
+  @Test func keyboardLayoutChangeSuppressionSuppressesMatchingKeyUpAndModifierRelease() {
+    var suppression = GhosttySurfaceView.KeyboardLayoutChangeSuppression(
+      keyCode: 49,
+      modifierFlags: [.control, .capsLock],
+      timestamp: 10
+    )
+
+    let suppressedKeyUp = suppression.suppressKeyUp(keyCode: 49, timestamp: 10.1)
+    #expect(suppressedKeyUp)
+    #expect(suppression.keyUpKeyCode == nil)
+    let suppressedModifierRelease = suppression.suppressFlagsChanged(
+      modifierFlags: [],
+      timestamp: 10.2
+    )
+    #expect(suppressedModifierRelease)
+    #expect(suppression.remainingModifiers.isEmpty)
+    #expect(!suppression.isActive)
+  }
+
+  @Test func keyboardLayoutChangeSuppressionExpiresIfReleaseNeverArrives() {
+    var suppression = GhosttySurfaceView.KeyboardLayoutChangeSuppression(
+      keyCode: 49,
+      modifierFlags: [.control],
+      timestamp: 10
+    )
+
+    let suppressedKeyUp = suppression.suppressKeyUp(keyCode: 49, timestamp: 11.1)
+    #expect(!suppressedKeyUp)
+    #expect(!suppression.isActive)
   }
 }
