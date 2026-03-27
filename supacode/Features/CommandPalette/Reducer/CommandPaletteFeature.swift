@@ -216,7 +216,7 @@ struct CommandPaletteFeature {
       items.append(contentsOf: debugToastItems())
     #endif
     for row in repositories.orderedWorktreeRows() {
-      guard !row.isPending, !row.isDeleting else { continue }
+      guard row.status == .idle else { continue }
       let repositoryName = repositories.repositoryName(for: row.repositoryID) ?? "Repository"
       let title = "\(repositoryName) / \(row.name)"
       items.append(

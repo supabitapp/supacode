@@ -1396,6 +1396,284 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  // MARK: - Delete Script
+
+  @Test(.dependencies) func deleteWorktreeConfirmedDelegatesDeleteScript() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(mainWorktree.id)
+    @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
+    $repositorySettings.withLock {
+      $0.deleteScript = "echo cleaning\necho done"
+    }
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.deleteWorktreeConfirmed(featureWorktree.id, repository.id)) {
+      $0.deleteScriptWorktreeIDs = [featureWorktree.id]
+    }
+    await store.receive(\.delegate.runBlockingScript)
+  }
+
+  @Test(.dependencies) func deleteScriptCompletedSuccessProceeds() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(mainWorktree.id)
+    state.deleteScriptWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.removeWorktree = { worktree, _ in await MainActor.run { worktree.workingDirectory } }
+      $0.gitClient.worktrees = { _ in [mainWorktree] }
+    }
+
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0)) {
+      $0.deleteScriptWorktreeIDs = []
+    }
+    await store.receive(\.deleteWorktreeApply) {
+      $0.deletingWorktreeIDs = [featureWorktree.id]
+    }
+    await store.receive(\.worktreeDeleted) {
+      $0.deletingWorktreeIDs = []
+      $0.repositories = [makeRepository(id: repoRoot, worktrees: [mainWorktree])]
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.reloadRepositories)
+    await store.receive(\.repositoriesLoaded) {
+      $0.isInitialLoadComplete = true
+    }
+  }
+
+  @Test(.dependencies) func deleteScriptCompletedFailureShowsAlert() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.deleteScriptWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Delete script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Script exited with code 7.\nCheck the DELETE SCRIPT tab for details.")
+    }
+
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 7)) {
+      $0.deleteScriptWorktreeIDs = []
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func deleteScriptCompletedCancellationClearsState() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.deleteScriptWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil)) {
+      $0.deleteScriptWorktreeIDs = []
+    }
+    #expect(store.state.alert == nil)
+  }
+
+  @Test func deleteScriptCompletedIgnoredWhenNotDeleting() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0))
+  }
+
+  @Test(.dependencies) func deleteWorktreeConfirmedSkipsScriptWhenEmpty() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(mainWorktree.id)
+    @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
+    $repositorySettings.withLock {
+      $0.deleteScript = "   \n  "
+    }
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.removeWorktree = { worktree, _ in await MainActor.run { worktree.workingDirectory } }
+      $0.gitClient.worktrees = { _ in [mainWorktree] }
+    }
+
+    await store.send(.deleteWorktreeConfirmed(featureWorktree.id, repository.id))
+    await store.receive(\.deleteWorktreeApply) {
+      $0.deletingWorktreeIDs = [featureWorktree.id]
+    }
+    await store.receive(\.worktreeDeleted) {
+      $0.deletingWorktreeIDs = []
+      $0.repositories = [makeRepository(id: repoRoot, worktrees: [mainWorktree])]
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.reloadRepositories)
+    await store.receive(\.repositoriesLoaded) {
+      $0.isInitialLoadComplete = true
+    }
+  }
+
+  @Test(.dependencies) func deleteScriptCompletedSuccessButWorktreeGoneShowsAlert() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.deleteScriptWorktreeIDs = ["/tmp/repo/gone"]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Delete failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState(
+        "The delete script completed successfully, but the worktree could not be found."
+          + " It may have been removed."
+      )
+    }
+
+    await store.send(.deleteScriptCompleted(worktreeID: "/tmp/repo/gone", exitCode: 0)) {
+      $0.deleteScriptWorktreeIDs = []
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func deleteWorktreeConfirmedNoopsWhenAlreadyArchiving() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.deleteWorktreeConfirmed(featureWorktree.id, repository.id))
+  }
+
+  @Test func repositoriesLoadedKeepsDeleteScriptInFlightUntilSuccessCompletion() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let reloadedRepository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.deleteScriptWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositoriesLoaded(
+        [reloadedRepository],
+        failures: [],
+        roots: [repository.rootURL],
+        animated: false
+      )
+    )
+    #expect(store.state.deleteScriptWorktreeIDs.contains(featureWorktree.id))
+
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0))
+    #expect(store.state.deleteScriptWorktreeIDs.isEmpty)
+  }
+
+  @Test func repositoriesLoadedKeepsDeleteScriptInFlightUntilFailureCompletion() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let reloadedRepository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.deleteScriptWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositoriesLoaded(
+        [reloadedRepository],
+        failures: [],
+        roots: [repository.rootURL],
+        animated: false
+      )
+    )
+    #expect(store.state.deleteScriptWorktreeIDs.contains(featureWorktree.id))
+
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1))
+    #expect(store.state.deleteScriptWorktreeIDs.isEmpty)
+    #expect(store.state.alert != nil)
+  }
+
   @Test func requestRenameBranchWithEmptyNameShowsAlert() async {
     let worktree = makeWorktree(id: "/tmp/wt", name: "eagle")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])

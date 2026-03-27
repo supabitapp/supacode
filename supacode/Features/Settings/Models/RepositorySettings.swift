@@ -3,6 +3,7 @@ import Foundation
 nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   var setupScript: String
   var archiveScript: String
+  var deleteScript: String
   var runScript: String
   var openActionID: String
   var worktreeBaseRef: String?
@@ -14,6 +15,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case setupScript
     case archiveScript
+    case deleteScript
     case runScript
     case openActionID
     case worktreeBaseRef
@@ -26,6 +28,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   static let `default` = RepositorySettings(
     setupScript: "",
     archiveScript: "",
+    deleteScript: "",
     runScript: "",
     openActionID: OpenWorktreeAction.automaticSettingsID,
     worktreeBaseRef: nil,
@@ -38,6 +41,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   init(
     setupScript: String,
     archiveScript: String,
+    deleteScript: String,
     runScript: String,
     openActionID: String,
     worktreeBaseRef: String?,
@@ -48,6 +52,7 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   ) {
     self.setupScript = setupScript
     self.archiveScript = archiveScript
+    self.deleteScript = deleteScript
     self.runScript = runScript
     self.openActionID = openActionID
     self.worktreeBaseRef = worktreeBaseRef
@@ -65,6 +70,9 @@ nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     archiveScript =
       try container.decodeIfPresent(String.self, forKey: .archiveScript)
       ?? Self.default.archiveScript
+    deleteScript =
+      try container.decodeIfPresent(String.self, forKey: .deleteScript)
+      ?? Self.default.deleteScript
     runScript =
       try container.decodeIfPresent(String.self, forKey: .runScript)
       ?? Self.default.runScript

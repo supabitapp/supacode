@@ -185,8 +185,10 @@ struct AppFeature {
 
       case .repositories(.delegate(.repositoriesChanged(let repositories))):
         let archivedIDs = state.repositories.archivedWorktreeIDSet
+        let deleteScriptIDs = state.repositories.deleteScriptWorktreeIDs
         let ids = Set(
-          repositories.flatMap { $0.worktrees.map(\.id) }.filter { !archivedIDs.contains($0) }
+          repositories.flatMap { $0.worktrees.map(\.id) }
+            .filter { !archivedIDs.contains($0) || deleteScriptIDs.contains($0) }
         )
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(from: repositories)
         let worktrees = state.repositories.worktreesForInfoWatcher()
@@ -692,6 +694,8 @@ struct AppFeature {
         switch kind {
         case .archive:
           return .send(.repositories(.archiveScriptCompleted(worktreeID: worktreeID, exitCode: exitCode)))
+        case .delete:
+          return .send(.repositories(.deleteScriptCompleted(worktreeID: worktreeID, exitCode: exitCode)))
         }
 
       case .terminalEvent:

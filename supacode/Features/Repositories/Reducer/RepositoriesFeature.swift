@@ -72,6 +72,7 @@ struct RepositoriesFeature {
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
     var archivingWorktreeIDs: Set<Worktree.ID> = []
+    var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
     var removingRepositoryIDs: Set<Repository.ID> = []
     var pinnedWorktreeIDs: [Worktree.ID] = []
@@ -191,6 +192,8 @@ struct RepositoriesFeature {
     case requestDeleteWorktree(Worktree.ID, Repository.ID)
     case requestDeleteWorktrees([DeleteWorktreeTarget])
     case deleteWorktreeConfirmed(Worktree.ID, Repository.ID)
+    case deleteScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?)
+    case deleteWorktreeApply(Worktree.ID, Repository.ID)
     case worktreeDeleted(
       Worktree.ID,
       repositoryID: Repository.ID,
@@ -1176,7 +1179,9 @@ struct RepositoriesFeature {
         if state.isMainWorktree(worktree) {
           return .none
         }
-        if state.deletingWorktreeIDs.contains(worktree.id) {
+        if state.deletingWorktreeIDs.contains(worktree.id)
+          || state.deleteScriptWorktreeIDs.contains(worktree.id)
+        {
           return .none
         }
         if state.archivingWorktreeIDs.contains(worktree.id) {
@@ -1217,6 +1222,7 @@ struct RepositoriesFeature {
           }
           if state.isMainWorktree(worktree)
             || state.deletingWorktreeIDs.contains(worktree.id)
+            || state.deleteScriptWorktreeIDs.contains(worktree.id)
             || state.archivingWorktreeIDs.contains(worktree.id)
             || state.isWorktreeArchived(worktree.id)
           {
@@ -1278,6 +1284,7 @@ struct RepositoriesFeature {
 
       case .archiveScriptCompleted(let worktreeID, let exitCode):
         guard state.archivingWorktreeIDs.contains(worktreeID) else {
+          repositoriesLogger.debug("Ignoring archiveScriptCompleted for \(worktreeID): not in archivingWorktreeIDs")
           return .none
         }
         state.archivingWorktreeIDs.remove(worktreeID)
@@ -1296,7 +1303,7 @@ struct RepositoriesFeature {
           }
           return .send(.archiveWorktreeApply(worktreeID, repositoryID))
         case nil:
-          // User cancelled or tab was closed before script completed.
+          repositoriesLogger.debug("Archive script cancelled or tab closed for worktree \(worktreeID)")
           return .none
         case let code?:
           state.alert = messageAlert(
@@ -1310,6 +1317,13 @@ struct RepositoriesFeature {
         guard let repository = state.repositories[id: repositoryID],
           let worktree = repository.worktrees[id: worktreeID]
         else {
+          repositoriesLogger.warning(
+            "archiveWorktreeApply: worktree \(worktreeID) not found in repository \(repositoryID)"
+          )
+          state.alert = messageAlert(
+            title: "Archive failed",
+            message: "The worktree could not be found. It may have already been removed."
+          )
           return .none
         }
         if state.isWorktreeArchived(worktreeID) {
@@ -1414,7 +1428,9 @@ struct RepositoriesFeature {
         if state.archivingWorktreeIDs.contains(worktree.id) {
           return .none
         }
-        if state.deletingWorktreeIDs.contains(worktree.id) {
+        if state.deletingWorktreeIDs.contains(worktree.id)
+          || state.deleteScriptWorktreeIDs.contains(worktree.id)
+        {
           return .none
         }
         @Shared(.settingsFile) var settingsFile
@@ -1452,6 +1468,7 @@ struct RepositoriesFeature {
           }
           if state.isMainWorktree(worktree)
             || state.deletingWorktreeIDs.contains(worktree.id)
+            || state.deleteScriptWorktreeIDs.contains(worktree.id)
             || state.archivingWorktreeIDs.contains(worktree.id)
           {
             continue
@@ -1501,10 +1518,66 @@ struct RepositoriesFeature {
         if state.archivingWorktreeIDs.contains(worktree.id) {
           return .none
         }
-        if state.deletingWorktreeIDs.contains(worktree.id) {
+        if state.deletingWorktreeIDs.contains(worktree.id)
+          || state.deleteScriptWorktreeIDs.contains(worktree.id)
+        {
           return .none
         }
         state.alert = nil
+        @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+        let script = repositorySettings.deleteScript
+        let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+          return .send(.deleteWorktreeApply(worktreeID, repositoryID))
+        }
+        state.deleteScriptWorktreeIDs.insert(worktree.id)
+        return .send(
+          .delegate(.runBlockingScript(worktree, repositoryID: repositoryID, kind: .delete, script: script)))
+
+      case .deleteScriptCompleted(let worktreeID, let exitCode):
+        guard state.deleteScriptWorktreeIDs.contains(worktreeID) else {
+          repositoriesLogger.debug("Ignoring deleteScriptCompleted for \(worktreeID): not in deleteScriptWorktreeIDs")
+          return .none
+        }
+        state.deleteScriptWorktreeIDs.remove(worktreeID)
+        switch exitCode {
+        case 0:
+          guard let repositoryID = state.repositoryID(containing: worktreeID) else {
+            repositoriesLogger.warning(
+              "Delete script succeeded but repository not found for worktree \(worktreeID)"
+            )
+            state.alert = messageAlert(
+              title: "Delete failed",
+              message: "The delete script completed successfully, but the worktree could not be found."
+                + " It may have been removed."
+            )
+            return .none
+          }
+          return .send(.deleteWorktreeApply(worktreeID, repositoryID))
+        case nil:
+          repositoriesLogger.debug("Delete script cancelled or tab closed for worktree \(worktreeID)")
+          return .none
+        case let code?:
+          state.alert = messageAlert(
+            title: "Delete script failed",
+            message: "\(blockingScriptExitMessage(code))\nCheck the DELETE SCRIPT tab for details."
+          )
+          return .none
+        }
+
+      case .deleteWorktreeApply(let worktreeID, let repositoryID):
+        guard let repository = state.repositories[id: repositoryID],
+          let worktree = repository.worktrees[id: worktreeID]
+        else {
+          repositoriesLogger.warning(
+            "deleteWorktreeApply: worktree \(worktreeID) not found in repository \(repositoryID)"
+          )
+          state.alert = messageAlert(
+            title: "Delete failed",
+            message: "The worktree could not be found. It may have already been removed."
+          )
+          return .none
+        }
         state.deletingWorktreeIDs.insert(worktree.id)
         let selectionWasRemoved = state.selectedWorktreeID == worktree.id
         let nextSelection =
@@ -1546,6 +1619,7 @@ struct RepositoriesFeature {
         let wasArchived = state.isWorktreeArchived(worktreeID)
         withAnimation(.easeOut(duration: 0.2)) {
           state.deletingWorktreeIDs.remove(worktreeID)
+          state.deleteScriptWorktreeIDs.remove(worktreeID)
           state.archivingWorktreeIDs.remove(worktreeID)
           state.pendingWorktrees.removeAll { $0.id == worktreeID }
           state.pendingSetupScriptWorktreeIDs.remove(worktreeID)
@@ -2121,7 +2195,8 @@ struct RepositoriesFeature {
             nextMerged,
             !state.isMainWorktree(worktree),
             !state.isWorktreeArchived(worktreeID),
-            !state.deletingWorktreeIDs.contains(worktreeID)
+            !state.deletingWorktreeIDs.contains(worktreeID),
+            !state.deleteScriptWorktreeIDs.contains(worktreeID)
           {
             archiveWorktreeIDs.append(worktreeID)
           }
@@ -2630,6 +2705,7 @@ struct RepositoriesFeature {
     }
     let availableWorktreeIDs = Set(repositories.flatMap { $0.worktrees.map(\.id) })
     let filteredDeletingIDs = state.deletingWorktreeIDs.intersection(availableWorktreeIDs)
+    let filteredDeleteScriptIDs = state.deleteScriptWorktreeIDs
     let filteredSetupScriptIDs = state.pendingSetupScriptWorktreeIDs.filter {
       availableWorktreeIDs.contains($0)
     }
@@ -2646,6 +2722,7 @@ struct RepositoriesFeature {
         state.repositories = identifiedRepositories
         state.pendingWorktrees = filteredPendingWorktrees
         state.deletingWorktreeIDs = filteredDeletingIDs
+        state.deleteScriptWorktreeIDs = filteredDeleteScriptIDs
         state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
         state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
         state.archivingWorktreeIDs = filteredArchivingIDs
@@ -2655,6 +2732,7 @@ struct RepositoriesFeature {
       state.repositories = identifiedRepositories
       state.pendingWorktrees = filteredPendingWorktrees
       state.deletingWorktreeIDs = filteredDeletingIDs
+      state.deleteScriptWorktreeIDs = filteredDeleteScriptIDs
       state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
       state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
       state.archivingWorktreeIDs = filteredArchivingIDs
@@ -2836,7 +2914,10 @@ extension RepositoriesFeature.State {
   }
 
   private func makePendingWorktreeRow(_ pending: PendingWorktree) -> WorktreeRowModel {
-    let isDeleting = removingRepositoryIDs.contains(pending.repositoryID)
+    let status: WorktreeRowModel.Status =
+      removingRepositoryIDs.contains(pending.repositoryID)
+      ? .deleting(inTerminal: false)
+      : .pending
     return WorktreeRowModel(
       id: pending.id,
       repositoryID: pending.repositoryID,
@@ -2845,10 +2926,7 @@ extension RepositoriesFeature.State {
       info: worktreeInfo(for: pending.id),
       isPinned: false,
       isMainWorktree: false,
-      isPending: true,
-      isArchiving: false,
-      isDeleting: isDeleting,
-      isRemovable: false
+      status: status
     )
   }
 
@@ -2858,10 +2936,18 @@ extension RepositoriesFeature.State {
     isPinned: Bool,
     isMainWorktree: Bool
   ) -> WorktreeRowModel {
-    let isDeleting =
-      removingRepositoryIDs.contains(repositoryID)
-      || deletingWorktreeIDs.contains(worktree.id)
-    let isArchiving = archivingWorktreeIDs.contains(worktree.id)
+    let status: WorktreeRowModel.Status =
+      if removingRepositoryIDs.contains(repositoryID)
+        || deletingWorktreeIDs.contains(worktree.id)
+      {
+        .deleting(inTerminal: false)
+      } else if deleteScriptWorktreeIDs.contains(worktree.id) {
+        .deleting(inTerminal: true)
+      } else if archivingWorktreeIDs.contains(worktree.id) {
+        .archiving
+      } else {
+        .idle
+      }
     return WorktreeRowModel(
       id: worktree.id,
       repositoryID: repositoryID,
@@ -2870,10 +2956,7 @@ extension RepositoriesFeature.State {
       info: worktreeInfo(for: worktree.id),
       isPinned: isPinned,
       isMainWorktree: isMainWorktree,
-      isPending: false,
-      isArchiving: isArchiving,
-      isDeleting: isDeleting,
-      isRemovable: !isDeleting && !isArchiving
+      status: status
     )
   }
 
@@ -3096,6 +3179,24 @@ extension RepositoriesFeature.State {
         )
       )
     }
+    // Archived worktrees with a running delete script should be
+    // visible in the sidebar so the terminal tab is accessible.
+    let archivedSet = archivedWorktreeIDSet
+    let unpinnedIDSet = Set(unpinnedWorktrees.map(\.id))
+    for worktree in repository.worktrees {
+      guard archivedSet.contains(worktree.id),
+        deleteScriptWorktreeIDs.contains(worktree.id),
+        !unpinnedIDSet.contains(worktree.id)
+      else { continue }
+      unpinnedRows.append(
+        makeWorktreeRow(
+          worktree,
+          repositoryID: repository.id,
+          isPinned: false,
+          isMainWorktree: false
+        )
+      )
+    }
     return WorktreeRowSections(
       main: mainRow,
       pinned: pinnedRows,
@@ -3278,6 +3379,7 @@ private func cleanupWorktreeState(
   state.pendingSetupScriptWorktreeIDs.remove(worktreeID)
   state.pendingTerminalFocusWorktreeIDs.remove(worktreeID)
   state.archivingWorktreeIDs.remove(worktreeID)
+  state.deleteScriptWorktreeIDs.remove(worktreeID)
   state.deletingWorktreeIDs.remove(worktreeID)
   state.worktreeInfoByID.removeValue(forKey: worktreeID)
   let didUpdatePinned = state.pinnedWorktreeIDs.contains(worktreeID)

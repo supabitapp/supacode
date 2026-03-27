@@ -87,7 +87,7 @@ struct SidebarView: View {
   ) -> (() -> Void)? {
     let targets =
       rows
-      .filter { $0.isRemovable && !$0.isMainWorktree && !$0.isDeleting && !$0.isArchiving }
+      .filter { $0.isRemovable && !$0.isMainWorktree }
       .map {
         RepositoriesFeature.ArchiveWorktreeTarget(
           worktreeID: $0.id,
@@ -109,7 +109,7 @@ struct SidebarView: View {
   ) -> (() -> Void)? {
     let targets =
       rows
-      .filter { $0.isRemovable && !$0.isDeleting }
+      .filter { $0.isRemovable }
       .map {
         RepositoriesFeature.DeleteWorktreeTarget(
           worktreeID: $0.id,

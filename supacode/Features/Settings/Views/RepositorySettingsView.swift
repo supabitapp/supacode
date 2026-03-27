@@ -151,6 +151,27 @@ struct RepositorySettingsView: View {
       Section {
         ZStack(alignment: .topLeading) {
           PlainTextEditor(
+            text: settings.runScript
+          )
+          .frame(minHeight: 120)
+          if store.settings.runScript.isEmpty {
+            Text("npm run dev")
+              .foregroundStyle(.secondary)
+              .padding(.leading, 6)
+              .font(.body)
+              .allowsHitTesting(false)
+          }
+        }
+      } header: {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Run Script")
+          Text("Run script launched on demand from the toolbar")
+            .foregroundStyle(.secondary)
+        }
+      }
+      Section {
+        ZStack(alignment: .topLeading) {
+          PlainTextEditor(
             text: settings.archiveScript
           )
           .frame(minHeight: 120)
@@ -172,11 +193,11 @@ struct RepositorySettingsView: View {
       Section {
         ZStack(alignment: .topLeading) {
           PlainTextEditor(
-            text: settings.runScript
+            text: settings.deleteScript
           )
           .frame(minHeight: 120)
-          if store.settings.runScript.isEmpty {
-            Text("npm run dev")
+          if store.settings.deleteScript.isEmpty {
+            Text("docker compose down")
               .foregroundStyle(.secondary)
               .padding(.leading, 6)
               .font(.body)
@@ -185,8 +206,8 @@ struct RepositorySettingsView: View {
         }
       } header: {
         VStack(alignment: .leading, spacing: 4) {
-          Text("Run Script")
-          Text("Run script launched on demand from the toolbar")
+          Text("Delete Script")
+          Text("Delete script that runs before a worktree is deleted")
             .foregroundStyle(.secondary)
         }
       }
