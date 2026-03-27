@@ -12,18 +12,15 @@ private enum CancelID {
   static let githubIntegrationRecovery = "repositories.githubIntegrationRecovery"
   static let worktreePromptLoad = "repositories.worktreePromptLoad"
   static let worktreePromptValidation = "repositories.worktreePromptValidation"
-  static func archiveScript(_ worktreeID: Worktree.ID) -> String {
-    "repositories.archiveScript.\(worktreeID)"
-  }
   static func delayedPRRefresh(_ worktreeID: Worktree.ID) -> String {
     "repositories.delayedPRRefresh.\(worktreeID)"
   }
 }
 
+private nonisolated let repositoriesLogger = SupaLogger("Repositories")
 private nonisolated let githubIntegrationRecoveryInterval: Duration = .seconds(15)
 private nonisolated let worktreeCreationProgressLineLimit = 200
 private nonisolated let worktreeCreationProgressUpdateStride = 20
-private nonisolated let archiveScriptProgressLineLimit = 200
 
 nonisolated struct WorktreeCreationProgressUpdateThrottle {
   private let stride: Int
@@ -75,7 +72,6 @@ struct RepositoriesFeature {
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
     var archivingWorktreeIDs: Set<Worktree.ID> = []
-    var archiveScriptProgressByWorktreeID: [Worktree.ID: ArchiveScriptProgress] = [:]
     var deletingWorktreeIDs: Set<Worktree.ID> = []
     var removingRepositoryIDs: Set<Repository.ID> = []
     var pinnedWorktreeIDs: [Worktree.ID] = []
@@ -189,9 +185,7 @@ struct RepositoriesFeature {
     case requestArchiveWorktree(Worktree.ID, Repository.ID)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID)
-    case archiveScriptProgressUpdated(worktreeID: Worktree.ID, progress: ArchiveScriptProgress)
-    case archiveScriptSucceeded(worktreeID: Worktree.ID, repositoryID: Repository.ID)
-    case archiveScriptFailed(worktreeID: Worktree.ID, message: String)
+    case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?)
     case archiveWorktreeApply(Worktree.ID, Repository.ID)
     case unarchiveWorktree(Worktree.ID)
     case requestDeleteWorktree(Worktree.ID, Repository.ID)
@@ -289,6 +283,7 @@ struct RepositoriesFeature {
     case repositoriesChanged(IdentifiedArrayOf<Repository>)
     case openRepositorySettings(Repository.ID)
     case worktreeCreated(Worktree)
+    case runBlockingScript(Worktree, repositoryID: Repository.ID, kind: BlockingScriptKind, script: String)
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -1273,72 +1268,43 @@ struct RepositoriesFeature {
         state.alert = nil
         @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
         let script = repositorySettings.archiveScript
-        let commandText = archiveScriptCommand(script)
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
           return .send(.archiveWorktreeApply(worktreeID, repositoryID))
         }
         state.archivingWorktreeIDs.insert(worktreeID)
-        state.archiveScriptProgressByWorktreeID[worktreeID] = ArchiveScriptProgress(
-          titleText: "Running archive script",
-          detailText: "Preparing archive script",
-          commandText: commandText
-        )
-        let shellClient = shellClient
-        let scriptWithEnv = worktree.scriptEnvironmentExportPrefix + script
-        return .run { send in
-          let envURL = URL(fileURLWithPath: "/usr/bin/env")
-          var progress = ArchiveScriptProgress(
-            titleText: "Running archive script",
-            detailText: "Running archive script",
-            commandText: commandText
-          )
-          do {
-            for try await event in shellClient.runLoginStream(
-              envURL,
-              ["bash", "-lc", scriptWithEnv],
-              worktree.workingDirectory,
-              log: false
-            ) {
-              switch event {
-              case .line(let line):
-                let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { continue }
-                progress.appendOutputLine(text, maxLines: archiveScriptProgressLineLimit)
-                await send(.archiveScriptProgressUpdated(worktreeID: worktreeID, progress: progress))
-              case .finished:
-                await send(.archiveScriptSucceeded(worktreeID: worktreeID, repositoryID: repositoryID))
-              }
-            }
-          } catch {
-            await send(.archiveScriptFailed(worktreeID: worktreeID, message: error.localizedDescription))
+        return .send(
+          .delegate(.runBlockingScript(worktree, repositoryID: repositoryID, kind: .archive, script: script)))
+
+      case .archiveScriptCompleted(let worktreeID, let exitCode):
+        guard state.archivingWorktreeIDs.contains(worktreeID) else {
+          return .none
+        }
+        state.archivingWorktreeIDs.remove(worktreeID)
+        switch exitCode {
+        case 0:
+          guard let repositoryID = state.repositoryID(containing: worktreeID) else {
+            repositoriesLogger.warning(
+              "Archive script succeeded but repository not found for worktree \(worktreeID)"
+            )
+            state.alert = messageAlert(
+              title: "Archive failed",
+              message: "The archive script completed successfully, but the worktree could not be found."
+                + " It may have been removed."
+            )
+            return .none
           }
-        }
-        .cancellable(id: CancelID.archiveScript(worktreeID), cancelInFlight: true)
-
-      case .archiveScriptProgressUpdated(let worktreeID, let progress):
-        guard state.archivingWorktreeIDs.contains(worktreeID) else {
+          return .send(.archiveWorktreeApply(worktreeID, repositoryID))
+        case nil:
+          // User cancelled or tab was closed before script completed.
+          return .none
+        case let code?:
+          state.alert = messageAlert(
+            title: "Archive script failed",
+            message: "\(blockingScriptExitMessage(code))\nCheck the ARCHIVE SCRIPT tab for details."
+          )
           return .none
         }
-        state.archiveScriptProgressByWorktreeID[worktreeID] = progress
-        return .none
-
-      case .archiveScriptSucceeded(let worktreeID, let repositoryID):
-        guard state.archivingWorktreeIDs.contains(worktreeID) else {
-          return .none
-        }
-        state.archivingWorktreeIDs.remove(worktreeID)
-        state.archiveScriptProgressByWorktreeID.removeValue(forKey: worktreeID)
-        return .send(.archiveWorktreeApply(worktreeID, repositoryID))
-
-      case .archiveScriptFailed(let worktreeID, let message):
-        guard state.archivingWorktreeIDs.contains(worktreeID) else {
-          return .none
-        }
-        state.archivingWorktreeIDs.remove(worktreeID)
-        state.archiveScriptProgressByWorktreeID.removeValue(forKey: worktreeID)
-        state.alert = messageAlert(title: "Archive script failed", message: message)
-        return .none
 
       case .archiveWorktreeApply(let worktreeID, let repositoryID):
         guard let repository = state.repositories[id: repositoryID],
@@ -1584,7 +1550,6 @@ struct RepositoriesFeature {
           state.pendingWorktrees.removeAll { $0.id == worktreeID }
           state.pendingSetupScriptWorktreeIDs.remove(worktreeID)
           state.pendingTerminalFocusWorktreeIDs.remove(worktreeID)
-          state.archiveScriptProgressByWorktreeID.removeValue(forKey: worktreeID)
           state.worktreeInfoByID.removeValue(forKey: worktreeID)
           state.pinnedWorktreeIDs.removeAll { $0 == worktreeID }
           state.archivedWorktreeIDs.removeAll { $0 == worktreeID }
@@ -2672,9 +2637,6 @@ struct RepositoriesFeature {
       availableWorktreeIDs.contains($0)
     }
     let filteredArchivingIDs = state.archivingWorktreeIDs
-    let filteredArchiveScriptProgress = state.archiveScriptProgressByWorktreeID.filter {
-      availableWorktreeIDs.contains($0.key) || filteredArchivingIDs.contains($0.key)
-    }
     let filteredWorktreeInfo = state.worktreeInfoByID.filter {
       availableWorktreeIDs.contains($0.key)
     }
@@ -2687,7 +2649,6 @@ struct RepositoriesFeature {
         state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
         state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
         state.archivingWorktreeIDs = filteredArchivingIDs
-        state.archiveScriptProgressByWorktreeID = filteredArchiveScriptProgress
         state.worktreeInfoByID = filteredWorktreeInfo
       }
     } else {
@@ -2697,7 +2658,6 @@ struct RepositoriesFeature {
       state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
       state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
       state.archivingWorktreeIDs = filteredArchivingIDs
-      state.archiveScriptProgressByWorktreeID = filteredArchiveScriptProgress
       state.worktreeInfoByID = filteredWorktreeInfo
     }
     let didPrunePinned = prunePinnedWorktreeIDs(state: &state)
@@ -2869,11 +2829,6 @@ extension RepositoriesFeature.State {
   func pendingWorktree(for id: Worktree.ID?) -> PendingWorktree? {
     guard let id else { return nil }
     return pendingWorktrees.first(where: { $0.id == id })
-  }
-
-  func archiveScriptProgress(for id: Worktree.ID?) -> ArchiveScriptProgress? {
-    guard let id else { return nil }
-    return archiveScriptProgressByWorktreeID[id]
   }
 
   func shouldFocusTerminal(for worktreeID: Worktree.ID) -> Bool {
@@ -3323,7 +3278,6 @@ private func cleanupWorktreeState(
   state.pendingSetupScriptWorktreeIDs.remove(worktreeID)
   state.pendingTerminalFocusWorktreeIDs.remove(worktreeID)
   state.archivingWorktreeIDs.remove(worktreeID)
-  state.archiveScriptProgressByWorktreeID.removeValue(forKey: worktreeID)
   state.deletingWorktreeIDs.remove(worktreeID)
   state.worktreeInfoByID.removeValue(forKey: worktreeID)
   let didUpdatePinned = state.pinnedWorktreeIDs.contains(worktreeID)
@@ -3350,9 +3304,14 @@ private func cleanupWorktreeState(
   )
 }
 
-private nonisolated func archiveScriptCommand(_ script: String) -> String {
-  let normalized = script.replacing("\n", with: "\\n")
-  return "bash -lc \(shellQuote(normalized))"
+private nonisolated func blockingScriptExitMessage(_ exitCode: Int) -> String {
+  switch exitCode {
+  case 1: return "Script failed (exit code 1)."
+  case 126: return "Permission denied (exit code 126)."
+  case 127: return "Command not found (exit code 127)."
+  case 129...: return "Script killed by signal \(exitCode - 128) (exit code \(exitCode))."
+  default: return "Script exited with code \(exitCode)."
+  }
 }
 
 private nonisolated func worktreeCreateCommand(

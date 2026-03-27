@@ -946,7 +946,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
 
-  @Test(.dependencies) func archiveWorktreeConfirmedRunsArchiveScriptAndShowsProgress() async {
+  @Test(.dependencies) func archiveWorktreeConfirmedDelegatesArchiveScript() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -963,52 +963,15 @@ struct RepositoriesFeatureTests {
     }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
-    } withDependencies: {
-      $0.shellClient.runLoginStreamImpl = { _, _, _, _ in
-        AsyncThrowingStream { continuation in
-          continuation.yield(.line(ShellStreamLine(source: .stdout, text: "syncing")))
-          continuation.yield(.line(ShellStreamLine(source: .stdout, text: "done")))
-          continuation.yield(.finished(ShellOutput(stdout: "syncing\ndone", stderr: "", exitCode: 0)))
-          continuation.finish()
-        }
-      }
     }
 
     await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id)) {
       $0.archivingWorktreeIDs = [featureWorktree.id]
-      $0.archiveScriptProgressByWorktreeID[featureWorktree.id] = ArchiveScriptProgress(
-        titleText: "Running archive script",
-        detailText: "Preparing archive script",
-        commandText: "bash -lc 'echo syncing\\necho done'"
-      )
     }
-    await store.receive(\.archiveScriptProgressUpdated) {
-      $0.archiveScriptProgressByWorktreeID[featureWorktree.id] = ArchiveScriptProgress(
-        titleText: "Running archive script",
-        detailText: "syncing",
-        commandText: "bash -lc 'echo syncing\\necho done'",
-        outputLines: ["syncing"]
-      )
-    }
-    await store.receive(\.archiveScriptProgressUpdated) {
-      $0.archiveScriptProgressByWorktreeID[featureWorktree.id] = ArchiveScriptProgress(
-        titleText: "Running archive script",
-        detailText: "done",
-        commandText: "bash -lc 'echo syncing\\necho done'",
-        outputLines: ["syncing", "done"]
-      )
-    }
-    await store.receive(\.archiveScriptSucceeded) {
-      $0.archivingWorktreeIDs = []
-      $0.archiveScriptProgressByWorktreeID = [:]
-    }
-    await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeIDs = [featureWorktree.id]
-    }
-    await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.delegate.runBlockingScript)
   }
 
-  @Test(.dependencies) func archiveWorktreeConfirmedScriptFailureBlocksArchive() async {
+  @Test(.dependencies) func archiveScriptCompletedSuccessArchivesWorktree() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -1017,25 +980,34 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
-    $repositorySettings.withLock {
-      $0.archiveScript = "exit 7"
-    }
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
       RepositoriesFeature()
-    } withDependencies: {
-      $0.shellClient.runLoginStreamImpl = { _, _, _, _ in
-        AsyncThrowingStream { continuation in
-          continuation.finish(
-            throwing: ShellClientError(
-              command: "bash -lc exit 7",
-              stdout: "",
-              stderr: "fail",
-              exitCode: 7
-            )
-          )
-        }
-      }
+    }
+
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0)) {
+      $0.archivingWorktreeIDs = []
+    }
+    await store.receive(\.archiveWorktreeApply) {
+      $0.archivedWorktreeIDs = [featureWorktree.id]
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+  }
+
+  @Test(.dependencies) func archiveScriptCompletedFailureShowsAlert() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
     }
 
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
@@ -1045,26 +1017,17 @@ struct RepositoriesFeatureTests {
         TextState("OK")
       }
     } message: {
-      TextState("Command failed: bash -lc exit 7\nstderr:\nfail")
+      TextState("Script exited with code 7.\nCheck the ARCHIVE SCRIPT tab for details.")
     }
 
-    await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id)) {
-      $0.archivingWorktreeIDs = [featureWorktree.id]
-      $0.archiveScriptProgressByWorktreeID[featureWorktree.id] = ArchiveScriptProgress(
-        titleText: "Running archive script",
-        detailText: "Preparing archive script",
-        commandText: "bash -lc 'exit 7'"
-      )
-    }
-    await store.receive(\.archiveScriptFailed) {
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 7)) {
       $0.archivingWorktreeIDs = []
-      $0.archiveScriptProgressByWorktreeID = [:]
       $0.alert = expectedAlert
     }
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }
 
-  @Test func archiveScriptSucceededIgnoredWhenNotArchiving() async {
+  @Test func archiveScriptCompletedCancellationClearsState() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -1073,15 +1036,20 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
-    await store.send(.archiveScriptSucceeded(worktreeID: featureWorktree.id, repositoryID: repository.id))
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil)) {
+      $0.archivingWorktreeIDs = []
+    }
+    #expect(store.state.alert == nil)
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }
 
-  @Test func archiveScriptFailedIgnoredWhenNotArchiving() async {
+  @Test func archiveScriptCompletedIgnoredWhenNotArchiving() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -1094,8 +1062,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.archiveScriptFailed(worktreeID: featureWorktree.id, message: "late failure"))
-    #expect(store.state.alert == nil)
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0))
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }
 
@@ -1111,10 +1078,6 @@ struct RepositoriesFeatureTests {
     let reloadedRepository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
     var state = makeState(repositories: [repository])
     state.archivingWorktreeIDs = [featureWorktree.id]
-    state.archiveScriptProgressByWorktreeID[featureWorktree.id] = ArchiveScriptProgress(
-      titleText: "Running archive script",
-      detailText: "still running"
-    )
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -1129,11 +1092,9 @@ struct RepositoriesFeatureTests {
       )
     )
     #expect(store.state.archivingWorktreeIDs.contains(featureWorktree.id))
-    #expect(store.state.archiveScriptProgressByWorktreeID[featureWorktree.id] != nil)
 
-    await store.send(.archiveScriptSucceeded(worktreeID: featureWorktree.id, repositoryID: repository.id))
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0))
     #expect(store.state.archivingWorktreeIDs.isEmpty)
-    #expect(store.state.archiveScriptProgressByWorktreeID.isEmpty)
   }
 
   @Test func repositoriesLoadedKeepsArchiveInFlightUntilFailureCompletion() async {
@@ -1148,10 +1109,6 @@ struct RepositoriesFeatureTests {
     let reloadedRepository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
     var state = makeState(repositories: [repository])
     state.archivingWorktreeIDs = [featureWorktree.id]
-    state.archiveScriptProgressByWorktreeID[featureWorktree.id] = ArchiveScriptProgress(
-      titleText: "Running archive script",
-      detailText: "still running"
-    )
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -1166,12 +1123,277 @@ struct RepositoriesFeatureTests {
       )
     )
     #expect(store.state.archivingWorktreeIDs.contains(featureWorktree.id))
-    #expect(store.state.archiveScriptProgressByWorktreeID[featureWorktree.id] != nil)
 
-    await store.send(.archiveScriptFailed(worktreeID: featureWorktree.id, message: "script failed"))
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1))
     #expect(store.state.archivingWorktreeIDs.isEmpty)
-    #expect(store.state.archiveScriptProgressByWorktreeID.isEmpty)
     #expect(store.state.alert != nil)
+  }
+
+  // MARK: - Archive script exit code coverage
+
+  @Test func archiveScriptCompletedExitCode1ShowsGenericFailure() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Archive script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Script failed (exit code 1).\nCheck the ARCHIVE SCRIPT tab for details.")
+    }
+
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1)) {
+      $0.archivingWorktreeIDs = []
+      $0.alert = expectedAlert
+    }
+    #expect(store.state.archivedWorktreeIDs.isEmpty)
+  }
+
+  @Test func archiveScriptCompletedExitCode126ShowsPermissionDenied() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Archive script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Permission denied (exit code 126).\nCheck the ARCHIVE SCRIPT tab for details.")
+    }
+
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 126)) {
+      $0.archivingWorktreeIDs = []
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func archiveScriptCompletedExitCode127ShowsCommandNotFound() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Archive script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Command not found (exit code 127).\nCheck the ARCHIVE SCRIPT tab for details.")
+    }
+
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 127)) {
+      $0.archivingWorktreeIDs = []
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func archiveScriptCompletedExitCode130ShowsSignalKilled() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Archive script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Script killed by signal 2 (exit code 130).\nCheck the ARCHIVE SCRIPT tab for details.")
+    }
+
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 130)) {
+      $0.archivingWorktreeIDs = []
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func archiveScriptCompletedExitCode137ShowsSIGKILL() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Archive script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Script killed by signal 9 (exit code 137).\nCheck the ARCHIVE SCRIPT tab for details.")
+    }
+
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 137)) {
+      $0.archivingWorktreeIDs = []
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test(.dependencies) func archiveWorktreeConfirmedEmptyScriptSkipsToApply() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
+    $repositorySettings.withLock {
+      $0.archiveScript = "   \n  "
+    }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id))
+    await store.receive(\.archiveWorktreeApply) {
+      $0.archivedWorktreeIDs = [featureWorktree.id]
+    }
+  }
+
+  @Test func archiveScriptCompletedDoesNotArchiveOnNonZeroExit() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    // Exit code 1 must NOT trigger archiveWorktreeApply.
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1)) {
+      $0.archivingWorktreeIDs = []
+      $0.alert = AlertState {
+        TextState("Archive script failed")
+      } actions: {
+        ButtonState(role: .cancel) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("Script failed (exit code 1).\nCheck the ARCHIVE SCRIPT tab for details.")
+      }
+    }
+    #expect(store.state.archivedWorktreeIDs.isEmpty)
+  }
+
+  @Test func archiveScriptCancellationDoesNotArchive() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    // Nil exit code (Ctrl+D, tab close) must NOT trigger archiveWorktreeApply.
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil)) {
+      $0.archivingWorktreeIDs = []
+    }
+    #expect(store.state.archivedWorktreeIDs.isEmpty)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test func archiveScriptCompletedSuccessOnlyWhenExitCodeZero() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+
+    // Test that ONLY exit code 0 leads to archival.
+    for exitCode in [1, 2, 126, 127, 128, 130, 137, 255] {
+      var state = makeState(repositories: [repository])
+      state.archivingWorktreeIDs = [featureWorktree.id]
+      let store = TestStore(initialState: state) {
+        RepositoriesFeature()
+      }
+      store.exhaustivity = .off
+
+      await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: exitCode))
+      #expect(
+        store.state.archivedWorktreeIDs.isEmpty,
+        "Exit code \(exitCode) should NOT archive the worktree"
+      )
+      #expect(
+        store.state.alert != nil,
+        "Exit code \(exitCode) should show an alert"
+      )
+    }
   }
 
   @Test func requestRenameBranchWithEmptyNameShowsAlert() async {

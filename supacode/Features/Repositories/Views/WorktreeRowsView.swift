@@ -109,7 +109,7 @@ struct WorktreeRowsView: View {
       ? { togglePin(for: row.id, isPinned: row.isPinned) }
       : nil
     let archiveAction: (() -> Void)? =
-      canShowRowActions && !row.isMainWorktree
+      canShowRowActions && !row.isMainWorktree && !row.isArchiving
       ? { archiveWorktree(row.id) }
       : nil
     let notifications = terminalManager.stateIfExists(for: row.id)?.notifications ?? []
@@ -224,7 +224,7 @@ struct WorktreeRowsView: View {
     let isBulkSelection = contextRows.count > 1
     let archiveTargets =
       contextRows
-      .filter { !$0.isMainWorktree }
+      .filter { !$0.isMainWorktree && !$0.isArchiving }
       .map {
         RepositoriesFeature.ArchiveWorktreeTarget(
           worktreeID: $0.id,

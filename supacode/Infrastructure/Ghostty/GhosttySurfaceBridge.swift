@@ -16,6 +16,11 @@ final class GhosttySurfaceBridge {
   var onMoveTab: ((ghostty_action_move_tab_s) -> Bool)?
   var onCommandPaletteToggle: (() -> Bool)?
   var onProgressReport: ((ghostty_action_progress_report_state_e) -> Void)?
+  // Used by blocking script completion detection in WorktreeTerminalState.
+  // Both callbacks are set on every surface but guarded by the
+  // blockingScripts dict in the handlers.
+  var onCommandFinished: ((Int?) -> Void)?
+  var onChildExited: ((UInt32) -> Void)?
   var onDesktopNotification: ((String, String) -> Void)?
   private var progressResetTask: Task<Void, Never>?
 
@@ -229,14 +234,17 @@ final class GhosttySurfaceBridge {
 
     case GHOSTTY_ACTION_COMMAND_FINISHED:
       let info = action.action.command_finished
-      state.commandExitCode = info.exit_code == -1 ? nil : Int(info.exit_code)
+      let exitCode = info.exit_code == -1 ? nil : Int(info.exit_code)
+      state.commandExitCode = exitCode
       state.commandDuration = info.duration
+      onCommandFinished?(exitCode)
       return true
 
     case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
       let info = action.action.child_exited
       state.childExitCode = info.exit_code
       state.childExitTimeMs = info.timetime_ms
+      onChildExited?(info.exit_code)
       return true
 
     case GHOSTTY_ACTION_READONLY:

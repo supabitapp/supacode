@@ -227,6 +227,11 @@ struct AppFeature {
           }
         )
 
+      case .repositories(.delegate(.runBlockingScript(let worktree, _, let kind, let script))):
+        return .run { _ in
+          await terminalClient.send(.runBlockingScript(worktree, kind: kind, script: script))
+        }
+
       case .settings(.setSelection(let selection)):
         let resolvedSelection = selection ?? .general
         switch resolvedSelection {
@@ -682,6 +687,12 @@ struct AppFeature {
         )
       case .terminalEvent(.setupScriptConsumed(let worktreeID)):
         return .send(.repositories(.consumeSetupScript(worktreeID)))
+
+      case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode)):
+        switch kind {
+        case .archive:
+          return .send(.repositories(.archiveScriptCompleted(worktreeID: worktreeID, exitCode: exitCode)))
+        }
 
       case .terminalEvent:
         return .none

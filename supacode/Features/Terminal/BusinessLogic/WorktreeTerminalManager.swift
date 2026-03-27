@@ -46,6 +46,8 @@ final class WorktreeTerminalManager {
       _ = state(for: worktree).runScript(script)
     case .stopRunScript(let worktree):
       _ = state(for: worktree).stopRunScript()
+    case .runBlockingScript(let worktree, let kind, let script):
+      _ = state(for: worktree).runBlockingScript(kind: kind, script)
     case .closeFocusedTab(let worktree):
       _ = closeFocusedTab(in: worktree)
     case .closeFocusedSurface(let worktree):
@@ -161,6 +163,9 @@ final class WorktreeTerminalManager {
     }
     state.onRunScriptStatusChanged = { [weak self] isRunning in
       self?.emit(.runScriptStatusChanged(worktreeID: worktree.id, isRunning: isRunning))
+    }
+    state.onBlockingScriptCompleted = { [weak self] kind, exitCode in
+      self?.emit(.blockingScriptCompleted(worktreeID: worktree.id, kind: kind, exitCode: exitCode))
     }
     state.onCommandPaletteToggle = { [weak self] in
       self?.emit(.commandPaletteToggleRequested(worktreeID: worktree.id))
