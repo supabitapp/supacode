@@ -128,7 +128,6 @@ struct KeyboardShortcutsSettingsView: View {
         }
       }
     }
-    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     // Align window toolbar and first column text.
     .padding(.leading, -6)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

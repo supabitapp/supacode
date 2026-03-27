@@ -120,6 +120,13 @@ struct SettingsView: View {
         }
       }
     }
+    .toolbar {
+      // Prevent the toolbar from collapsing when switching between
+      // detail views with and without toolbar items (e.g. Shortcuts).
+      ToolbarItem(placement: .principal) {
+        Color.clear.frame(width: 0, height: 0)
+      }
+    }
     .navigationSplitViewStyle(.balanced)
     .alert(store: settingsStore.scope(state: \.$alert, action: \.alert))
     .alert(store: store.scope(state: \.$alert, action: \.alert))

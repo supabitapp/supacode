@@ -102,7 +102,7 @@ nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRepresenta
     case .confirmWorktreeAction: "Confirm Worktree Action"
     case .selectNextWorktree: "Select Next Worktree"
     case .selectPreviousWorktree: "Select Previous Worktree"
-    case .selectWorktree(let index): "Select Worktree \(index)"
+    case .selectWorktree(let index): "Select Worktree \(index == 0 ? 10 : index)"
     case .openFinder: "Open Finder"
     case .openRepository: "Open Repository"
     case .openPullRequest: "Open Pull Request"

@@ -86,7 +86,7 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.openPullRequest.displayName == "Open Pull Request")
     #expect(AppShortcuts.toggleLeftSidebar.displayName == "Toggle Left Sidebar")
     #expect(AppShortcuts.selectWorktree1.displayName == "Select Worktree 1")
-    #expect(AppShortcuts.selectWorktree0.displayName == "Select Worktree 0")
+    #expect(AppShortcuts.selectWorktree0.displayName == "Select Worktree 10")
   }
 
   // MARK: - Effective shortcut resolution.
