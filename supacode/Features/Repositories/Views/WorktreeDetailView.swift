@@ -403,9 +403,16 @@ struct WorktreeDetailView: View {
       )
     }
     if selectedRow.isArchiving {
-      // The archive script runs in a terminal tab, so let the
-      // terminal view show through instead of a loading overlay.
-      return nil
+      let progress = repositories.archiveScriptProgress(for: selectedWorktreeID)
+      return WorktreeLoadingInfo(
+        name: selectedRow.name,
+        repositoryName: repositoryName,
+        state: .archiving,
+        statusTitle: progress?.titleText ?? selectedRow.name,
+        statusDetail: progress?.detailText ?? selectedRow.detail,
+        statusCommand: progress?.commandText,
+        statusLines: progress?.outputLines ?? []
+      )
     }
     if selectedRow.isPending {
       let pending = repositories.pendingWorktree(for: selectedWorktreeID)
