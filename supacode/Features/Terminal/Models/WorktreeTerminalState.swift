@@ -596,18 +596,20 @@ final class WorktreeTerminalState {
   }
 
   private func formatCommandInput(_ script: String) -> String? {
-    let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-    return worktree.scriptEnvironmentExportPrefix + trimmed + "\n"
+    makeCommandInput(
+      script: script,
+      environmentExportPrefix: worktree.scriptEnvironmentExportPrefix,
+    )
   }
 
-  // Appends `exit $?` so the shell terminates with the script's exit code.
-  // Without this, the interactive shell stays alive after the script finishes
-  // and GHOSTTY_ACTION_SHOW_CHILD_EXITED never fires for completion detection.
+  // Wraps the script in a shell-appropriate subshell and appends an exit
+  // so GHOSTTY_ACTION_SHOW_CHILD_EXITED fires with the correct exit code.
   private func blockingScriptInput(_ script: String) -> String? {
-    let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-    return worktree.scriptEnvironmentExportPrefix + "(\n" + trimmed + "\n)\nexit $?\n"
+    makeBlockingScriptInput(
+      script: script,
+      environmentExportPrefix: worktree.scriptEnvironmentExportPrefix,
+      shell: .resolveFromEnvironment(),
+    )
   }
 
   // Detects signal-based termination (e.g. Ctrl+C = exit code 130)
@@ -1054,5 +1056,62 @@ final class WorktreeTerminalState {
       maxIndex = max(maxIndex, value)
     }
     return maxIndex + 1
+  }
+}
+
+nonisolated func makeCommandInput(
+  script: String,
+  environmentExportPrefix: String
+) -> String? {
+  let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !trimmed.isEmpty else { return nil }
+  return environmentExportPrefix + trimmed + "\n"
+}
+
+// Wraps the script in a subshell so Ghostty's shell integration reports
+// the script's exit code via COMMAND_FINISHED while the outer shell is
+// still alive. Without the subshell, an `exit N` inside the script
+// kills the shell before COMMAND_FINISHED can fire, causing the last
+// recorded exit code to come from a prior command (e.g. `export` → 0).
+nonisolated func makeBlockingScriptInput(
+  script: String,
+  environmentExportPrefix: String,
+  shell: ShellKind
+) -> String? {
+  let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !trimmed.isEmpty else { return nil }
+  switch shell {
+  case .fish:
+    return environmentExportPrefix + "begin\n" + trimmed + "\nend\nexit $status\n"
+  case .posix:
+    return environmentExportPrefix + "(\n" + trimmed + "\n)\nexit $?\n"
+  }
+}
+
+enum ShellKind {
+  // POSIX-compatible shells (bash, zsh, sh, etc.).
+  case posix
+  // Fish shell.
+  case fish
+
+  static func resolveFromEnvironment() -> ShellKind {
+    if let shell = ProcessInfo.processInfo.environment["SHELL"], !shell.isEmpty {
+      return from(path: shell)
+    }
+    var pwd = passwd()
+    var result: UnsafeMutablePointer<passwd>?
+    let bufSize = sysconf(_SC_GETPW_R_SIZE_MAX)
+    let size = bufSize > 0 ? Int(bufSize) : 1024
+    var buffer = [CChar](repeating: 0, count: size)
+    if getpwuid_r(getuid(), &pwd, &buffer, buffer.count, &result) == 0,
+      let result, let shell = result.pointee.pw_shell
+    {
+      return from(path: String(cString: shell))
+    }
+    return .posix
+  }
+
+  static func from(path: String) -> ShellKind {
+    URL(fileURLWithPath: path).lastPathComponent == "fish" ? .fish : .posix
   }
 }
