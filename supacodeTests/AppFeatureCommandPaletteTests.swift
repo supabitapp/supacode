@@ -63,6 +63,19 @@ struct AppFeatureCommandPaletteTests {
     await store.receive(\.repositories.refreshWorktrees)
   }
 
+  @Test(.dependencies) func viewArchivedWorktreesDispatchesSelectArchived() async {
+    let store = TestStore(initialState: AppFeature.State()) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.commandPalette(.delegate(.viewArchivedWorktrees)))
+    await store.receive(\.repositories.selectArchivedWorktrees) {
+      $0.repositories.selection = .archivedWorktrees
+      $0.repositories.sidebarSelectedWorktreeIDs = []
+    }
+  }
+
   @Test(.dependencies) func checkForUpdatesDispatchesUpdateAction() async {
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
@@ -171,6 +184,7 @@ struct AppFeatureCommandPaletteTests {
       AppFeature()
     }
 
+    let archivedDisplay = AppShortcuts.archivedWorktrees.display
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("Archive worktree?")
     } actions: {
@@ -181,7 +195,9 @@ struct AppFeatureCommandPaletteTests {
         TextState("Cancel")
       }
     } message: {
-      TextState("Archive \(worktree.name)?")
+      TextState(
+        "You can find \(worktree.name) later in Menu Bar > Worktrees > Archived Worktrees (\(archivedDisplay))."
+      )
     }
 
     await store.send(.commandPalette(.delegate(.archiveWorktree(worktree.id, repository.id))))

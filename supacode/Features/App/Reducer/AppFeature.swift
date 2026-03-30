@@ -590,6 +590,9 @@ struct AppFeature {
       case .commandPalette(.delegate(.archiveWorktree(let worktreeID, let repositoryID))):
         return .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
 
+      case .commandPalette(.delegate(.viewArchivedWorktrees)):
+        return .send(.repositories(.selectArchivedWorktrees))
+
       case .commandPalette(.delegate(.refreshWorktrees)):
         return .send(.repositories(.refreshWorktrees))
 

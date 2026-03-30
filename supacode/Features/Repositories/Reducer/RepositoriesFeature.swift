@@ -1242,6 +1242,10 @@ struct RepositoriesFeature {
         if state.isWorktreeMerged(worktree) {
           return .send(.archiveWorktreeConfirmed(worktree.id, repository.id))
         }
+        @Shared(.settingsFile) var settingsFile
+        let archivedDisplay =
+          AppShortcuts.archivedWorktrees
+          .effective(from: settingsFile.global.shortcutOverrides)?.display ?? "none"
         state.alert = AlertState {
           TextState("Archive worktree?")
         } actions: {
@@ -1252,7 +1256,9 @@ struct RepositoriesFeature {
             TextState("Cancel")
           }
         } message: {
-          TextState("Archive \(worktree.name)?")
+          TextState(
+            "You can find \(worktree.name) later in Menu Bar > Worktrees > Archived Worktrees (\(archivedDisplay))."
+          )
         }
         return .none
 
@@ -1286,6 +1292,10 @@ struct RepositoriesFeature {
           return .send(.requestArchiveWorktree(target.worktreeID, target.repositoryID))
         }
         let count = validTargets.count
+        @Shared(.settingsFile) var settingsFile
+        let archivedDisplay =
+          AppShortcuts.archivedWorktrees
+          .effective(from: settingsFile.global.shortcutOverrides)?.display ?? "none"
         state.alert = AlertState {
           TextState("Archive \(count) worktrees?")
         } actions: {
@@ -1296,7 +1306,9 @@ struct RepositoriesFeature {
             TextState("Cancel")
           }
         } message: {
-          TextState("Archive \(count) worktrees?")
+          TextState(
+            "You can find them later in Menu Bar > Worktrees > Archived Worktrees (\(archivedDisplay))."
+          )
         }
         return .none
 

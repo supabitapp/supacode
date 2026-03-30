@@ -1249,6 +1249,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
+    let archivedDisplay = AppShortcuts.archivedWorktrees.display
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("Archive worktree?")
     } actions: {
@@ -1259,7 +1260,9 @@ struct RepositoriesFeatureTests {
         TextState("Cancel")
       }
     } message: {
-      TextState("Archive \(worktree.name)?")
+      TextState(
+        "You can find \(worktree.name) later in Menu Bar > Worktrees > Archived Worktrees (\(archivedDisplay))."
+      )
     }
 
     await store.send(.requestArchiveWorktree(worktree.id, repository.id)) {
@@ -1279,6 +1282,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
+    let archivedDisplay = AppShortcuts.archivedWorktrees.display
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("Archive 2 worktrees?")
     } actions: {
@@ -1289,7 +1293,9 @@ struct RepositoriesFeatureTests {
         TextState("Cancel")
       }
     } message: {
-      TextState("Archive 2 worktrees?")
+      TextState(
+        "You can find them later in Menu Bar > Worktrees > Archived Worktrees (\(archivedDisplay))."
+      )
     }
 
     await store.send(.requestArchiveWorktrees(targets)) {
