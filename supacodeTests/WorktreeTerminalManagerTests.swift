@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -648,6 +649,56 @@ struct WorktreeTerminalManagerTests {
     #expect(state.tabManager.selectedTabId == selectedBefore)
   }
 
+  @Test func focusChangedEventReconcilesResponderDrivenPaneSwitch() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    state.pendingLayoutSnapshot = makeTwoPaneLayoutSnapshot()
+    state.ensureInitialTab(focusing: false)
+
+    let stream = manager.eventStream()
+
+    guard let tabId = state.tabManager.selectedTabId else {
+      Issue.record("Expected selected tab")
+      return
+    }
+
+    let leaves = state.splitTree(for: tabId).visibleLeaves()
+    guard leaves.count == 2 else {
+      Issue.record("Expected two visible panes")
+      return
+    }
+
+    let firstPane = leaves[0]
+    let secondPane = leaves[1]
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+      styleMask: [.titled],
+      backing: .buffered,
+      defer: false
+    )
+    let container = NSView(frame: window.contentView?.bounds ?? .zero)
+    container.autoresizingMask = [.width, .height]
+    window.contentView = container
+    firstPane.frame = NSRect(x: 0, y: 0, width: 400, height: 600)
+    secondPane.frame = NSRect(x: 400, y: 0, width: 400, height: 600)
+    container.addSubview(firstPane)
+    container.addSubview(secondPane)
+
+    #expect(window.makeFirstResponder(firstPane))
+    state.syncFocus(windowIsKey: true, windowIsVisible: true)
+
+    #expect(window.makeFirstResponder(secondPane))
+
+    let event = await nextEvent(stream) { event in
+      event == .focusChanged(worktreeID: worktree.id, surfaceID: secondPane.id)
+    }
+
+    #expect(event == .focusChanged(worktreeID: worktree.id, surfaceID: secondPane.id))
+    #expect((window.firstResponder as? GhosttySurfaceView) === secondPane)
+    #expect(state.captureLayoutSnapshot()?.tabs.first?.focusedLeafIndex == 1)
+  }
+
   private func makeWorktree() -> Worktree {
     Worktree(
       id: "/tmp/repo/wt-1",
@@ -690,6 +741,36 @@ struct WorktreeTerminalManagerTests {
           layout: .leaf(
             TerminalLayoutSnapshot.SurfaceSnapshot(
               workingDirectory: "/tmp/repo/wt-1"
+            )
+          ),
+          focusedLeafIndex: 0
+        ),
+      ],
+      selectedTabIndex: 0
+    )
+  }
+
+  private func makeTwoPaneLayoutSnapshot() -> TerminalLayoutSnapshot {
+    TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          title: "Terminal 1",
+          icon: nil,
+          tintColor: nil,
+          layout: .split(
+            TerminalLayoutSnapshot.SplitSnapshot(
+              direction: .horizontal,
+              ratio: 0.5,
+              left: .leaf(
+                TerminalLayoutSnapshot.SurfaceSnapshot(
+                  workingDirectory: "/tmp/repo/wt-1"
+                )
+              ),
+              right: .leaf(
+                TerminalLayoutSnapshot.SurfaceSnapshot(
+                  workingDirectory: "/tmp/repo/wt-1"
+                )
+              )
             )
           ),
           focusedLeafIndex: 0
