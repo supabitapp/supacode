@@ -16,6 +16,18 @@ final class WorktreeTerminalState {
     let isFocused: Bool
   }
 
+  struct SurfaceFocusContext: Equatable {
+    let focusedSurfaceID: UUID?
+    let firstResponderSurfaceID: UUID?
+  }
+
+  struct SurfaceRenderContext: Equatable {
+    let isSelectedTab: Bool
+    let windowIsVisible: Bool
+    let windowIsKey: Bool
+    let focus: SurfaceFocusContext
+  }
+
   let tabManager: TerminalTabManager
   private let runtime: GhosttyRuntime
   private let worktree: Worktree
@@ -264,18 +276,35 @@ final class WorktreeTerminalState {
   private func applySurfaceActivity() {
     let selectedTabId = tabManager.selectedTabId
     let firstResponderSurfaceID = currentFirstResponderSurfaceID()
+    let windowRenderContext = SurfaceRenderContext(
+      isSelectedTab: false,
+      windowIsVisible: lastWindowIsVisible == true,
+      windowIsKey: lastWindowIsKey == true,
+      focus: SurfaceFocusContext(
+        focusedSurfaceID: nil,
+        firstResponderSurfaceID: firstResponderSurfaceID
+      )
+    )
+    let baseFocusContext = SurfaceFocusContext(
+      focusedSurfaceID: nil,
+      firstResponderSurfaceID: firstResponderSurfaceID
+    )
     for (tabId, tree) in trees {
-      let focusedId = focusedSurfaceIdByTab[tabId]
-      let isSelectedTab = (tabId == selectedTabId)
       let visibleSurfaceIDs = Set(tree.visibleLeaves().map(\.id))
+      var renderContext = windowRenderContext
+      renderContext = SurfaceRenderContext(
+        isSelectedTab: tabId == selectedTabId,
+        windowIsVisible: renderContext.windowIsVisible,
+        windowIsKey: renderContext.windowIsKey,
+        focus: SurfaceFocusContext(
+          focusedSurfaceID: focusedSurfaceIdByTab[tabId],
+          firstResponderSurfaceID: baseFocusContext.firstResponderSurfaceID
+        )
+      )
       for surface in tree.leaves() {
         let activity = Self.surfaceActivity(
           isSurfaceVisibleInTree: visibleSurfaceIDs.contains(surface.id),
-          isSelectedTab: isSelectedTab,
-          windowIsVisible: lastWindowIsVisible == true,
-          windowIsKey: lastWindowIsKey == true,
-          focusedSurfaceID: focusedId,
-          firstResponderSurfaceID: firstResponderSurfaceID,
+          renderContext: renderContext,
           surfaceID: surface.id
         )
         surface.setOcclusion(activity.isVisible)
@@ -297,19 +326,18 @@ final class WorktreeTerminalState {
 
   static func surfaceActivity(
     isSurfaceVisibleInTree: Bool = true,
-    isSelectedTab: Bool,
-    windowIsVisible: Bool,
-    windowIsKey: Bool,
-    focusedSurfaceID: UUID?,
-    firstResponderSurfaceID: UUID?,
+    renderContext: SurfaceRenderContext,
     surfaceID: UUID
   ) -> SurfaceActivity {
-    let isVisible = isSurfaceVisibleInTree && isSelectedTab && windowIsVisible
+    let isVisible =
+      isSurfaceVisibleInTree
+      && renderContext.isSelectedTab
+      && renderContext.windowIsVisible
     let isFocused =
       isVisible
-      && windowIsKey
-      && focusedSurfaceID == surfaceID
-      && firstResponderSurfaceID == surfaceID
+      && renderContext.windowIsKey
+      && renderContext.focus.focusedSurfaceID == surfaceID
+      && renderContext.focus.firstResponderSurfaceID == surfaceID
     return SurfaceActivity(isVisible: isVisible, isFocused: isFocused)
   }
 

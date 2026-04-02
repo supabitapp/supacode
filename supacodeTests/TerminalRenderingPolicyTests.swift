@@ -5,15 +5,32 @@ import Testing
 
 @MainActor
 struct TerminalRenderingPolicyTests {
+  private func renderContext(
+    isSelectedTab: Bool = true,
+    windowIsVisible: Bool = true,
+    windowIsKey: Bool = true,
+    focusedSurfaceID: UUID?,
+    firstResponderSurfaceID: UUID?
+  ) -> WorktreeTerminalState.SurfaceRenderContext {
+    WorktreeTerminalState.SurfaceRenderContext(
+      isSelectedTab: isSelectedTab,
+      windowIsVisible: windowIsVisible,
+      windowIsKey: windowIsKey,
+      focus: WorktreeTerminalState.SurfaceFocusContext(
+        focusedSurfaceID: focusedSurfaceID,
+        firstResponderSurfaceID: firstResponderSurfaceID
+      )
+    )
+  }
+
   @Test func surfaceActivityForSelectedVisibleFocusedSurfaceIsFocused() {
     let focusedID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: true,
-      windowIsVisible: true,
-      windowIsKey: true,
-      focusedSurfaceID: focusedID,
-      firstResponderSurfaceID: focusedID,
+      renderContext: renderContext(
+        focusedSurfaceID: focusedID,
+        firstResponderSurfaceID: focusedID
+      ),
       surfaceID: focusedID
     )
     #expect(activity.isVisible)
@@ -23,11 +40,10 @@ struct TerminalRenderingPolicyTests {
   @Test func surfaceActivityForSelectedVisibleUnfocusedSurfaceIsNotFocused() {
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: true,
-      windowIsVisible: true,
-      windowIsKey: true,
-      focusedSurfaceID: UUID(),
-      firstResponderSurfaceID: UUID(),
+      renderContext: renderContext(
+        focusedSurfaceID: UUID(),
+        firstResponderSurfaceID: UUID()
+      ),
       surfaceID: UUID()
     )
     #expect(activity.isVisible)
@@ -38,11 +54,11 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: true,
-      windowIsVisible: true,
-      windowIsKey: false,
-      focusedSurfaceID: surfaceID,
-      firstResponderSurfaceID: surfaceID,
+      renderContext: renderContext(
+        windowIsKey: false,
+        focusedSurfaceID: surfaceID,
+        firstResponderSurfaceID: surfaceID
+      ),
       surfaceID: surfaceID
     )
     #expect(activity.isVisible)
@@ -53,11 +69,11 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: true,
-      windowIsVisible: false,
-      windowIsKey: true,
-      focusedSurfaceID: surfaceID,
-      firstResponderSurfaceID: surfaceID,
+      renderContext: renderContext(
+        windowIsVisible: false,
+        focusedSurfaceID: surfaceID,
+        firstResponderSurfaceID: surfaceID
+      ),
       surfaceID: surfaceID
     )
     #expect(!activity.isVisible)
@@ -68,11 +84,11 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: false,
-      windowIsVisible: true,
-      windowIsKey: true,
-      focusedSurfaceID: surfaceID,
-      firstResponderSurfaceID: surfaceID,
+      renderContext: renderContext(
+        isSelectedTab: false,
+        focusedSurfaceID: surfaceID,
+        firstResponderSurfaceID: surfaceID
+      ),
       surfaceID: surfaceID
     )
     #expect(!activity.isVisible)
@@ -83,11 +99,10 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: false,
-      isSelectedTab: true,
-      windowIsVisible: true,
-      windowIsKey: true,
-      focusedSurfaceID: surfaceID,
-      firstResponderSurfaceID: surfaceID,
+      renderContext: renderContext(
+        focusedSurfaceID: surfaceID,
+        firstResponderSurfaceID: surfaceID
+      ),
       surfaceID: surfaceID
     )
     #expect(!activity.isVisible)
@@ -98,11 +113,10 @@ struct TerminalRenderingPolicyTests {
     let intendedSurfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: true,
-      windowIsVisible: true,
-      windowIsKey: true,
-      focusedSurfaceID: intendedSurfaceID,
-      firstResponderSurfaceID: nil,
+      renderContext: renderContext(
+        focusedSurfaceID: intendedSurfaceID,
+        firstResponderSurfaceID: nil
+      ),
       surfaceID: intendedSurfaceID
     )
 
@@ -116,20 +130,18 @@ struct TerminalRenderingPolicyTests {
 
     let intendedActivity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: true,
-      windowIsVisible: true,
-      windowIsKey: true,
-      focusedSurfaceID: intendedSurfaceID,
-      firstResponderSurfaceID: nil,
+      renderContext: renderContext(
+        focusedSurfaceID: intendedSurfaceID,
+        firstResponderSurfaceID: nil
+      ),
       surfaceID: intendedSurfaceID
     )
     let siblingActivity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
-      isSelectedTab: true,
-      windowIsVisible: true,
-      windowIsKey: true,
-      focusedSurfaceID: intendedSurfaceID,
-      firstResponderSurfaceID: nil,
+      renderContext: renderContext(
+        focusedSurfaceID: intendedSurfaceID,
+        firstResponderSurfaceID: nil
+      ),
       surfaceID: siblingSurfaceID
     )
 
