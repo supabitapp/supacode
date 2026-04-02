@@ -44,7 +44,7 @@ extension UpdaterClient: DependencyKey {
       setUpdateChannel: { channel in
         _ = controller
         delegate.updateChannel = channel
-        updater.updateCheckInterval = channel == .tip ? 900 : 3600
+        updater.updateCheckInterval = channel == .tip ? 43200 : 259200
         if updater.automaticallyChecksForUpdates {
           updater.checkForUpdatesInBackground()
         }
