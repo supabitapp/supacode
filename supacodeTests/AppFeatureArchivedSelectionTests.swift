@@ -73,7 +73,7 @@ struct AppFeatureArchivedSelectionTests {
     )
     var repositoriesState = RepositoriesFeature.State(repositories: [repository])
     repositoriesState.selection = .worktree(activeWorktree.id)
-    repositoriesState.archivedWorktreeIDs = [archivedWorktree.id]
+    repositoriesState.archivedWorktreeDates[archivedWorktree.id] = Date(timeIntervalSince1970: 1_000_000)
     var appState = AppFeature.State(
       repositories: repositoriesState,
       settings: SettingsFeature.State()

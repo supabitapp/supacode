@@ -2,13 +2,16 @@ import ComposableArchitecture
 import Foundation
 import Sharing
 
+nonisolated let archivedWorktreeDatesStorageKey = "archivedWorktreeDates"
+nonisolated let secondsPerDay: TimeInterval = 86400
+
 struct RepositoryPersistenceClient {
   var loadRoots: @Sendable () async -> [String]
   var saveRoots: @Sendable ([String]) async -> Void
   var loadPinnedWorktreeIDs: @Sendable () async -> [Worktree.ID]
   var savePinnedWorktreeIDs: @Sendable ([Worktree.ID]) async -> Void
-  var loadArchivedWorktreeIDs: @Sendable () async -> [Worktree.ID]
-  var saveArchivedWorktreeIDs: @Sendable ([Worktree.ID]) async -> Void
+  var loadArchivedWorktreeDates: @Sendable () async -> [Worktree.ID: Date]
+  var saveArchivedWorktreeDates: @Sendable ([Worktree.ID: Date]) async -> Void
   var loadRepositoryOrderIDs: @Sendable () async -> [Repository.ID]
   var saveRepositoryOrderIDs: @Sendable ([Repository.ID]) async -> Void
   var loadWorktreeOrderByRepository: @Sendable () async -> [Repository.ID: [Worktree.ID]]
@@ -40,14 +43,29 @@ extension RepositoryPersistenceClient: DependencyKey {
           $0 = ids
         }
       },
-      loadArchivedWorktreeIDs: {
-        @Shared(.appStorage("archivedWorktreeIDs")) var archived: [Worktree.ID] = []
-        return RepositoryPathNormalizer.normalize(archived)
+      loadArchivedWorktreeDates: {
+        let logger = SupaLogger("RepositoryPersistence")
+        @Shared(.appStorage(archivedWorktreeDatesStorageKey)) var dates: [Worktree.ID: Date] = [:]
+        guard dates.isEmpty else {
+          return RepositoryPathNormalizer.normalizeDictionaryKeys(dates)
+        }
+        // Migrate from legacy key.
+        @Shared(.appStorage("archivedWorktreeIDs")) var legacyIDs: [Worktree.ID] = []
+        guard !legacyIDs.isEmpty else { return [:] }
+        let now = Date()
+        var migrated: [Worktree.ID: Date] = [:]
+        for id in RepositoryPathNormalizer.normalize(legacyIDs) {
+          migrated[id] = now
+        }
+        logger.info("Migrating \(migrated.count) archived worktree(s) from legacy key.")
+        $dates.withLock { $0 = migrated }
+        $legacyIDs.withLock { $0 = [] }
+        return migrated
       },
-      saveArchivedWorktreeIDs: { ids in
-        @Shared(.appStorage("archivedWorktreeIDs")) var sharedArchived: [Worktree.ID] = []
-        let normalized = RepositoryPathNormalizer.normalize(ids)
-        $sharedArchived.withLock {
+      saveArchivedWorktreeDates: { dates in
+        @Shared(.appStorage(archivedWorktreeDatesStorageKey)) var sharedDates: [Worktree.ID: Date] = [:]
+        let normalized = RepositoryPathNormalizer.normalizeDictionaryKeys(dates)
+        $sharedDates.withLock {
           $0 = normalized
         }
       },
@@ -90,8 +108,8 @@ extension RepositoryPersistenceClient: DependencyKey {
     saveRoots: { _ in },
     loadPinnedWorktreeIDs: { [] },
     savePinnedWorktreeIDs: { _ in },
-    loadArchivedWorktreeIDs: { [] },
-    saveArchivedWorktreeIDs: { _ in },
+    loadArchivedWorktreeDates: { [:] },
+    saveArchivedWorktreeDates: { _ in },
     loadRepositoryOrderIDs: { [] },
     saveRepositoryOrderIDs: { _ in },
     loadWorktreeOrderByRepository: { [:] },

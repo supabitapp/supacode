@@ -1436,7 +1436,7 @@ struct RepositoriesFeatureTests {
         id: pendingID,
         repositoryID: repository.id,
         progress: WorktreeCreationProgress(stage: .loadingLocalBranches)
-      )
+      ),
     ]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -1473,7 +1473,7 @@ struct RepositoriesFeatureTests {
           stage: .checkingRepositoryMode,
           worktreeName: "swift-otter"
         )
-      )
+      ),
     ]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -1670,16 +1670,18 @@ struct RepositoriesFeatureTests {
         addedLines: nil,
         removedLines: nil,
         pullRequest: makePullRequest(state: "MERGED")
-      )
+      ),
     ]
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
+    store.dependencies.date = .constant(fixedDate)
 
     await store.send(.requestArchiveWorktree(featureWorktree.id, repository.id))
     await store.receive(\.archiveWorktreeConfirmed)
     await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeIDs = [featureWorktree.id]
+      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
       $0.pinnedWorktreeIDs = []
       $0.worktreeOrderByRepository = [:]
       $0.selection = .worktree(mainWorktree.id)
@@ -1869,15 +1871,17 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
     state.archivingWorktreeIDs = [featureWorktree.id]
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
+    store.dependencies.date = .constant(fixedDate)
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil)) {
       $0.archivingWorktreeIDs = []
     }
     await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeIDs = [featureWorktree.id]
+      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
     }
     await store.receive(\.delegate.repositoriesChanged)
   }
@@ -2064,14 +2068,16 @@ struct RepositoriesFeatureTests {
     $repositorySettings.withLock {
       $0.archiveScript = "   \n  "
     }
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
     let store = TestStore(initialState: makeState(repositories: [repository])) {
       RepositoriesFeature()
     }
+    store.dependencies.date = .constant(fixedDate)
     store.exhaustivity = .off
 
     await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id))
     await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeIDs = [featureWorktree.id]
+      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
     }
   }
 
@@ -2775,7 +2781,7 @@ struct RepositoriesFeatureTests {
     let worktree = makeWorktree(id: "/tmp/repo/wt1", name: "wt1", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
     var initialState = makeState(repositories: [repository])
-    initialState.archivedWorktreeIDs = [worktree.id]
+    initialState.archivedWorktreeDates[worktree.id] = Date(timeIntervalSince1970: 1_000_000)
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
@@ -2868,7 +2874,7 @@ struct RepositoriesFeatureTests {
         id: removedWorktree.id,
         repositoryID: repository.id,
         progress: WorktreeCreationProgress(stage: .choosingWorktreeName)
-      )
+      ),
     ]
     initialState.pinnedWorktreeIDs = [removedWorktree.id]
     initialState.worktreeInfoByID = [
@@ -2951,7 +2957,7 @@ struct RepositoriesFeatureTests {
         id: pendingID,
         repositoryID: repository.id,
         progress: WorktreeCreationProgress(stage: .loadingLocalBranches)
-      )
+      ),
     ]
     initialState.selection = .worktree(pendingID)
     initialState.sidebarSelectedWorktreeIDs = [existingWorktree.id, pendingID]
@@ -2996,9 +3002,11 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
     state.mergedWorktreeAction = .archive
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
+    store.dependencies.date = .constant(fixedDate)
     let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
 
     await store.send(
@@ -3015,7 +3023,7 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.archiveWorktreeConfirmed)
     await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeIDs = [featureWorktree.id]
+      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
     }
     await store.receive(\.delegate.repositoriesChanged)
   }
@@ -3122,7 +3130,7 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
     state.mergedWorktreeAction = .delete
-    state.archivedWorktreeIDs = [featureWorktree.id]
+    state.archivedWorktreeDates[featureWorktree.id] = Date(timeIntervalSince1970: 1_000_000)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3673,6 +3681,283 @@ struct RepositoriesFeatureTests {
 
     await store.send(.unarchiveWorktree(worktree.id))
     expectNoDifference(store.state.archivedWorktreeIDs, [])
+  }
+
+  // MARK: - Auto-Delete Expired Archived Worktrees
+
+  @Test func autoDeleteExpiredArchivedWorktreesDeletesExpiredWorktrees() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.exhaustivity = .off
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+    await store.receive(\.deleteWorktreeConfirmed)
+  }
+
+  @Test func autoDeleteExpiredArchivedWorktreesSkipsNonExpired() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let threeDaysAgo = fixedDate.addingTimeInterval(-3 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = threeDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+  }
+
+  @Test func autoDeleteExpiredArchivedWorktreesSkipsMainWorktree() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[mainWorktree.id] = eightDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+  }
+
+  @Test func autoDeleteExpiredArchivedWorktreesSkipsAlreadyDeleting() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.deletingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+  }
+
+  @Test func autoDeleteExpiredArchivedWorktreesNoopsWhenDisabled() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+  }
+
+  @Test func setAutoDeleteDaysTriggersAutoDelete() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.exhaustivity = .off
+
+    await store.send(.setAutoDeleteArchivedWorktreesAfterDays(.sevenDays)) {
+      $0.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    }
+    await store.receive(\.autoDeleteExpiredArchivedWorktrees)
+    await store.receive(\.deleteWorktreeConfirmed)
+  }
+
+  @Test func autoDeleteExpiredArchivedWorktreesSkipsDeleteScriptInProgress() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.deleteScriptWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+  }
+
+  @Test func autoDeleteExpiredArchivedWorktreesSkipsArchivingInProgress() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.archivingWorktreeIDs = [featureWorktree.id]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+  }
+
+  @Test func autoDeleteExpiredArchivedWorktreesDeletesAtExactCutoff() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let exactlySevenDaysAgo = fixedDate.addingTimeInterval(-7 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = exactlySevenDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.exhaustivity = .off
+
+    await store.send(.autoDeleteExpiredArchivedWorktrees)
+    await store.receive(\.deleteWorktreeConfirmed)
+  }
+
+  @Test func repositoriesLoadedTriggersAutoDeleteWhenEnabled() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositoriesLoaded(
+        [repository],
+        failures: [],
+        roots: [repository.rootURL],
+        animated: false
+      )
+    )
+    await store.receive(\.autoDeleteExpiredArchivedWorktrees)
+    await store.receive(\.deleteWorktreeConfirmed)
+  }
+
+  @Test func setAutoDeleteDaysNilDoesNotTriggerAutoDelete() async {
+    let store = TestStore(initialState: makeState(repositories: [])) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAutoDeleteArchivedWorktreesAfterDays(nil))
+  }
+
+  @Test func openRepositoriesFinishedTriggersAutoDeleteWhenEnabled() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
+    var state = makeState(repositories: [repository])
+    state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.exhaustivity = .off
+
+    await store.send(
+      .openRepositoriesFinished(
+        [repository],
+        failures: [],
+        invalidRoots: [],
+        roots: [repository.rootURL]
+      )
+    )
+    await store.receive(\.autoDeleteExpiredArchivedWorktrees)
+    await store.receive(\.deleteWorktreeConfirmed)
   }
 
   // MARK: - Select Next/Previous Worktree

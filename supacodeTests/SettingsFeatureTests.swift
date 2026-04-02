@@ -502,4 +502,231 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
   }
+
+  // MARK: - Auto-Delete Archived Worktrees Setting
+
+  @Test(.dependencies) func requestAutoDeleteDaysChangeDisablingAppliesImmediately() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.requestAutoDeleteDaysChange(nil)) {
+      $0.autoDeleteArchivedWorktreesAfterDays = nil
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
+  @Test(.dependencies) func requestAutoDeleteDaysChangeIncreasingAppliesImmediately() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.requestAutoDeleteDaysChange(.fourteenDays)) {
+      $0.autoDeleteArchivedWorktreesAfterDays = .fourteenDays
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
+  @Test(.dependencies) func requestAutoDeleteDaysChangeShorteningShowsAlertWhenAffected() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .fourteenDays
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let tenDaysAgo = fixedDate.addingTimeInterval(-10 * 86400)
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = {
+      ["/tmp/repo/feature": tenDaysAgo]
+    }
+
+    await store.send(.requestAutoDeleteDaysChange(.sevenDays))
+    await store.receive(\.resolvedAutoDeleteAffectedCount) {
+      $0.alert = AlertState {
+        TextState("Delete 1 archived worktree?")
+      } actions: {
+        ButtonState(role: .destructive, action: .confirmAutoDeleteDaysChange(.sevenDays)) {
+          TextState("Delete")
+        }
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState(
+          "1 archived worktree will be deleted immediately because "
+            + "it was archived more than 7 days ago."
+        )
+      }
+    }
+  }
+
+  @Test(.dependencies) func requestAutoDeleteDaysChangeShorteningNoAffectedAppliesImmediately() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .fourteenDays
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let oneDayAgo = fixedDate.addingTimeInterval(-1 * 86400)
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = {
+      ["/tmp/repo/feature": oneDayAgo]
+    }
+
+    await store.send(.requestAutoDeleteDaysChange(.sevenDays))
+    await store.receive(\.resolvedAutoDeleteAffectedCount) {
+      $0.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
+  @Test(.dependencies) func confirmAutoDeleteDaysChangeAppliesSetting() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .fourteenDays
+    var state = SettingsFeature.State(settings: settings)
+    state.alert = AlertState {
+      TextState("Delete 1 archived worktree?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmAutoDeleteDaysChange(.threeDays)) {
+        TextState("Delete")
+      }
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("placeholder")
+    }
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.alert(.presented(.confirmAutoDeleteDaysChange(.threeDays)))) {
+      $0.alert = nil
+      $0.autoDeleteArchivedWorktreesAfterDays = .threeDays
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
+  @Test(.dependencies) func requestAutoDeleteDaysChangeShorteningShowsAlertWithPluralWording() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .fourteenDays
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let tenDaysAgo = fixedDate.addingTimeInterval(-10 * 86400)
+    let twelveDaysAgo = fixedDate.addingTimeInterval(-12 * 86400)
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = {
+      ["/tmp/repo/feature": tenDaysAgo, "/tmp/repo/bugfix": twelveDaysAgo]
+    }
+
+    await store.send(.requestAutoDeleteDaysChange(.sevenDays))
+    await store.receive(\.resolvedAutoDeleteAffectedCount) {
+      $0.alert = AlertState {
+        TextState("Delete 2 archived worktrees?")
+      } actions: {
+        ButtonState(role: .destructive, action: .confirmAutoDeleteDaysChange(.sevenDays)) {
+          TextState("Delete")
+        }
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState(
+          "2 archived worktrees will be deleted immediately because "
+            + "they were archived more than 7 days ago."
+        )
+      }
+    }
+  }
+
+  @Test(.dependencies) func requestAutoDeleteDaysChangeCancelKeepsPreviousSetting() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .fourteenDays
+    var state = SettingsFeature.State(settings: settings)
+    state.alert = AlertState {
+      TextState("Delete 1 archived worktree?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmAutoDeleteDaysChange(.sevenDays)) {
+        TextState("Delete")
+      }
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("placeholder")
+    }
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.alert(.dismiss)) {
+      $0.alert = nil
+    }
+    // No settingsChanged delegate emitted — setting stays at .fourteenDays.
+  }
+
+  @Test(.dependencies) func requestAutoDeleteDaysChangeEnablingChecksAffectedCount() async {
+    // Use a very old date so that leaked @Shared state from other tests
+    // (with normal-range dates) falls outside the cutoff and is not counted.
+    let fixedDate = Date.distantPast
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = { [:] }
+
+    await store.send(.requestAutoDeleteDaysChange(.sevenDays))
+    await store.receive(\.resolvedAutoDeleteAffectedCount) {
+      $0.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
+  // MARK: - GlobalSettings Decoding Validation
+
+  #if DEBUG
+    @Test func decodingAutoDeleteAcceptsZeroInDebug() throws {
+      let json = try makeGlobalSettingsJSON(autoDeleteDays: 0)
+      let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+      #expect(settings.autoDeleteArchivedWorktreesAfterDays == .immediately)
+    }
+  #else
+    @Test func decodingAutoDeleteRejectsZero() throws {
+      let json = try makeGlobalSettingsJSON(autoDeleteDays: 0)
+      let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+      #expect(settings.autoDeleteArchivedWorktreesAfterDays == nil)
+    }
+  #endif
+
+  @Test func decodingAutoDeleteRejectsNegative() throws {
+    let json = try makeGlobalSettingsJSON(autoDeleteDays: -5)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+    #expect(settings.autoDeleteArchivedWorktreesAfterDays == nil)
+  }
+
+  @Test func decodingAutoDeleteRejectsUnrecognizedPositive() throws {
+    let json = try makeGlobalSettingsJSON(autoDeleteDays: 99)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+    #expect(settings.autoDeleteArchivedWorktreesAfterDays == nil)
+  }
+
+  @Test func decodingAutoDeleteAcceptsValidPeriod() throws {
+    let json = try makeGlobalSettingsJSON(autoDeleteDays: 7)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+    #expect(settings.autoDeleteArchivedWorktreesAfterDays == .sevenDays)
+  }
+
+  private func makeGlobalSettingsJSON(autoDeleteDays: Int) throws -> Data {
+    let base = GlobalSettings.default
+    let encoded = try JSONEncoder().encode(base)
+    var dict = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+    dict["autoDeleteArchivedWorktreesAfterDays"] = autoDeleteDays
+    return try JSONSerialization.data(withJSONObject: dict)
+  }
 }
