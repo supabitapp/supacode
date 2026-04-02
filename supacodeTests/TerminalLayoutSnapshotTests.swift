@@ -86,7 +86,7 @@ struct TerminalLayoutSnapshotTests {
           tintColor: nil,
           layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: "/home")),
           focusedLeafIndex: 0
-        ),
+        )
       ],
       selectedTabIndex: 0
     )

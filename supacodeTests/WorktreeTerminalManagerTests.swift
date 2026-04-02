@@ -744,7 +744,7 @@ struct WorktreeTerminalManagerTests {
             )
           ),
           focusedLeafIndex: 0
-        ),
+        )
       ],
       selectedTabIndex: 0
     )
@@ -774,7 +774,7 @@ struct WorktreeTerminalManagerTests {
             )
           ),
           focusedLeafIndex: 0
-        ),
+        )
       ],
       selectedTabIndex: 0
     )
