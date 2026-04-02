@@ -263,7 +263,7 @@ final class WorktreeTerminalState {
 
   private func applySurfaceActivity() {
     let selectedTabId = tabManager.selectedTabId
-    var surfaceToFocus: GhosttySurfaceView?
+    let firstResponderSurfaceID = currentFirstResponderSurfaceID()
     for (tabId, tree) in trees {
       let focusedId = focusedSurfaceIdByTab[tabId]
       let isSelectedTab = (tabId == selectedTabId)
@@ -275,18 +275,24 @@ final class WorktreeTerminalState {
           windowIsVisible: lastWindowIsVisible == true,
           windowIsKey: lastWindowIsKey == true,
           focusedSurfaceID: focusedId,
+          firstResponderSurfaceID: firstResponderSurfaceID,
           surfaceID: surface.id
         )
         surface.setOcclusion(activity.isVisible)
         surface.focusDidChange(activity.isFocused)
-        if activity.isFocused {
-          surfaceToFocus = surface
-        }
       }
     }
-    if let surfaceToFocus, surfaceToFocus.window?.firstResponder is GhosttySurfaceView {
-      surfaceToFocus.window?.makeFirstResponder(surfaceToFocus)
-    }
+  }
+
+  private func currentFirstResponderSurfaceID() -> UUID? {
+    let selectedWindow =
+      tabManager.selectedTabId
+      .flatMap { trees[$0] }
+      .flatMap { tree in
+        tree.leaves().compactMap(\.window).first
+      }
+    let window = selectedWindow ?? surfaces.values.compactMap(\.window).first
+    return (window?.firstResponder as? GhosttySurfaceView)?.id
   }
 
   static func surfaceActivity(
@@ -295,10 +301,15 @@ final class WorktreeTerminalState {
     windowIsVisible: Bool,
     windowIsKey: Bool,
     focusedSurfaceID: UUID?,
+    firstResponderSurfaceID: UUID?,
     surfaceID: UUID
   ) -> SurfaceActivity {
     let isVisible = isSurfaceVisibleInTree && isSelectedTab && windowIsVisible
-    let isFocused = isVisible && windowIsKey && focusedSurfaceID == surfaceID
+    let isFocused =
+      isVisible
+      && windowIsKey
+      && focusedSurfaceID == surfaceID
+      && firstResponderSurfaceID == surfaceID
     return SurfaceActivity(isVisible: isVisible, isFocused: isFocused)
   }
 
@@ -949,6 +960,7 @@ final class WorktreeTerminalState {
     view.onFocusChange = { [weak self, weak view] focused in
       guard let self, let view, focused else { return }
       self.focusedSurfaceIdByTab[tabId] = view.id
+      self.syncFocusIfNeeded()
       self.markNotificationsRead(forSurfaceID: view.id)
       self.updateTabTitle(for: tabId)
       self.emitFocusChangedIfNeeded(view.id)

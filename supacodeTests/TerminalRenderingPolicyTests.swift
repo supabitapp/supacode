@@ -13,6 +13,7 @@ struct TerminalRenderingPolicyTests {
       windowIsVisible: true,
       windowIsKey: true,
       focusedSurfaceID: focusedID,
+      firstResponderSurfaceID: focusedID,
       surfaceID: focusedID
     )
     #expect(activity.isVisible)
@@ -26,6 +27,7 @@ struct TerminalRenderingPolicyTests {
       windowIsVisible: true,
       windowIsKey: true,
       focusedSurfaceID: UUID(),
+      firstResponderSurfaceID: UUID(),
       surfaceID: UUID()
     )
     #expect(activity.isVisible)
@@ -40,6 +42,7 @@ struct TerminalRenderingPolicyTests {
       windowIsVisible: true,
       windowIsKey: false,
       focusedSurfaceID: surfaceID,
+      firstResponderSurfaceID: surfaceID,
       surfaceID: surfaceID
     )
     #expect(activity.isVisible)
@@ -54,6 +57,7 @@ struct TerminalRenderingPolicyTests {
       windowIsVisible: false,
       windowIsKey: true,
       focusedSurfaceID: surfaceID,
+      firstResponderSurfaceID: surfaceID,
       surfaceID: surfaceID
     )
     #expect(!activity.isVisible)
@@ -68,6 +72,7 @@ struct TerminalRenderingPolicyTests {
       windowIsVisible: true,
       windowIsKey: true,
       focusedSurfaceID: surfaceID,
+      firstResponderSurfaceID: surfaceID,
       surfaceID: surfaceID
     )
     #expect(!activity.isVisible)
@@ -82,10 +87,56 @@ struct TerminalRenderingPolicyTests {
       windowIsVisible: true,
       windowIsKey: true,
       focusedSurfaceID: surfaceID,
+      firstResponderSurfaceID: surfaceID,
       surfaceID: surfaceID
     )
     #expect(!activity.isVisible)
     #expect(!activity.isFocused)
+  }
+
+  @Test func surfaceActivityRequiresTerminalFirstResponderToMatchFocusIntent() {
+    let intendedSurfaceID = UUID()
+    let activity = WorktreeTerminalState.surfaceActivity(
+      isSurfaceVisibleInTree: true,
+      isSelectedTab: true,
+      windowIsVisible: true,
+      windowIsKey: true,
+      focusedSurfaceID: intendedSurfaceID,
+      firstResponderSurfaceID: nil,
+      surfaceID: intendedSurfaceID
+    )
+
+    #expect(activity.isVisible)
+    #expect(!activity.isFocused)
+  }
+
+  @Test func worktreeSwitchWithoutTerminalAutoFocusKeepsAllVisiblePanesUnfocused() {
+    let intendedSurfaceID = UUID()
+    let siblingSurfaceID = UUID()
+
+    let intendedActivity = WorktreeTerminalState.surfaceActivity(
+      isSurfaceVisibleInTree: true,
+      isSelectedTab: true,
+      windowIsVisible: true,
+      windowIsKey: true,
+      focusedSurfaceID: intendedSurfaceID,
+      firstResponderSurfaceID: nil,
+      surfaceID: intendedSurfaceID
+    )
+    let siblingActivity = WorktreeTerminalState.surfaceActivity(
+      isSurfaceVisibleInTree: true,
+      isSelectedTab: true,
+      windowIsVisible: true,
+      windowIsKey: true,
+      focusedSurfaceID: intendedSurfaceID,
+      firstResponderSurfaceID: nil,
+      surfaceID: siblingSurfaceID
+    )
+
+    #expect(intendedActivity.isVisible)
+    #expect(!intendedActivity.isFocused)
+    #expect(siblingActivity.isVisible)
+    #expect(!siblingActivity.isFocused)
   }
 
   @Test func tabContentStackReturnsSelectedTabWhenItExists() {
