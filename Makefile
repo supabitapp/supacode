@@ -7,12 +7,11 @@ MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
 
 # Derived values (DO NOT TOUCH).
-CURRENT_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
-CURRENT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(CURRENT_MAKEFILE_PATH)))
-GHOSTTY_XCFRAMEWORK_PATH := $(CURRENT_MAKEFILE_DIR)/Frameworks/GhosttyKit.xcframework
-GHOSTTY_RESOURCE_PATH := $(CURRENT_MAKEFILE_DIR)/Resources/ghostty
-GHOSTTY_TERMINFO_PATH := $(CURRENT_MAKEFILE_DIR)/Resources/terminfo
+GHOSTTY_XCFRAMEWORK_PATH := Frameworks/GhosttyKit.xcframework
+GHOSTTY_RESOURCE_PATH := Resources/ghostty
+GHOSTTY_TERMINFO_PATH := Resources/terminfo
 GHOSTTY_BUILD_OUTPUTS := $(GHOSTTY_XCFRAMEWORK_PATH) $(GHOSTTY_RESOURCE_PATH) $(GHOSTTY_TERMINFO_PATH)
+PROJECT_FILE_PATH := supacode.xcodeproj/project.pbxproj
 SPM_CACHE_DIR := /tmp/supacode-spm-cache/SourcePackages
 VERSION ?=
 BUILD ?=
@@ -23,16 +22,16 @@ XCODEBUILD_FLAGS ?=
 help:  # Display this help.
 	@-+echo "Run make with one of the following targets:"
 	@-+echo
-	@-+grep -Eh "^[a-z-]+:.*#" "$(CURRENT_MAKEFILE_PATH)" | sed -E 's/^(.*:)(.*#+)(.*)/  \1 @@@ \3 /' | column -t -s "@@@"
+	@-+grep -Eh "^[a-z-]+:.*#" Makefile | sed -E 's/^(.*:)(.*#+)(.*)/  \1 @@@ \3 /' | column -t -s "@@@"
 
 build-ghostty-xcframework: $(GHOSTTY_BUILD_OUTPUTS) # Build ghostty framework
 
 $(GHOSTTY_BUILD_OUTPUTS):
-	@cd "$(CURRENT_MAKEFILE_DIR)/ThirdParty/ghostty" && mise exec -- zig build -Doptimize=ReleaseFast -Demit-xcframework=true -Dsentry=false
+	@cd ThirdParty/ghostty && mise exec -- zig build -Doptimize=ReleaseFast -Demit-xcframework=true -Dsentry=false
 	rsync -a ThirdParty/ghostty/macos/GhosttyKit.xcframework Frameworks
-	@src="$(CURRENT_MAKEFILE_DIR)/ThirdParty/ghostty/zig-out/share/ghostty"; \
+	@src="ThirdParty/ghostty/zig-out/share/ghostty"; \
 	dst="$(GHOSTTY_RESOURCE_PATH)"; \
-	terminfo_src="$(CURRENT_MAKEFILE_DIR)/ThirdParty/ghostty/zig-out/share/terminfo"; \
+	terminfo_src="ThirdParty/ghostty/zig-out/share/terminfo"; \
 	terminfo_dst="$(GHOSTTY_TERMINFO_PATH)"; \
 	mkdir -p "$$dst"; \
 	rsync -a --delete "$$src/" "$$dst/"; \
@@ -87,7 +86,7 @@ log-stream: # Stream logs from the app via log stream
 
 bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUILD=123])
 	@if [ -z "$(VERSION)" ]; then \
-		current="$$(/usr/bin/awk -F' = ' '/MARKETING_VERSION = [0-9.]+;/{gsub(/;/,"",$$2);print $$2; exit}' "$(CURRENT_MAKEFILE_DIR)/supacode.xcodeproj/project.pbxproj")"; \
+		current="$$(/usr/bin/awk -F' = ' '/MARKETING_VERSION = [0-9.]+;/{gsub(/;/,"",$$2);print $$2; exit}' "$(PROJECT_FILE_PATH)")"; \
 		if [ -z "$$current" ]; then \
 			echo "error: MARKETING_VERSION not found"; \
 			exit 1; \
@@ -104,7 +103,7 @@ bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUIL
 		version="$(VERSION)"; \
 	fi; \
 	if [ -z "$(BUILD)" ]; then \
-		build="$$(/usr/bin/awk -F' = ' '/CURRENT_PROJECT_VERSION = [0-9]+;/{gsub(/;/,"",$$2);print $$2; exit}' "$(CURRENT_MAKEFILE_DIR)/supacode.xcodeproj/project.pbxproj")"; \
+		build="$$(/usr/bin/awk -F' = ' '/CURRENT_PROJECT_VERSION = [0-9]+;/{gsub(/;/,"",$$2);print $$2; exit}' "$(PROJECT_FILE_PATH)")"; \
 		if [ -z "$$build" ]; then \
 			echo "error: CURRENT_PROJECT_VERSION not found"; \
 			exit 1; \
@@ -118,10 +117,10 @@ bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUIL
 		build="$(BUILD)"; \
 	fi; \
 	sed -i '' "s/MARKETING_VERSION = [0-9.]*;/MARKETING_VERSION = $$version;/g" \
-		"$(CURRENT_MAKEFILE_DIR)/supacode.xcodeproj/project.pbxproj"; \
+		"$(PROJECT_FILE_PATH)"; \
 	sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $$build;/g" \
-		"$(CURRENT_MAKEFILE_DIR)/supacode.xcodeproj/project.pbxproj"; \
-	git add "$(CURRENT_MAKEFILE_DIR)/supacode.xcodeproj/project.pbxproj"; \
+		"$(PROJECT_FILE_PATH)"; \
+	git add "$(PROJECT_FILE_PATH)"; \
 	git commit -m "bump v$$version"; \
 	git tag -s "v$$version" -m "v$$version"; \
 	echo "version bumped to $$version (build $$build), tagged v$$version"
