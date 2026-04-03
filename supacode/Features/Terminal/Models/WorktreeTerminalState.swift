@@ -25,6 +25,8 @@ final class WorktreeTerminalState {
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   var tabIsRunningById: [TerminalTabID: Bool] = [:]
+  private var tmuxActiveTabIds: Set<TerminalTabID> = []
+  private(set) var shouldHideTabBar = false
   private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:]
   private var blockingScriptLaunchDirectories: [TerminalTabID: URL] = [:]
   private var lastBlockingScriptTabByKind: [BlockingScriptKind: TerminalTabID] = [:]
@@ -68,6 +70,32 @@ final class WorktreeTerminalState {
 
   func isBlockingScriptRunning(kind: BlockingScriptKind) -> Bool {
     blockingScripts.values.contains(kind)
+  }
+
+  private func setTmuxActive(_ active: Bool, for tabId: TerminalTabID) {
+    if active {
+      tmuxActiveTabIds.insert(tabId)
+    } else {
+      tmuxActiveTabIds.remove(tabId)
+    }
+    updateShouldHideTabBar()
+  }
+
+  private func updateShouldHideTabBar() {
+    @Shared(.settingsFile) var settingsFile
+    shouldHideTabBar =
+      settingsFile.global.hideTmuxTabBar
+      && tabManager.tabs.count == 1
+      && (tabManager.tabs.first.map { tmuxActiveTabIds.contains($0.id) } ?? false)
+  }
+
+  func refreshTmuxTabBarVisibility() {
+    updateShouldHideTabBar()
+  }
+
+  private func titleIndicatesTmux(_ title: String) -> Bool {
+    let trimmed = title.trimmingCharacters(in: .whitespaces)
+    return trimmed == "tmux" || trimmed.hasPrefix("tmux ")
   }
 
   func ensureInitialTab(focusing: Bool) {
@@ -224,6 +252,7 @@ final class WorktreeTerminalState {
       context: creation.context
     )
     tabIsRunningById[tabId] = false
+    updateShouldHideTabBar()
     if creation.focusing, let surface = tree.root?.leftmostLeaf() {
       focusSurface(surface, in: tabId)
     }
@@ -360,12 +389,14 @@ final class WorktreeTerminalState {
   func closeTab(_ tabId: TerminalTabID) {
     let closedBlockingKind = blockingScripts.removeValue(forKey: tabId)
     cleanupBlockingScriptLaunchDirectory(for: tabId)
+    tmuxActiveTabIds.remove(tabId)
     // Clear lingering tab tracking for completed or non-blocking tabs.
     for (kind, tracked) in lastBlockingScriptTabByKind where tracked == tabId {
       lastBlockingScriptTabByKind.removeValue(forKey: kind)
     }
     removeTree(for: tabId)
     tabManager.closeTab(tabId)
+    updateShouldHideTabBar()
     if let selected = tabManager.selectedTabId {
       focusSurface(in: selected)
     } else {
@@ -903,6 +934,9 @@ final class WorktreeTerminalState {
       if self.focusedSurfaceIdByTab[tabId] == view.id {
         self.tabManager.updateTitle(tabId, title: title)
       }
+      if self.titleIndicatesTmux(title) {
+        self.setTmuxActive(true, for: tabId)
+      }
     }
     view.bridge.onSplitAction = { [weak self, weak view] action in
       guard let self, let view else { return false }
@@ -932,6 +966,9 @@ final class WorktreeTerminalState {
     }
     view.bridge.onCommandFinished = { [weak self] exitCode in
       guard let self else { return }
+      if self.tmuxActiveTabIds.contains(tabId) {
+        self.setTmuxActive(false, for: tabId)
+      }
       self.handleBlockingScriptCommandFinished(tabId: tabId, exitCode: exitCode)
     }
     view.bridge.onChildExited = { [weak self] exitCode in
@@ -1190,7 +1227,9 @@ final class WorktreeTerminalState {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
       cleanupBlockingScriptLaunchDirectory(for: tabId)
+      tmuxActiveTabIds.remove(tabId)
       tabManager.closeTab(tabId)
+      updateShouldHideTabBar()
       if let kind = blockingScripts.removeValue(forKey: tabId) {
         lastBlockingScriptTabByKind.removeValue(forKey: kind)
 

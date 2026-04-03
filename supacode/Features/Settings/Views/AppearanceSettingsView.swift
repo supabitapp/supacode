@@ -76,6 +76,12 @@ struct AppearanceSettingsView: View {
       } footer: {
         Text("Changes to Analytics require Supacode to restart before they take effect.")
       }
+      Section("Advanced") {
+        Toggle(isOn: $store.hideTmuxTabBar) {
+          Text("Hide Tab Bar for `tmux`")
+          Text("Applies when `tmux` is the only running tab.")
+        }
+      }
     }
     .formStyle(.grouped)
     .padding(.top, -20)

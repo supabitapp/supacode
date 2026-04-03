@@ -23,6 +23,7 @@ struct TerminalClient {
     case prune(Set<Worktree.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
+    case refreshTmuxTabBarVisibility
   }
 
   enum Event: Equatable {
