@@ -122,7 +122,7 @@ struct SettingsFeatureAgentHookTests {
     } withDependencies: {
       $0[ClaudeSettingsClient.self].checkInstalled = { progress in
         let key = progress ? "claudeProgress" : "claudeNotifications"
-        startedChecks.withValue { $0.insert(key) }
+        _ = startedChecks.withValue { $0.insert(key) }
         await withCheckedContinuation { continuation in
           continuations.withValue { $0.append(continuation) }
         }
@@ -130,7 +130,7 @@ struct SettingsFeatureAgentHookTests {
       }
       $0[CodexSettingsClient.self].checkInstalled = { progress in
         let key = progress ? "codexProgress" : "codexNotifications"
-        startedChecks.withValue { $0.insert(key) }
+        _ = startedChecks.withValue { $0.insert(key) }
         await withCheckedContinuation { continuation in
           continuations.withValue { $0.append(continuation) }
         }

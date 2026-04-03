@@ -35,7 +35,7 @@ struct AppFeatureTerminalSetupScriptTests {
       $0.repositories.pendingSetupScriptWorktreeIDs.remove(worktree.id)
     }
     await store.finish()
-    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true)])
+    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true, id: nil)])
   }
 
   @Test(.dependencies) func newTerminalWithoutSetupScriptDoesNotConsume() async {
@@ -61,7 +61,7 @@ struct AppFeatureTerminalSetupScriptTests {
 
     await store.send(.newTerminal)
     await store.finish()
-    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: false)])
+    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: false, id: nil)])
   }
 
   @Test(.dependencies) func tabCreatedDoesNotConsumeSetupScript() async {

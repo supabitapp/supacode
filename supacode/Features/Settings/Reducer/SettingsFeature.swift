@@ -29,6 +29,7 @@ struct SettingsFeature {
     var terminalThemeSyncEnabled: Bool
     var restoreTerminalLayoutEnabled: Bool
     var hideSingleTabBar: Bool
+    var allowArbitraryDeeplinkInput: Bool
     var defaultWorktreeBaseDirectoryPath: String
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
@@ -68,6 +69,7 @@ struct SettingsFeature {
       terminalThemeSyncEnabled = settings.terminalThemeSyncEnabled
       restoreTerminalLayoutEnabled = settings.restoreTerminalLayoutEnabled
       hideSingleTabBar = settings.hideSingleTabBar
+      allowArbitraryDeeplinkInput = settings.allowArbitraryDeeplinkInput
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
       shortcutOverrides = settings.shortcutOverrides
       defaultWorktreeBaseDirectoryPath =
@@ -99,6 +101,7 @@ struct SettingsFeature {
         terminalThemeSyncEnabled: terminalThemeSyncEnabled,
         restoreTerminalLayoutEnabled: restoreTerminalLayoutEnabled,
         hideSingleTabBar: hideSingleTabBar,
+        allowArbitraryDeeplinkInput: allowArbitraryDeeplinkInput,
         defaultWorktreeBaseDirectoryPath: SupacodePaths.normalizedWorktreeBaseDirectoryPath(
           defaultWorktreeBaseDirectoryPath
         ),
@@ -114,6 +117,7 @@ struct SettingsFeature {
     case repositoriesChanged(IdentifiedArrayOf<Repository>)
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
+    case setAllowArbitraryDeeplinkInput(Bool)
     case showNotificationPermissionAlert(errorMessage: String?)
     case updateShortcut(id: AppShortcutID, override: AppShortcutOverride?)
     case toggleShortcutEnabled(id: AppShortcutID, enabled: Bool)
@@ -223,6 +227,11 @@ struct SettingsFeature {
 
       case .setSystemNotificationsEnabled(let isEnabled):
         state.systemNotificationsEnabled = isEnabled
+        state.syncGlobalDefaults(from: state.globalSettings)
+        return persist(state)
+
+      case .setAllowArbitraryDeeplinkInput(let isEnabled):
+        state.allowArbitraryDeeplinkInput = isEnabled
         state.syncGlobalDefaults(from: state.globalSettings)
         return persist(state)
 

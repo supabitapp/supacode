@@ -31,8 +31,19 @@ private enum GhosttyCLI {
 
 @MainActor
 final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
-  var appStore: StoreOf<AppFeature>?
+  var appStore: StoreOf<AppFeature>? {
+    didSet {
+      guard let appStore else { return }
+      // Replay any deeplinks that arrived before the store was initialized.
+      let buffered = bufferedDeeplinkURLs
+      bufferedDeeplinkURLs.removeAll()
+      for url in buffered {
+        appStore.send(.deeplinkReceived(url))
+      }
+    }
+  }
   var terminalManager: WorktreeTerminalManager?
+  private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
     terminalManager?.saveAllLayoutSnapshots()
@@ -55,6 +66,17 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     if flag { return true }
     return showMainWindow(from: sender) ? false : true
+  }
+
+  func application(_ application: NSApplication, open urls: [URL]) {
+    guard let appStore else {
+      SupaLogger("Deeplink").warning("Deeplink received before store initialized, buffering: \(urls)")
+      bufferedDeeplinkURLs.append(contentsOf: urls)
+      return
+    }
+    for url in urls {
+      appStore.send(.deeplinkReceived(url))
+    }
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -167,6 +189,12 @@ struct SupacodeApp: App {
         },
         events: {
           terminalManager.eventStream()
+        },
+        tabExists: { worktreeID, tabID in
+          terminalManager.tabExists(worktreeID: worktreeID, tabID: tabID)
+        },
+        surfaceExists: { worktreeID, tabID, surfaceID in
+          terminalManager.surfaceExists(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID)
         }
       )
       values.worktreeInfoWatcher = WorktreeInfoWatcherClient(
@@ -191,7 +219,9 @@ struct SupacodeApp: App {
           .environment(commandKeyObserver)
       }
       .openSettingsOnSelection(store: store)
+      .openDeeplinkCheatsheetOnRequest(store: store)
     }
+    .handlesExternalEvents(matching: [])
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)
     .commands {
@@ -227,6 +257,8 @@ struct SupacodeApp: App {
         }
       }
       CommandGroup(replacing: .help) {
+        DeeplinkCheatsheetMenuButton()
+        Divider()
         Button("Submit GitHub Issue") {
           guard let url = URL(string: "https://github.com/supabitapp/supacode/issues/new") else { return }
           NSWorkspace.shared.open(url)
@@ -248,8 +280,16 @@ struct SupacodeApp: App {
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
     }
+    .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
     .defaultSize(width: 800, height: 600)
+    .restorationBehavior(.disabled)
+    Window("Deeplink Reference", id: WindowID.deeplinkCheatsheet) {
+      DeeplinkCheatsheetView()
+    }
+    .handlesExternalEvents(matching: [])
+    .windowToolbarStyle(.unified)
+    .defaultSize(width: 720, height: 640)
     .restorationBehavior(.disabled)
   }
 }

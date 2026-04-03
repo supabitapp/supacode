@@ -38,7 +38,7 @@ struct SplitTreeTests {
     let tree = try SplitTree(view: first)
       .inserting(view: second, at: first, direction: .right)
 
-    let zoomed = tree.settingZoomed(try #require(tree.find(id: second.id)))
+    let zoomed = tree.settingZoomed(tree.find(id: second.id)!)
     let visibleLeaves = zoomed.visibleLeaves()
 
     #expect(visibleLeaves.count == 1)

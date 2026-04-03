@@ -4,6 +4,8 @@ import Foundation
 import PostHog
 import SwiftUI
 
+private nonisolated let deeplinkLogger = SupaLogger("Deeplink")
+
 private enum CancelID {
   static let periodicRefresh = "app.periodicRefresh"
 }
@@ -22,7 +24,10 @@ struct AppFeature {
     var isRunScriptPromptPresented = false
     var notificationIndicatorCount: Int = 0
     var lastKnownSystemNotificationsEnabled: Bool
+    var pendingDeeplinks: [Deeplink] = []
+    var isDeeplinkCheatsheetRequested = false
     @Presents var alert: AlertState<Alert>?
+    @Presents var deeplinkInputConfirmation: DeeplinkInputConfirmationFeature.State?
 
     init(
       repositories: RepositoriesFeature.State = .init(),
@@ -61,7 +66,11 @@ struct AppFeature {
     case navigateSearchPrevious
     case endSearch
     case systemNotificationsPermissionFailed(errorMessage: String?)
+    case deeplinkReceived(URL)
+    case deeplink(Deeplink)
+    case deeplinkCheatsheetOpened
     case alert(PresentationAction<Alert>)
+    case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
     case terminalEvent(TerminalClient.Event)
   }
 
@@ -71,6 +80,7 @@ struct AppFeature {
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
+  @Dependency(DeeplinkClient.self) private var deeplinkClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(WorkspaceClient.self) private var workspaceClient
   @Dependency(NotificationSoundClient.self) private var notificationSoundClient
@@ -191,22 +201,7 @@ struct AppFeature {
         state.repositories.runScriptWorktreeIDs.formIntersection(ids)
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(from: repositories)
         let worktrees = state.repositories.worktreesForInfoWatcher()
-        if case .repository(let repositoryID)? = state.settings.selection,
-          !repositories.contains(where: { $0.id == repositoryID })
-        {
-          return .merge(
-            .send(.settings(.repositoriesChanged(repositories))),
-            .send(.settings(.setSelection(.general))),
-            .send(.commandPalette(.pruneRecency(recencyIDs))),
-            .run { _ in
-              await terminalClient.send(.prune(ids))
-            },
-            .run { _ in
-              await worktreeInfoWatcher.send(.setWorktrees(worktrees))
-            }
-          )
-        }
-        return .merge(
+        var effects: [Effect<Action>] = [
           .send(.settings(.repositoriesChanged(repositories))),
           .send(.commandPalette(.pruneRecency(recencyIDs))),
           .run { _ in
@@ -214,8 +209,21 @@ struct AppFeature {
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
+          },
+        ]
+        if case .repository(let repositoryID)? = state.settings.selection,
+          !repositories.contains(where: { $0.id == repositoryID })
+        {
+          effects.append(.send(.settings(.setSelection(.general))))
+        }
+        if !state.pendingDeeplinks.isEmpty {
+          let pending = state.pendingDeeplinks
+          state.pendingDeeplinks.removeAll()
+          for deeplink in pending {
+            effects.append(.send(.deeplink(deeplink)))
           }
-        )
+        }
+        return .merge(effects)
 
       case .repositories(.delegate(.openRepositorySettings(let repositoryID))):
         guard state.repositories.repositories.contains(where: { $0.id == repositoryID }) else {
@@ -231,7 +239,7 @@ struct AppFeature {
       case .repositories(.delegate(.selectTerminalTab(let worktreeID, let tabId))):
         guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
         return .run { _ in
-          await terminalClient.send(.selectTab(worktree, tabId: tabId))
+          await terminalClient.send(.selectTab(worktree, tabID: tabId))
         }
 
       case .settings(.setSelection(let selection)):
@@ -563,6 +571,36 @@ struct AppFeature {
         state.selectedRunScript = settings.runScript
         return .none
 
+      case .deeplinkReceived(let url):
+        let deeplinkClient = deeplinkClient
+        guard let parsed = deeplinkClient.parse(url) else {
+          deeplinkLogger.warning("Failed to parse deeplink URL: \(url)")
+          if url.scheme == "supacode" {
+            state.alert = AlertState {
+              TextState("Invalid deeplink")
+            } actions: {
+              ButtonState(role: .cancel, action: .dismiss) {
+                TextState("OK")
+              }
+            } message: {
+              TextState("The deeplink URL could not be recognized: \(url.absoluteString)")
+            }
+          }
+          return .none
+        }
+        guard state.repositories.isInitialLoadComplete else {
+          state.pendingDeeplinks.append(parsed)
+          return .none
+        }
+        return .send(.deeplink(parsed))
+
+      case .deeplink(let deeplink):
+        return handleDeeplink(deeplink, state: &state)
+
+      case .deeplinkCheatsheetOpened:
+        state.isDeeplinkCheatsheetRequested = false
+        return .none
+
       case .systemNotificationsPermissionFailed(let errorMessage):
         return .concatenate(
           .send(.settings(.setSystemNotificationsEnabled(false))),
@@ -582,6 +620,39 @@ struct AppFeature {
 
       case .alert:
         return .none
+
+      case .deeplinkInputConfirmation(
+        .presented(.delegate(.confirm(let worktreeID, let confirmedAction, let alwaysAllow)))):
+        state.deeplinkInputConfirmation = nil
+        // The initial deeplink dispatch already selected the worktree via
+        // `handleWorktreeDeeplink`. Re-dispatch only the action effect, skipping
+        // the redundant select.
+        let actionEffect = worktreeActionEffect(
+          worktreeID: worktreeID,
+          action: confirmedAction,
+          state: &state,
+          bypassConfirmation: true,
+        )
+        guard alwaysAllow else { return actionEffect }
+        return .concatenate(
+          .send(.settings(.setAllowArbitraryDeeplinkInput(true))),
+          actionEffect,
+        )
+
+      case .deeplinkInputConfirmation(.presented(.delegate(.cancel))):
+        state.deeplinkInputConfirmation = nil
+        return .none
+
+      case .deeplinkInputConfirmation:
+        return .none
+
+      case .repositories(.repositoriesLoaded), .repositories(.openRepositoriesFinished):
+        // Flush pending deeplinks after initial load completes, even when repositoriesChanged
+        // delegate does not fire (e.g., zero repos loaded with no state change).
+        guard !state.pendingDeeplinks.isEmpty else { return .none }
+        let pending = state.pendingDeeplinks
+        state.pendingDeeplinks.removeAll()
+        return .merge(pending.map { .send(.deeplink($0)) })
 
       case .repositories:
         return .none
@@ -725,5 +796,410 @@ struct AppFeature {
     Scope(state: \.commandPalette, action: \.commandPalette) {
       CommandPaletteFeature()
     }
+    .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
+      DeeplinkInputConfirmationFeature()
+    }
+  }
+
+  // MARK: - Deeplink handling.
+
+  // MARK: Deeplink dispatch.
+
+  private func handleDeeplink(
+    _ deeplink: Deeplink,
+    state: inout State
+  ) -> Effect<Action> {
+    switch deeplink {
+    case .open:
+      return .run { @MainActor _ in
+        let app = NSApplication.shared
+        guard let window = app.windows.first(where: { $0.identifier?.rawValue == WindowID.main })
+        else {
+          app.activate()
+          return
+        }
+        if window.isMiniaturized {
+          window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        app.activate()
+      }
+    case .help:
+      state.isDeeplinkCheatsheetRequested = true
+      return .none
+    case .worktree(let worktreeID, let action):
+      return handleWorktreeDeeplink(worktreeID: worktreeID, action: action, state: &state)
+    case .repoOpen(let path):
+      return .send(.repositories(.openRepositories([path])))
+    case .repoWorktreeNew(let repositoryID, let branch, let baseRef, let fetchOrigin):
+      guard state.repositories.repositories[id: repositoryID] != nil else {
+        deeplinkLogger.warning("Repository not found: \(repositoryID)")
+        state.alert = AlertState {
+          TextState("Repository not found")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("No repository matching the deeplink could be found.")
+        }
+        return .none
+      }
+      guard let branch else {
+        return .send(.repositories(.createRandomWorktreeInRepository(repositoryID)))
+      }
+      return .send(
+        .repositories(
+          .createWorktreeInRepository(
+            repositoryID: repositoryID,
+            nameSource: .explicit(branch),
+            baseRefSource: baseRef.map { .explicit($0) } ?? .repositorySetting,
+            fetchOrigin: fetchOrigin,
+          )
+        )
+      )
+    case .settings(let section):
+      return handleSettingsDeeplink(section: section)
+    case .settingsRepo(let repositoryID):
+      guard state.repositories.repositories[id: repositoryID] != nil else {
+        deeplinkLogger.warning("Repository not found for settings deeplink: \(repositoryID)")
+        state.alert = AlertState {
+          TextState("Repository not found")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("No repository matching the deeplink could be found.")
+        }
+        return .none
+      }
+      return .send(.settings(.setSelection(.repository(repositoryID))))
+    }
+  }
+
+  // MARK: Worktree deeplink dispatch.
+
+  private func handleWorktreeDeeplink(
+    worktreeID rawWorktreeID: Worktree.ID,
+    action: Deeplink.WorktreeAction,
+    state: inout State,
+    bypassConfirmation: Bool = false
+  ) -> Effect<Action> {
+    let worktreeID = resolveWorktreeID(rawWorktreeID, state: state)
+    guard state.repositories.worktree(for: worktreeID) != nil else {
+      deeplinkLogger.warning("Worktree not found: \(rawWorktreeID)")
+      state.alert = AlertState {
+        TextState("Worktree not found")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("No worktree matching the deeplink could be found. It may have been removed.")
+      }
+      return .none
+    }
+
+    let selectEffect: Effect<Action> =
+      .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
+    let actionEffect = worktreeActionEffect(
+      worktreeID: worktreeID,
+      action: action,
+      state: &state,
+      bypassConfirmation: bypassConfirmation,
+    )
+    return .concatenate(selectEffect, actionEffect)
+  }
+
+  // swiftlint:disable:next cyclomatic_complexity function_body_length
+  private func worktreeActionEffect(
+    worktreeID: Worktree.ID,
+    action: Deeplink.WorktreeAction,
+    state: inout State,
+    bypassConfirmation: Bool
+  ) -> Effect<Action> {
+    switch action {
+    case .select:
+      return .none
+    case .run:
+      return .send(.runScript)
+    case .stop:
+      return .send(.stopRunScript)
+    case .archive:
+      guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
+        return .none
+      }
+      return .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
+    case .unarchive:
+      return .send(.repositories(.unarchiveWorktree(worktreeID)))
+    case .delete:
+      return deeplinkDeleteWorktreeEffect(
+        worktreeID: worktreeID,
+        action: action,
+        state: &state,
+        bypassConfirmation: bypassConfirmation,
+      )
+    case .pin:
+      return .send(.repositories(.pinWorktree(worktreeID)))
+    case .unpin:
+      return .send(.repositories(.unpinWorktree(worktreeID)))
+    case .tab(let tabID):
+      guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .selectTab(worktree, tabID: TerminalTabID(rawValue: tabID))
+      }
+    case .tabNew(let input, let id):
+      guard let input, !input.isEmpty else {
+        return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+          .createTab(worktree, runSetupScriptIfNew: true, id: id)
+        }
+      }
+      if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
+        presentDeeplinkConfirmation(
+          worktreeID: worktreeID, message: .command(input),
+          action: action, state: &state)
+        return .none
+      }
+      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .createTabWithInput(worktree, input: input, runSetupScriptIfNew: false, id: id)
+      }
+    case .tabDestroy(let tabID):
+      guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      guard bypassConfirmation || state.settings.allowArbitraryDeeplinkInput else {
+        presentDeeplinkConfirmation(
+          worktreeID: worktreeID, message: .confirmation("Close tab \(tabID.uuidString.prefix(8))…?"),
+          action: action, state: &state)
+        return .none
+      }
+      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID))
+      }
+    case .surface(let tabID, let surfaceID, let input):
+      guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
+        return .none
+      }
+      if let input, !input.isEmpty,
+        requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
+      {
+        presentDeeplinkConfirmation(
+          worktreeID: worktreeID, message: .command(input),
+          action: action, state: &state)
+        return .none
+      }
+      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .focusSurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, input: input)
+      }
+    case .surfaceSplit(let tabID, let surfaceID, let direction, let input, let id):
+      guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
+        return .none
+      }
+      if let input, !input.isEmpty,
+        requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
+      {
+        presentDeeplinkConfirmation(
+          worktreeID: worktreeID, message: .command(input),
+          action: action, state: &state)
+        return .none
+      }
+      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .splitSurface(
+          worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
+          direction: direction, input: input, id: id)
+      }
+    case .surfaceDestroy(let tabID, let surfaceID):
+      guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
+        return .none
+      }
+      guard bypassConfirmation || state.settings.allowArbitraryDeeplinkInput else {
+        presentDeeplinkConfirmation(
+          worktreeID: worktreeID, message: .confirmation("Close surface \(surfaceID.uuidString.prefix(8))…?"),
+          action: action, state: &state)
+        return .none
+      }
+      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .destroySurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID)
+      }
+    }
+  }
+
+  private func deeplinkDeleteWorktreeEffect(
+    worktreeID: Worktree.ID,
+    action: Deeplink.WorktreeAction,
+    state: inout State,
+    bypassConfirmation: Bool
+  ) -> Effect<Action> {
+    guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "delete", state: &state) else {
+      return .none
+    }
+    if let worktree = state.repositories.worktree(for: worktreeID),
+      state.repositories.isMainWorktree(worktree)
+    {
+      state.alert = AlertState {
+        TextState("Delete not allowed")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("Deleting the main worktree is not allowed.")
+      }
+      return .none
+    }
+    let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? worktreeID
+    guard bypassConfirmation || state.settings.allowArbitraryDeeplinkInput else {
+      presentDeeplinkConfirmation(
+        worktreeID: worktreeID,
+        message: .confirmation("Delete worktree \"\(worktreeName)\"?"),
+        action: action,
+        state: &state,
+      )
+      return .none
+    }
+    return .send(.repositories(.deleteWorktreeConfirmed(worktreeID, repositoryID)))
+  }
+
+  private func resolveRepositoryID(
+    for worktreeID: Worktree.ID,
+    label: String,
+    state: inout State
+  ) -> Repository.ID? {
+    guard let repositoryID = state.repositories.repositoryID(containing: worktreeID) else {
+      deeplinkLogger.warning("Repository not found for worktree \(worktreeID) during \(label)")
+      state.alert = AlertState {
+        TextState("\(label.capitalized) failed")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("Could not resolve the repository for this worktree.")
+      }
+      return nil
+    }
+    return repositoryID
+  }
+
+  // MARK: Confirmation helpers.
+
+  /// Returns `true` when neither `bypassConfirmation` nor the allow-arbitrary setting is active.
+  private func requiresInputConfirmation(
+    state: State,
+    bypassConfirmation: Bool
+  ) -> Bool {
+    !bypassConfirmation && !state.settings.allowArbitraryDeeplinkInput
+  }
+
+  // MARK: Terminal command dispatch.
+
+  private func sendTerminalCommand(
+    worktreeID: Worktree.ID,
+    state: State,
+    command: (Worktree) -> TerminalClient.Command
+  ) -> Effect<Action> {
+    guard let worktree = state.repositories.worktree(for: worktreeID) else {
+      deeplinkLogger.warning("Worktree \(worktreeID) vanished before terminal command could be dispatched.")
+      return .none
+    }
+    let cmd = command(worktree)
+    let terminalClient = terminalClient
+    return .run { _ in await terminalClient.send(cmd) }
+  }
+
+  private func presentDeeplinkConfirmation(
+    worktreeID: Worktree.ID,
+    message: DeeplinkConfirmationMessage,
+    action: Deeplink.WorktreeAction,
+    state: inout State
+  ) {
+    let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? "Unknown"
+    let repoName = state.repositories.repositoryID(containing: worktreeID)
+      .flatMap { state.repositories.repositories[id: $0]?.name }
+    state.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
+      worktreeID: worktreeID,
+      worktreeName: worktreeName,
+      repositoryName: repoName,
+      message: message,
+      action: action,
+    )
+  }
+
+  // MARK: Validation helpers.
+
+  /// Validates that a tab exists in the given worktree, showing an alert if not.
+  private func validateTab(
+    worktreeID: Worktree.ID,
+    tabID: UUID,
+    state: inout State
+  ) -> Bool {
+    guard terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: tabID)) else {
+      deeplinkLogger.warning("Tab \(tabID) not found in worktree \(worktreeID)")
+      state.alert = AlertState {
+        TextState("Tab not found")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("No tab matching the deeplink could be found. It may have been closed.")
+      }
+      return false
+    }
+    return true
+  }
+
+  /// Validates that a tab and surface exist in the given worktree, showing an alert if not.
+  private func validateSurface(
+    worktreeID: Worktree.ID,
+    tabID: UUID,
+    surfaceID: UUID,
+    state: inout State
+  ) -> Bool {
+    guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return false }
+    guard terminalClient.surfaceExists(worktreeID, TerminalTabID(rawValue: tabID), surfaceID) else {
+      deeplinkLogger.warning("Surface \(surfaceID) not found in tab \(tabID) of worktree \(worktreeID)")
+      state.alert = AlertState {
+        TextState("Surface not found")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("No surface matching the deeplink could be found. It may have been closed.")
+      }
+      return false
+    }
+    return true
+  }
+
+  /// Resolves a worktree ID, trying the raw value first then appending a trailing
+  /// slash since stored IDs derived from `standardizedFileURL` for directories include one.
+  private func resolveWorktreeID(
+    _ rawID: Worktree.ID,
+    state: State
+  ) -> Worktree.ID {
+    guard state.repositories.worktree(for: rawID) == nil else { return rawID }
+    let alternate = rawID + "/"
+    guard state.repositories.worktree(for: alternate) != nil else { return rawID }
+    return alternate
+  }
+
+  // MARK: Settings deeplink.
+
+  private func handleSettingsDeeplink(section: Deeplink.DeeplinkSettingsSection?) -> Effect<Action> {
+    guard let section else {
+      return .send(.settings(.setSelection(.general)))
+    }
+    let settingsSection: SettingsSection =
+      switch section {
+      case .general: .general
+      case .notifications: .notifications
+      case .worktrees: .worktree
+      case .codingAgents: .codingAgents
+      case .shortcuts: .shortcuts
+      case .updates: .updates
+      case .github: .github
+      }
+    return .send(.settings(.setSelection(settingsSection)))
   }
 }

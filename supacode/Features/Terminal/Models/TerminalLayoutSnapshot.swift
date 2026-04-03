@@ -5,6 +5,7 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
   let selectedTabIndex: Int
 
   struct TabSnapshot: Codable, Equatable, Sendable {
+    let id: UUID?
     let title: String
     let icon: String?
     let tintColor: TerminalTabTintColor?
@@ -25,13 +26,10 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
   }
 
   struct SurfaceSnapshot: Codable, Equatable, Sendable {
+    let id: UUID?
     let workingDirectory: String?
   }
 
-  enum SplitDirection: String, Codable, Equatable, Sendable {
-    case horizontal
-    case vertical
-  }
 }
 
 extension TerminalLayoutSnapshot.LayoutNode {

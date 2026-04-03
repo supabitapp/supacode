@@ -691,11 +691,11 @@ struct WorktreeTerminalManagerTests {
     let secondTabId = tabIds[1]
 
     // Select the second tab first.
-    manager.handleCommand(.selectTab(worktree, tabId: secondTabId))
+    manager.handleCommand(.selectTab(worktree, tabID: secondTabId))
     #expect(state.tabManager.selectedTabId == secondTabId)
 
     // Select the first tab.
-    manager.handleCommand(.selectTab(worktree, tabId: firstTabId))
+    manager.handleCommand(.selectTab(worktree, tabID: firstTabId))
     #expect(state.tabManager.selectedTabId == firstTabId)
   }
 
@@ -716,7 +716,7 @@ struct WorktreeTerminalManagerTests {
     state.closeTab(tabId)
     let selectedBefore = state.tabManager.selectedTabId
 
-    manager.handleCommand(.selectTab(worktree, tabId: tabId))
+    manager.handleCommand(.selectTab(worktree, tabID: tabId))
 
     // Selection should not change.
     #expect(state.tabManager.selectedTabId == selectedBefore)
@@ -759,11 +759,13 @@ struct WorktreeTerminalManagerTests {
     TerminalLayoutSnapshot(
       tabs: [
         TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
           title: "Terminal 1",
           icon: nil,
           tintColor: nil,
           layout: .leaf(
             TerminalLayoutSnapshot.SurfaceSnapshot(
+              id: nil,
               workingDirectory: "/tmp/repo/wt-1"
             )
           ),

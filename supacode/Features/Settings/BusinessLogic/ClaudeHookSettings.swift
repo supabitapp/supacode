@@ -31,7 +31,7 @@ private nonisolated struct ClaudeProgressPayload: Encodable {
   let hooks: [String: [AgentHookGroup]] = [
     "UserPromptSubmit": [
       .init(hooks: [
-        .init(command: ClaudeHookSettings.busyOn, timeout: 10),
+        .init(command: ClaudeHookSettings.busyOn, timeout: 10)
       ]),
     ],
     "Stop": [

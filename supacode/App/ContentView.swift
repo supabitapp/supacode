@@ -72,8 +72,14 @@ struct ContentView: View {
     }
     .alert(store: repositoriesStore.scope(state: \.$alert, action: \.alert))
     .alert(store: store.scope(state: \.$alert, action: \.alert))
-    .sheet(store: repositoriesStore.scope(state: \.$worktreeCreationPrompt, action: \.worktreeCreationPrompt)) {
-      promptStore in
+    .sheet(
+      store: store.scope(state: \.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation)
+    ) { confirmationStore in
+      DeeplinkInputConfirmationView(store: confirmationStore)
+    }
+    .sheet(
+      store: repositoriesStore.scope(state: \.$worktreeCreationPrompt, action: \.worktreeCreationPrompt)
+    ) { promptStore in
       WorktreeCreationPromptView(store: promptStore)
     }
     .sheet(isPresented: isRunScriptPromptPresented) {

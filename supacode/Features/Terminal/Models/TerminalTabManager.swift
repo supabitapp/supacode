@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 @MainActor
@@ -6,13 +7,28 @@ final class TerminalTabManager {
   var tabs: [TerminalTabItem] = []
   var selectedTabId: TerminalTabID?
 
+  private static let logger = SupaLogger("TabManager")
+
   func createTab(
     title: String,
     icon: String?,
     isTitleLocked: Bool = false,
-    tintColor: TerminalTabTintColor? = nil
+    tintColor: TerminalTabTintColor? = nil,
+    id: UUID? = nil
   ) -> TerminalTabID {
-    let tab = TerminalTabItem(title: title, icon: icon, isTitleLocked: isTitleLocked, tintColor: tintColor)
+    let tabID: TerminalTabID
+    if let id {
+      let candidate = TerminalTabID(rawValue: id)
+      if tabs.contains(where: { $0.id == candidate }) {
+        Self.logger.warning("Duplicate tab ID \(id), generating a new one.")
+        tabID = TerminalTabID()
+      } else {
+        tabID = candidate
+      }
+    } else {
+      tabID = TerminalTabID()
+    }
+    let tab = TerminalTabItem(id: tabID, title: title, icon: icon, isTitleLocked: isTitleLocked, tintColor: tintColor)
     if let selectedTabId,
       let selectedIndex = tabs.firstIndex(where: { $0.id == selectedTabId })
     {

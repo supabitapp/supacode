@@ -274,7 +274,7 @@ struct RepositoriesFeatureTests {
       id: repoBID,
       worktrees: [makeWorktree(id: "\(repoBID)/wt1", name: "wt1", repoRoot: repoBID)]
     )
-    var initialState = makeState(repositories: [repoA, repoB])
+    let initialState = makeState(repositories: [repoA, repoB])
     initialState.$collapsedRepositoryIDs.withLock { $0 = [repoA.id, repoB.id, "/tmp/missing"] }
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
@@ -4277,7 +4277,7 @@ struct RepositoriesFeatureTests {
       $0.repositoryPersistence.loadRoots = { [repoRootA, repoRootB] }
       $0.gitClient.worktrees = { root in
         let path = root.path(percentEncoded: false)
-        startedRoots.withValue { $0.insert(path) }
+        _ = startedRoots.withValue { $0.insert(path) }
         if path == repoRootA {
           await gate.wait()
           return [worktreeA]

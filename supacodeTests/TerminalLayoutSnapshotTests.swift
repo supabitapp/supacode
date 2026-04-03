@@ -8,6 +8,7 @@ struct TerminalLayoutSnapshotTests {
     let snapshot = TerminalLayoutSnapshot(
       tabs: [
         TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
           title: "main 1",
           icon: "terminal",
           tintColor: nil,
@@ -15,13 +16,13 @@ struct TerminalLayoutSnapshotTests {
             TerminalLayoutSnapshot.SplitSnapshot(
               direction: .horizontal,
               ratio: 0.7,
-              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: "/Users/test/project")),
+              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/Users/test/project")),
               right: .split(
                 TerminalLayoutSnapshot.SplitSnapshot(
                   direction: .vertical,
                   ratio: 0.4,
-                  left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: "/tmp")),
-                  right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: nil))
+                  left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/tmp")),
+                  right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil))
                 )
               )
             )
@@ -29,10 +30,11 @@ struct TerminalLayoutSnapshotTests {
           focusedLeafIndex: 1
         ),
         TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
           title: "main 2",
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: "/Users/test")),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/Users/test")),
           focusedLeafIndex: 0
         ),
       ],
@@ -51,8 +53,8 @@ struct TerminalLayoutSnapshotTests {
       TerminalLayoutSnapshot.SplitSnapshot(
         direction: .horizontal,
         ratio: 0.5,
-        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: "/first")),
-        right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: "/second"))
+        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/first")),
+        right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/second"))
       )
     )
     #expect(node.firstLeaf.workingDirectory == "/first")
@@ -63,13 +65,13 @@ struct TerminalLayoutSnapshotTests {
       TerminalLayoutSnapshot.SplitSnapshot(
         direction: .horizontal,
         ratio: 0.5,
-        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: nil)),
+        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil)),
         right: .split(
           TerminalLayoutSnapshot.SplitSnapshot(
             direction: .vertical,
             ratio: 0.5,
-            left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: nil)),
-            right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: nil))
+            left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil)),
+            right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil))
           )
         )
       )
@@ -81,10 +83,11 @@ struct TerminalLayoutSnapshotTests {
     let snapshot = TerminalLayoutSnapshot(
       tabs: [
         TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
           title: "tab",
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(workingDirectory: "/home")),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/home")),
           focusedLeafIndex: 0
         ),
       ],

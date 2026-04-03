@@ -26,7 +26,7 @@ struct Worktree: Identifiable, Hashable, Sendable {
 }
 
 extension Worktree {
-  /// Environment variables exposed to all Supacode scripts.
+  /// Base environment variables for Supacode scripts (supplemented per-surface).
   var scriptEnvironment: [String: String] {
     [
       "SUPACODE_WORKTREE_PATH": workingDirectory.path(percentEncoded: false),
@@ -34,11 +34,4 @@ extension Worktree {
     ]
   }
 
-  /// Shell export statements for prepending to scripts.
-  var scriptEnvironmentExportPrefix: String {
-    scriptEnvironment
-      .sorted(by: { $0.key < $1.key })
-      .map { "export \($0.key)='\($0.value.replacing("'", with: "'\"'\"'"))'" }
-      .joined(separator: "\n") + "\n"
-  }
 }

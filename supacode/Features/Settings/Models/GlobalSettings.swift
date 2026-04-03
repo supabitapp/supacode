@@ -51,6 +51,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   var terminalThemeSyncEnabled: Bool
   var restoreTerminalLayoutEnabled: Bool
   var hideSingleTabBar: Bool
+  var allowArbitraryDeeplinkInput: Bool
   var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
   var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
 
@@ -78,6 +79,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalThemeSyncEnabled: false,
     restoreTerminalLayoutEnabled: false,
     hideSingleTabBar: false,
+    allowArbitraryDeeplinkInput: false,
     defaultWorktreeBaseDirectoryPath: nil,
     autoDeleteArchivedWorktreesAfterDays: nil,
     shortcutOverrides: [:]
@@ -107,6 +109,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalThemeSyncEnabled: Bool = false,
     restoreTerminalLayoutEnabled: Bool = false,
     hideSingleTabBar: Bool = false,
+    allowArbitraryDeeplinkInput: Bool = false,
     defaultWorktreeBaseDirectoryPath: String? = nil,
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
     shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:]
@@ -134,6 +137,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.terminalThemeSyncEnabled = terminalThemeSyncEnabled
     self.restoreTerminalLayoutEnabled = restoreTerminalLayoutEnabled
     self.hideSingleTabBar = hideSingleTabBar
+    self.allowArbitraryDeeplinkInput = allowArbitraryDeeplinkInput
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
     self.shortcutOverrides = shortcutOverrides
@@ -227,6 +231,9 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     hideSingleTabBar =
       try container.decodeIfPresent(Bool.self, forKey: .hideSingleTabBar)
       ?? Self.default.hideSingleTabBar
+    allowArbitraryDeeplinkInput =
+      try container.decodeIfPresent(Bool.self, forKey: .allowArbitraryDeeplinkInput)
+      ?? Self.default.allowArbitraryDeeplinkInput
     defaultWorktreeBaseDirectoryPath =
       try container.decodeIfPresent(String.self, forKey: .defaultWorktreeBaseDirectoryPath)
       ?? Self.default.defaultWorktreeBaseDirectoryPath

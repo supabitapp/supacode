@@ -4,6 +4,8 @@ import CoreText
 import GhosttyKit
 import QuartzCore
 
+private let surfaceLogger = SupaLogger("Surface")
+
 final class GhosttySurfaceView: NSView, Identifiable {
   private struct ScrollbarState {
     let total: UInt64
@@ -1626,6 +1628,19 @@ extension GhosttySurfaceView: NSServicesMenuRequestor {
     pboard.declareTypes([.string], owner: nil)
     pboard.setString(String(cString: text.text), forType: .string)
     return true
+  }
+
+  /// Sends raw text directly to the terminal PTY, bypassing the text input system.
+  func sendText(_ text: String) {
+    guard let surface else {
+      surfaceLogger.warning("sendText: surface not available, dropping \(text.count) chars.")
+      return
+    }
+    let len = text.utf8CString.count
+    guard len > 0 else { return }
+    text.withCString { ptr in
+      ghostty_surface_text(surface, ptr, UInt(len - 1))
+    }
   }
 
   func readSelection(from pboard: NSPasteboard) -> Bool {
