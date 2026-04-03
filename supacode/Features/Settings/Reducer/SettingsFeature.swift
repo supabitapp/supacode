@@ -28,7 +28,7 @@ struct SettingsFeature {
     var pullRequestMergeStrategy: PullRequestMergeStrategy
     var terminalThemeSyncEnabled: Bool
     var restoreTerminalLayoutEnabled: Bool
-    var hideTmuxTabBar: Bool
+    var hideSingleTabBar: Bool
     var defaultWorktreeBaseDirectoryPath: String
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
@@ -63,7 +63,7 @@ struct SettingsFeature {
       pullRequestMergeStrategy = settings.pullRequestMergeStrategy
       terminalThemeSyncEnabled = settings.terminalThemeSyncEnabled
       restoreTerminalLayoutEnabled = settings.restoreTerminalLayoutEnabled
-      hideTmuxTabBar = settings.hideTmuxTabBar
+      hideSingleTabBar = settings.hideSingleTabBar
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
       shortcutOverrides = settings.shortcutOverrides
       defaultWorktreeBaseDirectoryPath =
@@ -94,7 +94,7 @@ struct SettingsFeature {
         pullRequestMergeStrategy: pullRequestMergeStrategy,
         terminalThemeSyncEnabled: terminalThemeSyncEnabled,
         restoreTerminalLayoutEnabled: restoreTerminalLayoutEnabled,
-        hideTmuxTabBar: hideTmuxTabBar,
+        hideSingleTabBar: hideSingleTabBar,
         defaultWorktreeBaseDirectoryPath: SupacodePaths.normalizedWorktreeBaseDirectoryPath(
           defaultWorktreeBaseDirectoryPath
         ),
@@ -185,7 +185,7 @@ struct SettingsFeature {
         state.pullRequestMergeStrategy = normalizedSettings.pullRequestMergeStrategy
         state.terminalThemeSyncEnabled = normalizedSettings.terminalThemeSyncEnabled
         state.restoreTerminalLayoutEnabled = normalizedSettings.restoreTerminalLayoutEnabled
-        state.hideTmuxTabBar = normalizedSettings.hideTmuxTabBar
+        state.hideSingleTabBar = normalizedSettings.hideSingleTabBar
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
         state.shortcutOverrides = normalizedSettings.shortcutOverrides
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""

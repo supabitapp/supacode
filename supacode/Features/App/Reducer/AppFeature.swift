@@ -307,7 +307,7 @@ struct AppFeature {
             await terminalClient.send(.setNotificationsEnabled(settings.inAppNotificationsEnabled))
           },
           .run { _ in
-            await terminalClient.send(.refreshTmuxTabBarVisibility)
+            await terminalClient.send(.refreshTabBarVisibility)
           },
           .run { _ in
             await worktreeInfoWatcher.send(

@@ -100,7 +100,6 @@ struct RepositorySettingsView: View {
         )
         ScriptEnvironmentRow(
           name: "SUPACODE_ROOT_PATH",
-          value: store.rootURL.path(percentEncoded: false),
           description: "Path to the repository root."
         )
       }
@@ -168,14 +167,19 @@ private struct ScriptSection: View {
 
 private struct ScriptEnvironmentRow: View {
   let name: String
-  var value: String?
   let description: String
 
   var body: some View {
     LabeledContent {
-      if let value {
-        Text(value).monospaced()
+      Button {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(name, forType: .string)
+      } label: {
+        Image(systemName: "doc.on.doc")
+          .accessibilityLabel("Copy variable key")
       }
+      .buttonStyle(.borderless)
+      .help("Copy variable key.")
     } label: {
       Text(name).monospaced()
       Text(description)

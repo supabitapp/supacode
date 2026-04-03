@@ -71,7 +71,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private(set) var surface: ghostty_surface_t?
   private var surfaceRef: GhosttyRuntime.SurfaceReference?
   private let workingDirectoryCString: UnsafeMutablePointer<CChar>?
+  private let commandCString: UnsafeMutablePointer<CChar>?
   private let initialInputCString: UnsafeMutablePointer<CChar>?
+  private let environmentVariables: [String: String]
   private let fontSize: Float32
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
@@ -174,7 +176,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   init(
     runtime: GhosttyRuntime,
     workingDirectory: URL?,
+    command: String? = nil,
     initialInput: String? = nil,
+    environmentVariables: [String: String] = [:],
     fontSize: Float32? = nil,
     context: ghostty_surface_context_e
   ) {
@@ -182,6 +186,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0
     self.context = context
+    self.environmentVariables = environmentVariables
     if let workingDirectory {
       let path = Self.normalizedWorkingDirectoryPath(
         workingDirectory.path(percentEncoded: false)
@@ -189,6 +194,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
       workingDirectoryCString = path.withCString { strdup($0) }
     } else {
       workingDirectoryCString = nil
+    }
+    if let command {
+      commandCString = command.withCString { strdup($0) }
+    } else {
+      commandCString = nil
     }
     if let initialInput {
       initialInputCString = initialInput.withCString { strdup($0) }
@@ -226,6 +236,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     closeSurface()
     if let workingDirectoryCString {
       free(workingDirectoryCString)
+    }
+    if let commandCString {
+      free(commandCString)
     }
     if let initialInputCString {
       free(initialInputCString)
@@ -870,9 +883,30 @@ final class GhosttySurfaceView: NSView, Identifiable {
     config.scale_factor = backingScaleFactor()
     config.font_size = fontSize
     config.working_directory = workingDirectoryCString.map { UnsafePointer($0) }
+    config.command = commandCString.map { UnsafePointer($0) }
     config.initial_input = initialInputCString.map { UnsafePointer($0) }
     config.context = context
-    surface = ghostty_surface_new(app, &config)
+    // Ghostty copies env vars into its arena allocator, so
+    // the C strings only need to live through this call.
+    var envVars = environmentVariables.map { key, value in
+      ghostty_env_var_s(
+        key: key.withCString { strdup($0)! },
+        value: value.withCString { strdup($0)! }
+      )
+    }
+    defer {
+      for envVar in envVars {
+        free(.init(mutating: envVar.key))
+        free(.init(mutating: envVar.value))
+      }
+    }
+    envVars.withUnsafeMutableBufferPointer { buffer in
+      if let baseAddress = buffer.baseAddress {
+        config.env_vars = baseAddress
+        config.env_var_count = buffer.count
+      }
+      surface = ghostty_surface_new(app, &config)
+    }
     bridge.surface = surface
     lastOcclusion = nil
     lastSurfaceFocus = nil
