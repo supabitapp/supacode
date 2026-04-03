@@ -16,10 +16,8 @@ struct TerminalRenderingPolicyTests {
       isSelectedTab: isSelectedTab,
       windowIsVisible: windowIsVisible,
       windowIsKey: windowIsKey,
-      focus: WorktreeTerminalState.SurfaceFocusContext(
-        focusedSurfaceID: focusedSurfaceID,
-        firstResponderSurfaceID: firstResponderSurfaceID
-      )
+      focusedSurfaceID: focusedSurfaceID,
+      firstResponderSurfaceID: firstResponderSurfaceID
     )
   }
 
@@ -116,6 +114,22 @@ struct TerminalRenderingPolicyTests {
       renderContext: renderContext(
         focusedSurfaceID: intendedSurfaceID,
         firstResponderSurfaceID: nil
+      ),
+      surfaceID: intendedSurfaceID
+    )
+
+    #expect(activity.isVisible)
+    #expect(!activity.isFocused)
+  }
+
+  @Test func surfaceActivityDoesNotFocusWhenSiblingPaneOwnsFirstResponder() {
+    let intendedSurfaceID = UUID()
+    let siblingSurfaceID = UUID()
+    let activity = WorktreeTerminalState.surfaceActivity(
+      isSurfaceVisibleInTree: true,
+      renderContext: renderContext(
+        focusedSurfaceID: intendedSurfaceID,
+        firstResponderSurfaceID: siblingSurfaceID
       ),
       surfaceID: intendedSurfaceID
     )
