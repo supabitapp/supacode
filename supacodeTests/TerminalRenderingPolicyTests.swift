@@ -1,3 +1,4 @@
+import GhosttyKit
 import SwiftUI
 import Testing
 
@@ -163,6 +164,39 @@ struct TerminalRenderingPolicyTests {
     #expect(!intendedActivity.isFocused)
     #expect(siblingActivity.isVisible)
     #expect(!siblingActivity.isFocused)
+  }
+
+  @Test func worktreeSwitchDoesNotAutoFocusFromDifferentWorktreeTerminalResponder() {
+    let currentSurfaceID = UUID()
+    let foreignSurface = GhosttySurfaceView(
+      runtime: GhosttyRuntime(),
+      workingDirectory: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_TAB
+    )
+
+    let shouldAutoFocus = WorktreeTerminalTabsView.shouldAutoFocusTerminal(
+      forceAutoFocus: false,
+      responder: foreignSurface,
+      ownedSurfaceIDs: [currentSurfaceID]
+    )
+
+    #expect(!shouldAutoFocus)
+  }
+
+  @Test func currentWorktreeTerminalResponderPreservesAutoFocusOnTabSwitch() {
+    let currentSurface = GhosttySurfaceView(
+      runtime: GhosttyRuntime(),
+      workingDirectory: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_TAB
+    )
+
+    let shouldAutoFocus = WorktreeTerminalTabsView.shouldAutoFocusTerminal(
+      forceAutoFocus: false,
+      responder: currentSurface,
+      ownedSurfaceIDs: [currentSurface.id]
+    )
+
+    #expect(shouldAutoFocus)
   }
 
   @Test func tabContentStackReturnsSelectedTabWhenItExists() {

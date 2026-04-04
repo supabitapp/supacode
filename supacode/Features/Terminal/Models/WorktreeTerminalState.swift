@@ -48,6 +48,9 @@ final class WorktreeTerminalState {
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
   }
+  var surfaceIDs: Set<UUID> {
+    Set(surfaces.keys)
+  }
   var isSelected: () -> Bool = { false }
   var onNotificationReceived: ((String, String) -> Void)?
   var onNotificationIndicatorChanged: (() -> Void)?

@@ -53,14 +53,14 @@ struct WorktreeTerminalTabsView: View {
     )
     .onAppear {
       state.ensureInitialTab(focusing: false)
-      if shouldAutoFocusTerminal {
+      if shouldAutoFocusTerminal(for: state) {
         state.focusSelectedTab()
       }
       let activity = resolvedWindowActivity
       state.syncFocus(windowIsKey: activity.isKeyWindow, windowIsVisible: activity.isVisible)
     }
     .onChange(of: state.tabManager.selectedTabId) { _, _ in
-      if shouldAutoFocusTerminal {
+      if shouldAutoFocusTerminal(for: state) {
         state.focusSelectedTab()
       }
       let activity = resolvedWindowActivity
@@ -68,12 +68,30 @@ struct WorktreeTerminalTabsView: View {
     }
   }
 
-  private var shouldAutoFocusTerminal: Bool {
+  private func shouldAutoFocusTerminal(for state: WorktreeTerminalState) -> Bool {
+    Self.shouldAutoFocusTerminal(
+      forceAutoFocus: forceAutoFocus,
+      responder: NSApp.keyWindow?.firstResponder,
+      ownedSurfaceIDs: state.surfaceIDs
+    )
+  }
+
+  static func shouldAutoFocusTerminal(
+    forceAutoFocus: Bool,
+    responder: NSResponder?,
+    ownedSurfaceIDs: Set<UUID>
+  ) -> Bool {
     if forceAutoFocus {
       return true
     }
-    guard let responder = NSApp.keyWindow?.firstResponder else { return true }
-    return !(responder is NSTableView) && !(responder is NSOutlineView)
+    guard let responder else { return true }
+    if responder is NSTableView || responder is NSOutlineView {
+      return false
+    }
+    guard let surface = responder as? GhosttySurfaceView else {
+      return true
+    }
+    return ownedSurfaceIDs.contains(surface.id)
   }
 
   private var resolvedWindowActivity: WindowActivityState {
