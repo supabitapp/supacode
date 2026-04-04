@@ -42,22 +42,20 @@ struct WorktreeSettingsView: View {
         }
       }
       Section("Clean-up") {
-        Picker(selection: $store.mergedWorktreeAction) {
-          Text("Do nothing").tag(MergedWorktreeAction?.none)
-          ForEach(MergedWorktreeAction.allCases) { action in
-            Text(action.title).tag(MergedWorktreeAction?.some(action))
-          }
-        } label: {
-          Text("When a pull request is merged")
-          switch store.mergedWorktreeAction {
-          case .archive:
-            Text("Archives worktrees when their pull requests are merged.")
-          case .delete:
-            Text("Follows the \"Delete local branch with worktree\" option below.")
-          case nil:
-            EmptyView()
+        Picker(
+          "Auto-delete archived worktrees",
+          selection: Binding(
+            get: { store.autoDeleteArchivedWorktreesAfterDays },
+            set: { store.send(.requestAutoDeleteDaysChange($0)) }
+          )
+        ) {
+          Text("Never").tag(AutoDeletePeriod?.none)
+          ForEach(AutoDeletePeriod.allCases, id: \.rawValue) { period in
+            Text(period.label).tag(AutoDeletePeriod?.some(period))
           }
         }
+      }
+      Section {
         Toggle(isOn: $store.deleteBranchOnDeleteWorktree) {
           Text("Delete local branch with worktree")
           Text("Removes the local branch along with the worktree. Remote branches must be deleted on GitHub.")

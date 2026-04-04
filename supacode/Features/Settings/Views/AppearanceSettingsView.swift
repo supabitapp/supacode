@@ -76,6 +76,12 @@ struct AppearanceSettingsView: View {
       } footer: {
         Text("Changes to Analytics require Supacode to restart before they take effect.")
       }
+      Section("Advanced") {
+        Toggle(isOn: $store.hideSingleTabBar) {
+          Text("Hide Tab Bar for Single Tab")
+          Text("Automatically hides the tab bar when only one tab is open.")
+        }
+      }
     }
     .formStyle(.grouped)
     .padding(.top, -20)

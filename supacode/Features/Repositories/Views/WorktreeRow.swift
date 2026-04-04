@@ -61,6 +61,7 @@ struct WorktreeRow: View {
     hideSubtitleOnMatch: Bool,
     showsPullRequestInfo: Bool,
     isRunScriptRunning: Bool,
+    isTaskRunning: Bool,
     showsNotificationIndicator: Bool,
     notifications: [WorktreeTerminalNotification],
     shortcutHint: String?
@@ -73,7 +74,7 @@ struct WorktreeRow: View {
     self.showsNotificationIndicator = showsNotificationIndicator
     self.notifications = notifications
     self.shortcutHint = shortcutHint
-    self.isBusy = row.isArchiving || row.isDeleting || row.isPending
+    self.isBusy = row.isArchiving || row.isDeleting || row.isPending || isTaskRunning
 
     // Worktree color.
     self.worktreeColor =
@@ -409,35 +410,6 @@ private struct VerticallyCenteredLabelStyle: LabelStyle {
 
 extension LabelStyle where Self == VerticallyCenteredLabelStyle {
   static var verticallyCentered: VerticallyCenteredLabelStyle { .init() }
-}
-
-// MARK: - Shimmer effect.
-
-private struct ShimmerModifier: ViewModifier {
-  let isActive: Bool
-  @State private var phase = false
-
-  func body(content: Content) -> some View {
-    content
-      .mask(
-        LinearGradient(
-          colors: isActive ? [.black.opacity(0.6), .black, .black.opacity(0.6)] : [.black],
-          startPoint: phase ? UnitPoint(x: 1, y: 1) : UnitPoint(x: -0.5, y: -0.5),
-          endPoint: phase ? UnitPoint(x: 1.5, y: 1.5) : UnitPoint(x: 0, y: 0)
-        )
-        .animation(
-          isActive ? .linear(duration: 1.5).delay(0.25).repeatForever(autoreverses: false) : nil,
-          value: phase
-        )
-      )
-      .task(id: isActive) { phase = isActive }
-  }
-}
-
-extension View {
-  func shimmer(isActive: Bool) -> some View {
-    modifier(ShimmerModifier(isActive: isActive))
-  }
 }
 
 // MARK: - Pulsing dot.

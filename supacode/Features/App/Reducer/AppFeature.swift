@@ -254,7 +254,7 @@ struct AppFeature {
           repoSettingsState.globalPullRequestMergeStrategy =
             state.settings.pullRequestMergeStrategy
           state.settings.repositorySettings = repoSettingsState
-        case .general, .notifications, .worktree, .shortcuts, .updates, .github:
+        case .general, .notifications, .worktree, .codingAgents, .shortcuts, .updates, .github:
           state.settings.repositorySettings = nil
         }
         return .none
@@ -288,6 +288,13 @@ struct AppFeature {
             )
           ),
           .send(
+            .repositories(
+              .setAutoDeleteArchivedWorktreesAfterDays(
+                settings.autoDeleteArchivedWorktreesAfterDays
+              )
+            )
+          ),
+          .send(
             .updates(
               .applySettings(
                 updateChannel: settings.updateChannel,
@@ -298,6 +305,9 @@ struct AppFeature {
           ),
           .run { _ in
             await terminalClient.send(.setNotificationsEnabled(settings.inAppNotificationsEnabled))
+          },
+          .run { _ in
+            await terminalClient.send(.refreshTabBarVisibility)
           },
           .run { _ in
             await worktreeInfoWatcher.send(

@@ -49,7 +49,7 @@ struct CommandPaletteFeatureTests {
           copyIgnored: false,
           copyUntracked: false
         )
-      )
+      ),
     ]
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
@@ -74,7 +74,7 @@ struct CommandPaletteFeatureTests {
           description: "Focus the split to the right.",
           action: "goto_split:right",
           actionKey: "goto_split"
-        )
+        ),
       ]
     )
 
@@ -98,7 +98,7 @@ struct CommandPaletteFeatureTests {
           description: "",
           action: "goto_split:right",
           actionKey: "goto_split"
-        )
+        ),
       ]
     )
 

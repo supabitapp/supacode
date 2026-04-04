@@ -117,4 +117,23 @@ nonisolated enum RepositoryPathNormalizer {
     return normalized
   }
 
+  static func normalizeDictionaryKeys(
+    _ dictionary: [String: Date]
+  ) -> [String: Date] {
+    var normalized: [String: Date] = [:]
+    normalized.reserveCapacity(dictionary.count)
+    for (key, value) in dictionary {
+      let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else { continue }
+      let resolved = URL(fileURLWithPath: trimmed)
+        .standardizedFileURL
+        .path(percentEncoded: false)
+      // On collision, keep the more recent (greater) date.
+      if let existing = normalized[resolved], existing > value {
+        continue
+      }
+      normalized[resolved] = value
+    }
+    return normalized
+  }
 }

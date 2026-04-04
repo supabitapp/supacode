@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Dependencies
 import Foundation
 import GhosttyKit
 import Observation
@@ -7,6 +8,7 @@ import Sharing
 
 private let blockingScriptLogger = SupaLogger("BlockingScript")
 private let layoutLogger = SupaLogger("Layout")
+private let terminalStateLogger = SupaLogger("Terminal")
 
 @MainActor
 @Observable
@@ -33,6 +35,8 @@ final class WorktreeTerminalState {
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   var tabIsRunningById: [TerminalTabID: Bool] = [:]
+  var socketPath: String?
+  private(set) var shouldHideTabBar = false
   private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:]
   private var blockingScriptLaunchDirectories: [TerminalTabID: URL] = [:]
   private var lastBlockingScriptTabByKind: [BlockingScriptKind: TerminalTabID] = [:]
@@ -45,12 +49,19 @@ final class WorktreeTerminalState {
   private var lastWindowIsVisible: Bool?
   var notifications: [WorktreeTerminalNotification] = []
   var notificationsEnabled = true
+  @ObservationIgnored @Dependency(\.date.now) private var now
+  private var recentHookBySurfaceID: [UUID: (text: String, recordedAt: Date)] = [:]
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
   }
   var surfaceIDs: Set<UUID> {
     Set(surfaces.keys)
   }
+  #if DEBUG
+    var debugRecentHookCount: Int {
+      recentHookBySurfaceID.count
+    }
+  #endif
   var isSelected: () -> Bool = { false }
   var onNotificationReceived: ((String, String) -> Void)?
   var onNotificationIndicatorChanged: (() -> Void)?
@@ -71,14 +82,38 @@ final class WorktreeTerminalState {
       wrappedValue: RepositorySettings.default,
       .repositorySettings(worktree.repositoryRootURL)
     )
+    // Pre-hide the tab bar before the first tab is created to
+    // avoid a visible flash. updateShouldHideTabBar() handles
+    // the steady state once tabs exist.
+    @Shared(.settingsFile) var settingsFile
+    self.shouldHideTabBar = settingsFile.global.hideSingleTabBar
   }
 
   var taskStatus: WorktreeTaskStatus {
-    tabIsRunningById.values.contains(true) ? .running : .idle
+    trees.keys.contains(where: { isTabBusy($0) }) ? .running : .idle
+  }
+
+  private func isTabBusy(_ tabId: TerminalTabID) -> Bool {
+    guard let tree = trees[tabId] else { return false }
+    return tree.leaves().contains { surface in
+      isRunningProgressState(surface.bridge.state.progressState)
+        || surface.bridge.state.agentBusy
+    }
   }
 
   func isBlockingScriptRunning(kind: BlockingScriptKind) -> Bool {
     blockingScripts.values.contains(kind)
+  }
+
+  private func updateShouldHideTabBar() {
+    @Shared(.settingsFile) var settingsFile
+    shouldHideTabBar =
+      settingsFile.global.hideSingleTabBar
+      && tabManager.tabs.count == 1
+  }
+
+  func refreshTabBarVisibility() {
+    updateShouldHideTabBar()
   }
 
   func ensureInitialTab(focusing: Bool) {
@@ -144,6 +179,7 @@ final class WorktreeTerminalState {
         title: title,
         icon: "terminal",
         isTitleLocked: false,
+        command: nil,
         initialInput: resolvedInput,
         focusing: focusing,
         inheritingFromSurfaceId: resolvedInheritanceSurfaceId,
@@ -190,6 +226,7 @@ final class WorktreeTerminalState {
         icon: kind.tabIcon,
         isTitleLocked: true,
         tintColor: kind.tabColor,
+        command: defaultShellPath(),
         initialInput: launch.commandInput,
         focusing: true,
         inheritingFromSurfaceId: currentFocusedSurfaceId(),
@@ -205,6 +242,8 @@ final class WorktreeTerminalState {
     blockingScripts[tabId] = kind
     blockingScriptLaunchDirectories[tabId] = launch.directoryURL
     lastBlockingScriptTabByKind[kind] = tabId
+    tabManager.updateDirty(tabId, isDirty: true)
+    emitTaskStatusIfChanged()
 
     blockingScriptLogger.info("Started \(kind.tabTitle) for worktree \(worktree.id)")
     return tabId
@@ -215,6 +254,7 @@ final class WorktreeTerminalState {
     let icon: String?
     let isTitleLocked: Bool
     var tintColor: TerminalTabTintColor?
+    let command: String?
     let initialInput: String?
     let focusing: Bool
     let inheritingFromSurfaceId: UUID?
@@ -231,10 +271,12 @@ final class WorktreeTerminalState {
     let tree = splitTree(
       for: tabId,
       inheritingFromSurfaceId: creation.inheritingFromSurfaceId,
+      command: creation.command,
       initialInput: creation.initialInput,
       context: creation.context
     )
     tabIsRunningById[tabId] = false
+    updateShouldHideTabBar()
     if creation.focusing, let surface = tree.root?.leftmostLeaf() {
       focusSurface(surface, in: tabId)
     }
@@ -249,6 +291,17 @@ final class WorktreeTerminalState {
     }
     tabManager.selectTab(tabId)
     focusSurface(in: tabId)
+    emitTaskStatusIfChanged()
+  }
+
+  /// Sets or clears the agent busy flag on a specific surface.
+  func setAgentBusy(surfaceID: UUID, tabID: TerminalTabID, active: Bool) {
+    guard let surface = surfaces[surfaceID] else {
+      terminalStateLogger.debug("Dropped busy update for unknown surface \(surfaceID) in worktree \(worktree.id)")
+      return
+    }
+    surface.bridge.state.agentBusy = active
+    tabManager.updateDirty(tabID, isDirty: isTabBusy(tabID))
     emitTaskStatusIfChanged()
   }
 
@@ -397,6 +450,7 @@ final class WorktreeTerminalState {
     }
     removeTree(for: tabId)
     tabManager.closeTab(tabId)
+    updateShouldHideTabBar()
     if let selected = tabManager.selectedTabId {
       focusSurface(in: selected)
     } else {
@@ -436,6 +490,7 @@ final class WorktreeTerminalState {
   func splitTree(
     for tabId: TerminalTabID,
     inheritingFromSurfaceId: UUID? = nil,
+    command: String? = nil,
     initialInput: String? = nil,
     context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB
   ) -> SplitTree<GhosttySurfaceView> {
@@ -444,6 +499,7 @@ final class WorktreeTerminalState {
     }
     let surface = createSurface(
       tabId: tabId,
+      command: command,
       initialInput: initialInput,
       inheritingFromSurfaceId: inheritingFromSurfaceId,
       context: context
@@ -578,6 +634,8 @@ final class WorktreeTerminalState {
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
+    // Agent busy state lives on GhosttySurfaceState and is cleaned up
+    // when surfaces are removed.
     let pendingKinds = Set(blockingScripts.values)
     blockingScripts.removeAll()
     lastBlockingScriptTabByKind.removeAll()
@@ -900,6 +958,8 @@ final class WorktreeTerminalState {
     reportedTabId: TerminalTabID?
   ) {
     tabManager.unlockAndUpdateTitle(tabId, title: "\(worktree.name) \(nextTabIndex())")
+    tabManager.updateDirty(tabId, isDirty: isTabBusy(tabId))
+    emitTaskStatusIfChanged()
 
     Task { @MainActor [weak self] in
       guard let self else {
@@ -914,18 +974,36 @@ final class WorktreeTerminalState {
     }
   }
 
+  private func surfaceEnvironment(tabId: TerminalTabID, surfaceID: UUID) -> [String: String] {
+    var env = worktree.scriptEnvironment
+    env["SUPACODE_WORKTREE_ID"] =
+      worktree.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+      ?? worktree.id
+    env["SUPACODE_TAB_ID"] = tabId.rawValue.uuidString
+    env["SUPACODE_SURFACE_ID"] = surfaceID.uuidString
+    if let socketPath {
+      env["SUPACODE_SOCKET_PATH"] = socketPath
+    }
+    return env
+  }
+
   private func createSurface(
     tabId: TerminalTabID,
+    command: String? = nil,
     initialInput: String?,
     workingDirectoryOverride: URL? = nil,
     inheritingFromSurfaceId: UUID?,
     context: ghostty_surface_context_e
   ) -> GhosttySurfaceView {
+    let surfaceID = UUID()
     let inherited = inheritedSurfaceConfig(fromSurfaceId: inheritingFromSurfaceId, context: context)
     let view = GhosttySurfaceView(
+      id: surfaceID,
       runtime: runtime,
       workingDirectory: workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory,
+      command: command,
       initialInput: initialInput,
+      environmentVariables: surfaceEnvironment(tabId: tabId, surfaceID: surfaceID),
       fontSize: inherited.fontSize,
       context: context
     )
@@ -1053,7 +1131,25 @@ final class WorktreeTerminalState {
     emitFocusChangedIfNeeded(surface.id)
   }
 
-  private func appendNotification(title: String, body: String, surfaceId: UUID) {
+  /// Appends a notification from an agent hook on a specific surface.
+  func appendHookNotification(title: String, body: String, surfaceID: UUID) {
+    guard surfaces[surfaceID] != nil else {
+      terminalStateLogger.debug("Dropped hook notification for unknown surface \(surfaceID) in worktree \(worktree.id)")
+      return
+    }
+    // Record for deduplication against later OSC 9 notifications.
+    if let normalized = Self.normalizedText("\(title) \(body)") {
+      recentHookBySurfaceID[surfaceID] = (text: normalized, recordedAt: now)
+    }
+    appendNotification(title: title, body: body, surfaceId: surfaceID, fromHook: true)
+  }
+
+  private func appendNotification(
+    title: String,
+    body: String,
+    surfaceId: UUID,
+    fromHook: Bool = false
+  ) {
     let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
@@ -1071,14 +1167,57 @@ final class WorktreeTerminalState {
       )
       emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
     }
+    // Suppress OSC 9 system notifications that duplicate a recent hook notification.
+    if !fromHook, shouldSuppressDesktopNotification(title: trimmedTitle, body: trimmedBody, surfaceId: surfaceId) {
+      return
+    }
     onNotificationReceived?(trimmedTitle, trimmedBody)
+  }
+
+  // MARK: - Notification deduplication (matches supaterm's approach).
+
+  private static let notificationCoalescingWindow: TimeInterval = 2
+
+  private static let genericCompletionTexts: Set<String> = [
+    "agent turn complete",
+    "task complete",
+    "turn complete",
+  ]
+
+  private func shouldSuppressDesktopNotification(title: String, body: String, surfaceId: UUID) -> Bool {
+    guard
+      let terminalText = Self.normalizedText("\(title) \(body)"),
+      let recent = recentHookBySurfaceID[surfaceId],
+      now.timeIntervalSince(recent.recordedAt) <= Self.notificationCoalescingWindow
+    else {
+      return false
+    }
+    if terminalText == recent.text { return true }
+    if recent.text.hasPrefix(terminalText) { return true }
+    if Self.genericCompletionTexts.contains(terminalText) { return true }
+    return false
+  }
+
+  private static func normalizedText(_ value: String) -> String? {
+    let collapsed =
+      value
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
+      .lowercased()
+      .trimmingCharacters(in: .punctuationCharacters)
+    return collapsed.isEmpty ? nil : collapsed
+  }
+
+  private func cleanupSurfaceState(for surfaceID: UUID) {
+    recentHookBySurfaceID.removeValue(forKey: surfaceID)
+    surfaces.removeValue(forKey: surfaceID)
   }
 
   private func removeTree(for tabId: TerminalTabID) {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
     for surface in tree.leaves() {
       surface.closeSurface()
-      surfaces.removeValue(forKey: surface.id)
+      cleanupSurfaceState(for: surface.id)
     }
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     tabIsRunningById.removeValue(forKey: tabId)
@@ -1104,7 +1243,7 @@ final class WorktreeTerminalState {
       isRunningProgressState(surface.bridge.state.progressState)
     }
     tabIsRunningById[tabId] = isRunningNow
-    tabManager.updateDirty(tabId, isDirty: isRunningNow)
+    tabManager.updateDirty(tabId, isDirty: isTabBusy(tabId))
     emitTaskStatusIfChanged()
   }
 
@@ -1203,12 +1342,12 @@ final class WorktreeTerminalState {
     guard surfaces[view.id] != nil else { return }
     guard let tabId = tabId(containing: view.id), let tree = trees[tabId] else {
       view.closeSurface()
-      surfaces.removeValue(forKey: view.id)
+      cleanupSurfaceState(for: view.id)
       return
     }
     guard let node = tree.find(id: view.id) else {
       view.closeSurface()
-      surfaces.removeValue(forKey: view.id)
+      cleanupSurfaceState(for: view.id)
       return
     }
     let nextSurface =
@@ -1217,12 +1356,14 @@ final class WorktreeTerminalState {
       : nil
     let newTree = tree.removing(node)
     view.closeSurface()
-    surfaces.removeValue(forKey: view.id)
+    cleanupSurfaceState(for: view.id)
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
+      tabIsRunningById.removeValue(forKey: tabId)
       cleanupBlockingScriptLaunchDirectory(for: tabId)
       tabManager.closeTab(tabId)
+      updateShouldHideTabBar()
       if let kind = blockingScripts.removeValue(forKey: tabId) {
         lastBlockingScriptTabByKind.removeValue(forKey: kind)
 
@@ -1232,6 +1373,7 @@ final class WorktreeTerminalState {
           lastBlockingScriptTabByKind.removeValue(forKey: kind)
         }
       }
+      emitTaskStatusIfChanged()
       return
     }
     updateTree(newTree, for: tabId)

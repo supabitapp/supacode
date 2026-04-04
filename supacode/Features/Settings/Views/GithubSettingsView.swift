@@ -156,6 +156,22 @@ struct GithubSettingsView: View {
           Text("Merge strategy")
           Text("Default strategy when merging PRs from the command palette.")
         }
+        Picker(selection: $store.mergedWorktreeAction) {
+          Text("Do nothing").tag(MergedWorktreeAction?.none)
+          ForEach(MergedWorktreeAction.allCases) { action in
+            Text(action.title).tag(MergedWorktreeAction?.some(action))
+          }
+        } label: {
+          Text("When a pull request is merged")
+          switch store.mergedWorktreeAction {
+          case .archive:
+            Text("Archives the worktree when its pull request is merged.")
+          case .delete:
+            Text("Follows the \"Delete local branch with worktree\" option in Worktrees settings.")
+          case nil:
+            EmptyView()
+          }
+        }
       }
     }
     .formStyle(.grouped)

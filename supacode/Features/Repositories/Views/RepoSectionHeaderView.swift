@@ -6,7 +6,7 @@ struct RepoSectionHeaderView: View {
 
   var body: some View {
     HStack {
-      Text(name)
+      Text(name).foregroundStyle(.secondary)
       if isRemoving {
         ProgressView()
           .controlSize(.small)

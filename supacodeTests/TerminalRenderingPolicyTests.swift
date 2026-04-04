@@ -169,6 +169,7 @@ struct TerminalRenderingPolicyTests {
   @Test func worktreeSwitchDoesNotAutoFocusFromDifferentWorktreeTerminalResponder() {
     let currentSurfaceID = UUID()
     let foreignSurface = GhosttySurfaceView(
+      id: UUID(),
       runtime: GhosttyRuntime(),
       workingDirectory: nil,
       context: GHOSTTY_SURFACE_CONTEXT_TAB
@@ -184,7 +185,9 @@ struct TerminalRenderingPolicyTests {
   }
 
   @Test func currentWorktreeTerminalResponderPreservesAutoFocusOnTabSwitch() {
+    let currentSurfaceID = UUID()
     let currentSurface = GhosttySurfaceView(
+      id: currentSurfaceID,
       runtime: GhosttyRuntime(),
       workingDirectory: nil,
       context: GHOSTTY_SURFACE_CONTEXT_TAB
@@ -193,7 +196,7 @@ struct TerminalRenderingPolicyTests {
     let shouldAutoFocus = WorktreeTerminalTabsView.shouldAutoFocusTerminal(
       forceAutoFocus: false,
       responder: currentSurface,
-      ownedSurfaceIDs: [currentSurface.id]
+      ownedSurfaceIDs: [currentSurfaceID]
     )
 
     #expect(shouldAutoFocus)
