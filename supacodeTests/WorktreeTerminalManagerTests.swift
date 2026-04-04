@@ -1,3 +1,4 @@
+import Dependencies
 import Foundation
 import Testing
 
@@ -87,6 +88,73 @@ struct WorktreeTerminalManagerTests {
     #expect(event == .setupScriptConsumed(worktreeID: worktree.id))
   }
 
+  @Test func unavailableSocketServerIsDiscarded() {
+    let server = AgentHookSocketServer()
+    server.shutdown()
+
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    #expect(manager.socketServer == nil)
+    #expect(state.socketPath == nil)
+  }
+
+  @Test func socketBusyRoutesToDecodedWorktreeState() {
+    let server = AgentHookSocketServer()
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
+    let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
+
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+
+    guard let state = manager.stateIfExists(for: worktree.id),
+      let tabId = state.tabManager.selectedTabId,
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf(),
+      let encodedID = worktree.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+    else {
+      Issue.record("Expected blocking script tab and socket server")
+      return
+    }
+
+    server.onBusy?(encodedID, tabId.rawValue, surface.id, true)
+
+    #expect(manager.taskStatus(for: worktree.id) == .running)
+  }
+
+  @Test func socketNotificationRoutesToDecodedWorktreeState() {
+    withDependencies {
+      $0.date.now = Date(timeIntervalSince1970: 1_234)
+    } operation: {
+      let server = AgentHookSocketServer()
+      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
+      let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
+
+      manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+
+      guard let state = manager.stateIfExists(for: worktree.id),
+        let tabId = state.tabManager.selectedTabId,
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf(),
+        let encodedID = worktree.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+      else {
+        Issue.record("Expected blocking script tab and socket server")
+        return
+      }
+
+      server.onNotification?(
+        encodedID,
+        tabId.rawValue,
+        surface.id,
+        AgentHookNotification(agent: "codex", event: "Stop", title: "Done", body: "All complete")
+      )
+
+      #expect(
+        state.notifications.contains {
+          $0.title == "Done" && $0.body == "All complete"
+        }
+      )
+    }
+  }
+
   @Test func notificationIndicatorUsesCurrentCountOnStreamStart() async {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
@@ -98,7 +166,7 @@ struct WorktreeTerminalManagerTests {
         title: "Unread",
         body: "body",
         isRead: false
-      )
+      ),
     ]
     state.onNotificationIndicatorChanged?()
     state.notifications = [
@@ -107,7 +175,7 @@ struct WorktreeTerminalManagerTests {
         title: "Read",
         body: "body",
         isRead: true
-      )
+      ),
     ]
 
     let stream = manager.eventStream()
@@ -128,22 +196,28 @@ struct WorktreeTerminalManagerTests {
 
     #expect(manager.taskStatus(for: worktree.id) == .idle)
 
-    let tab1 = TerminalTabID()
-    let tab2 = TerminalTabID()
-    state.tabIsRunningById[tab1] = false
-    state.tabIsRunningById[tab2] = false
+    guard
+      let tab1 = state.createTab(),
+      let tab2 = state.createTab(focusing: false),
+      let surface1 = state.splitTree(for: tab1).root?.leftmostLeaf(),
+      let surface2 = state.splitTree(for: tab2).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected tabs and surfaces")
+      return
+    }
+
     #expect(manager.taskStatus(for: worktree.id) == .idle)
 
-    state.tabIsRunningById[tab2] = true
+    surface2.bridge.state.agentBusy = true
     #expect(manager.taskStatus(for: worktree.id) == .running)
 
-    state.tabIsRunningById[tab1] = true
+    surface1.bridge.state.agentBusy = true
     #expect(manager.taskStatus(for: worktree.id) == .running)
 
-    state.tabIsRunningById[tab2] = false
+    surface2.bridge.state.agentBusy = false
     #expect(manager.taskStatus(for: worktree.id) == .running)
 
-    state.tabIsRunningById[tab1] = false
+    surface1.bridge.state.agentBusy = false
     #expect(manager.taskStatus(for: worktree.id) == .idle)
   }
 
@@ -648,12 +722,13 @@ struct WorktreeTerminalManagerTests {
     #expect(state.tabManager.selectedTabId == selectedBefore)
   }
 
-  private func makeWorktree() -> Worktree {
-    Worktree(
-      id: "/tmp/repo/wt-1",
-      name: "wt-1",
+  private func makeWorktree(id: String = "/tmp/repo/wt-1") -> Worktree {
+    let name = URL(fileURLWithPath: id).lastPathComponent
+    return Worktree(
+      id: id,
+      name: name,
       detail: "detail",
-      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-1"),
+      workingDirectory: URL(fileURLWithPath: id),
       repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
     )
   }

@@ -32,6 +32,10 @@ struct SettingsFeature {
     var defaultWorktreeBaseDirectoryPath: String
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+    var claudeProgressState = AgentHooksInstallState.checking
+    var claudeNotificationsState = AgentHooksInstallState.checking
+    var codexProgressState = AgentHooksInstallState.checking
+    var codexNotificationsState = AgentHooksInstallState.checking
     // nil = settings window closed, non-nil = open to this section.
     // The view layer opens the settings window when this becomes non-nil.
     var selection: SettingsSection?
@@ -116,6 +120,10 @@ struct SettingsFeature {
     case resetAllShortcuts
     case requestAutoDeleteDaysChange(AutoDeletePeriod?)
     case resolvedAutoDeleteAffectedCount(AutoDeletePeriod, affectedCount: Int)
+    case agentHookChecked(AgentHookSlot, installed: Bool)
+    case agentHookInstallTapped(AgentHookSlot)
+    case agentHookUninstallTapped(AgentHookSlot)
+    case agentHookActionCompleted(AgentHookSlot, Result<Bool, Error>)
     case repositorySettings(RepositorySettingsFeature.Action)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
@@ -134,6 +142,8 @@ struct SettingsFeature {
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
+  @Dependency(ClaudeSettingsClient.self) private var claudeSettingsClient
+  @Dependency(CodexSettingsClient.self) private var codexSettingsClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(\.date.now) private var now
@@ -144,7 +154,22 @@ struct SettingsFeature {
       switch action {
       case .task:
         @Shared(.settingsFile) var settingsFile
-        return .send(.settingsLoaded(settingsFile.global))
+        return .merge(
+          .send(.settingsLoaded(settingsFile.global)),
+          .run { [claudeSettingsClient, codexSettingsClient] send in
+            async let claudeProgressInstalled = claudeSettingsClient.checkInstalled(true)
+            async let claudeNotificationsInstalled = claudeSettingsClient.checkInstalled(false)
+            async let codexProgressInstalled = codexSettingsClient.checkInstalled(true)
+            async let codexNotificationsInstalled = codexSettingsClient.checkInstalled(false)
+
+            await send(.agentHookChecked(.claudeProgress, installed: await claudeProgressInstalled))
+            await send(
+              .agentHookChecked(.claudeNotifications, installed: await claudeNotificationsInstalled))
+            await send(.agentHookChecked(.codexProgress, installed: await codexProgressInstalled))
+            await send(
+              .agentHookChecked(.codexNotifications, installed: await codexNotificationsInstalled))
+          }
+        )
 
       case .settingsLoaded(let settings):
         let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
@@ -222,6 +247,52 @@ struct SettingsFeature {
         } message: {
           TextState(message)
         }
+        return .none
+
+      case .agentHookChecked(let slot, let installed):
+        state[hookSlot: slot] = installed ? .installed : .notInstalled
+        return .none
+
+      case .agentHookInstallTapped(let slot):
+        guard !state[hookSlot: slot].isLoading else { return .none }
+        state[hookSlot: slot] = .installing
+        return .run { [claudeSettingsClient, codexSettingsClient] send in
+          do {
+            switch slot {
+            case .claudeProgress: try await claudeSettingsClient.installProgress()
+            case .claudeNotifications: try await claudeSettingsClient.installNotifications()
+            case .codexProgress: try await codexSettingsClient.installProgress()
+            case .codexNotifications: try await codexSettingsClient.installNotifications()
+            }
+            await send(.agentHookActionCompleted(slot, .success(true)))
+          } catch {
+            await send(.agentHookActionCompleted(slot, .failure(error)))
+          }
+        }
+
+      case .agentHookUninstallTapped(let slot):
+        guard !state[hookSlot: slot].isLoading else { return .none }
+        state[hookSlot: slot] = .uninstalling
+        return .run { [claudeSettingsClient, codexSettingsClient] send in
+          do {
+            switch slot {
+            case .claudeProgress: try await claudeSettingsClient.uninstallProgress()
+            case .claudeNotifications: try await claudeSettingsClient.uninstallNotifications()
+            case .codexProgress: try await codexSettingsClient.uninstallProgress()
+            case .codexNotifications: try await codexSettingsClient.uninstallNotifications()
+            }
+            await send(.agentHookActionCompleted(slot, .success(false)))
+          } catch {
+            await send(.agentHookActionCompleted(slot, .failure(error)))
+          }
+        }
+
+      case .agentHookActionCompleted(let slot, .success(let installed)):
+        state[hookSlot: slot] = installed ? .installed : .notInstalled
+        return .none
+
+      case .agentHookActionCompleted(let slot, .failure(let error)):
+        state[hookSlot: slot] = .failed(error.localizedDescription)
         return .none
 
       case .updateShortcut(let id, let override):
@@ -364,5 +435,24 @@ extension SettingsFeature.State {
       settings.copyUntrackedOnWorktreeCreate
     repositorySettings?.globalPullRequestMergeStrategy =
       settings.pullRequestMergeStrategy
+  }
+
+  subscript(hookSlot slot: AgentHookSlot) -> AgentHooksInstallState {
+    get {
+      switch slot {
+      case .claudeProgress: claudeProgressState
+      case .claudeNotifications: claudeNotificationsState
+      case .codexProgress: codexProgressState
+      case .codexNotifications: codexNotificationsState
+      }
+    }
+    set {
+      switch slot {
+      case .claudeProgress: claudeProgressState = newValue
+      case .claudeNotifications: claudeNotificationsState = newValue
+      case .codexProgress: codexProgressState = newValue
+      case .codexNotifications: codexNotificationsState = newValue
+      }
+    }
   }
 }

@@ -66,7 +66,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private let runtime: GhosttyRuntime
-  let id = UUID()
+  let id: UUID
   let bridge: GhosttySurfaceBridge
   private(set) var surface: ghostty_surface_t?
   private var surfaceRef: GhosttyRuntime.SurfaceReference?
@@ -174,6 +174,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   override var acceptsFirstResponder: Bool { true }
 
   init(
+    id: UUID,
     runtime: GhosttyRuntime,
     workingDirectory: URL?,
     command: String? = nil,
@@ -182,6 +183,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     fontSize: Float32? = nil,
     context: ghostty_surface_context_e
   ) {
+    self.id = id
     self.runtime = runtime
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0

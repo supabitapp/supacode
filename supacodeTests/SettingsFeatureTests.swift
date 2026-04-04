@@ -35,6 +35,9 @@ struct SettingsFeatureTests {
 
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
+    } withDependencies: {
+      $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
+      $0[CodexSettingsClient.self].checkInstalled = { _ in false }
     }
 
     await store.send(.task)
@@ -59,6 +62,7 @@ struct SettingsFeatureTests {
       $0.terminalThemeSyncEnabled = false
     }
     await store.receive(\.delegate.settingsChanged)
+    await receiveStartupHookChecks(from: store)
   }
 
   @Test(.dependencies) func savesUpdatesChanges() async {
@@ -494,6 +498,9 @@ struct SettingsFeatureTests {
 
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
+    } withDependencies: {
+      $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
+      $0[CodexSettingsClient.self].checkInstalled = { _ in false }
     }
 
     await store.send(.task)
@@ -501,6 +508,7 @@ struct SettingsFeatureTests {
       $0.shortcutOverrides = [.openSettings: override]
     }
     await store.receive(\.delegate.settingsChanged)
+    await receiveStartupHookChecks(from: store)
   }
 
   // MARK: - Auto-Delete Archived Worktrees Setting
@@ -728,5 +736,21 @@ struct SettingsFeatureTests {
     var dict = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
     dict["autoDeleteArchivedWorktreesAfterDays"] = autoDeleteDays
     return try JSONSerialization.data(withJSONObject: dict)
+  }
+}
+
+@MainActor
+private func receiveStartupHookChecks(from store: TestStoreOf<SettingsFeature>) async {
+  await store.receive(\.agentHookChecked) {
+    $0.claudeProgressState = .notInstalled
+  }
+  await store.receive(\.agentHookChecked) {
+    $0.claudeNotificationsState = .notInstalled
+  }
+  await store.receive(\.agentHookChecked) {
+    $0.codexProgressState = .notInstalled
+  }
+  await store.receive(\.agentHookChecked) {
+    $0.codexNotificationsState = .notInstalled
   }
 }

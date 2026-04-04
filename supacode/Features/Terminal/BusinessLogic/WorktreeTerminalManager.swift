@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import Sharing
 
@@ -7,6 +8,7 @@ private let terminalLogger = SupaLogger("Terminal")
 @Observable
 final class WorktreeTerminalManager {
   private let runtime: GhosttyRuntime
+  private(set) var socketServer: AgentHookSocketServer?
   private var states: [Worktree.ID: WorktreeTerminalState] = [:]
   private var notificationsEnabled = true
   private var lastNotificationIndicatorCount: Int?
@@ -16,8 +18,41 @@ final class WorktreeTerminalManager {
   var saveLayoutSnapshot: ((Worktree.ID, TerminalLayoutSnapshot?) -> Void)?
   var loadLayoutSnapshot: ((Worktree.ID) -> TerminalLayoutSnapshot?)?
 
-  init(runtime: GhosttyRuntime) {
+  init(runtime: GhosttyRuntime, socketServer: AgentHookSocketServer? = nil) {
     self.runtime = runtime
+    let resolvedServer = socketServer ?? AgentHookSocketServer()
+    guard resolvedServer.socketPath != nil else {
+      self.socketServer = nil
+      terminalLogger.warning("Agent hook socket server unavailable")
+      return
+    }
+    self.socketServer = resolvedServer
+    configureSocketServer(resolvedServer)
+  }
+
+  private func configureSocketServer(_ server: AgentHookSocketServer) {
+    server.onBusy = { [weak self] worktreeID, tabID, surfaceID, active in
+      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+      guard let state = self?.states[decoded] else {
+        terminalLogger.debug("Dropped busy update for unknown worktree \(decoded)")
+        return
+      }
+      state.setAgentBusy(
+        surfaceID: surfaceID,
+        tabID: TerminalTabID(rawValue: tabID),
+        active: active
+      )
+    }
+    server.onNotification = { [weak self] worktreeID, _, surfaceID, notification in
+      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+      guard let state = self?.states[decoded] else {
+        terminalLogger.debug("Dropped hook notification for unknown worktree \(decoded)")
+        return
+      }
+      let title = notification.title ?? notification.agent
+      let body = notification.body ?? ""
+      state.appendHookNotification(title: title, body: body, surfaceID: surfaceID)
+    }
   }
 
   func handleCommand(_ command: TerminalClient.Command) {
@@ -153,6 +188,7 @@ final class WorktreeTerminalManager {
       worktree: worktree,
       runSetupScript: runSetupScript
     )
+    state.socketPath = socketServer?.socketPath
     // Load saved layout snapshot for restoration (skip when a setup script is pending).
     if !runSetupScript {
       state.pendingLayoutSnapshot = loadLayoutSnapshot?(worktree.id)

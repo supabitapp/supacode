@@ -70,7 +70,7 @@ export-archive: # Export xarchive
 	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | mise exec -- xcsift -qw --format toon'
 
 test: build-ghostty-xcframework
-	xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -clonedSourcePackagesDirPath "$(SPM_CACHE_DIR)" 2>&1
+	xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO -clonedSourcePackagesDirPath "$(SPM_CACHE_DIR)" 2>&1
 
 format: # Format code with swift-format (local only)
 	swift-format -p --in-place --recursive --configuration ./.swift-format.json supacode supacodeTests
