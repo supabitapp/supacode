@@ -1,3 +1,4 @@
+import AppKit
 import GhosttyKit
 import SwiftUI
 import Testing
@@ -175,13 +176,15 @@ struct TerminalRenderingPolicyTests {
       context: GHOSTTY_SURFACE_CONTEXT_TAB
     )
 
-    let shouldAutoFocus = WorktreeTerminalTabsView.shouldAutoFocusTerminal(
+    let focusTarget = WorktreeTerminalTabsView.focusTarget(
       forceAutoFocus: false,
       responder: foreignSurface,
-      ownedSurfaceIDs: [currentSurfaceID]
+      ownedSurfaceIDs: [currentSurfaceID],
+      focusFollowsMouseEnabled: false,
+      hoveredSurfaceID: nil
     )
 
-    #expect(!shouldAutoFocus)
+    #expect(focusTarget == .none)
   }
 
   @Test func currentWorktreeTerminalResponderPreservesAutoFocusOnTabSwitch() {
@@ -193,13 +196,40 @@ struct TerminalRenderingPolicyTests {
       context: GHOSTTY_SURFACE_CONTEXT_TAB
     )
 
-    let shouldAutoFocus = WorktreeTerminalTabsView.shouldAutoFocusTerminal(
+    let focusTarget = WorktreeTerminalTabsView.focusTarget(
       forceAutoFocus: false,
       responder: currentSurface,
-      ownedSurfaceIDs: [currentSurfaceID]
+      ownedSurfaceIDs: [currentSurfaceID],
+      focusFollowsMouseEnabled: false,
+      hoveredSurfaceID: nil
     )
 
-    #expect(shouldAutoFocus)
+    #expect(focusTarget == .selectedTab)
+  }
+
+  @Test func sidebarSelectionTransfersFocusToHoveredPaneWhenMouseFocusIsEnabled() {
+    let hoveredSurfaceID = UUID()
+    let focusTarget = WorktreeTerminalTabsView.focusTarget(
+      forceAutoFocus: false,
+      responder: NSTableView(),
+      ownedSurfaceIDs: [hoveredSurfaceID],
+      focusFollowsMouseEnabled: true,
+      hoveredSurfaceID: hoveredSurfaceID
+    )
+
+    #expect(focusTarget == .hoveredSurface(hoveredSurfaceID))
+  }
+
+  @Test func sidebarSelectionKeepsKeyboardFocusWhenMouseFocusIsDisabled() {
+    let focusTarget = WorktreeTerminalTabsView.focusTarget(
+      forceAutoFocus: false,
+      responder: NSTableView(),
+      ownedSurfaceIDs: [UUID()],
+      focusFollowsMouseEnabled: false,
+      hoveredSurfaceID: UUID()
+    )
+
+    #expect(focusTarget == .none)
   }
 
   @Test func tabContentStackReturnsSelectedTabWhenItExists() {

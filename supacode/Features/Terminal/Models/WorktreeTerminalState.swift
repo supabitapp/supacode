@@ -57,6 +57,12 @@ final class WorktreeTerminalState {
   var surfaceIDs: Set<UUID> {
     Set(surfaces.keys)
   }
+  var focusFollowsMouseEnabled: Bool {
+    runtime.focusFollowsMouse()
+  }
+  var visibleSurfaceIDUnderMouse: UUID? {
+    selectedVisibleSurfaceIDUnderMouse()
+  }
   #if DEBUG
     var debugRecentHookCount: Int {
       recentHookBySurfaceID.count
@@ -367,6 +373,36 @@ final class WorktreeTerminalState {
     }
     let window = selectedWindow ?? surfaces.values.compactMap(\.window).first
     return (window?.firstResponder as? GhosttySurfaceView)?.id
+  }
+
+  private func selectedVisibleSurfaceIDUnderMouse() -> UUID? {
+    guard focusFollowsMouseEnabled,
+      let selectedTabId = tabManager.selectedTabId,
+      let tree = trees[selectedTabId]
+    else {
+      return nil
+    }
+
+    let visibleLeaves = tree.visibleLeaves()
+    guard !visibleLeaves.isEmpty else { return nil }
+
+    let window = visibleLeaves.compactMap(\.window).first ?? NSApp.keyWindow
+    guard let window, let contentView = window.contentView else { return nil }
+
+    let locationInContent = contentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    var hitView = contentView.hitTest(locationInContent)
+    let visibleSurfaceIDs = Set(visibleLeaves.map(\.id))
+
+    while let currentView = hitView {
+      if let surface = currentView as? GhosttySurfaceView,
+        visibleSurfaceIDs.contains(surface.id)
+      {
+        return surface.id
+      }
+      hitView = currentView.superview
+    }
+
+    return nil
   }
 
   static func surfaceActivity(

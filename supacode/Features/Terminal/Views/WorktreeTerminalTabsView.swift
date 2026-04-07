@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 
 struct WorktreeTerminalTabsView: View {
+  enum FocusTarget: Equatable {
+    case hoveredSurface(UUID)
+    case selectedTab
+    case none
+  }
+
   let worktree: Worktree
   let manager: WorktreeTerminalManager
   let shouldRunSetupScript: Bool
@@ -57,45 +63,72 @@ struct WorktreeTerminalTabsView: View {
     )
     .onAppear {
       state.ensureInitialTab(focusing: false)
-      if shouldAutoFocusTerminal(for: state) {
-        state.focusSelectedTab()
-      }
+      applyKeyboardFocus(for: state)
       let activity = resolvedWindowActivity
       state.syncFocus(windowIsKey: activity.isKeyWindow, windowIsVisible: activity.isVisible)
     }
     .onChange(of: state.tabManager.selectedTabId) { _, _ in
-      if shouldAutoFocusTerminal(for: state) {
-        state.focusSelectedTab()
-      }
+      applyKeyboardFocus(for: state)
       let activity = resolvedWindowActivity
       state.syncFocus(windowIsKey: activity.isKeyWindow, windowIsVisible: activity.isVisible)
     }
   }
 
-  private func shouldAutoFocusTerminal(for state: WorktreeTerminalState) -> Bool {
-    Self.shouldAutoFocusTerminal(
+  private func applyKeyboardFocus(for state: WorktreeTerminalState) {
+    apply(focusTarget(for: state), to: state)
+
+    guard state.focusFollowsMouseEnabled else { return }
+    Task { @MainActor in
+      await Task.yield()
+      guard state.isSelected() else { return }
+      if case .hoveredSurface(let surfaceID) = focusTarget(for: state) {
+        _ = state.focusSurface(id: surfaceID)
+      }
+    }
+  }
+
+  private func apply(_ focusTarget: FocusTarget, to state: WorktreeTerminalState) {
+    switch focusTarget {
+    case .hoveredSurface(let surfaceID):
+      _ = state.focusSurface(id: surfaceID)
+    case .selectedTab:
+      state.focusSelectedTab()
+    case .none:
+      break
+    }
+  }
+
+  private func focusTarget(for state: WorktreeTerminalState) -> FocusTarget {
+    Self.focusTarget(
       forceAutoFocus: forceAutoFocus,
       responder: NSApp.keyWindow?.firstResponder,
-      ownedSurfaceIDs: state.surfaceIDs
+      ownedSurfaceIDs: state.surfaceIDs,
+      focusFollowsMouseEnabled: state.focusFollowsMouseEnabled,
+      hoveredSurfaceID: state.visibleSurfaceIDUnderMouse
     )
   }
 
-  static func shouldAutoFocusTerminal(
+  static func focusTarget(
     forceAutoFocus: Bool,
     responder: NSResponder?,
-    ownedSurfaceIDs: Set<UUID>
-  ) -> Bool {
-    if forceAutoFocus {
-      return true
+    ownedSurfaceIDs: Set<UUID>,
+    focusFollowsMouseEnabled: Bool,
+    hoveredSurfaceID: UUID?
+  ) -> FocusTarget {
+    if focusFollowsMouseEnabled, let hoveredSurfaceID {
+      return .hoveredSurface(hoveredSurfaceID)
     }
-    guard let responder else { return true }
+    if forceAutoFocus {
+      return .selectedTab
+    }
+    guard let responder else { return .selectedTab }
     if responder is NSTableView || responder is NSOutlineView {
-      return false
+      return .none
     }
     guard let surface = responder as? GhosttySurfaceView else {
-      return true
+      return .selectedTab
     }
-    return ownedSurfaceIDs.contains(surface.id)
+    return ownedSurfaceIDs.contains(surface.id) ? .selectedTab : .none
   }
 
   private var resolvedWindowActivity: WindowActivityState {

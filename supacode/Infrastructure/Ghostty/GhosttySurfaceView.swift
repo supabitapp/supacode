@@ -654,6 +654,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   override func mouseEntered(with event: NSEvent) {
     super.mouseEntered(with: event)
     sendMousePosition(event)
+    if let window, window.isKeyWindow, !focused, runtime.focusFollowsMouse() {
+      requestFocus()
+    }
   }
 
   override func mouseExited(with event: NSEvent) {
