@@ -12,7 +12,7 @@ actor ShellCallStore {
 }
 
 struct GitClientBranchRefsTests {
-  @Test func branchRefsUsesUpstreamsOrLocalRefs() async throws {
+  @Test func branchRefsIncludesLocalAndUpstreamRefs() async throws {
     let store = ShellCallStore()
     let output = """
       feature\torigin/feature
@@ -31,7 +31,7 @@ struct GitClientBranchRefsTests {
 
     let refs = try await client.branchRefs(for: repoRoot)
 
-    let expected = ["origin/bugfix", "origin/feature", "main"]
+    let expected = ["bugfix", "feature", "main", "origin/bugfix", "origin/feature"]
       .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     #expect(refs == expected)
     let calls = await store.calls
@@ -57,7 +57,7 @@ struct GitClientBranchRefsTests {
 
     let refs = try await client.branchRefs(for: repoRoot)
 
-    #expect(refs == ["origin/main"])
+    #expect(refs == ["head", "main", "origin/main"])
   }
 
   @Test func defaultRemoteBranchRefStripsPrefix() async throws {

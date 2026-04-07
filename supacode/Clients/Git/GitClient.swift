@@ -586,20 +586,25 @@ struct GitClient {
   nonisolated private func parseLocalRefsWithUpstream(_ output: String) -> [String] {
     output
       .split(whereSeparator: \.isNewline)
-      .compactMap { line in
+      .flatMap { line -> [String] in
         let parts = line.split(separator: "\t", omittingEmptySubsequences: false)
         guard let local = parts.first else {
-          return nil
+          return []
         }
         let localRef = String(local).trimmingCharacters(in: .whitespacesAndNewlines)
         let upstreamRef =
           parts.count > 1
           ? String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
           : ""
-        if !upstreamRef.isEmpty {
-          return upstreamRef
+
+        var refs: [String] = []
+        if !localRef.isEmpty {
+          refs.append(localRef)
         }
-        return localRef.isEmpty ? nil : localRef
+        if !upstreamRef.isEmpty {
+          refs.append(upstreamRef)
+        }
+        return refs
       }
   }
 
