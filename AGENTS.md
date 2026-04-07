@@ -31,9 +31,9 @@ Supacode is a macOS orchestrator for running multiple coding agents in parallel,
 
 ```
 AppFeature (root TCA store)
-├─ RepositoriesFeature (repos + worktrees)
+├─ RepositoriesFeature (repos, worktrees, PR state, archive/delete flows)
 ├─ CommandPaletteFeature
-├─ SettingsFeature (appearance, updates, repo settings)
+├─ SettingsFeature (general, notifications, coding agents, shortcuts, github, worktree, repo settings)
 └─ UpdatesFeature (Sparkle auto-updates)
 
 WorktreeTerminalManager (global @Observable terminal state)
@@ -42,7 +42,11 @@ WorktreeTerminalManager (global @Observable terminal state)
     └─ TerminalTabManager (tab/split management)
         └─ GhosttySurfaceState[] (one per terminal surface)
 
-GhosttyRuntime (shared singleton)
+WorktreeInfoWatcherManager (global worktree watcher state)
+├─ HEAD watchers per worktree
+└─ debounced branch / file / pull request refresh events
+
+GhosttyRuntime (shared runtime)
 └─ ghostty_app_t (single C instance)
     └─ ghostty_surface_t[] (independent terminal sessions)
 ```
@@ -57,9 +61,21 @@ Reducer → terminalClient.send(Command) → WorktreeTerminalManager
 Reducer ← .terminalEvent(Event) ← AsyncStream<Event>
 ```
 
-- **Commands**: `createTab`, `closeFocusedTab`, `prune`, `setSelectedWorktreeID`, etc.
-- **Events**: `notificationReceived`, `tabCreated`, `tabClosed`, `focusChanged`, `taskStatusChanged`
-- Wired in `supacodeApp.swift`, subscribed in `AppFeature.task`
+- **Commands**: tab creation, initial-tab setup, blocking scripts, search, Ghostty binding actions, tab/surface closing, notification toggles, and lifecycle management
+- **Events**: notifications, dock indicator count changes, tab/focus changes, task status changes, blocking-script completion, command palette requests, and setup-script consumption
+- Wired in `supacodeApp.swift`, subscribed in `AppFeature.appLaunched`
+
+Worktree metadata refresh uses `WorktreeInfoWatcherClient` in parallel:
+
+```
+Reducer → worktreeInfoWatcher.send(Command) → WorktreeInfoWatcherManager
+                                                           ↓
+Reducer ← .repositories(.worktreeInfoEvent(Event)) ← AsyncStream<Event>
+```
+
+- **Commands**: `setWorktrees`, `setSelectedWorktreeID`, `setPullRequestTrackingEnabled`, `stop`
+- **Events**: `branchChanged`, `filesChanged`, `repositoryPullRequestRefresh`
+- Wired in `supacodeApp.swift`, subscribed in `AppFeature.appLaunched`
 
 ### Key Dependencies
 
@@ -78,7 +94,7 @@ Reducer ← .terminalEvent(Event) ← AsyncStream<Event>
 
 ## Code Guidelines
 
-- Target macOS 26.0+, Swift 6.2+
+- Target macOS 26.0+, Swift 6.0
 - Before doing a big feature or when planning, consult with pfw (pointfree) skills on TCA, Observable best practices first.
 - Use `@ObservableState` for TCA feature state; use `@Observable` for non-TCA shared stores; never `ObservableObject`
 - Always mark `@Observable` classes with `@MainActor`
