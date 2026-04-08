@@ -68,6 +68,9 @@ final class GhosttySurfaceBridge {
       return onMoveTab?(action.action.move_tab) ?? false
     case GHOSTTY_ACTION_TOGGLE_COMMAND_PALETTE:
       return onCommandPaletteToggle?() ?? false
+    case GHOSTTY_ACTION_TOGGLE_BACKGROUND_OPACITY:
+      surfaceView?.toggleBackgroundOpacity()
+      return true
     case GHOSTTY_ACTION_GOTO_WINDOW,
       GHOSTTY_ACTION_TOGGLE_QUICK_TERMINAL,
       GHOSTTY_ACTION_CLOSE_ALL_WINDOWS:

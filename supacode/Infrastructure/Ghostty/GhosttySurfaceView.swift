@@ -92,6 +92,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var lastSurfaceFocus: Bool?
   private var eventMonitor: Any?
   private var notificationObservers: [NSObjectProtocol] = []
+  private var isBackgroundOpaque = false
   private var prevPressureStage: Int = 0
   private lazy var cachedScreenContents = CachedValue<String>(duration: .milliseconds(500)) {
     [weak self] in
@@ -399,7 +400,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private func applyWindowBackgroundAppearance() {
     guard let window, window.isVisible else { return }
     let opacity = runtime.backgroundOpacity()
-    if !window.styleMask.contains(.fullScreen), opacity < 1 {
+    if !window.styleMask.contains(.fullScreen), opacity < 1, !isBackgroundOpaque {
       window.isOpaque = false
       window.titlebarAppearsTransparent = true
       window.backgroundColor = .white.withAlphaComponent(0.001)
@@ -414,6 +415,13 @@ final class GhosttySurfaceView: NSView, Identifiable {
     window.isOpaque = true
     window.titlebarAppearsTransparent = false
     window.backgroundColor = runtime.backgroundColor().withAlphaComponent(1)
+  }
+
+  func toggleBackgroundOpacity() {
+    guard runtime.backgroundOpacity() < 1 else { return }
+    guard let window, !window.styleMask.contains(.fullScreen) else { return }
+    isBackgroundOpaque.toggle()
+    applyWindowBackgroundAppearance()
   }
 
   func focusDidChange(_ focused: Bool) {
