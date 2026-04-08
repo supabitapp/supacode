@@ -2,6 +2,7 @@ import AppKit
 import Carbon
 import CoreText
 import GhosttyKit
+import ObjectiveC
 import QuartzCore
 
 private let surfaceLogger = SupaLogger("Surface")
@@ -92,7 +93,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var lastSurfaceFocus: Bool?
   private var eventMonitor: Any?
   private var notificationObservers: [NSObjectProtocol] = []
-  private var isBackgroundOpaque = false
   private var prevPressureStage: Int = 0
   private lazy var cachedScreenContents = CachedValue<String>(duration: .milliseconds(500)) {
     [weak self] in
@@ -400,7 +400,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private func applyWindowBackgroundAppearance() {
     guard let window, window.isVisible else { return }
     let opacity = runtime.backgroundOpacity()
-    if !window.styleMask.contains(.fullScreen), opacity < 1, !isBackgroundOpaque {
+    if !window.styleMask.contains(.fullScreen), opacity < 1, !window.isBackgroundOpaque {
       window.isOpaque = false
       window.titlebarAppearsTransparent = true
       window.backgroundColor = .white.withAlphaComponent(0.001)
@@ -418,9 +418,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   func toggleBackgroundOpacity() {
+    // we keep these preconditions here so we do not mutate per-window opacity state 
+    // when toggling would have no visible effect.
     guard runtime.backgroundOpacity() < 1 else { return }
     guard let window, !window.styleMask.contains(.fullScreen) else { return }
-    isBackgroundOpaque.toggle()
+    window.isBackgroundOpaque.toggle()
     applyWindowBackgroundAppearance()
   }
 
@@ -1446,6 +1448,26 @@ final class GhosttySurfaceView: NSView, Identifiable {
     return flags
   }
 
+}
+
+private enum GhosttySurfaceWindowBackgroundOpaqueKey {
+  static var value = 0
+}
+
+private extension NSWindow {
+  var isBackgroundOpaque: Bool {
+    get {
+      (objc_getAssociatedObject(self, &GhosttySurfaceWindowBackgroundOpaqueKey.value) as? Bool) ?? false
+    }
+    set {
+      objc_setAssociatedObject(
+        self,
+        &GhosttySurfaceWindowBackgroundOpaqueKey.value,
+        newValue,
+        .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+      )
+    }
+  }
 }
 
 extension GhosttySurfaceView {

@@ -70,7 +70,7 @@ final class GhosttySurfaceBridge {
       return onCommandPaletteToggle?() ?? false
     case GHOSTTY_ACTION_TOGGLE_BACKGROUND_OPACITY:
       surfaceView?.toggleBackgroundOpacity()
-      return true
+      return surfaceView != nil
     case GHOSTTY_ACTION_GOTO_WINDOW,
       GHOSTTY_ACTION_TOGGLE_QUICK_TERMINAL,
       GHOSTTY_ACTION_CLOSE_ALL_WINDOWS:
