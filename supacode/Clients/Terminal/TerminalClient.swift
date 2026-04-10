@@ -6,6 +6,7 @@ struct TerminalClient {
   var events: @MainActor @Sendable () -> AsyncStream<Event>
   var tabExists: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
   var surfaceExists: @MainActor @Sendable (Worktree.ID, TerminalTabID, UUID) -> Bool
+  var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
 
   enum Command: Equatable {
     case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil)
@@ -53,14 +54,16 @@ extension TerminalClient: DependencyKey {
     send: { _ in fatalError("TerminalClient.send not configured") },
     events: { fatalError("TerminalClient.events not configured") },
     tabExists: { _, _ in fatalError("TerminalClient.tabExists not configured") },
-    surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") }
+    surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
+    surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") }
   )
 
   static let testValue = TerminalClient(
     send: { _ in },
     events: { AsyncStream { $0.finish() } },
     tabExists: unimplemented("TerminalClient.tabExists", placeholder: true),
-    surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true)
+    surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true),
+    surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true)
   )
 }
 

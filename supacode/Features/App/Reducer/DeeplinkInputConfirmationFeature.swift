@@ -27,6 +27,8 @@ struct DeeplinkInputConfirmationFeature {
     let message: DeeplinkConfirmationMessage
     let action: Deeplink.WorktreeAction
     var alwaysAllow: Bool = false
+    /// Socket client FD for CLI response, if this was triggered by a socket command.
+    var responseFD: Int32?
   }
 
   enum Action: BindableAction, Equatable {

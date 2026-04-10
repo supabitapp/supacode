@@ -10,6 +10,7 @@
 		32513D1E25BB4F418CABB2A8 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 8B2985744DB94333AE1B5878 /* Sentry */; };
 		886A649F771240E8A5AC792D /* Dependencies in Frameworks */ = {isa = PBXBuildFile; productRef = 8D787DCF45744283A83F226F /* Dependencies */; };
 		C8B33B9AFE69E738ABFA08BE /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 497B582F42253CBC8FBF101F /* ComposableArchitecture */; };
+		D6098EE7C51A363EEEB19D96 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 885E115D150FAC9E8FE1BF14 /* Cocoa.framework */; };
 		D63D00F72F2A5EEE00018D05 /* DependenciesTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = D63D00F62F2A5EEE00018D05 /* DependenciesTestSupport */; };
 		D64162B02F23CAF100260CA3 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = D64162AD2F23CAF100260CA3 /* ghostty */; };
 		D64162B12F23CAF100260CA3 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = D64162AE2F23CAF100260CA3 /* terminfo */; };
@@ -20,9 +21,18 @@
 		D6D054282F2E3EBF00D70ED5 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = D6D054272F2E3EBF00D70ED5 /* PostHog */; };
 		DFE570C142184CC387C1BC78 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B5698573F7354B14B940EA60 /* Sparkle */; };
 		E0DF87932F79E2010033488C /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = E0DF87922F79E2010033488C /* Kingfisher */; };
+		F542DC6E802DA5838C376FB7 /* supacode in Embed CLI */ = {isa = PBXBuildFile; fileRef = AD67F6010C5A19E60B56FF43 /* supacode */; };
+		FABB5693D5F608FB0213B948 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = FD216B84B874E686D2C09DA9 /* ArgumentParser */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		79895DA717540B59C3F38369 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D69CE0422F1F378200584C57 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 629715C1FF1EF798EBB08908;
+			remoteInfo = "supacode-cli";
+		};
 		D6F821052F1FCBC1004B4174 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D69CE0422F1F378200584C57 /* Project object */;
@@ -32,7 +42,23 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		650ADEAFEE1E2C19D86F4B43 /* Embed CLI */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = bin;
+			dstSubfolderSpec = 7;
+			files = (
+				F542DC6E802DA5838C376FB7 /* supacode in Embed CLI */,
+			);
+			name = "Embed CLI";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		885E115D150FAC9E8FE1BF14 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		AD67F6010C5A19E60B56FF43 /* supacode */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = supacode; sourceTree = BUILT_PRODUCTS_DIR; };
 		D64162AD2F23CAF100260CA3 /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = Resources/ghostty; sourceTree = "<group>"; };
 		D64162AE2F23CAF100260CA3 /* terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = terminfo; path = Resources/terminfo; sourceTree = "<group>"; };
 		D64162AF2F23CAF100260CA3 /* git-wt */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "git-wt"; path = "Resources/git-wt"; sourceTree = "<group>"; };
@@ -53,6 +79,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		609C6D3697ACB29B31D6B08B /* supacode-cli */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "supacode-cli";
+			sourceTree = "<group>";
+		};
 		D69CE04C2F1F378200584C57 /* supacode */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -93,6 +124,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E196DACD1AA8FA6156D3D90B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6098EE7C51A363EEEB19D96 /* Cocoa.framework in Frameworks */,
+				FABB5693D5F608FB0213B948 /* ArgumentParser in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -103,6 +143,7 @@
 				D64162AF2F23CAF100260CA3 /* git-wt */,
 				D64162AE2F23CAF100260CA3 /* terminfo */,
 				D69CE04C2F1F378200584C57 /* supacode */,
+				609C6D3697ACB29B31D6B08B /* supacode-cli */,
 				D6F821022F1FCBC1004B4174 /* supacodeTests */,
 				D69CE04B2F1F378200584C57 /* Products */,
 				D6A1CB2E2F1F4A36004FDABD /* Frameworks */,
@@ -114,6 +155,7 @@
 			children = (
 				D69CE04A2F1F378200584C57 /* supacode.app */,
 				D6F821012F1FCBC1004B4174 /* supacodeTests.xctest */,
+				AD67F6010C5A19E60B56FF43 /* supacode */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -123,13 +165,44 @@
 			children = (
 				D6A1CB342F1F4AC2004FDABD /* Carbon.framework */,
 				D6A1CB2F2F1F4A48004FDABD /* GhosttyKit.xcframework */,
+				E0A728C215C20069F40831AA /* OS X */,
 			);
 			path = Frameworks;
+			sourceTree = "<group>";
+		};
+		E0A728C215C20069F40831AA /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				885E115D150FAC9E8FE1BF14 /* Cocoa.framework */,
+			);
+			name = "OS X";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		629715C1FF1EF798EBB08908 /* supacode-cli */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BEE07F7B4E349DA5B9C43552 /* Build configuration list for PBXNativeTarget "supacode-cli" */;
+			buildPhases = (
+				16B4F2DDFCF4E3250DA1FA05 /* Sources */,
+				E196DACD1AA8FA6156D3D90B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				609C6D3697ACB29B31D6B08B /* supacode-cli */,
+			);
+			name = "supacode-cli";
+			packageProductDependencies = (
+				FD216B84B874E686D2C09DA9 /* ArgumentParser */,
+			);
+			productName = "supacode-cli";
+			productReference = AD67F6010C5A19E60B56FF43 /* supacode */;
+			productType = "com.apple.product-type.tool";
+		};
 		D69CE0492F1F378200584C57 /* supacode */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D69CE0552F1F378200584C57 /* Build configuration list for PBXNativeTarget "supacode" */;
@@ -138,10 +211,12 @@
 				D67F9B122F33000100A1B2C3 /* Verify git-wt script */,
 				D69CE0472F1F378200584C57 /* Frameworks */,
 				D69CE0482F1F378200584C57 /* Resources */,
+				650ADEAFEE1E2C19D86F4B43 /* Embed CLI */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3927B6D5917C2C7186326691 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				D69CE04C2F1F378200584C57 /* supacode */,
@@ -220,6 +295,7 @@
 				899A0B6B6B42424B92CD20C2 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				D6D054262F2E3EB300D70ED5 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 				E0DF87912F79E2010033488C /* XCRemoteSwiftPackageReference "Kingfisher" */,
+				60B21186376AE420DD9C602D /* XCRemoteSwiftPackageReference "swift-argument-parser" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D69CE04B2F1F378200584C57 /* Products */;
@@ -228,6 +304,7 @@
 			targets = (
 				D69CE0492F1F378200584C57 /* supacode */,
 				D6F821002F1FCBC1004B4174 /* supacodeTests */,
+				629715C1FF1EF798EBB08908 /* supacode-cli */,
 			);
 		};
 /* End PBXProject section */
@@ -275,6 +352,13 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		16B4F2DDFCF4E3250DA1FA05 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D69CE0462F1F378200584C57 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -292,6 +376,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		3927B6D5917C2C7186326691 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = "supacode-cli";
+			target = 629715C1FF1EF798EBB08908 /* supacode-cli */;
+			targetProxy = 79895DA717540B59C3F38369 /* PBXContainerItemProxy */;
+		};
 		D6F821062F1FCBC1004B4174 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D69CE0492F1F378200584C57 /* supacode */;
@@ -300,6 +390,40 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		AF6101B33DD612544206D276 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_MODULE_NAME = supacode_cli;
+				PRODUCT_NAME = supacode;
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C9FD2FCB9B3592F645A93FAE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_MODULE_NAME = supacode_cli;
+				PRODUCT_NAME = supacode;
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
 		D69CE0532F1F378200584C57 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -589,6 +713,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		BEE07F7B4E349DA5B9C43552 /* Build configuration list for PBXNativeTarget "supacode-cli" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AF6101B33DD612544206D276 /* Release */,
+				C9FD2FCB9B3592F645A93FAE /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		D69CE0452F1F378200584C57 /* Build configuration list for PBXProject "supacode" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -625,6 +758,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.10.1;
+			};
+		};
+		60B21186376AE420DD9C602D /* XCRemoteSwiftPackageReference "swift-argument-parser" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-argument-parser";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.0;
 			};
 		};
 		899A0B6B6B42424B92CD20C2 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
@@ -717,6 +858,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E0DF87912F79E2010033488C /* XCRemoteSwiftPackageReference "Kingfisher" */;
 			productName = Kingfisher;
+		};
+		FD216B84B874E686D2C09DA9 /* ArgumentParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 60B21186376AE420DD9C602D /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
+			productName = ArgumentParser;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

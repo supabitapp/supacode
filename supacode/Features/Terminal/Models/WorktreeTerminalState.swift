@@ -262,12 +262,15 @@ final class WorktreeTerminalState {
       tintColor: creation.tintColor,
       id: creation.tabID,
     )
+    // When a tab ID is explicitly provided, use it as the initial surface ID
+    // so the CLI can reference the surface immediately after creation.
     let tree = splitTree(
       for: tabId,
       inheritingFromSurfaceId: creation.inheritingFromSurfaceId,
       command: creation.command,
       initialInput: creation.initialInput,
-      context: creation.context
+      context: creation.context,
+      surfaceID: creation.tabID != nil ? tabId.rawValue : nil
     )
     tabIsRunningById[tabId] = false
     updateShouldHideTabBar()
@@ -278,6 +281,16 @@ final class WorktreeTerminalState {
     return tabId
   }
 
+  func listSurfaces(tabID: TerminalTabID) -> [[String: String]] {
+    let focusedID = focusedSurfaceIdByTab[tabID]
+    return surfaces.compactMap { surfaceID, _ in
+      guard tabId(containing: surfaceID) == tabID else { return nil }
+      var entry = ["id": surfaceID.uuidString]
+      if surfaceID == focusedID { entry["focused"] = "1" }
+      return entry
+    }.sorted { ($0["id"] ?? "") < ($1["id"] ?? "") }
+  }
+
   func hasTab(_ tabId: TerminalTabID) -> Bool {
     tabManager.tabs.contains(where: { $0.id == tabId })
   }
@@ -285,6 +298,11 @@ final class WorktreeTerminalState {
   func hasSurface(_ surfaceId: UUID, in tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
     return tree.find(id: surfaceId) != nil
+  }
+
+  /// Checks whether a surface UUID exists anywhere in the worktree (across all tabs).
+  func hasSurfaceAnywhere(_ surfaceId: UUID) -> Bool {
+    surfaces[surfaceId] != nil
   }
 
   func selectTab(_ tabId: TerminalTabID) {
@@ -491,7 +509,8 @@ final class WorktreeTerminalState {
     inheritingFromSurfaceId: UUID? = nil,
     command: String? = nil,
     initialInput: String? = nil,
-    context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB
+    context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB,
+    surfaceID: UUID? = nil
   ) -> SplitTree<GhosttySurfaceView> {
     if let existing = trees[tabId] {
       return existing
@@ -501,7 +520,8 @@ final class WorktreeTerminalState {
       command: command,
       initialInput: initialInput,
       inheritingFromSurfaceId: inheritingFromSurfaceId,
-      context: context
+      context: context,
+      surfaceID: surfaceID
     )
     let tree = SplitTree(view: surface)
     trees[tabId] = tree
@@ -512,7 +532,8 @@ final class WorktreeTerminalState {
   func performSplitAction(
     _ action: GhosttySplitAction,
     for surfaceId: UUID,
-    newSurfaceID: UUID? = nil
+    newSurfaceID: UUID? = nil,
+    initialInput: String? = nil
   ) -> Bool {
     guard let tabId = tabId(containing: surfaceId), var tree = trees[tabId] else {
       return false
@@ -524,7 +545,7 @@ final class WorktreeTerminalState {
     case .newSplit(let direction):
       let newSurface = createSurface(
         tabId: tabId,
-        initialInput: nil,
+        initialInput: initialInput,
         inheritingFromSurfaceId: surfaceId,
         context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
         surfaceID: newSurfaceID,
@@ -993,6 +1014,15 @@ final class WorktreeTerminalState {
     env["SUPACODE_SURFACE_ID"] = surfaceID.uuidString
     if let socketPath {
       env["SUPACODE_SOCKET_PATH"] = socketPath
+    }
+    // Prepend the bundled CLI binary directory to PATH so that `supacode`
+    // resolves to the CLI tool, not the app binary added by Ghostty.
+    if let cliBinDir = Bundle.main.resourceURL?
+      .appending(path: "bin", directoryHint: .isDirectory)
+      .path(percentEncoded: false)
+    {
+      let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+      env["PATH"] = currentPath.isEmpty ? cliBinDir : "\(cliBinDir):\(currentPath)"
     }
     return env
   }

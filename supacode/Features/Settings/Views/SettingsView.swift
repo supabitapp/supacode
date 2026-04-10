@@ -59,8 +59,8 @@ struct SettingsView: View {
           .tag(SettingsSection.notifications)
         Label("Worktrees", systemImage: "list.dash")
           .tag(SettingsSection.worktree)
-        Label("Coding Agents", systemImage: "hammer")
-          .tag(SettingsSection.codingAgents)
+        Label("Developer", systemImage: "hammer")
+          .tag(SettingsSection.developer)
         Label("GitHub", image: "github-mark")
           .tag(SettingsSection.github)
         Label("Shortcuts", systemImage: "keyboard")
@@ -89,8 +89,8 @@ struct SettingsView: View {
         NotificationsSettingsView(store: settingsStore)
       case .worktree:
         WorktreeSettingsView(store: settingsStore)
-      case .codingAgents:
-        CodingAgentsSettingsView(store: settingsStore)
+      case .developer:
+        DeveloperSettingsView(store: settingsStore)
       case .shortcuts:
         KeyboardShortcutsSettingsView(store: settingsStore)
       case .updates:

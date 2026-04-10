@@ -29,10 +29,13 @@ struct SettingsFeature {
     var terminalThemeSyncEnabled: Bool
     var restoreTerminalLayoutEnabled: Bool
     var hideSingleTabBar: Bool
-    var allowArbitraryDeeplinkInput: Bool
+    var automatedActionPolicy: AutomatedActionPolicy
     var defaultWorktreeBaseDirectoryPath: String
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+    var cliInstallState = AgentHooksInstallState.checking
+    var claudeSkillState = AgentHooksInstallState.checking
+    var codexSkillState = AgentHooksInstallState.checking
     var claudeProgressState = AgentHooksInstallState.checking
     var claudeNotificationsState = AgentHooksInstallState.checking
     var codexProgressState = AgentHooksInstallState.checking
@@ -69,7 +72,7 @@ struct SettingsFeature {
       terminalThemeSyncEnabled = settings.terminalThemeSyncEnabled
       restoreTerminalLayoutEnabled = settings.restoreTerminalLayoutEnabled
       hideSingleTabBar = settings.hideSingleTabBar
-      allowArbitraryDeeplinkInput = settings.allowArbitraryDeeplinkInput
+      automatedActionPolicy = settings.automatedActionPolicy
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
       shortcutOverrides = settings.shortcutOverrides
       defaultWorktreeBaseDirectoryPath =
@@ -101,7 +104,7 @@ struct SettingsFeature {
         terminalThemeSyncEnabled: terminalThemeSyncEnabled,
         restoreTerminalLayoutEnabled: restoreTerminalLayoutEnabled,
         hideSingleTabBar: hideSingleTabBar,
-        allowArbitraryDeeplinkInput: allowArbitraryDeeplinkInput,
+        automatedActionPolicy: automatedActionPolicy,
         defaultWorktreeBaseDirectoryPath: SupacodePaths.normalizedWorktreeBaseDirectoryPath(
           defaultWorktreeBaseDirectoryPath
         ),
@@ -117,13 +120,21 @@ struct SettingsFeature {
     case repositoriesChanged(IdentifiedArrayOf<Repository>)
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
-    case setAllowArbitraryDeeplinkInput(Bool)
+    case setAutomatedActionPolicy(AutomatedActionPolicy)
     case showNotificationPermissionAlert(errorMessage: String?)
     case updateShortcut(id: AppShortcutID, override: AppShortcutOverride?)
     case toggleShortcutEnabled(id: AppShortcutID, enabled: Bool)
     case resetAllShortcuts
     case requestAutoDeleteDaysChange(AutoDeletePeriod?)
     case resolvedAutoDeleteAffectedCount(AutoDeletePeriod, affectedCount: Int)
+    case cliInstallChecked(installed: Bool)
+    case cliInstallTapped
+    case cliUninstallTapped
+    case cliInstallCompleted(Result<Bool, Error>)
+    case cliSkillChecked(agent: SkillAgent, installed: Bool)
+    case cliSkillInstallTapped(SkillAgent)
+    case cliSkillUninstallTapped(SkillAgent)
+    case cliSkillCompleted(SkillAgent, Result<Bool, Error>)
     case agentHookChecked(AgentHookSlot, installed: Bool)
     case agentHookInstallTapped(AgentHookSlot)
     case agentHookUninstallTapped(AgentHookSlot)
@@ -146,6 +157,8 @@ struct SettingsFeature {
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
+  @Dependency(CLIInstallerClient.self) private var cliInstallerClient
+  @Dependency(CLISkillClient.self) private var cliSkillClient
   @Dependency(ClaudeSettingsClient.self) private var claudeSettingsClient
   @Dependency(CodexSettingsClient.self) private var codexSettingsClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
@@ -158,21 +171,33 @@ struct SettingsFeature {
       switch action {
       case .task:
         @Shared(.settingsFile) var settingsFile
-        return .merge(
+        return .concatenate(
           .send(.settingsLoaded(settingsFile.global)),
-          .run { [claudeSettingsClient, codexSettingsClient] send in
-            async let claudeProgressInstalled = claudeSettingsClient.checkInstalled(true)
-            async let claudeNotificationsInstalled = claudeSettingsClient.checkInstalled(false)
-            async let codexProgressInstalled = codexSettingsClient.checkInstalled(true)
-            async let codexNotificationsInstalled = codexSettingsClient.checkInstalled(false)
+          .merge(
+            .run { [cliInstallerClient] send in
+              let installed = await cliInstallerClient.checkInstalled()
+              await send(.cliInstallChecked(installed: installed))
+            },
+            .run { [cliSkillClient] send in
+              async let claude = cliSkillClient.checkInstalled(.claude)
+              async let codex = cliSkillClient.checkInstalled(.codex)
+              await send(.cliSkillChecked(agent: .claude, installed: await claude))
+              await send(.cliSkillChecked(agent: .codex, installed: await codex))
+            },
+            .run { [claudeSettingsClient, codexSettingsClient] send in
+              async let claudeProgressInstalled = claudeSettingsClient.checkInstalled(true)
+              async let claudeNotificationsInstalled = claudeSettingsClient.checkInstalled(false)
+              async let codexProgressInstalled = codexSettingsClient.checkInstalled(true)
+              async let codexNotificationsInstalled = codexSettingsClient.checkInstalled(false)
 
-            await send(.agentHookChecked(.claudeProgress, installed: await claudeProgressInstalled))
-            await send(
-              .agentHookChecked(.claudeNotifications, installed: await claudeNotificationsInstalled))
-            await send(.agentHookChecked(.codexProgress, installed: await codexProgressInstalled))
-            await send(
-              .agentHookChecked(.codexNotifications, installed: await codexNotificationsInstalled))
-          }
+              await send(.agentHookChecked(.claudeProgress, installed: await claudeProgressInstalled))
+              await send(
+                .agentHookChecked(.claudeNotifications, installed: await claudeNotificationsInstalled))
+              await send(.agentHookChecked(.codexProgress, installed: await codexProgressInstalled))
+              await send(
+                .agentHookChecked(.codexNotifications, installed: await codexNotificationsInstalled))
+            }
+          )
         )
 
       case .settingsLoaded(let settings):
@@ -215,6 +240,7 @@ struct SettingsFeature {
         state.terminalThemeSyncEnabled = normalizedSettings.terminalThemeSyncEnabled
         state.restoreTerminalLayoutEnabled = normalizedSettings.restoreTerminalLayoutEnabled
         state.hideSingleTabBar = normalizedSettings.hideSingleTabBar
+        state.automatedActionPolicy = normalizedSettings.automatedActionPolicy
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
         state.shortcutOverrides = normalizedSettings.shortcutOverrides
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
@@ -230,8 +256,8 @@ struct SettingsFeature {
         state.syncGlobalDefaults(from: state.globalSettings)
         return persist(state)
 
-      case .setAllowArbitraryDeeplinkInput(let isEnabled):
-        state.allowArbitraryDeeplinkInput = isEnabled
+      case .setAutomatedActionPolicy(let policy):
+        state.automatedActionPolicy = policy
         state.syncGlobalDefaults(from: state.globalSettings)
         return persist(state)
 
@@ -256,6 +282,84 @@ struct SettingsFeature {
         } message: {
           TextState(message)
         }
+        return .none
+
+      case .cliInstallChecked(let installed):
+        state.cliInstallState = installed ? .installed : .notInstalled
+        return .none
+
+      case .cliInstallTapped:
+        guard !state.cliInstallState.isLoading else { return .none }
+        state.cliInstallState = .installing
+        return .run { [cliInstallerClient] send in
+          do {
+            try await cliInstallerClient.install()
+            await send(.cliInstallCompleted(.success(true)))
+          } catch {
+            await send(.cliInstallCompleted(.failure(error)))
+          }
+        }
+
+      case .cliUninstallTapped:
+        guard !state.cliInstallState.isLoading else { return .none }
+        state.cliInstallState = .uninstalling
+        return .run { [cliInstallerClient] send in
+          do {
+            try await cliInstallerClient.uninstall()
+            await send(.cliInstallCompleted(.success(false)))
+          } catch {
+            await send(.cliInstallCompleted(.failure(error)))
+          }
+        }
+
+      case .cliInstallCompleted(.success(let installed)):
+        state.cliInstallState = installed ? .installed : .notInstalled
+        return .none
+
+      case .cliInstallCompleted(.failure(let error)):
+        // User cancelled the authorization dialog — restore the previous state.
+        guard (error as? CLIInstallerError) != .cancelled else {
+          let wasUninstalling = state.cliInstallState == .uninstalling
+          state.cliInstallState = wasUninstalling ? .installed : .notInstalled
+          return .none
+        }
+        state.cliInstallState = .failed(error.localizedDescription)
+        return .none
+
+      case .cliSkillChecked(let agent, let installed):
+        state[skillAgent: agent] = installed ? .installed : .notInstalled
+        return .none
+
+      case .cliSkillInstallTapped(let agent):
+        guard !state[skillAgent: agent].isLoading else { return .none }
+        state[skillAgent: agent] = .installing
+        return .run { [cliSkillClient] send in
+          do {
+            try await cliSkillClient.install(agent)
+            await send(.cliSkillCompleted(agent, .success(true)))
+          } catch {
+            await send(.cliSkillCompleted(agent, .failure(error)))
+          }
+        }
+
+      case .cliSkillUninstallTapped(let agent):
+        guard !state[skillAgent: agent].isLoading else { return .none }
+        state[skillAgent: agent] = .uninstalling
+        return .run { [cliSkillClient] send in
+          do {
+            try await cliSkillClient.uninstall(agent)
+            await send(.cliSkillCompleted(agent, .success(false)))
+          } catch {
+            await send(.cliSkillCompleted(agent, .failure(error)))
+          }
+        }
+
+      case .cliSkillCompleted(let agent, .success(let installed)):
+        state[skillAgent: agent] = installed ? .installed : .notInstalled
+        return .none
+
+      case .cliSkillCompleted(let agent, .failure(let error)):
+        state[skillAgent: agent] = .failed(error.localizedDescription)
         return .none
 
       case .agentHookChecked(let slot, let installed):
@@ -444,6 +548,21 @@ extension SettingsFeature.State {
       settings.copyUntrackedOnWorktreeCreate
     repositorySettings?.globalPullRequestMergeStrategy =
       settings.pullRequestMergeStrategy
+  }
+
+  subscript(skillAgent agent: SkillAgent) -> AgentHooksInstallState {
+    get {
+      switch agent {
+      case .claude: claudeSkillState
+      case .codex: codexSkillState
+      }
+    }
+    set {
+      switch agent {
+      case .claude: claudeSkillState = newValue
+      case .codex: codexSkillState = newValue
+      }
+    }
   }
 
   subscript(hookSlot slot: AgentHookSlot) -> AgentHooksInstallState {

@@ -143,6 +143,89 @@ struct AgentHookSocketServerTests {
     #expect(notification.agent == "unknown")
   }
 
+  // MARK: - CLI command message parsing.
+
+  @Test func parsesValidCommandMessage() {
+    let json = #"{"deeplink":"supacode://worktree/%2Ftmp%2Frepo/run"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .command(let url, _) = message else {
+      Issue.record("Expected command message, got \(String(describing: message))")
+      return
+    }
+    #expect(url.scheme == "supacode")
+    #expect(url.host() == "worktree")
+  }
+
+  @Test func rejectsCommandWithInvalidScheme() {
+    let json = #"{"deeplink":"https://example.com"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+    #expect(message == nil)
+  }
+
+  @Test func rejectsCommandWithMalformedJSON() {
+    let json = #"{"not_deeplink":"supacode://test"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+    #expect(message == nil)
+  }
+
+  @Test func commandDoesNotInterfereWithBusyMessages() {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    let raw = "/tmp/repo \(tabID.uuidString) \(surfaceID.uuidString) 1"
+    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
+
+    guard case .busy = message else {
+      Issue.record("Expected busy message, got \(String(describing: message))")
+      return
+    }
+  }
+
+  // MARK: - Query message parsing.
+
+  @Test func parsesValidQueryMessage() {
+    let json = #"{"query":"repos"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .query(let resource, let params, _) = message else {
+      Issue.record("Expected query message, got \(String(describing: message))")
+      return
+    }
+    #expect(resource == "repos")
+    #expect(params.isEmpty)
+  }
+
+  @Test func parsesQueryMessageWithParams() {
+    let json = #"{"query":"tabs","worktreeID":"/tmp/repo"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .query(let resource, let params, _) = message else {
+      Issue.record("Expected query message, got \(String(describing: message))")
+      return
+    }
+    #expect(resource == "tabs")
+    #expect(params["worktreeID"] == "/tmp/repo")
+  }
+
+  @Test func queryTakesPrecedenceOverDeeplink() {
+    let json = #"{"query":"repos","deeplink":"supacode://worktree/test"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .query(let resource, _, _) = message else {
+      Issue.record("Expected query message, got \(String(describing: message))")
+      return
+    }
+    #expect(resource == "repos")
+  }
+
+  @Test func rejectsJSONWithNeitherQueryNorDeeplink() {
+    let json = #"{"foo":"bar"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+    #expect(message == nil)
+  }
+
+  // MARK: - readPayload.
+
   @Test func readPayloadReturnsNilOnReadError() {
     let payload = AgentHookSocketServer.readPayload(from: -1) { _, _ in
       errno = EIO

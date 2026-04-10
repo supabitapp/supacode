@@ -25,7 +25,7 @@ struct AppFeature {
     var notificationIndicatorCount: Int = 0
     var lastKnownSystemNotificationsEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
-    var isDeeplinkCheatsheetRequested = false
+    var isDeeplinkReferenceRequested = false
     @Presents var alert: AlertState<Alert>?
     @Presents var deeplinkInputConfirmation: DeeplinkInputConfirmationFeature.State?
 
@@ -66,9 +66,9 @@ struct AppFeature {
     case navigateSearchPrevious
     case endSearch
     case systemNotificationsPermissionFailed(errorMessage: String?)
-    case deeplinkReceived(URL)
-    case deeplink(Deeplink)
-    case deeplinkCheatsheetOpened
+    case deeplinkReceived(URL, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
+    case deeplink(Deeplink, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
+    case deeplinkReferenceOpened
     case alert(PresentationAction<Alert>)
     case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
     case terminalEvent(TerminalClient.Event)
@@ -262,7 +262,7 @@ struct AppFeature {
           repoSettingsState.globalPullRequestMergeStrategy =
             state.settings.pullRequestMergeStrategy
           state.settings.repositorySettings = repoSettingsState
-        case .general, .notifications, .worktree, .codingAgents, .shortcuts, .updates, .github:
+        case .general, .notifications, .worktree, .developer, .shortcuts, .updates, .github:
           state.settings.repositorySettings = nil
         }
         return .none
@@ -392,12 +392,15 @@ struct AppFeature {
         return .none
 
       case .requestQuit:
+        let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
         #if !DEBUG
           guard state.settings.confirmBeforeQuit else {
             analyticsClient.capture("app_quit", nil)
-            return .run { @MainActor _ in
-              NSApplication.shared.terminate(nil)
-            }
+            return .concatenate(
+              pendingFDEffect,
+              .run { @MainActor _ in
+                NSApplication.shared.terminate(nil)
+              })
           }
           state.alert = AlertState {
             TextState("Quit Supacode?")
@@ -411,11 +414,13 @@ struct AppFeature {
           } message: {
             TextState("This will close all terminal sessions.")
           }
-          return .none
+          return pendingFDEffect
         #else
-          return .run { @MainActor _ in
-            NSApplication.shared.terminate(nil)
-          }
+          return .concatenate(
+            pendingFDEffect,
+            .run { @MainActor _ in
+              NSApplication.shared.terminate(nil)
+            })
         #endif
 
       case .newTerminal:
@@ -571,10 +576,15 @@ struct AppFeature {
         state.selectedRunScript = settings.runScript
         return .none
 
-      case .deeplinkReceived(let url):
+      case .deeplinkReceived(let url, let source, let responseFD):
         let deeplinkClient = deeplinkClient
         guard let parsed = deeplinkClient.parse(url) else {
           deeplinkLogger.warning("Failed to parse deeplink URL: \(url)")
+          // Close the socket FD with an error so the CLI doesn't hang.
+          if let responseFD {
+            return sendSocketResponse(
+              clientFD: responseFD, ok: false, error: "Invalid deeplink: \(url.absoluteString)")
+          }
           if url.scheme == "supacode" {
             state.alert = AlertState {
               TextState("Invalid deeplink")
@@ -589,16 +599,34 @@ struct AppFeature {
           return .none
         }
         guard state.repositories.isInitialLoadComplete else {
+          // Socket commands arriving before load is complete get an immediate error
+          // since pendingDeeplinks stores parsed Deeplink values without the socket
+          // FD, and replaying them later would leave the CLI client hanging.
+          if let responseFD {
+            return sendSocketResponse(
+              clientFD: responseFD, ok: false, error: "Supacode is still loading. Try again.")
+          }
           state.pendingDeeplinks.append(parsed)
           return .none
         }
-        return .send(.deeplink(parsed))
+        return .send(.deeplink(parsed, source: source, responseFD: responseFD))
 
-      case .deeplink(let deeplink):
-        return handleDeeplink(deeplink, state: &state)
+      case .deeplink(let deeplink, let source, let responseFD):
+        let alertBefore = state.alert
+        let effect = handleDeeplink(deeplink, source: source, responseFD: responseFD, state: &state)
+        guard let responseFD else { return effect }
+        // Confirmation dialog pending — response will be sent when dialog resolves.
+        guard state.deeplinkInputConfirmation == nil else { return effect }
+        // If a new alert was set during handling, the command failed.
+        let succeeded = state.alert == alertBefore
+        let errorMessage: String? = succeeded ? nil : extractAlertMessage(state.alert)
+        return .concatenate(
+          effect,
+          sendSocketResponse(
+            clientFD: responseFD, ok: succeeded, error: errorMessage))
 
-      case .deeplinkCheatsheetOpened:
-        state.isDeeplinkCheatsheetRequested = false
+      case .deeplinkReferenceOpened:
+        state.isDeeplinkReferenceRequested = false
         return .none
 
       case .systemNotificationsPermissionFailed(let errorMessage):
@@ -613,35 +641,55 @@ struct AppFeature {
 
       case .alert(.presented(.confirmQuit)):
         analyticsClient.capture("app_quit", nil)
+        let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
         state.alert = nil
-        return .run { @MainActor _ in
-          NSApplication.shared.terminate(nil)
-        }
+        return .concatenate(
+          pendingFDEffect,
+          .run { @MainActor _ in
+            NSApplication.shared.terminate(nil)
+          })
 
       case .alert:
         return .none
 
       case .deeplinkInputConfirmation(
         .presented(.delegate(.confirm(let worktreeID, let confirmedAction, let alwaysAllow)))):
+        let pendingFD = state.deeplinkInputConfirmation?.responseFD
         state.deeplinkInputConfirmation = nil
         // The initial deeplink dispatch already selected the worktree via
         // `handleWorktreeDeeplink`. Re-dispatch only the action effect, skipping
         // the redundant select.
+        let alertBefore = state.alert
         let actionEffect = worktreeActionEffect(
           worktreeID: worktreeID,
           action: confirmedAction,
           state: &state,
           bypassConfirmation: true,
         )
-        guard alwaysAllow else { return actionEffect }
-        return .concatenate(
-          .send(.settings(.setAllowArbitraryDeeplinkInput(true))),
-          actionEffect,
-        )
+        let succeeded = state.alert == alertBefore
+        let responseEffect: Effect<Action> =
+          pendingFD.map {
+            sendSocketResponse(
+              clientFD: $0,
+              ok: succeeded,
+              error: succeeded ? nil : extractAlertMessage(state.alert))
+          } ?? .none
+        let policyEffect: Effect<Action> =
+          alwaysAllow
+          ? .send(.settings(.setAutomatedActionPolicy(.always)))
+          : .none
+        return .concatenate(policyEffect, actionEffect, responseEffect)
 
       case .deeplinkInputConfirmation(.presented(.delegate(.cancel))):
+        let pendingFD = state.deeplinkInputConfirmation?.responseFD
         state.deeplinkInputConfirmation = nil
-        return .none
+        guard let clientFD = pendingFD else { return .none }
+        return sendSocketResponse(clientFD: clientFD, ok: false, error: "Cancelled by user.")
+
+      case .deeplinkInputConfirmation(.dismiss):
+        // Drain any pending responseFD when TCA auto-dismisses the dialog
+        // so the CLI client does not hang.
+        return drainPendingResponseFD(state: &state, error: "Dialog dismissed.")
 
       case .deeplinkInputConfirmation:
         return .none
@@ -807,6 +855,8 @@ struct AppFeature {
 
   private func handleDeeplink(
     _ deeplink: Deeplink,
+    source: ActionSource = .urlScheme,
+    responseFD: Int32? = nil,
     state: inout State
   ) -> Effect<Action> {
     switch deeplink {
@@ -825,10 +875,12 @@ struct AppFeature {
         app.activate()
       }
     case .help:
-      state.isDeeplinkCheatsheetRequested = true
+      state.isDeeplinkReferenceRequested = true
       return .none
     case .worktree(let worktreeID, let action):
-      return handleWorktreeDeeplink(worktreeID: worktreeID, action: action, state: &state)
+      return handleWorktreeDeeplink(
+        worktreeID: worktreeID, action: action, source: source, responseFD: responseFD, state: &state
+      )
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
     case .repoWorktreeNew(let repositoryID, let branch, let baseRef, let fetchOrigin):
@@ -883,6 +935,8 @@ struct AppFeature {
   private func handleWorktreeDeeplink(
     worktreeID rawWorktreeID: Worktree.ID,
     action: Deeplink.WorktreeAction,
+    source: ActionSource = .urlScheme,
+    responseFD: Int32? = nil,
     state: inout State,
     bypassConfirmation: Bool = false
   ) -> Effect<Action> {
@@ -901,13 +955,15 @@ struct AppFeature {
       return .none
     }
 
+    let policyBypass = state.settings.automatedActionPolicy.allowsBypass(from: source)
     let selectEffect: Effect<Action> =
       .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
     let actionEffect = worktreeActionEffect(
       worktreeID: worktreeID,
       action: action,
       state: &state,
-      bypassConfirmation: bypassConfirmation,
+      bypassConfirmation: bypassConfirmation || policyBypass,
+      responseFD: responseFD,
     )
     return .concatenate(selectEffect, actionEffect)
   }
@@ -917,7 +973,8 @@ struct AppFeature {
     worktreeID: Worktree.ID,
     action: Deeplink.WorktreeAction,
     state: inout State,
-    bypassConfirmation: Bool
+    bypassConfirmation: Bool,
+    responseFD: Int32? = nil
   ) -> Effect<Action> {
     switch action {
     case .select:
@@ -939,6 +996,7 @@ struct AppFeature {
         action: action,
         state: &state,
         bypassConfirmation: bypassConfirmation,
+        responseFD: responseFD
       )
     case .pin:
       return .send(.repositories(.pinWorktree(worktreeID)))
@@ -950,27 +1008,39 @@ struct AppFeature {
         .selectTab(worktree, tabID: TerminalTabID(rawValue: tabID))
       }
     case .tabNew(let input, let id):
+      // Reject explicit IDs that collide with an existing tab.
+      if let id, terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: id)) {
+        state.alert = AlertState {
+          TextState("Tab ID already exists")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("A tab with ID \(id.uuidString) already exists.")
+        }
+        return .none
+      }
       guard let input, !input.isEmpty else {
         return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
           .createTab(worktree, runSetupScriptIfNew: true, id: id)
         }
       }
       if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
-        presentDeeplinkConfirmation(
-          worktreeID: worktreeID, message: .command(input),
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID, responseFD: responseFD, message: .command(input),
           action: action, state: &state)
-        return .none
       }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .createTabWithInput(worktree, input: input, runSetupScriptIfNew: false, id: id)
       }
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
-      guard bypassConfirmation || state.settings.allowArbitraryDeeplinkInput else {
-        presentDeeplinkConfirmation(
-          worktreeID: worktreeID, message: .confirmation("Close tab \(tabID.uuidString.prefix(8))…?"),
-          action: action, state: &state)
-        return .none
+      guard bypassConfirmation else {
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID,
+          responseFD: responseFD,
+          message: .confirmation("Close tab \(tabID.uuidString.prefix(8))…?"),
+          action: action,
+          state: &state)
       }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID))
@@ -982,10 +1052,9 @@ struct AppFeature {
       if let input, !input.isEmpty,
         requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
       {
-        presentDeeplinkConfirmation(
-          worktreeID: worktreeID, message: .command(input),
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID, responseFD: responseFD, message: .command(input),
           action: action, state: &state)
-        return .none
       }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .focusSurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, input: input)
@@ -994,13 +1063,23 @@ struct AppFeature {
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
       }
+      // Reject explicit IDs that collide with an existing surface across all tabs.
+      if let id, terminalClient.surfaceExistsInWorktree(worktreeID, id) {
+        state.alert = AlertState {
+          TextState("Surface ID already exists")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("A surface with ID \(id.uuidString) already exists.")
+        }
+        return .none
+      }
       if let input, !input.isEmpty,
         requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
       {
-        presentDeeplinkConfirmation(
-          worktreeID: worktreeID, message: .command(input),
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID, responseFD: responseFD, message: .command(input),
           action: action, state: &state)
-        return .none
       }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .splitSurface(
@@ -1011,11 +1090,13 @@ struct AppFeature {
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
       }
-      guard bypassConfirmation || state.settings.allowArbitraryDeeplinkInput else {
-        presentDeeplinkConfirmation(
-          worktreeID: worktreeID, message: .confirmation("Close surface \(surfaceID.uuidString.prefix(8))…?"),
-          action: action, state: &state)
-        return .none
+      guard bypassConfirmation else {
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID,
+          responseFD: responseFD,
+          message: .confirmation("Close surface \(surfaceID.uuidString.prefix(8))…?"),
+          action: action,
+          state: &state)
       }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .destroySurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID)
@@ -1027,7 +1108,8 @@ struct AppFeature {
     worktreeID: Worktree.ID,
     action: Deeplink.WorktreeAction,
     state: inout State,
-    bypassConfirmation: Bool
+    bypassConfirmation: Bool,
+    responseFD: Int32? = nil
   ) -> Effect<Action> {
     guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "delete", state: &state) else {
       return .none
@@ -1047,14 +1129,14 @@ struct AppFeature {
       return .none
     }
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? worktreeID
-    guard bypassConfirmation || state.settings.allowArbitraryDeeplinkInput else {
-      presentDeeplinkConfirmation(
+    guard bypassConfirmation else {
+      return presentDeeplinkConfirmation(
         worktreeID: worktreeID,
+        responseFD: responseFD,
         message: .confirmation("Delete worktree \"\(worktreeName)\"?"),
         action: action,
-        state: &state,
+        state: &state
       )
-      return .none
     }
     return .send(.repositories(.deleteWorktreeConfirmed(worktreeID, repositoryID)))
   }
@@ -1082,12 +1164,12 @@ struct AppFeature {
 
   // MARK: Confirmation helpers.
 
-  /// Returns `true` when neither `bypassConfirmation` nor the allow-arbitrary setting is active.
+  /// Returns `true` when confirmation has not been bypassed (via policy or re-dispatch).
   private func requiresInputConfirmation(
     state: State,
     bypassConfirmation: Bool
   ) -> Bool {
-    !bypassConfirmation && !state.settings.allowArbitraryDeeplinkInput
+    !bypassConfirmation
   }
 
   // MARK: Terminal command dispatch.
@@ -1106,22 +1188,61 @@ struct AppFeature {
     return .run { _ in await terminalClient.send(cmd) }
   }
 
+  /// Extracts a human-readable message from an alert state for CLI error responses.
+  private func extractAlertMessage(_ alert: AlertState<Alert>?) -> String {
+    guard let alert else { return "Command failed." }
+    // TextState.customDumpValue returns the plain string for verbatim content.
+    let raw =
+      (alert.message?.customDumpValue as? String)
+      ?? (alert.title.customDumpValue as? String)
+    return raw?.isEmpty == false ? raw! : "Command failed."
+  }
+
+  /// Sends a socket response on the given FD and closes it.
+  private func sendSocketResponse(
+    clientFD: Int32,
+    ok succeeded: Bool,
+    error: String? = nil
+  ) -> Effect<Action> {
+    .run { _ in
+      AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: succeeded, error: error)
+    }
+  }
+
+  /// Closes any pending `responseFD` stored in the confirmation dialog so the CLI does not hang.
+  private func drainPendingResponseFD(
+    state: inout State,
+    error: String
+  ) -> Effect<Action> {
+    guard let clientFD = state.deeplinkInputConfirmation?.responseFD else { return .none }
+    state.deeplinkInputConfirmation?.responseFD = nil
+    return sendSocketResponse(clientFD: clientFD, ok: false, error: error)
+  }
+
   private func presentDeeplinkConfirmation(
     worktreeID: Worktree.ID,
+    responseFD: Int32? = nil,
     message: DeeplinkConfirmationMessage,
     action: Deeplink.WorktreeAction,
     state: inout State
-  ) {
+  ) -> Effect<Action> {
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? "Unknown"
     let repoName = state.repositories.repositoryID(containing: worktreeID)
       .flatMap { state.repositories.repositories[id: $0]?.name }
+    // Close any previously pending FD so the CLI does not hang.
+    let supersededEffect: Effect<Action> =
+      state.deeplinkInputConfirmation?.responseFD.map {
+        sendSocketResponse(clientFD: $0, ok: false, error: "Superseded by another command.")
+      } ?? .none
     state.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
       worktreeID: worktreeID,
       worktreeName: worktreeName,
       repositoryName: repoName,
       message: message,
       action: action,
+      responseFD: responseFD
     )
+    return supersededEffect
   }
 
   // MARK: Validation helpers.
@@ -1195,7 +1316,7 @@ struct AppFeature {
       case .general: .general
       case .notifications: .notifications
       case .worktrees: .worktree
-      case .codingAgents: .codingAgents
+      case .developer, .codingAgents: .developer
       case .shortcuts: .shortcuts
       case .updates: .updates
       case .github: .github

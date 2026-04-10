@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Darwin
 import DependenciesTestSupport
 import Foundation
 import Sharing
@@ -82,7 +83,7 @@ struct AppFeatureDeeplinkTests {
   @Test(.dependencies) func deleteWorktreeDeeplinkSkipsConfirmationWhenSettingEnabled() async {
     let worktree = makeWorktree()
     var settings = SettingsFeature.State()
-    settings.allowArbitraryDeeplinkInput = true
+    settings.automatedActionPolicy = .always
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -167,29 +168,29 @@ struct AppFeatureDeeplinkTests {
 
   // MARK: - Help deeplink.
 
-  @Test(.dependencies) func helpDeeplinkSetsCheatsheetRequested() async {
+  @Test(.dependencies) func helpDeeplinkSetsReferenceRequested() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)
 
     await store.send(.deeplink(.help)) {
-      $0.isDeeplinkCheatsheetRequested = true
+      $0.isDeeplinkReferenceRequested = true
     }
   }
 
-  @Test(.dependencies) func deeplinkCheatsheetOpenedResetsFlag() async {
+  @Test(.dependencies) func deeplinkReferenceOpenedResetsFlag() async {
     let worktree = makeWorktree()
     var initialState = AppFeature.State(
       repositories: makeRepositoriesState(worktree: worktree),
       settings: SettingsFeature.State(),
     )
-    initialState.isDeeplinkCheatsheetRequested = true
+    initialState.isDeeplinkReferenceRequested = true
     let store = TestStore(initialState: initialState) {
       AppFeature()
     }
     store.exhaustivity = .off
 
-    await store.send(.deeplinkCheatsheetOpened) {
-      $0.isDeeplinkCheatsheetRequested = false
+    await store.send(.deeplinkReferenceOpened) {
+      $0.isDeeplinkReferenceRequested = false
     }
   }
 
@@ -209,7 +210,7 @@ struct AppFeatureDeeplinkTests {
     let tabUUID = UUID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     var settings = SettingsFeature.State()
-    settings.allowArbitraryDeeplinkInput = true
+    settings.automatedActionPolicy = .always
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -251,7 +252,7 @@ struct AppFeatureDeeplinkTests {
     let surfaceUUID = UUID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     var settings = SettingsFeature.State()
-    settings.allowArbitraryDeeplinkInput = true
+    settings.automatedActionPolicy = .always
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -516,7 +517,7 @@ struct AppFeatureDeeplinkTests {
     let worktree = makeWorktree()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     var settings = SettingsFeature.State()
-    settings.allowArbitraryDeeplinkInput = true
+    settings.automatedActionPolicy = .always
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -602,8 +603,8 @@ struct AppFeatureDeeplinkTests {
       }
     }
     // The setting is persisted via SettingsFeature, not mutated directly.
-    await store.receive(\.settings.setAllowArbitraryDeeplinkInput) {
-      $0.settings.allowArbitraryDeeplinkInput = true
+    await store.receive(\.settings.setAutomatedActionPolicy) {
+      $0.settings.automatedActionPolicy = .always
     }
     await store.finish()
   }
@@ -1052,6 +1053,269 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.deeplinkInputConfirmation == nil)
   }
 
+  // MARK: - Socket source with responseFD.
+
+  @Test(.dependencies) func socketDeeplinkSuccessSendsOkResponse() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .select), source: .socket, responseFD: writeFD))
+    await store.receive(\.repositories.selectWorktree)
+    // Drain the response effect.
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func socketDeeplinkUnknownWorktreeSendsErrorResponse() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(.deeplink(.worktree(id: "/nonexistent", action: .select), source: .socket, responseFD: writeFD))
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.isEmpty == false)
+  }
+
+  @Test(.dependencies) func socketDeeplinkBeforeLoadSendsStillLoadingError() async {
+    let worktree = makeWorktree()
+    let repository = makeRepository(worktree: worktree)
+    var repositories = RepositoriesFeature.State()
+    repositories.repositories = [repository]
+    repositories.isInitialLoadComplete = false
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      let worktreeID = worktree.id
+      $0[DeeplinkClient.self].parse = { _ in .worktree(id: worktreeID, action: .select) }
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(.deeplinkReceived(URL(string: "supacode://worktree/x")!, source: .socket, responseFD: writeFD))
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.contains("loading") == true)
+  }
+
+  @Test(.dependencies) func socketDeeplinkConfirmationStoresFD() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "echo test", id: nil)),
+        source: .socket,
+        responseFD: 42
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == 42)
+  }
+
+  @Test(.dependencies) func socketDeeplinkSupersededConfirmationClosesOldFD() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let (oldReadFD, oldWriteFD) = makePipe()
+    defer { close(oldReadFD) }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    // First command opens a confirmation dialog with the old FD.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "echo first", id: nil)),
+        source: .socket,
+        responseFD: oldWriteFD
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == oldWriteFD)
+
+    // Second command supersedes — old FD should receive an error.
+    let (newReadFD, newWriteFD) = makePipe()
+    defer {
+      close(newReadFD)
+      close(newWriteFD)
+    }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "echo second", id: nil)),
+        source: .socket,
+        responseFD: newWriteFD
+      )
+    )
+    await store.finish()
+
+    // The old FD should have been closed with a superseded error.
+    let oldResponse = readPipeJSON(oldReadFD)
+    #expect(oldResponse?["ok"] as? Bool == false)
+    #expect((oldResponse?["error"] as? String)?.contains("Superseded") == true)
+
+    // The new FD is stored in the confirmation.
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == newWriteFD)
+  }
+
+  @Test(.dependencies) func socketDeeplinkCancelSendsErrorResponse() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State(),
+    )
+    initialState.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
+      worktreeID: worktree.id,
+      worktreeName: worktree.name,
+      repositoryName: "repo",
+      message: .command("echo hello"),
+      action: .tabNew(input: "echo hello", id: nil),
+      responseFD: writeFD,
+    )
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(.deeplinkInputConfirmation(.presented(.delegate(.cancel)))) {
+        $0.deeplinkInputConfirmation = nil
+      }
+    }
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect(response?["error"] as? String == "Cancelled by user.")
+  }
+
+  @Test(.dependencies) func socketDeeplinkConfirmSendsOkResponse() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State(),
+    )
+    initialState.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
+      worktreeID: worktree.id,
+      worktreeName: worktree.name,
+      repositoryName: "repo",
+      message: .command("echo hello"),
+      action: .tabNew(input: "echo hello", id: nil),
+      responseFD: writeFD,
+    )
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(worktreeID: worktree.id, action: .tabNew(input: "echo hello", id: nil), alwaysAllow: false)))
+        )
+      ) {
+        $0.deeplinkInputConfirmation = nil
+      }
+    }
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func cliOnlyPolicyBypassesConfirmationForSocket() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .cliOnly
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "echo test", id: nil)),
+        source: .socket
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    #expect(
+      sent.value.contains(
+        .createTabWithInput(worktree, input: "echo test", runSetupScriptIfNew: false, id: nil)
+      )
+    )
+  }
+
+  @Test(.dependencies) func cliOnlyPolicyRequiresConfirmationForURLScheme() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .cliOnly
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "echo test", id: nil)),
+        source: .urlScheme
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+  }
+
   // MARK: - Helpers.
 
   private func makeWorktree(
@@ -1126,5 +1390,198 @@ struct AppFeatureDeeplinkTests {
       message: .command(input),
       action: .tabNew(input: input, id: nil),
     )
+  }
+
+  // MARK: - Quit drains pending responseFD.
+
+  @Test(.dependencies) func dialogDismissDrainsPendingResponseFD() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State(),
+    )
+    initialState.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
+      worktreeID: worktree.id,
+      worktreeName: worktree.name,
+      repositoryName: "repo",
+      message: .command("echo hello"),
+      action: .tabNew(input: "echo hello", id: nil),
+      responseFD: writeFD,
+    )
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    // Test via .dismiss rather than .requestQuit to avoid NSApplication.terminate
+    // killing the test runner in DEBUG builds.
+    await store.send(.deeplinkInputConfirmation(.dismiss))
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+  }
+
+  // MARK: - deeplinksOnly policy.
+
+  @Test(.dependencies) func deeplinksOnlyPolicyBypassesConfirmationForURLScheme() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .deeplinksOnly
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "echo test", id: nil)),
+        source: .urlScheme
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    #expect(
+      sent.value.contains(
+        .createTabWithInput(worktree, input: "echo test", runSetupScriptIfNew: false, id: nil)
+      )
+    )
+  }
+
+  @Test(.dependencies) func deeplinksOnlyPolicyRequiresConfirmationForSocket() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .deeplinksOnly
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "echo test", id: nil)),
+        source: .socket
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+  }
+
+  // MARK: - Invalid socket deeplink sends FD error response.
+
+  @Test(.dependencies) func socketDeeplinkWithInvalidURLSendsErrorResponse() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0[DeeplinkClient.self].parse = { _ in nil }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplinkReceived(URL(string: "supacode://bad")!, source: .socket, responseFD: writeFD))
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.contains("Invalid deeplink") == true)
+  }
+
+  // MARK: - Duplicate ID rejection.
+
+  @Test(.dependencies) func tabNewWithDuplicateExplicitIDShowsAlert() async {
+    let worktree = makeWorktree()
+    let existingTabID = UUID()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, tabID in tabID.rawValue == existingTabID }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .tabNew(input: nil, id: existingTabID))))
+    #expect(store.state.alert != nil)
+  }
+
+  @Test(.dependencies) func surfaceSplitWithDuplicateExplicitIDShowsAlert() async {
+    let worktree = makeWorktree()
+    let tabUUID = UUID()
+    let surfaceUUID = UUID()
+    let existingSurfaceID = UUID()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, sID in sID == existingSurfaceID }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(
+          id: worktree.id,
+          action: .surfaceSplit(
+            tabID: tabUUID, surfaceID: surfaceUUID, direction: .horizontal,
+            input: nil, id: existingSurfaceID))))
+    #expect(store.state.alert != nil)
+    #expect(store.state.deeplinkInputConfirmation == nil)
+  }
+
+  // MARK: - Pipe helpers for responseFD testing.
+
+  private func makePipe() -> (readFD: Int32, writeFD: Int32) {
+    var fds: [Int32] = [0, 0]
+    let result = fds.withUnsafeMutableBufferPointer { buf in
+      Darwin.pipe(buf.baseAddress!)
+    }
+    precondition(result == 0, "pipe() failed")
+    return (fds[0], fds[1])
+  }
+
+  private func readPipeJSON(_ fileDescriptor: Int32) -> [String: Any]? {
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    while true {
+      let bytesRead = buffer.withUnsafeMutableBufferPointer { buf in
+        Darwin.read(fileDescriptor, buf.baseAddress!, buf.count)
+      }
+      guard bytesRead > 0 else { break }
+      data.append(contentsOf: buffer.prefix(bytesRead))
+    }
+    guard !data.isEmpty else { return nil }
+    return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
   }
 }

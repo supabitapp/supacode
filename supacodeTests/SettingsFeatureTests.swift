@@ -29,6 +29,7 @@ struct SettingsFeatureTests {
       mergedWorktreeAction: .archive,
       promptForWorktreeCreation: true,
       terminalThemeSyncEnabled: false,
+      automatedActionPolicy: .always,
     )
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = loaded }
@@ -36,10 +37,13 @@ struct SettingsFeatureTests {
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
     } withDependencies: {
+      $0[CLIInstallerClient.self].checkInstalled = { false }
+      $0[CLISkillClient.self].checkInstalled = { _ in false }
       $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
       $0[CodexSettingsClient.self].checkInstalled = { _ in false }
     }
 
+    store.exhaustivity = .off(showSkippedAssertions: false)
     await store.send(.task)
     await store.receive(\.settingsLoaded) {
       $0.appearanceMode = .dark
@@ -60,9 +64,10 @@ struct SettingsFeatureTests {
       $0.promptForWorktreeCreation = true
       $0.fetchOriginBeforeWorktreeCreation = true
       $0.terminalThemeSyncEnabled = false
+      $0.automatedActionPolicy = .always
     }
-    await store.receive(\.delegate.settingsChanged)
-    await receiveStartupHookChecks(from: store)
+    await store.skipReceivedActions()
+    receiveStartupHookChecks(from: store)
   }
 
   @Test(.dependencies) func savesUpdatesChanges() async {
@@ -499,16 +504,19 @@ struct SettingsFeatureTests {
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
     } withDependencies: {
+      $0[CLIInstallerClient.self].checkInstalled = { false }
+      $0[CLISkillClient.self].checkInstalled = { _ in false }
       $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
       $0[CodexSettingsClient.self].checkInstalled = { _ in false }
     }
 
+    store.exhaustivity = .off(showSkippedAssertions: false)
     await store.send(.task)
     await store.receive(\.settingsLoaded) {
       $0.shortcutOverrides = [.openSettings: override]
     }
-    await store.receive(\.delegate.settingsChanged)
-    await receiveStartupHookChecks(from: store)
+    await store.skipReceivedActions()
+    receiveStartupHookChecks(from: store)
   }
 
   // MARK: - Auto-Delete Archived Worktrees Setting
@@ -737,20 +745,69 @@ struct SettingsFeatureTests {
     dict["autoDeleteArchivedWorktreesAfterDays"] = autoDeleteDays
     return try JSONSerialization.data(withJSONObject: dict)
   }
+
+  // MARK: - AutomatedActionPolicy migration.
+
+  @Test func decodingNewPolicyFieldIsUsed() throws {
+    let json = try makeGlobalSettingsJSONWithPolicy(policy: "never")
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+    #expect(settings.automatedActionPolicy == .never)
+  }
+
+  @Test func decodingLegacyBoolTrueMigratedToAlways() throws {
+    let json = try makeGlobalSettingsJSONWithLegacyBool(true)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+    #expect(settings.automatedActionPolicy == .always)
+  }
+
+  @Test func decodingLegacyBoolFalseMigratedToNever() throws {
+    let json = try makeGlobalSettingsJSONWithLegacyBool(false)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+    #expect(settings.automatedActionPolicy == .never)
+  }
+
+  @Test func decodingNeitherFieldUsesDefault() throws {
+    let json = try makeGlobalSettingsJSONWithoutPolicy()
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: json)
+    #expect(settings.automatedActionPolicy == GlobalSettings.default.automatedActionPolicy)
+  }
+
+  private func makeGlobalSettingsJSONWithPolicy(policy: String) throws -> Data {
+    let base = GlobalSettings.default
+    let encoded = try JSONEncoder().encode(base)
+    var dict = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+    dict["automatedActionPolicy"] = policy
+    return try JSONSerialization.data(withJSONObject: dict)
+  }
+
+  private func makeGlobalSettingsJSONWithLegacyBool(_ value: Bool) throws -> Data {
+    let base = GlobalSettings.default
+    let encoded = try JSONEncoder().encode(base)
+    var dict = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+    dict.removeValue(forKey: "automatedActionPolicy")
+    dict["allowArbitraryDeeplinkInput"] = value
+    return try JSONSerialization.data(withJSONObject: dict)
+  }
+
+  private func makeGlobalSettingsJSONWithoutPolicy() throws -> Data {
+    let base = GlobalSettings.default
+    let encoded = try JSONEncoder().encode(base)
+    var dict = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+    dict.removeValue(forKey: "automatedActionPolicy")
+    dict.removeValue(forKey: "allowArbitraryDeeplinkInput")
+    return try JSONSerialization.data(withJSONObject: dict)
+  }
 }
 
 @MainActor
-private func receiveStartupHookChecks(from store: TestStoreOf<SettingsFeature>) async {
-  await store.receive(\.agentHookChecked) {
-    $0.claudeProgressState = .notInstalled
-  }
-  await store.receive(\.agentHookChecked) {
-    $0.claudeNotificationsState = .notInstalled
-  }
-  await store.receive(\.agentHookChecked) {
-    $0.codexProgressState = .notInstalled
-  }
-  await store.receive(\.agentHookChecked) {
-    $0.codexNotificationsState = .notInstalled
-  }
+private func receiveStartupHookChecks(from store: TestStoreOf<SettingsFeature>) {
+  // CLI/skill/hook checks run in parallel via .merge.
+  // Caller must drain effects before calling this. Assert final state only.
+  #expect(store.state.cliInstallState == .notInstalled)
+  #expect(store.state.claudeSkillState == .notInstalled)
+  #expect(store.state.codexSkillState == .notInstalled)
+  #expect(store.state.claudeProgressState == .notInstalled)
+  #expect(store.state.claudeNotificationsState == .notInstalled)
+  #expect(store.state.codexProgressState == .notInstalled)
+  #expect(store.state.codexNotificationsState == .notInstalled)
 }

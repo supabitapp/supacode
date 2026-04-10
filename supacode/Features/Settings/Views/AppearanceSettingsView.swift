@@ -81,9 +81,13 @@ struct AppearanceSettingsView: View {
           Text("Hide Tab Bar for Single Tab")
           Text("Automatically hides the tab bar when only one tab is open.")
         }
-        Toggle(isOn: $store.allowArbitraryDeeplinkInput) {
-          Text("Allow Arbitrary Deeplink Actions")
-          Text("Skip the confirmation dialog when a deeplink runs a command or performs a destructive action.")
+        Picker(selection: $store.automatedActionPolicy.sending(\.setAutomatedActionPolicy)) {
+          ForEach(AutomatedActionPolicy.allCases, id: \.self) { policy in
+            Text(policy.displayName).tag(policy)
+          }
+        } label: {
+          Text("Allow Arbitrary Actions")
+          Text("Skip the confirmation dialog for commands and destructive actions.")
         }
       }
     }

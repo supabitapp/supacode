@@ -722,6 +722,77 @@ struct WorktreeTerminalManagerTests {
     #expect(state.tabManager.selectedTabId == selectedBefore)
   }
 
+  // MARK: - CLI query methods.
+
+  @Test func listTabsReturnsTabIDs() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    guard let tab1 = state.createTab(),
+      let tab2 = state.createTab(focusing: false)
+    else {
+      Issue.record("Expected tabs to be created")
+      return
+    }
+
+    guard let tabs = manager.listTabs(worktreeID: worktree.id) else {
+      Issue.record("Expected non-nil tabs result")
+      return
+    }
+
+    #expect(tabs.count == 2)
+    let focusedTabs = tabs.filter { $0["focused"] == "1" }
+    #expect(focusedTabs.count == 1)
+    // createTab() selects the new tab, so tab1 (created last with focus) is selected.
+    let selectedTabID = state.tabManager.selectedTabId
+    #expect(focusedTabs.first?["id"] == selectedTabID?.rawValue.uuidString)
+    let ids = Set(tabs.compactMap { $0["id"] })
+    #expect(ids == [tab1.rawValue.uuidString, tab2.rawValue.uuidString])
+  }
+
+  @Test func listTabsReturnsNilForUnknownWorktree() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    #expect(manager.listTabs(worktreeID: "/nonexistent") == nil)
+  }
+
+  @Test func listSurfacesReturnsSortedSurfaceIDs() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    guard let tabID = state.createTab() else {
+      Issue.record("Expected tab to be created")
+      return
+    }
+
+    guard let surfaces = manager.listSurfaces(worktreeID: worktree.id, tabID: tabID.rawValue.uuidString) else {
+      Issue.record("Expected non-nil surfaces result")
+      return
+    }
+
+    // Should have at least one surface (the initial one).
+    #expect(!surfaces.isEmpty)
+    // Results should be sorted by UUID string.
+    let ids = surfaces.compactMap { $0["id"] }
+    #expect(ids == ids.sorted())
+    // One surface should be focused.
+    let focusedSurfaces = surfaces.filter { $0["focused"] == "1" }
+    #expect(focusedSurfaces.count == 1)
+  }
+
+  @Test func listSurfacesReturnsNilForUnknownWorktree() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    #expect(manager.listSurfaces(worktreeID: "/nonexistent", tabID: UUID().uuidString) == nil)
+  }
+
+  @Test func listSurfacesReturnsNilForInvalidTabID() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    _ = manager.state(for: worktree)
+    #expect(manager.listSurfaces(worktreeID: worktree.id, tabID: "not-a-uuid") == nil)
+  }
+
   private func makeWorktree(id: String = "/tmp/repo/wt-1") -> Worktree {
     let name = URL(fileURLWithPath: id).lastPathComponent
     return Worktree(

@@ -115,6 +115,7 @@ struct SupacodeApp: App {
   @State private var commandKeyObserver: CommandKeyObserver
   @State private var store: StoreOf<AppFeature>
 
+  // swiftlint:disable:next cyclomatic_complexity function_body_length
   @MainActor init() {
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
@@ -195,6 +196,9 @@ struct SupacodeApp: App {
         },
         surfaceExists: { worktreeID, tabID, surfaceID in
           terminalManager.surfaceExists(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID)
+        },
+        surfaceExistsInWorktree: { worktreeID, surfaceID in
+          terminalManager.surfaceExistsInWorktree(worktreeID: worktreeID, surfaceID: surfaceID)
         }
       )
       values.worktreeInfoWatcher = WorktreeInfoWatcherClient(
@@ -209,6 +213,73 @@ struct SupacodeApp: App {
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
+    // Forward CLI socket commands to the TCA store as deeplinks.
+    // The responseFD is threaded through the action chain so the reducer
+    // can respond after processing (or after a confirmation dialog resolves).
+    let store = appStore
+    terminalManager.onDeeplinkCommand = { url, clientFD in
+      store.send(.deeplinkReceived(url, source: .socket, responseFD: clientFD))
+    }
+    // Handle CLI queries by reading state and responding with data.
+    // Queries are read-only and handled outside the reducer intentionally:
+    // they only snapshot existing state and terminal layout without side
+    // effects, so routing through TCA actions would add ceremony without
+    // improving testability or correctness.
+    terminalManager.onQuery = { resource, params, clientFD in
+      let repos = store.repositories.repositories
+      let selectedWorktreeID = store.repositories.selectedWorktreeID
+      let pctSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
+      switch resource {
+      case "repos":
+        let data = repos.map {
+          ["id": $0.id.addingPercentEncoding(withAllowedCharacters: pctSet) ?? $0.id]
+        }
+        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
+      case "worktrees":
+        let data = repos.flatMap { repo in
+          repo.worktrees.map { worktree in
+            let encodedID = worktree.id.addingPercentEncoding(withAllowedCharacters: pctSet) ?? worktree.id
+            var entry = ["id": encodedID]
+            if worktree.id == selectedWorktreeID { entry["focused"] = "1" }
+            return entry
+          }
+        }
+        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
+      case "tabs":
+        guard let worktreeID = params["worktreeID"] else {
+          AgentHookSocketServer.sendCommandResponse(
+            clientFD: clientFD, ok: false, error: "Missing worktreeID for tab list.")
+          return
+        }
+        let tabs = terminalManager.listTabs(worktreeID: worktreeID)
+        if tabs == nil {
+          // The worktree may exist in repo state but have no terminal yet.
+          let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+          let worktreeExists = repos.contains { $0.worktrees.contains { $0.id == decoded } }
+          guard worktreeExists else {
+            AgentHookSocketServer.sendCommandResponse(
+              clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+            return
+          }
+        }
+        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: tabs ?? [])
+      case "surfaces":
+        guard let worktreeID = params["worktreeID"], let tabID = params["tabID"] else {
+          AgentHookSocketServer.sendCommandResponse(
+            clientFD: clientFD, ok: false, error: "Missing worktreeID/tabID for surface list.")
+          return
+        }
+        guard let surfaces = terminalManager.listSurfaces(worktreeID: worktreeID, tabID: tabID) else {
+          AgentHookSocketServer.sendCommandResponse(
+            clientFD: clientFD, ok: false, error: "Worktree or tab not found.")
+          return
+        }
+        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: surfaces)
+      default:
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
+      }
+    }
   }
 
   var body: some Scene {
@@ -219,7 +290,7 @@ struct SupacodeApp: App {
           .environment(commandKeyObserver)
       }
       .openSettingsOnSelection(store: store)
-      .openDeeplinkCheatsheetOnRequest(store: store)
+      .openDeeplinkReferenceOnRequest(store: store)
     }
     .handlesExternalEvents(matching: [])
     .environment(ghosttyShortcuts)
@@ -257,7 +328,7 @@ struct SupacodeApp: App {
         }
       }
       CommandGroup(replacing: .help) {
-        DeeplinkCheatsheetMenuButton()
+        DeeplinkReferenceMenuButton()
         Divider()
         Button("Submit GitHub Issue") {
           guard let url = URL(string: "https://github.com/supabitapp/supacode/issues/new") else { return }
@@ -284,8 +355,15 @@ struct SupacodeApp: App {
     .windowToolbarStyle(.unified)
     .defaultSize(width: 800, height: 600)
     .restorationBehavior(.disabled)
-    Window("Deeplink Reference", id: WindowID.deeplinkCheatsheet) {
-      DeeplinkCheatsheetView()
+    Window("Deeplink Reference", id: WindowID.deeplinkReference) {
+      DeeplinkReferenceView()
+    }
+    .handlesExternalEvents(matching: [])
+    .windowToolbarStyle(.unified)
+    .defaultSize(width: 720, height: 640)
+    .restorationBehavior(.disabled)
+    Window("CLI Reference", id: WindowID.cliReference) {
+      CLIReferenceView()
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)

@@ -37,6 +37,7 @@ enum Deeplink: Equatable, Sendable {
     case general
     case notifications
     case worktrees
+    case developer
     case codingAgents
     case shortcuts
     case updates

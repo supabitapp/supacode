@@ -266,6 +266,16 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .settings(section: .worktrees))
   }
 
+  @Test func settingsDeveloperSection() {
+    let url = URL(string: "supacode://settings/developer")!
+    #expect(parse(url) == .settings(section: .developer))
+  }
+
+  @Test func settingsCodingAgentsBackwardCompat() {
+    let url = URL(string: "supacode://settings/codingAgents")!
+    #expect(parse(url) == .settings(section: .codingAgents))
+  }
+
   @Test func settingsRepoWithValidID() {
     let url = URL(string: "supacode://settings/repo/%2Ftmp%2Frepo")!
     #expect(parse(url) == .settingsRepo(repositoryID: "/tmp/repo"))

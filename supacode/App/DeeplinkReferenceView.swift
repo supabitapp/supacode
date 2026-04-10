@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import SwiftUI
 
-struct DeeplinkCheatsheetView: View {
+struct DeeplinkReferenceView: View {
   var body: some View {
     Form {
       Section {
@@ -99,7 +99,7 @@ struct DeeplinkCheatsheetView: View {
     .init(
       url: "supacode://settings/<section>",
       description: "Open a specific section.",
-      params: "general|notifications|worktrees|codingAgents|shortcuts|updates|github"
+      params: "general|notifications|worktrees|developer|shortcuts|updates|github"
     ),
     .init(url: "supacode://settings/repo/<repo_id>", description: "Open repository settings."),
   ]
@@ -142,37 +142,37 @@ private struct DeeplinkSection: View {
   }
 }
 
-struct DeeplinkCheatsheetMenuButton: View {
+struct DeeplinkReferenceMenuButton: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     Button("Deeplink Reference") {
-      openWindow(id: WindowID.deeplinkCheatsheet)
+      openWindow(id: WindowID.deeplinkReference)
     }
-    .help("Open the deeplink cheatsheet.")
+    .help("Open the deeplink reference.")
   }
 }
 
 // MARK: - Deeplink → window bridge.
 
-/// Opens the deeplink cheatsheet window when the reducer sets `isDeeplinkCheatsheetRequested`.
-struct OpenDeeplinkCheatsheetBridge: ViewModifier {
+/// Opens the deeplink reference window when the reducer sets `isDeeplinkReferenceRequested`.
+struct OpenDeeplinkReferenceBridge: ViewModifier {
   @Environment(\.openWindow) private var openWindow
   let store: StoreOf<AppFeature>
 
   func body(content: Content) -> some View {
     content
-      .onChange(of: store.isDeeplinkCheatsheetRequested) { _, requested in
+      .onChange(of: store.isDeeplinkReferenceRequested) { _, requested in
         guard requested else { return }
-        openWindow(id: WindowID.deeplinkCheatsheet)
-        store.send(.deeplinkCheatsheetOpened)
+        openWindow(id: WindowID.deeplinkReference)
+        store.send(.deeplinkReferenceOpened)
       }
   }
 }
 
 extension View {
-  func openDeeplinkCheatsheetOnRequest(store: StoreOf<AppFeature>) -> some View {
-    modifier(OpenDeeplinkCheatsheetBridge(store: store))
+  func openDeeplinkReferenceOnRequest(store: StoreOf<AppFeature>) -> some View {
+    modifier(OpenDeeplinkReferenceBridge(store: store))
   }
 }
 
