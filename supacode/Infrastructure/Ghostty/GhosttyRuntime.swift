@@ -25,6 +25,7 @@ final class GhosttyRuntime {
   private var observers: [NSObjectProtocol] = []
   private var surfaceRefs: [SurfaceReference] = []
   private var lastColorScheme: ghostty_color_scheme_e?
+  var isBackgroundOpaque = false
   var onConfigChange: (() -> Void)?
 
   init() {

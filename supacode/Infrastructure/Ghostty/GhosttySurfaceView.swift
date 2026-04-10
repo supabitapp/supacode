@@ -2,7 +2,6 @@ import AppKit
 import Carbon
 import CoreText
 import GhosttyKit
-import ObjectiveC
 import QuartzCore
 
 private let surfaceLogger = SupaLogger("Surface")
@@ -398,9 +397,16 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private func applyWindowBackgroundAppearance() {
-    guard let window, window.isVisible else { return }
+    guard let window else {
+      surfaceLogger.debug("applyWindowBackgroundAppearance: window unavailable, skipping.")
+      return
+    }
+    guard window.isVisible else {
+      surfaceLogger.debug("applyWindowBackgroundAppearance: window not visible, skipping.")
+      return
+    }
     let opacity = runtime.backgroundOpacity()
-    if !window.styleMask.contains(.fullScreen), opacity < 1, !window.isBackgroundOpaque {
+    if !window.styleMask.contains(.fullScreen), opacity < 1, !runtime.isBackgroundOpaque {
       window.isOpaque = false
       window.titlebarAppearsTransparent = true
       window.backgroundColor = .white.withAlphaComponent(0.001)
@@ -417,13 +423,24 @@ final class GhosttySurfaceView: NSView, Identifiable {
     window.backgroundColor = runtime.backgroundColor().withAlphaComponent(1)
   }
 
-  func toggleBackgroundOpacity() {
-    // we keep these preconditions here so we do not mutate per-window opacity state 
-    // when toggling would have no visible effect.
-    guard runtime.backgroundOpacity() < 1 else { return }
-    guard let window, !window.styleMask.contains(.fullScreen) else { return }
-    window.isBackgroundOpaque.toggle()
+  func toggleBackgroundOpacity() -> Bool {
+    // Guard against a missing window, and skip toggling when it would
+    // have no visible effect (fully opaque config or fullscreen mode).
+    guard runtime.backgroundOpacity() < 1 else {
+      surfaceLogger.warning("toggleBackgroundOpacity: no-op because background opacity is fully opaque.")
+      return false
+    }
+    guard let window else {
+      surfaceLogger.debug("toggleBackgroundOpacity: window unavailable, skipping.")
+      return false
+    }
+    guard !window.styleMask.contains(.fullScreen) else {
+      surfaceLogger.warning("toggleBackgroundOpacity: no-op in fullscreen mode.")
+      return false
+    }
+    runtime.isBackgroundOpaque.toggle()
     applyWindowBackgroundAppearance()
+    return true
   }
 
   func focusDidChange(_ focused: Bool) {
@@ -1448,26 +1465,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
     return flags
   }
 
-}
-
-private enum GhosttySurfaceWindowBackgroundOpaqueKey {
-  static var value = 0
-}
-
-private extension NSWindow {
-  var isBackgroundOpaque: Bool {
-    get {
-      (objc_getAssociatedObject(self, &GhosttySurfaceWindowBackgroundOpaqueKey.value) as? Bool) ?? false
-    }
-    set {
-      objc_setAssociatedObject(
-        self,
-        &GhosttySurfaceWindowBackgroundOpaqueKey.value,
-        newValue,
-        .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-      )
-    }
-  }
 }
 
 extension GhosttySurfaceView {
