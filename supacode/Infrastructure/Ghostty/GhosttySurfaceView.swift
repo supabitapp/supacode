@@ -424,10 +424,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   func toggleBackgroundOpacity() -> Bool {
-    // Guard against a missing window, and skip toggling when it would
-    // have no visible effect (fully opaque config or fullscreen mode).
+    // Skip toggling when it would have no visible effect: config is fully
+    // opaque, no window is available, or window is in fullscreen mode.
     guard runtime.backgroundOpacity() < 1 else {
-      surfaceLogger.warning("toggleBackgroundOpacity: no-op because background opacity is fully opaque.")
+      surfaceLogger.debug("toggleBackgroundOpacity: no-op, background is already fully opaque.")
       return false
     }
     guard let window else {
@@ -435,10 +435,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
       return false
     }
     guard !window.styleMask.contains(.fullScreen) else {
-      surfaceLogger.warning("toggleBackgroundOpacity: no-op in fullscreen mode.")
+      surfaceLogger.debug("toggleBackgroundOpacity: no-op in fullscreen mode.")
       return false
     }
-    runtime.isBackgroundOpaque.toggle()
+    runtime.toggleIsBackgroundOpaque()
     applyWindowBackgroundAppearance()
     return true
   }

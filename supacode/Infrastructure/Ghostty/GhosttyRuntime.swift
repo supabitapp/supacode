@@ -25,7 +25,13 @@ final class GhosttyRuntime {
   private var observers: [NSObjectProtocol] = []
   private var surfaceRefs: [SurfaceReference] = []
   private var lastColorScheme: ghostty_color_scheme_e?
-  var isBackgroundOpaque = false
+  /// Whether the user has toggled background opacity to force
+  /// an opaque window, overriding the configured transparency.
+  private(set) var isBackgroundOpaque = false
+
+  func toggleIsBackgroundOpaque() {
+    isBackgroundOpaque.toggle()
+  }
   var onConfigChange: (() -> Void)?
 
   init() {
@@ -153,6 +159,7 @@ final class GhosttyRuntime {
       Self.logger.warning("Cannot reload app config: Ghostty app instance is nil.")
       return
     }
+    isBackgroundOpaque = false
     var target = ghostty_target_s()
     target.tag = GHOSTTY_TARGET_APP
     guard let config = Self.loadConfig() else {
