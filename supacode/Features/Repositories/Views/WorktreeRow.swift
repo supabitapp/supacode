@@ -174,7 +174,6 @@ struct WorktreeRow: View {
         TrailingView(
           shortcutHint: shortcutHint,
           info: info,
-          isBusy: isBusy,
           showsPullRequestInfo: showsPullRequestInfo,
           pullRequestBadgeText: pullRequestBadgeText,
           isRunScriptRunning: isRunScriptRunning,
@@ -307,7 +306,6 @@ private struct IconView: View {
 private struct TrailingView: View {
   let shortcutHint: String?
   let info: WorktreeInfoEntry?
-  let isBusy: Bool
   let showsPullRequestInfo: Bool
   let pullRequestBadgeText: String?
   let isRunScriptRunning: Bool
@@ -321,14 +319,12 @@ private struct TrailingView: View {
         .foregroundStyle(.secondary)
     } else {
       HStack(spacing: 6) {
-        if !isBusy {
-          DiffStatsView(info: info)
-          if showsPullRequestInfo, let pullRequestBadgeText {
-            Text(pullRequestBadgeText)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .transition(.blurReplace)
-          }
+        DiffStatsView(info: info)
+        if showsPullRequestInfo, let pullRequestBadgeText {
+          Text(pullRequestBadgeText)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .transition(.blurReplace)
         }
         StatusIndicator(
           isRunScriptRunning: isRunScriptRunning,

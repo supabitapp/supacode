@@ -15,10 +15,20 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
       guard let branch = aliasMap[alias] else {
         continue
       }
+      // Prefer PRs from the same repo (matching owner/name).
       let upstreamCandidates = connection.nodes.filter { $0.matches(owner: normalizedOwner, repo: normalizedRepo) }
+      // Fall back to fork PRs. The GraphQL query fetches by headRefName,
+      // so a fork PR like "user:main → main" appears when querying for
+      // "main" even though the local branch is the PR's target, not its
+      // source. Skip these by requiring baseRefName to differ from the
+      // local branch name (nil baseRefName is treated as unknown and
+      // excluded conservatively).
       let candidates =
         upstreamCandidates.isEmpty
-        ? connection.nodes.filter { $0.headRepository != nil }
+        ? connection.nodes.filter {
+          $0.headRepository != nil
+            && $0.baseRefName.map { $0.lowercased() != branch.lowercased() } ?? false
+        }
         : upstreamCandidates
       if let node = candidates.max(by: { left, right in
         let leftRank = left.stateRank

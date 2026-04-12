@@ -66,7 +66,53 @@ struct GithubBatchPullRequestsTests {
     #expect(prs["feature-b"] == nil)
   }
 
-  @Test func fallsBackToForkOnlyMatches() throws {
+  @Test func ignoresForkPRWhenBaseRefMatchesBranch() throws {
+    // Fork PR "fork:main → main" should be filtered out for local
+    // "main" because the local branch is the PR's target, not its source.
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 9,
+                  "title": "Fork PR",
+                  "state": "MERGED",
+                  "additions": 1,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2025-01-01T00:00:00Z",
+                  "url": "https://github.com/fork/repo/pull/9",
+                  "headRefName": "main",
+                  "baseRefName": "main",
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "fork" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "main"],
+      owner: "octo",
+      repo: "repo"
+    )
+    #expect(prs["main"] == nil)
+  }
+
+  @Test func matchesForkPRWhenBaseRefDiffersFromBranch() throws {
+    // Fork PR "fork:feature-a → main" should be selected for local
+    // "feature-a" because the local branch is the PR's source, not its target.
     let json = """
       {
         "data": {
@@ -84,6 +130,7 @@ struct GithubBatchPullRequestsTests {
                   "updatedAt": "2025-01-01T00:00:00Z",
                   "url": "https://github.com/fork/repo/pull/9",
                   "headRefName": "feature-a",
+                  "baseRefName": "main",
                   "headRepository": {
                     "name": "repo",
                     "owner": { "login": "fork" }
@@ -108,7 +155,9 @@ struct GithubBatchPullRequestsTests {
     #expect(prs["feature-a"]?.title == "Fork PR")
   }
 
-  @Test func ignoresNilHeadRepositoryInFallback() throws {
+  @Test func skipsNilHeadRepositoryInForkFallback() throws {
+    // When falling back to fork PRs, nodes with nil headRepository
+    // are excluded. The fork PR with a valid headRepository wins.
     let json = """
       {
         "data": {
@@ -126,6 +175,7 @@ struct GithubBatchPullRequestsTests {
                   "updatedAt": "2025-01-02T00:00:00Z",
                   "url": "https://github.com/octo/repo/pull/7",
                   "headRefName": "feature-a",
+                  "baseRefName": "main",
                   "headRepository": null
                 },
                 {
@@ -139,6 +189,7 @@ struct GithubBatchPullRequestsTests {
                   "updatedAt": "2025-01-01T00:00:00Z",
                   "url": "https://github.com/fork/repo/pull/8",
                   "headRefName": "feature-a",
+                  "baseRefName": "main",
                   "headRepository": {
                     "name": "repo",
                     "owner": { "login": "fork" }
@@ -276,5 +327,48 @@ struct GithubBatchPullRequestsTests {
     )
     #expect(prs["feature-a"]?.number == 21)
     #expect(prs["feature-a"]?.title == "Merged Newer")
+  }
+
+  @Test func excludesForkPRWithNilBaseRefName() throws {
+    // When baseRefName is nil the filter cannot determine whether the
+    // local branch is the PR's target, so the PR is excluded conservatively.
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 30,
+                  "title": "Fork Missing Base",
+                  "state": "OPEN",
+                  "additions": 1,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2025-01-01T00:00:00Z",
+                  "url": "https://github.com/fork/repo/pull/30",
+                  "headRefName": "main",
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "fork" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "main"],
+      owner: "octo",
+      repo: "repo"
+    )
+    #expect(prs["main"] == nil)
   }
 }
