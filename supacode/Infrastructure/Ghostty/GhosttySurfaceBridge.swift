@@ -2,6 +2,45 @@ import AppKit
 import Foundation
 import GhosttyKit
 
+enum GhosttyOpenURLKind: Equatable {
+  case unknown
+  case text
+  case html
+
+  init(_ value: ghostty_action_open_url_kind_e) {
+    switch value {
+    case GHOSTTY_ACTION_OPEN_URL_KIND_TEXT:
+      self = .text
+    case GHOSTTY_ACTION_OPEN_URL_KIND_HTML:
+      self = .html
+    default:
+      self = .unknown
+    }
+  }
+}
+
+struct GhosttyOpenURLRequest: Equatable {
+  let kind: GhosttyOpenURLKind
+  let url: URL
+}
+
+func ghosttyOpenURLRequest(
+  urlString: String?,
+  kind: ghostty_action_open_url_kind_e
+) -> GhosttyOpenURLRequest? {
+  guard let urlString = urlString?.trimmingCharacters(in: .whitespacesAndNewlines),
+    !urlString.isEmpty
+  else { return nil }
+  let url: URL
+  if let candidate = URL(string: urlString), candidate.scheme != nil {
+    url = candidate
+  } else {
+    let expanded = NSString(string: urlString).expandingTildeInPath
+    url = URL(filePath: expanded).standardizedFileURL
+  }
+  return GhosttyOpenURLRequest(kind: GhosttyOpenURLKind(kind), url: url)
+}
+
 @MainActor
 final class GhosttySurfaceBridge {
   let state = GhosttySurfaceState()
@@ -33,7 +72,9 @@ final class GhosttySurfaceBridge {
     if let handled = handleSplitAction(action) { return handled }
     if handleTitleAndPath(action) { return false }
     if handleCommandStatus(action) { return false }
-    if handleMouseAndLink(action) { return false }
+    if handleMouseAndLink(action) {
+      return action.tag == GHOSTTY_ACTION_OPEN_URL
+    }
     if handleSearchAndScroll(action) { return false }
     if handleSizeAndKey(action) { return false }
     if handleConfigAndShell(action) { return false }
@@ -286,7 +327,12 @@ final class GhosttySurfaceBridge {
     case GHOSTTY_ACTION_OPEN_URL:
       let openUrl = action.action.open_url
       state.openUrlKind = openUrl.kind
-      state.openUrl = string(from: openUrl.url, length: openUrl.len)
+      let rawUrl = string(from: openUrl.url, length: openUrl.len)
+      state.openUrl = rawUrl
+      if let request = ghosttyOpenURLRequest(urlString: rawUrl, kind: openUrl.kind) {
+        SupaLogger("GhosttySurfaceBridge").debug("OPEN_URL raw=\(rawUrl ?? "nil") resolved=\(request.url)")
+        NSWorkspace.shared.open(request.url)
+      }
       return true
 
     case GHOSTTY_ACTION_COLOR_CHANGE:

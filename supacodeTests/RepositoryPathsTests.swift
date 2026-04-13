@@ -79,6 +79,20 @@ struct SupacodePathsTests {
     #expect(directory == expectedDirectory)
   }
 
+  @Test func normalizedWorktreeBaseDirectoryPathExpandsNamedTildePaths() {
+    let username = NSUserName()
+    let input = "~\(username)/worktrees"
+    let normalizedPath = SupacodePaths.normalizedWorktreeBaseDirectoryPath(input)
+    let expectedPath = URL(
+      filePath: NSString(string: input).expandingTildeInPath,
+      directoryHint: .isDirectory
+    )
+    .standardizedFileURL
+    .path(percentEncoded: false)
+
+    #expect(normalizedPath == expectedPath)
+  }
+
   @Test func exampleWorktreePathUsesResolvedBaseDirectory() {
     let root = URL(fileURLWithPath: "/tmp/work/repo-alpha")
     let path = SupacodePaths.exampleWorktreePath(
