@@ -357,7 +357,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     updateScreenObservers()
     updateContentScale()
-    updateSurfaceSize()
+    notifySizeChanged()
     applyWindowBackgroundAppearance()
   }
 
@@ -370,12 +370,20 @@ final class GhosttySurfaceView: NSView, Identifiable {
       CATransaction.commit()
     }
     updateContentScale()
-    updateSurfaceSize()
+    notifySizeChanged()
   }
 
   override func layout() {
     super.layout()
-    updateSurfaceSize()
+    notifySizeChanged()
+  }
+
+  private func notifySizeChanged() {
+    if let scrollWrapper {
+      scrollWrapper.updateSurfaceSize()
+    } else {
+      updateSurfaceSize()
+    }
   }
 
   override func updateTrackingAreas() {
@@ -835,9 +843,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     return event
   }
 
-  func updateSurfaceSize() {
+  func updateSurfaceSize(contentSize: CGSize? = nil) {
     guard let surface else { return }
-    let backingSize = convertToBacking(bounds.size)
+    let backingSize = convertToBacking(contentSize ?? bounds.size)
     if backingSize == lastBackingSize {
       return
     }
@@ -941,7 +949,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     bridge.surface = surface
     lastOcclusion = nil
     lastSurfaceFocus = nil
-    updateSurfaceSize()
+    notifySizeChanged()
   }
 
   private func updateContentScale() {
@@ -1789,6 +1797,8 @@ final class GhosttySurfaceScrollView: NSView {
     observers.forEach { NotificationCenter.default.removeObserver($0) }
   }
 
+  override var safeAreaInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
   override func layout() {
     super.layout()
     scrollView.frame = bounds
@@ -1796,11 +1806,18 @@ final class GhosttySurfaceScrollView: NSView {
     documentView.frame.size.width = scrollView.bounds.width
     synchronizeScrollView()
     synchronizeSurfaceView()
-    surfaceView.updateSurfaceSize()
+    synchronizeCoreSurface()
+  }
+
+  private func synchronizeCoreSurface() {
+    let width = scrollView.contentSize.width
+    let height = surfaceView.frame.height
+    guard width > 0, height > 0 else { return }
+    surfaceView.updateSurfaceSize(contentSize: CGSize(width: width, height: height))
   }
 
   func updateSurfaceSize() {
-    surfaceView.updateSurfaceSize()
+    synchronizeCoreSurface()
     needsLayout = true
   }
 
@@ -1822,7 +1839,7 @@ final class GhosttySurfaceScrollView: NSView {
 
   private func handleScrollerStyleChange() {
     refreshAppearance()
-    surfaceView.updateSurfaceSize()
+    synchronizeCoreSurface()
   }
 
   private func synchronizeSurfaceView() {
