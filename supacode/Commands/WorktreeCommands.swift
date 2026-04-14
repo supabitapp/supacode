@@ -13,6 +13,9 @@ struct WorktreeCommands: Commands {
   @FocusedValue(\.deleteWorktreeAction) private var deleteWorktreeAction
   @FocusedValue(\.runScriptAction) private var runScriptAction
   @FocusedValue(\.stopRunScriptAction) private var stopRunScriptAction
+  @FocusedValue(\.testScriptAction) private var testScriptAction
+  @FocusedValue(\.debugScriptAction) private var debugScriptAction
+  @FocusedValue(\.deployScriptAction) private var deployScriptAction
   @FocusedValue(\.visibleHotkeyWorktreeRows) private var visibleHotkeyWorktreeRows
 
   init(store: StoreOf<AppFeature>) {
@@ -38,6 +41,9 @@ struct WorktreeCommands: Commands {
     let refresh = AppShortcuts.refreshWorktrees.effective(from: overrides)
     let run = AppShortcuts.runScript.effective(from: overrides)
     let stop = AppShortcuts.stopRunScript.effective(from: overrides)
+    let test = AppShortcuts.testScript.effective(from: overrides)
+    let debug = AppShortcuts.debugScript.effective(from: overrides)
+    let deploy = AppShortcuts.deployScript.effective(from: overrides)
     CommandMenu("Worktrees") {
       // Creation and opening.
       Button("New Worktree…", systemImage: "plus") {
@@ -102,6 +108,24 @@ struct WorktreeCommands: Commands {
       .appKeyboardShortcut(stop)
       .help("Stop Script (\(stop?.display ?? "none"))")
       .disabled(stopRunScriptAction == nil)
+      Button("Test Script", systemImage: "testtube.2") {
+        testScriptAction?()
+      }
+      .appKeyboardShortcut(test)
+      .help("Test Script (\(test?.display ?? "none"))")
+      .disabled(testScriptAction == nil)
+      Button("Debug Script", systemImage: "ladybug") {
+        debugScriptAction?()
+      }
+      .appKeyboardShortcut(debug)
+      .help("Debug Script (\(debug?.display ?? "none"))")
+      .disabled(debugScriptAction == nil)
+      Button("Deploy Script", systemImage: "shippingbox") {
+        deployScriptAction?()
+      }
+      .appKeyboardShortcut(deploy)
+      .help("Deploy Script (\(deploy?.display ?? "none"))")
+      .disabled(deployScriptAction == nil)
       Divider()
       // Navigation.
       Button("Select Next", systemImage: "chevron.down") {
@@ -231,6 +255,21 @@ extension FocusedValues {
     set { self[StopRunScriptActionKey.self] = newValue }
   }
 
+  var testScriptAction: (() -> Void)? {
+    get { self[TestScriptActionKey.self] }
+    set { self[TestScriptActionKey.self] = newValue }
+  }
+
+  var debugScriptAction: (() -> Void)? {
+    get { self[DebugScriptActionKey.self] }
+    set { self[DebugScriptActionKey.self] = newValue }
+  }
+
+  var deployScriptAction: (() -> Void)? {
+    get { self[DeployScriptActionKey.self] }
+    set { self[DeployScriptActionKey.self] = newValue }
+  }
+
   var visibleHotkeyWorktreeRows: [WorktreeRowModel]? {
     get { self[VisibleHotkeyWorktreeRowsKey.self] }
     set { self[VisibleHotkeyWorktreeRowsKey.self] = newValue }
@@ -242,6 +281,18 @@ private struct RunScriptActionKey: FocusedValueKey {
 }
 
 private struct StopRunScriptActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+private struct TestScriptActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+private struct DebugScriptActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+private struct DeployScriptActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 

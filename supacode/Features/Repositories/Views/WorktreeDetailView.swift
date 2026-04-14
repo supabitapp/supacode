@@ -217,6 +217,9 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.endSearchAction, actions.endSearch)
       .focusedSceneValue(\.runScriptAction, actions.runScript)
       .focusedSceneValue(\.stopRunScriptAction, actions.stopRunScript)
+      .focusedSceneValue(\.testScriptAction, actions.testScript)
+      .focusedSceneValue(\.debugScriptAction, actions.debugScript)
+      .focusedSceneValue(\.deployScriptAction, actions.deployScript)
   }
 
   private func makeFocusedActions(
@@ -238,7 +241,10 @@ struct WorktreeDetailView: View {
       navigateSearchPrevious: action(.navigateSearchPrevious),
       endSearch: action(.endSearch),
       runScript: runScriptEnabled ? { store.send(.runScript) } : nil,
-      stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil
+      stopRunScript: runScriptIsRunning ? { store.send(.stopRunScript) } : nil,
+      testScript: nil,
+      debugScript: nil,
+      deployScript: nil,
     )
   }
 
@@ -272,6 +278,9 @@ struct WorktreeDetailView: View {
     let endSearch: (() -> Void)?
     let runScript: (() -> Void)?
     let stopRunScript: (() -> Void)?
+    let testScript: (() -> Void)?
+    let debugScript: (() -> Void)?
+    let deployScript: (() -> Void)?
   }
 
   fileprivate struct WorktreeToolbarState {

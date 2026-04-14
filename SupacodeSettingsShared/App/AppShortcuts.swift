@@ -13,6 +13,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectWorktree(Int)
   case openFinder, openRepository, openPullRequest, copyPath
   case runScript, stopRunScript
+  case testScript, debugScript, deployScript
 
   // Stable string key for JSON dictionary persistence.
   public var codingKey: CodingKey {
@@ -53,6 +54,9 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "copyPath"
     case .runScript: "runScript"
     case .stopRunScript: "stopRunScript"
+    case .testScript: "testScript"
+    case .debugScript: "debugScript"
+    case .deployScript: "deployScript"
     }
   }
 
@@ -76,6 +80,9 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "copyPath": .copyPath,
     "runScript": .runScript,
     "stopRunScript": .stopRunScript,
+    "testScript": .testScript,
+    "debugScript": .debugScript,
+    "deployScript": .deployScript,
   ]
 
   private init?(stableKey: String) {
@@ -112,6 +119,9 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
     case .stopRunScript: "Stop Run Script"
+    case .testScript: "Test Script"
+    case .debugScript: "Debug Script"
+    case .deployScript: "Deploy Script"
     }
   }
 }
@@ -316,6 +326,9 @@ public enum AppShortcuts {
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
   public static let stopRunScript = AppShortcut(id: .stopRunScript, key: ".", modifiers: .command)
+  public static let testScript = AppShortcut(id: .testScript, key: "u", modifiers: [.command, .shift])
+  public static let debugScript = AppShortcut(id: .debugScript, key: "y", modifiers: [.command, .shift])
+  public static let deployScript = AppShortcut(id: .deployScript, key: "d", modifiers: [.command, .shift])
 
   public static let worktreeSelection: [AppShortcut] = [
     selectWorktree1, selectWorktree2, selectWorktree3, selectWorktree4, selectWorktree5,
@@ -337,7 +350,10 @@ public enum AppShortcuts {
     AppShortcutGroup(category: .worktreeSelection, shortcuts: worktreeSelection),
     AppShortcutGroup(
       category: .actions,
-      shortcuts: [openFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript]
+      shortcuts: [
+        openFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript,
+        testScript, debugScript, deployScript,
+      ]
     ),
   ]
 
