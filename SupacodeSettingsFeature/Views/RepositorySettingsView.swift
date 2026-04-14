@@ -115,12 +115,6 @@ public struct RepositorySettingsView: View {
         placeholder: "claude --dangerously-skip-permissions"
       )
       ScriptSection(
-        title: "Run Script",
-        subtitle: "Launched on demand from the toolbar.",
-        text: settings.runScript,
-        placeholder: "npm run dev"
-      )
-      ScriptSection(
         title: "Archive Script",
         subtitle: "Runs before a worktree is archived.",
         text: settings.archiveScript,

@@ -41,6 +41,7 @@ private struct RepositoryLabel: View {
 struct SettingsView: View {
   @Bindable var store: StoreOf<AppFeature>
   @Bindable var settingsStore: StoreOf<SettingsFeature>
+  @State private var expandedRepositories: Set<String> = []
 
   init(store: StoreOf<AppFeature>) {
     self.store = store
@@ -51,7 +52,7 @@ struct SettingsView: View {
     let updatesStore = store.scope(state: \.updates, action: \.updates)
     let selection = settingsStore.selection ?? .general
     let selectedRepositorySummary: SettingsRepositorySummary? = {
-      guard case .repository(let repositoryID) = selection else {
+      guard let repositoryID = selection.repositoryID else {
         return nil
       }
       return settingsStore.repositorySummaries.first(where: { $0.id == repositoryID })
@@ -76,8 +77,25 @@ struct SettingsView: View {
 
         Section("Repositories") {
           ForEach(settingsStore.repositorySummaries, id: \.id) { repository in
-            RepositoryLabel(name: repository.name, rootURL: repository.rootURL)
-              .tag(SettingsSection.repository(repository.id))
+            DisclosureGroup(
+              isExpanded: Binding(
+                get: { expandedRepositories.contains(repository.id) || selection.repositoryID == repository.id },
+                set: { expanded in
+                  if expanded {
+                    expandedRepositories.insert(repository.id)
+                  } else {
+                    expandedRepositories.remove(repository.id)
+                  }
+                }
+              )
+            ) {
+              Label("General", systemImage: "gearshape")
+                .tag(SettingsSection.repository(repository.id))
+              Label("Scripts", systemImage: "terminal")
+                .tag(SettingsSection.repositoryScripts(repository.id))
+            } label: {
+              RepositoryLabel(name: repository.name, rootURL: repository.rootURL)
+            }
           }
         }
       }
@@ -114,6 +132,20 @@ struct SettingsView: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .navigationTitle("Repositories")
+        }
+      case .repositoryScripts:
+        if let repository = selectedRepositorySummary {
+          IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
+            repositorySettingsStore in
+            RepositoryScriptsSettingsView(store: repositorySettingsStore)
+              .id("\(repository.id)-scripts")
+              .navigationTitle("\(repository.name) — Scripts")
+          }
+        } else {
+          Text("Repository not found.")
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .navigationTitle("Scripts")
         }
       }
     }

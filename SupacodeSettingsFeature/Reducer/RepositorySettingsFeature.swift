@@ -63,6 +63,9 @@ public struct RepositorySettingsFeature {
       globalPullRequestMergeStrategy: PullRequestMergeStrategy
     )
     case branchDataLoaded([String], defaultBaseRef: String)
+    case addScript
+    case removeScripts(IndexSet)
+    case moveScripts(IndexSet, Int)
     case delegate(Delegate)
     case binding(BindingAction<State>)
   }
@@ -160,6 +163,26 @@ public struct RepositorySettingsFeature {
         state.isBranchDataLoaded = true
         return .none
 
+      case .addScript:
+        state.settings.scripts.append(ScriptDefinition(kind: .custom))
+        return persistAndNotify(state: &state)
+
+      case .removeScripts(let offsets):
+        var scripts = state.settings.scripts
+        for index in offsets.sorted().reversed() {
+          scripts.remove(at: index)
+        }
+        state.settings.scripts = scripts
+        return persistAndNotify(state: &state)
+
+      case .moveScripts(let source, let destination):
+        var scripts = state.settings.scripts
+        let items = source.sorted().reversed().map { scripts.remove(at: $0) }.reversed()
+        let insertAt = min(destination, scripts.count)
+        scripts.insert(contentsOf: items, at: insertAt)
+        state.settings.scripts = scripts
+        return persistAndNotify(state: &state)
+
       case .binding:
         if state.isBareRepository {
           state.settings.copyIgnoredOnWorktreeCreate = nil
@@ -179,5 +202,18 @@ public struct RepositorySettingsFeature {
         return .none
       }
     }
+  }
+
+  /// Persists the current settings and notifies the delegate.
+  private func persistAndNotify(state: inout State) -> Effect<Action> {
+    let rootURL = state.rootURL
+    var normalizedSettings = state.settings
+    normalizedSettings.worktreeBaseDirectoryPath = SupacodePaths.normalizedWorktreeBaseDirectoryPath(
+      normalizedSettings.worktreeBaseDirectoryPath,
+      repositoryRootURL: rootURL
+    )
+    @Shared(.repositorySettings(rootURL)) var repositorySettings
+    $repositorySettings.withLock { $0 = normalizedSettings }
+    return .send(.delegate(.settingsChanged(rootURL)))
   }
 }

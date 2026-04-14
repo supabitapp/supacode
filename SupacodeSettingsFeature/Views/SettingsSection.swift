@@ -9,4 +9,15 @@ public enum SettingsSection: Hashable {
   case updates
   case github
   case repository(String)
+  case repositoryScripts(String)
+
+  /// The repository ID for repository-scoped sections.
+  public var repositoryID: String? {
+    switch self {
+    case .repository(let id), .repositoryScripts(let id):
+      id
+    default:
+      nil
+    }
+  }
 }
