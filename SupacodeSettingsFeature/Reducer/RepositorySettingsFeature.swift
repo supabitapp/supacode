@@ -188,6 +188,17 @@ public struct RepositorySettingsFeature {
           state.settings.copyIgnoredOnWorktreeCreate = nil
           state.settings.copyUntrackedOnWorktreeCreate = nil
         }
+        // Enforce at most one script per predefined kind.
+        // Only `.custom` allows duplicates.
+        var seenKinds: Set<ScriptKind> = []
+        for index in state.settings.scripts.indices {
+          let kind = state.settings.scripts[index].kind
+          guard kind != .custom else { continue }
+          guard seenKinds.insert(kind).inserted else {
+            state.settings.scripts[index].kind = .custom
+            continue
+          }
+        }
         let rootURL = state.rootURL
         var normalizedSettings = state.settings
         normalizedSettings.worktreeBaseDirectoryPath = SupacodePaths.normalizedWorktreeBaseDirectoryPath(

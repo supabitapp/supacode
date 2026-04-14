@@ -73,7 +73,6 @@ struct WorktreeDetailView: View {
           showExtras: commandKeyObserver.isPressed,
           scripts: scripts,
           runningScriptIDs: runningScriptIDs,
-          selectedScriptID: state.selectedScriptID
         )
         WorktreeToolbarContent(
           toolbarState: toolbarState,
@@ -308,14 +307,10 @@ struct WorktreeDetailView: View {
     let showExtras: Bool
     let scripts: [ScriptDefinition]
     let runningScriptIDs: Set<UUID>
-    let selectedScriptID: UUID?
 
-    /// The script the primary button should run.
+    /// The script the primary toolbar button should run (always the `.run` script).
     var primaryScript: ScriptDefinition? {
-      if let selectedScriptID, let match = scripts.first(where: { $0.id == selectedScriptID }) {
-        return match
-      }
-      return scripts.first { $0.kind == .run }
+      scripts.first { $0.kind == .run }
     }
 
     /// Whether any `.run`-kind script is currently running.
@@ -820,7 +815,6 @@ private struct WorktreeToolbarPreview: View {
       showExtras: false,
       scripts: [ScriptDefinition(kind: .run, command: "npm run dev")],
       runningScriptIDs: [],
-      selectedScriptID: nil
     )
     let observer = CommandKeyObserver()
     observer.isPressed = false

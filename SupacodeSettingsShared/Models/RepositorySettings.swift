@@ -6,7 +6,6 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   public var deleteScript: String
   public var runScript: String
   public var scripts: [ScriptDefinition]
-  public var selectedScriptID: UUID?
   public var openActionID: String
   public var worktreeBaseRef: String?
   public var worktreeBaseDirectoryPath: String?
@@ -20,7 +19,6 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     case deleteScript
     case runScript
     case scripts
-    case selectedScriptID
     case openActionID
     case worktreeBaseRef
     case worktreeBaseDirectoryPath
@@ -35,13 +33,12 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     deleteScript: "",
     runScript: "",
     scripts: [],
-    selectedScriptID: nil,
     openActionID: OpenWorktreeAction.automaticSettingsID,
     worktreeBaseRef: nil,
     worktreeBaseDirectoryPath: nil,
     copyIgnoredOnWorktreeCreate: nil,
     copyUntrackedOnWorktreeCreate: nil,
-    pullRequestMergeStrategy: nil
+    pullRequestMergeStrategy: nil,
   )
 
   public init(
@@ -50,7 +47,6 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     deleteScript: String,
     runScript: String,
     scripts: [ScriptDefinition] = [],
-    selectedScriptID: UUID? = nil,
     openActionID: String,
     worktreeBaseRef: String?,
     worktreeBaseDirectoryPath: String? = nil,
@@ -63,7 +59,6 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     self.deleteScript = deleteScript
     self.runScript = runScript
     self.scripts = scripts
-    self.selectedScriptID = selectedScriptID
     self.openActionID = openActionID
     self.worktreeBaseRef = worktreeBaseRef
     self.worktreeBaseDirectoryPath = worktreeBaseDirectoryPath
@@ -88,7 +83,9 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
       ?? Self.default.runScript
     // Migrate legacy `runScript` into the new `scripts` array when
     // the `scripts` key is absent from persisted JSON.
-    let decodedScripts = try container.decodeIfPresent([ScriptDefinition].self, forKey: .scripts)
+    // Use `try?` so an unknown `ScriptKind` raw value from a future
+    // version doesn't crash the entire settings decode.
+    let decodedScripts = try? container.decodeIfPresent([ScriptDefinition].self, forKey: .scripts)
     if let decodedScripts {
       scripts = decodedScripts
     } else if !runScript.isEmpty {
@@ -96,9 +93,6 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     } else {
       scripts = Self.default.scripts
     }
-    selectedScriptID =
-      try container.decodeIfPresent(UUID.self, forKey: .selectedScriptID)
-      ?? Self.default.selectedScriptID
     openActionID =
       try container.decodeIfPresent(String.self, forKey: .openActionID)
       ?? Self.default.openActionID
@@ -115,5 +109,23 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     pullRequestMergeStrategy =
       try container.decodeIfPresent(PullRequestMergeStrategy.self, forKey: .pullRequestMergeStrategy)
       ?? Self.default.pullRequestMergeStrategy
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(setupScript, forKey: .setupScript)
+    try container.encode(archiveScript, forKey: .archiveScript)
+    try container.encode(deleteScript, forKey: .deleteScript)
+    // Derive `runScript` from the first `.run`-kind script's command
+    // so older clients can still read the value.
+    let derivedRunScript = scripts.first(where: { $0.kind == .run })?.command ?? runScript
+    try container.encode(derivedRunScript, forKey: .runScript)
+    try container.encode(scripts, forKey: .scripts)
+    try container.encode(openActionID, forKey: .openActionID)
+    try container.encodeIfPresent(worktreeBaseRef, forKey: .worktreeBaseRef)
+    try container.encodeIfPresent(worktreeBaseDirectoryPath, forKey: .worktreeBaseDirectoryPath)
+    try container.encodeIfPresent(copyIgnoredOnWorktreeCreate, forKey: .copyIgnoredOnWorktreeCreate)
+    try container.encodeIfPresent(copyUntrackedOnWorktreeCreate, forKey: .copyUntrackedOnWorktreeCreate)
+    try container.encodeIfPresent(pullRequestMergeStrategy, forKey: .pullRequestMergeStrategy)
   }
 }

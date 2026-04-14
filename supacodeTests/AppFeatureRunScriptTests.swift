@@ -30,7 +30,7 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runScript)
     await store.receive(\.settings.setSelection)
-    #expect(store.state.settings.selection == .repository(expectedRepositoryID))
+    #expect(store.state.settings.selection == .repositoryScripts(expectedRepositoryID))
   }
 
   @Test(.dependencies) func runScriptRunsFirstRunKindScript() async {
@@ -334,7 +334,6 @@ struct AppFeatureRunScriptTests {
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
     var settings = RepositorySettings.default
     settings.scripts = [definition]
-    settings.selectedScriptID = definition.id
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositories,
@@ -347,7 +346,6 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.worktreeSettingsLoaded(settings, worktreeID: worktree.id))
     #expect(store.state.scripts == [definition])
-    #expect(store.state.selectedScriptID == definition.id)
   }
 
   private func makeWorktree() -> Worktree {

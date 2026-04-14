@@ -91,7 +91,6 @@ struct AppFeatureDefaultEditorTests {
     await store.receive(\.worktreeSettingsLoaded) {
       $0.openActionSelection = .terminal
       $0.scripts = localRepositorySettings.scripts
-      $0.selectedScriptID = localRepositorySettings.selectedScriptID
     }
     await store.finish()
   }

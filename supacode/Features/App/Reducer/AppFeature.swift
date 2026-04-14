@@ -22,7 +22,6 @@ struct AppFeature {
     var commandPalette = CommandPaletteFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
     var scripts: [ScriptDefinition] = []
-    var selectedScriptID: UUID?
     var notificationIndicatorCount: Int = 0
     var lastKnownSystemNotificationsEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
@@ -41,10 +40,7 @@ struct AppFeature {
 
     /// The script that the primary toolbar button should run.
     var primaryScript: ScriptDefinition? {
-      if let selectedScriptID, let match = scripts.first(where: { $0.id == selectedScriptID }) {
-        return match
-      }
-      return scripts.first { $0.kind == .run }
+      scripts.first { $0.kind == .run }
     }
 
     /// Running script IDs for the currently selected worktree.
@@ -162,7 +158,6 @@ struct AppFeature {
         guard let worktree else {
           state.openActionSelection = .finder
           state.scripts = []
-          state.selectedScriptID = nil
           var effects: [Effect<Action>] = [
             .run { _ in
               await terminalClient.send(.setSelectedWorktreeID(nil))
@@ -436,12 +431,12 @@ struct AppFeature {
       case .runScript:
         // Find the selected or primary script and run it.
         guard let definition = state.primaryScript else {
-          // No scripts configured — open repository settings.
+          // No scripts configured — open repository scripts settings.
           guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
             return .none
           }
           let repositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
-          return .send(.settings(.setSelection(.repository(repositoryID))))
+          return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         return .send(.runNamedScript(definition))
 
@@ -449,6 +444,8 @@ struct AppFeature {
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           return .none
         }
+        // Prevent running the same script twice.
+        guard !state.runningScriptIDs.contains(definition.id) else { return .none }
         let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .none }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
@@ -567,7 +564,6 @@ struct AppFeature {
           defaultEditorID: normalizedDefaultEditorID
         )
         state.scripts = settings.scripts
-        state.selectedScriptID = settings.selectedScriptID
         return .none
 
       case .deeplinkReceived(let url, let source, let responseFD):
