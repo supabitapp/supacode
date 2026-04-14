@@ -557,6 +557,17 @@ final class GhosttyRuntime {
     return true
   }
 
+  func splitPreserveZoomOnNavigation() -> Bool {
+    guard let config else { return false }
+    var value: CUnsignedInt = 0
+    let key = "split-preserve-zoom"
+    guard ghostty_config_get(config, &value, key, UInt(key.count)) else { return false }
+    // Ghostty's C API bitcasts packed structs into c_uint; the first field maps to bit 0.
+    // https://github.com/ghostty-org/ghostty/blob/6057f8d/src/config/c_get.zig#L74-L84
+    // https://github.com/ghostty-org/ghostty/blob/6057f8d/src/config/c_get.zig#L226-L240
+    return value & (1 << 0) != 0
+  }
+
   func backgroundOpacity() -> Double {
     guard let config else { return 1 }
     var value: Double = 1

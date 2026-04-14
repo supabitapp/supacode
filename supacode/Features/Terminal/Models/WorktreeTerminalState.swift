@@ -21,6 +21,7 @@ final class WorktreeTerminalState {
 
   let tabManager: TerminalTabManager
   private let runtime: GhosttyRuntime
+  @ObservationIgnored private let splitPreserveZoomOnNavigation: () -> Bool
   private let worktree: Worktree
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
@@ -63,8 +64,14 @@ final class WorktreeTerminalState {
   var onCommandPaletteToggle: (() -> Void)?
   var onSetupScriptConsumed: (() -> Void)?
 
-  init(runtime: GhosttyRuntime, worktree: Worktree, runSetupScript: Bool = false) {
+  init(
+    runtime: GhosttyRuntime,
+    worktree: Worktree,
+    runSetupScript: Bool = false,
+    splitPreserveZoomOnNavigation: (() -> Bool)? = nil
+  ) {
     self.runtime = runtime
+    self.splitPreserveZoomOnNavigation = splitPreserveZoomOnNavigation ?? { runtime.splitPreserveZoomOnNavigation() }
     self.worktree = worktree
     self.pendingSetupScript = runSetupScript
     self.tabManager = TerminalTabManager()
@@ -574,8 +581,13 @@ final class WorktreeTerminalState {
         return false
       }
       if tree.zoomed != nil {
-        tree = tree.settingZoomed(nil)
-        trees[tabId] = tree
+        if splitPreserveZoomOnNavigation() {
+          let nextNode = tree.root?.node(view: nextSurface)
+          tree = tree.settingZoomed(nextNode)
+        } else {
+          tree = tree.settingZoomed(nil)
+        }
+        updateTree(tree, for: tabId)
       }
       focusSurface(nextSurface, in: tabId)
       syncFocusIfNeeded()
