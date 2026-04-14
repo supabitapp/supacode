@@ -230,6 +230,8 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.testScriptAction, actions.testScript)
       .focusedSceneValue(\.debugScriptAction, actions.debugScript)
       .focusedSceneValue(\.deployScriptAction, actions.deployScript)
+      .focusedSceneValue(\.lintScriptAction, actions.lintScript)
+      .focusedSceneValue(\.formatScriptAction, actions.formatScript)
   }
 
   private func makeFocusedActions(
@@ -244,6 +246,8 @@ struct WorktreeDetailView: View {
     let hasTest = scripts.contains { $0.kind == .test }
     let hasDebug = scripts.contains { $0.kind == .debug }
     let hasDeploy = scripts.contains { $0.kind == .deploy }
+    let hasLint = scripts.contains { $0.kind == .lint }
+    let hasFormat = scripts.contains { $0.kind == .format }
     return FocusedActions(
       openSelectedWorktree: action(.openSelectedWorktree),
       newTerminal: action(.newTerminal),
@@ -259,6 +263,8 @@ struct WorktreeDetailView: View {
       testScript: hasTest ? { store.send(.testScript) } : nil,
       debugScript: hasDebug ? { store.send(.debugScript) } : nil,
       deployScript: hasDeploy ? { store.send(.deployScript) } : nil,
+      lintScript: hasLint ? { store.send(.lintScript) } : nil,
+      formatScript: hasFormat ? { store.send(.formatScript) } : nil,
     )
   }
 
@@ -295,6 +301,8 @@ struct WorktreeDetailView: View {
     let testScript: (() -> Void)?
     let debugScript: (() -> Void)?
     let deployScript: (() -> Void)?
+    let lintScript: (() -> Void)?
+    let formatScript: (() -> Void)?
   }
 
   fileprivate struct WorktreeToolbarState {

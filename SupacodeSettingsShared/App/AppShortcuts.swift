@@ -14,6 +14,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case openFinder, openRepository, openPullRequest, copyPath
   case runScript, stopRunScript
   case testScript, debugScript, deployScript
+  case lintScript, formatScript
 
   // Stable string key for JSON dictionary persistence.
   public var codingKey: CodingKey {
@@ -57,6 +58,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .testScript: "testScript"
     case .debugScript: "debugScript"
     case .deployScript: "deployScript"
+    case .lintScript: "lintScript"
+    case .formatScript: "formatScript"
     }
   }
 
@@ -83,6 +86,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "testScript": .testScript,
     "debugScript": .debugScript,
     "deployScript": .deployScript,
+    "lintScript": .lintScript,
+    "formatScript": .formatScript,
   ]
 
   private init?(stableKey: String) {
@@ -122,6 +127,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .testScript: "Test Script"
     case .debugScript: "Debug Script"
     case .deployScript: "Deploy Script"
+    case .lintScript: "Lint Script"
+    case .formatScript: "Format Script"
     }
   }
 }
@@ -329,6 +336,8 @@ public enum AppShortcuts {
   public static let testScript = AppShortcut(id: .testScript, key: "u", modifiers: [.command, .shift])
   public static let debugScript = AppShortcut(id: .debugScript, key: "y", modifiers: [.command, .shift])
   public static let deployScript = AppShortcut(id: .deployScript, key: "d", modifiers: [.command, .shift])
+  public static let lintScript = AppShortcut(id: .lintScript, key: "l", modifiers: [.command, .shift])
+  public static let formatScript = AppShortcut(id: .formatScript, key: "f", modifiers: [.command, .shift])
 
   public static let worktreeSelection: [AppShortcut] = [
     selectWorktree1, selectWorktree2, selectWorktree3, selectWorktree4, selectWorktree5,
@@ -352,7 +361,7 @@ public enum AppShortcuts {
       category: .actions,
       shortcuts: [
         openFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript,
-        testScript, debugScript, deployScript,
+        testScript, debugScript, deployScript, lintScript, formatScript,
       ]
     ),
   ]

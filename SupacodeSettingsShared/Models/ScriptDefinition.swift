@@ -11,6 +11,12 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
   public var tintColor: TerminalTabTintColor
   public var command: String
 
+  /// Display name for toolbar labels: predefined types show their
+  /// kind name ("Run", "Test"), custom types show user-defined name.
+  public nonisolated var displayName: String {
+    kind == .custom ? name : kind.defaultName
+  }
+
   public nonisolated init(
     id: UUID = UUID(),
     kind: ScriptKind,

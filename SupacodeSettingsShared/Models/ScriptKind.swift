@@ -8,6 +8,8 @@ public enum ScriptKind: String, Codable, CaseIterable, Hashable, Sendable {
   case debug
   case test
   case deploy
+  case lint
+  case format
   case custom
 
   /// Default display name shown in UI when the user hasn't provided one.
@@ -17,6 +19,8 @@ public enum ScriptKind: String, Codable, CaseIterable, Hashable, Sendable {
     case .debug: "Debug"
     case .test: "Test"
     case .deploy: "Deploy"
+    case .lint: "Lint"
+    case .format: "Format"
     case .custom: "Custom"
     }
   }
@@ -28,6 +32,8 @@ public enum ScriptKind: String, Codable, CaseIterable, Hashable, Sendable {
     case .debug: "ant.fill"
     case .test: "checkmark.diamond.fill"
     case .deploy: "arrow.up.circle.fill"
+    case .lint: "exclamationmark.triangle.fill"
+    case .format: "text.alignleft"
     case .custom: "terminal.fill"
     }
   }
@@ -39,6 +45,8 @@ public enum ScriptKind: String, Codable, CaseIterable, Hashable, Sendable {
     case .debug: .orange
     case .test: .blue
     case .deploy: .purple
+    case .lint: .yellow
+    case .format: .teal
     case .custom: .teal
     }
   }

@@ -1,3 +1,5 @@
+import SwiftUI
+
 /// Color token for terminal tab tint indicators, used in place of
 /// `Color` so that related types can remain `Equatable` and `Sendable`.
 public enum TerminalTabTintColor: String, Codable, CaseIterable, Hashable, Sendable {
@@ -8,4 +10,17 @@ public enum TerminalTabTintColor: String, Codable, CaseIterable, Hashable, Senda
   case purple
   case yellow
   case teal
+
+  /// Resolved SwiftUI color for rendering.
+  public var color: Color {
+    switch self {
+    case .green: .green
+    case .orange: .orange
+    case .red: .red
+    case .blue: .blue
+    case .purple: .purple
+    case .yellow: .yellow
+    case .teal: .teal
+    }
+  }
 }

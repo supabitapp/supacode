@@ -57,8 +57,14 @@ public struct RepositoryScriptsSettingsView: View {
     .padding(.trailing, -6)
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
-        Button {
-          store.send(.addScript)
+        Menu {
+          ForEach(ScriptKind.allCases, id: \.self) { kind in
+            Button {
+              store.send(.addScript(kind))
+            } label: {
+              Label(kind.defaultName, systemImage: kind.defaultSystemImage)
+            }
+          }
         } label: {
           Image(systemName: "plus")
             .accessibilityLabel("Add Script")
@@ -76,23 +82,16 @@ private struct ScriptRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      Picker(selection: $script.kind) {
-        ForEach(ScriptKind.allCases, id: \.self) { kind in
-          Label(kind.defaultName, systemImage: kind.defaultSystemImage)
-            .tag(kind)
-        }
-      } label: {
-        EmptyView()
+      Image(systemName: script.systemImage)
+        .foregroundStyle(script.tintColor.color)
+        .frame(width: 20)
+      if script.kind == .custom {
+        TextField("Name", text: $script.name)
+          .frame(minWidth: 80)
+      } else {
+        Text(script.kind.defaultName)
+          .frame(minWidth: 80, alignment: .leading)
       }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(width: 100)
-      .onChange(of: script.kind) { _, newKind in
-        script.systemImage = newKind.defaultSystemImage
-        script.tintColor = newKind.defaultTintColor
-      }
-      TextField("Name", text: $script.name)
-        .frame(minWidth: 80)
       TextField("Command", text: $script.command)
         .monospaced()
         .frame(minWidth: 120)

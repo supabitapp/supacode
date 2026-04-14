@@ -1,16 +1,3 @@
-import SupacodeSettingsShared
-import SwiftUI
-
-extension TerminalTabTintColor {
-  var color: Color {
-    switch self {
-    case .green: .green
-    case .orange: .orange
-    case .red: .red
-    case .blue: .blue
-    case .purple: .purple
-    case .yellow: .yellow
-    case .teal: .teal
-    }
-  }
-}
+// TerminalTabTintColor is defined in SupacodeSettingsShared.
+// This file previously held the enum before it was moved to the shared module.
+// The `var color: Color` property now lives on the enum definition itself.

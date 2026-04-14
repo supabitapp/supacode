@@ -132,10 +132,28 @@ struct RepositorySettingsScriptTests {
     let store = makeStore()
     store.exhaustivity = .off(showSkippedAssertions: false)
 
-    await store.send(.addScript) {
+    await store.send(.addScript(.custom)) {
       #expect($0.settings.scripts.count == 1)
       #expect($0.settings.scripts.first?.kind == .custom)
       #expect($0.settings.scripts.first?.name == "Custom")
+    }
+  }
+
+  @Test(.dependencies) func addScriptRejectsDuplicatePredefinedKind() async {
+    let store = makeStore(scripts: [ScriptDefinition(kind: .lint, command: "swiftlint")])
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    // Second .lint is silently rejected.
+    await store.send(.addScript(.lint))
+    #expect(store.state.settings.scripts.count == 1)
+  }
+
+  @Test(.dependencies) func addScriptAllowsMultipleCustomKinds() async {
+    let store = makeStore(scripts: [ScriptDefinition(kind: .custom, name: "A", command: "a")])
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.addScript(.custom)) {
+      #expect($0.settings.scripts.count == 2)
     }
   }
 

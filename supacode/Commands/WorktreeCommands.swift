@@ -16,6 +16,8 @@ struct WorktreeCommands: Commands {
   @FocusedValue(\.testScriptAction) private var testScriptAction
   @FocusedValue(\.debugScriptAction) private var debugScriptAction
   @FocusedValue(\.deployScriptAction) private var deployScriptAction
+  @FocusedValue(\.lintScriptAction) private var lintScriptAction
+  @FocusedValue(\.formatScriptAction) private var formatScriptAction
   @FocusedValue(\.visibleHotkeyWorktreeRows) private var visibleHotkeyWorktreeRows
 
   init(store: StoreOf<AppFeature>) {
@@ -44,6 +46,8 @@ struct WorktreeCommands: Commands {
     let test = AppShortcuts.testScript.effective(from: overrides)
     let debug = AppShortcuts.debugScript.effective(from: overrides)
     let deploy = AppShortcuts.deployScript.effective(from: overrides)
+    let lint = AppShortcuts.lintScript.effective(from: overrides)
+    let format = AppShortcuts.formatScript.effective(from: overrides)
     CommandMenu("Worktrees") {
       // Creation and opening.
       Button("New Worktree…", systemImage: "plus") {
@@ -126,6 +130,18 @@ struct WorktreeCommands: Commands {
       .appKeyboardShortcut(deploy)
       .help("Deploy Script (\(deploy?.display ?? "none"))")
       .disabled(deployScriptAction == nil)
+      Button("Lint Script", systemImage: "exclamationmark.triangle") {
+        lintScriptAction?()
+      }
+      .appKeyboardShortcut(lint)
+      .help("Lint Script (\(lint?.display ?? "none"))")
+      .disabled(lintScriptAction == nil)
+      Button("Format Script", systemImage: "text.alignleft") {
+        formatScriptAction?()
+      }
+      .appKeyboardShortcut(format)
+      .help("Format Script (\(format?.display ?? "none"))")
+      .disabled(formatScriptAction == nil)
       Divider()
       // Navigation.
       Button("Select Next", systemImage: "chevron.down") {
@@ -270,6 +286,16 @@ extension FocusedValues {
     set { self[DeployScriptActionKey.self] = newValue }
   }
 
+  var lintScriptAction: (() -> Void)? {
+    get { self[LintScriptActionKey.self] }
+    set { self[LintScriptActionKey.self] = newValue }
+  }
+
+  var formatScriptAction: (() -> Void)? {
+    get { self[FormatScriptActionKey.self] }
+    set { self[FormatScriptActionKey.self] = newValue }
+  }
+
   var visibleHotkeyWorktreeRows: [WorktreeRowModel]? {
     get { self[VisibleHotkeyWorktreeRowsKey.self] }
     set { self[VisibleHotkeyWorktreeRowsKey.self] = newValue }
@@ -293,6 +319,14 @@ private struct DebugScriptActionKey: FocusedValueKey {
 }
 
 private struct DeployScriptActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+private struct LintScriptActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+private struct FormatScriptActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 

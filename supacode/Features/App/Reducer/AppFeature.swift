@@ -77,6 +77,8 @@ struct AppFeature {
     case testScript
     case debugScript
     case deployScript
+    case lintScript
+    case formatScript
     case closeTab
     case closeSurface
     case startSearch
@@ -483,6 +485,12 @@ struct AppFeature {
 
       case .deployScript:
         return runFirstScript(ofKind: .deploy, state: &state)
+
+      case .lintScript:
+        return runFirstScript(ofKind: .lint, state: &state)
+
+      case .formatScript:
+        return runFirstScript(ofKind: .format, state: &state)
 
       case .closeTab:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {

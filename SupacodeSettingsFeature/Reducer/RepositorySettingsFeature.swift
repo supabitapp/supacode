@@ -63,7 +63,7 @@ public struct RepositorySettingsFeature {
       globalPullRequestMergeStrategy: PullRequestMergeStrategy
     )
     case branchDataLoaded([String], defaultBaseRef: String)
-    case addScript
+    case addScript(ScriptKind)
     case removeScripts(IndexSet)
     case moveScripts(IndexSet, Int)
     case delegate(Delegate)
@@ -163,8 +163,12 @@ public struct RepositorySettingsFeature {
         state.isBranchDataLoaded = true
         return .none
 
-      case .addScript:
-        state.settings.scripts.append(ScriptDefinition(kind: .custom))
+      case .addScript(let kind):
+        // Predefined kinds are unique; reject duplicates.
+        guard kind == .custom || !state.settings.scripts.contains(where: { $0.kind == kind }) else {
+          return .none
+        }
+        state.settings.scripts.append(ScriptDefinition(kind: kind))
         return persistAndNotify(state: &state)
 
       case .removeScripts(let offsets):
@@ -187,17 +191,6 @@ public struct RepositorySettingsFeature {
         if state.isBareRepository {
           state.settings.copyIgnoredOnWorktreeCreate = nil
           state.settings.copyUntrackedOnWorktreeCreate = nil
-        }
-        // Enforce at most one script per predefined kind.
-        // Only `.custom` allows duplicates.
-        var seenKinds: Set<ScriptKind> = []
-        for index in state.settings.scripts.indices {
-          let kind = state.settings.scripts[index].kind
-          guard kind != .custom else { continue }
-          guard seenKinds.insert(kind).inserted else {
-            state.settings.scripts[index].kind = .custom
-            continue
-          }
         }
         let rootURL = state.rootURL
         var normalizedSettings = state.settings
