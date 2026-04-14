@@ -385,7 +385,7 @@ final class AgentHookSocketServer {
       return nil
     }
 
-    let body = payload.message ?? payload.lastAssistantMessage
+    let body = payload.message ?? payload.lastAssistantMessage ?? payload.assistantResponse
     return AgentHookNotification(
       agent: agent,
       event: payload.hookEventName ?? "unknown",
@@ -428,12 +428,14 @@ private nonisolated struct AgentHookPayload: Decodable {
   let title: String?
   let message: String?
   let lastAssistantMessage: String?
+  let assistantResponse: String?
 
   enum CodingKeys: String, CodingKey {
     case hookEventName = "hook_event_name"
     case title
     case message
     case lastAssistantMessage = "last_assistant_message"
+    case assistantResponse = "assistant_response"
   }
 }
 
