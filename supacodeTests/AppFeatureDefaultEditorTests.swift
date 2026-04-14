@@ -37,7 +37,7 @@ struct AppFeatureDefaultEditorTests {
     await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
     await store.receive(\.worktreeSettingsLoaded)
     #expect(store.state.openActionSelection == .finder)
-    #expect(store.state.selectedRunScript == "")
+    #expect(store.state.scripts.isEmpty)
     await store.finish()
   }
 
@@ -90,7 +90,8 @@ struct AppFeatureDefaultEditorTests {
     await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
     await store.receive(\.worktreeSettingsLoaded) {
       $0.openActionSelection = .terminal
-      $0.selectedRunScript = "pnpm dev"
+      $0.scripts = localRepositorySettings.scripts
+      $0.selectedScriptID = localRepositorySettings.selectedScriptID
     }
     await store.finish()
   }

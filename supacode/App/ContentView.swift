@@ -24,14 +24,6 @@ struct ContentView: View {
   }
 
   var body: some View {
-    let isRunScriptPromptPresented = Binding(
-      get: { store.isRunScriptPromptPresented },
-      set: { store.send(.runScriptPromptPresented($0)) }
-    )
-    let runScriptDraft = Binding(
-      get: { store.runScriptDraft },
-      set: { store.send(.runScriptDraftChanged($0)) }
-    )
     NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
@@ -75,17 +67,6 @@ struct ContentView: View {
     ) { promptStore in
       WorktreeCreationPromptView(store: promptStore)
     }
-    .sheet(isPresented: isRunScriptPromptPresented) {
-      RunScriptPromptView(
-        script: runScriptDraft,
-        onCancel: {
-          store.send(.runScriptPromptPresented(false))
-        },
-        onSaveAndRun: {
-          store.send(.saveRunScriptAndRun)
-        }
-      )
-    }
     .focusedSceneValue(\.toggleLeftSidebarAction, toggleLeftSidebar)
     .focusedSceneValue(\.revealInSidebarAction, revealInSidebarAction)
     .overlay {
@@ -93,7 +74,9 @@ struct ContentView: View {
         store: store.scope(state: \.commandPalette, action: \.commandPalette),
         items: CommandPaletteFeature.commandPaletteItems(
           from: store.repositories,
-          ghosttyCommands: ghosttyShortcuts.commandPaletteEntries
+          ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
+          scripts: store.scripts,
+          runningScriptIDs: store.runningScriptIDs
         )
       )
     }
@@ -150,59 +133,5 @@ extension EnvironmentValues {
     set {
       surfaceBackgroundOpacity = newValue
     }
-  }
-}
-
-private struct RunScriptPromptView: View {
-  @Binding var script: String
-  let onCancel: () -> Void
-  let onSaveAndRun: () -> Void
-
-  private var canSave: Bool {
-    !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Run")
-          .font(.title3)
-        Text("Enter a command to run in this worktree. It will be saved to repository settings.")
-          .foregroundStyle(.secondary)
-      }
-
-      ZStack(alignment: .topLeading) {
-        PlainTextEditor(
-          text: $script,
-          isMonospaced: true
-        )
-        .frame(minHeight: 160)
-        if script.isEmpty {
-          Text("npm run dev")
-            .foregroundStyle(.secondary)
-            .padding(.leading, 6)
-            .font(.body.monospaced())
-            .allowsHitTesting(false)
-        }
-      }
-
-      HStack {
-        Spacer()
-        Button("Cancel") {
-          onCancel()
-        }
-        .keyboardShortcut(.cancelAction)
-        .help("Cancel (Esc)")
-
-        Button("Save and Run") {
-          onSaveAndRun()
-        }
-        .keyboardShortcut(.defaultAction)
-        .help("Save and Run (↩)")
-        .disabled(!canSave)
-      }
-    }
-    .padding(20)
-    .frame(minWidth: 520)
   }
 }

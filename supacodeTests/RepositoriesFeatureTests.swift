@@ -1784,20 +1784,29 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.runBlockingScript)
   }
 
-  @Test(.dependencies) func runScriptCompletedWithFailureShowsAlert() async {
+  @Test(.dependencies) func scriptCompletedWithFailureShowsAlert() async {
     let repoRoot = "/tmp/repo"
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
+    let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runScriptWorktreeIDs = [worktree.id]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
-    await store.send(.runScriptCompleted(worktreeID: worktree.id, exitCode: 1, tabId: nil)) {
-      $0.runScriptWorktreeIDs = []
+    await store.send(
+      .scriptCompleted(
+        worktreeID: worktree.id,
+        scriptID: definition.id,
+        kind: .script(definition),
+        exitCode: 1,
+        tabId: nil
+      )
+    ) {
+      $0.runningScriptsByWorktreeID = [:]
       $0.alert = expectedScriptFailureAlert(
-        kind: .script(ScriptDefinition(kind: .run)),
+        kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",
         worktreeID: worktree.id,
         repoName: "repo",
@@ -1806,34 +1815,52 @@ struct RepositoriesFeatureTests {
     }
   }
 
-  @Test(.dependencies) func runScriptCompletedWithSuccessDoesNotShowAlert() async {
+  @Test(.dependencies) func scriptCompletedWithSuccessDoesNotShowAlert() async {
     let repoRoot = "/tmp/repo"
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
+    let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runScriptWorktreeIDs = [worktree.id]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
-    await store.send(.runScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)) {
-      $0.runScriptWorktreeIDs = []
+    await store.send(
+      .scriptCompleted(
+        worktreeID: worktree.id,
+        scriptID: definition.id,
+        kind: .script(definition),
+        exitCode: 0,
+        tabId: nil
+      )
+    ) {
+      $0.runningScriptsByWorktreeID = [:]
     }
     #expect(store.state.alert == nil)
   }
 
-  @Test(.dependencies) func runScriptCompletedWithNilExitCodeDoesNotShowAlert() async {
+  @Test(.dependencies) func scriptCompletedWithNilExitCodeDoesNotShowAlert() async {
     let repoRoot = "/tmp/repo"
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
+    let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runScriptWorktreeIDs = [worktree.id]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
-    await store.send(.runScriptCompleted(worktreeID: worktree.id, exitCode: nil, tabId: nil)) {
-      $0.runScriptWorktreeIDs = []
+    await store.send(
+      .scriptCompleted(
+        worktreeID: worktree.id,
+        scriptID: definition.id,
+        kind: .script(definition),
+        exitCode: nil,
+        tabId: nil
+      )
+    ) {
+      $0.runningScriptsByWorktreeID = [:]
     }
     #expect(store.state.alert == nil)
   }
@@ -1844,18 +1871,27 @@ struct RepositoriesFeatureTests {
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
     let tabId = TerminalTabID()
+    let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runScriptWorktreeIDs = [worktree.id]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
     store.exhaustivity = .off
 
     // Trigger the failure alert through the normal flow.
-    await store.send(.runScriptCompleted(worktreeID: worktree.id, exitCode: 1, tabId: tabId)) {
-      $0.runScriptWorktreeIDs = []
+    await store.send(
+      .scriptCompleted(
+        worktreeID: worktree.id,
+        scriptID: definition.id,
+        kind: .script(definition),
+        exitCode: 1,
+        tabId: tabId
+      )
+    ) {
+      $0.runningScriptsByWorktreeID = [:]
       $0.alert = expectedScriptFailureAlert(
-        kind: .script(ScriptDefinition(kind: .run)),
+        kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",
         worktreeID: worktree.id,
         tabId: tabId,

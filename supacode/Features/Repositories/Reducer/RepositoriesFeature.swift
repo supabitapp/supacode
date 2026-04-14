@@ -77,7 +77,7 @@ struct RepositoriesFeature {
     var pendingWorktrees: [PendingWorktree] = []
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
-    var runScriptWorktreeIDs: Set<Worktree.ID> = []
+    var runningScriptsByWorktreeID: [Worktree.ID: Set<UUID>] = [:]
     var archivingWorktreeIDs: Set<Worktree.ID> = []
     var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
@@ -200,7 +200,8 @@ struct RepositoriesFeature {
     )
     case consumeSetupScript(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
-    case runScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
+    case scriptCompleted(
+      worktreeID: Worktree.ID, scriptID: UUID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
     case requestArchiveWorktree(Worktree.ID, Repository.ID)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID)
@@ -1391,15 +1392,20 @@ struct RepositoriesFeature {
           }
         )
 
-      case .runScriptCompleted(let worktreeID, let exitCode, let tabId):
-        guard state.runScriptWorktreeIDs.contains(worktreeID) else {
-          repositoriesLogger.debug("Ignoring runScriptCompleted for \(worktreeID): not in runScriptWorktreeIDs")
+      case .scriptCompleted(let worktreeID, let scriptID, let kind, let exitCode, let tabId):
+        guard var ids = state.runningScriptsByWorktreeID[worktreeID], ids.contains(scriptID) else {
+          repositoriesLogger.debug("Ignoring scriptCompleted for \(worktreeID)/\(scriptID): not tracked")
           return .none
         }
-        state.runScriptWorktreeIDs.remove(worktreeID)
+        ids.remove(scriptID)
+        if ids.isEmpty {
+          state.runningScriptsByWorktreeID.removeValue(forKey: worktreeID)
+        } else {
+          state.runningScriptsByWorktreeID[worktreeID] = ids
+        }
         guard let exitCode, exitCode != 0 else { return .none }
         state.alert = blockingScriptFailureAlert(
-          kind: .script(ScriptDefinition(kind: .run)),
+          kind: kind,
           exitCode: exitCode,
           worktreeID: worktreeID,
           tabId: tabId,
@@ -2911,7 +2917,9 @@ struct RepositoriesFeature {
     let filteredFocusIDs = state.pendingTerminalFocusWorktreeIDs.filter {
       availableWorktreeIDs.contains($0)
     }
-    let filteredRunScriptIDs = state.runScriptWorktreeIDs
+    let filteredRunningScripts = state.runningScriptsByWorktreeID.filter {
+      availableWorktreeIDs.contains($0.key)
+    }
     let filteredArchivingIDs = state.archivingWorktreeIDs
     let filteredWorktreeInfo = state.worktreeInfoByID.filter {
       availableWorktreeIDs.contains($0.key)
@@ -2925,7 +2933,7 @@ struct RepositoriesFeature {
         state.deleteScriptWorktreeIDs = filteredDeleteScriptIDs
         state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
         state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
-        state.runScriptWorktreeIDs = filteredRunScriptIDs
+        state.runningScriptsByWorktreeID = filteredRunningScripts
         state.archivingWorktreeIDs = filteredArchivingIDs
         state.worktreeInfoByID = filteredWorktreeInfo
       }
@@ -2936,6 +2944,7 @@ struct RepositoriesFeature {
       state.deleteScriptWorktreeIDs = filteredDeleteScriptIDs
       state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
       state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
+      state.runningScriptsByWorktreeID = filteredRunningScripts
       state.archivingWorktreeIDs = filteredArchivingIDs
       state.worktreeInfoByID = filteredWorktreeInfo
     }
