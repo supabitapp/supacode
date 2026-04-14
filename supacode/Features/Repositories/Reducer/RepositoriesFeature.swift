@@ -78,6 +78,7 @@ struct RepositoriesFeature {
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
     var runningScriptsByWorktreeID: [Worktree.ID: Set<UUID>] = [:]
+    var scriptTintColorByID: [UUID: TerminalTabTintColor] = [:]
     var archivingWorktreeIDs: Set<Worktree.ID> = []
     var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
@@ -1402,6 +1403,12 @@ struct RepositoriesFeature {
           state.runningScriptsByWorktreeID.removeValue(forKey: worktreeID)
         } else {
           state.runningScriptsByWorktreeID[worktreeID] = ids
+        }
+        // Remove the cached tint color when the script ID is no longer
+        // referenced by any worktree.
+        let stillReferenced = state.runningScriptsByWorktreeID.values.contains { $0.contains(scriptID) }
+        if !stillReferenced {
+          state.scriptTintColorByID.removeValue(forKey: scriptID)
         }
         guard let exitCode, exitCode != 0 else { return .none }
         state.alert = blockingScriptFailureAlert(
@@ -2920,6 +2927,10 @@ struct RepositoriesFeature {
     let filteredRunningScripts = state.runningScriptsByWorktreeID.filter {
       availableWorktreeIDs.contains($0.key)
     }
+    let remainingScriptIDs = Set(filteredRunningScripts.values.flatMap { $0 })
+    let filteredScriptTintColors = state.scriptTintColorByID.filter {
+      remainingScriptIDs.contains($0.key)
+    }
     let filteredArchivingIDs = state.archivingWorktreeIDs
     let filteredWorktreeInfo = state.worktreeInfoByID.filter {
       availableWorktreeIDs.contains($0.key)
@@ -2934,6 +2945,7 @@ struct RepositoriesFeature {
         state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
         state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
         state.runningScriptsByWorktreeID = filteredRunningScripts
+        state.scriptTintColorByID = filteredScriptTintColors
         state.archivingWorktreeIDs = filteredArchivingIDs
         state.worktreeInfoByID = filteredWorktreeInfo
       }
@@ -2945,6 +2957,7 @@ struct RepositoriesFeature {
       state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
       state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
       state.runningScriptsByWorktreeID = filteredRunningScripts
+      state.scriptTintColorByID = filteredScriptTintColors
       state.archivingWorktreeIDs = filteredArchivingIDs
       state.worktreeInfoByID = filteredWorktreeInfo
     }
@@ -3152,6 +3165,13 @@ extension RepositoriesFeature.State {
       }
     }
     return nil
+  }
+
+  /// Tint colors for scripts currently running in the given worktree,
+  /// ordered deterministically by script ID.
+  func runningScriptColors(for worktreeID: Worktree.ID) -> [TerminalTabTintColor] {
+    guard let scriptIDs = runningScriptsByWorktreeID[worktreeID] else { return [] }
+    return scriptIDs.sorted().compactMap { scriptTintColorByID[$0] }
   }
 
   func pendingWorktree(for id: Worktree.ID?) -> PendingWorktree? {

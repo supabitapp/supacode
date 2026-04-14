@@ -220,6 +220,9 @@ struct AppFeature {
         )
         state.repositories.runningScriptsByWorktreeID = state.repositories.runningScriptsByWorktreeID
           .filter { ids.contains($0.key) }
+        let remainingScriptIDs = Set(state.repositories.runningScriptsByWorktreeID.values.flatMap { $0 })
+        state.repositories.scriptTintColorByID = state.repositories.scriptTintColorByID
+          .filter { remainingScriptIDs.contains($0.key) }
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(from: repositories)
         let worktrees = state.repositories.worktreesForInfoWatcher()
         var effects: [Effect<Action>] = [
@@ -452,6 +455,7 @@ struct AppFeature {
         var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? []
         ids.insert(definition.id)
         state.repositories.runningScriptsByWorktreeID[worktree.id] = ids
+        state.repositories.scriptTintColorByID[definition.id] = definition.tintColor
         return .run { _ in
           await terminalClient.send(
             .runBlockingScript(worktree, kind: .script(definition), script: definition.command)

@@ -5,6 +5,7 @@ import IdentifiedCollections
 import Testing
 
 @testable import SupacodeSettingsFeature
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -84,6 +85,7 @@ struct AppFeatureArchivedSelectionTests {
       activeWorktree.id: [scriptID],
       archivedWorktree.id: [scriptID],
     ]
+    appState.repositories.scriptTintColorByID = [scriptID: .green]
     let sentCommands = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: appState) {
       AppFeature()

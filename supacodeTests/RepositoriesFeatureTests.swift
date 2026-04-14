@@ -1791,6 +1791,7 @@ struct RepositoriesFeatureTests {
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.scriptTintColorByID = [definition.id: definition.tintColor]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -1805,6 +1806,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
+      $0.scriptTintColorByID = [:]
       $0.alert = expectedScriptFailureAlert(
         kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",
@@ -1822,6 +1824,7 @@ struct RepositoriesFeatureTests {
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.scriptTintColorByID = [definition.id: definition.tintColor]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -1836,6 +1839,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
+      $0.scriptTintColorByID = [:]
     }
     #expect(store.state.alert == nil)
   }
@@ -1847,6 +1851,7 @@ struct RepositoriesFeatureTests {
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.scriptTintColorByID = [definition.id: definition.tintColor]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -1861,6 +1866,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
+      $0.scriptTintColorByID = [:]
     }
     #expect(store.state.alert == nil)
   }
@@ -1874,6 +1880,7 @@ struct RepositoriesFeatureTests {
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.scriptTintColorByID = [definition.id: definition.tintColor]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -1890,6 +1897,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
+      $0.scriptTintColorByID = [:]
       $0.alert = expectedScriptFailureAlert(
         kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",

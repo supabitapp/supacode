@@ -54,6 +54,7 @@ struct AppFeatureRunScriptTests {
     await store.send(.runScript)
     await store.receive(\.runNamedScript) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+      $0.repositories.scriptTintColorByID = [definition.id: definition.tintColor]
     }
     await store.finish()
 
@@ -89,6 +90,7 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runNamedScript(definition)) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+      $0.repositories.scriptTintColorByID = [definition.id: definition.tintColor]
     }
     await store.finish()
   }
@@ -115,6 +117,7 @@ struct AppFeatureRunScriptTests {
     await store.send(.testScript)
     await store.receive(\.runNamedScript) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [testScript.id]]
+      $0.repositories.scriptTintColorByID = [testScript.id: testScript.tintColor]
     }
     await store.finish()
 
@@ -152,6 +155,7 @@ struct AppFeatureRunScriptTests {
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
     var repositoriesState = repositories
     repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    repositoriesState.scriptTintColorByID = [definition.id: definition.tintColor]
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -173,6 +177,7 @@ struct AppFeatureRunScriptTests {
       )
     ) {
       $0.repositories.runningScriptsByWorktreeID = [:]
+      $0.repositories.scriptTintColorByID = [:]
     }
   }
 
@@ -255,6 +260,7 @@ struct AppFeatureRunScriptTests {
     await store.send(.debugScript)
     await store.receive(\.runNamedScript) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [debugDef.id]]
+      $0.repositories.scriptTintColorByID = [debugDef.id: debugDef.tintColor]
     }
     await store.finish()
 
@@ -291,6 +297,7 @@ struct AppFeatureRunScriptTests {
     await store.send(.deployScript)
     await store.receive(\.runNamedScript) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [deployDef.id]]
+      $0.repositories.scriptTintColorByID = [deployDef.id: deployDef.tintColor]
     }
     await store.finish()
 
