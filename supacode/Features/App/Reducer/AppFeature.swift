@@ -427,8 +427,9 @@ struct AppFeature {
         analyticsClient.capture("script_run", nil)
         state.repositories.runScriptWorktreeIDs.insert(worktree.id)
         let script = state.selectedRunScript
+        let definition = ScriptDefinition(kind: .run, command: script)
         return .run { _ in
-          await terminalClient.send(.runBlockingScript(worktree, kind: .run, script: script))
+          await terminalClient.send(.runBlockingScript(worktree, kind: .script(definition), script: script))
         }
 
       case .runScriptDraftChanged(let script):
@@ -797,7 +798,7 @@ struct AppFeature {
 
       case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
         switch kind {
-        case .run:
+        case .script:
           return .send(.repositories(.runScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
         case .archive:
           return .send(.repositories(.archiveScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))

@@ -184,11 +184,35 @@ final class WorktreeTerminalState {
     return tabId
   }
 
+  /// Stops a single user-defined script identified by its definition ID.
   @discardableResult
-  func stopRunScript() -> Bool {
-    guard let tabId = blockingScripts.first(where: { $0.value == .run })?.key else { return false }
+  func stopScript(definitionID: UUID) -> Bool {
+    guard
+      let tabId = blockingScripts.first(where: { $0.value.scriptDefinitionID == definitionID })?.key
+    else { return false }
     closeTab(tabId)
     return true
+  }
+
+  /// Stops all running `.run`-kind scripts (backward compat for Cmd+.).
+  @discardableResult
+  func stopRunScripts() -> Bool {
+    let runTabIds = blockingScripts.filter { $0.value.isRunKind }.map(\.key)
+    guard !runTabIds.isEmpty else { return false }
+    for tabId in runTabIds {
+      closeTab(tabId)
+    }
+    return true
+  }
+
+  /// Returns the set of script definition IDs currently running.
+  func runningScriptDefinitionIDs() -> Set<UUID> {
+    Set(blockingScripts.values.compactMap(\.scriptDefinitionID))
+  }
+
+  /// Checks whether a user-defined script with the given definition ID is running.
+  func isScriptRunning(definitionID: UUID) -> Bool {
+    blockingScripts.values.contains(where: { $0.scriptDefinitionID == definitionID })
   }
 
   @discardableResult

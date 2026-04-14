@@ -1399,7 +1399,11 @@ struct RepositoriesFeature {
         state.runScriptWorktreeIDs.remove(worktreeID)
         guard let exitCode, exitCode != 0 else { return .none }
         state.alert = blockingScriptFailureAlert(
-          kind: .run, exitCode: exitCode, worktreeID: worktreeID, tabId: tabId, state: state
+          kind: .script(ScriptDefinition(kind: .run)),
+          exitCode: exitCode,
+          worktreeID: worktreeID,
+          tabId: tabId,
+          state: state
         )
         return .none
 

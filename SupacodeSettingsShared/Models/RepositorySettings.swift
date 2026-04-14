@@ -5,6 +5,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   public var archiveScript: String
   public var deleteScript: String
   public var runScript: String
+  public var scripts: [ScriptDefinition]
+  public var selectedScriptID: UUID?
   public var openActionID: String
   public var worktreeBaseRef: String?
   public var worktreeBaseDirectoryPath: String?
@@ -17,6 +19,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     case archiveScript
     case deleteScript
     case runScript
+    case scripts
+    case selectedScriptID
     case openActionID
     case worktreeBaseRef
     case worktreeBaseDirectoryPath
@@ -30,6 +34,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     archiveScript: "",
     deleteScript: "",
     runScript: "",
+    scripts: [],
+    selectedScriptID: nil,
     openActionID: OpenWorktreeAction.automaticSettingsID,
     worktreeBaseRef: nil,
     worktreeBaseDirectoryPath: nil,
@@ -43,6 +49,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     archiveScript: String,
     deleteScript: String,
     runScript: String,
+    scripts: [ScriptDefinition] = [],
+    selectedScriptID: UUID? = nil,
     openActionID: String,
     worktreeBaseRef: String?,
     worktreeBaseDirectoryPath: String? = nil,
@@ -54,6 +62,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     self.archiveScript = archiveScript
     self.deleteScript = deleteScript
     self.runScript = runScript
+    self.scripts = scripts
+    self.selectedScriptID = selectedScriptID
     self.openActionID = openActionID
     self.worktreeBaseRef = worktreeBaseRef
     self.worktreeBaseDirectoryPath = worktreeBaseDirectoryPath
@@ -76,6 +86,19 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     runScript =
       try container.decodeIfPresent(String.self, forKey: .runScript)
       ?? Self.default.runScript
+    // Migrate legacy `runScript` into the new `scripts` array when
+    // the `scripts` key is absent from persisted JSON.
+    let decodedScripts = try container.decodeIfPresent([ScriptDefinition].self, forKey: .scripts)
+    if let decodedScripts {
+      scripts = decodedScripts
+    } else if !runScript.isEmpty {
+      scripts = [ScriptDefinition(kind: .run, command: runScript)]
+    } else {
+      scripts = Self.default.scripts
+    }
+    selectedScriptID =
+      try container.decodeIfPresent(UUID.self, forKey: .selectedScriptID)
+      ?? Self.default.selectedScriptID
     openActionID =
       try container.decodeIfPresent(String.self, forKey: .openActionID)
       ?? Self.default.openActionID

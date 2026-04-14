@@ -122,7 +122,7 @@ final class WorktreeTerminalManager {
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
     case .stopRunScript(let worktree):
-      _ = state(for: worktree).stopRunScript()
+      _ = state(for: worktree).stopRunScripts()
     case .runBlockingScript(let worktree, let kind, let script):
       _ = state(for: worktree).runBlockingScript(kind: kind, script)
     case .closeFocusedTab(let worktree):

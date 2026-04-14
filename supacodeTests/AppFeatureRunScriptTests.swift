@@ -67,7 +67,19 @@ struct AppFeatureRunScriptTests {
     }
     await store.finish()
 
-    #expect(sent.value == [.runBlockingScript(worktree, kind: .run, script: "npm run dev")])
+    #expect(sent.value.count == 1)
+    guard case .runBlockingScript(let sentWorktree, let kind, let script) = sent.value.first else {
+      Issue.record("Expected runBlockingScript command")
+      return
+    }
+    #expect(sentWorktree == worktree)
+    #expect(script == "npm run dev")
+    guard case .script(let definition) = kind else {
+      Issue.record("Expected .script kind")
+      return
+    }
+    #expect(definition.kind == .run)
+    #expect(definition.command == "npm run dev")
 
     let savedRunScript = withDependencies {
       $0.settingsFileStorage = storage.storage

@@ -1,17 +1,16 @@
+import SupacodeSettingsShared
 import SwiftUI
 
-/// Color token for terminal tab tint indicators, used in place of
-/// `Color` so that `TerminalTabItem` can remain `Equatable` and `Sendable`.
-enum TerminalTabTintColor: String, Codable, Hashable, Sendable {
-  case green
-  case orange
-  case red
-
+extension TerminalTabTintColor {
   var color: Color {
     switch self {
     case .green: .green
     case .orange: .orange
     case .red: .red
+    case .blue: .blue
+    case .purple: .purple
+    case .yellow: .yellow
+    case .teal: .teal
     }
   }
 }

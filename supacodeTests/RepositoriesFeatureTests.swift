@@ -1797,7 +1797,7 @@ struct RepositoriesFeatureTests {
     await store.send(.runScriptCompleted(worktreeID: worktree.id, exitCode: 1, tabId: nil)) {
       $0.runScriptWorktreeIDs = []
       $0.alert = expectedScriptFailureAlert(
-        kind: .run,
+        kind: .script(ScriptDefinition(kind: .run)),
         exitMessage: "Script failed (exit code 1).",
         worktreeID: worktree.id,
         repoName: "repo",
@@ -1855,7 +1855,7 @@ struct RepositoriesFeatureTests {
     await store.send(.runScriptCompleted(worktreeID: worktree.id, exitCode: 1, tabId: tabId)) {
       $0.runScriptWorktreeIDs = []
       $0.alert = expectedScriptFailureAlert(
-        kind: .run,
+        kind: .script(ScriptDefinition(kind: .run)),
         exitMessage: "Script failed (exit code 1).",
         worktreeID: worktree.id,
         tabId: tabId,
