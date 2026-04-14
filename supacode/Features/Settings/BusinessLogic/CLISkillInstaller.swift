@@ -47,6 +47,7 @@ nonisolated struct CLISkillInstaller {
     switch agent {
     case .claude: CLISkillContent.claudeSkill
     case .codex: CLISkillContent.codexSkillMd
+    case .kiro: CLISkillContent.kiroSkillMd
     }
   }
 }
