@@ -85,9 +85,8 @@ struct WorktreeDetailView: View {
           onOpenActionSelectionChanged: { action in
             store.send(.openActionSelectionChanged(action))
           },
-          onCopyPath: {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(selectedWorktree.workingDirectory.path, forType: .string)
+          onRevealInFinder: {
+            store.send(.revealInFinder)
           },
           onSelectNotification: selectToolbarNotification,
           onDismissAllNotifications: { dismissAllToolbarNotifications(in: notificationGroups) },
@@ -212,8 +211,14 @@ struct WorktreeDetailView: View {
     content: Content,
     actions: FocusedActions
   ) -> some View {
-    content
+    let resolvedSelection: OpenWorktreeAction? =
+      actions.openSelectedWorktree != nil
+      ? OpenWorktreeAction.availableSelection(store.openActionSelection) : nil
+    return
+      content
       .focusedSceneValue(\.openSelectedWorktreeAction, actions.openSelectedWorktree)
+      .focusedSceneValue(\.revealInFinderAction, actions.revealInFinder)
+      .focusedSceneValue(\.openActionSelection, resolvedSelection)
       .focusedSceneValue(\.newTerminalAction, actions.newTerminal)
       .focusedValue(\.closeTabAction, actions.closeTab)
       .focusedValue(\.closeSurfaceAction, actions.closeSurface)
@@ -235,6 +240,7 @@ struct WorktreeDetailView: View {
     }
     return FocusedActions(
       openSelectedWorktree: action(.openSelectedWorktree),
+      revealInFinder: action(.revealInFinder),
       newTerminal: action(.newTerminal),
       closeTab: action(.closeTab),
       closeSurface: action(.closeSurface),
@@ -268,6 +274,7 @@ struct WorktreeDetailView: View {
 
   private struct FocusedActions {
     let openSelectedWorktree: (() -> Void)?
+    let revealInFinder: (() -> Void)?
     let newTerminal: (() -> Void)?
     let closeTab: (() -> Void)?
     let closeSurface: (() -> Void)?
@@ -319,7 +326,7 @@ struct WorktreeDetailView: View {
     let onRenameBranch: (String) -> Void
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
-    let onCopyPath: () -> Void
+    let onRevealInFinder: () -> Void
     let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
     let onDismissAllNotifications: () -> Void
     let onRunScript: () -> Void
@@ -383,21 +390,24 @@ struct WorktreeDetailView: View {
 
     @ViewBuilder
     private func openMenu(openActionSelection: OpenWorktreeAction, showExtras: Bool) -> some View {
-      let availableActions = OpenWorktreeAction.availableCases
-      let resolvedOpenActionSelection = OpenWorktreeAction.availableSelection(openActionSelection)
-      Button {
-        onOpenWorktree(resolvedOpenActionSelection)
-      } label: {
-        OpenWorktreeActionMenuLabelView(
-          action: resolvedOpenActionSelection,
-          shortcutHint: showExtras ? resolveShortcutDisplay(for: AppShortcuts.openFinder, fallback: "") : nil
-        )
+      let availableActions = OpenWorktreeAction.availableCases.filter { $0 != .finder }
+      let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
+      let primarySelection = resolved == .finder ? availableActions.first : resolved
+      if let primarySelection {
+        Button {
+          onOpenWorktree(primarySelection)
+        } label: {
+          OpenWorktreeActionMenuLabelView(
+            action: primarySelection,
+            shortcutHint: showExtras ? resolveShortcutDisplay(for: AppShortcuts.openWorktree, fallback: "") : nil
+          )
+        }
+        .help(openActionHelpText(for: primarySelection, isDefault: true))
       }
-      .help(openActionHelpText(for: resolvedOpenActionSelection, isDefault: true))
 
       Menu {
         ForEach(availableActions) { action in
-          let isDefault = action == resolvedOpenActionSelection
+          let isDefault = action == primarySelection
           Button {
             onOpenActionSelectionChanged(action)
             onOpenWorktree(action)
@@ -408,10 +418,12 @@ struct WorktreeDetailView: View {
           .help(openActionHelpText(for: action, isDefault: isDefault))
         }
         Divider()
-        Button("Copy Path") {
-          onCopyPath()
+        Button {
+          onRevealInFinder()
+        } label: {
+          OpenWorktreeActionMenuLabelView(action: .finder, shortcutHint: nil)
         }
-        .help("Copy path")
+        .help("Reveal in Finder (\(resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
       } label: {
         Image(systemName: "chevron.down")
           .font(.caption2)
@@ -420,13 +432,12 @@ struct WorktreeDetailView: View {
       .imageScale(.small)
       .menuIndicator(.hidden)
       .fixedSize()
-      .help("Open in...")
-
+      .help("Open in…")
     }
 
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
       guard isDefault else { return action.title }
-      return "\(action.title) (\(resolveShortcutDisplay(for: AppShortcuts.openFinder)))"
+      return "\(action.title) (\(resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
     }
   }
 
@@ -818,7 +829,7 @@ private struct WorktreeToolbarPreview: View {
         onRenameBranch: { _ in },
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
-        onCopyPath: {},
+        onRevealInFinder: {},
         onSelectNotification: { _, _ in },
         onDismissAllNotifications: {},
         onRunScript: {},

@@ -6,6 +6,14 @@ import Testing
 @testable import SupacodeSettingsShared
 @testable import supacode
 
+private struct PlainCodingKey: CodingKey {
+  var stringValue: String
+  var intValue: Int? { nil }
+  init(_ stringValue: String) { self.stringValue = stringValue }
+  init?(stringValue: String) { self.stringValue = stringValue }
+  init?(intValue: Int) { nil }
+}
+
 @MainActor
 struct AppShortcutsTests {
   @Test func displaySymbolsMatchDisplay() {
@@ -173,6 +181,20 @@ struct AppShortcutsTests {
   @Test func groupsCategoriesMatchAllCases() {
     let groupCategories = AppShortcuts.groups.map(\.category)
     expectNoDifference(groupCategories, AppShortcutCategory.allCases)
+  }
+
+  // MARK: - Backward-compatible key migration.
+
+  @Test func legacyOpenFinderKeyDecodesToOpenWorktree() {
+    // Existing user settings may contain "openFinder" from before the rename.
+    let decoded = AppShortcutID(codingKey: PlainCodingKey("openFinder"))
+    #expect(decoded == .openWorktree)
+  }
+
+  @Test func openWorktreeKeyRoundTrips() {
+    let decoded = AppShortcutID(codingKey: PlainCodingKey("openWorktree"))
+    #expect(decoded == .openWorktree)
+    #expect(decoded?.codingKey.stringValue == "openWorktree")
   }
 
   // MARK: - Override ghost keybind propagation.
