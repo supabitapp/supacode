@@ -8,6 +8,8 @@ import SwiftUI
 struct WorktreeCommands: Commands {
   @Bindable var store: StoreOf<AppFeature>
   @FocusedValue(\.openSelectedWorktreeAction) private var openSelectedWorktreeAction
+  @FocusedValue(\.revealInFinderAction) private var revealInFinderAction
+  @FocusedValue(\.openActionSelection) private var openActionSelection
   @FocusedValue(\.confirmWorktreeAction) private var confirmWorktreeAction
   @FocusedValue(\.archiveWorktreeAction) private var archiveWorktreeAction
   @FocusedValue(\.deleteWorktreeAction) private var deleteWorktreeAction
@@ -31,7 +33,8 @@ struct WorktreeCommands: Commands {
     let deleteWt = AppShortcuts.deleteWorktree.effective(from: overrides)
     let confirm = AppShortcuts.confirmWorktreeAction.effective(from: overrides)
     let openRepo = AppShortcuts.openRepository.effective(from: overrides)
-    let openWorktree = AppShortcuts.openFinder.effective(from: overrides)
+    let openWorktree = AppShortcuts.openWorktree.effective(from: overrides)
+    let revealInFinder = AppShortcuts.revealInFinder.effective(from: overrides)
     let openPR = AppShortcuts.openPullRequest.effective(from: overrides)
     let newWt = AppShortcuts.newWorktree.effective(from: overrides)
     let archived = AppShortcuts.archivedWorktrees.effective(from: overrides)
@@ -46,12 +49,20 @@ struct WorktreeCommands: Commands {
       .appKeyboardShortcut(newWt)
       .help("New Worktree (\(newWt?.display ?? "none"))")
       .disabled(!repositories.canCreateWorktree)
-      Button("Open in Finder", systemImage: "folder") {
+      Divider()
+      let openLabel = openActionSelection.map { "Open in \($0.labelTitle)" } ?? "Open"
+      Button(openLabel, systemImage: "arrow.up.right.square") {
         openSelectedWorktreeAction?()
       }
       .appKeyboardShortcut(openWorktree)
-      .help("Open in Finder (\(openWorktree?.display ?? "none"))")
+      .help("\(openLabel) (\(openWorktree?.display ?? "none"))")
       .disabled(openSelectedWorktreeAction == nil)
+      Button("Reveal in Finder", systemImage: "folder") {
+        revealInFinderAction?()
+      }
+      .appKeyboardShortcut(revealInFinder)
+      .help("Reveal in Finder (\(revealInFinder?.display ?? "none"))")
+      .disabled(revealInFinderAction == nil)
       Button("Open Pull Request", systemImage: "arrow.up.forward") {
         if let pullRequestURL {
           NSWorkspace.shared.open(pullRequestURL)
@@ -192,6 +203,14 @@ private struct OpenSelectedWorktreeActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+private struct RevealInFinderActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+private struct OpenActionSelectionKey: FocusedValueKey {
+  typealias Value = OpenWorktreeAction
+}
+
 private struct DeleteWorktreeActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
@@ -204,6 +223,16 @@ extension FocusedValues {
   var openSelectedWorktreeAction: (() -> Void)? {
     get { self[OpenSelectedWorktreeActionKey.self] }
     set { self[OpenSelectedWorktreeActionKey.self] = newValue }
+  }
+
+  var revealInFinderAction: (() -> Void)? {
+    get { self[RevealInFinderActionKey.self] }
+    set { self[RevealInFinderActionKey.self] = newValue }
+  }
+
+  var openActionSelection: OpenWorktreeAction? {
+    get { self[OpenActionSelectionKey.self] }
+    set { self[OpenActionSelectionKey.self] = newValue }
   }
 
   var confirmWorktreeAction: (() -> Void)? {

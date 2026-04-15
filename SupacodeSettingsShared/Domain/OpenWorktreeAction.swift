@@ -38,7 +38,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
 
   public var title: String {
     switch self {
-    case .finder: "Open Finder"
+    case .finder: "Reveal in Finder"
     case .editor: "$EDITOR"
     case .alacritty: "Alacritty"
     case .antigravity: "Antigravity"

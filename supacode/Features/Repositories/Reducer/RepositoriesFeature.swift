@@ -249,6 +249,7 @@ struct RepositoriesFeature {
     case dismissToast
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
+    case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
@@ -308,6 +309,7 @@ struct RepositoriesFeature {
     case selectedWorktreeChanged(Worktree?)
     case repositoriesChanged(IdentifiedArrayOf<Repository>)
     case openRepositorySettings(Repository.ID)
+    case openWorktreeInApp(Worktree.ID, OpenWorktreeAction)
     case worktreeCreated(Worktree)
     case runBlockingScript(Worktree, repositoryID: Repository.ID, kind: BlockingScriptKind, script: String)
     case selectTerminalTab(Worktree.ID, tabId: TerminalTabID)
@@ -2008,7 +2010,7 @@ struct RepositoriesFeature {
         var effects: [Effect<Action>] = [
           .run { _ in
             await repositoryPersistence.savePinnedWorktreeIDs(pinnedWorktreeIDs)
-          }
+          },
         ]
         if didUpdateWorktreeOrder {
           let worktreeOrderByRepository = state.worktreeOrderByRepository
@@ -2035,7 +2037,7 @@ struct RepositoriesFeature {
         var effects: [Effect<Action>] = [
           .run { _ in
             await repositoryPersistence.savePinnedWorktreeIDs(pinnedWorktreeIDs)
-          }
+          },
         ]
         if didUpdateWorktreeOrder {
           let worktreeOrderByRepository = state.worktreeOrderByRepository
@@ -2731,6 +2733,9 @@ struct RepositoriesFeature {
 
       case .openRepositorySettings(let repositoryID):
         return .send(.delegate(.openRepositorySettings(repositoryID)))
+
+      case .contextMenuOpenWorktree(let worktreeID, let action):
+        return .send(.delegate(.openWorktreeInApp(worktreeID, action)))
 
       case .alert(.presented(.viewTerminalTab(let worktreeID, let tabId))):
         return .merge(

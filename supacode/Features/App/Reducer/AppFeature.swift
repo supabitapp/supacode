@@ -6,6 +6,7 @@ import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI
 
+private nonisolated let appLogger = SupaLogger("App")
 private nonisolated let deeplinkLogger = SupaLogger("Deeplink")
 
 private enum CancelID {
@@ -51,6 +52,7 @@ struct AppFeature {
     case openActionSelectionChanged(OpenWorktreeAction)
     case worktreeSettingsLoaded(RepositorySettings, worktreeID: Worktree.ID)
     case openSelectedWorktree
+    case revealInFinder
     case openWorktree(OpenWorktreeAction)
     case openWorktreeFailed(OpenActionError)
     case requestQuit
@@ -228,6 +230,13 @@ struct AppFeature {
         }
         return .merge(effects)
 
+      case .repositories(.delegate(.openWorktreeInApp(let worktreeID, let action))):
+        guard let worktree = state.repositories.worktree(for: worktreeID) else {
+          appLogger.warning("openWorktreeInApp: worktree \(worktreeID) not found, ignoring.")
+          return .none
+        }
+        return openWorktreeEffect(worktree: worktree, action: action, source: .contextMenu, state: state)
+
       case .repositories(.delegate(.openRepositorySettings(let repositoryID))):
         guard state.repositories.repositories.contains(where: { $0.id == repositoryID }) else {
           return .none
@@ -322,6 +331,7 @@ struct AppFeature {
       case .openActionSelectionChanged(let action):
         state.openActionSelection = action
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          appLogger.warning("openActionSelectionChanged: selected worktree not found, skipping persistence.")
           return .none
         }
         let rootURL = worktree.repositoryRootURL
@@ -333,29 +343,19 @@ struct AppFeature {
       case .openSelectedWorktree:
         return .send(.openWorktree(OpenWorktreeAction.availableSelection(state.openActionSelection)))
 
-      case .openWorktree(let action):
+      case .revealInFinder:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          appLogger.warning("revealInFinder: selected worktree not found, ignoring.")
           return .none
         }
-        analyticsClient.capture("worktree_opened", ["action": action.settingsID])
-        if action == .editor {
-          let shouldRunSetupScript =
-            state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
-          return .run { _ in
-            await terminalClient.send(
-              .createTabWithInput(
-                worktree,
-                input: "$EDITOR",
-                runSetupScriptIfNew: shouldRunSetupScript
-              )
-            )
-          }
+        return openWorktreeEffect(worktree: worktree, action: .finder, source: .revealInFinder, state: state)
+
+      case .openWorktree(let action):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          appLogger.warning("openWorktree: selected worktree not found, ignoring.")
+          return .none
         }
-        return .run { send in
-          await workspaceClient.open(action, worktree) { error in
-            send(.openWorktreeFailed(error))
-          }
-        }
+        return openWorktreeEffect(worktree: worktree, action: action, source: .toolbar, state: state)
 
       case .openWorktreeFailed(let error):
         state.alert = AlertState {
@@ -824,6 +824,41 @@ struct AppFeature {
     }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
+    }
+  }
+
+  // MARK: - Open worktree.
+
+  private enum OpenWorktreeSource: String {
+    case toolbar
+    case contextMenu
+    case revealInFinder
+  }
+
+  private func openWorktreeEffect(
+    worktree: Worktree,
+    action: OpenWorktreeAction,
+    source: OpenWorktreeSource,
+    state: State
+  ) -> Effect<Action> {
+    analyticsClient.capture("worktree_opened", ["action": action.settingsID, "source": source.rawValue])
+    guard action == .editor else {
+      return .run { send in
+        await workspaceClient.open(action, worktree) { error in
+          send(.openWorktreeFailed(error))
+        }
+      }
+    }
+    let shouldRunSetupScript =
+      state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
+    return .run { _ in
+      await terminalClient.send(
+        .createTabWithInput(
+          worktree,
+          input: "$EDITOR",
+          runSetupScriptIfNew: shouldRunSetupScript
+        )
+      )
     }
   }
 

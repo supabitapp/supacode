@@ -11,7 +11,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case deleteWorktree, confirmWorktreeAction
   case selectNextWorktree, selectPreviousWorktree
   case selectWorktree(Int)
-  case openFinder, openRepository, openPullRequest, copyPath
+  case openWorktree, revealInFinder, openRepository, openPullRequest, copyPath
   case runScript, stopRunScript
 
   // Stable string key for JSON dictionary persistence.
@@ -47,7 +47,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .selectNextWorktree: "selectNextWorktree"
     case .selectPreviousWorktree: "selectPreviousWorktree"
     case .selectWorktree(let index): "selectWorktree\(index)"
-    case .openFinder: "openFinder"
+    case .openWorktree: "openWorktree"
+    case .revealInFinder: "revealInFinder"
     case .openRepository: "openRepository"
     case .openPullRequest: "openPullRequest"
     case .copyPath: "copyPath"
@@ -70,7 +71,9 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "confirmWorktreeAction": .confirmWorktreeAction,
     "selectNextWorktree": .selectNextWorktree,
     "selectPreviousWorktree": .selectPreviousWorktree,
-    "openFinder": .openFinder,
+    "openWorktree": .openWorktree,
+    "openFinder": .openWorktree,
+    "revealInFinder": .revealInFinder,
     "openRepository": .openRepository,
     "openPullRequest": .openPullRequest,
     "copyPath": .copyPath,
@@ -106,7 +109,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .selectNextWorktree: "Select Next Worktree"
     case .selectPreviousWorktree: "Select Previous Worktree"
     case .selectWorktree(let index): "Select Worktree \(index == 0 ? 10 : index)"
-    case .openFinder: "Open Finder"
+    case .openWorktree: "Open Worktree"
+    case .revealInFinder: "Reveal in Finder"
     case .openRepository: "Open Repository"
     case .openPullRequest: "Open Pull Request"
     case .copyPath: "Copy Path"
@@ -310,7 +314,8 @@ public enum AppShortcuts {
   public static let selectWorktree9 = AppShortcut(id: .selectWorktree(9), key: "9", modifiers: [.control])
   public static let selectWorktree0 = AppShortcut(id: .selectWorktree(0), key: "0", modifiers: [.control])
 
-  public static let openFinder = AppShortcut(id: .openFinder, key: "o", modifiers: .command)
+  public static let openWorktree = AppShortcut(id: .openWorktree, key: "o", modifiers: .command)
+  public static let revealInFinder = AppShortcut(id: .revealInFinder, key: "r", modifiers: [.command, .option])
   public static let openRepository = AppShortcut(id: .openRepository, key: "o", modifiers: [.command, .shift])
   public static let openPullRequest = AppShortcut(id: .openPullRequest, key: "g", modifiers: [.command, .control])
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
@@ -337,7 +342,7 @@ public enum AppShortcuts {
     AppShortcutGroup(category: .worktreeSelection, shortcuts: worktreeSelection),
     AppShortcutGroup(
       category: .actions,
-      shortcuts: [openFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript]
+      shortcuts: [openWorktree, revealInFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript]
     ),
   ]
 

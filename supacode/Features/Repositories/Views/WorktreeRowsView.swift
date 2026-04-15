@@ -233,12 +233,25 @@ private struct WorktreeContextMenu: View {
     return rows.isEmpty ? [row] : rows
   }
 
+  private var openActionSelection: OpenWorktreeAction {
+    @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    return OpenWorktreeAction.fromSettingsID(
+      repositorySettings.openActionID,
+      defaultEditorID: settingsFile.global.defaultEditorID
+    )
+  }
+
   var body: some View {
     let contextRows = contextRows
     let isBulkSelection = contextRows.count > 1
     let overrides = settingsFile.global.shortcutOverrides
     let archiveShortcut = AppShortcuts.archiveWorktree.effective(from: overrides)
     let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
+
+    if !isBulkSelection {
+      openActions(overrides: overrides)
+      Divider()
+    }
 
     let pinnableRows = contextRows.filter { !$0.isMainWorktree }
     if !pinnableRows.isEmpty {
@@ -309,6 +322,40 @@ private struct WorktreeContextMenu: View {
       }
     }
     .appKeyboardShortcut(deleteShortcut)
+  }
+
+  @ViewBuilder
+  private func openActions(overrides: [AppShortcutID: AppShortcutOverride]) -> some View {
+    let availableActions = OpenWorktreeAction.availableCases.filter { $0 != .finder }
+    let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
+    let primarySelection = resolved == .finder ? availableActions.first : resolved
+    let openShortcut = AppShortcuts.openWorktree.effective(from: overrides)
+    let revealShortcut = AppShortcuts.revealInFinder.effective(from: overrides)
+
+    if let primarySelection {
+      Button("Open with \(primarySelection.labelTitle)", systemImage: "arrow.up.right.square") {
+        store.send(.contextMenuOpenWorktree(worktree.id, primarySelection))
+      }
+      .appKeyboardShortcut(openShortcut)
+      .help("Open with \(primarySelection.labelTitle) (\(openShortcut?.display ?? "none"))")
+    }
+
+    Menu("Open With") {
+      ForEach(availableActions) { action in
+        Button {
+          store.send(.contextMenuOpenWorktree(worktree.id, action))
+        } label: {
+          OpenWorktreeActionMenuLabelView(action: action, shortcutHint: nil)
+        }
+        .help("Open with \(action.labelTitle)")
+      }
+    }
+
+    Button("Reveal in Finder", systemImage: "folder") {
+      store.send(.contextMenuOpenWorktree(worktree.id, .finder))
+    }
+    .appKeyboardShortcut(revealShortcut)
+    .help("Reveal in Finder (\(revealShortcut?.display ?? "none"))")
   }
 
   private func togglePin(for worktreeID: Worktree.ID, isPinned: Bool) {

@@ -380,6 +380,25 @@ struct SettingsFeatureTests {
     }
   }
 
+  @Test(.dependencies) func setSelectionToNonRepositoryClearsRepositorySettings() async {
+    let summary = SettingsRepositorySummary(id: "/tmp/repo", name: "Repo")
+    var state = SettingsFeature.State()
+    state.selection = .repository(summary.id)
+    state.repositorySummaries = [summary]
+    state.repositorySettings = RepositorySettingsFeature.State(
+      rootURL: summary.rootURL,
+      settings: .default
+    )
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.setSelection(.general)) {
+      $0.selection = .general
+      $0.repositorySettings = nil
+    }
+  }
+
   // MARK: - Keyboard shortcut overrides.
 
   @Test(.dependencies) func updateShortcutPersistsOverride() async {
