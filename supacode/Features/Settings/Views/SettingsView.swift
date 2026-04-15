@@ -42,13 +42,22 @@ private struct RepositoryLabel: View {
 private struct RepositoryDisclosureLabel: View {
   let repository: SettingsRepositorySummary
   @Bindable var settingsStore: StoreOf<SettingsFeature>
+  @Binding var isExpanded: Bool
+
+  private var isSelected: Bool {
+    settingsStore.selection?.repositoryID == repository.id
+  }
 
   var body: some View {
     RepositoryLabel(name: repository.name, rootURL: repository.rootURL)
       .contentShape(Rectangle())
       .accessibilityAddTraits(.isButton)
       .onTapGesture {
-        _ = withAnimation { settingsStore.send(.setSelection(.repository(repository.id))) }
+        guard !isSelected else {
+          isExpanded.toggle()
+          return
+        }
+        _ = settingsStore.send(.setSelection(.repository(repository.id)))
       }
   }
 }
@@ -96,7 +105,17 @@ private struct SettingsSidebarView: View {
           } label: {
             RepositoryDisclosureLabel(
               repository: repository,
-              settingsStore: settingsStore
+              settingsStore: settingsStore,
+              isExpanded: Binding(
+                get: { expandedRepositories.contains(repository.id) },
+                set: { expanded in
+                  if expanded {
+                    expandedRepositories.insert(repository.id)
+                  } else {
+                    expandedRepositories.remove(repository.id)
+                  }
+                }
+              )
             )
           }
         }
