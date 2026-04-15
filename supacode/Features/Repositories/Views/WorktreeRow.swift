@@ -402,21 +402,6 @@ private struct StatusIndicator: View {
   }
 }
 
-// MARK: - Vertically centered label style.
-
-private struct VerticallyCenteredLabelStyle: LabelStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    HStack(spacing: 6) {
-      configuration.icon
-      configuration.title
-    }
-  }
-}
-
-extension LabelStyle where Self == VerticallyCenteredLabelStyle {
-  static var verticallyCentered: VerticallyCenteredLabelStyle { .init() }
-}
-
 // MARK: - Multi-color ping dot.
 
 /// Displays a pulsing dot that cycles through multiple script tint

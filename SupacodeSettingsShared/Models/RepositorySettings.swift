@@ -83,9 +83,9 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
       ?? Self.default.runScript
     // Migrate legacy `runScript` into the new `scripts` array when
     // the `scripts` key is absent from persisted JSON.
-    // Use `try?` so an unknown `ScriptKind` raw value from a future
-    // version doesn't crash the entire settings decode.
-    let decodedScripts = try? container.decodeIfPresent([ScriptDefinition].self, forKey: .scripts)
+    // Decode element-by-element so a single unknown `ScriptKind`
+    // only drops that entry, not the entire array.
+    let decodedScripts = Self.decodeScriptsLossily(from: container)
     if let decodedScripts {
       scripts = decodedScripts
     } else if !runScript.isEmpty {
@@ -127,5 +127,27 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     try container.encodeIfPresent(copyIgnoredOnWorktreeCreate, forKey: .copyIgnoredOnWorktreeCreate)
     try container.encodeIfPresent(copyUntrackedOnWorktreeCreate, forKey: .copyUntrackedOnWorktreeCreate)
     try container.encodeIfPresent(pullRequestMergeStrategy, forKey: .pullRequestMergeStrategy)
+  }
+
+  /// Decodes the `scripts` array element-by-element, silently
+  /// skipping entries that fail (e.g. unknown `ScriptKind`).
+  /// Returns `nil` when the key is absent (legacy JSON).
+  private static func decodeScriptsLossily(
+    from container: KeyedDecodingContainer<CodingKeys>
+  ) -> [ScriptDefinition]? {
+    guard container.contains(.scripts) else { return nil }
+    guard let wrappers = try? container.decode([Lossy<ScriptDefinition>].self, forKey: .scripts) else {
+      return nil
+    }
+    return wrappers.compactMap { $0.value }
+  }
+}
+
+/// Wrapper that always succeeds at the container level,
+/// capturing decode failures as `nil` instead of throwing.
+private nonisolated struct Lossy<T: Decodable & Sendable>: Decodable, Sendable {
+  nonisolated let value: T?
+  nonisolated init(from decoder: Decoder) throws {
+    value = try? T(from: decoder)
   }
 }

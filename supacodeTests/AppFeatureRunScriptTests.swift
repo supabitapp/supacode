@@ -205,6 +205,42 @@ struct AppFeatureRunScriptTests {
     #expect(store.state.scripts == [definition])
   }
 
+  @Test(.dependencies) func scriptCompletedCleansUpOrphanedIDAfterScriptDeletion() async {
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    // Simulate a script that is running but has been removed from
+    // the settings (e.g. user deleted it while it was executing).
+    var repositoriesState = repositories
+    repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    repositoriesState.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    // Scripts array is empty — the definition was deleted from settings.
+    #expect(store.state.scripts.isEmpty)
+
+    await store.send(
+      .repositories(
+        .scriptCompleted(
+          worktreeID: worktree.id,
+          scriptID: definition.id,
+          kind: .script(definition),
+          exitCode: 0,
+          tabId: nil
+        )
+      )
+    ) {
+      $0.repositories.runningScriptsByWorktreeID = [:]
+      $0.repositories.scriptTintColorByID = [:]
+    }
+  }
+
   private func makeWorktree() -> Worktree {
     Worktree(
       id: "/tmp/repo/wt-1",

@@ -7,9 +7,12 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
   public var id: UUID
   public var kind: ScriptKind
   public var name: String
-  public var systemImage: String
-  public var tintColor: TerminalTabTintColor
   public var command: String
+
+  /// Per-instance overrides — only meaningful for `.custom` kinds.
+  /// Predefined kinds always resolve to the kind default.
+  public var systemImage: String?
+  public var tintColor: TerminalTabTintColor?
 
   /// Display name for toolbar labels: predefined types show their
   /// kind name ("Run", "Test"), custom types show user-defined name.
@@ -20,13 +23,13 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
   /// Resolved SF Symbol name: predefined types always use the kind
   /// default so future icon changes propagate automatically.
   public nonisolated var resolvedSystemImage: String {
-    kind == .custom ? systemImage : kind.defaultSystemImage
+    systemImage ?? kind.defaultSystemImage
   }
 
   /// Resolved tint color: predefined types always use the kind
   /// default so future color changes propagate automatically.
   public nonisolated var resolvedTintColor: TerminalTabTintColor {
-    kind == .custom ? tintColor : kind.defaultTintColor
+    tintColor ?? kind.defaultTintColor
   }
 
   public nonisolated init(
@@ -40,8 +43,8 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
     self.id = id
     self.kind = kind
     self.name = name ?? kind.defaultName
-    self.systemImage = systemImage ?? kind.defaultSystemImage
-    self.tintColor = tintColor ?? kind.defaultTintColor
+    self.systemImage = systemImage
+    self.tintColor = tintColor
     self.command = command
   }
 }

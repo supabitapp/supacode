@@ -245,7 +245,8 @@ struct CommandPaletteFeature {
   }
 
   static func recencyRetentionIDs(
-    from repositories: IdentifiedArrayOf<Repository>
+    from repositories: IdentifiedArrayOf<Repository>,
+    scripts: [ScriptDefinition] = []
   ) -> [CommandPaletteItem.ID] {
     var ids = CommandPaletteItemID.globalIDs
     for repository in repositories {
@@ -253,6 +254,10 @@ struct CommandPaletteFeature {
       for worktree in repository.worktrees {
         ids.append(CommandPaletteItemID.worktreeSelect(worktree.id))
       }
+    }
+    for script in scripts {
+      ids.append(CommandPaletteItemID.runScript(script.id))
+      ids.append(CommandPaletteItemID.stopScript(script.id))
     }
     return ids
   }

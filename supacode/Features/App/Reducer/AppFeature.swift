@@ -215,7 +215,10 @@ struct AppFeature {
         let remainingScriptIDs = Set(state.repositories.runningScriptsByWorktreeID.values.flatMap { $0 })
         state.repositories.scriptTintColorByID = state.repositories.scriptTintColorByID
           .filter { remainingScriptIDs.contains($0.key) }
-        let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(from: repositories)
+        let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
+          from: repositories,
+          scripts: state.scripts
+        )
         let worktrees = state.repositories.worktreesForInfoWatcher()
         var effects: [Effect<Action>] = [
           .send(
@@ -752,12 +755,10 @@ struct AppFeature {
         return .send(.runNamedScript(definition))
 
       case .commandPalette(.delegate(.stopScript(let scriptID, _))):
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+        guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
           return .none
         }
-        return .run { _ in
-          await terminalClient.send(.stopScript(worktree, definitionID: scriptID))
-        }
+        return .send(.stopScript(definition))
 
       #if DEBUG
         case .commandPalette(.delegate(.debugTestToast(let toast))):

@@ -67,9 +67,9 @@ struct RepositorySettingsCodableTests {
     #expect(raw["runScript"]?.stringValue == "npm run dev")
   }
 
-  @Test func decodeWithUnknownScriptKindFallsBackGracefully() throws {
-    // An unknown `kind` value should not crash; scripts should fall
-    // back to an empty array.
+  @Test func decodeWithUnknownScriptKindDropsOnlyInvalidEntries() throws {
+    // An unknown `kind` value should only drop that entry, not the
+    // entire array. Valid sibling scripts must survive.
     let json = """
       {
         "setupScript": "",
@@ -79,9 +79,21 @@ struct RepositorySettingsCodableTests {
         "scripts": [
           {
             "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "run", "name": "Run",
+            "systemImage": "play",
+            "tintColor": "green", "command": "npm start"
+          },
+          {
+            "id": "00000000-0000-0000-0000-000000000002",
             "kind": "unknown_future_kind", "name": "X",
             "systemImage": "star",
             "tintColor": "red", "command": "echo hi"
+          },
+          {
+            "id": "00000000-0000-0000-0000-000000000003",
+            "kind": "test", "name": "Test",
+            "systemImage": "play.diamond",
+            "tintColor": "yellow", "command": "npm test"
           }
         ],
         "openActionID": "automatic"
@@ -89,7 +101,11 @@ struct RepositorySettingsCodableTests {
       """
     let data = Data(json.utf8)
     let settings = try JSONDecoder().decode(RepositorySettings.self, from: data)
-    #expect(settings.scripts.isEmpty)
+    #expect(settings.scripts.count == 2)
+    #expect(settings.scripts[0].kind == .run)
+    #expect(settings.scripts[0].command == "npm start")
+    #expect(settings.scripts[1].kind == .test)
+    #expect(settings.scripts[1].command == "npm test")
   }
 }
 

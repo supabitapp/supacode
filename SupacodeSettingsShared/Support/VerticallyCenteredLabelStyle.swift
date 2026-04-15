@@ -2,8 +2,10 @@ import SwiftUI
 
 /// A label style that arranges the icon and title
 /// horizontally with vertical center alignment.
-struct VerticallyCenteredLabelStyle: LabelStyle {
-  func makeBody(configuration: Configuration) -> some View {
+public struct VerticallyCenteredLabelStyle: LabelStyle {
+  public init() {}
+
+  public func makeBody(configuration: Configuration) -> some View {
     HStack(spacing: 6) {
       configuration.icon
       configuration.title
@@ -12,5 +14,5 @@ struct VerticallyCenteredLabelStyle: LabelStyle {
 }
 
 extension LabelStyle where Self == VerticallyCenteredLabelStyle {
-  static var verticallyCentered: VerticallyCenteredLabelStyle { .init() }
+  public static var verticallyCentered: VerticallyCenteredLabelStyle { .init() }
 }
