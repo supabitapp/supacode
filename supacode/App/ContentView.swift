@@ -33,7 +33,7 @@ struct ContentView: View {
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!store.repositories.isInitialLoadComplete)
-    .environment(\.scripts, store.scripts)
+    .environment(\.scriptsByID, Dictionary(uniqueKeysWithValues: store.scripts.map { ($0.id, $0) }))
     .environment(\.surfaceBackgroundOpacity, terminalManager.surfaceBackgroundOpacity())
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
@@ -105,14 +105,15 @@ struct ContentView: View {
 
 }
 
-private struct ScriptsEnvironmentKey: EnvironmentKey {
-  static let defaultValue: [ScriptDefinition] = []
+private struct ScriptsByIDEnvironmentKey: EnvironmentKey {
+  static let defaultValue: [UUID: ScriptDefinition] = [:]
 }
 
 extension EnvironmentValues {
-  var scripts: [ScriptDefinition] {
-    get { self[ScriptsEnvironmentKey.self] }
-    set { self[ScriptsEnvironmentKey.self] = newValue }
+  /// Pre-computed lookup for sidebar row color resolution.
+  var scriptsByID: [UUID: ScriptDefinition] {
+    get { self[ScriptsByIDEnvironmentKey.self] }
+    set { self[ScriptsByIDEnvironmentKey.self] = newValue }
   }
 }
 

@@ -90,9 +90,33 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runNamedScript(definition)) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-
     }
     await store.finish()
+  }
+
+  @Test(.dependencies) func runNamedScriptRejectsDuplicateRun() async {
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
+    var initialState = AppFeature.State(
+      repositories: repositories,
+      settings: SettingsFeature.State()
+    )
+    initialState.scripts = [definition]
+    // Pre-populate running state to simulate an already-running script.
+    initialState.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    // Second run of the same script should be silently rejected.
+    await store.send(.runNamedScript(definition))
+    #expect(sent.value.isEmpty)
   }
 
   @Test(.dependencies) func scriptCompletedRemovesFromTracking() async {

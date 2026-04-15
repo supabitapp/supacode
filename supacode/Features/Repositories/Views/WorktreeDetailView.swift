@@ -707,7 +707,7 @@ private struct ScriptSplitButton: View {
         icon: "play.fill",
         label: "Run",
         shortcut: AppShortcuts.runScript,
-        helpText: "Configure scripts in Settings",
+        helpText: "Configure scripts in Settings.",
         action: onManageScripts
       )
     }
@@ -764,13 +764,13 @@ private struct ScriptSplitButton: View {
               )
             }
           }
-          .help(isRunning ? "Stop \(script.displayName)" : "Run \(script.displayName)")
+          .help(isRunning ? "Stop \(script.displayName)." : "Run \(script.displayName).")
         }
         Divider()
         Button("Manage Scripts…") {
           onManageScripts()
         }
-        .help("Open repository settings to manage scripts")
+        .help("Open repository settings to manage scripts.")
       } label: {
         Image(systemName: "chevron.down")
           .font(.caption2)
@@ -779,7 +779,7 @@ private struct ScriptSplitButton: View {
       .imageScale(.small)
       .menuIndicator(.hidden)
       .fixedSize()
-      .help("Script actions")
+      .help("Script actions.")
     }
   }
 
