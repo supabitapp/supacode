@@ -421,7 +421,6 @@ struct WorktreeDetailView: View {
         } primaryAction: {
           onOpenWorktree(primarySelection)
         }
-        .menuIndicator(.hidden)
         .help(openActionHelpText(for: primarySelection, isDefault: true))
       }
     }
@@ -716,26 +715,24 @@ private struct ScriptMenu: View {
         onManageScripts()
       }
     }
-    .menuIndicator(.hidden)
     .help(primaryHelpText(hasRunning: hasRunning))
   }
 
   @ViewBuilder
   private func scriptLabel(hasRunning: Bool) -> some View {
-    let icon = hasRunning ? "stop.fill" : (primaryScript?.resolvedSystemImage ?? "play.fill")
+    let icon = hasRunning ? "stop" : (primaryScript?.resolvedSystemImage ?? "play")
     let label = hasRunning ? "Stop" : (primaryScript?.displayName ?? "Run")
     let shortcut = hasRunning ? AppShortcuts.stopRunScript : AppShortcuts.runScript
-    HStack(spacing: 6) {
+    Label {
+      Text(
+        commandKeyObserver.isPressed
+          ? resolveShortcutDisplay(for: shortcut, fallback: "")
+          : label
+      )
+    } icon: {
       Image(systemName: icon)
         .accessibilityHidden(true)
-      Text(label)
-      if commandKeyObserver.isPressed {
-        Text(resolveShortcutDisplay(for: shortcut, fallback: ""))
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-    }
-    .font(.caption)
+    }.labelStyle(.titleAndIcon)
   }
 
   private func primaryHelpText(hasRunning: Bool) -> String {
