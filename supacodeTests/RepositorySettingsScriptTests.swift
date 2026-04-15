@@ -200,7 +200,7 @@ struct RepositorySettingsScriptTests {
     }
   }
 
-  @Test(.dependencies) func removeScriptRemovesByID() async {
+  @Test(.dependencies) func removeScriptShowsConfirmationAndRemovesByID() async {
     let script1 = ScriptDefinition(kind: .run, command: "npm run dev")
     let script2 = ScriptDefinition(kind: .test, command: "npm test")
     let script3 = ScriptDefinition(kind: .deploy, command: "deploy.sh")
@@ -208,10 +208,51 @@ struct RepositorySettingsScriptTests {
     store.exhaustivity = .off(showSkippedAssertions: false)
 
     await store.send(.removeScript(script2.id)) {
-      #expect($0.settings.scripts.count == 2)
-      #expect($0.settings.scripts[0].id == script1.id)
-      #expect($0.settings.scripts[1].id == script3.id)
+      $0.alert = AlertState {
+        TextState("Remove \"\(script2.displayName)\" script?")
+      } actions: {
+        ButtonState(role: .destructive, action: .confirmRemoveScript(script2.id)) {
+          TextState("Remove")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState("This action cannot be undone.")
+      }
     }
+
+    await store.send(.alert(.presented(.confirmRemoveScript(script2.id)))) {
+      $0.alert = nil
+      $0.settings.scripts = [script1, script3]
+    }
+  }
+
+  @Test(.dependencies) func removeScriptCancelDoesNotRemove() async {
+    let script = ScriptDefinition(kind: .run, command: "npm run dev")
+    let store = makeStore(scripts: [script])
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.removeScript(script.id)) {
+      $0.alert = AlertState {
+        TextState("Remove \"\(script.displayName)\" script?")
+      } actions: {
+        ButtonState(role: .destructive, action: .confirmRemoveScript(script.id)) {
+          TextState("Remove")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState("This action cannot be undone.")
+      }
+    }
+
+    await store.send(.alert(.dismiss)) {
+      $0.alert = nil
+    }
+
+    #expect(store.state.settings.scripts.count == 1)
   }
 
 }

@@ -36,7 +36,7 @@ struct AppFeatureOpenWorktreeTests {
     #expect(context.openedActions.value.isEmpty)
     #expect(
       context.terminalCommands.value == [
-        .createTabWithInput(context.worktree, input: "$EDITOR", runSetupScriptIfNew: false),
+        .createTabWithInput(context.worktree, input: "$EDITOR", runSetupScriptIfNew: false)
       ]
     )
     await store.finish()
@@ -49,7 +49,7 @@ struct AppFeatureOpenWorktreeTests {
     await store.receive(\.repositories.delegate.openWorktreeInApp)
     #expect(
       context.terminalCommands.value == [
-        .createTabWithInput(context.worktree, input: "$EDITOR", runSetupScriptIfNew: true),
+        .createTabWithInput(context.worktree, input: "$EDITOR", runSetupScriptIfNew: true)
       ]
     )
     await store.finish()

@@ -45,9 +45,11 @@ public struct RepositoryScriptsSettingsView: View {
             TextField("Name", text: $script.name)
           }
           ScriptCommandEditor(text: $script.command, label: script.displayName)
-          Button("Remove Script", role: .destructive) {
+          Button("Remove Script…", role: .destructive) {
             store.send(.removeScript(script.id))
           }
+          .buttonStyle(.plain)
+          .foregroundStyle(.red)
           .help("Remove this script.")
         } header: {
           Label {
@@ -62,6 +64,7 @@ public struct RepositoryScriptsSettingsView: View {
       }
 
     }
+    .alert($store.scope(state: \.alert, action: \.alert))
     .formStyle(.grouped)
     .padding(.top, -20)
     .padding(.leading, -8)

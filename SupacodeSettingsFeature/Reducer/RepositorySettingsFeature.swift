@@ -27,6 +27,8 @@ public struct RepositorySettingsFeature {
       )
     }
 
+    @Presents public var alert: AlertState<Alert>?
+
     public init(
       rootURL: URL,
       settings: RepositorySettings,
@@ -52,6 +54,11 @@ public struct RepositorySettingsFeature {
     }
   }
 
+  @CasePathable
+  public enum Alert: Equatable {
+    case confirmRemoveScript(ScriptDefinition.ID)
+  }
+
   public enum Action: BindableAction {
     case task
     case settingsLoaded(
@@ -65,6 +72,7 @@ public struct RepositorySettingsFeature {
     case branchDataLoaded([String], defaultBaseRef: String)
     case addScript(ScriptKind)
     case removeScript(ScriptDefinition.ID)
+    case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
   }
@@ -171,8 +179,27 @@ public struct RepositorySettingsFeature {
         return persistAndNotify(state: &state)
 
       case .removeScript(let id):
+        guard let script = state.settings.scripts.first(where: { $0.id == id }) else { return .none }
+        state.alert = AlertState {
+          TextState("Remove \"\(script.displayName)\" script?")
+        } actions: {
+          ButtonState(role: .destructive, action: .confirmRemoveScript(id)) {
+            TextState("Remove")
+          }
+          ButtonState(role: .cancel) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState("This action cannot be undone.")
+        }
+        return .none
+
+      case .alert(.presented(.confirmRemoveScript(let id))):
         state.settings.scripts.removeAll { $0.id == id }
         return persistAndNotify(state: &state)
+
+      case .alert:
+        return .none
 
       case .binding:
         if state.isBareRepository {
@@ -185,6 +212,7 @@ public struct RepositorySettingsFeature {
         return .none
       }
     }
+    .ifLet(\.$alert, action: \.alert)
   }
 
   /// Persists the current settings and notifies the delegate.
