@@ -6,14 +6,14 @@ nonisolated enum KiroHookSettings {
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: "kiro")
 
   static func progressHookEntriesByEvent() throws -> [String: [JSONValue]] {
-    try KiroHookPayloadSupport.extractHookEntries(
+    try AgentHookPayloadSupport.extractHookGroups(
       from: KiroProgressPayload(),
       invalidConfiguration: KiroHookSettingsError.invalidConfiguration
     )
   }
 
   static func notificationHookEntriesByEvent() throws -> [String: [JSONValue]] {
-    try KiroHookPayloadSupport.extractHookEntries(
+    try AgentHookPayloadSupport.extractHookGroups(
       from: KiroNotificationPayload(),
       invalidConfiguration: KiroHookSettingsError.invalidConfiguration
     )
@@ -59,28 +59,4 @@ private nonisolated struct KiroNotificationPayload: Encodable {
       KiroHookEntry(command: KiroHookSettings.notify, timeoutMs: 10_000)
     ],
   ]
-}
-
-// MARK: - Payload support for flat format.
-
-nonisolated enum KiroHookPayloadSupport {
-  static func extractHookEntries<T: Encodable>(
-    from payload: T,
-    invalidConfiguration: @autoclosure () -> Error
-  ) throws -> [String: [JSONValue]] {
-    guard
-      let objectValue = try JSONValue(payload).objectValue,
-      let hooksValue = objectValue["hooks"]?.objectValue
-    else {
-      throw invalidConfiguration()
-    }
-    var result: [String: [JSONValue]] = [:]
-    for (event, value) in hooksValue {
-      guard let entries = value.arrayValue else {
-        throw invalidConfiguration()
-      }
-      result[event] = entries
-    }
-    return result
-  }
 }

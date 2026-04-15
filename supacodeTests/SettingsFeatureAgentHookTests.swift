@@ -140,6 +140,14 @@ struct SettingsFeatureAgentHookTests {
         }
         return progress
       }
+      $0[KiroSettingsClient.self].checkInstalled = { progress in
+        let key = progress ? "kiroProgress" : "kiroNotifications"
+        _ = startedChecks.withValue { $0.insert(key) }
+        await withCheckedContinuation { continuation in
+          continuations.withValue { $0.append(continuation) }
+        }
+        return progress
+      }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -148,9 +156,9 @@ struct SettingsFeatureAgentHookTests {
 
     // CLI/skill/hook checks run in parallel via `.merge`.
     // CLI/skill mocks return immediately; hook checks block on continuations.
-    // Wait for all four hook checks to start.
+    // Wait for all six hook checks to start.
     await eventually {
-      startedChecks.value.count == 4
+      startedChecks.value.count == 6
     }
 
     continuations.withValue { continuations in
@@ -163,7 +171,7 @@ struct SettingsFeatureAgentHookTests {
     await store.skipReceivedActions()
   }
 
-  @Test(.dependencies) func taskChecksAllFourHookSlotsOnStartup() async {
+  @Test(.dependencies) func taskChecksAllSixHookSlotsOnStartup() async {
     let checkedSlots = LockIsolated<[String]>([])
 
     let store = TestStore(initialState: SettingsFeature.State()) {
@@ -179,6 +187,10 @@ struct SettingsFeatureAgentHookTests {
         checkedSlots.withValue { $0.append(progress ? "codexProgress" : "codexNotifications") }
         return progress
       }
+      $0[KiroSettingsClient.self].checkInstalled = { progress in
+        checkedSlots.withValue { $0.append(progress ? "kiroProgress" : "kiroNotifications") }
+        return progress
+      }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -192,7 +204,109 @@ struct SettingsFeatureAgentHookTests {
         "claudeNotifications",
         "codexProgress",
         "codexNotifications",
+        "kiroProgress",
+        "kiroNotifications",
       ])
+  }
+
+  // MARK: - Kiro hook actions.
+
+  @Test(.dependencies) func agentHookInstallTappedKiroProgressTransitionsToInstalled() async {
+    var state = SettingsFeature.State()
+    state.kiroProgressState = .notInstalled
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[KiroSettingsClient.self].installProgress = {}
+    }
+
+    await store.send(.agentHookInstallTapped(.kiroProgress)) {
+      $0.kiroProgressState = .installing
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.kiroProgressState = .installed
+    }
+  }
+
+  @Test(.dependencies) func agentHookUninstallTappedKiroProgressTransitionsToNotInstalled() async {
+    var state = SettingsFeature.State()
+    state.kiroProgressState = .installed
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[KiroSettingsClient.self].uninstallProgress = {}
+    }
+
+    await store.send(.agentHookUninstallTapped(.kiroProgress)) {
+      $0.kiroProgressState = .uninstalling
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.kiroProgressState = .notInstalled
+    }
+  }
+
+  @Test(.dependencies) func agentHookInstallTappedKiroNotificationsTransitionsToInstalled() async {
+    var state = SettingsFeature.State()
+    state.kiroNotificationsState = .notInstalled
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[KiroSettingsClient.self].installNotifications = {}
+    }
+
+    await store.send(.agentHookInstallTapped(.kiroNotifications)) {
+      $0.kiroNotificationsState = .installing
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.kiroNotificationsState = .installed
+    }
+  }
+
+  @Test(.dependencies) func agentHookUninstallTappedKiroNotificationsTransitionsToNotInstalled() async {
+    var state = SettingsFeature.State()
+    state.kiroNotificationsState = .installed
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[KiroSettingsClient.self].uninstallNotifications = {}
+    }
+
+    await store.send(.agentHookUninstallTapped(.kiroNotifications)) {
+      $0.kiroNotificationsState = .uninstalling
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.kiroNotificationsState = .notInstalled
+    }
+  }
+
+  @Test(.dependencies) func agentHookCheckedKiroProgressSetsInstalled() async {
+    var state = SettingsFeature.State()
+    state.kiroProgressState = .checking
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.agentHookChecked(.kiroProgress, installed: true)) {
+      $0.kiroProgressState = .installed
+    }
+  }
+
+  @Test(.dependencies) func agentHookCheckedKiroNotificationsSetsNotInstalled() async {
+    var state = SettingsFeature.State()
+    state.kiroNotificationsState = .checking
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.agentHookChecked(.kiroNotifications, installed: false)) {
+      $0.kiroNotificationsState = .notInstalled
+    }
   }
 
   private func eventually(

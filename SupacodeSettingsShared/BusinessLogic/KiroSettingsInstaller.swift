@@ -64,9 +64,9 @@ nonisolated struct KiroSettingsInstaller {
   // MARK: - Default agent config.
 
   /// Creates `kiro_default.json` with the known built-in defaults when the file does not exist.
-  /// The config mirrors Kiro's built-in `kiro_default` agent — `tools: ["*"]` matches Kiro's
-  /// default tool access. Creating this file overrides the built-in entirely, so we must include
-  /// the full config (not just hooks).
+  /// The config mirrors Kiro's built-in `kiro_default` agent as of Kiro 1.x (2026-04). `tools: ["*"]`
+  /// matches Kiro's default tool access. Creating this file overrides the built-in entirely, so we must
+  /// include the full config (not just hooks).
   private func ensureDefaultAgentConfig() throws {
     guard !fileManager.fileExists(atPath: settingsURL.path) else { return }
     try fileManager.createDirectory(

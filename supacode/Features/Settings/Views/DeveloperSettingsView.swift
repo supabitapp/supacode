@@ -5,6 +5,7 @@ import SwiftUI
 
 struct DeveloperSettingsView: View {
   let store: StoreOf<SettingsFeature>
+  @State private var kiroExpanded = false
 
   var body: some View {
     Form {
@@ -89,7 +90,7 @@ struct DeveloperSettingsView: View {
       } footer: {
         Text("Applied to `~/.codex`.")
       }
-      Section {
+      Section(isExpanded: $kiroExpanded) {
         AgentInstallRow(
           installAction: { store.send(.agentHookInstallTapped(.kiroProgress)) },
           uninstallAction: { store.send(.agentHookUninstallTapped(.kiroProgress)) },
@@ -122,8 +123,6 @@ struct DeveloperSettingsView: View {
             .accessibilityHidden(true)
         }
         .labelStyle(.titleTrailingIcon)
-      } footer: {
-        Text("Applied to `~/.kiro`.")
       }
     }
     .formStyle(.grouped)
