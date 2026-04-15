@@ -139,8 +139,8 @@ extension ShellClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var shellClient: ShellClient {
+extension DependencyValues {
+  public var shellClient: ShellClient {
     get { self[ShellClient.self] }
     set { self[ShellClient.self] = newValue }
   }

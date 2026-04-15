@@ -97,18 +97,15 @@ struct WorktreeDetailView: View {
           onStopRunScripts: { store.send(.stopRunScripts) },
           onManageScripts: {
             let repositoryID = selectedWorktree.repositoryRootURL.path(percentEncoded: false)
-            store.send(.settings(.setSelection(.repository(repositoryID))))
+            store.send(.settings(.setSelection(.repositoryScripts(repositoryID))))
           }
         )
       }
     }
-    let hasScripts = !scripts.isEmpty
     let hasRunningRunScript = state.hasRunningRunScript
     let actions = makeFocusedActions(
       hasActiveWorktree: hasActiveWorktree,
-      hasScripts: hasScripts,
-      hasRunningRunScript: hasRunningRunScript,
-      scripts: scripts
+      hasRunningRunScript: hasRunningRunScript
     )
     return applyFocusedActions(content: content, actions: actions)
   }
@@ -227,27 +224,15 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.endSearchAction, actions.endSearch)
       .focusedSceneValue(\.runScriptAction, actions.runScript)
       .focusedSceneValue(\.stopRunScriptAction, actions.stopRunScript)
-      .focusedSceneValue(\.testScriptAction, actions.testScript)
-      .focusedSceneValue(\.debugScriptAction, actions.debugScript)
-      .focusedSceneValue(\.deployScriptAction, actions.deployScript)
-      .focusedSceneValue(\.lintScriptAction, actions.lintScript)
-      .focusedSceneValue(\.formatScriptAction, actions.formatScript)
   }
 
   private func makeFocusedActions(
     hasActiveWorktree: Bool,
-    hasScripts: Bool,
-    hasRunningRunScript: Bool,
-    scripts: [ScriptDefinition]
+    hasRunningRunScript: Bool
   ) -> FocusedActions {
     func action(_ appAction: AppFeature.Action) -> (() -> Void)? {
       hasActiveWorktree ? { store.send(appAction) } : nil
     }
-    let hasTest = scripts.contains { $0.kind == .test }
-    let hasDebug = scripts.contains { $0.kind == .debug }
-    let hasDeploy = scripts.contains { $0.kind == .deploy }
-    let hasLint = scripts.contains { $0.kind == .lint }
-    let hasFormat = scripts.contains { $0.kind == .format }
     return FocusedActions(
       openSelectedWorktree: action(.openSelectedWorktree),
       newTerminal: action(.newTerminal),
@@ -260,11 +245,6 @@ struct WorktreeDetailView: View {
       endSearch: action(.endSearch),
       runScript: hasActiveWorktree ? { store.send(.runScript) } : nil,
       stopRunScript: hasRunningRunScript ? { store.send(.stopRunScripts) } : nil,
-      testScript: hasTest ? { store.send(.testScript) } : nil,
-      debugScript: hasDebug ? { store.send(.debugScript) } : nil,
-      deployScript: hasDeploy ? { store.send(.deployScript) } : nil,
-      lintScript: hasLint ? { store.send(.lintScript) } : nil,
-      formatScript: hasFormat ? { store.send(.formatScript) } : nil,
     )
   }
 
@@ -298,11 +278,6 @@ struct WorktreeDetailView: View {
     let endSearch: (() -> Void)?
     let runScript: (() -> Void)?
     let stopRunScript: (() -> Void)?
-    let testScript: (() -> Void)?
-    let debugScript: (() -> Void)?
-    let deployScript: (() -> Void)?
-    let lintScript: (() -> Void)?
-    let formatScript: (() -> Void)?
   }
 
   fileprivate struct WorktreeToolbarState {
@@ -732,9 +707,9 @@ private struct ScriptSplitButton: View {
         onRunScript()
       } label: {
         HStack(spacing: 6) {
-          Image(systemName: primaryScript.systemImage)
+          Image(systemName: primaryScript.resolvedSystemImage)
             .accessibilityHidden(true)
-          Text(primaryScript.name)
+          Text(primaryScript.displayName)
           if commandKeyObserver.isPressed {
             Text(shortcutDisplay(for: AppShortcuts.runScript, fallback: ""))
               .font(.caption)
@@ -766,7 +741,11 @@ private struct ScriptSplitButton: View {
 
   @ViewBuilder
   private var scriptMenu: some View {
-    if !toolbarState.scripts.isEmpty {
+    // Show the dropdown unless the only script is the primary .run script.
+    let showMenu =
+      toolbarState.scripts.count > 1
+      || (toolbarState.scripts.count == 1 && toolbarState.scripts.first?.kind != .run)
+    if showMenu {
       Menu {
         ForEach(toolbarState.scripts) { script in
           let isRunning = toolbarState.runningScriptIDs.contains(script.id)
@@ -777,12 +756,16 @@ private struct ScriptSplitButton: View {
               onRunNamedScript(script)
             }
           } label: {
-            Label(
-              isRunning ? "Stop: \(script.name)" : "Run: \(script.name)",
-              systemImage: isRunning ? "stop.fill" : script.systemImage
-            )
+            Label {
+              Text(isRunning ? "Stop \(script.displayName)" : script.displayName)
+            } icon: {
+              Image.tintedSymbol(
+                isRunning ? "stop.fill" : script.resolvedSystemImage,
+                color: script.resolvedTintColor.nsColor,
+              )
+            }
           }
-          .help(isRunning ? "Stop \(script.name)" : "Run \(script.name)")
+          .help(isRunning ? "Stop \(script.displayName)" : "Run \(script.displayName)")
         }
         Divider()
         Button("Manage Scripts…") {

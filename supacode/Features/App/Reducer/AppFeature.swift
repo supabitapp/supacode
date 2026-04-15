@@ -74,11 +74,6 @@ struct AppFeature {
     case runNamedScript(ScriptDefinition)
     case stopScript(ScriptDefinition)
     case stopRunScripts
-    case testScript
-    case debugScript
-    case deployScript
-    case lintScript
-    case formatScript
     case closeTab
     case closeSurface
     case startSearch
@@ -454,7 +449,7 @@ struct AppFeature {
         var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? []
         ids.insert(definition.id)
         state.repositories.runningScriptsByWorktreeID[worktree.id] = ids
-        state.repositories.scriptTintColorByID[definition.id] = definition.tintColor
+        state.repositories.scriptTintColorByID[definition.id] = definition.resolvedTintColor
         return .run { _ in
           await terminalClient.send(
             .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
@@ -476,21 +471,6 @@ struct AppFeature {
         return .run { _ in
           await terminalClient.send(.stopRunScript(worktree))
         }
-
-      case .testScript:
-        return runFirstScript(ofKind: .test, state: &state)
-
-      case .debugScript:
-        return runFirstScript(ofKind: .debug, state: &state)
-
-      case .deployScript:
-        return runFirstScript(ofKind: .deploy, state: &state)
-
-      case .lintScript:
-        return runFirstScript(ofKind: .lint, state: &state)
-
-      case .formatScript:
-        return runFirstScript(ofKind: .format, state: &state)
 
       case .closeTab:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -866,16 +846,6 @@ struct AppFeature {
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
     }
-  }
-
-  // MARK: - Script helpers.
-
-  /// Finds the first script of the given kind and dispatches `.runNamedScript`.
-  private func runFirstScript(ofKind kind: ScriptKind, state: inout State) -> Effect<Action> {
-    guard let definition = state.scripts.first(where: { $0.kind == kind }) else {
-      return .none
-    }
-    return .send(.runNamedScript(definition))
   }
 
   // MARK: - Deeplink handling.

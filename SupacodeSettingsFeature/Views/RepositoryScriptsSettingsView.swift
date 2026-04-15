@@ -2,7 +2,7 @@ import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Settings sub-section for managing on-demand scripts.
+/// Settings sub-section for managing on-demand and lifecycle scripts.
 public struct RepositoryScriptsSettingsView: View {
   @Bindable var store: StoreOf<RepositorySettingsFeature>
 
@@ -12,44 +12,93 @@ public struct RepositoryScriptsSettingsView: View {
 
   public var body: some View {
     Form {
+      // Lifecycle scripts.
       Section {
-        if store.settings.scripts.isEmpty {
-          Text("No scripts configured.")
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 8)
-        } else {
-          List {
-            ForEach($store.settings.scripts) { $script in
-              ScriptRow(script: $script)
-            }
-            .onDelete { offsets in
-              store.send(.removeScripts(offsets))
-            }
-            .onMove { source, destination in
-              store.send(.moveScripts(source, destination))
-            }
-          }
-          .listStyle(.bordered(alternatesRowBackgrounds: true))
-          .frame(minHeight: 120)
-        }
+        ScriptCommandEditor(text: $store.settings.setupScript, label: "Setup Script")
       } header: {
-        Text("Scripts")
-        Text("Launched on demand from the toolbar, command palette, or keyboard shortcut.")
+        Label {
+          VStack(alignment: .leading, spacing: 0) {
+            Text("Setup Script")
+              .font(.body)
+              .bold()
+              .lineLimit(1)
+            Text("Runs once after worktree creation.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+        } icon: {
+          Image(systemName: "truck.box.badge.clock").foregroundStyle(.blue).accessibilityHidden(true)
+        }.labelStyle(.verticallyCentered)
       } footer: {
-        Text("Drag to reorder. The first script is used as the default.")
+        Text("e.g., `pnpm install`")
       }
 
-      Section("Environment Variables") {
-        ScriptEnvironmentRow(
-          name: "SUPACODE_WORKTREE_PATH",
-          description: "Path to the active worktree."
-        )
-        ScriptEnvironmentRow(
-          name: "SUPACODE_ROOT_PATH",
-          description: "Path to the repository root."
-        )
+      Section {
+        ScriptCommandEditor(text: $store.settings.archiveScript, label: "Archive Script")
+      } header: {
+        Label {
+          VStack(alignment: .leading, spacing: 0) {
+            Text("Archive Script")
+              .font(.body)
+              .bold()
+              .lineLimit(1)
+            Text("Runs before a worktree is archived.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+        } icon: {
+          Image(systemName: "archivebox").foregroundStyle(.orange).accessibilityHidden(true)
+        }.labelStyle(.verticallyCentered)
+      } footer: {
+        Text("e.g., `docker compose down`")
       }
+
+      Section {
+        ScriptCommandEditor(text: $store.settings.deleteScript, label: "Delete Script")
+      } header: {
+        Label {
+          VStack(alignment: .leading, spacing: 0) {
+            Text("Delete Script")
+              .font(.body)
+              .bold()
+              .lineLimit(1)
+            Text("Runs before a worktree is deleted.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+        } icon: {
+          Image(systemName: "trash").foregroundStyle(.red).accessibilityHidden(true)
+        }.labelStyle(.verticallyCentered)
+      } footer: {
+        Text("e.g., `docker compose down`")
+      }
+
+      // User-defined scripts, each in its own section.
+      ForEach(Array($store.settings.scripts.enumerated()), id: \.element.id) { index, $script in
+        Section {
+          if script.kind == .custom {
+            TextField("Name", text: $script.name)
+          }
+          ScriptCommandEditor(text: $script.command, label: script.displayName)
+          Button("Remove Script", role: .destructive) {
+            store.send(.removeScripts(IndexSet(integer: index)))
+          }
+          .help("Remove this script.")
+        } header: {
+          Label {
+            Text("\(script.name) Script")
+              .font(.body)
+              .bold()
+          } icon: {
+            Image(systemName: script.resolvedSystemImage).foregroundStyle(script.resolvedTintColor.color)
+              .accessibilityHidden(true)
+          }.labelStyle(.verticallyCentered)
+        }
+      }
+
     }
     .formStyle(.grouped)
     .padding(.top, -20)
@@ -57,12 +106,19 @@ public struct RepositoryScriptsSettingsView: View {
     .padding(.trailing, -6)
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
+        let usedKinds = Set(store.settings.scripts.map(\.kind))
         Menu {
           ForEach(ScriptKind.allCases, id: \.self) { kind in
-            Button {
-              store.send(.addScript(kind))
-            } label: {
-              Label(kind.defaultName, systemImage: kind.defaultSystemImage)
+            if kind == .custom || !usedKinds.contains(kind) {
+              Button {
+                store.send(.addScript(kind))
+              } label: {
+                Label {
+                  Text("\(kind.defaultName) Script")
+                } icon: {
+                  Image.tintedSymbol(kind.defaultSystemImage, color: kind.defaultTintColor.nsColor)
+                }
+              }
             }
           }
         } label: {
@@ -75,51 +131,17 @@ public struct RepositoryScriptsSettingsView: View {
   }
 }
 
-// MARK: - Script row.
-
-private struct ScriptRow: View {
-  @Binding var script: ScriptDefinition
-
-  var body: some View {
-    HStack(spacing: 12) {
-      Image(systemName: script.systemImage)
-        .foregroundStyle(script.tintColor.color)
-        .frame(width: 20)
-      if script.kind == .custom {
-        TextField("Name", text: $script.name)
-          .frame(minWidth: 80)
-      } else {
-        Text(script.kind.defaultName)
-          .frame(minWidth: 80, alignment: .leading)
-      }
-      TextField("Command", text: $script.command)
-        .monospaced()
-        .frame(minWidth: 120)
-    }
-    .padding(.vertical, 4)
-  }
-}
-
-// MARK: - Environment row.
-
-private struct ScriptEnvironmentRow: View {
-  let name: String
-  let description: String
+/// Monospaced text editor for script commands.
+private struct ScriptCommandEditor: View {
+  @Binding var text: String
+  let label: String
 
   var body: some View {
-    LabeledContent {
-      Button {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(name, forType: .string)
-      } label: {
-        Image(systemName: "doc.on.doc")
-          .accessibilityLabel("Copy variable key")
-      }
-      .buttonStyle(.borderless)
-      .help("Copy variable key.")
-    } label: {
-      Text(name).monospaced()
-      Text(description)
-    }
+    TextEditor(text: $text)
+      .monospaced()
+      .textEditorStyle(.plain)
+      .autocorrectionDisabled()
+      .frame(height: 90)
+      .accessibilityLabel(label)
   }
 }

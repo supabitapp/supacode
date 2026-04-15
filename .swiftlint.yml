@@ -4,10 +4,13 @@ included:
   - supacode
   - supacode-cli
   - supacodeTests
+  - SupacodeSettingsShared
+  - SupacodeSettingsFeature
 excluded:
   - ThirdParty/ghostty
   # Skill content contains long markdown lines inside multiline strings.
   - supacode/Features/Settings/BusinessLogic/CLISkillContent.swift
+  - SupacodeSettingsShared/BusinessLogic/CLISkillContent.swift
 
 disabled_rules:
   - file_length

@@ -50,8 +50,8 @@ extension ClaudeSettingsClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var claudeSettingsClient: ClaudeSettingsClient {
+extension DependencyValues {
+  public var claudeSettingsClient: ClaudeSettingsClient {
     get { self[ClaudeSettingsClient.self] }
     set { self[ClaudeSettingsClient.self] = newValue }
   }

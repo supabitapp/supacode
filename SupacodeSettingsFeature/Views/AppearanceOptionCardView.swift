@@ -1,5 +1,5 @@
-import SwiftUI
 import SupacodeSettingsShared
+import SwiftUI
 
 struct AppearanceOptionCardView: View {
   let mode: AppearanceMode

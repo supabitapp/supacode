@@ -402,7 +402,7 @@ private struct CommandPaletteRowView: View {
     case .archiveWorktree:
       return "archivebox"
     case .runScript(let definition):
-      return definition.systemImage
+      return definition.resolvedSystemImage
     case .stopScript:
       return "stop.fill"
     #if DEBUG

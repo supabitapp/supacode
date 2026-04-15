@@ -168,7 +168,7 @@ final class WorktreeTerminalState {
     let tabId = createTab(
       TabCreation(
         title: title,
-        icon: "terminal",
+        icon: nil,
         isTitleLocked: false,
         command: nil,
         initialInput: resolvedInput,

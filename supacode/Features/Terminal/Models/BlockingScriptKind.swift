@@ -20,7 +20,7 @@ enum BlockingScriptKind: Hashable, Sendable {
 
   var tabIcon: String {
     switch self {
-    case .script(let definition): definition.systemImage
+    case .script(let definition): definition.resolvedSystemImage
     case .archive: "archivebox.fill"
     case .delete: "trash.fill"
     }
@@ -28,7 +28,7 @@ enum BlockingScriptKind: Hashable, Sendable {
 
   var tabColor: TerminalTabTintColor {
     switch self {
-    case .script(let definition): definition.tintColor
+    case .script(let definition): definition.resolvedTintColor
     case .archive: .orange
     case .delete: .red
     }

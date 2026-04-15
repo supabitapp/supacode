@@ -13,8 +13,6 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectWorktree(Int)
   case openFinder, openRepository, openPullRequest, copyPath
   case runScript, stopRunScript
-  case testScript, debugScript, deployScript
-  case lintScript, formatScript
 
   // Stable string key for JSON dictionary persistence.
   public var codingKey: CodingKey {
@@ -55,11 +53,6 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "copyPath"
     case .runScript: "runScript"
     case .stopRunScript: "stopRunScript"
-    case .testScript: "testScript"
-    case .debugScript: "debugScript"
-    case .deployScript: "deployScript"
-    case .lintScript: "lintScript"
-    case .formatScript: "formatScript"
     }
   }
 
@@ -83,11 +76,6 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "copyPath": .copyPath,
     "runScript": .runScript,
     "stopRunScript": .stopRunScript,
-    "testScript": .testScript,
-    "debugScript": .debugScript,
-    "deployScript": .deployScript,
-    "lintScript": .lintScript,
-    "formatScript": .formatScript,
   ]
 
   private init?(stableKey: String) {
@@ -124,11 +112,6 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
     case .stopRunScript: "Stop Run Script"
-    case .testScript: "Test Script"
-    case .debugScript: "Debug Script"
-    case .deployScript: "Deploy Script"
-    case .lintScript: "Lint Script"
-    case .formatScript: "Format Script"
     }
   }
 }
@@ -333,11 +316,6 @@ public enum AppShortcuts {
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
   public static let stopRunScript = AppShortcut(id: .stopRunScript, key: ".", modifiers: .command)
-  public static let testScript = AppShortcut(id: .testScript, key: "u", modifiers: [.command, .shift])
-  public static let debugScript = AppShortcut(id: .debugScript, key: "y", modifiers: [.command, .shift])
-  public static let deployScript = AppShortcut(id: .deployScript, key: "d", modifiers: [.command, .shift])
-  public static let lintScript = AppShortcut(id: .lintScript, key: "l", modifiers: [.command, .shift])
-  public static let formatScript = AppShortcut(id: .formatScript, key: "f", modifiers: [.command, .shift])
 
   public static let worktreeSelection: [AppShortcut] = [
     selectWorktree1, selectWorktree2, selectWorktree3, selectWorktree4, selectWorktree5,
@@ -361,7 +339,6 @@ public enum AppShortcuts {
       category: .actions,
       shortcuts: [
         openFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript,
-        testScript, debugScript, deployScript, lintScript, formatScript,
       ]
     ),
   ]
@@ -427,9 +404,9 @@ public enum AppShortcuts {
 
 // MARK: - View modifier.
 
-public extension View {
+extension View {
   @ViewBuilder
-  func appKeyboardShortcut(_ shortcut: AppShortcut?) -> some View {
+  public func appKeyboardShortcut(_ shortcut: AppShortcut?) -> some View {
     if let shortcut {
       self.keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
     } else {

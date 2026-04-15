@@ -50,8 +50,8 @@ extension CodexSettingsClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var codexSettingsClient: CodexSettingsClient {
+extension DependencyValues {
+  public var codexSettingsClient: CodexSettingsClient {
     get { self[CodexSettingsClient.self] }
     set { self[CodexSettingsClient.self] = newValue }
   }

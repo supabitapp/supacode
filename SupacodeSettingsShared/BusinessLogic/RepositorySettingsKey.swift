@@ -87,9 +87,11 @@ public nonisolated struct RepositorySettingsKey: SharedKey {
     continuation.resume()
   }
 }
+nonisolated
 
-public nonisolated extension SharedReaderKey where Self == RepositorySettingsKey.Default {
-  static func repositorySettings(_ rootURL: URL) -> Self {
+  extension SharedReaderKey where Self == RepositorySettingsKey.Default
+{
+  public static func repositorySettings(_ rootURL: URL) -> Self {
     Self[RepositorySettingsKey(rootURL: rootURL), default: .default]
   }
 }

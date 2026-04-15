@@ -16,7 +16,7 @@ struct AppFeatureRunScriptTests {
     let expectedRepositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
     var settingsState = SettingsFeature.State()
     settingsState.repositorySummaries = [
-      SettingsRepositorySummary(id: expectedRepositoryID, name: "repo"),
+      SettingsRepositorySummary(id: expectedRepositoryID, name: "repo")
     ]
     let store = TestStore(
       initialState: AppFeature.State(
@@ -54,7 +54,7 @@ struct AppFeatureRunScriptTests {
     await store.send(.runScript)
     await store.receive(\.runNamedScript) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-      $0.repositories.scriptTintColorByID = [definition.id: definition.tintColor]
+      $0.repositories.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
     }
     await store.finish()
 
@@ -90,63 +90,9 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runNamedScript(definition)) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-      $0.repositories.scriptTintColorByID = [definition.id: definition.tintColor]
+      $0.repositories.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
     }
     await store.finish()
-  }
-
-  @Test(.dependencies) func testScriptRunsFirstTestKindScript() async {
-    let worktree = makeWorktree()
-    let repositories = makeRepositoriesState(worktree: worktree)
-    let testScript = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
-    let runScript = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
-    let sent = LockIsolated<[TerminalClient.Command]>([])
-    var initialState = AppFeature.State(
-      repositories: repositories,
-      settings: SettingsFeature.State()
-    )
-    initialState.scripts = [runScript, testScript]
-    let store = TestStore(initialState: initialState) {
-      AppFeature()
-    } withDependencies: {
-      $0.terminalClient.send = { command in
-        sent.withValue { $0.append(command) }
-      }
-    }
-
-    await store.send(.testScript)
-    await store.receive(\.runNamedScript) {
-      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [testScript.id]]
-      $0.repositories.scriptTintColorByID = [testScript.id: testScript.tintColor]
-    }
-    await store.finish()
-
-    #expect(sent.value.count == 1)
-    guard case .runBlockingScript(_, let kind, let script) = sent.value.first else {
-      Issue.record("Expected runBlockingScript command")
-      return
-    }
-    #expect(script == "npm test")
-    guard case .script(let def) = kind else {
-      Issue.record("Expected .script kind")
-      return
-    }
-    #expect(def.kind == .test)
-  }
-
-  @Test(.dependencies) func testScriptWithNoTestScriptDoesNothing() async {
-    let worktree = makeWorktree()
-    let repositories = makeRepositoriesState(worktree: worktree)
-    var initialState = AppFeature.State(
-      repositories: repositories,
-      settings: SettingsFeature.State()
-    )
-    initialState.scripts = [ScriptDefinition(kind: .run, command: "npm start")]
-    let store = TestStore(initialState: initialState) {
-      AppFeature()
-    }
-
-    await store.send(.testScript)
   }
 
   @Test(.dependencies) func scriptCompletedRemovesFromTracking() async {
@@ -155,7 +101,7 @@ struct AppFeatureRunScriptTests {
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
     var repositoriesState = repositories
     repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-    repositoriesState.scriptTintColorByID = [definition.id: definition.tintColor]
+    repositoriesState.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -237,95 +183,6 @@ struct AppFeatureRunScriptTests {
     }
     #expect(sentWorktree == worktree)
     #expect(definitionID == definition.id)
-  }
-
-  @Test(.dependencies) func debugScriptRunsFirstDebugKindScript() async {
-    let worktree = makeWorktree()
-    let repositories = makeRepositoriesState(worktree: worktree)
-    let debugDef = ScriptDefinition(kind: .debug, name: "Debug", command: "lldb app")
-    let sent = LockIsolated<[TerminalClient.Command]>([])
-    var initialState = AppFeature.State(
-      repositories: repositories,
-      settings: SettingsFeature.State(),
-    )
-    initialState.scripts = [debugDef]
-    let store = TestStore(initialState: initialState) {
-      AppFeature()
-    } withDependencies: {
-      $0.terminalClient.send = { command in
-        sent.withValue { $0.append(command) }
-      }
-    }
-
-    await store.send(.debugScript)
-    await store.receive(\.runNamedScript) {
-      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [debugDef.id]]
-      $0.repositories.scriptTintColorByID = [debugDef.id: debugDef.tintColor]
-    }
-    await store.finish()
-
-    #expect(sent.value.count == 1)
-    guard case .runBlockingScript(_, let kind, _) = sent.value.first else {
-      Issue.record("Expected runBlockingScript command")
-      return
-    }
-    guard case .script(let def) = kind else {
-      Issue.record("Expected .script kind")
-      return
-    }
-    #expect(def.kind == .debug)
-  }
-
-  @Test(.dependencies) func deployScriptRunsFirstDeployKindScript() async {
-    let worktree = makeWorktree()
-    let repositories = makeRepositoriesState(worktree: worktree)
-    let deployDef = ScriptDefinition(kind: .deploy, name: "Deploy", command: "./deploy.sh")
-    let sent = LockIsolated<[TerminalClient.Command]>([])
-    var initialState = AppFeature.State(
-      repositories: repositories,
-      settings: SettingsFeature.State(),
-    )
-    initialState.scripts = [deployDef]
-    let store = TestStore(initialState: initialState) {
-      AppFeature()
-    } withDependencies: {
-      $0.terminalClient.send = { command in
-        sent.withValue { $0.append(command) }
-      }
-    }
-
-    await store.send(.deployScript)
-    await store.receive(\.runNamedScript) {
-      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [deployDef.id]]
-      $0.repositories.scriptTintColorByID = [deployDef.id: deployDef.tintColor]
-    }
-    await store.finish()
-
-    #expect(sent.value.count == 1)
-    guard case .runBlockingScript(_, let kind, _) = sent.value.first else {
-      Issue.record("Expected runBlockingScript command")
-      return
-    }
-    guard case .script(let def) = kind else {
-      Issue.record("Expected .script kind")
-      return
-    }
-    #expect(def.kind == .deploy)
-  }
-
-  @Test(.dependencies) func debugScriptWithNoDebugScriptDoesNothing() async {
-    let worktree = makeWorktree()
-    let repositories = makeRepositoriesState(worktree: worktree)
-    var initialState = AppFeature.State(
-      repositories: repositories,
-      settings: SettingsFeature.State(),
-    )
-    initialState.scripts = [ScriptDefinition(kind: .run, command: "npm start")]
-    let store = TestStore(initialState: initialState) {
-      AppFeature()
-    }
-
-    await store.send(.debugScript)
   }
 
   @Test(.dependencies) func worktreeSettingsLoadedPopulatesScripts() async {

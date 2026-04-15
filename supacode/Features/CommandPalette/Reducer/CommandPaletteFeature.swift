@@ -339,7 +339,7 @@ private func pullRequestItems(
       subtitle: pullRequest.title,
       kind: .openPullRequest(worktreeID),
       priorityTier: 2
-    ),
+    )
   ]
 
   if let readyItem = makeReadyItem() {
@@ -633,9 +633,9 @@ private func scriptItems(
       items.append(
         CommandPaletteItem(
           id: CommandPaletteItemID.stopScript(script.id),
-          title: "Stop: \(script.name)",
+          title: "Stop: \(script.displayName)",
           subtitle: nil,
-          kind: .stopScript(script.id, name: script.name),
+          kind: .stopScript(script.id, name: script.displayName),
           priorityTier: 0
         )
       )
@@ -643,7 +643,7 @@ private func scriptItems(
       items.append(
         CommandPaletteItem(
           id: CommandPaletteItemID.runScript(script.id),
-          title: "Run: \(script.name)",
+          title: "Run: \(script.displayName)",
           subtitle: nil,
           kind: .runScript(script)
         )

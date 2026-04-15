@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Color token for terminal tab tint indicators, used in place of
@@ -21,6 +22,19 @@ public enum TerminalTabTintColor: String, Codable, CaseIterable, Hashable, Senda
     case .purple: .purple
     case .yellow: .yellow
     case .teal: .teal
+    }
+  }
+
+  /// Resolved AppKit color for use in NSImage tinting.
+  public var nsColor: NSColor {
+    switch self {
+    case .green: .systemGreen
+    case .orange: .systemOrange
+    case .red: .systemRed
+    case .blue: .systemBlue
+    case .purple: .systemPurple
+    case .yellow: .systemYellow
+    case .teal: .systemTeal
     }
   }
 }

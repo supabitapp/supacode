@@ -79,7 +79,7 @@ struct SettingsView: View {
           ForEach(settingsStore.repositorySummaries, id: \.id) { repository in
             DisclosureGroup(
               isExpanded: Binding(
-                get: { expandedRepositories.contains(repository.id) || selection.repositoryID == repository.id },
+                get: { expandedRepositories.contains(repository.id) },
                 set: { expanded in
                   if expanded {
                     expandedRepositories.insert(repository.id)
@@ -103,6 +103,11 @@ struct SettingsView: View {
       .frame(minWidth: 220, maxHeight: .infinity)
       .navigationSplitViewColumnWidth(220)
       .toolbar(removing: .sidebarToggle)
+      .onChange(of: selection) { _, newSelection in
+        // Auto-expand the repository disclosure group when navigating to it.
+        guard let repositoryID = newSelection.repositoryID else { return }
+        expandedRepositories.insert(repositoryID)
+      }
     } detail: {
       switch selection {
       case .general:

@@ -17,6 +17,18 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
     kind == .custom ? name : kind.defaultName
   }
 
+  /// Resolved SF Symbol name: predefined types always use the kind
+  /// default so future icon changes propagate automatically.
+  public nonisolated var resolvedSystemImage: String {
+    kind == .custom ? systemImage : kind.defaultSystemImage
+  }
+
+  /// Resolved tint color: predefined types always use the kind
+  /// default so future color changes propagate automatically.
+  public nonisolated var resolvedTintColor: TerminalTabTintColor {
+    kind == .custom ? tintColor : kind.defaultTintColor
+  }
+
   public nonisolated init(
     id: UUID = UUID(),
     kind: ScriptKind,

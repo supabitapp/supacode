@@ -37,7 +37,12 @@ struct RepositorySettingsCodableTests {
         "deleteScript": "",
         "runScript": "legacy command",
         "scripts": [
-          {"id": "00000000-0000-0000-0000-000000000001", "kind": "test", "name": "Test", "systemImage": "checkmark.diamond.fill", "tintColor": "blue", "command": "npm test"}
+          {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "test", "name": "Test",
+            "systemImage": "checkmark.diamond.fill",
+            "tintColor": "blue", "command": "npm test"
+          }
         ],
         "openActionID": "automatic"
       }
@@ -72,7 +77,12 @@ struct RepositorySettingsCodableTests {
         "deleteScript": "",
         "runScript": "",
         "scripts": [
-          {"id": "00000000-0000-0000-0000-000000000001", "kind": "unknown_future_kind", "name": "X", "systemImage": "star", "tintColor": "red", "command": "echo hi"}
+          {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "unknown_future_kind", "name": "X",
+            "systemImage": "star",
+            "tintColor": "red", "command": "echo hi"
+          }
         ],
         "openActionID": "automatic"
       }
@@ -160,7 +170,7 @@ struct RepositorySettingsScriptTests {
   @Test(.dependencies) func removeScriptsRemovesAtOffsets() async {
     let script1 = ScriptDefinition(kind: .run, command: "npm run dev")
     let script2 = ScriptDefinition(kind: .test, command: "npm test")
-    let script3 = ScriptDefinition(kind: .debug, command: "lldb")
+    let script3 = ScriptDefinition(kind: .deploy, command: "deploy.sh")
     let store = makeStore(scripts: [script1, script2, script3])
     store.exhaustivity = .off(showSkippedAssertions: false)
 

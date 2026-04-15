@@ -117,8 +117,8 @@ test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO; \
 	fi
 
-format: # Format code with swift format (local only)
-	swift format -p --in-place --recursive --configuration ./.swift-format.json supacode supacode-cli supacodeTests
+format: # Format code with swift format (local only).
+	swift format -p --in-place --recursive --configuration ./.swift-format.json supacode supacode-cli supacodeTests SupacodeSettingsShared SupacodeSettingsFeature
 
 lint: # Lint code with swiftlint
 	mise exec -- swiftlint lint --quiet --config .swiftlint.yml

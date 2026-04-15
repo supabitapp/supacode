@@ -1,7 +1,7 @@
 import SwiftUI
 
-public extension KeyboardShortcut {
-  var displaySymbols: [String] {
+extension KeyboardShortcut {
+  public var displaySymbols: [String] {
     var parts: [String] = []
     if modifiers.contains(.command) { parts.append("⌘") }
     if modifiers.contains(.shift) { parts.append("⇧") }
@@ -11,13 +11,13 @@ public extension KeyboardShortcut {
     return parts
   }
 
-  var display: String {
+  public var display: String {
     displaySymbols.joined()
   }
 }
 
-public extension KeyEquivalent {
-  var display: String {
+extension KeyEquivalent {
+  public var display: String {
     switch self {
     case .delete: "⌫"
     case .return: "↩"
