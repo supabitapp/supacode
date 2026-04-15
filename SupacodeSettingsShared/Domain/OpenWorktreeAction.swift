@@ -19,6 +19,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   case intellij
   case kitty
   case pycharm
+  case rubymine
   case rustrover
   case smartgit
   case sourcetree
@@ -50,6 +51,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .intellij: "IntelliJ IDEA"
     case .kitty: "Kitty"
     case .pycharm: "PyCharm"
+    case .rubymine: "RubyMine"
     case .rustrover: "RustRover"
     case .smartgit: "SmartGit"
     case .sourcetree: "Sourcetree"
@@ -73,8 +75,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder: "Finder"
     case .editor: "$EDITOR"
     case .alacritty, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
-      .intellij, .kitty, .pycharm, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal,
-      .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed:
+      .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge,
+      .terminal, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf,
+      .xcode, .zed:
       title
     }
   }
@@ -95,8 +98,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder, .editor:
       return true
     case .alacritty, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
-      .intellij, .kitty, .pycharm, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal,
-      .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed:
+      .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge,
+      .terminal, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf,
+      .xcode, .zed:
       return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
     }
   }
@@ -116,6 +120,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .intellij: "intellij"
     case .kitty: "kitty"
     case .pycharm: "pycharm"
+    case .rubymine: "rubymine"
     case .rustrover: "rustrover"
     case .smartgit: "smartgit"
     case .sourcetree: "sourcetree"
@@ -148,6 +153,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .intellij: "com.jetbrains.intellij"
     case .kitty: "net.kovidgoyal.kitty"
     case .pycharm: "com.jetbrains.pycharm"
+    case .rubymine: "com.jetbrains.rubymine"
     case .rustrover: "com.jetbrains.rustrover"
     case .smartgit: "com.syntevo.smartgit"
     case .sourcetree: "com.torusknot.SourceTreeNotMAS"
@@ -177,6 +183,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     .intellij,
     .webstorm,
     .pycharm,
+    .rubymine,
     .rustrover,
     .antigravity,
   ]

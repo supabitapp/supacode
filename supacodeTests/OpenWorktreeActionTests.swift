@@ -9,6 +9,7 @@ struct OpenWorktreeActionTests {
 
     #expect(settingsIDs.contains("antigravity"))
     #expect(settingsIDs.contains("intellij"))
+    #expect(settingsIDs.contains("rubymine"))
     #expect(settingsIDs.contains("rustrover"))
     #expect(settingsIDs.contains("vscode-insiders"))
     #expect(settingsIDs.contains("warp"))
@@ -20,6 +21,7 @@ struct OpenWorktreeActionTests {
     #expect(OpenWorktreeAction.intellij.bundleIdentifier == "com.jetbrains.intellij")
     #expect(OpenWorktreeAction.webstorm.bundleIdentifier == "com.jetbrains.WebStorm")
     #expect(OpenWorktreeAction.pycharm.bundleIdentifier == "com.jetbrains.pycharm")
+    #expect(OpenWorktreeAction.rubymine.bundleIdentifier == "com.jetbrains.rubymine")
     #expect(OpenWorktreeAction.rustrover.bundleIdentifier == "com.jetbrains.rustrover")
   }
 
@@ -28,6 +30,7 @@ struct OpenWorktreeActionTests {
     #expect(editors.contains(.intellij))
     #expect(editors.contains(.webstorm))
     #expect(editors.contains(.pycharm))
+    #expect(editors.contains(.rubymine))
     #expect(editors.contains(.rustrover))
   }
 }

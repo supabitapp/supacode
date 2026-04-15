@@ -37,7 +37,7 @@ private func performOpenWorktreeAction(
     return
   case .finder:
     NSWorkspace.shared.activateFileViewerSelecting([worktree.workingDirectory])
-  case .intellij, .webstorm, .pycharm, .rustrover:
+  case .intellij, .webstorm, .pycharm, .rubymine, .rustrover:
     guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.bundleIdentifier) else {
       onError(
         OpenActionError(
