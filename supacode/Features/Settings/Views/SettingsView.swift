@@ -86,18 +86,17 @@ private struct SettingsSidebarView: View {
 
       Section("Repositories") {
         ForEach(settingsStore.repositorySummaries, id: \.id) { repository in
-          DisclosureGroup(
-            isExpanded: Binding(
-              get: { expandedRepositories.contains(repository.id) },
-              set: { expanded in
-                if expanded {
-                  expandedRepositories.insert(repository.id)
-                } else {
-                  expandedRepositories.remove(repository.id)
-                }
+          let isExpanded = Binding(
+            get: { expandedRepositories.contains(repository.id) },
+            set: { expanded in
+              if expanded {
+                expandedRepositories.insert(repository.id)
+              } else {
+                expandedRepositories.remove(repository.id)
               }
-            )
-          ) {
+            }
+          )
+          DisclosureGroup(isExpanded: isExpanded) {
             Label("General", systemImage: "gearshape")
               .tag(SettingsSection.repository(repository.id))
             Label("Scripts", systemImage: "terminal")
@@ -106,16 +105,7 @@ private struct SettingsSidebarView: View {
             RepositoryDisclosureLabel(
               repository: repository,
               settingsStore: settingsStore,
-              isExpanded: Binding(
-                get: { expandedRepositories.contains(repository.id) },
-                set: { expanded in
-                  if expanded {
-                    expandedRepositories.insert(repository.id)
-                  } else {
-                    expandedRepositories.remove(repository.id)
-                  }
-                }
-              )
+              isExpanded: isExpanded
             )
           }
         }

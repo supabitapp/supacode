@@ -298,7 +298,7 @@ struct WorktreeDetailView: View {
     let scripts: [ScriptDefinition]
     let runningScriptIDs: Set<UUID>
 
-    /// The script the primary toolbar button should run (always the `.run` script).
+    /// The first `.run`-kind script, if any.
     var primaryScript: ScriptDefinition? {
       scripts.primaryScript
     }
@@ -590,12 +590,13 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
     ToolbarItem {
       Button {
       } label: {
-        HStack(spacing: 6) {
-          Image(systemName: "play.fill")
+        Label {
           Text("Run")
+        } icon: {
+          Image(systemName: "play")
         }
+        .labelStyle(.titleAndIcon)
       }
-      .font(.caption)
       .redacted(reason: .placeholder)
       .shimmer(isActive: true)
     }
@@ -611,7 +612,8 @@ private struct MultiSelectedWorktreeSummary: Identifiable {
 /// Resolves a shortcut's display string from the user's settings.
 private func resolveShortcutDisplay(for shortcut: AppShortcut, fallback: String = "none") -> String {
   @Shared(.settingsFile) var settingsFile
-  return shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
+  let display = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
+  return display.isEmpty ? fallback : display
 }
 
 private struct MultiSelectedWorktreesDetailView: View {
@@ -662,7 +664,8 @@ private struct MultiSelectedWorktreesDetailView: View {
 }
 
 /// Menu with primary action for running scripts in the toolbar.
-/// Click runs the default script; long-press/arrow opens the full script list.
+/// Click runs the default script, stops running scripts, or opens settings;
+/// long-press/arrow opens the full script list.
 private struct ScriptMenu: View {
   let toolbarState: WorktreeDetailView.WorktreeToolbarState
   let onRunScript: () -> Void
@@ -692,14 +695,16 @@ private struct ScriptMenu: View {
             Text(isRunning ? "Stop \(script.displayName)" : script.displayName)
           } icon: {
             Image.tintedSymbol(
-              isRunning ? "stop.fill" : script.resolvedSystemImage,
+              isRunning ? "stop" : script.resolvedSystemImage,
               color: script.resolvedTintColor.nsColor,
             )
           }
         }
         .help(isRunning ? "Stop \(script.displayName)." : "Run \(script.displayName).")
       }
-      Divider()
+      if !toolbarState.scripts.isEmpty {
+        Divider()
+      }
       Button("Manage Scripts…") {
         onManageScripts()
       }
@@ -726,7 +731,7 @@ private struct ScriptMenu: View {
     Label {
       Text(
         commandKeyObserver.isPressed
-          ? resolveShortcutDisplay(for: shortcut, fallback: "")
+          ? resolveShortcutDisplay(for: shortcut, fallback: label)
           : label
       )
     } icon: {
