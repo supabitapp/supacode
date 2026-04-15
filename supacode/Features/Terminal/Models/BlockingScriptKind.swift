@@ -46,7 +46,9 @@ enum BlockingScriptKind: Sendable {
     }
   }
 
-  /// `true` when this is a `.run`-kind script — the only kind stopped by Cmd+.
+  /// `true` when this is a `.run`-kind script — the only kind
+  /// stopped by the global Stop action (Cmd+.), since Stop is
+  /// the semantic counterpart of Run.
   var isRunKind: Bool {
     switch self {
     case .script(let definition): definition.kind == .run

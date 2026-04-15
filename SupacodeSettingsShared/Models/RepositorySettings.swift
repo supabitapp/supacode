@@ -7,7 +7,7 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   /// Legacy field kept for backward-compatible JSON serialization.
   /// New code should use `scripts` instead. On encode, this is
   /// derived from the first `.run`-kind script's command.
-  public var runScript: String
+  public private(set) var runScript: String
   public var scripts: [ScriptDefinition]
   public var openActionID: String
   public var worktreeBaseRef: String?

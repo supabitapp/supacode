@@ -3156,14 +3156,16 @@ extension RepositoriesFeature.State {
   }
 
   /// Tint colors for scripts currently running in the given worktree,
-  /// ordered deterministically by script ID.
+  /// ordered deterministically by script ID. Falls back to `.green`
+  /// for script IDs not found in the provided array (e.g. when the
+  /// selected worktree belongs to a different repository).
   func runningScriptColors(
     for worktreeID: Worktree.ID,
     scripts: [ScriptDefinition]
   ) -> [TerminalTabTintColor] {
     guard let scriptIDs = runningScriptsByWorktreeID[worktreeID] else { return [] }
     let scriptsByID = Dictionary(uniqueKeysWithValues: scripts.map { ($0.id, $0) })
-    return scriptIDs.sorted().compactMap { scriptsByID[$0]?.resolvedTintColor }
+    return scriptIDs.sorted().map { scriptsByID[$0]?.resolvedTintColor ?? .green }
   }
 
   func pendingWorktree(for id: Worktree.ID?) -> PendingWorktree? {

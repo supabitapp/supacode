@@ -687,57 +687,55 @@ private struct ScriptSplitButton: View {
   private var primaryButton: some View {
     let hasRunning = toolbarState.hasRunningRunScript
     if hasRunning {
-      Button {
-        onStopRunScripts()
-      } label: {
-        HStack(spacing: 6) {
-          Image(systemName: "stop.fill")
-            .accessibilityHidden(true)
-          Text("Stop")
-          if commandKeyObserver.isPressed {
-            Text(resolveShortcutDisplay(for: AppShortcuts.stopRunScript, fallback: ""))
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-      }
-      .font(.caption)
-      .help(toolbarState.stopRunScriptHelpText)
+      scriptButton(
+        icon: "stop.fill",
+        label: "Stop",
+        shortcut: AppShortcuts.stopRunScript,
+        helpText: toolbarState.stopRunScriptHelpText,
+        action: onStopRunScripts
+      )
     } else if let primaryScript {
-      Button {
-        onRunScript()
-      } label: {
-        HStack(spacing: 6) {
-          Image(systemName: primaryScript.resolvedSystemImage)
-            .accessibilityHidden(true)
-          Text(primaryScript.displayName)
-          if commandKeyObserver.isPressed {
-            Text(resolveShortcutDisplay(for: AppShortcuts.runScript, fallback: ""))
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-      }
-      .font(.caption)
-      .help(toolbarState.runScriptHelpText)
+      scriptButton(
+        icon: primaryScript.resolvedSystemImage,
+        label: primaryScript.displayName,
+        shortcut: AppShortcuts.runScript,
+        helpText: toolbarState.runScriptHelpText,
+        action: onRunScript
+      )
     } else {
-      Button {
-        onManageScripts()
-      } label: {
-        HStack(spacing: 6) {
-          Image(systemName: "play.fill")
-            .accessibilityHidden(true)
-          Text("Run")
-          if commandKeyObserver.isPressed {
-            Text(resolveShortcutDisplay(for: AppShortcuts.runScript, fallback: ""))
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
+      scriptButton(
+        icon: "play.fill",
+        label: "Run",
+        shortcut: AppShortcuts.runScript,
+        helpText: "Configure scripts in Settings",
+        action: onManageScripts
+      )
+    }
+  }
+
+  private func scriptButton(
+    icon: String,
+    label: String,
+    shortcut: AppShortcut,
+    helpText: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button {
+      action()
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: icon)
+          .accessibilityHidden(true)
+        Text(label)
+        if commandKeyObserver.isPressed {
+          Text(resolveShortcutDisplay(for: shortcut, fallback: ""))
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
       }
-      .font(.caption)
-      .help("Configure scripts in Settings")
     }
+    .font(.caption)
+    .help(helpText)
   }
 
   @ViewBuilder

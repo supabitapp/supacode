@@ -70,11 +70,15 @@ struct RepositorySettingsCodableTests {
   @Test func encodeWithNoRunKindScriptClearsRunScript() throws {
     // When no `.run`-kind script exists, the encoded `runScript`
     // should be empty — not the stale legacy value.
-    var settings = RepositorySettings.default
-    settings.runScript = "stale legacy command"
-    settings.scripts = [
-      ScriptDefinition(kind: .test, command: "npm test")
-    ]
+    var settings = RepositorySettings(
+      setupScript: "",
+      archiveScript: "",
+      deleteScript: "",
+      runScript: "stale legacy command",
+      scripts: [ScriptDefinition(kind: .test, command: "npm test")],
+      openActionID: "automatic",
+      worktreeBaseRef: nil
+    )
     let data = try JSONEncoder().encode(settings)
     let raw = try JSONDecoder().decode([String: AnyCodable].self, from: data)
     #expect(raw["runScript"]?.stringValue == "")

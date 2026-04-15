@@ -13,68 +13,30 @@ public struct RepositoryScriptsSettingsView: View {
   public var body: some View {
     Form {
       // Lifecycle scripts.
-      Section {
-        ScriptCommandEditor(text: $store.settings.setupScript, label: "Setup Script")
-      } header: {
-        Label {
-          VStack(alignment: .leading, spacing: 0) {
-            Text("Setup Script")
-              .font(.body)
-              .bold()
-              .lineLimit(1)
-            Text("Runs once after worktree creation.")
-              .font(.footnote)
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-          }
-        } icon: {
-          Image(systemName: "truck.box.badge.clock").foregroundStyle(.blue).accessibilityHidden(true)
-        }.labelStyle(.verticallyCentered)
-      } footer: {
-        Text("e.g., `pnpm install`")
-      }
-
-      Section {
-        ScriptCommandEditor(text: $store.settings.archiveScript, label: "Archive Script")
-      } header: {
-        Label {
-          VStack(alignment: .leading, spacing: 0) {
-            Text("Archive Script")
-              .font(.body)
-              .bold()
-              .lineLimit(1)
-            Text("Runs before a worktree is archived.")
-              .font(.footnote)
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-          }
-        } icon: {
-          Image(systemName: "archivebox").foregroundStyle(.orange).accessibilityHidden(true)
-        }.labelStyle(.verticallyCentered)
-      } footer: {
-        Text("e.g., `docker compose down`")
-      }
-
-      Section {
-        ScriptCommandEditor(text: $store.settings.deleteScript, label: "Delete Script")
-      } header: {
-        Label {
-          VStack(alignment: .leading, spacing: 0) {
-            Text("Delete Script")
-              .font(.body)
-              .bold()
-              .lineLimit(1)
-            Text("Runs before a worktree is deleted.")
-              .font(.footnote)
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-          }
-        } icon: {
-          Image(systemName: "trash").foregroundStyle(.red).accessibilityHidden(true)
-        }.labelStyle(.verticallyCentered)
-      } footer: {
-        Text("e.g., `docker compose down`")
-      }
+      LifecycleScriptSection(
+        text: $store.settings.setupScript,
+        title: "Setup Script",
+        subtitle: "Runs once after worktree creation.",
+        icon: "truck.box.badge.clock",
+        iconColor: .blue,
+        footerExample: "pnpm install"
+      )
+      LifecycleScriptSection(
+        text: $store.settings.archiveScript,
+        title: "Archive Script",
+        subtitle: "Runs before a worktree is archived.",
+        icon: "archivebox",
+        iconColor: .orange,
+        footerExample: "docker compose down"
+      )
+      LifecycleScriptSection(
+        text: $store.settings.deleteScript,
+        title: "Delete Script",
+        subtitle: "Runs before a worktree is deleted.",
+        icon: "trash",
+        iconColor: .red,
+        footerExample: "docker compose down"
+      )
 
       // User-defined scripts, each in its own section.
       ForEach($store.settings.scripts) { $script in
@@ -127,6 +89,39 @@ public struct RepositoryScriptsSettingsView: View {
         }
         .help("Add a new script.")
       }
+    }
+  }
+}
+
+/// Reusable section for lifecycle scripts (setup, archive, delete).
+private struct LifecycleScriptSection: View {
+  @Binding var text: String
+  let title: String
+  let subtitle: String
+  let icon: String
+  let iconColor: Color
+  let footerExample: String
+
+  var body: some View {
+    Section {
+      ScriptCommandEditor(text: $text, label: title)
+    } header: {
+      Label {
+        VStack(alignment: .leading, spacing: 0) {
+          Text(title)
+            .font(.body)
+            .bold()
+            .lineLimit(1)
+          Text(subtitle)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+      } icon: {
+        Image(systemName: icon).foregroundStyle(iconColor).accessibilityHidden(true)
+      }.labelStyle(.verticallyCentered)
+    } footer: {
+      Text("e.g., `\(footerExample)`")
     }
   }
 }

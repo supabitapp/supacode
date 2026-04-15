@@ -179,15 +179,7 @@ public struct RepositorySettingsFeature {
           state.settings.copyIgnoredOnWorktreeCreate = nil
           state.settings.copyUntrackedOnWorktreeCreate = nil
         }
-        let rootURL = state.rootURL
-        var normalizedSettings = state.settings
-        normalizedSettings.worktreeBaseDirectoryPath = SupacodePaths.normalizedWorktreeBaseDirectoryPath(
-          normalizedSettings.worktreeBaseDirectoryPath,
-          repositoryRootURL: rootURL
-        )
-        @Shared(.repositorySettings(rootURL)) var repositorySettings
-        $repositorySettings.withLock { $0 = normalizedSettings }
-        return .send(.delegate(.settingsChanged(rootURL)))
+        return persistAndNotify(state: &state)
 
       case .delegate:
         return .none

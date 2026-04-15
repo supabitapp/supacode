@@ -52,9 +52,15 @@ struct AppFeatureDefaultEditorTests {
     let repositoryID = worktree.repositoryRootURL.standardizedFileURL.path(percentEncoded: false)
     var globalRepositorySettings = RepositorySettings.default
     globalRepositorySettings.openActionID = OpenWorktreeAction.finder.settingsID
-    var localRepositorySettings = RepositorySettings.default
-    localRepositorySettings.openActionID = OpenWorktreeAction.terminal.settingsID
-    localRepositorySettings.runScript = "pnpm dev"
+    var localRepositorySettings = RepositorySettings(
+      setupScript: "",
+      archiveScript: "",
+      deleteScript: "",
+      runScript: "pnpm dev",
+      scripts: [ScriptDefinition(kind: .run, command: "pnpm dev")],
+      openActionID: OpenWorktreeAction.terminal.settingsID,
+      worktreeBaseRef: nil
+    )
 
     withDependencies {
       $0.settingsFileStorage = settingsStorage.storage

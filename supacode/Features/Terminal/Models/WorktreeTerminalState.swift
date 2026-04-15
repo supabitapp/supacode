@@ -194,7 +194,11 @@ final class WorktreeTerminalState {
     return true
   }
 
-  /// Stops all running `.run`-kind scripts (backward compat for Cmd+.).
+  /// Stops all running `.run`-kind scripts. Intentionally excludes
+  /// non-run scripts (test, deploy, etc.) because the Stop action
+  /// (Cmd+.) is the semantic counterpart of Run, not a "stop
+  /// everything" command. Other kinds are stopped individually
+  /// via the script menu or command palette.
   @discardableResult
   func stopRunScripts() -> Bool {
     let runTabIds = blockingScripts.filter { $0.value.isRunKind }.map(\.key)
