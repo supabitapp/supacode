@@ -85,7 +85,6 @@ struct AppFeatureArchivedSelectionTests {
       activeWorktree.id: [scriptID],
       archivedWorktree.id: [scriptID],
     ]
-    appState.repositories.scriptTintColorByID = [scriptID: .green]
     let sentCommands = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: appState) {
       AppFeature()

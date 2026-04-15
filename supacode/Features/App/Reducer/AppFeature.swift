@@ -211,9 +211,6 @@ struct AppFeature {
         )
         state.repositories.runningScriptsByWorktreeID = state.repositories.runningScriptsByWorktreeID
           .filter { ids.contains($0.key) }
-        let remainingScriptIDs = Set(state.repositories.runningScriptsByWorktreeID.values.flatMap { $0 })
-        state.repositories.scriptTintColorByID = state.repositories.scriptTintColorByID
-          .filter { remainingScriptIDs.contains($0.key) }
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
           from: repositories,
           scripts: state.scripts
@@ -451,7 +448,6 @@ struct AppFeature {
         var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? []
         ids.insert(definition.id)
         state.repositories.runningScriptsByWorktreeID[worktree.id] = ids
-        state.repositories.scriptTintColorByID[definition.id] = definition.resolvedTintColor
         return .run { _ in
           await terminalClient.send(
             .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
@@ -754,6 +750,10 @@ struct AppFeature {
         return .send(.runNamedScript(definition))
 
       case .commandPalette(.delegate(.stopScript(let scriptID, _))):
+        // If a script was removed from settings while still running,
+        // it won't appear here. That is intentional — the terminal
+        // tab stays open and cleans up on natural completion or when
+        // the user closes the tab manually.
         guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
           return .none
         }

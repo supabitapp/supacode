@@ -16,7 +16,7 @@ enum BlockingScriptKind: Sendable {
 
   var tabTitle: String {
     switch self {
-    case .script(let definition): definition.name
+    case .script(let definition): definition.displayName
     case .archive: "Archive Script"
     case .delete: "Delete Script"
     }

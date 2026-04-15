@@ -54,7 +54,7 @@ struct AppFeatureRunScriptTests {
     await store.send(.runScript)
     await store.receive(\.runNamedScript) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-      $0.repositories.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
+
     }
     await store.finish()
 
@@ -90,7 +90,7 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runNamedScript(definition)) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-      $0.repositories.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
+
     }
     await store.finish()
   }
@@ -101,7 +101,7 @@ struct AppFeatureRunScriptTests {
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
     var repositoriesState = repositories
     repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-    repositoriesState.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
+
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -123,7 +123,7 @@ struct AppFeatureRunScriptTests {
       )
     ) {
       $0.repositories.runningScriptsByWorktreeID = [:]
-      $0.repositories.scriptTintColorByID = [:]
+
     }
   }
 
@@ -213,7 +213,7 @@ struct AppFeatureRunScriptTests {
     // the settings (e.g. user deleted it while it was executing).
     var repositoriesState = repositories
     repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
-    repositoriesState.scriptTintColorByID = [definition.id: definition.resolvedTintColor]
+
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -237,7 +237,7 @@ struct AppFeatureRunScriptTests {
       )
     ) {
       $0.repositories.runningScriptsByWorktreeID = [:]
-      $0.repositories.scriptTintColorByID = [:]
+
     }
   }
 

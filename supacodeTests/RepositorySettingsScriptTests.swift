@@ -67,6 +67,19 @@ struct RepositorySettingsCodableTests {
     #expect(raw["runScript"]?.stringValue == "npm run dev")
   }
 
+  @Test func encodeWithNoRunKindScriptClearsRunScript() throws {
+    // When no `.run`-kind script exists, the encoded `runScript`
+    // should be empty — not the stale legacy value.
+    var settings = RepositorySettings.default
+    settings.runScript = "stale legacy command"
+    settings.scripts = [
+      ScriptDefinition(kind: .test, command: "npm test")
+    ]
+    let data = try JSONEncoder().encode(settings)
+    let raw = try JSONDecoder().decode([String: AnyCodable].self, from: data)
+    #expect(raw["runScript"]?.stringValue == "")
+  }
+
   @Test func decodeWithUnknownScriptKindDropsOnlyInvalidEntries() throws {
     // An unknown `kind` value should only drop that entry, not the
     // entire array. Valid sibling scripts must survive.

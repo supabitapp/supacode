@@ -4,6 +4,9 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   public var setupScript: String
   public var archiveScript: String
   public var deleteScript: String
+  /// Legacy field kept for backward-compatible JSON serialization.
+  /// New code should use `scripts` instead. On encode, this is
+  /// derived from the first `.run`-kind script's command.
   public var runScript: String
   public var scripts: [ScriptDefinition]
   public var openActionID: String
@@ -118,7 +121,10 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     try container.encode(deleteScript, forKey: .deleteScript)
     // Derive `runScript` from the first `.run`-kind script's command
     // so older clients can still read the value.
-    let derivedRunScript = scripts.first(where: { $0.kind == .run })?.command ?? runScript
+    // Fall back to empty string (not the legacy `runScript` property)
+    // so removing all `.run` scripts correctly signals removal to
+    // older clients instead of leaking the stale legacy value.
+    let derivedRunScript = scripts.first(where: { $0.kind == .run })?.command ?? ""
     try container.encode(derivedRunScript, forKey: .runScript)
     try container.encode(scripts, forKey: .scripts)
     try container.encode(openActionID, forKey: .openActionID)
@@ -131,13 +137,17 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
 
   /// Decodes the `scripts` array element-by-element, silently
   /// skipping entries that fail (e.g. unknown `ScriptKind`).
-  /// Returns `nil` when the key is absent (legacy JSON).
+  /// Returns `nil` when the key is absent (legacy JSON), or `[]`
+  /// when the key is present but corrupted (e.g. `null`).
   private static func decodeScriptsLossily(
     from container: KeyedDecodingContainer<CodingKeys>
   ) -> [ScriptDefinition]? {
     guard container.contains(.scripts) else { return nil }
     guard let wrappers = try? container.decode([Lossy<ScriptDefinition>].self, forKey: .scripts) else {
-      return nil
+      // Key exists but value is not a valid array (e.g. null or
+      // wrong type). Return empty rather than triggering legacy
+      // migration which would overwrite with stale data.
+      return []
     }
     return wrappers.compactMap { $0.value }
   }

@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import SupacodeSettingsShared
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -32,6 +33,7 @@ struct ContentView: View {
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!store.repositories.isInitialLoadComplete)
+    .environment(\.scripts, store.scripts)
     .environment(\.surfaceBackgroundOpacity, terminalManager.surfaceBackgroundOpacity())
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
@@ -101,6 +103,17 @@ struct ContentView: View {
     store.send(.repositories(.revealSelectedWorktreeInSidebar))
   }
 
+}
+
+private struct ScriptsEnvironmentKey: EnvironmentKey {
+  static let defaultValue: [ScriptDefinition] = []
+}
+
+extension EnvironmentValues {
+  var scripts: [ScriptDefinition] {
+    get { self[ScriptsEnvironmentKey.self] }
+    set { self[ScriptsEnvironmentKey.self] = newValue }
+  }
 }
 
 private struct SurfaceBackgroundOpacityKey: EnvironmentKey {

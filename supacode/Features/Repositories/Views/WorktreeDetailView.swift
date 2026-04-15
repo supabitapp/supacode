@@ -390,7 +390,7 @@ struct WorktreeDetailView: View {
       } label: {
         OpenWorktreeActionMenuLabelView(
           action: resolvedOpenActionSelection,
-          shortcutHint: showExtras ? shortcutDisplay(for: AppShortcuts.openFinder, fallback: "") : nil
+          shortcutHint: showExtras ? resolveShortcutDisplay(for: AppShortcuts.openFinder, fallback: "") : nil
         )
       }
       .help(openActionHelpText(for: resolvedOpenActionSelection, isDefault: true))
@@ -424,14 +424,9 @@ struct WorktreeDetailView: View {
 
     }
 
-    private func shortcutDisplay(for shortcut: AppShortcut, fallback: String = "none") -> String {
-      @Shared(.settingsFile) var settingsFile
-      return shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
-    }
-
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
       guard isDefault else { return action.title }
-      return "\(action.title) (\(shortcutDisplay(for: AppShortcuts.openFinder)))"
+      return "\(action.title) (\(resolveShortcutDisplay(for: AppShortcuts.openFinder)))"
     }
   }
 
@@ -612,6 +607,12 @@ private struct MultiSelectedWorktreeSummary: Identifiable {
   let repositoryName: String?
 }
 
+/// Resolves a shortcut's display string from the user's settings.
+private func resolveShortcutDisplay(for shortcut: AppShortcut, fallback: String = "none") -> String {
+  @Shared(.settingsFile) var settingsFile
+  return shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
+}
+
 private struct MultiSelectedWorktreesDetailView: View {
   let rows: [MultiSelectedWorktreeSummary]
 
@@ -694,7 +695,7 @@ private struct ScriptSplitButton: View {
             .accessibilityHidden(true)
           Text("Stop")
           if commandKeyObserver.isPressed {
-            Text(shortcutDisplay(for: AppShortcuts.stopRunScript, fallback: ""))
+            Text(resolveShortcutDisplay(for: AppShortcuts.stopRunScript, fallback: ""))
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -711,7 +712,7 @@ private struct ScriptSplitButton: View {
             .accessibilityHidden(true)
           Text(primaryScript.displayName)
           if commandKeyObserver.isPressed {
-            Text(shortcutDisplay(for: AppShortcuts.runScript, fallback: ""))
+            Text(resolveShortcutDisplay(for: AppShortcuts.runScript, fallback: ""))
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -728,7 +729,7 @@ private struct ScriptSplitButton: View {
             .accessibilityHidden(true)
           Text("Run")
           if commandKeyObserver.isPressed {
-            Text(shortcutDisplay(for: AppShortcuts.runScript, fallback: ""))
+            Text(resolveShortcutDisplay(for: AppShortcuts.runScript, fallback: ""))
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -784,10 +785,6 @@ private struct ScriptSplitButton: View {
     }
   }
 
-  private func shortcutDisplay(for shortcut: AppShortcut, fallback: String = "none") -> String {
-    @Shared(.settingsFile) var settingsFile
-    return shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
-  }
 }
 
 @MainActor

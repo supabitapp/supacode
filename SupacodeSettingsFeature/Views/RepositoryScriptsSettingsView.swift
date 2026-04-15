@@ -89,7 +89,7 @@ public struct RepositoryScriptsSettingsView: View {
           .help("Remove this script.")
         } header: {
           Label {
-            Text("\(script.name) Script")
+            Text("\(script.displayName) Script")
               .font(.body)
               .bold()
           } icon: {

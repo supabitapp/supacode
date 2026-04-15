@@ -153,6 +153,7 @@ private struct WorktreeRowContainer: View {
   let shortcutHint: String?
   @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
+  @Environment(\.scripts) private var scripts
 
   var body: some View {
     WorktreeRow(
@@ -161,7 +162,7 @@ private struct WorktreeRowContainer: View {
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       showsPullRequestInfo: !draggingWorktreeIDs.contains(row.id),
-      runningScriptColors: store.state.runningScriptColors(for: row.id),
+      runningScriptColors: store.state.runningScriptColors(for: row.id, scripts: scripts),
       isTaskRunning: terminalManager.stateIfExists(for: row.id)?.taskStatus == .running,
       showsNotificationIndicator: terminalManager.hasUnseenNotifications(for: row.id),
       notifications: terminalManager.stateIfExists(for: row.id)?.notifications ?? [],
