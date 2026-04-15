@@ -1,5 +1,6 @@
 import Foundation
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 nonisolated final class SettingsTestStorage: @unchecked Sendable {

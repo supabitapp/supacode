@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 actor ShellCallStore {

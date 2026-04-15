@@ -13,6 +13,7 @@ disabled_rules:
   - file_length
   - closure_parameter_position
   - type_body_length
+  - trailing_comma
 
 opt_in_rules:
   - accessibility_label_for_image
@@ -23,9 +24,6 @@ opening_brace:
   ignore_multiline_function_signatures: true
   ignore_multiline_statement_conditions: true
   ignore_multiline_type_headers: true
-
-trailing_comma:
-  mandatory_comma: true
 
 cyclomatic_complexity:
   warning: 15

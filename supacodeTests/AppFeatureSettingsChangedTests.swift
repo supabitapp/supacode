@@ -2,6 +2,8 @@ import ComposableArchitecture
 import DependenciesTestSupport
 import Testing
 
+@testable import SupacodeSettingsFeature
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor

@@ -2,6 +2,8 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import PostHog
+import SupacodeSettingsFeature
+import SupacodeSettingsShared
 import SwiftUI
 
 private nonisolated let deeplinkLogger = SupaLogger("Deeplink")
@@ -202,7 +204,13 @@ struct AppFeature {
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(from: repositories)
         let worktrees = state.repositories.worktreesForInfoWatcher()
         var effects: [Effect<Action>] = [
-          .send(.settings(.repositoriesChanged(repositories))),
+          .send(
+            .settings(
+              .repositoriesChanged(
+                repositories.map { SettingsRepositorySummary(id: $0.id, name: $0.name) }
+              )
+            )
+          ),
           .send(.commandPalette(.pruneRecency(recencyIDs))),
           .run { _ in
             await terminalClient.send(.prune(ids))
@@ -211,11 +219,6 @@ struct AppFeature {
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
           },
         ]
-        if case .repository(let repositoryID)? = state.settings.selection,
-          !repositories.contains(where: { $0.id == repositoryID })
-        {
-          effects.append(.send(.settings(.setSelection(.general))))
-        }
         if !state.pendingDeeplinks.isEmpty {
           let pending = state.pendingDeeplinks
           state.pendingDeeplinks.removeAll()
@@ -241,31 +244,6 @@ struct AppFeature {
         return .run { _ in
           await terminalClient.send(.selectTab(worktree, tabID: tabId))
         }
-
-      case .settings(.setSelection(let selection)):
-        let resolvedSelection = selection ?? .general
-        switch resolvedSelection {
-        case .repository(let repositoryID):
-          guard let repository = state.repositories.repositories[id: repositoryID] else {
-            state.settings.repositorySettings = nil
-            return .none
-          }
-          @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
-          var repoSettingsState = RepositorySettingsFeature.State(
-            rootURL: repository.rootURL,
-            settings: repositorySettings
-          )
-          repoSettingsState.globalCopyIgnoredOnWorktreeCreate =
-            state.settings.copyIgnoredOnWorktreeCreate
-          repoSettingsState.globalCopyUntrackedOnWorktreeCreate =
-            state.settings.copyUntrackedOnWorktreeCreate
-          repoSettingsState.globalPullRequestMergeStrategy =
-            state.settings.pullRequestMergeStrategy
-          state.settings.repositorySettings = repoSettingsState
-        case .general, .notifications, .worktree, .developer, .shortcuts, .updates, .github:
-          state.settings.repositorySettings = nil
-        }
-        return .none
 
       case .settings(.delegate(.settingsChanged(let settings))):
         let shouldCheckSystemNotificationPermission =

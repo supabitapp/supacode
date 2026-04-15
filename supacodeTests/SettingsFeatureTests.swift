@@ -6,6 +6,8 @@ import Foundation
 import Sharing
 import Testing
 
+@testable import SupacodeSettingsFeature
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -139,18 +141,22 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.systemNotificationsEnabled == true)
   }
 
-  @Test(.dependencies) func selectionDoesNotMutateRepositorySettings() async {
-    let selection = SettingsSection.repository("repo-id")
+  @Test(.dependencies) func selectionBuildsRepositorySettingsFromRepositorySummary() async {
+    let summary = SettingsRepositorySummary(id: "/tmp/repo", name: "Repo")
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
     }
 
-    await store.send(.setSelection(selection)) {
-      $0.selection = selection
+    await store.send(.repositoriesChanged([summary])) {
+      $0.repositorySummaries = [summary]
     }
 
-    await store.send(.setSelection(.general)) {
-      $0.selection = .general
+    await store.send(.setSelection(.repository(summary.id))) {
+      $0.selection = .repository(summary.id)
+      $0.repositorySettings = RepositorySettingsFeature.State(
+        rootURL: summary.rootURL,
+        settings: .default
+      )
     }
   }
 
@@ -168,9 +174,12 @@ struct SettingsFeatureTests {
 
   @Test(.dependencies) func loadingSettingsDoesNotResetSelection() async {
     let rootURL = URL(fileURLWithPath: "/tmp/repo")
-    let selection = SettingsSection.repository("repo-id")
+    let selection = SettingsSection.repository(rootURL.path(percentEncoded: false))
     var state = SettingsFeature.State()
     state.selection = selection
+    state.repositorySummaries = [
+      SettingsRepositorySummary(id: rootURL.path(percentEncoded: false), name: "Repo")
+    ]
     state.repositorySettings = RepositorySettingsFeature.State(
       rootURL: rootURL,
       settings: .default
@@ -216,6 +225,9 @@ struct SettingsFeatureTests {
       $0.mergedWorktreeAction = .archive
       $0.promptForWorktreeCreation = false
       $0.selection = selection
+      $0.repositorySummaries = [
+        SettingsRepositorySummary(id: rootURL.path(percentEncoded: false), name: "Repo")
+      ]
       $0.repositorySettings = RepositorySettingsFeature.State(
         rootURL: rootURL,
         settings: .default
@@ -335,31 +347,36 @@ struct SettingsFeatureTests {
   // MARK: - Sorted repositories.
 
   @Test(.dependencies) func repositoriesChangedSortsByNameCaseInsensitive() async {
-    let repoC = Repository(
-      id: "/tmp/charlie",
-      rootURL: URL(fileURLWithPath: "/tmp/charlie"),
-      name: "Charlie",
-      worktrees: [],
-    )
-    let repoA = Repository(
-      id: "/tmp/alpha",
-      rootURL: URL(fileURLWithPath: "/tmp/alpha"),
-      name: "alpha",
-      worktrees: [],
-    )
-    let repoB = Repository(
-      id: "/tmp/bravo",
-      rootURL: URL(fileURLWithPath: "/tmp/bravo"),
-      name: "Bravo",
-      worktrees: [],
-    )
+    let repoC = SettingsRepositorySummary(id: "/tmp/charlie", name: "Charlie")
+    let repoA = SettingsRepositorySummary(id: "/tmp/alpha", name: "alpha")
+    let repoB = SettingsRepositorySummary(id: "/tmp/bravo", name: "Bravo")
 
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
     }
 
     await store.send(.repositoriesChanged([repoC, repoA, repoB])) {
-      $0.sortedRepositoryIDs = [repoA.id, repoB.id, repoC.id]
+      $0.repositorySummaries = [repoA, repoB, repoC]
+    }
+  }
+
+  @Test(.dependencies) func repositoriesChangedClearsMissingRepositorySelection() async {
+    let summary = SettingsRepositorySummary(id: "/tmp/repo", name: "Repo")
+    var state = SettingsFeature.State()
+    state.selection = .repository(summary.id)
+    state.repositorySummaries = [summary]
+    state.repositorySettings = RepositorySettingsFeature.State(
+      rootURL: summary.rootURL,
+      settings: .default
+    )
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.repositoriesChanged([])) {
+      $0.selection = .general
+      $0.repositorySummaries = []
+      $0.repositorySettings = nil
     }
   }
 
@@ -556,9 +573,10 @@ struct SettingsFeatureTests {
       SettingsFeature()
     }
     store.dependencies.date = .constant(fixedDate)
-    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = {
-      ["/tmp/repo/feature": tenDaysAgo]
-    }
+    store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
+      load: { ["/tmp/repo/feature": tenDaysAgo] },
+      save: { _ in }
+    )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
     await store.receive(\.resolvedAutoDeleteAffectedCount) {
@@ -589,9 +607,10 @@ struct SettingsFeatureTests {
       SettingsFeature()
     }
     store.dependencies.date = .constant(fixedDate)
-    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = {
-      ["/tmp/repo/feature": oneDayAgo]
-    }
+    store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
+      load: { ["/tmp/repo/feature": oneDayAgo] },
+      save: { _ in }
+    )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
     await store.receive(\.resolvedAutoDeleteAffectedCount) {
@@ -637,9 +656,10 @@ struct SettingsFeatureTests {
       SettingsFeature()
     }
     store.dependencies.date = .constant(fixedDate)
-    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = {
-      ["/tmp/repo/feature": tenDaysAgo, "/tmp/repo/bugfix": twelveDaysAgo]
-    }
+    store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
+      load: { ["/tmp/repo/feature": tenDaysAgo, "/tmp/repo/bugfix": twelveDaysAgo] },
+      save: { _ in }
+    )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
     await store.receive(\.resolvedAutoDeleteAffectedCount) {
@@ -695,7 +715,10 @@ struct SettingsFeatureTests {
       SettingsFeature()
     }
     store.dependencies.date = .constant(fixedDate)
-    store.dependencies.repositoryPersistence.loadArchivedWorktreeDates = { [:] }
+    store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
+      load: { [:] },
+      save: { _ in }
+    )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
     await store.receive(\.resolvedAutoDeleteAffectedCount) {

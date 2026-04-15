@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import SupacodeSettingsShared
 import SwiftUI
 
 // Keycap-styled label for a single key symbol.

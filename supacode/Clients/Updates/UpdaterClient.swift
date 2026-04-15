@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Sparkle
+import SupacodeSettingsShared
 
 struct UpdaterClient {
   var configure: @MainActor @Sendable (_ checks: Bool, _ downloads: Bool, _ checkInBackground: Bool) -> Void

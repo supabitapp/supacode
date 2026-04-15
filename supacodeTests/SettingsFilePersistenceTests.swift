@@ -4,6 +4,7 @@ import Foundation
 import Sharing
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 struct SettingsFilePersistenceTests {

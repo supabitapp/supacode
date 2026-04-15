@@ -1,4 +1,5 @@
 import Sharing
+import SupacodeSettingsShared
 
 struct CommandPaletteItem: Identifiable, Equatable {
   static let defaultPriorityTier = 100

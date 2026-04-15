@@ -1,5 +1,6 @@
 import GhosttyKit
 import Observation
+import SupacodeSettingsShared
 import SwiftUI
 
 @MainActor

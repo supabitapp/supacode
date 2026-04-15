@@ -34,6 +34,7 @@ jobs:
     if: needs.check.outputs.should_skip != 'true'
     permissions:
       contents: read
+      id-token: write
     env:
       MISE_HTTP_TIMEOUT: 120
       MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,11 +53,26 @@ jobs:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
       - run: echo "TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
-      - name: Override build number for versioning scheme
+      - name: Prepare release overrides
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
         run: |
-          BASE=$(awk -F' = ' '/CURRENT_PROJECT_VERSION = [0-9]+/{gsub(/;/,""); print $2; exit}' supacode.xcodeproj/project.pbxproj)
+          set -euo pipefail
+          : "${SENTRY_DSN:?secret SENTRY_DSN is not set}"
+          : "${POSTHOG_API_KEY:?secret POSTHOG_API_KEY is not set}"
+          : "${POSTHOG_HOST:?secret POSTHOG_HOST is not set}"
+          BASE=$(awk -F' = ' '/^CURRENT_PROJECT_VERSION = [0-9]+$/{print $2; exit}' Configurations/Project.xcconfig)
           BUILD_NUMBER=$((BASE * 1000))
-          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = $BUILD_NUMBER/g" supacode.xcodeproj/project.pbxproj
+          mkdir -p build
+          cat > build/ReleaseOverrides.xcconfig <<EOF
+          CURRENT_PROJECT_VERSION = $BUILD_NUMBER
+          SENTRY_DSN = $SENTRY_DSN
+          POSTHOG_API_KEY = $POSTHOG_API_KEY
+          POSTHOG_HOST = $POSTHOG_HOST
+          EOF
+          echo "XCODE_XCCONFIG_FILE=$PWD/build/ReleaseOverrides.xcconfig" >> "$GITHUB_ENV"
       - name: Setup keychain
         run: |
           echo "$DEVELOPER_ID_CERT_P12" | base64 --decode > build-cert.p12
@@ -73,20 +89,7 @@ jobs:
             exit 1
           fi
           echo "DEVELOPER_ID_IDENTITY_SHA=$DEVELOPER_ID_IDENTITY_SHA" >> "$GITHUB_ENV"
-      - name: Inject secrets
-        env:
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-        run: |
-          set -euo pipefail
-          : "${SENTRY_DSN:?secret SENTRY_DSN is not set}"
-          : "${POSTHOG_API_KEY:?secret POSTHOG_API_KEY is not set}"
-          : "${POSTHOG_HOST:?secret POSTHOG_HOST is not set}"
-          sed -i '' "s|__SENTRY_DSN__|${SENTRY_DSN}|g" supacode/App/supacodeApp.swift
-          sed -i '' "s|__POSTHOG_API_KEY__|${POSTHOG_API_KEY}|g" supacode/App/supacodeApp.swift
-          sed -i '' "s|__POSTHOG_HOST__|${POSTHOG_HOST}|g" supacode/App/supacodeApp.swift
-      - name: Archive Xcode project
+      - name: Archive workspace
         run: make archive
       - name: Upload dSYMs
         uses: actions/upload-artifact@v6
@@ -150,15 +153,38 @@ jobs:
           fi
       - name: Notarize and staple
         run: |
+          set -euo pipefail
           APP_PATH="$(find build/export -name "supacode.app" -maxdepth 3 -print -quit)"
-
+          NOTARY_RESULT_PATH=build/notarytool-submit.json
+          NOTARY_LOG_PATH=build/notarytool-log.json
+          NOTARY_STATUS=""
+          NOTARY_ID=""
           for attempt in 1 2 3; do
             echo "Notarization attempt $attempt..."
-            xcrun notarytool submit build/supacode.dmg --keychain-profile "notarytool-profile" --wait && break
+            submit_exit=0
+            if ! xcrun notarytool submit build/supacode.dmg \
+              --keychain-profile "notarytool-profile" \
+              --wait \
+              --output-format json > "$NOTARY_RESULT_PATH"; then
+              submit_exit=$?
+            fi
+            NOTARY_STATUS="$(jq -r '.status // empty' "$NOTARY_RESULT_PATH" 2>/dev/null || true)"
+            NOTARY_ID="$(jq -r '.id // empty' "$NOTARY_RESULT_PATH" 2>/dev/null || true)"
+            cat "$NOTARY_RESULT_PATH" || true
+            if [ "$submit_exit" -eq 0 ] && [ "$NOTARY_STATUS" = "Accepted" ]; then
+              break
+            fi
+            if [ -n "$NOTARY_ID" ]; then
+              xcrun notarytool log "$NOTARY_ID" --keychain-profile "notarytool-profile" > "$NOTARY_LOG_PATH" || true
+              cat "$NOTARY_LOG_PATH" || true
+            fi
             echo "Attempt $attempt failed, retrying in 30s..."
             sleep 30
           done
-
+          if [ "$NOTARY_STATUS" != "Accepted" ]; then
+            echo "::error::Notarization failed with status '$NOTARY_STATUS'"
+            exit 1
+          fi
           xcrun stapler staple build/supacode.dmg
           xcrun stapler staple "$APP_PATH"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/supacode.app.zip

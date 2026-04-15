@@ -2,6 +2,7 @@ import ComposableArchitecture
 import CustomDump
 import Foundation
 import Sentry
+import SupacodeSettingsShared
 
 extension Reducer where State: Equatable {
   @ReducerBuilder<State, Action>

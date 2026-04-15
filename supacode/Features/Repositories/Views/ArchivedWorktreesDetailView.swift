@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import SupacodeSettingsShared
 import SwiftUI
 
 struct ArchivedWorktreesDetailView: View {

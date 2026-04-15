@@ -31,6 +31,10 @@ playground.xcworkspace
 
 .build/
 .derivedData/
+Derived/
+supacode.xcodeproj/
+supacode.xcworkspace/
+Tuist/Dependencies/
 
 # CocoaPods
 #
@@ -62,9 +66,6 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
-Frameworks/GhosttyKit.xcframework
-Resources/ghostty
-Resources/terminfo
 *.profraw
 .env
 .DS_Store

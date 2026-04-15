@@ -5,6 +5,8 @@ import Foundation
 import Sharing
 import Testing
 
+@testable import SupacodeSettingsFeature
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor

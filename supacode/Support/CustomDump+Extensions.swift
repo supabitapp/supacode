@@ -1,5 +1,7 @@
 import CustomDump
 import Foundation
+import SupacodeSettingsFeature
+import SupacodeSettingsShared
 
 extension Repository: CustomDumpRepresentable {
   var customDumpValue: Any {
@@ -32,8 +34,8 @@ extension RepositoriesFeature.State: CustomDumpRepresentable {
   }
 }
 
-extension SettingsFeature.State: CustomDumpRepresentable {
-  var customDumpValue: Any {
+extension SettingsFeature.State: @retroactive CustomDumpRepresentable {
+  public var customDumpValue: Any {
     (
       selection: selection,
       hasRepoSettings: repositorySettings != nil
@@ -51,8 +53,8 @@ extension AppFeature.State: CustomDumpRepresentable {
   }
 }
 
-extension RepositorySettingsFeature.State: CustomDumpRepresentable {
-  var customDumpValue: Any {
+extension RepositorySettingsFeature.State: @retroactive CustomDumpRepresentable {
+  public var customDumpValue: Any {
     (
       rootURL: rootURL.lastPathComponent,
       isBare: isBareRepository,

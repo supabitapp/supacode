@@ -7,6 +7,7 @@ import IdentifiedCollections
 import Sharing
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -890,10 +891,12 @@ struct RepositoriesFeatureTests {
     }
 
     await store.receive(\.pendingWorktreeProgressUpdated)
-    #expect(store.state.pendingWorktrees[0].progress == WorktreeCreationProgress(
-      stage: .loadingLocalBranches,
-      worktreeName: "feature/new-branch"
-    ))
+    #expect(
+      store.state.pendingWorktrees[0].progress
+        == WorktreeCreationProgress(
+          stage: .loadingLocalBranches,
+          worktreeName: "feature/new-branch"
+        ))
 
     await validationClock.advance(by: .seconds(1))
 

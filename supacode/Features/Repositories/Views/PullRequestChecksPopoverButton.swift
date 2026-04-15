@@ -1,4 +1,5 @@
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct PullRequestChecksPopoverButton<Label: View>: View {

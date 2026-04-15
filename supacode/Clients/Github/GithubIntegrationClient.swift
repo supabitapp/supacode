@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import SupacodeSettingsShared
 
 struct GithubIntegrationClient: Sendable {
   var isAvailable: @MainActor @Sendable () async -> Bool

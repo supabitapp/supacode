@@ -1,4 +1,6 @@
 import ComposableArchitecture
+import SupacodeSettingsFeature
+import SupacodeSettingsShared
 import SwiftUI
 
 struct UpdatesSettingsView: View {

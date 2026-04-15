@@ -3,6 +3,7 @@ import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
 import PostHog
+import SupacodeSettingsShared
 import SwiftUI
 
 private enum CancelID {

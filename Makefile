@@ -7,64 +7,89 @@ MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
 
 # Derived values (DO NOT TOUCH).
-GHOSTTY_XCFRAMEWORK_PATH := Frameworks/GhosttyKit.xcframework
-GHOSTTY_RESOURCE_PATH := Resources/ghostty
-GHOSTTY_TERMINFO_PATH := Resources/terminfo
-GHOSTTY_BUILD_OUTPUTS := $(GHOSTTY_XCFRAMEWORK_PATH) $(GHOSTTY_RESOURCE_PATH) $(GHOSTTY_TERMINFO_PATH)
-PROJECT_FILE_PATH := supacode.xcodeproj/project.pbxproj
-SPM_CACHE_DIR := /tmp/supacode-spm-cache/SourcePackages
-FORMAT ?= xcsift
+CURRENT_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
+CURRENT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(CURRENT_MAKEFILE_PATH)))
+PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/supacode.xcworkspace
+APP_SCHEME := supacode
+PROJECT_CONFIG_PATH := Configurations/Project.xcconfig
+TUIST_GENERATION_STAMP_DIR := $(CURRENT_MAKEFILE_DIR)/.build/.tuist-generated-stamps
+TUIST_INSTALL_STAMP := $(TUIST_GENERATION_STAMP_DIR)/.installed
+TUIST_DEVELOPMENT_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/development
+TUIST_SOURCE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/none
+TUIST_SOURCE_RELEASE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/none-release
+TUIST_GENERATION_INPUTS := Project.swift Workspace.swift Tuist.swift Tuist/Package.swift $(wildcard Tuist/Package.resolved) $(PROJECT_CONFIG_PATH) mise.toml scripts/build-ghostty.sh
+TUIST_GENERATE_CACHE_PROFILE ?= development
+TUIST_CACHE_CONFIGURATION ?= Debug
 VERSION ?=
 BUILD ?=
 XCODEBUILD_FLAGS ?=
 
-# Output formatter pipe. Usage: make build-app FORMAT=xcpretty|xcsift|none.
-ifeq ($(FORMAT),xcsift)
-  FORMATTER = | mise exec -- xcsift -qw --format toon
-else ifeq ($(FORMAT),xcpretty)
-  ifeq (,$(shell command -v xcpretty 2>/dev/null))
-    $(error xcpretty is not installed. Install it with: gem install xcpretty)
-  endif
-  FORMATTER = | xcpretty
-else ifeq ($(FORMAT),none)
-  FORMATTER =
-else
-  $(error Unknown FORMAT "$(FORMAT)". Use xcsift, xcpretty, or none)
-endif
 .DEFAULT_GOAL := help
-.PHONY: build-ghostty-xcframework build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
+.PHONY: build-ghostty-xcframework generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
+
+ifdef CI
+TUIST_INSTALL_FLAGS := --force-resolved-versions
+else
+TUIST_INSTALL_FLAGS :=
+endif
 
 help:  # Display this help.
 	@-+echo "Run make with one of the following targets:"
 	@-+echo
-	@-+grep -Eh "^[a-z-]+:.*#" Makefile | sed -E 's/^(.*:)(.*#+)(.*)/  \1 @@@ \3 /' | column -t -s "@@@"
+	@-+grep -Eh "^[a-z-]+:.*#" "$(CURRENT_MAKEFILE_PATH)" | sed -E 's/^(.*:)(.*#+)(.*)/  \1 @@@ \3 /' | column -t -s "@@@"
 
-build-ghostty-xcframework: $(GHOSTTY_BUILD_OUTPUTS) # Build ghostty framework
+generate-project: $(TUIST_GENERATION_STAMP_DIR)/$(TUIST_GENERATE_CACHE_PROFILE) # Resolve packages and generate Xcode workspace
 
-$(GHOSTTY_BUILD_OUTPUTS):
-	@cd ThirdParty/ghostty && mise exec -- zig build -Doptimize=ReleaseFast -Demit-xcframework=true -Dsentry=false
-	rsync -a ThirdParty/ghostty/macos/GhosttyKit.xcframework Frameworks
-	@src="ThirdParty/ghostty/zig-out/share/ghostty"; \
-	dst="$(GHOSTTY_RESOURCE_PATH)"; \
-	terminfo_src="ThirdParty/ghostty/zig-out/share/terminfo"; \
-	terminfo_dst="$(GHOSTTY_TERMINFO_PATH)"; \
-	mkdir -p "$$dst"; \
-	rsync -a --delete "$$src/" "$$dst/"; \
-	mkdir -p "$$terminfo_dst"; \
-	rsync -a --delete "$$terminfo_src/" "$$terminfo_dst/"
+generate-project-sources: $(TUIST_SOURCE_GENERATION_STAMP) # Resolve packages and generate a source-only Xcode workspace
 
-build-app: build-ghostty-xcframework # Build the macOS app (Debug)
-	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug build -skipMacroValidation -clonedSourcePackagesDirPath "$(SPM_CACHE_DIR)" 2>&1 $(FORMATTER)'
+$(TUIST_INSTALL_STAMP): $(TUIST_GENERATION_INPUTS)
+	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
+	mise exec -- tuist install $(TUIST_INSTALL_FLAGS)
+	touch "$@"
+
+$(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
+	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
+	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
+	rm -rf supacode.xcodeproj supacode.xcworkspace
+	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/supacode-*; do \
+		[ -e "$$path" ] || continue; \
+		rm -rf "$$path"; \
+	done
+	mise exec -- tuist generate --no-open --cache-profile "$*"
+	touch "$@"
+
+$(TUIST_SOURCE_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
+	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
+	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
+	rm -rf supacode.xcodeproj supacode.xcworkspace
+	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/supacode-*; do \
+		[ -e "$$path" ] || continue; \
+		rm -rf "$$path"; \
+	done
+	mise exec -- tuist generate --no-open --cache-profile none --configuration Release
+	touch "$@"
+
+build-ghostty-xcframework: # Build ghostty framework
+	./scripts/build-ghostty.sh
+
+inspect-dependencies: $(TUIST_INSTALL_STAMP) # Check for implicit Tuist dependencies
+	mise exec -- tuist inspect dependencies --only implicit
+
+warm-cache: $(TUIST_INSTALL_STAMP) # Warm the full Tuist cacheable graph
+	mise exec -- tuist cache warm --configuration $(TUIST_CACHE_CONFIGURATION)
+
+build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the macOS app (Debug)
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation 2>&1 | mise exec -- xcbeautify --disable-logging'
 
 run-app: build-app # Build then launch (Debug) with log streaming
-	@settings="$$(xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	@settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
 	"$$build_dir/$$product/Contents/MacOS/$$exec_name"
 
 install-dev-build: build-app # install dev build to /Applications
-	@settings="$$(xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	@settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	src="$$build_dir/$$product"; \
@@ -78,20 +103,24 @@ install-dev-build: build-app # install dev build to /Applications
 	ditto "$$src" "$$dst"; \
 	echo "installed $$dst"
 
-archive: build-ghostty-xcframework # Archive Release build for distribution
-	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Release -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation -clonedSourcePackagesDirPath "$(SPM_CACHE_DIR)" $(XCODEBUILD_FLAGS) 2>&1 $(FORMATTER)'
+archive: $(TUIST_SOURCE_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
+	mkdir -p build
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcbeautify --quiet --disable-logging'
 
 export-archive: # Export xarchive
-	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 $(FORMATTER)'
+	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | mise exec -- xcbeautify --quiet --disable-logging'
 
-test: build-ghostty-xcframework # Run all tests
-	bash -o pipefail -c 'xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO -clonedSourcePackagesDirPath "$(SPM_CACHE_DIR)" 2>&1 $(FORMATTER)'
+test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
+	@if [ -t 1 ]; then \
+		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO 2>&1 | mise exec -- xcbeautify --disable-logging'; \
+	else \
+		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO; \
+	fi
 
-format: # Format code with swift-format (local only)
-	swift-format -p --in-place --recursive --configuration ./.swift-format.json supacode supacodeTests
+format: # Format code with swift format (local only)
+	swift format -p --in-place --recursive --configuration ./.swift-format.json supacode supacode-cli supacodeTests
 
 lint: # Lint code with swiftlint
-	mise exec -- swiftlint --fix --quiet
 	mise exec -- swiftlint lint --quiet --config .swiftlint.yml
 
 check: format lint # Format and lint
@@ -101,7 +130,7 @@ log-stream: # Stream logs from the app via log stream
 
 bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUILD=123])
 	@if [ -z "$(VERSION)" ]; then \
-		current="$$(/usr/bin/awk -F' = ' '/MARKETING_VERSION = [0-9.]+;/{gsub(/;/,"",$$2);print $$2; exit}' "$(PROJECT_FILE_PATH)")"; \
+		current="$$(/usr/bin/awk -F' = ' '/^MARKETING_VERSION = [0-9.]+$$/{print $$2; exit}' "$(PROJECT_CONFIG_PATH)")"; \
 		if [ -z "$$current" ]; then \
 			echo "error: MARKETING_VERSION not found"; \
 			exit 1; \
@@ -118,7 +147,7 @@ bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUIL
 		version="$(VERSION)"; \
 	fi; \
 	if [ -z "$(BUILD)" ]; then \
-		build="$$(/usr/bin/awk -F' = ' '/CURRENT_PROJECT_VERSION = [0-9]+;/{gsub(/;/,"",$$2);print $$2; exit}' "$(PROJECT_FILE_PATH)")"; \
+		build="$$(/usr/bin/awk -F' = ' '/^CURRENT_PROJECT_VERSION = [0-9]+$$/{print $$2; exit}' "$(PROJECT_CONFIG_PATH)")"; \
 		if [ -z "$$build" ]; then \
 			echo "error: CURRENT_PROJECT_VERSION not found"; \
 			exit 1; \
@@ -131,12 +160,12 @@ bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUIL
 		fi; \
 		build="$(BUILD)"; \
 	fi; \
-	sed -i '' "s/MARKETING_VERSION = [0-9.]*;/MARKETING_VERSION = $$version;/g" \
-		"$(PROJECT_FILE_PATH)"; \
-	sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $$build;/g" \
-		"$(PROJECT_FILE_PATH)"; \
-	git add "$(PROJECT_FILE_PATH)"; \
-	git commit -m "bump v$$version"; \
+	sed -i '' "s/^MARKETING_VERSION = [0-9.]*/MARKETING_VERSION = $$version/g" \
+		"$(PROJECT_CONFIG_PATH)"; \
+	sed -i '' "s/^CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = $$build/g" \
+		"$(PROJECT_CONFIG_PATH)"; \
+	git add "$(PROJECT_CONFIG_PATH)"; \
+	git commit -S -m "bump v$$version"; \
 	git tag -s "v$$version" -m "v$$version"; \
 	echo "version bumped to $$version (build $$build), tagged v$$version"
 

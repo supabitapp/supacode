@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GhosttyKit
+import SupacodeSettingsShared
 
 enum GhosttyOpenURLKind: Equatable {
   case unknown

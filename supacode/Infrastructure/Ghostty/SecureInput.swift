@@ -1,5 +1,6 @@
 import Carbon
 import Cocoa
+import SupacodeSettingsShared
 
 @MainActor
 final class SecureInput: Observable {

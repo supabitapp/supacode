@@ -1,5 +1,6 @@
 import Foundation
 import Sentry
+import SupacodeSettingsShared
 
 enum GitOperation: String {
   case repoRoot = "repo_root"
@@ -50,9 +51,11 @@ struct GitClient {
   }
 
   private let shell: ShellClient
+  private let referenceQueries: GitReferenceQueries
 
   nonisolated init(shell: ShellClient = .live) {
     self.shell = shell
+    self.referenceQueries = GitReferenceQueries(shell: shell)
   }
 
   nonisolated func repoRoot(for path: URL) async throws -> URL {
@@ -158,56 +161,15 @@ struct GitClient {
   }
 
   nonisolated func isBareRepository(for repoRoot: URL) async throws -> Bool {
-    let path = repoRoot.path(percentEncoded: false)
-    let output = try await runGit(
-      operation: .repoIsBare,
-      arguments: ["-C", path, "rev-parse", "--is-bare-repository"]
-    )
-    return output.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+    try await referenceQueries.isBareRepository(for: repoRoot)
   }
 
   nonisolated func branchRefs(for repoRoot: URL) async throws -> [String] {
-    let path = repoRoot.path(percentEncoded: false)
-    let localOutput = try await runGit(
-      operation: .branchRefs,
-      arguments: [
-        "-C",
-        path,
-        "for-each-ref",
-        "--format=%(refname:short)\t%(upstream:short)",
-        "refs/heads",
-      ]
-    )
-    let refs = parseLocalRefsWithUpstream(localOutput)
-      .filter { !$0.hasSuffix("/HEAD") }
-      .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    return deduplicated(refs)
+    try await referenceQueries.branchRefs(for: repoRoot)
   }
 
   nonisolated func defaultRemoteBranchRef(for repoRoot: URL) async throws -> String? {
-    let path = repoRoot.path(percentEncoded: false)
-    do {
-      let output = try await runGit(
-        operation: .defaultRemoteBranchRef,
-        arguments: ["-C", path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"]
-      )
-      let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-      if let resolved = normalizeRemoteRef(trimmed),
-        await refExists(resolved, repoRoot: repoRoot)
-      {
-        return resolved
-      }
-    } catch {
-      let rootPath = repoRoot.path(percentEncoded: false)
-      gitLogger.warning(
-        "Default remote branch ref failed for \(rootPath): \(error.localizedDescription)"
-      )
-    }
-    let fallback = "origin/main"
-    if await refExists(fallback, repoRoot: repoRoot) {
-      return fallback
-    }
-    return nil
+    try await referenceQueries.defaultRemoteBranchRef(for: repoRoot)
   }
 
   /// Returns the list of configured remote names for a repository.
@@ -234,13 +196,7 @@ struct GitClient {
   }
 
   nonisolated func automaticWorktreeBaseRef(for repoRoot: URL) async -> String? {
-    let resolved = try? await defaultRemoteBranchRef(for: repoRoot)
-    if let resolved {
-      return Self.preferredBaseRef(remote: resolved, localHead: nil)
-    }
-    let localHead = try? await localHeadBranchRef(for: repoRoot)
-    let resolvedLocalHead = await resolveLocalHead(localHead, repoRoot: repoRoot)
-    return Self.preferredBaseRef(remote: nil, localHead: resolvedLocalHead)
+    await referenceQueries.automaticWorktreeBaseRef(for: repoRoot)
   }
 
   nonisolated func ignoredFileCount(for repoRoot: URL) async throws -> Int {
@@ -583,76 +539,8 @@ struct GitClient {
       .last { !$0.isEmpty }
   }
 
-  nonisolated private func parseLocalRefsWithUpstream(_ output: String) -> [String] {
-    output
-      .split(whereSeparator: \.isNewline)
-      .compactMap { line in
-        let parts = line.split(separator: "\t", omittingEmptySubsequences: false)
-        guard let local = parts.first else {
-          return nil
-        }
-        let localRef = String(local).trimmingCharacters(in: .whitespacesAndNewlines)
-        let upstreamRef =
-          parts.count > 1
-          ? String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
-          : ""
-        if !upstreamRef.isEmpty {
-          return upstreamRef
-        }
-        return localRef.isEmpty ? nil : localRef
-      }
-  }
-
-  nonisolated private func deduplicated(_ values: [String]) -> [String] {
-    var seen = Set<String>()
-    return values.filter { seen.insert($0).inserted }
-  }
-
-  nonisolated private func normalizeRemoteRef(_ value: String) -> String? {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else {
-      return nil
-    }
-    let prefix = "refs/remotes/"
-    if trimmed.hasPrefix(prefix) {
-      return String(trimmed.dropFirst(prefix.count))
-    }
-    return trimmed
-  }
-
-  nonisolated private func localHeadBranchRef(for repoRoot: URL) async throws -> String? {
-    let path = repoRoot.path(percentEncoded: false)
-    let output = try await runGit(
-      operation: .localHeadRef,
-      arguments: ["-C", path, "symbolic-ref", "--short", "HEAD"]
-    )
-    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? nil : trimmed
-  }
-
-  nonisolated private func resolveLocalHead(_ localHead: String?, repoRoot: URL) async -> String? {
-    guard let localHead else { return nil }
-    if await refExists(localHead, repoRoot: repoRoot) {
-      return localHead
-    }
-    return nil
-  }
-
   nonisolated static func preferredBaseRef(remote: String?, localHead: String?) -> String? {
-    remote ?? localHead
-  }
-
-  nonisolated private func refExists(_ ref: String, repoRoot: URL) async -> Bool {
-    let path = repoRoot.path(percentEncoded: false)
-    do {
-      _ = try await runGit(
-        operation: .defaultRemoteBranchRef,
-        arguments: ["-C", path, "rev-parse", "--verify", "--quiet", ref]
-      )
-      return true
-    } catch {
-      return false
-    }
+    GitReferenceQueries.preferredBaseRef(remote: remote, localHead: localHead)
   }
 
   nonisolated private func runGit(

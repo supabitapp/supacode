@@ -1,6 +1,7 @@
 import AppKit
 import ComposableArchitecture
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct WorktreeDetailView: View {
@@ -530,7 +531,8 @@ private struct DetailPlaceholderView: View {
 private struct ToolbarPlaceholderContent: ToolbarContent {
   var body: some ToolbarContent {
     ToolbarItem {
-      Button {} label: {
+      Button {
+      } label: {
         HStack(spacing: 6) {
           Image(systemName: "arrow.trianglehead.branch")
             .foregroundStyle(.secondary)
@@ -561,7 +563,8 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
     ToolbarSpacer(.flexible)
 
     ToolbarItemGroup {
-      Button {} label: {
+      Button {
+      } label: {
         HStack(spacing: 4) {
           Image(systemName: "doc.text")
           Text("VS Code (⌘O)")
@@ -574,7 +577,8 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
     ToolbarSpacer(.fixed)
 
     ToolbarItem {
-      Button {} label: {
+      Button {
+      } label: {
         HStack(spacing: 6) {
           Image(systemName: "play.fill")
           Text("Run")

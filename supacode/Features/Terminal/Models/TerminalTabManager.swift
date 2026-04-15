@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SupacodeSettingsShared
 
 @MainActor
 @Observable

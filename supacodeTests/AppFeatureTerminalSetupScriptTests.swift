@@ -4,6 +4,7 @@ import Foundation
 import IdentifiedCollections
 import Testing
 
+@testable import SupacodeSettingsFeature
 @testable import supacode
 
 @MainActor

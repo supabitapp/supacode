@@ -1,4 +1,5 @@
 import AppKit
+import SupacodeSettingsShared
 import SwiftUI
 
 struct OpenWorktreeActionMenuLabelView: View {

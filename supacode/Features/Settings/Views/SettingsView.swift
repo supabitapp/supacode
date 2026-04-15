@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Kingfisher
+import SupacodeSettingsFeature
 import SwiftUI
 
 /// Sidebar label that shows a GitHub owner avatar next to the repository name.
@@ -48,8 +49,13 @@ struct SettingsView: View {
 
   var body: some View {
     let updatesStore = store.scope(state: \.updates, action: \.updates)
-    let repositories = store.repositories.repositories
     let selection = settingsStore.selection ?? .general
+    let selectedRepositorySummary: SettingsRepositorySummary? = {
+      guard case .repository(let repositoryID) = selection else {
+        return nil
+      }
+      return settingsStore.repositorySummaries.first(where: { $0.id == repositoryID })
+    }()
 
     NavigationSplitView(columnVisibility: .constant(.all)) {
       List(selection: $settingsStore.selection.sending(\.setSelection)) {
@@ -69,11 +75,9 @@ struct SettingsView: View {
           .tag(SettingsSection.updates)
 
         Section("Repositories") {
-          ForEach(settingsStore.sortedRepositoryIDs, id: \.self) { repositoryID in
-            if let repository = repositories[id: repositoryID] {
-              RepositoryLabel(name: repository.name, rootURL: repository.rootURL)
-                .tag(SettingsSection.repository(repository.id))
-            }
+          ForEach(settingsStore.repositorySummaries, id: \.id) { repository in
+            RepositoryLabel(name: repository.name, rootURL: repository.rootURL)
+              .tag(SettingsSection.repository(repository.id))
           }
         }
       }
@@ -97,11 +101,10 @@ struct SettingsView: View {
         UpdatesSettingsView(settingsStore: settingsStore, updatesStore: updatesStore)
       case .github:
         GithubSettingsView(store: settingsStore)
-      case .repository(let repositoryID):
-        if let repository = repositories[id: repositoryID] {
-          IfLetStore(
-            settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)
-          ) { repositorySettingsStore in
+      case .repository:
+        if let repository = selectedRepositorySummary {
+          IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
+            repositorySettingsStore in
             RepositorySettingsView(store: repositorySettingsStore)
               .id(repository.id)
               .navigationTitle(repository.name)

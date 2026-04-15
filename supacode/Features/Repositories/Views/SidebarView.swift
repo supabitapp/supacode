@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct SidebarView: View {

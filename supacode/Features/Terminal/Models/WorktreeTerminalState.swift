@@ -5,6 +5,7 @@ import Foundation
 import GhosttyKit
 import Observation
 import Sharing
+import SupacodeSettingsShared
 
 private let blockingScriptLogger = SupaLogger("BlockingScript")
 private let layoutLogger = SupaLogger("Layout")

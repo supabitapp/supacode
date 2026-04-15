@@ -1,6 +1,8 @@
 import AppKit
 import ComposableArchitecture
 import Sharing
+import SupacodeSettingsFeature
+import SupacodeSettingsShared
 import SwiftUI
 
 struct WorktreeCommands: Commands {

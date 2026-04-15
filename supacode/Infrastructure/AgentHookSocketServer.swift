@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import SupacodeSettingsShared
 
 private nonisolated let socketLogger = SupaLogger("AgentHookSocket")
 

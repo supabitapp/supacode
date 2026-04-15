@@ -9,9 +9,9 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import GhosttyKit
-import PostHog
-import Sentry
 import Sharing
+import SupacodeSettingsFeature
+import SupacodeSettingsShared
 import SwiftUI
 
 private enum GhosttyCLI {
@@ -115,31 +115,14 @@ struct SupacodeApp: App {
   @State private var commandKeyObserver: CommandKeyObserver
   @State private var store: StoreOf<AppFeature>
 
-  // swiftlint:disable:next cyclomatic_complexity function_body_length
   @MainActor init() {
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
-    #if !DEBUG
-      if initialSettings.crashReportsEnabled {
-        SentrySDK.start { options in
-          options.dsn = "__SENTRY_DSN__"
-          options.tracesSampleRate = 1.0
-          options.enableAppHangTracking = false
-        }
-      }
-      if initialSettings.analyticsEnabled {
-        let posthogAPIKey = "__POSTHOG_API_KEY__"
-        let posthogHost = "__POSTHOG_HOST__"
-        let config = PostHogConfig(apiKey: posthogAPIKey, host: posthogHost)
-        config.enableSwizzling = false
-        PostHogSDK.shared.setup(config)
-        if let hardwareUUID = HardwareInfo.uuid {
-          PostHogSDK.shared.identify(hardwareUUID)
-        }
-      }
-    #endif
+    let infoDictionary = Bundle.main.infoDictionary ?? [:]
+    AppCrashReporting.setup(settings: initialSettings, infoDictionary: infoDictionary)
+    AppTelemetry.setup(settings: initialSettings, infoDictionary: infoDictionary)
     if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("ghostty") {
       setenv("GHOSTTY_RESOURCES_DIR", resourceURL.path, 1)
     }
@@ -154,9 +137,26 @@ struct SupacodeApp: App {
     _ghostty = State(initialValue: runtime)
     let shortcuts = GhosttyShortcutManager(runtime: runtime)
     _ghosttyShortcuts = State(initialValue: shortcuts)
+    let terminalManager = Self.makeTerminalManager(runtime: runtime)
+    _terminalManager = State(initialValue: terminalManager)
+    let worktreeInfoWatcher = WorktreeInfoWatcherManager()
+    _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
+    let keyObserver = CommandKeyObserver()
+    _commandKeyObserver = State(initialValue: keyObserver)
+    let appStore = Self.makeStore(
+      initialSettings: initialSettings,
+      terminalManager: terminalManager,
+      worktreeInfoWatcher: worktreeInfoWatcher
+    )
+    _store = State(initialValue: appStore)
+    appDelegate.appStore = appStore
+    appDelegate.terminalManager = terminalManager
+    Self.configureSocketHandlers(terminalManager: terminalManager, store: appStore)
+  }
+
+  @MainActor
+  private static func makeTerminalManager(runtime: GhosttyRuntime) -> WorktreeTerminalManager {
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
-    // Always persist layouts regardless of `restoreTerminalLayoutEnabled`, so enabling
-    // the setting retroactively restores the most recent session.
     terminalManager.saveLayoutSnapshot = { worktreeID, snapshot in
       @Shared(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
       $layouts.withLock { dict in
@@ -173,14 +173,16 @@ struct SupacodeApp: App {
       @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
       return layouts[worktreeID]
     }
-    _terminalManager = State(initialValue: terminalManager)
-    let worktreeInfoWatcher = WorktreeInfoWatcherManager()
-    _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
-    let keyObserver = CommandKeyObserver()
-    _commandKeyObserver = State(initialValue: keyObserver)
-    let appStore = Store(
-      initialState: AppFeature.State(settings: SettingsFeature.State(settings: initialSettings))
-    ) {
+    return terminalManager
+  }
+
+  @MainActor
+  private static func makeStore(
+    initialSettings: GlobalSettings,
+    terminalManager: WorktreeTerminalManager,
+    worktreeInfoWatcher: WorktreeInfoWatcherManager
+  ) -> StoreOf<AppFeature> {
+    Store(initialState: AppFeature.State(settings: SettingsFeature.State(settings: initialSettings))) {
       AppFeature()
         .logActions()
     } withDependencies: { values in
@@ -210,75 +212,87 @@ struct SupacodeApp: App {
         }
       )
     }
-    _store = State(initialValue: appStore)
-    appDelegate.appStore = appStore
-    appDelegate.terminalManager = terminalManager
-    // Forward CLI socket commands to the TCA store as deeplinks.
-    // The responseFD is threaded through the action chain so the reducer
-    // can respond after processing (or after a confirmation dialog resolves).
-    let store = appStore
+  }
+
+  @MainActor
+  private static func configureSocketHandlers(
+    terminalManager: WorktreeTerminalManager,
+    store: StoreOf<AppFeature>
+  ) {
     terminalManager.onDeeplinkCommand = { url, clientFD in
       store.send(.deeplinkReceived(url, source: .socket, responseFD: clientFD))
     }
-    // Handle CLI queries by reading state and responding with data.
-    // Queries are read-only and handled outside the reducer intentionally:
-    // they only snapshot existing state and terminal layout without side
-    // effects, so routing through TCA actions would add ceremony without
-    // improving testability or correctness.
     terminalManager.onQuery = { resource, params, clientFD in
-      let repos = store.repositories.repositories
-      let selectedWorktreeID = store.repositories.selectedWorktreeID
-      let pctSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
-      switch resource {
-      case "repos":
-        let data = repos.map {
-          ["id": $0.id.addingPercentEncoding(withAllowedCharacters: pctSet) ?? $0.id]
-        }
-        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
-      case "worktrees":
-        let data = repos.flatMap { repo in
-          repo.worktrees.map { worktree in
-            let encodedID = worktree.id.addingPercentEncoding(withAllowedCharacters: pctSet) ?? worktree.id
-            var entry = ["id": encodedID]
-            if worktree.id == selectedWorktreeID { entry["focused"] = "1" }
-            return entry
-          }
-        }
-        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
-      case "tabs":
-        guard let worktreeID = params["worktreeID"] else {
-          AgentHookSocketServer.sendCommandResponse(
-            clientFD: clientFD, ok: false, error: "Missing worktreeID for tab list.")
-          return
-        }
-        let tabs = terminalManager.listTabs(worktreeID: worktreeID)
-        if tabs == nil {
-          // The worktree may exist in repo state but have no terminal yet.
-          let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-          let worktreeExists = repos.contains { $0.worktrees.contains { $0.id == decoded } }
-          guard worktreeExists else {
-            AgentHookSocketServer.sendCommandResponse(
-              clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
-            return
-          }
-        }
-        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: tabs ?? [])
-      case "surfaces":
-        guard let worktreeID = params["worktreeID"], let tabID = params["tabID"] else {
-          AgentHookSocketServer.sendCommandResponse(
-            clientFD: clientFD, ok: false, error: "Missing worktreeID/tabID for surface list.")
-          return
-        }
-        guard let surfaces = terminalManager.listSurfaces(worktreeID: worktreeID, tabID: tabID) else {
-          AgentHookSocketServer.sendCommandResponse(
-            clientFD: clientFD, ok: false, error: "Worktree or tab not found.")
-          return
-        }
-        AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: surfaces)
-      default:
-        AgentHookSocketServer.sendCommandResponse(
-          clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
+      Self.handleQuery(
+        resource: resource,
+        params: params,
+        clientFD: clientFD,
+        terminalManager: terminalManager,
+        store: store
+      )
+    }
+  }
+
+  @MainActor
+  private static func handleQuery(
+    resource: String,
+    params: [String: String],
+    clientFD: Int32,
+    terminalManager: WorktreeTerminalManager,
+    store: StoreOf<AppFeature>
+  ) {
+    let repos = store.repositories.repositories
+    let selectedWorktreeID = store.repositories.selectedWorktreeID
+    let pctSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
+
+    switch resource {
+    case "repos":
+      let data = repos.map {
+        ["id": $0.id.addingPercentEncoding(withAllowedCharacters: pctSet) ?? $0.id]
       }
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
+    case "worktrees":
+      let data = repos.flatMap { repo in
+        repo.worktrees.map { worktree in
+          let encodedID = worktree.id.addingPercentEncoding(withAllowedCharacters: pctSet) ?? worktree.id
+          var entry = ["id": encodedID]
+          if worktree.id == selectedWorktreeID { entry["focused"] = "1" }
+          return entry
+        }
+      }
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
+    case "tabs":
+      guard let worktreeID = params["worktreeID"] else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Missing worktreeID for tab list.")
+        return
+      }
+      let tabs = terminalManager.listTabs(worktreeID: worktreeID)
+      if tabs == nil {
+        let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+        let worktreeExists = repos.contains { $0.worktrees.contains { $0.id == decoded } }
+        guard worktreeExists else {
+          AgentHookSocketServer.sendCommandResponse(
+            clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+          return
+        }
+      }
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: tabs ?? [])
+    case "surfaces":
+      guard let worktreeID = params["worktreeID"], let tabID = params["tabID"] else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Missing worktreeID/tabID for surface list.")
+        return
+      }
+      guard let surfaces = terminalManager.listSurfaces(worktreeID: worktreeID, tabID: tabID) else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Worktree or tab not found.")
+        return
+      }
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: surfaces)
+    default:
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
     }
   }
 

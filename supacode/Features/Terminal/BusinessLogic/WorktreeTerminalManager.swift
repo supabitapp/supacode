@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Sharing
+import SupacodeSettingsShared
 
 private let terminalLogger = SupaLogger("Terminal")
 

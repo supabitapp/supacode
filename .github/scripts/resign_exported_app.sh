@@ -26,6 +26,7 @@ sign_path() {
 code_roots=(
   "$app_path/Contents/Frameworks"
   "$app_path/Contents/PlugIns"
+  "$app_path/Contents/Resources"
   "$app_path/Contents/XPCServices"
   "$app_path/Contents/Library/LoginItems"
 )

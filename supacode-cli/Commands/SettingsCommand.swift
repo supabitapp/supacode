@@ -16,7 +16,7 @@ struct SettingsCommand: ParsableCommand {
     commandName: "settings",
     abstract: "Open Supacode settings.",
     subcommands: [
-      Repo.self,
+      Repo.self
     ]
   )
 

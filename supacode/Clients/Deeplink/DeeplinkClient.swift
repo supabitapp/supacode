@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 
 struct DeeplinkClient: Sendable {
   var parse: @Sendable (URL) -> Deeplink?

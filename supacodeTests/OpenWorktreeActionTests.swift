@@ -1,5 +1,6 @@
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 struct OpenWorktreeActionTests {

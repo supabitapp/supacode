@@ -2,6 +2,7 @@ import ConcurrencyExtras
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 struct CodexSettingsInstallerTests {

@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor

@@ -1,6 +1,7 @@
 import AppKit
 import GhosttyKit
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 import UniformTypeIdentifiers
 

@@ -1,9 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import Sharing
-
-nonisolated let archivedWorktreeDatesStorageKey = "archivedWorktreeDates"
-nonisolated let secondsPerDay: TimeInterval = 86400
+import SupacodeSettingsShared
 
 struct RepositoryPersistenceClient {
   var loadRoots: @Sendable () async -> [String]
@@ -22,6 +20,7 @@ struct RepositoryPersistenceClient {
 
 extension RepositoryPersistenceClient: DependencyKey {
   static let liveValue: RepositoryPersistenceClient = {
+    let archivedWorktreeDatesClient = ArchivedWorktreeDatesClient.liveValue
     return RepositoryPersistenceClient(
       loadRoots: {
         @Shared(.repositoryRoots) var roots: [String]
@@ -34,40 +33,20 @@ extension RepositoryPersistenceClient: DependencyKey {
         }
       },
       loadPinnedWorktreeIDs: {
-        @Shared(.pinnedWorktreeIDs) var pinned: [Worktree.ID]
+        @Shared(.pinnedWorktreeIDs) var pinned: [String]
         return pinned
       },
       savePinnedWorktreeIDs: { ids in
-        @Shared(.pinnedWorktreeIDs) var sharedPinned: [Worktree.ID]
+        @Shared(.pinnedWorktreeIDs) var sharedPinned: [String]
         $sharedPinned.withLock {
           $0 = ids
         }
       },
       loadArchivedWorktreeDates: {
-        let logger = SupaLogger("RepositoryPersistence")
-        @Shared(.appStorage(archivedWorktreeDatesStorageKey)) var dates: [Worktree.ID: Date] = [:]
-        guard dates.isEmpty else {
-          return RepositoryPathNormalizer.normalizeDictionaryKeys(dates)
-        }
-        // Migrate from legacy key.
-        @Shared(.appStorage("archivedWorktreeIDs")) var legacyIDs: [Worktree.ID] = []
-        guard !legacyIDs.isEmpty else { return [:] }
-        let now = Date()
-        var migrated: [Worktree.ID: Date] = [:]
-        for id in RepositoryPathNormalizer.normalize(legacyIDs) {
-          migrated[id] = now
-        }
-        logger.info("Migrating \(migrated.count) archived worktree(s) from legacy key.")
-        $dates.withLock { $0 = migrated }
-        $legacyIDs.withLock { $0 = [] }
-        return migrated
+        await archivedWorktreeDatesClient.load()
       },
       saveArchivedWorktreeDates: { dates in
-        @Shared(.appStorage(archivedWorktreeDatesStorageKey)) var sharedDates: [Worktree.ID: Date] = [:]
-        let normalized = RepositoryPathNormalizer.normalizeDictionaryKeys(dates)
-        $sharedDates.withLock {
-          $0 = normalized
-        }
+        await archivedWorktreeDatesClient.save(dates)
       },
       loadRepositoryOrderIDs: {
         @Shared(.appStorage("repositoryOrderIDs")) var order: [Repository.ID] = []
