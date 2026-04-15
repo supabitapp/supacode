@@ -77,14 +77,14 @@ public struct RepositoryScriptsSettingsView: View {
       }
 
       // User-defined scripts, each in its own section.
-      ForEach(Array($store.settings.scripts.enumerated()), id: \.element.id) { index, $script in
+      ForEach($store.settings.scripts) { $script in
         Section {
           if script.kind == .custom {
             TextField("Name", text: $script.name)
           }
           ScriptCommandEditor(text: $script.command, label: script.displayName)
           Button("Remove Script", role: .destructive) {
-            store.send(.removeScripts(IndexSet(integer: index)))
+            store.send(.removeScript(script.id))
           }
           .help("Remove this script.")
         } header: {

@@ -40,7 +40,7 @@ struct AppFeature {
 
     /// The script that the primary toolbar button should run.
     var primaryScript: ScriptDefinition? {
-      scripts.first { $0.kind == .run }
+      scripts.primaryScript
     }
 
     /// Running script IDs for the currently selected worktree.
@@ -51,8 +51,7 @@ struct AppFeature {
 
     /// Whether any `.run`-kind script is currently running in the selected worktree.
     var hasRunningRunScript: Bool {
-      let running = runningScriptIDs
-      return scripts.contains { $0.kind == .run && running.contains($0.id) }
+      scripts.hasRunningRunScript(in: runningScriptIDs)
     }
   }
 

@@ -23,13 +23,13 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
   /// Resolved SF Symbol name: predefined types always use the kind
   /// default so future icon changes propagate automatically.
   public nonisolated var resolvedSystemImage: String {
-    systemImage ?? kind.defaultSystemImage
+    kind == .custom ? (systemImage ?? kind.defaultSystemImage) : kind.defaultSystemImage
   }
 
   /// Resolved tint color: predefined types always use the kind
   /// default so future color changes propagate automatically.
   public nonisolated var resolvedTintColor: TerminalTabTintColor {
-    tintColor ?? kind.defaultTintColor
+    kind == .custom ? (tintColor ?? kind.defaultTintColor) : kind.defaultTintColor
   }
 
   public nonisolated init(
@@ -46,5 +46,19 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
     self.systemImage = systemImage
     self.tintColor = tintColor
     self.command = command
+  }
+}
+
+// MARK: - Collection helpers
+
+extension [ScriptDefinition] {
+  /// The first `.run`-kind script — the primary toolbar action.
+  public var primaryScript: ScriptDefinition? {
+    first { $0.kind == .run }
+  }
+
+  /// Whether any `.run`-kind script is currently running.
+  public func hasRunningRunScript(in runningIDs: Set<UUID>) -> Bool {
+    contains { $0.kind == .run && runningIDs.contains($0.id) }
   }
 }

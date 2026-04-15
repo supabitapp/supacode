@@ -64,8 +64,7 @@ public struct RepositorySettingsFeature {
     )
     case branchDataLoaded([String], defaultBaseRef: String)
     case addScript(ScriptKind)
-    case removeScripts(IndexSet)
-    case moveScripts(IndexSet, Int)
+    case removeScript(ScriptDefinition.ID)
     case delegate(Delegate)
     case binding(BindingAction<State>)
   }
@@ -171,20 +170,8 @@ public struct RepositorySettingsFeature {
         state.settings.scripts.append(ScriptDefinition(kind: kind))
         return persistAndNotify(state: &state)
 
-      case .removeScripts(let offsets):
-        var scripts = state.settings.scripts
-        for index in offsets.sorted().reversed() {
-          scripts.remove(at: index)
-        }
-        state.settings.scripts = scripts
-        return persistAndNotify(state: &state)
-
-      case .moveScripts(let source, let destination):
-        var scripts = state.settings.scripts
-        let items = source.sorted().reversed().map { scripts.remove(at: $0) }.reversed()
-        let insertAt = min(destination, scripts.count)
-        scripts.insert(contentsOf: items, at: insertAt)
-        state.settings.scripts = scripts
+      case .removeScript(let id):
+        state.settings.scripts.removeAll { $0.id == id }
         return persistAndNotify(state: &state)
 
       case .binding:

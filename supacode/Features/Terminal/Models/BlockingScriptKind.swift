@@ -5,7 +5,11 @@ import SupacodeSettingsShared
 /// with exit-code tracking. `.archive` and `.delete` block worktree
 /// state transitions until the script completes. `.script` wraps a
 /// user-defined `ScriptDefinition` and can run concurrently.
-enum BlockingScriptKind: Hashable, Sendable {
+///
+/// Equality and hashing for the `.script` case use only the
+/// definition's `id`, so dictionary lookups and dedup checks remain
+/// stable even when the user edits the script's name or command.
+enum BlockingScriptKind: Sendable {
   case script(ScriptDefinition)
   case archive
   case delete
@@ -47,6 +51,31 @@ enum BlockingScriptKind: Hashable, Sendable {
     switch self {
     case .script(let definition): definition.kind == .run
     case .archive, .delete: false
+    }
+  }
+}
+
+// MARK: - Hashable / Equatable
+
+extension BlockingScriptKind: Hashable {
+  static func == (lhs: BlockingScriptKind, rhs: BlockingScriptKind) -> Bool {
+    switch (lhs, rhs) {
+    case (.script(let lhsDef), .script(let rhsDef)): lhsDef.id == rhsDef.id
+    case (.archive, .archive): true
+    case (.delete, .delete): true
+    default: false
+    }
+  }
+
+  func hash(into hasher: inout Hasher) {
+    switch self {
+    case .script(let definition):
+      hasher.combine(0)
+      hasher.combine(definition.id)
+    case .archive:
+      hasher.combine(1)
+    case .delete:
+      hasher.combine(2)
     }
   }
 }

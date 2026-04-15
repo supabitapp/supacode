@@ -293,12 +293,12 @@ struct WorktreeDetailView: View {
 
     /// The script the primary toolbar button should run (always the `.run` script).
     var primaryScript: ScriptDefinition? {
-      scripts.first { $0.kind == .run }
+      scripts.primaryScript
     }
 
     /// Whether any `.run`-kind script is currently running.
     var hasRunningRunScript: Bool {
-      scripts.contains { $0.kind == .run && runningScriptIDs.contains($0.id) }
+      scripts.hasRunningRunScript(in: runningScriptIDs)
     }
 
     var runScriptHelpText: String {
