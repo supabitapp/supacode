@@ -367,7 +367,7 @@ struct WorktreeDetailView: View {
 
       ToolbarSpacer(.flexible)
 
-      ToolbarItemGroup {
+      ToolbarItem {
         openMenu(
           openActionSelection: toolbarState.openActionSelection,
           showExtras: toolbarState.showExtras
@@ -376,7 +376,7 @@ struct WorktreeDetailView: View {
       ToolbarSpacer(.fixed)
 
       ToolbarItem {
-        ScriptSplitButton(
+        ScriptMenu(
           toolbarState: toolbarState,
           onRunScript: onRunScript,
           onRunNamedScript: onRunNamedScript,
@@ -394,45 +394,36 @@ struct WorktreeDetailView: View {
       let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
       let primarySelection = resolved == .finder ? availableActions.first : resolved
       if let primarySelection {
-        Button {
-          onOpenWorktree(primarySelection)
+        Menu {
+          ForEach(availableActions) { action in
+            let isDefault = action == primarySelection
+            Button {
+              onOpenActionSelectionChanged(action)
+              onOpenWorktree(action)
+            } label: {
+              OpenWorktreeActionMenuLabelView(action: action, shortcutHint: nil)
+            }
+            .buttonStyle(.plain)
+            .help(openActionHelpText(for: action, isDefault: isDefault))
+          }
+          Divider()
+          Button {
+            onRevealInFinder()
+          } label: {
+            OpenWorktreeActionMenuLabelView(action: .finder, shortcutHint: nil)
+          }
+          .help("Reveal in Finder (\(resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
         } label: {
           OpenWorktreeActionMenuLabelView(
             action: primarySelection,
             shortcutHint: showExtras ? resolveShortcutDisplay(for: AppShortcuts.openWorktree, fallback: "") : nil
           )
+        } primaryAction: {
+          onOpenWorktree(primarySelection)
         }
+        .menuIndicator(.hidden)
         .help(openActionHelpText(for: primarySelection, isDefault: true))
       }
-
-      Menu {
-        ForEach(availableActions) { action in
-          let isDefault = action == primarySelection
-          Button {
-            onOpenActionSelectionChanged(action)
-            onOpenWorktree(action)
-          } label: {
-            OpenWorktreeActionMenuLabelView(action: action, shortcutHint: nil)
-          }
-          .buttonStyle(.plain)
-          .help(openActionHelpText(for: action, isDefault: isDefault))
-        }
-        Divider()
-        Button {
-          onRevealInFinder()
-        } label: {
-          OpenWorktreeActionMenuLabelView(action: .finder, shortcutHint: nil)
-        }
-        .help("Reveal in Finder (\(resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
-      } label: {
-        Image(systemName: "chevron.down")
-          .font(.caption2)
-          .accessibilityLabel("Open in menu")
-      }
-      .imageScale(.small)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .help("Open in…")
     }
 
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
@@ -671,10 +662,9 @@ private struct MultiSelectedWorktreesDetailView: View {
   }
 }
 
-/// Split-button for running scripts in the toolbar.
-/// Primary button runs the selected/default script.
-/// Chevron dropdown lists all configured scripts with run/stop options.
-private struct ScriptSplitButton: View {
+/// Menu with primary action for running scripts in the toolbar.
+/// Click runs the default script; long-press/arrow opens the full script list.
+private struct ScriptMenu: View {
   let toolbarState: WorktreeDetailView.WorktreeToolbarState
   let onRunScript: () -> Void
   let onRunNamedScript: (ScriptDefinition) -> Void
@@ -688,112 +678,75 @@ private struct ScriptSplitButton: View {
   }
 
   var body: some View {
-    HStack(spacing: 0) {
-      primaryButton
-      scriptMenu
+    let hasRunning = toolbarState.hasRunningRunScript
+    Menu {
+      ForEach(toolbarState.scripts) { script in
+        let isRunning = toolbarState.runningScriptIDs.contains(script.id)
+        Button {
+          if isRunning {
+            onStopScript(script)
+          } else {
+            onRunNamedScript(script)
+          }
+        } label: {
+          Label {
+            Text(isRunning ? "Stop \(script.displayName)" : script.displayName)
+          } icon: {
+            Image.tintedSymbol(
+              isRunning ? "stop.fill" : script.resolvedSystemImage,
+              color: script.resolvedTintColor.nsColor,
+            )
+          }
+        }
+        .help(isRunning ? "Stop \(script.displayName)." : "Run \(script.displayName).")
+      }
+      Divider()
+      Button("Manage Scripts…") {
+        onManageScripts()
+      }
+      .help("Open repository settings to manage scripts.")
+    } label: {
+      scriptLabel(hasRunning: hasRunning)
+    } primaryAction: {
+      if hasRunning {
+        onStopRunScripts()
+      } else if primaryScript != nil {
+        onRunScript()
+      } else {
+        onManageScripts()
+      }
     }
+    .menuIndicator(.hidden)
+    .help(primaryHelpText(hasRunning: hasRunning))
   }
 
   @ViewBuilder
-  private var primaryButton: some View {
-    let hasRunning = toolbarState.hasRunningRunScript
-    if hasRunning {
-      scriptButton(
-        icon: "stop.fill",
-        label: "Stop",
-        shortcut: AppShortcuts.stopRunScript,
-        helpText: toolbarState.stopRunScriptHelpText,
-        action: onStopRunScripts
-      )
-    } else if let primaryScript {
-      scriptButton(
-        icon: primaryScript.resolvedSystemImage,
-        label: primaryScript.displayName,
-        shortcut: AppShortcuts.runScript,
-        helpText: toolbarState.runScriptHelpText,
-        action: onRunScript
-      )
-    } else {
-      scriptButton(
-        icon: "play.fill",
-        label: "Run",
-        shortcut: AppShortcuts.runScript,
-        helpText: "Configure scripts in Settings.",
-        action: onManageScripts
-      )
-    }
-  }
-
-  private func scriptButton(
-    icon: String,
-    label: String,
-    shortcut: AppShortcut,
-    helpText: String,
-    action: @escaping () -> Void
-  ) -> some View {
-    Button {
-      action()
-    } label: {
-      HStack(spacing: 6) {
-        Image(systemName: icon)
-          .accessibilityHidden(true)
-        Text(label)
-        if commandKeyObserver.isPressed {
-          Text(resolveShortcutDisplay(for: shortcut, fallback: ""))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
+  private func scriptLabel(hasRunning: Bool) -> some View {
+    let icon = hasRunning ? "stop.fill" : (primaryScript?.resolvedSystemImage ?? "play.fill")
+    let label = hasRunning ? "Stop" : (primaryScript?.displayName ?? "Run")
+    let shortcut = hasRunning ? AppShortcuts.stopRunScript : AppShortcuts.runScript
+    HStack(spacing: 6) {
+      Image(systemName: icon)
+        .accessibilityHidden(true)
+      Text(label)
+      if commandKeyObserver.isPressed {
+        Text(resolveShortcutDisplay(for: shortcut, fallback: ""))
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
     }
     .font(.caption)
-    .help(helpText)
   }
 
-  @ViewBuilder
-  private var scriptMenu: some View {
-    // Show the dropdown unless the only script is the primary .run script.
-    let showMenu =
-      toolbarState.scripts.count > 1
-      || (toolbarState.scripts.count == 1 && toolbarState.scripts.first?.kind != .run)
-    if showMenu {
-      Menu {
-        ForEach(toolbarState.scripts) { script in
-          let isRunning = toolbarState.runningScriptIDs.contains(script.id)
-          Button {
-            if isRunning {
-              onStopScript(script)
-            } else {
-              onRunNamedScript(script)
-            }
-          } label: {
-            Label {
-              Text(isRunning ? "Stop \(script.displayName)" : script.displayName)
-            } icon: {
-              Image.tintedSymbol(
-                isRunning ? "stop.fill" : script.resolvedSystemImage,
-                color: script.resolvedTintColor.nsColor,
-              )
-            }
-          }
-          .help(isRunning ? "Stop \(script.displayName)." : "Run \(script.displayName).")
-        }
-        Divider()
-        Button("Manage Scripts…") {
-          onManageScripts()
-        }
-        .help("Open repository settings to manage scripts.")
-      } label: {
-        Image(systemName: "chevron.down")
-          .font(.caption2)
-          .accessibilityLabel("Script menu")
-      }
-      .imageScale(.small)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .help("Script actions.")
+  private func primaryHelpText(hasRunning: Bool) -> String {
+    if hasRunning {
+      return toolbarState.stopRunScriptHelpText
     }
+    guard primaryScript != nil else {
+      return "Configure scripts in Settings."
+    }
+    return toolbarState.runScriptHelpText
   }
-
 }
 
 @MainActor
