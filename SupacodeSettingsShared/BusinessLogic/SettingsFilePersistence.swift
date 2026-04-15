@@ -154,10 +154,7 @@ public nonisolated struct SettingsFileKey: SharedKey {
     return encoder
   }
 }
-nonisolated
-
-  extension SharedReaderKey where Self == SettingsFileKey.Default
-{
+nonisolated extension SharedReaderKey where Self == SettingsFileKey.Default {
   public static var settingsFile: Self {
     Self[SettingsFileKey(), default: .default]
   }
