@@ -49,7 +49,7 @@ struct RepositorySettingsKeyTests {
     let rootURL = URL(fileURLWithPath: "/tmp/repo")
 
     var updated = RepositorySettings.default
-    updated.runScript = "echo updated"
+    updated.setupScript = "echo updated"
 
     withDependencies {
       $0.settingsFileStorage = storage.storage
@@ -146,9 +146,9 @@ struct RepositorySettingsKeyTests {
     let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
     let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
     var globalSettings = RepositorySettings.default
-    globalSettings.runScript = "echo global"
+    globalSettings.setupScript = "echo global"
     var localSettings = RepositorySettings.default
-    localSettings.runScript = "echo local"
+    localSettings.setupScript = "echo local"
 
     withDependencies {
       $0.settingsFileStorage = globalStorage.storage
@@ -185,7 +185,7 @@ struct RepositorySettingsKeyTests {
     let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
     let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
     var globalSettings = RepositorySettings.default
-    globalSettings.runScript = "echo global"
+    globalSettings.setupScript = "echo global"
 
     withDependencies {
       $0.settingsFileStorage = globalStorage.storage
@@ -218,7 +218,7 @@ struct RepositorySettingsKeyTests {
     let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
     let localURL = SupacodePaths.repositorySettingsURL(for: rootURL)
     var globalSettings = RepositorySettings.default
-    globalSettings.runScript = "echo global"
+    globalSettings.setupScript = "echo global"
 
     withDependencies {
       $0.settingsFileStorage = globalStorage.storage
@@ -256,7 +256,7 @@ struct RepositorySettingsKeyTests {
     try localStorage.save(encode(.default), at: localURL)
 
     var updated = RepositorySettings.default
-    updated.runScript = "echo local"
+    updated.setupScript = "echo local"
 
     withDependencies {
       $0.settingsFileStorage = globalStorage.storage
@@ -294,7 +294,7 @@ struct RepositorySettingsKeyTests {
     let localURL = SupacodePaths.repositorySettingsURL(for: rootURL)
 
     var updated = RepositorySettings.default
-    updated.runScript = "echo global"
+    updated.setupScript = "echo global"
 
     withDependencies {
       $0.settingsFileStorage = globalStorage.storage

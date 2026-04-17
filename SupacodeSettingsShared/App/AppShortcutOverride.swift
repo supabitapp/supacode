@@ -32,8 +32,8 @@ public nonisolated struct AppShortcutOverride: Codable, Equatable, Hashable, Sen
 
 // MARK: - SwiftUI conversions.
 
-public extension AppShortcutOverride {
-  init(from eventModifiers: SwiftUI.EventModifiers, keyCode: UInt16) {
+extension AppShortcutOverride {
+  public init(from eventModifiers: SwiftUI.EventModifiers, keyCode: UInt16) {
     self.keyCode = keyCode
     var flags: ModifierFlags = []
     if eventModifiers.contains(.command) { flags.insert(.command) }
@@ -44,7 +44,7 @@ public extension AppShortcutOverride {
     self.isEnabled = true
   }
 
-  var eventModifiers: SwiftUI.EventModifiers {
+  public var eventModifiers: SwiftUI.EventModifiers {
     var result: SwiftUI.EventModifiers = []
     if modifiers.contains(.command) { result.insert(.command) }
     if modifiers.contains(.option) { result.insert(.option) }
@@ -53,28 +53,28 @@ public extension AppShortcutOverride {
     return result
   }
 
-  var keyboardShortcut: KeyboardShortcut {
+  public var keyboardShortcut: KeyboardShortcut {
     KeyboardShortcut(keyEquivalent, modifiers: eventModifiers)
   }
 
-  var keyEquivalent: KeyEquivalent {
+  public var keyEquivalent: KeyEquivalent {
     Self.keyEquivalent(for: keyCode)
   }
 }
 
 // MARK: - Display.
 
-public extension AppShortcutOverride {
-  var displayString: String {
+extension AppShortcutOverride {
+  public var displayString: String {
     Self.displaySymbols(for: keyCode, modifiers: modifiers).joined()
   }
 
   // Ordered array of individual display symbols: one per modifier, followed by the key.
-  var displaySymbols: [String] {
+  public var displaySymbols: [String] {
     Self.displaySymbols(for: keyCode, modifiers: modifiers)
   }
 
-  static func displaySymbols(for keyCode: UInt16, modifiers: ModifierFlags) -> [String] {
+  public static func displaySymbols(for keyCode: UInt16, modifiers: ModifierFlags) -> [String] {
     var parts: [String] = []
     if modifiers.contains(.command) { parts.append("⌘") }
     if modifiers.contains(.shift) { parts.append("⇧") }
@@ -87,18 +87,18 @@ public extension AppShortcutOverride {
 
 // MARK: - System hotkeys.
 
-public extension AppShortcutOverride {
+extension AppShortcutOverride {
   // Well-known macOS app conventions always reserved by AppKit (not in the symbolic hotkeys plist).
-  static let appKitReservedDisplayStrings: Set<String> = ["⌘Q", "⌘W", "⌘H", "⌘M"]
+  public static let appKitReservedDisplayStrings: Set<String> = ["⌘Q", "⌘W", "⌘H", "⌘M"]
 
   // Reads macOS system symbolic hotkeys at runtime and returns their display strings,
   // combined with well-known AppKit reserved shortcuts.
-  static func allReservedDisplayStrings() -> Set<String> {
+  public static func allReservedDisplayStrings() -> Set<String> {
     systemReservedDisplayStrings().union(appKitReservedDisplayStrings)
   }
 
   // Reads macOS system symbolic hotkeys at runtime and returns their display strings.
-  static func systemReservedDisplayStrings() -> Set<String> {
+  public static func systemReservedDisplayStrings() -> Set<String> {
     guard let defaults = UserDefaults(suiteName: "com.apple.symbolichotkeys"),
       let hotkeys = defaults.dictionary(forKey: "AppleSymbolicHotKeys")
     else {
@@ -131,8 +131,8 @@ public extension AppShortcutOverride {
 
 // MARK: - Ghostty keybind.
 
-public extension AppShortcutOverride {
-  var ghosttyKeybind: String {
+extension AppShortcutOverride {
+  public var ghosttyKeybind: String {
     let parts = ghosttyModifierParts + [Self.ghosttyKeyName(for: keyCode)]
     return parts.joined(separator: "+")
   }
@@ -151,9 +151,9 @@ public extension AppShortcutOverride {
 
 private nonisolated let shortcutLogger = SupaLogger("Shortcuts")
 
-public extension AppShortcutOverride {
+extension AppShortcutOverride {
   // Reverse lookup: given a US QWERTY character, return its key code.
-  static func keyCode(for character: Character) -> UInt16? {
+  public static func keyCode(for character: Character) -> UInt16? {
     reverseUSQwerty[character]
   }
 
@@ -167,13 +167,13 @@ public extension AppShortcutOverride {
 
   // Resolves the character for a key code using the current keyboard layout,
   // falling back to US QWERTY when the layout is unavailable (e.g., CI, sandboxed contexts).
-  static func layoutCharacter(for code: UInt16) -> String? {
+  public static func layoutCharacter(for code: UInt16) -> String? {
     if let char = currentLayoutCharacter(for: code, modifierState: 0) { return char }
     shortcutLogger.debug("Using US QWERTY fallback for key code \(code)")
     return usQwertyFallback[code]
   }
 
-  static func displayCharacter(for keyEquivalent: KeyEquivalent) -> String {
+  public static func displayCharacter(for keyEquivalent: KeyEquivalent) -> String {
     guard let code = keyCode(forDisplayedKeyEquivalent: keyEquivalent.character) else {
       return String(keyEquivalent.character).uppercased()
     }
@@ -181,7 +181,7 @@ public extension AppShortcutOverride {
   }
 
   // The Ghostty key name for a given key code (e.g. "a", "arrow_up", "return").
-  static func resolvedGhosttyKeyName(for code: UInt16) -> String {
+  public static func resolvedGhosttyKeyName(for code: UInt16) -> String {
     ghosttyKeyName(for: code)
   }
 
@@ -269,7 +269,7 @@ public extension AppShortcutOverride {
 
   // AppKit renders menu key equivalents from the logical key equivalent. Reverse
   // lookup the active layout so our own labels match the menu bar.
-  static func keyCode(
+  public static func keyCode(
     forDisplayedKeyEquivalent character: Character,
     candidateKeyCodes: [UInt16] = candidatePrintableKeyCodes,
     modifierStates: [UInt32] = menuDisplayModifierStates,
@@ -288,7 +288,7 @@ public extension AppShortcutOverride {
     return nil
   }
 
-  static func keyCode(forDisplayedKeyEquivalent character: Character) -> UInt16? {
+  public static func keyCode(forDisplayedKeyEquivalent character: Character) -> UInt16? {
     keyCode(forDisplayedKeyEquivalent: character) { code, modifierState in
       currentLayoutCharacter(for: code, modifierState: modifierState)
     }
@@ -319,8 +319,8 @@ public extension AppShortcutOverride {
 
   // UCKeyTranslate modifier states: unmodified, shift, option, shift+option.
   // Ordered so the simplest printable mapping is preferred during reverse lookup.
-  static let menuDisplayModifierStates: [UInt32] = [0, 0x02, 0x08, 0x0A]
-  static let candidatePrintableKeyCodes: [UInt16] = Array(usQwertyFallback.keys).sorted()
+  public static let menuDisplayModifierStates: [UInt32] = [0, 0x02, 0x08, 0x0A]
+  public static let candidatePrintableKeyCodes: [UInt16] = Array(usQwertyFallback.keys).sorted()
 
   private static func ghosttyKeyName(for code: UInt16) -> String {
     switch Int(code) {
@@ -337,7 +337,7 @@ public extension AppShortcutOverride {
     }
   }
 
-  static func displayCharacter(for code: UInt16, modifiers: ModifierFlags = []) -> String {
+  public static func displayCharacter(for code: UInt16, modifiers: ModifierFlags = []) -> String {
     switch Int(code) {
     case kVK_LeftArrow: return "←"
     case kVK_RightArrow: return "→"
@@ -357,7 +357,7 @@ public extension AppShortcutOverride {
     }
   }
 
-  static func keyEquivalent(for code: UInt16) -> KeyEquivalent {
+  public static func keyEquivalent(for code: UInt16) -> KeyEquivalent {
     switch Int(code) {
     case kVK_LeftArrow: return .leftArrow
     case kVK_RightArrow: return .rightArrow

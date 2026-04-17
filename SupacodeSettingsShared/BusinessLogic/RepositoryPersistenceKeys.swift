@@ -94,15 +94,14 @@ public nonisolated struct PinnedWorktreeIDsKey: SharedKey {
     continuation.resume()
   }
 }
-
-public nonisolated extension SharedReaderKey where Self == RepositoryRootsKey.Default {
-  static var repositoryRoots: Self {
+nonisolated extension SharedReaderKey where Self == RepositoryRootsKey.Default {
+  public static var repositoryRoots: Self {
     Self[RepositoryRootsKey(), default: []]
   }
 }
 
-public nonisolated extension SharedReaderKey where Self == PinnedWorktreeIDsKey.Default {
-  static var pinnedWorktreeIDs: Self {
+nonisolated extension SharedReaderKey where Self == PinnedWorktreeIDsKey.Default {
+  public static var pinnedWorktreeIDs: Self {
     Self[PinnedWorktreeIDsKey(), default: []]
   }
 }

@@ -5,6 +5,7 @@ import IdentifiedCollections
 import Testing
 
 @testable import SupacodeSettingsFeature
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -79,7 +80,11 @@ struct AppFeatureArchivedSelectionTests {
       repositories: repositoriesState,
       settings: SettingsFeature.State()
     )
-    appState.repositories.runScriptWorktreeIDs = [activeWorktree.id, archivedWorktree.id]
+    let scriptID = UUID()
+    appState.repositories.runningScriptsByWorktreeID = [
+      activeWorktree.id: [scriptID],
+      archivedWorktree.id: [scriptID],
+    ]
     let sentCommands = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: appState) {
       AppFeature()
@@ -92,7 +97,7 @@ struct AppFeatureArchivedSelectionTests {
     store.exhaustivity = .off
 
     await store.send(.repositories(.delegate(.repositoriesChanged([repository])))) {
-      $0.repositories.runScriptWorktreeIDs = [activeWorktree.id]
+      $0.repositories.runningScriptsByWorktreeID = [activeWorktree.id: [scriptID]]
     }
     await store.finish()
 

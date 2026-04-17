@@ -33,7 +33,7 @@ private nonisolated struct CodexProgressPayload: Encodable {
     "UserPromptSubmit": [
       .init(hooks: [
         .init(command: CodexHookSettings.busyOn, timeout: 10)
-      ]),
+      ])
     ],
     "Stop": [
       .init(hooks: [.init(command: CodexHookSettings.busyOff, timeout: 10)])
@@ -48,6 +48,6 @@ private nonisolated struct CodexNotificationPayload: Encodable {
   let hooks: [String: [AgentHookGroup]] = [
     "Stop": [
       .init(hooks: [.init(command: CodexHookSettings.notify, timeout: 10)])
-    ],
+    ]
   ]
 }

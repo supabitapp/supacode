@@ -1,4 +1,5 @@
 import Foundation
+import SupacodeSettingsShared
 
 struct TerminalTabItem: Identifiable, Equatable, Sendable {
   let id: TerminalTabID

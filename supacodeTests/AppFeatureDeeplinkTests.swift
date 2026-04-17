@@ -165,7 +165,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .stop)))
     await store.receive(\.repositories.selectWorktree)
-    await store.receive(\.stopRunScript)
+    await store.receive(\.stopRunScripts)
   }
 
   // MARK: - Help deeplink.

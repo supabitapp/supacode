@@ -1,3 +1,4 @@
+import Foundation
 import Sharing
 import SupacodeSettingsShared
 
@@ -43,6 +44,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case copyCiFailureLogs(Worktree.ID)
     case rerunFailedJobs(Worktree.ID)
     case openFailingCheckDetails(Worktree.ID)
+    case runScript(ScriptDefinition)
+    case stopScript(UUID, name: String)
     #if DEBUG
       case debugTestToast(RepositoriesFeature.StatusToast)
     #endif
@@ -66,6 +69,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       false
+    case .runScript, .stopScript:
+      true
     #if DEBUG
       case .debugTestToast:
         true
@@ -91,6 +96,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .worktreeSelect,
       .removeWorktree,
       .archiveWorktree:
+      false
+    case .runScript, .stopScript:
       false
     #if DEBUG
       case .debugTestToast:
@@ -118,8 +125,11 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .openFailingCheckDetails,
       .worktreeSelect,
       .removeWorktree,
-      .archiveWorktree:
+      .archiveWorktree,
+      .stopScript:
       nil
+    case .runScript(let definition):
+      definition.kind == .run ? AppShortcuts.runScript : nil
     #if DEBUG
       case .debugTestToast:
         nil

@@ -32,7 +32,7 @@ private nonisolated struct ClaudeProgressPayload: Encodable {
     "UserPromptSubmit": [
       .init(hooks: [
         .init(command: ClaudeHookSettings.busyOn, timeout: 10)
-      ]),
+      ])
     ],
     "Stop": [
       .init(hooks: [.init(command: ClaudeHookSettings.busyOff, timeout: 10)])

@@ -1,6 +1,7 @@
 import AppKit
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 import SwiftUI
 
 struct CommandPaletteOverlayView: View {
@@ -351,6 +352,10 @@ private struct CommandPaletteRowView: View {
       return "Remove"
     case .archiveWorktree:
       return "Archive"
+    case .runScript:
+      return "Script"
+    case .stopScript:
+      return "Script"
     #if DEBUG
       case .debugTestToast:
         return "Debug"
@@ -396,6 +401,10 @@ private struct CommandPaletteRowView: View {
       return "trash"
     case .archiveWorktree:
       return "archivebox"
+    case .runScript(let definition):
+      return definition.resolvedSystemImage
+    case .stopScript:
+      return "stop.fill"
     #if DEBUG
       case .debugTestToast:
         return "ladybug"
@@ -414,6 +423,8 @@ private struct CommandPaletteRowView: View {
       return true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       return false
+    case .runScript, .stopScript:
+      return true
     #if DEBUG
       case .debugTestToast:
         return true
@@ -524,6 +535,10 @@ private struct CommandPaletteRowView: View {
       base = "Re-run failed jobs"
     case .openFailingCheckDetails:
       base = "Open failing check details"
+    case .runScript(let definition):
+      base = "Run \(definition.name)"
+    case .stopScript(_, let name):
+      base = "Stop \(name)"
     #if DEBUG
       case .debugTestToast:
         base = row.title

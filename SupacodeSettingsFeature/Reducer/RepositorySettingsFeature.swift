@@ -27,6 +27,8 @@ public struct RepositorySettingsFeature {
       )
     }
 
+    @Presents public var alert: AlertState<Alert>?
+
     public init(
       rootURL: URL,
       settings: RepositorySettings,
@@ -52,6 +54,11 @@ public struct RepositorySettingsFeature {
     }
   }
 
+  @CasePathable
+  public enum Alert: Equatable {
+    case confirmRemoveScript(ScriptDefinition.ID)
+  }
+
   public enum Action: BindableAction {
     case task
     case settingsLoaded(
@@ -63,6 +70,9 @@ public struct RepositorySettingsFeature {
       globalPullRequestMergeStrategy: PullRequestMergeStrategy
     )
     case branchDataLoaded([String], defaultBaseRef: String)
+    case addScript(ScriptKind)
+    case removeScript(ScriptDefinition.ID)
+    case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
   }
@@ -160,24 +170,61 @@ public struct RepositorySettingsFeature {
         state.isBranchDataLoaded = true
         return .none
 
+      case .addScript(let kind):
+        // Predefined kinds are unique; reject duplicates.
+        guard kind == .custom || !state.settings.scripts.contains(where: { $0.kind == kind }) else {
+          return .none
+        }
+        state.settings.scripts.append(ScriptDefinition(kind: kind))
+        return persistAndNotify(state: &state)
+
+      case .removeScript(let id):
+        guard let script = state.settings.scripts.first(where: { $0.id == id }) else { return .none }
+        state.alert = AlertState {
+          TextState("Remove \"\(script.displayName)\" script?")
+        } actions: {
+          ButtonState(role: .destructive, action: .confirmRemoveScript(id)) {
+            TextState("Remove")
+          }
+          ButtonState(role: .cancel) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState("This action cannot be undone.")
+        }
+        return .none
+
+      case .alert(.presented(.confirmRemoveScript(let id))):
+        state.settings.scripts.removeAll { $0.id == id }
+        return persistAndNotify(state: &state)
+
+      case .alert:
+        return .none
+
       case .binding:
         if state.isBareRepository {
           state.settings.copyIgnoredOnWorktreeCreate = nil
           state.settings.copyUntrackedOnWorktreeCreate = nil
         }
-        let rootURL = state.rootURL
-        var normalizedSettings = state.settings
-        normalizedSettings.worktreeBaseDirectoryPath = SupacodePaths.normalizedWorktreeBaseDirectoryPath(
-          normalizedSettings.worktreeBaseDirectoryPath,
-          repositoryRootURL: rootURL
-        )
-        @Shared(.repositorySettings(rootURL)) var repositorySettings
-        $repositorySettings.withLock { $0 = normalizedSettings }
-        return .send(.delegate(.settingsChanged(rootURL)))
+        return persistAndNotify(state: &state)
 
       case .delegate:
         return .none
       }
     }
+    .ifLet(\.$alert, action: \.alert)
+  }
+
+  /// Persists the current settings and notifies the delegate.
+  private func persistAndNotify(state: inout State) -> Effect<Action> {
+    let rootURL = state.rootURL
+    var normalizedSettings = state.settings
+    normalizedSettings.worktreeBaseDirectoryPath = SupacodePaths.normalizedWorktreeBaseDirectoryPath(
+      normalizedSettings.worktreeBaseDirectoryPath,
+      repositoryRootURL: rootURL
+    )
+    @Shared(.repositorySettings(rootURL)) var repositorySettings
+    $repositorySettings.withLock { $0 = normalizedSettings }
+    return .send(.delegate(.settingsChanged(rootURL)))
   }
 }

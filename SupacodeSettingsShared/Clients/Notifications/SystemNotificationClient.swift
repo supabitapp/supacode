@@ -119,8 +119,8 @@ extension SystemNotificationClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var systemNotificationClient: SystemNotificationClient {
+extension DependencyValues {
+  public var systemNotificationClient: SystemNotificationClient {
     get { self[SystemNotificationClient.self] }
     set { self[SystemNotificationClient.self] = newValue }
   }

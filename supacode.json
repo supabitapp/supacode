@@ -2,8 +2,35 @@
   "archiveScript" : "",
   "copyIgnoredOnWorktreeCreate" : true,
   "copyUntrackedOnWorktreeCreate" : true,
+  "deleteScript" : "",
   "openActionID" : "xcode",
   "pullRequestMergeStrategy" : "merge",
   "runScript" : "make run-app",
-  "setupScript" : "git submodule update -f --depth=1 --init --no-fetch  -j 8 --progress\ncodex"
+  "scripts" : [
+    {
+      "command" : "make run-app",
+      "id" : "B90F7467-8638-4FB6-9CFC-450207596267",
+      "kind" : "run",
+      "name" : "Run"
+    },
+    {
+      "command" : "make test",
+      "id" : "D477CB4A-8BF5-46E7-B192-E22193DC0705",
+      "kind" : "test",
+      "name" : "Test"
+    },
+    {
+      "command" : "make check",
+      "id" : "19B9B006-EEF2-4C96-9CC6-7DCCF9F3C09D",
+      "kind" : "lint",
+      "name" : "Lint"
+    },
+    {
+      "command" : "make format",
+      "id" : "914F90DE-B782-4A76-9845-8A1A45803833",
+      "kind" : "format",
+      "name" : "Format"
+    }
+  ],
+  "setupScript" : "git submodule update --recursive"
 }

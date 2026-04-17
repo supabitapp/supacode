@@ -1,5 +1,6 @@
 import Dependencies
 import Foundation
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -166,7 +167,7 @@ struct WorktreeTerminalManagerTests {
         title: "Unread",
         body: "body",
         isRead: false
-      ),
+      )
     ]
     state.onNotificationIndicatorChanged?()
     state.notifications = [
@@ -175,7 +176,7 @@ struct WorktreeTerminalManagerTests {
         title: "Read",
         body: "body",
         isRead: true
-      ),
+      )
     ]
 
     let stream = manager.eventStream()
@@ -588,31 +589,34 @@ struct WorktreeTerminalManagerTests {
   @Test func runScriptBlockingScriptTracksRunningState() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, command: "echo hi")
 
-    #expect(manager.isBlockingScriptRunning(kind: .run, for: worktree.id) == false)
+    #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == false)
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .run, script: "echo hi"))
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo hi"))
 
-    #expect(manager.isBlockingScriptRunning(kind: .run, for: worktree.id) == true)
+    #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == true)
   }
 
   @Test func stopRunScriptClosesRunTab() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, command: "sleep 10")
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .run, script: "sleep 10"))
-    #expect(manager.isBlockingScriptRunning(kind: .run, for: worktree.id) == true)
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "sleep 10"))
+    #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == true)
 
     manager.handleCommand(.stopRunScript(worktree))
-    #expect(manager.isBlockingScriptRunning(kind: .run, for: worktree.id) == false)
+    #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == false)
   }
 
   @Test func runScriptTabTitleResetsAfterSignalInterruption() async {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
+    let definition = ScriptDefinition(kind: .run, command: "sleep 10")
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .run, script: "sleep 10"))
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "sleep 10"))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -623,7 +627,7 @@ struct WorktreeTerminalManagerTests {
     }
 
     let tab = state.tabManager.tabs.first { $0.id == tabId }
-    #expect(tab?.title == "Run Script")
+    #expect(tab?.title == "Run")
     #expect(tab?.isTitleLocked == true)
     #expect(tab?.tintColor == .green)
 
@@ -841,7 +845,7 @@ struct WorktreeTerminalManagerTests {
             )
           ),
           focusedLeafIndex: 0
-        ),
+        )
       ],
       selectedTabIndex: 0
     )

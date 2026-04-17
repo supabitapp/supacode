@@ -108,30 +108,6 @@ public struct RepositorySettingsView: View {
           description: "Path to the repository root."
         )
       }
-      ScriptSection(
-        title: "Setup Script",
-        subtitle: "Runs once after worktree creation.",
-        text: settings.setupScript,
-        placeholder: "claude --dangerously-skip-permissions"
-      )
-      ScriptSection(
-        title: "Run Script",
-        subtitle: "Launched on demand from the toolbar.",
-        text: settings.runScript,
-        placeholder: "npm run dev"
-      )
-      ScriptSection(
-        title: "Archive Script",
-        subtitle: "Runs before a worktree is archived.",
-        text: settings.archiveScript,
-        placeholder: "docker compose down"
-      )
-      ScriptSection(
-        title: "Delete Script",
-        subtitle: "Runs before a worktree is deleted.",
-        text: settings.deleteScript,
-        placeholder: "docker compose down"
-      )
     }
     .formStyle(.grouped)
     .padding(.top, -20)
@@ -139,31 +115,6 @@ public struct RepositorySettingsView: View {
     .padding(.trailing, -6)
     .task {
       store.send(.task)
-    }
-  }
-}
-
-// MARK: - Script section.
-
-private struct ScriptSection: View {
-  let title: String
-  let subtitle: String
-  let text: Binding<String>
-  let placeholder: String
-
-  var body: some View {
-    Section {
-      TextEditor(text: text)
-        .monospaced()
-        .textEditorStyle(.plain)
-        .autocorrectionDisabled()
-        .frame(height: 112)
-        .accessibilityLabel(title)
-    } header: {
-      Text(title)
-      Text(subtitle)
-    } footer: {
-      Text("e.g., `\(placeholder)`")
     }
   }
 }

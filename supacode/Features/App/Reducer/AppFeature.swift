@@ -6,6 +6,7 @@ import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI
 
+private nonisolated let appLogger = SupaLogger("App")
 private nonisolated let deeplinkLogger = SupaLogger("Deeplink")
 
 private enum CancelID {
@@ -21,9 +22,7 @@ struct AppFeature {
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
-    var selectedRunScript: String = ""
-    var runScriptDraft: String = ""
-    var isRunScriptPromptPresented = false
+    var scripts: [ScriptDefinition] = []
     var notificationIndicatorCount: Int = 0
     var lastKnownSystemNotificationsEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
@@ -39,6 +38,22 @@ struct AppFeature {
       self.settings = settings
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
     }
+
+    /// The script that the primary toolbar button should run.
+    var primaryScript: ScriptDefinition? {
+      scripts.primaryScript
+    }
+
+    /// Running script IDs for the currently selected worktree.
+    var runningScriptIDs: Set<UUID> {
+      guard let worktreeID = repositories.selectedWorktreeID else { return [] }
+      return repositories.runningScriptsByWorktreeID[worktreeID] ?? []
+    }
+
+    /// Whether any `.run`-kind script is currently running in the selected worktree.
+    var hasRunningRunScript: Bool {
+      scripts.hasRunningRunScript(in: runningScriptIDs)
+    }
   }
 
   enum Action {
@@ -51,15 +66,15 @@ struct AppFeature {
     case openActionSelectionChanged(OpenWorktreeAction)
     case worktreeSettingsLoaded(RepositorySettings, worktreeID: Worktree.ID)
     case openSelectedWorktree
+    case revealInFinder
     case openWorktree(OpenWorktreeAction)
     case openWorktreeFailed(OpenActionError)
     case requestQuit
     case newTerminal
     case runScript
-    case runScriptDraftChanged(String)
-    case runScriptPromptPresented(Bool)
-    case saveRunScriptAndRun
-    case stopRunScript
+    case runNamedScript(ScriptDefinition)
+    case stopScript(ScriptDefinition)
+    case stopRunScripts
     case closeTab
     case closeSurface
     case startSearch
@@ -140,9 +155,7 @@ struct AppFeature {
         let repositoryPersistence = repositoryPersistence
         guard let worktree else {
           state.openActionSelection = .finder
-          state.selectedRunScript = ""
-          state.runScriptDraft = ""
-          state.isRunScriptPromptPresented = false
+          state.scripts = []
           var effects: [Effect<Action>] = [
             .run { _ in
               await terminalClient.send(.setSelectedWorktreeID(nil))
@@ -163,8 +176,6 @@ struct AppFeature {
         }
         let rootURL = worktree.repositoryRootURL
         let worktreeID = worktree.id
-        state.runScriptDraft = ""
-        state.isRunScriptPromptPresented = false
         @Shared(.repositorySettings(rootURL)) var repositorySettings
         let settings = repositorySettings
         return .merge(
@@ -200,8 +211,12 @@ struct AppFeature {
           repositories.flatMap { $0.worktrees.map(\.id) }
             .filter { !archivedIDs.contains($0) || deleteScriptIDs.contains($0) }
         )
-        state.repositories.runScriptWorktreeIDs.formIntersection(ids)
-        let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(from: repositories)
+        state.repositories.runningScriptsByWorktreeID = state.repositories.runningScriptsByWorktreeID
+          .filter { ids.contains($0.key) }
+        let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
+          from: repositories,
+          scripts: state.scripts
+        )
         let worktrees = state.repositories.worktreesForInfoWatcher()
         var effects: [Effect<Action>] = [
           .send(
@@ -227,6 +242,13 @@ struct AppFeature {
           }
         }
         return .merge(effects)
+
+      case .repositories(.delegate(.openWorktreeInApp(let worktreeID, let action))):
+        guard let worktree = state.repositories.worktree(for: worktreeID) else {
+          appLogger.warning("openWorktreeInApp: worktree \(worktreeID) not found, ignoring.")
+          return .none
+        }
+        return openWorktreeEffect(worktree: worktree, action: action, source: .contextMenu, state: state)
 
       case .repositories(.delegate(.openRepositorySettings(let repositoryID))):
         guard state.repositories.repositories.contains(where: { $0.id == repositoryID }) else {
@@ -322,6 +344,7 @@ struct AppFeature {
       case .openActionSelectionChanged(let action):
         state.openActionSelection = action
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          appLogger.warning("openActionSelectionChanged: selected worktree not found, skipping persistence.")
           return .none
         }
         let rootURL = worktree.repositoryRootURL
@@ -333,29 +356,19 @@ struct AppFeature {
       case .openSelectedWorktree:
         return .send(.openWorktree(OpenWorktreeAction.availableSelection(state.openActionSelection)))
 
-      case .openWorktree(let action):
+      case .revealInFinder:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          appLogger.warning("revealInFinder: selected worktree not found, ignoring.")
           return .none
         }
-        analyticsClient.capture("worktree_opened", ["action": action.settingsID])
-        if action == .editor {
-          let shouldRunSetupScript =
-            state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
-          return .run { _ in
-            await terminalClient.send(
-              .createTabWithInput(
-                worktree,
-                input: "$EDITOR",
-                runSetupScriptIfNew: shouldRunSetupScript
-              )
-            )
-          }
+        return openWorktreeEffect(worktree: worktree, action: .finder, source: .revealInFinder, state: state)
+
+      case .openWorktree(let action):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          appLogger.warning("openWorktree: selected worktree not found, ignoring.")
+          return .none
         }
-        return .run { send in
-          await workspaceClient.open(action, worktree) { error in
-            send(.openWorktreeFailed(error))
-          }
-        }
+        return openWorktreeEffect(worktree: worktree, action: action, source: .toolbar, state: state)
 
       case .openWorktreeFailed(let error):
         state.alert = AlertState {
@@ -412,59 +425,44 @@ struct AppFeature {
         }
 
       case .runScript:
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
-          return .none
-        }
-        let trimmed = state.selectedRunScript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-          if state.isRunScriptPromptPresented {
+        // Find the selected or primary script and run it.
+        guard let definition = state.primaryScript else {
+          // No scripts configured — open repository scripts settings.
+          guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
             return .none
           }
-          state.runScriptDraft = state.selectedRunScript
-          state.isRunScriptPromptPresented = true
-          return .none
+          let repositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
+          return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
-        analyticsClient.capture("script_run", nil)
-        state.repositories.runScriptWorktreeIDs.insert(worktree.id)
-        let script = state.selectedRunScript
-        return .run { _ in
-          await terminalClient.send(.runBlockingScript(worktree, kind: .run, script: script))
-        }
+        return .send(.runNamedScript(definition))
 
-      case .runScriptDraftChanged(let script):
-        state.runScriptDraft = script
-        return .none
-
-      case .runScriptPromptPresented(let isPresented):
-        state.isRunScriptPromptPresented = isPresented
-        if !isPresented {
-          state.runScriptDraft = ""
-        }
-        return .none
-
-      case .saveRunScriptAndRun:
+      case .runNamedScript(let definition):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
-          state.isRunScriptPromptPresented = false
-          state.runScriptDraft = ""
           return .none
         }
-        let script = state.runScriptDraft
-        let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-          return .none
+        // Prevent running the same script twice.
+        guard !state.runningScriptIDs.contains(definition.id) else { return .none }
+        let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .none }
+        analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
+        var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? []
+        ids.insert(definition.id)
+        state.repositories.runningScriptsByWorktreeID[worktree.id] = ids
+        return .run { _ in
+          await terminalClient.send(
+            .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+          )
         }
-        let rootURL = worktree.repositoryRootURL
-        @Shared(.repositorySettings(rootURL)) var repositorySettings
-        $repositorySettings.withLock { $0.runScript = script }
-        if state.settings.repositorySettings?.rootURL == rootURL {
-          state.settings.repositorySettings?.settings.runScript = script
-        }
-        state.selectedRunScript = script
-        state.isRunScriptPromptPresented = false
-        state.runScriptDraft = ""
-        return .send(.runScript)
 
-      case .stopRunScript:
+      case .stopScript(let definition):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.stopScript(worktree, definitionID: definition.id))
+        }
+
+      case .stopRunScripts:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           return .none
         }
@@ -551,7 +549,7 @@ struct AppFeature {
           settings.openActionID,
           defaultEditorID: normalizedDefaultEditorID
         )
-        state.selectedRunScript = settings.runScript
+        state.scripts = settings.scripts
         return .none
 
       case .deeplinkReceived(let url, let source, let responseFD):
@@ -748,6 +746,19 @@ struct AppFeature {
       case .commandPalette(.delegate(.openFailingCheckDetails(let worktreeID))):
         return .send(.repositories(.pullRequestAction(worktreeID, .openFailingCheckDetails)))
 
+      case .commandPalette(.delegate(.runScript(let definition))):
+        return .send(.runNamedScript(definition))
+
+      case .commandPalette(.delegate(.stopScript(let scriptID, _))):
+        // If a script was removed from settings while still running,
+        // it won't appear here. That is intentional — the terminal
+        // tab stays open and cleans up on natural completion or when
+        // the user closes the tab manually.
+        guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
+          return .none
+        }
+        return .send(.stopScript(definition))
+
       #if DEBUG
         case .commandPalette(.delegate(.debugTestToast(let toast))):
           return .send(.repositories(.showToast(toast)))
@@ -797,8 +808,18 @@ struct AppFeature {
 
       case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
         switch kind {
-        case .run:
-          return .send(.repositories(.runScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
+        case .script(let definition):
+          return .send(
+            .repositories(
+              .scriptCompleted(
+                worktreeID: worktreeID,
+                scriptID: definition.id,
+                kind: kind,
+                exitCode: exitCode,
+                tabId: tabId
+              )
+            )
+          )
         case .archive:
           return .send(.repositories(.archiveScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
         case .delete:
@@ -824,6 +845,41 @@ struct AppFeature {
     }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
+    }
+  }
+
+  // MARK: - Open worktree.
+
+  private enum OpenWorktreeSource: String {
+    case toolbar
+    case contextMenu
+    case revealInFinder
+  }
+
+  private func openWorktreeEffect(
+    worktree: Worktree,
+    action: OpenWorktreeAction,
+    source: OpenWorktreeSource,
+    state: State
+  ) -> Effect<Action> {
+    analyticsClient.capture("worktree_opened", ["action": action.settingsID, "source": source.rawValue])
+    guard action == .editor else {
+      return .run { send in
+        await workspaceClient.open(action, worktree) { error in
+          send(.openWorktreeFailed(error))
+        }
+      }
+    }
+    let shouldRunSetupScript =
+      state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
+    return .run { _ in
+      await terminalClient.send(
+        .createTabWithInput(
+          worktree,
+          input: "$EDITOR",
+          runSetupScriptIfNew: shouldRunSetupScript
+        )
+      )
     }
   }
 
@@ -960,7 +1016,7 @@ struct AppFeature {
     case .run:
       return .send(.runScript)
     case .stop:
-      return .send(.stopRunScript)
+      return .send(.stopRunScripts)
     case .archive:
       guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
         return .none

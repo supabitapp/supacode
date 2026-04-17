@@ -21,6 +21,7 @@ final class WorktreeTerminalState {
 
   let tabManager: TerminalTabManager
   private let runtime: GhosttyRuntime
+  @ObservationIgnored private let splitPreserveZoomOnNavigation: () -> Bool
   private let worktree: Worktree
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
@@ -63,8 +64,14 @@ final class WorktreeTerminalState {
   var onCommandPaletteToggle: (() -> Void)?
   var onSetupScriptConsumed: (() -> Void)?
 
-  init(runtime: GhosttyRuntime, worktree: Worktree, runSetupScript: Bool = false) {
+  init(
+    runtime: GhosttyRuntime,
+    worktree: Worktree,
+    runSetupScript: Bool = false,
+    splitPreserveZoomOnNavigation: (() -> Bool)? = nil
+  ) {
     self.runtime = runtime
+    self.splitPreserveZoomOnNavigation = splitPreserveZoomOnNavigation ?? { runtime.splitPreserveZoomOnNavigation() }
     self.worktree = worktree
     self.pendingSetupScript = runSetupScript
     self.tabManager = TerminalTabManager()
@@ -168,7 +175,7 @@ final class WorktreeTerminalState {
     let tabId = createTab(
       TabCreation(
         title: title,
-        icon: "terminal",
+        icon: nil,
         isTitleLocked: false,
         command: nil,
         initialInput: resolvedInput,
@@ -184,11 +191,39 @@ final class WorktreeTerminalState {
     return tabId
   }
 
+  /// Stops a single user-defined script identified by its definition ID.
   @discardableResult
-  func stopRunScript() -> Bool {
-    guard let tabId = blockingScripts.first(where: { $0.value == .run })?.key else { return false }
+  func stopScript(definitionID: UUID) -> Bool {
+    guard
+      let tabId = blockingScripts.first(where: { $0.value.scriptDefinitionID == definitionID })?.key
+    else { return false }
     closeTab(tabId)
     return true
+  }
+
+  /// Stops all running `.run`-kind scripts. Intentionally excludes
+  /// non-run scripts (test, deploy, etc.) because the Stop action
+  /// (Cmd+.) is the semantic counterpart of Run, not a "stop
+  /// everything" command. Other kinds are stopped individually
+  /// via the script menu or command palette.
+  @discardableResult
+  func stopRunScripts() -> Bool {
+    let runTabIds = blockingScripts.filter { $0.value.isRunKind }.map(\.key)
+    guard !runTabIds.isEmpty else { return false }
+    for tabId in runTabIds {
+      closeTab(tabId)
+    }
+    return true
+  }
+
+  /// Returns the set of script definition IDs currently running.
+  func runningScriptDefinitionIDs() -> Set<UUID> {
+    Set(blockingScripts.values.compactMap(\.scriptDefinitionID))
+  }
+
+  /// Checks whether a user-defined script with the given definition ID is running.
+  func isScriptRunning(definitionID: UUID) -> Bool {
+    blockingScripts.values.contains(where: { $0.scriptDefinitionID == definitionID })
   }
 
   @discardableResult
@@ -574,8 +609,13 @@ final class WorktreeTerminalState {
         return false
       }
       if tree.zoomed != nil {
-        tree = tree.settingZoomed(nil)
-        trees[tabId] = tree
+        if splitPreserveZoomOnNavigation() {
+          let nextNode = tree.root?.node(view: nextSurface)
+          tree = tree.settingZoomed(nextNode)
+        } else {
+          tree = tree.settingZoomed(nil)
+        }
+        updateTree(tree, for: tabId)
       }
       focusSurface(nextSurface, in: tabId)
       syncFocusIfNeeded()

@@ -77,7 +77,7 @@ struct RepositoriesFeature {
     var pendingWorktrees: [PendingWorktree] = []
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
-    var runScriptWorktreeIDs: Set<Worktree.ID> = []
+    var runningScriptsByWorktreeID: [Worktree.ID: Set<UUID>] = [:]
     var archivingWorktreeIDs: Set<Worktree.ID> = []
     var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
@@ -200,7 +200,8 @@ struct RepositoriesFeature {
     )
     case consumeSetupScript(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
-    case runScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
+    case scriptCompleted(
+      worktreeID: Worktree.ID, scriptID: UUID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
     case requestArchiveWorktree(Worktree.ID, Repository.ID)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID)
@@ -249,6 +250,7 @@ struct RepositoriesFeature {
     case dismissToast
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
+    case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
@@ -308,6 +310,7 @@ struct RepositoriesFeature {
     case selectedWorktreeChanged(Worktree?)
     case repositoriesChanged(IdentifiedArrayOf<Repository>)
     case openRepositorySettings(Repository.ID)
+    case openWorktreeInApp(Worktree.ID, OpenWorktreeAction)
     case worktreeCreated(Worktree)
     case runBlockingScript(Worktree, repositoryID: Repository.ID, kind: BlockingScriptKind, script: String)
     case selectTerminalTab(Worktree.ID, tabId: TerminalTabID)
@@ -1391,15 +1394,24 @@ struct RepositoriesFeature {
           }
         )
 
-      case .runScriptCompleted(let worktreeID, let exitCode, let tabId):
-        guard state.runScriptWorktreeIDs.contains(worktreeID) else {
-          repositoriesLogger.debug("Ignoring runScriptCompleted for \(worktreeID): not in runScriptWorktreeIDs")
+      case .scriptCompleted(let worktreeID, let scriptID, let kind, let exitCode, let tabId):
+        guard var ids = state.runningScriptsByWorktreeID[worktreeID], ids.contains(scriptID) else {
+          repositoriesLogger.debug("Ignoring scriptCompleted for \(worktreeID)/\(scriptID): not tracked")
           return .none
         }
-        state.runScriptWorktreeIDs.remove(worktreeID)
+        ids.remove(scriptID)
+        if ids.isEmpty {
+          state.runningScriptsByWorktreeID.removeValue(forKey: worktreeID)
+        } else {
+          state.runningScriptsByWorktreeID[worktreeID] = ids
+        }
         guard let exitCode, exitCode != 0 else { return .none }
         state.alert = blockingScriptFailureAlert(
-          kind: .run, exitCode: exitCode, worktreeID: worktreeID, tabId: tabId, state: state
+          kind: kind,
+          exitCode: exitCode,
+          worktreeID: worktreeID,
+          tabId: tabId,
+          state: state
         )
         return .none
 
@@ -2008,7 +2020,7 @@ struct RepositoriesFeature {
         var effects: [Effect<Action>] = [
           .run { _ in
             await repositoryPersistence.savePinnedWorktreeIDs(pinnedWorktreeIDs)
-          },
+          }
         ]
         if didUpdateWorktreeOrder {
           let worktreeOrderByRepository = state.worktreeOrderByRepository
@@ -2035,7 +2047,7 @@ struct RepositoriesFeature {
         var effects: [Effect<Action>] = [
           .run { _ in
             await repositoryPersistence.savePinnedWorktreeIDs(pinnedWorktreeIDs)
-          },
+          }
         ]
         if didUpdateWorktreeOrder {
           let worktreeOrderByRepository = state.worktreeOrderByRepository
@@ -2732,6 +2744,9 @@ struct RepositoriesFeature {
       case .openRepositorySettings(let repositoryID):
         return .send(.delegate(.openRepositorySettings(repositoryID)))
 
+      case .contextMenuOpenWorktree(let worktreeID, let action):
+        return .send(.delegate(.openWorktreeInApp(worktreeID, action)))
+
       case .alert(.presented(.viewTerminalTab(let worktreeID, let tabId))):
         return .merge(
           .send(.selectWorktree(worktreeID, focusTerminal: true)),
@@ -2907,7 +2922,9 @@ struct RepositoriesFeature {
     let filteredFocusIDs = state.pendingTerminalFocusWorktreeIDs.filter {
       availableWorktreeIDs.contains($0)
     }
-    let filteredRunScriptIDs = state.runScriptWorktreeIDs
+    let filteredRunningScripts = state.runningScriptsByWorktreeID.filter {
+      availableWorktreeIDs.contains($0.key)
+    }
     let filteredArchivingIDs = state.archivingWorktreeIDs
     let filteredWorktreeInfo = state.worktreeInfoByID.filter {
       availableWorktreeIDs.contains($0.key)
@@ -2921,7 +2938,8 @@ struct RepositoriesFeature {
         state.deleteScriptWorktreeIDs = filteredDeleteScriptIDs
         state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
         state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
-        state.runScriptWorktreeIDs = filteredRunScriptIDs
+        state.runningScriptsByWorktreeID = filteredRunningScripts
+
         state.archivingWorktreeIDs = filteredArchivingIDs
         state.worktreeInfoByID = filteredWorktreeInfo
       }
@@ -2932,6 +2950,7 @@ struct RepositoriesFeature {
       state.deleteScriptWorktreeIDs = filteredDeleteScriptIDs
       state.pendingSetupScriptWorktreeIDs = filteredSetupScriptIDs
       state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
+      state.runningScriptsByWorktreeID = filteredRunningScripts
       state.archivingWorktreeIDs = filteredArchivingIDs
       state.worktreeInfoByID = filteredWorktreeInfo
     }
@@ -3139,6 +3158,18 @@ extension RepositoriesFeature.State {
       }
     }
     return nil
+  }
+
+  /// Tint colors for scripts currently running in the given worktree,
+  /// ordered deterministically by script ID. Falls back to `.green`
+  /// for script IDs not found in the lookup (e.g. when the selected
+  /// worktree belongs to a different repository).
+  func runningScriptColors(
+    for worktreeID: Worktree.ID,
+    scriptsByID: [UUID: ScriptDefinition]
+  ) -> [TerminalTabTintColor] {
+    guard let scriptIDs = runningScriptsByWorktreeID[worktreeID] else { return [] }
+    return scriptIDs.sorted().map { scriptsByID[$0]?.resolvedTintColor ?? .green }
   }
 
   func pendingWorktree(for id: Worktree.ID?) -> PendingWorktree? {

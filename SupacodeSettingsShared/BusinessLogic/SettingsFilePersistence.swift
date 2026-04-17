@@ -36,20 +36,20 @@ public nonisolated enum SettingsFileURLKey: DependencyKey {
   public static var testValue: URL { SupacodePaths.settingsURL }
 }
 
-public extension DependencyValues {
-  nonisolated var settingsFileStorage: SettingsFileStorage {
+extension DependencyValues {
+  public nonisolated var settingsFileStorage: SettingsFileStorage {
     get { self[SettingsFileStorageKey.self] }
     set { self[SettingsFileStorageKey.self] = newValue }
   }
 
-  nonisolated var settingsFileURL: URL {
+  public nonisolated var settingsFileURL: URL {
     get { self[SettingsFileURLKey.self] }
     set { self[SettingsFileURLKey.self] = newValue }
   }
 }
 
-public extension SettingsFileStorage {
-  nonisolated static func inMemory() -> SettingsFileStorage {
+extension SettingsFileStorage {
+  public nonisolated static func inMemory() -> SettingsFileStorage {
     let storage = InMemorySettingsFileStorage()
     return SettingsFileStorage(
       load: { try storage.load($0) },
@@ -154,9 +154,8 @@ public nonisolated struct SettingsFileKey: SharedKey {
     return encoder
   }
 }
-
-public nonisolated extension SharedReaderKey where Self == SettingsFileKey.Default {
-  static var settingsFile: Self {
+nonisolated extension SharedReaderKey where Self == SettingsFileKey.Default {
+  public static var settingsFile: Self {
     Self[SettingsFileKey(), default: .default]
   }
 }

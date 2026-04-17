@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import Sharing
+import SupacodeSettingsShared
 
 @Reducer
 struct CommandPaletteFeature {
@@ -49,6 +50,8 @@ struct CommandPaletteFeature {
     case copyCiFailureLogs(Worktree.ID)
     case rerunFailedJobs(Worktree.ID)
     case openFailingCheckDetails(Worktree.ID)
+    case runScript(ScriptDefinition)
+    case stopScript(UUID, name: String)
     #if DEBUG
       case debugTestToast(RepositoriesFeature.StatusToast)
     #endif
@@ -163,7 +166,9 @@ struct CommandPaletteFeature {
 
   static func commandPaletteItems(
     from repositories: RepositoriesFeature.State,
-    ghosttyCommands: [GhosttyCommand] = []
+    ghosttyCommands: [GhosttyCommand] = [],
+    scripts: [ScriptDefinition] = [],
+    runningScriptIDs: Set<UUID> = []
   ) -> [CommandPaletteItem] {
     var items: [CommandPaletteItem] = [
       CommandPaletteItem(
@@ -205,6 +210,7 @@ struct CommandPaletteFeature {
     ]
     if repositories.selectedWorktreeID != nil {
       items.append(contentsOf: ghosttyCommandItems(ghosttyCommands))
+      items.append(contentsOf: scriptItems(scripts: scripts, runningScriptIDs: runningScriptIDs))
     }
     if let selectedWorktreeID = repositories.selectedWorktreeID,
       let repositoryID = repositories.repositoryID(containing: selectedWorktreeID),
@@ -239,7 +245,8 @@ struct CommandPaletteFeature {
   }
 
   static func recencyRetentionIDs(
-    from repositories: IdentifiedArrayOf<Repository>
+    from repositories: IdentifiedArrayOf<Repository>,
+    scripts: [ScriptDefinition] = []
   ) -> [CommandPaletteItem.ID] {
     var ids = CommandPaletteItemID.globalIDs
     for repository in repositories {
@@ -247,6 +254,10 @@ struct CommandPaletteFeature {
       for worktree in repository.worktrees {
         ids.append(CommandPaletteItemID.worktreeSelect(worktree.id))
       }
+    }
+    for script in scripts {
+      ids.append(CommandPaletteItemID.runScript(script.id))
+      ids.append(CommandPaletteItemID.stopScript(script.id))
     }
     return ids
   }
@@ -333,7 +344,7 @@ private func pullRequestItems(
       subtitle: pullRequest.title,
       kind: .openPullRequest(worktreeID),
       priorityTier: 2
-    ),
+    )
   ]
 
   if let readyItem = makeReadyItem() {
@@ -491,6 +502,14 @@ private enum CommandPaletteItemID {
   static func pullRequestClose(_ repositoryID: Repository.ID) -> CommandPaletteItem.ID {
     "pr.\(repositoryID).close"
   }
+
+  static func runScript(_ scriptID: UUID) -> CommandPaletteItem.ID {
+    "script.\(scriptID).run"
+  }
+
+  static func stopScript(_ scriptID: UUID) -> CommandPaletteItem.ID {
+    "script.\(scriptID).stop"
+  }
 }
 
 private func prioritizeItems(
@@ -556,6 +575,10 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
     .rerunFailedJobs,
     .openFailingCheckDetails:
     return pullRequestDelegateAction(for: kind)!
+  case .runScript(let definition):
+    return .runScript(definition)
+  case .stopScript(let scriptID, let name):
+    return .stopScript(scriptID, name: name)
   #if DEBUG
     case .debugTestToast(let toast):
       return .debugTestToast(toast)
@@ -592,13 +615,47 @@ private func pullRequestDelegateAction(
     .archiveWorktree,
     .viewArchivedWorktrees,
     .refreshWorktrees,
-    .ghosttyCommand:
+    .ghosttyCommand,
+    .runScript,
+    .stopScript:
     return nil
   #if DEBUG
     case .debugTestToast:
       return nil
   #endif
   }
+}
+
+private func scriptItems(
+  scripts: [ScriptDefinition],
+  runningScriptIDs: Set<UUID>
+) -> [CommandPaletteItem] {
+  var items: [CommandPaletteItem] = []
+  for script in scripts {
+    let trimmed = script.command.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { continue }
+    if runningScriptIDs.contains(script.id) {
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.stopScript(script.id),
+          title: "Stop: \(script.displayName)",
+          subtitle: nil,
+          kind: .stopScript(script.id, name: script.displayName),
+          priorityTier: 0
+        )
+      )
+    } else {
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.runScript(script.id),
+          title: "Run: \(script.displayName)",
+          subtitle: nil,
+          kind: .runScript(script)
+        )
+      )
+    }
+  }
+  return items
 }
 
 private func ghosttyCommandItems(_ commands: [GhosttyCommand]) -> [CommandPaletteItem] {

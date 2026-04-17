@@ -38,9 +38,145 @@ private struct RepositoryLabel: View {
   }
 }
 
+/// Disclosure group label for a repository in the settings sidebar.
+private struct RepositoryDisclosureLabel: View {
+  let repository: SettingsRepositorySummary
+  @Bindable var settingsStore: StoreOf<SettingsFeature>
+  @Binding var isExpanded: Bool
+
+  private var isSelected: Bool {
+    settingsStore.selection?.repositoryID == repository.id
+  }
+
+  var body: some View {
+    RepositoryLabel(name: repository.name, rootURL: repository.rootURL)
+      .contentShape(Rectangle())
+      .accessibilityAddTraits(.isButton)
+      .onTapGesture {
+        guard !isSelected else {
+          isExpanded.toggle()
+          return
+        }
+        _ = settingsStore.send(.setSelection(.repository(repository.id)))
+      }
+  }
+}
+
+/// Sidebar content for the settings split view.
+private struct SettingsSidebarView: View {
+  @Bindable var settingsStore: StoreOf<SettingsFeature>
+  @Binding var expandedRepositories: Set<String>
+
+  var body: some View {
+    List(selection: $settingsStore.selection.sending(\.setSelection)) {
+      Label("General", systemImage: "gearshape")
+        .tag(SettingsSection.general)
+      Label("Notifications", systemImage: "bell")
+        .tag(SettingsSection.notifications)
+      Label("Worktrees", systemImage: "list.dash")
+        .tag(SettingsSection.worktree)
+      Label("Developer", systemImage: "hammer")
+        .tag(SettingsSection.developer)
+      Label("GitHub", image: "github-mark")
+        .tag(SettingsSection.github)
+      Label("Shortcuts", systemImage: "keyboard")
+        .tag(SettingsSection.shortcuts)
+      Label("Updates", systemImage: "arrow.down.circle")
+        .tag(SettingsSection.updates)
+
+      Section("Repositories") {
+        ForEach(settingsStore.repositorySummaries, id: \.id) { repository in
+          let isExpanded = Binding(
+            get: { expandedRepositories.contains(repository.id) },
+            set: { expanded in
+              if expanded {
+                expandedRepositories.insert(repository.id)
+              } else {
+                expandedRepositories.remove(repository.id)
+              }
+            }
+          )
+          DisclosureGroup(isExpanded: isExpanded) {
+            Label("General", systemImage: "gearshape")
+              .tag(SettingsSection.repository(repository.id))
+            Label("Scripts", systemImage: "terminal")
+              .tag(SettingsSection.repositoryScripts(repository.id))
+          } label: {
+            RepositoryDisclosureLabel(
+              repository: repository,
+              settingsStore: settingsStore,
+              isExpanded: isExpanded
+            )
+          }
+        }
+      }
+    }
+    .listStyle(.sidebar)
+    .frame(minWidth: 220, maxHeight: .infinity)
+    .navigationSplitViewColumnWidth(220)
+    .toolbar(removing: .sidebarToggle)
+  }
+}
+
+/// Detail pane content for the settings split view.
+private struct SettingsDetailView: View {
+  let selection: SettingsSection
+  let selectedRepositorySummary: SettingsRepositorySummary?
+  @Bindable var settingsStore: StoreOf<SettingsFeature>
+  let updatesStore: StoreOf<UpdatesFeature>
+
+  var body: some View {
+    switch selection {
+    case .general:
+      AppearanceSettingsView(store: settingsStore)
+    case .notifications:
+      NotificationsSettingsView(store: settingsStore)
+    case .worktree:
+      WorktreeSettingsView(store: settingsStore)
+    case .developer:
+      DeveloperSettingsView(store: settingsStore)
+    case .shortcuts:
+      KeyboardShortcutsSettingsView(store: settingsStore)
+    case .updates:
+      UpdatesSettingsView(settingsStore: settingsStore, updatesStore: updatesStore)
+    case .github:
+      GithubSettingsView(store: settingsStore)
+    case .repository:
+      if let repository = selectedRepositorySummary {
+        IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
+          repositorySettingsStore in
+          RepositorySettingsView(store: repositorySettingsStore)
+            .id(repository.id)
+            .navigationTitle(repository.name)
+        }
+      } else {
+        Text("Repository not found.")
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .navigationTitle("Repositories")
+      }
+    case .repositoryScripts:
+      if let repository = selectedRepositorySummary {
+        IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
+          repositorySettingsStore in
+          RepositoryScriptsSettingsView(store: repositorySettingsStore)
+            .id("\(repository.id)-scripts")
+            .navigationTitle("\(repository.name) — Scripts")
+        }
+      } else {
+        Text("Repository not found.")
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .navigationTitle("Scripts")
+      }
+    }
+  }
+}
+
 struct SettingsView: View {
   @Bindable var store: StoreOf<AppFeature>
   @Bindable var settingsStore: StoreOf<SettingsFeature>
+  @State private var expandedRepositories: Set<String> = []
 
   init(store: StoreOf<AppFeature>) {
     self.store = store
@@ -51,71 +187,29 @@ struct SettingsView: View {
     let updatesStore = store.scope(state: \.updates, action: \.updates)
     let selection = settingsStore.selection ?? .general
     let selectedRepositorySummary: SettingsRepositorySummary? = {
-      guard case .repository(let repositoryID) = selection else {
+      guard let repositoryID = selection.repositoryID else {
         return nil
       }
       return settingsStore.repositorySummaries.first(where: { $0.id == repositoryID })
     }()
 
     NavigationSplitView(columnVisibility: .constant(.all)) {
-      List(selection: $settingsStore.selection.sending(\.setSelection)) {
-        Label("General", systemImage: "gearshape")
-          .tag(SettingsSection.general)
-        Label("Notifications", systemImage: "bell")
-          .tag(SettingsSection.notifications)
-        Label("Worktrees", systemImage: "list.dash")
-          .tag(SettingsSection.worktree)
-        Label("Developer", systemImage: "hammer")
-          .tag(SettingsSection.developer)
-        Label("GitHub", image: "github-mark")
-          .tag(SettingsSection.github)
-        Label("Shortcuts", systemImage: "keyboard")
-          .tag(SettingsSection.shortcuts)
-        Label("Updates", systemImage: "arrow.down.circle")
-          .tag(SettingsSection.updates)
-
-        Section("Repositories") {
-          ForEach(settingsStore.repositorySummaries, id: \.id) { repository in
-            RepositoryLabel(name: repository.name, rootURL: repository.rootURL)
-              .tag(SettingsSection.repository(repository.id))
-          }
-        }
+      SettingsSidebarView(
+        settingsStore: settingsStore,
+        expandedRepositories: $expandedRepositories
+      )
+      .onChange(of: selection) { _, newSelection in
+        // Auto-expand the repository disclosure group when navigating to it.
+        guard let repositoryID = newSelection.repositoryID else { return }
+        expandedRepositories.insert(repositoryID)
       }
-      .listStyle(.sidebar)
-      .frame(minWidth: 220, maxHeight: .infinity)
-      .navigationSplitViewColumnWidth(220)
-      .toolbar(removing: .sidebarToggle)
     } detail: {
-      switch selection {
-      case .general:
-        AppearanceSettingsView(store: settingsStore)
-      case .notifications:
-        NotificationsSettingsView(store: settingsStore)
-      case .worktree:
-        WorktreeSettingsView(store: settingsStore)
-      case .developer:
-        DeveloperSettingsView(store: settingsStore)
-      case .shortcuts:
-        KeyboardShortcutsSettingsView(store: settingsStore)
-      case .updates:
-        UpdatesSettingsView(settingsStore: settingsStore, updatesStore: updatesStore)
-      case .github:
-        GithubSettingsView(store: settingsStore)
-      case .repository:
-        if let repository = selectedRepositorySummary {
-          IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
-            repositorySettingsStore in
-            RepositorySettingsView(store: repositorySettingsStore)
-              .id(repository.id)
-              .navigationTitle(repository.name)
-          }
-        } else {
-          Text("Repository not found.")
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .navigationTitle("Repositories")
-        }
-      }
+      SettingsDetailView(
+        selection: selection,
+        selectedRepositorySummary: selectedRepositorySummary,
+        settingsStore: settingsStore,
+        updatesStore: updatesStore
+      )
     }
     .toolbar {
       // Invisible item keeps the toolbar stable when switching between

@@ -31,8 +31,8 @@ extension RepositorySettingsGitClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var repositorySettingsGitClient: RepositorySettingsGitClient {
+extension DependencyValues {
+  public var repositorySettingsGitClient: RepositorySettingsGitClient {
     get { self[RepositorySettingsGitClient.self] }
     set { self[RepositorySettingsGitClient.self] = newValue }
   }

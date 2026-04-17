@@ -2,6 +2,7 @@ import ComposableArchitecture
 import CustomDump
 import Foundation
 import IdentifiedCollections
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -49,7 +50,7 @@ struct CommandPaletteFeatureTests {
           copyIgnored: false,
           copyUntracked: false
         )
-      ),
+      )
     ]
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
@@ -74,7 +75,7 @@ struct CommandPaletteFeatureTests {
           description: "Focus the split to the right.",
           action: "goto_split:right",
           actionKey: "goto_split"
-        ),
+        )
       ]
     )
 
@@ -98,7 +99,7 @@ struct CommandPaletteFeatureTests {
           description: "",
           action: "goto_split:right",
           actionKey: "goto_split"
-        ),
+        )
       ]
     )
 
@@ -1000,6 +1001,92 @@ struct CommandPaletteFeatureTests {
       $0.recencyByItemID[item.id] = now.timeIntervalSince1970
     }
     await store.receive(.delegate(.ghosttyCommand("goto_split:right")))
+  }
+
+  // MARK: - Script items.
+
+  @Test func commandPaletteItems_includesRunItemsForConfiguredScripts() {
+    let rootPath = "/tmp/repo"
+    let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(repositories: [repository])
+    state.selection = .worktree(worktree.id)
+
+    let runDef = ScriptDefinition(kind: .run, command: "npm run dev")
+    let testDef = ScriptDefinition(kind: .test, command: "npm test")
+
+    let items = CommandPaletteFeature.commandPaletteItems(
+      from: state,
+      scripts: [runDef, testDef]
+    )
+
+    let runItem = items.first { $0.id == "script.\(runDef.id).run" }
+    let testItem = items.first { $0.id == "script.\(testDef.id).run" }
+    #expect(runItem?.title == "Run: Run")
+    #expect(testItem?.title == "Run: Test")
+  }
+
+  @Test func commandPaletteItems_showsStopForRunningScripts() {
+    let rootPath = "/tmp/repo"
+    let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(repositories: [repository])
+    state.selection = .worktree(worktree.id)
+
+    let definition = ScriptDefinition(kind: .run, command: "npm run dev")
+
+    let items = CommandPaletteFeature.commandPaletteItems(
+      from: state,
+      scripts: [definition],
+      runningScriptIDs: [definition.id]
+    )
+
+    let stopItem = items.first { $0.id == "script.\(definition.id).stop" }
+    #expect(stopItem?.title == "Stop: Run")
+    #expect(stopItem?.priorityTier == 0)
+    // No run item should exist for a running script.
+    let runItem = items.first { $0.id == "script.\(definition.id).run" }
+    #expect(runItem == nil)
+  }
+
+  @Test func commandPaletteItems_excludesEmptyCommandScripts() {
+    let rootPath = "/tmp/repo"
+    let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(repositories: [repository])
+    state.selection = .worktree(worktree.id)
+
+    let emptyDef = ScriptDefinition(kind: .run, command: "  ")
+    let validDef = ScriptDefinition(kind: .test, command: "npm test")
+
+    let items = CommandPaletteFeature.commandPaletteItems(
+      from: state,
+      scripts: [emptyDef, validDef]
+    )
+
+    #expect(items.contains { $0.id == "script.\(emptyDef.id).run" } == false)
+    #expect(items.contains { $0.id == "script.\(validDef.id).run" })
+  }
+
+  @Test func commandPaletteItems_excludesScriptsWithoutSelectedWorktree() {
+    let definition = ScriptDefinition(kind: .run, command: "npm run dev")
+    let items = CommandPaletteFeature.commandPaletteItems(
+      from: RepositoriesFeature.State(),
+      scripts: [definition]
+    )
+
+    #expect(items.contains { $0.id == "script.\(definition.id).run" } == false)
+  }
+
+  @Test func recencyRetentionIDs_includesScriptIDs() {
+    let definition = ScriptDefinition(kind: .run, command: "npm run dev")
+    let ids = CommandPaletteFeature.recencyRetentionIDs(
+      from: [],
+      scripts: [definition]
+    )
+
+    #expect(ids.contains("script.\(definition.id).run"))
+    #expect(ids.contains("script.\(definition.id).stop"))
   }
 }
 

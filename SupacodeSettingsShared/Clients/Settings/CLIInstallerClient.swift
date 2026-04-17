@@ -36,8 +36,8 @@ extension CLIInstallerClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var cliInstallerClient: CLIInstallerClient {
+extension DependencyValues {
+  public var cliInstallerClient: CLIInstallerClient {
     get { self[CLIInstallerClient.self] }
     set { self[CLIInstallerClient.self] = newValue }
   }

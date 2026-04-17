@@ -30,8 +30,8 @@ extension CLISkillClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var cliSkillClient: CLISkillClient {
+extension DependencyValues {
+  public var cliSkillClient: CLISkillClient {
     get { self[CLISkillClient.self] }
     set { self[CLISkillClient.self] = newValue }
   }

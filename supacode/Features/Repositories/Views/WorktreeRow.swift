@@ -14,7 +14,7 @@ struct WorktreeRow: View {
   let info: WorktreeInfoEntry?
   let pullRequestBadgeText: String?
   let showsPullRequestInfo: Bool
-  let isRunScriptRunning: Bool
+  let runningScriptColors: [TerminalTabTintColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
   let shortcutHint: String?
@@ -62,7 +62,7 @@ struct WorktreeRow: View {
     hideSubtitle: Bool,
     hideSubtitleOnMatch: Bool,
     showsPullRequestInfo: Bool,
-    isRunScriptRunning: Bool,
+    runningScriptColors: [TerminalTabTintColor],
     isTaskRunning: Bool,
     showsNotificationIndicator: Bool,
     notifications: [WorktreeTerminalNotification],
@@ -73,7 +73,7 @@ struct WorktreeRow: View {
     self.isPending = row.isPending
     self.info = row.info
     self.showsPullRequestInfo = showsPullRequestInfo
-    self.isRunScriptRunning = isRunScriptRunning
+    self.runningScriptColors = runningScriptColors
     self.showsNotificationIndicator = showsNotificationIndicator
     self.notifications = notifications
     self.shortcutHint = shortcutHint
@@ -178,7 +178,7 @@ struct WorktreeRow: View {
           info: info,
           showsPullRequestInfo: showsPullRequestInfo,
           pullRequestBadgeText: pullRequestBadgeText,
-          isRunScriptRunning: isRunScriptRunning,
+          runningScriptColors: runningScriptColors,
           showsNotificationIndicator: showsNotificationIndicator,
           notifications: notifications
         )
@@ -315,7 +315,7 @@ private struct TrailingView: View {
   let info: WorktreeInfoEntry?
   let showsPullRequestInfo: Bool
   let pullRequestBadgeText: String?
-  let isRunScriptRunning: Bool
+  let runningScriptColors: [TerminalTabTintColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
 
@@ -334,7 +334,7 @@ private struct TrailingView: View {
             .transition(.blurReplace)
         }
         StatusIndicator(
-          isRunScriptRunning: isRunScriptRunning,
+          runningScriptColors: runningScriptColors,
           showsNotificationIndicator: showsNotificationIndicator,
           notifications: notifications
         )
@@ -368,7 +368,7 @@ private struct DiffStatsView: View {
 // MARK: - Status indicator.
 
 private struct StatusIndicator: View {
-  let isRunScriptRunning: Bool
+  let runningScriptColors: [TerminalTabTintColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
   @Environment(\.backgroundProminence) private var backgroundProminence
@@ -376,11 +376,13 @@ private struct StatusIndicator: View {
 
   var body: some View {
     let isEmphasized = backgroundProminence == .increased
-    if isRunScriptRunning || showsNotificationIndicator {
+    let isRunning = !runningScriptColors.isEmpty
+    if isRunning || showsNotificationIndicator {
       ZStack {
-        if isRunScriptRunning {
-          PingDot(
-            style: isEmphasized ? AnyShapeStyle(.primary) : AnyShapeStyle(.green),
+        if isRunning {
+          MultiColorPingDot(
+            colors: runningScriptColors,
+            isEmphasized: isEmphasized,
             size: 6,
             showsSolidCenter: !showsNotificationIndicator
           )
@@ -400,19 +402,101 @@ private struct StatusIndicator: View {
   }
 }
 
-// MARK: - Vertically centered label style.
+// MARK: - Multi-color ping dot.
 
-private struct VerticallyCenteredLabelStyle: LabelStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    HStack(spacing: 6) {
-      configuration.icon
-      configuration.title
+/// Displays a pulsing dot that cycles through multiple script tint
+/// colors when more than one script is running. Falls back to the
+/// single-color pulsing behavior when only one color is present.
+private struct MultiColorPingDot: View {
+  let colors: [TerminalTabTintColor]
+  let isEmphasized: Bool
+  let size: CGFloat
+  let showsSolidCenter: Bool
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  /// Unique, ordered colors derived from the input.
+  private var uniqueColors: [Color] {
+    guard !isEmphasized else { return [.primary] }
+    var seen = Set<TerminalTabTintColor>()
+    return colors.compactMap { tint in
+      guard seen.insert(tint).inserted else { return nil }
+      return tint.color
+    }
+  }
+
+  var body: some View {
+    let resolved = uniqueColors
+    if resolved.count <= 1 {
+      PingDot(
+        style: resolved.first.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.green),
+        size: size,
+        showsSolidCenter: showsSolidCenter
+      )
+    } else if reduceMotion {
+      // Show a static dot with the first color when motion is reduced.
+      StaticDot(color: resolved[0], size: size, showsSolidCenter: showsSolidCenter)
+    } else {
+      CyclingDot(colors: resolved, size: size, showsSolidCenter: showsSolidCenter)
     }
   }
 }
 
-extension LabelStyle where Self == VerticallyCenteredLabelStyle {
-  static var verticallyCentered: VerticallyCenteredLabelStyle { .init() }
+/// Static dot used when accessibility reduce-motion is enabled.
+private struct StaticDot: View {
+  let color: Color
+  let size: CGFloat
+  let showsSolidCenter: Bool
+
+  var body: some View {
+    ZStack {
+      Circle()
+        .stroke(color, lineWidth: 1)
+        .frame(width: size, height: size)
+        .opacity(0.6)
+      if showsSolidCenter {
+        Circle()
+          .fill(color)
+          .frame(width: size, height: size)
+      }
+    }
+    .accessibilityLabel("Run script active")
+  }
+}
+
+/// Animated dot that smoothly cycles through the provided colors.
+private struct CyclingDot: View {
+  let colors: [Color]
+  let size: CGFloat
+  let showsSolidCenter: Bool
+  @State private var isPinging = false
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 2.0)) { timeline in
+      let index = Self.colorIndex(for: timeline.date, count: colors.count)
+      ZStack {
+        Circle()
+          .stroke(colors[index], lineWidth: 1)
+          .frame(width: size, height: size)
+          .scaleEffect(isPinging ? 2 : 1)
+          .opacity(isPinging ? 0 : 0.6)
+          .animation(.easeOut(duration: 1).repeatForever(autoreverses: false), value: isPinging)
+        if showsSolidCenter {
+          Circle()
+            .fill(colors[index])
+            .frame(width: size, height: size)
+        }
+      }
+      .animation(.easeInOut(duration: 0.6), value: index)
+    }
+    .accessibilityLabel("Run script active")
+    .task { isPinging = true }
+  }
+
+  private static func colorIndex(for date: Date, count: Int) -> Int {
+    guard count > 0 else { return 0 }
+    let seconds = Int(date.timeIntervalSinceReferenceDate)
+    return (seconds / 2) % count
+  }
 }
 
 // MARK: - Pulsing dot.

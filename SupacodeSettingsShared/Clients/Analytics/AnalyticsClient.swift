@@ -39,8 +39,8 @@ extension AnalyticsClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var analyticsClient: AnalyticsClient {
+extension DependencyValues {
+  public var analyticsClient: AnalyticsClient {
     get { self[AnalyticsClient.self] }
     set { self[AnalyticsClient.self] = newValue }
   }
@@ -50,8 +50,8 @@ private struct AnalyticsClientKey: EnvironmentKey {
   static let defaultValue = AnalyticsClient.liveValue
 }
 
-public extension EnvironmentValues {
-  var analyticsClient: AnalyticsClient {
+extension EnvironmentValues {
+  public var analyticsClient: AnalyticsClient {
     get { self[AnalyticsClientKey.self] }
     set { self[AnalyticsClientKey.self] = newValue }
   }

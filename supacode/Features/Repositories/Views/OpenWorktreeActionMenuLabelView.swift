@@ -20,7 +20,13 @@ struct OpenWorktreeActionMenuLabelView: View {
   }
 
   var body: some View {
-    HStack(spacing: 6) {
+    Label {
+      if let shortcutHint {
+        Text(shortcutHint)
+      } else {
+        Text(action.labelTitle)
+      }
+    } icon: {
       if let icon = action.menuIcon {
         switch icon {
         case .app(let image):
@@ -33,18 +39,6 @@ struct OpenWorktreeActionMenuLabelView: View {
             .accessibilityHidden(true)
         }
       }
-      if let shortcutHint {
-        HStack(spacing: 2) {
-          Text(action.labelTitle)
-            .font(.body)
-          Text("(\(shortcutHint))")
-            .font(.body)
-            .foregroundStyle(.secondary)
-        }
-      } else {
-        Text(action.labelTitle)
-          .font(.body)
-      }
-    }
+    }.labelStyle(.titleAndIcon)
   }
 }
