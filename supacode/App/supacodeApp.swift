@@ -118,6 +118,11 @@ struct SupacodeApp: App {
   @MainActor init() {
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
+    // Fold the six legacy sidebar-state sources into `sidebar.json`
+    // before any @Shared binding observes them. Idempotent — gates
+    // on whether `sidebar.json` already exists — so the downgrade →
+    // re-upgrade path can't double-migrate.
+    SidebarPersistenceMigrator.migrateIfNeeded()
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
     let infoDictionary = Bundle.main.infoDictionary ?? [:]
