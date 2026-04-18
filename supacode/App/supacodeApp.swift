@@ -290,6 +290,30 @@ struct SupacodeApp: App {
         return
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: surfaces)
+    case "scripts":
+      guard let worktreeID = params["worktreeID"] else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Missing worktreeID for script list.")
+        return
+      }
+      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+      guard let worktree = repos.flatMap(\.worktrees).first(where: { $0.id == decoded }) else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+        return
+      }
+      @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var settings
+      let runningIDs = store.repositories.runningScriptsByWorktreeID[decoded] ?? []
+      let data = settings.scripts.map { script in
+        [
+          "id": script.id.uuidString,
+          "kind": script.kind.rawValue,
+          "name": script.name,
+          "displayName": script.displayName,
+          "running": runningIDs.contains(script.id) ? "1" : "",
+        ]
+      }
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
     default:
       AgentHookSocketServer.sendCommandResponse(
         clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")

@@ -18,6 +18,16 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/\(action)"
   }
 
+  // MARK: - Script.
+
+  static func scriptRun(worktreeID: String, scriptID: String) -> String {
+    "supacode://worktree/\(worktreeID)/script/\(scriptID)/run"
+  }
+
+  static func scriptStop(worktreeID: String, scriptID: String) -> String {
+    "supacode://worktree/\(worktreeID)/script/\(scriptID)/stop"
+  }
+
   // MARK: - Tab.
 
   static func tabFocus(worktreeID: String, tabID: String) -> String {

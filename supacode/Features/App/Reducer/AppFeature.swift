@@ -1021,7 +1021,6 @@ struct AppFeature {
       return runScriptDeeplinkEffect(
         worktreeID: worktreeID,
         scriptID: scriptID,
-        action: action,
         state: &state,
         bypassConfirmation: bypassConfirmation,
         responseFD: responseFD
@@ -1152,7 +1151,6 @@ struct AppFeature {
   private func runScriptDeeplinkEffect(
     worktreeID: Worktree.ID,
     scriptID: UUID,
-    action: Deeplink.WorktreeAction,
     state: inout State,
     bypassConfirmation: Bool,
     responseFD: Int32?
@@ -1166,7 +1164,7 @@ struct AppFeature {
         worktreeID: worktreeID,
         responseFD: responseFD,
         message: .command(definition.command),
-        action: action,
+        action: .runScript(scriptID: scriptID),
         state: &state
       )
     }
