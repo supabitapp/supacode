@@ -977,15 +977,7 @@ struct AppFeature {
     let worktreeID = resolveWorktreeID(rawWorktreeID, state: state)
     guard state.repositories.worktree(for: worktreeID) != nil else {
       deeplinkLogger.warning("Worktree not found: \(rawWorktreeID)")
-      state.alert = AlertState {
-        TextState("Worktree not found")
-      } actions: {
-        ButtonState(role: .cancel, action: .dismiss) {
-          TextState("OK")
-        }
-      } message: {
-        TextState("No worktree matching the deeplink could be found. It may have been removed.")
-      }
+      state.alert = worktreeNotFoundAlert()
       return .none
     }
 
