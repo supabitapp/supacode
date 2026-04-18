@@ -427,6 +427,42 @@ struct AppFeatureDeeplinkTests {
     #expect(hasRun)
   }
 
+  @Test(.dependencies) func stopScriptSocketDeeplinkSendsErrorWhenNotRunning() async {
+    // Regression guard: stopping a script that exists but isn't running
+    // must surface an error on the socket responseFD so the CLI exits
+    // non-zero instead of reporting a false positive.
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .stopScript(scriptID: definition.id)),
+        source: .socket,
+        responseFD: writeFD
+      )
+    )
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.isEmpty == false)
+  }
+
   @Test(.dependencies) func runScriptSocketDeeplinkStoresResponseFDInConfirmation() async {
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")

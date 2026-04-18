@@ -1158,7 +1158,10 @@ struct AppFeature {
     // Read the target worktree's scripts directly so cross-worktree
     // deeplinks do not depend on the currently selected worktree's
     // `state.scripts`, which may still reflect an older selection.
-    guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
+    guard let worktree = state.repositories.worktree(for: worktreeID) else {
+      state.alert = worktreeNotFoundAlert()
+      return .none
+    }
     @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
     guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
       state.alert = scriptAlert(
@@ -1209,7 +1212,10 @@ struct AppFeature {
     scriptID: UUID,
     state: inout State
   ) -> Effect<Action> {
-    guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
+    guard let worktree = state.repositories.worktree(for: worktreeID) else {
+      state.alert = worktreeNotFoundAlert()
+      return .none
+    }
     @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
     guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
       state.alert = scriptAlert(
@@ -1241,6 +1247,18 @@ struct AppFeature {
       }
     } message: {
       TextState(message)
+    }
+  }
+
+  private func worktreeNotFoundAlert() -> AlertState<Alert> {
+    AlertState {
+      TextState("Worktree not found")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("No worktree matching the deeplink could be found. It may have been removed.")
     }
   }
 
