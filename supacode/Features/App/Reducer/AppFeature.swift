@@ -1017,6 +1017,17 @@ struct AppFeature {
       return .send(.runScript)
     case .stop:
       return .send(.stopRunScripts)
+    case .runScript(let scriptID):
+      return runScriptDeeplinkEffect(
+        worktreeID: worktreeID,
+        scriptID: scriptID,
+        action: action,
+        state: &state,
+        bypassConfirmation: bypassConfirmation,
+        responseFD: responseFD
+      )
+    case .stopScript(let scriptID):
+      return stopScriptDeeplinkEffect(scriptID: scriptID, state: &state)
     case .archive:
       guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
         return .none
@@ -1135,6 +1146,53 @@ struct AppFeature {
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .destroySurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID)
       }
+    }
+  }
+
+  private func runScriptDeeplinkEffect(
+    worktreeID: Worktree.ID,
+    scriptID: UUID,
+    action: Deeplink.WorktreeAction,
+    state: inout State,
+    bypassConfirmation: Bool,
+    responseFD: Int32?
+  ) -> Effect<Action> {
+    guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
+      state.alert = scriptNotFoundAlert()
+      return .none
+    }
+    if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
+      return presentDeeplinkConfirmation(
+        worktreeID: worktreeID,
+        responseFD: responseFD,
+        message: .command(definition.command),
+        action: action,
+        state: &state
+      )
+    }
+    return .send(.runNamedScript(definition))
+  }
+
+  private func stopScriptDeeplinkEffect(
+    scriptID: UUID,
+    state: inout State
+  ) -> Effect<Action> {
+    guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
+      state.alert = scriptNotFoundAlert()
+      return .none
+    }
+    return .send(.stopScript(definition))
+  }
+
+  private func scriptNotFoundAlert() -> AlertState<Alert> {
+    AlertState {
+      TextState("Script not found")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("No script matching the deeplink could be found. It may have been removed.")
     }
   }
 

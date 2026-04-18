@@ -168,6 +168,103 @@ struct AppFeatureDeeplinkTests {
     await store.receive(\.stopRunScripts)
   }
 
+  // MARK: - Named script deeplinks.
+
+  @Test(.dependencies) func runScriptDeeplinkShowsConfirmation() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initialState.scripts = [definition]
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
+    #expect(store.state.deeplinkInputConfirmation?.message == .command("npm test"))
+    #expect(store.state.deeplinkInputConfirmation?.action == .runScript(scriptID: definition.id))
+  }
+
+  @Test(.dependencies) func runScriptDeeplinkSkipsConfirmationWhenPolicyAllows() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: settings
+    )
+    initialState.scripts = [definition]
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
+    await store.finish()
+
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    let hasRun = sent.value.contains(where: {
+      if case .runBlockingScript = $0 { return true }
+      return false
+    })
+    #expect(hasRun)
+  }
+
+  @Test(.dependencies) func runScriptDeeplinkWithUnknownScriptShowsAlert() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: UUID()))))
+    #expect(store.state.alert != nil)
+    #expect(store.state.deeplinkInputConfirmation == nil)
+  }
+
+  @Test(.dependencies) func stopScriptDeeplinkSendsStopCommand() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initialState.scripts = [definition]
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .stopScript(scriptID: definition.id))))
+    await store.finish()
+
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    let hasStop = sent.value.contains(where: {
+      if case .stopScript(_, let definitionID) = $0 { return definitionID == definition.id }
+      return false
+    })
+    #expect(hasStop)
+  }
+
+  @Test(.dependencies) func stopScriptDeeplinkWithUnknownScriptShowsAlert() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .stopScript(scriptID: UUID()))))
+    #expect(store.state.alert != nil)
+  }
+
   // MARK: - Help deeplink.
 
   @Test(.dependencies) func helpDeeplinkSetsReferenceRequested() async {
