@@ -297,13 +297,19 @@ struct SupacodeApp: App {
         return
       }
       let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      guard let worktree = repos.flatMap(\.worktrees).first(where: { $0.id == decoded }) else {
+      // Worktree IDs from standardizedFileURL include a trailing slash, so
+      // accept both forms — matching the deeplink reducer's resolveWorktreeID.
+      let allWorktrees = repos.flatMap(\.worktrees)
+      let worktree =
+        allWorktrees.first(where: { $0.id == decoded })
+        ?? allWorktrees.first(where: { $0.id == decoded + "/" })
+      guard let worktree else {
         AgentHookSocketServer.sendCommandResponse(
           clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
         return
       }
       @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var settings
-      let runningIDs = store.repositories.runningScriptsByWorktreeID[decoded] ?? []
+      let runningIDs = store.repositories.runningScriptsByWorktreeID[worktree.id] ?? []
       let data = settings.scripts.map { script in
         [
           "id": script.id.uuidString,

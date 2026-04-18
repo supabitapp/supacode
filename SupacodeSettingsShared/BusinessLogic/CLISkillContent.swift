@@ -93,15 +93,16 @@ nonisolated enum CLISkillContent {
     ### Worktree
 
     ```
-    supacode worktree list [-f]                   # List worktree IDs (-f = focused only).
-    supacode worktree focus [-w <id>]            # Focus worktree.
-    supacode worktree run [-w <id>]              # Run the worktree script.
-    supacode worktree stop [-w <id>]             # Stop the running script.
-    supacode worktree archive [-w <id>]          # Archive worktree.
-    supacode worktree unarchive [-w <id>]        # Unarchive worktree.
-    supacode worktree delete [-w <id>]           # Delete worktree.
-    supacode worktree pin [-w <id>]              # Pin worktree.
-    supacode worktree unpin [-w <id>]            # Unpin worktree.
+    supacode worktree list [-f]                          # List worktree IDs (-f = focused only).
+    supacode worktree focus [-w <id>]                   # Focus worktree.
+    supacode worktree run [-w <id>] [-c <uuid>]         # Run script (default: primary run-kind; -c for a specific UUID).
+    supacode worktree stop [-w <id>] [-c <uuid>]        # Stop script (default: all run-kind; -c for a specific UUID).
+    supacode worktree script list [-w <id>]             # List configured scripts (id / kind / name). Running rows are underlined.
+    supacode worktree archive [-w <id>]                 # Archive worktree.
+    supacode worktree unarchive [-w <id>]               # Unarchive worktree.
+    supacode worktree delete [-w <id>]                  # Delete worktree.
+    supacode worktree pin [-w <id>]                     # Pin worktree.
+    supacode worktree unpin [-w <id>]                   # Unpin worktree.
     ```
 
     ### Tab
@@ -150,6 +151,7 @@ nonisolated enum CLISkillContent {
     | `--worktree` | `-w` | `$SUPACODE_WORKTREE_ID` | Worktree ID. |
     | `--tab` | `-t` | `$SUPACODE_TAB_ID` | Tab UUID. |
     | `--surface` | `-s` | `$SUPACODE_SURFACE_ID` | Surface UUID. |
+    | `--script` | `-c` | — | Script UUID (for `worktree run`/`stop`). |
     | `--repo` | `-r` | `$SUPACODE_REPO_ID` | Repository ID. |
     | `--input` | `-i` | — | Command to run in the terminal. |
     | `--direction` | `-d` | `horizontal` | Split direction (`horizontal`/`h` or `vertical`/`v`). |

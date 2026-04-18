@@ -42,8 +42,8 @@ nonisolated func resolveRepoID(_ explicit: String?) throws -> String {
 }
 
 /// Validates that a `--script` argument is a well-formed UUID and returns
-/// its canonical lowercase string form. Fails early so the CLI surfaces
-/// a helpful error before dispatching an unparsable deeplink.
+/// the canonical `UUID.uuidString` form (uppercased). Fails early so the
+/// CLI surfaces a helpful error before dispatching an unparsable deeplink.
 nonisolated func validatedScriptID(_ raw: String) throws -> String {
   guard let uuid = UUID(uuidString: raw) else {
     throw ValidationError(

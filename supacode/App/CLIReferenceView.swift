@@ -62,8 +62,18 @@ struct CLIReferenceView: View {
   private static let worktreeRows: [CLIEntry] = [
     .init(command: "supacode worktree list [-f]", description: "List worktree IDs. -f for focused only."),
     .init(command: "supacode worktree focus [-w <id>]", description: "Focus a worktree."),
-    .init(command: "supacode worktree run [-w <id>]", description: "Run the worktree script."),
-    .init(command: "supacode worktree stop [-w <id>]", description: "Stop the running script."),
+    .init(
+      command: "supacode worktree run [-w <id>] [-c <uuid>]",
+      description: "Run a script. Defaults to the primary run-kind script; -c targets a specific one."
+    ),
+    .init(
+      command: "supacode worktree stop [-w <id>] [-c <uuid>]",
+      description: "Stop a script. Defaults to all run-kind scripts; -c targets a specific one."
+    ),
+    .init(
+      command: "supacode worktree script list [-w <id>]",
+      description: "List configured scripts. Underlined rows are currently running."
+    ),
     .init(command: "supacode worktree archive [-w <id>]", description: "Archive the worktree."),
     .init(command: "supacode worktree unarchive [-w <id>]", description: "Unarchive the worktree."),
     .init(command: "supacode worktree delete [-w <id>]", description: "Delete the worktree."),
@@ -123,6 +133,7 @@ struct CLIReferenceView: View {
     .init(command: "-w, --worktree", description: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID."),
     .init(command: "-t, --tab", description: "Tab UUID. Defaults to $SUPACODE_TAB_ID."),
     .init(command: "-s, --surface", description: "Surface UUID. Defaults to $SUPACODE_SURFACE_ID."),
+    .init(command: "-c, --script", description: "Script UUID (for `worktree run`/`stop`)."),
     .init(command: "-r, --repo", description: "Repository ID. Defaults to $SUPACODE_REPO_ID."),
     .init(command: "-i, --input", description: "Command to run in the terminal."),
     .init(command: "-d, --direction", description: "Split direction: horizontal (h) or vertical (v)."),

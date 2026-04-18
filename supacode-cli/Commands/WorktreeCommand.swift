@@ -60,7 +60,7 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
-    @Option(name: [.short, .long], help: "Script UUID (see `worktree script list`).")
+    @Option(name: [.customShort("c"), .long], help: "Script UUID (see `worktree script list`).")
     var script: String?
 
     func run() throws {
@@ -84,7 +84,7 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
-    @Option(name: [.short, .long], help: "Script UUID (see `worktree script list`).")
+    @Option(name: [.customShort("c"), .long], help: "Script UUID (see `worktree script list`).")
     var script: String?
 
     func run() throws {

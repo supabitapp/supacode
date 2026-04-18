@@ -46,8 +46,16 @@ struct DeeplinkReferenceView: View {
 
   private static let worktreeRows: [DeeplinkEntry] = [
     .init(url: "supacode://worktree/<worktree_id>", description: "Select worktree."),
-    .init(url: "supacode://worktree/<worktree_id>/run", description: "Run the worktree script."),
-    .init(url: "supacode://worktree/<worktree_id>/stop", description: "Stop the running script."),
+    .init(url: "supacode://worktree/<worktree_id>/run", description: "Run the primary run-kind script."),
+    .init(url: "supacode://worktree/<worktree_id>/stop", description: "Stop all run-kind scripts."),
+    .init(
+      url: "supacode://worktree/<worktree_id>/script/<script_id>/run",
+      description: "Run a specific configured script by UUID."
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/script/<script_id>/stop",
+      description: "Stop a specific running script by UUID."
+    ),
     .init(url: "supacode://worktree/<worktree_id>/archive", description: "Archive the worktree."),
     .init(url: "supacode://worktree/<worktree_id>/unarchive", description: "Unarchive the worktree."),
     .init(url: "supacode://worktree/<worktree_id>/delete", description: "Delete the worktree."),

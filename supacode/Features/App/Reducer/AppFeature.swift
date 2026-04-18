@@ -1026,7 +1026,7 @@ struct AppFeature {
         responseFD: responseFD
       )
     case .stopScript(let scriptID):
-      return stopScriptDeeplinkEffect(scriptID: scriptID, state: &state)
+      return stopScriptDeeplinkEffect(worktreeID: worktreeID, scriptID: scriptID, state: &state)
     case .archive:
       guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
         return .none
@@ -1155,8 +1155,32 @@ struct AppFeature {
     bypassConfirmation: Bool,
     responseFD: Int32?
   ) -> Effect<Action> {
-    guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
-      state.alert = scriptNotFoundAlert()
+    // Read the target worktree's scripts directly so cross-worktree
+    // deeplinks do not depend on the currently selected worktree's
+    // `state.scripts`, which may still reflect an older selection.
+    guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
+    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
+      state.alert = scriptAlert(
+        title: "Script not found",
+        message: "No script matching the deeplink could be found. It may have been removed."
+      )
+      return .none
+    }
+    let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      state.alert = scriptAlert(
+        title: "Script has no command",
+        message: "\"\(definition.displayName)\" has an empty command. Configure it in Settings first."
+      )
+      return .none
+    }
+    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? []
+    guard !runningIDs.contains(scriptID) else {
+      state.alert = scriptAlert(
+        title: "Script already running",
+        message: "\"\(definition.displayName)\" is already running in this worktree."
+      )
       return .none
     }
     if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
@@ -1168,29 +1192,55 @@ struct AppFeature {
         state: &state
       )
     }
-    return .send(.runNamedScript(definition))
+    analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
+    var updated = runningIDs
+    updated.insert(scriptID)
+    state.repositories.runningScriptsByWorktreeID[worktreeID] = updated
+    let terminalClient = terminalClient
+    return .run { _ in
+      await terminalClient.send(
+        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+      )
+    }
   }
 
   private func stopScriptDeeplinkEffect(
+    worktreeID: Worktree.ID,
     scriptID: UUID,
     state: inout State
   ) -> Effect<Action> {
-    guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
-      state.alert = scriptNotFoundAlert()
+    guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
+    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
+      state.alert = scriptAlert(
+        title: "Script not found",
+        message: "No script matching the deeplink could be found. It may have been removed."
+      )
       return .none
     }
-    return .send(.stopScript(definition))
+    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? []
+    guard runningIDs.contains(scriptID) else {
+      state.alert = scriptAlert(
+        title: "Script not running",
+        message: "\"\(definition.displayName)\" is not currently running in this worktree."
+      )
+      return .none
+    }
+    let terminalClient = terminalClient
+    return .run { _ in
+      await terminalClient.send(.stopScript(worktree, definitionID: scriptID))
+    }
   }
 
-  private func scriptNotFoundAlert() -> AlertState<Alert> {
+  private func scriptAlert(title: String, message: String) -> AlertState<Alert> {
     AlertState {
-      TextState("Script not found")
+      TextState(title)
     } actions: {
       ButtonState(role: .cancel, action: .dismiss) {
         TextState("OK")
       }
     } message: {
-      TextState("No script matching the deeplink could be found. It may have been removed.")
+      TextState(message)
     }
   }
 
