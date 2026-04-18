@@ -125,24 +125,45 @@ struct SidebarStateTests {
     #expect(unpinned == ["u-1"])
   }
 
+  @Test func reorderPartiallyOverlappingInputPreservesOtherItemsInOriginalOrder() {
+    // Pins the contract of `reorder(bucket:in:to:)` when the
+    // `reorderedIDs` list only partially overlaps the bucket:
+    //   - IDs in `reorderedIDs` that aren't currently in the bucket
+    //     (here `X`) are silently dropped.
+    //   - Items in the bucket that aren't in `reorderedIDs` (here
+    //     `B` and `D`) keep their relative order and are spliced
+    //     after the reordered run — matching the position of the
+    //     first reordered item in the original order.
+    var state = SidebarState()
+    state.insert(worktree: "A", in: repoA, bucket: .unpinned)
+    state.insert(worktree: "B", in: repoA, bucket: .unpinned)
+    state.insert(worktree: "C", in: repoA, bucket: .unpinned)
+    state.insert(worktree: "D", in: repoA, bucket: .unpinned)
+
+    state.reorder(bucket: .unpinned, in: repoA, to: ["C", "X", "A"])
+
+    let order = Array(state.sections[repoA]?.buckets[.unpinned]?.items.keys ?? [])
+    #expect(order == ["C", "A", "B", "D"])
+  }
+
   // MARK: - archivedWorktrees accessor
 
   @Test func archivedWorktreesEnumeratesAcrossSections() {
     var state = SidebarState()
-    let t1 = Date(timeIntervalSince1970: 1_000_000)
-    let t2 = Date(timeIntervalSince1970: 2_000_000)
+    let earlierDate = Date(timeIntervalSince1970: 1_000_000)
+    let laterDate = Date(timeIntervalSince1970: 2_000_000)
     state.insert(
-      worktree: "wt-a", in: repoA, bucket: .archived, item: .init(archivedAt: t1)
+      worktree: "wt-a", in: repoA, bucket: .archived, item: .init(archivedAt: earlierDate)
     )
     state.insert(
-      worktree: "wt-b", in: repoB, bucket: .archived, item: .init(archivedAt: t2)
+      worktree: "wt-b", in: repoB, bucket: .archived, item: .init(archivedAt: laterDate)
     )
 
     let archived = state.archivedWorktrees
 
     #expect(archived.count == 2)
-    #expect(archived.contains { $0.worktreeID == "wt-a" && $0.archivedAt == t1 })
-    #expect(archived.contains { $0.worktreeID == "wt-b" && $0.archivedAt == t2 })
+    #expect(archived.contains { $0.worktreeID == "wt-a" && $0.archivedAt == earlierDate })
+    #expect(archived.contains { $0.worktreeID == "wt-b" && $0.archivedAt == laterDate })
   }
 
   // MARK: - Codable round-trip
@@ -202,6 +223,29 @@ struct SidebarStateTests {
     #expect(json.contains("\"archived\""))
     #expect(json.contains("\"archivedAt\""))
     #expect(json.contains("\"collapsed\""))
+    #expect(json.contains("\"buckets\""))
+    #expect(json.contains("\"schemaVersion\""))
+  }
+
+  @Test func emptyStateWireFormatAlwaysEncodesSchemaVersionAndSectionDefaults() throws {
+    // Exhaustive pin: a default-constructed `SidebarState` still
+    // emits `schemaVersion` (always present so the migrator can
+    // round-trip the value), and a freshly-materialised `Section`
+    // always emits both `collapsed` and `buckets` — never
+    // defaulted-field-omitted — so the wire format stays stable
+    // for the migrator's idempotency contract.
+    var state = SidebarState()
+    // Default section: `collapsed == false`, empty buckets. The
+    // previous encoder skipped both fields in this case; the new
+    // encoder must emit them.
+    state.sections[repoA] = .init()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(state)
+    let json = try #require(String(data: data, encoding: .utf8))
+    #expect(json.contains("\"schemaVersion\""))
+    #expect(json.contains("\"collapsed\""))
+    #expect(json.contains("\"buckets\""))
   }
 
   @Test func unarchiveRepeatedlyDoesNotLeakBuckets() {

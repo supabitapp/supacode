@@ -21,59 +21,101 @@ import OrderedCollections
 /// `remove`, `reorder` cover the full mutation surface; callers
 /// always know the source bucket from their reducer context.
 nonisolated struct SidebarState: Equatable, Sendable, Codable {
-  var sections: OrderedDictionary<Repository.ID, Section> = [:]
+  var schemaVersion: Int
+  var sections: OrderedDictionary<Repository.ID, Section>
   var focusedWorktreeID: Worktree.ID?
+
+  /// Memberwise initializer. `schemaVersion` defaults to `0`, meaning
+  /// "not migrated yet, or migrator failed". The boot-time migrator
+  /// is the only writer that sets it to `1`; every other writer
+  /// (including the default `SidebarState()` path and mutations
+  /// persisted by `SidebarKey.save`) leaves it at `0`.
+  init(
+    schemaVersion: Int = 0,
+    sections: OrderedDictionary<Repository.ID, Section> = [:],
+    focusedWorktreeID: Worktree.ID? = nil
+  ) {
+    self.schemaVersion = schemaVersion
+    self.sections = sections
+    self.focusedWorktreeID = focusedWorktreeID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion
+    case sections
+    case focusedWorktreeID
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    // Default to `0` when the key is absent so existing
+    // `sidebar.json` files written before `schemaVersion` existed
+    // decode as "not migrated yet".
+    self.schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+    self.sections =
+      try container.decodeIfPresent(
+        OrderedDictionary<Repository.ID, Section>.self,
+        forKey: .sections
+      ) ?? [:]
+    self.focusedWorktreeID = try container.decodeIfPresent(Worktree.ID.self, forKey: .focusedWorktreeID)
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    // Always encode `schemaVersion` so the value round-trips and the
+    // migrator can distinguish "written by migrator" from "written by
+    // first-mutation after migrator failure".
+    try container.encode(schemaVersion, forKey: .schemaVersion)
+    try container.encode(sections, forKey: .sections)
+    try container.encodeIfPresent(focusedWorktreeID, forKey: .focusedWorktreeID)
+  }
+
+  nonisolated enum BucketID: String, Codable, Hashable, Sendable {
+    case pinned
+    case unpinned
+    case archived
+  }
 
   nonisolated struct Section: Equatable, Sendable, Codable {
     var collapsed: Bool
-    var buckets: OrderedDictionary<Bucket.ID, Bucket>
+    var buckets: OrderedDictionary<BucketID, Bucket>
 
     init(
       collapsed: Bool = false,
-      buckets: OrderedDictionary<Bucket.ID, Bucket> = [:]
+      buckets: OrderedDictionary<BucketID, Bucket> = [:]
     ) {
       self.collapsed = collapsed
       self.buckets = buckets
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum SectionCodingKeys: String, CodingKey {
       case collapsed
       case buckets
     }
 
     init(from decoder: any Decoder) throws {
-      let container = try decoder.container(keyedBy: CodingKeys.self)
-      // Default to `false` when the key is absent so existing
-      // `sidebar.json` files written before `collapsed` became a
+      let container = try decoder.container(keyedBy: SectionCodingKeys.self)
+      // Default to `false` / empty when the key is absent so existing
+      // `sidebar.json` files written before these fields became
       // non-optional still decode cleanly.
       self.collapsed = try container.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
       self.buckets =
         try container.decodeIfPresent(
-          OrderedDictionary<Bucket.ID, Bucket>.self,
+          OrderedDictionary<BucketID, Bucket>.self,
           forKey: .buckets
         ) ?? [:]
     }
 
     func encode(to encoder: any Encoder) throws {
-      var container = encoder.container(keyedBy: CodingKeys.self)
-      // Only encode `collapsed` when it's `true` so the default
-      // state stays compact on disk.
-      if collapsed {
-        try container.encode(collapsed, forKey: .collapsed)
-      }
-      if !buckets.isEmpty {
-        try container.encode(buckets, forKey: .buckets)
-      }
+      var container = encoder.container(keyedBy: SectionCodingKeys.self)
+      // Always encode `collapsed` and `buckets` so the wire format
+      // stays exhaustive and the migrator can rely on a stable shape.
+      try container.encode(collapsed, forKey: .collapsed)
+      try container.encode(buckets, forKey: .buckets)
     }
   }
 
   nonisolated struct Bucket: Equatable, Sendable, Codable {
-    nonisolated enum ID: String, Codable, Hashable, Sendable {
-      case pinned
-      case unpinned
-      case archived
-    }
-
     var items: OrderedDictionary<Worktree.ID, Item> = [:]
   }
 
@@ -83,6 +125,16 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     /// item leaves `.archived`, so the field is a reliable "is this
     /// currently archived?" signal without a bucket check.
     var archivedAt: Date?
+  }
+
+  /// Flat reference to an archived worktree: the owning repo, the
+  /// worktree ID, and the timestamp it was archived at. Used by the
+  /// `archivedWorktrees` accessor so callers can consume the fan-out
+  /// via property access rather than tuple destructuring.
+  nonisolated struct ArchivedWorktreeRef: Equatable, Sendable {
+    let repositoryID: Repository.ID
+    let worktreeID: Worktree.ID
+    let archivedAt: Date
   }
 }
 
@@ -98,15 +150,21 @@ nonisolated extension SidebarState {
   ///
   /// Iteration follows `sections` insertion order, then item
   /// insertion order inside `.archived`.
-  var archivedWorktrees: [(repositoryID: Repository.ID, worktreeID: Worktree.ID, archivedAt: Date)] {
-    var result: [(Repository.ID, Worktree.ID, Date)] = []
+  var archivedWorktrees: [ArchivedWorktreeRef] {
+    var result: [ArchivedWorktreeRef] = []
     for (repoID, section) in sections {
       guard let archived = section.buckets[.archived] else {
         continue
       }
       for (worktreeID, item) in archived.items {
         if let archivedAt = item.archivedAt {
-          result.append((repoID, worktreeID, archivedAt))
+          result.append(
+            ArchivedWorktreeRef(
+              repositoryID: repoID,
+              worktreeID: worktreeID,
+              archivedAt: archivedAt
+            )
+          )
         }
       }
     }
@@ -118,7 +176,7 @@ nonisolated extension SidebarState {
   /// by reducer actions that need to pass `from:` to `move` or
   /// `archive` but only know the repo + worktree from their action
   /// payload. O(buckets) = O(3); cheaper than any scan.
-  func currentBucket(of worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> Bucket.ID? {
+  func currentBucket(of worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> BucketID? {
     guard let section = sections[repositoryID] else {
       return nil
     }
@@ -140,8 +198,8 @@ nonisolated extension SidebarState {
   mutating func move(
     worktree worktreeID: Worktree.ID,
     in repositoryID: Repository.ID,
-    from: Bucket.ID,
-    to: Bucket.ID,
+    from: BucketID,
+    to destination: BucketID,
     position: Int? = 0
   ) {
     guard var section = sections[repositoryID] else {
@@ -150,12 +208,12 @@ nonisolated extension SidebarState {
     guard var item = section.buckets[from]?.items.removeValue(forKey: worktreeID) else {
       return
     }
-    if to != .archived {
+    if destination != .archived {
       item.archivedAt = nil
     }
-    var bucket = section.buckets[to] ?? .init()
+    var bucket = section.buckets[destination] ?? .init()
     insert(item: item, for: worktreeID, into: &bucket, position: position)
-    section.buckets[to] = bucket
+    section.buckets[destination] = bucket
     sections[repositoryID] = section
   }
 
@@ -166,7 +224,7 @@ nonisolated extension SidebarState {
   mutating func insert(
     worktree worktreeID: Worktree.ID,
     in repositoryID: Repository.ID,
-    bucket bucketID: Bucket.ID,
+    bucket bucketID: BucketID,
     item: Item = .init(),
     position: Int? = nil
   ) {
@@ -185,7 +243,7 @@ nonisolated extension SidebarState {
   mutating func archive(
     worktree worktreeID: Worktree.ID,
     in repositoryID: Repository.ID,
-    from: Bucket.ID,
+    from: BucketID,
     at timestamp: Date
   ) {
     var section = sections[repositoryID] ?? .init()
@@ -209,7 +267,7 @@ nonisolated extension SidebarState {
   mutating func remove(
     worktree worktreeID: Worktree.ID,
     in repositoryID: Repository.ID,
-    from bucketID: Bucket.ID
+    from bucketID: BucketID
   ) {
     sections[repositoryID]?.buckets[bucketID]?.items.removeValue(forKey: worktreeID)
   }
@@ -234,7 +292,7 @@ nonisolated extension SidebarState {
   /// relative position after the reordered run. Other buckets
   /// untouched.
   mutating func reorder(
-    bucket bucketID: Bucket.ID,
+    bucket bucketID: BucketID,
     in repositoryID: Repository.ID,
     to reorderedIDs: [Worktree.ID]
   ) {

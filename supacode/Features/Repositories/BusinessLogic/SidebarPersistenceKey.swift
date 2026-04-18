@@ -63,13 +63,14 @@ nonisolated struct SidebarKey: SharedKey {
     } catch {
       // Move the corrupt file aside before falling back to an empty
       // state — otherwise the next `save` atomically overwrites the
-      // bytes we might need to recover from. A rename failure is
-      // logged at error level + logged twice (once for the decode,
-      // once for the rename) so the operator has an unambiguous
-      // signal that the user's curation is at risk on the next
-      // save. Non-recoverable without manual intervention, but
-      // leaving the app stuck in a "refuse to save" sentinel
-      // state would create a worse UX.
+      // bytes we might need to recover from. A decode failure always
+      // logs at warning level so the operator sees the corruption;
+      // if the subsequent rename also fails, we log a second warning
+      // line so the double-failure is unambiguous in the logs. When
+      // the corrupt file has already been renamed by a prior run we
+      // skip the second log entirely. Non-recoverable without manual
+      // intervention, but leaving the app stuck in a "refuse to
+      // save" sentinel state would create a worse UX.
       Self.logger.warning(
         "Failed to decode sidebar state from \(url.path(percentEncoded: false)): \(error)"
       )
@@ -104,7 +105,10 @@ nonisolated struct SidebarKey: SharedKey {
       try fileManager.moveItem(at: url, to: destination)
     } catch {
       Self.logger.warning(
-        "Failed to rename corrupt sidebar file to \(destination.lastPathComponent): \(error). Next save WILL overwrite the corrupt bytes."
+        """
+        Failed to rename corrupt sidebar file to \(destination.lastPathComponent): \(error). \
+        Next save WILL overwrite the corrupt bytes.
+        """
       )
     }
   }

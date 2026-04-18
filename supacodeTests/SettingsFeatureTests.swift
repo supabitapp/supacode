@@ -593,8 +593,7 @@ struct SettingsFeatureTests {
     }
     store.dependencies.date = .constant(fixedDate)
     store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
-      load: { ["/tmp/repo/feature": tenDaysAgo] },
-      save: { _ in }
+      load: { [tenDaysAgo] },
     )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
@@ -627,8 +626,7 @@ struct SettingsFeatureTests {
     }
     store.dependencies.date = .constant(fixedDate)
     store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
-      load: { ["/tmp/repo/feature": oneDayAgo] },
-      save: { _ in }
+      load: { [oneDayAgo] },
     )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
@@ -676,8 +674,7 @@ struct SettingsFeatureTests {
     }
     store.dependencies.date = .constant(fixedDate)
     store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
-      load: { ["/tmp/repo/feature": tenDaysAgo, "/tmp/repo/bugfix": twelveDaysAgo] },
-      save: { _ in }
+      load: { [tenDaysAgo, twelveDaysAgo] },
     )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
@@ -735,8 +732,7 @@ struct SettingsFeatureTests {
     }
     store.dependencies.date = .constant(fixedDate)
     store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
-      load: { [:] },
-      save: { _ in }
+      load: { [] },
     )
 
     await store.send(.requestAutoDeleteDaysChange(.sevenDays))
@@ -744,6 +740,58 @@ struct SettingsFeatureTests {
       $0.autoDeleteArchivedWorktreesAfterDays = .sevenDays
     }
     await store.receive(\.delegate.settingsChanged)
+  }
+
+  /// Regression test for C7: after the sidebar refactor, the
+  /// auto-delete preflight used to read timestamps from the legacy
+  /// `@Shared(.appStorage("archivedWorktreeDates"))` dict via
+  /// `ArchivedWorktreeDatesClient.liveValue`. The sidebar migrator
+  /// wipes that key on first launch, so the affected count would
+  /// drop to 0, the destructive-confirmation alert would silently
+  /// skip, and the next reducer pass would read from the new
+  /// `@Shared(.sidebar)` and delete everything older than the
+  /// cutoff without user consent. The fix routes the affected
+  /// count through the same canonical `@Shared(.sidebar)` source
+  /// the sweep reads from — so if timestamps exist they surface
+  /// in the alert, and if they don't no alert is skipped-past.
+  @Test(.dependencies)
+  func requestAutoDeleteDaysChangeReadsTimestampsFromCanonicalSidebarBucket() async {
+    var settings = GlobalSettings.default
+    settings.autoDeleteArchivedWorktreesAfterDays = .fourteenDays
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let thirtyDaysAgoA = fixedDate.addingTimeInterval(-30 * 86400)
+    let thirtyDaysAgoB = fixedDate.addingTimeInterval(-31 * 86400)
+    let thirtyDaysAgoC = fixedDate.addingTimeInterval(-32 * 86400)
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.dependencies.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
+      load: { [thirtyDaysAgoA, thirtyDaysAgoB, thirtyDaysAgoC] },
+    )
+
+    await store.send(.requestAutoDeleteDaysChange(.sevenDays))
+    // The period must NOT be mutated pre-confirmation — otherwise
+    // the destructive change silently races the next sweep.
+    #expect(store.state.autoDeleteArchivedWorktreesAfterDays == .fourteenDays)
+    await store.receive(\.resolvedAutoDeleteAffectedCount) {
+      $0.alert = AlertState {
+        TextState("Delete 3 archived worktrees?")
+      } actions: {
+        ButtonState(role: .destructive, action: .confirmAutoDeleteDaysChange(.sevenDays)) {
+          TextState("Delete")
+        }
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState(
+          "3 archived worktrees will be deleted immediately because "
+            + "they were archived more than 7 days ago."
+        )
+      }
+    }
+    #expect(store.state.autoDeleteArchivedWorktreesAfterDays == .fourteenDays)
   }
 
   // MARK: - GlobalSettings Decoding Validation

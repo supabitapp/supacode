@@ -67,6 +67,89 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func firstRepositoriesLoadedPreservesMigratedPinnedEntryMissingFromRoster() async {
+    // T5 — first-load reconcile must not clobber migrated data.
+    // The migrator writes pinned worktree IDs into `sidebar.json`
+    // before the first git-roster hydration. If the first
+    // `.repositoriesLoaded` tick sees a partial roster (e.g. the
+    // `feature` worktree is still loading), the liveness prune
+    // would silently drop the migrated pin and the user would
+    // lose curation on launch. The reducer guards this by gating
+    // the destructive prune on `state.isInitialLoadComplete`:
+    // the seed + orphan-preservation passes still run, but the
+    // curated `.pinned` items are copied forward verbatim. On
+    // the SECOND tick (`isInitialLoadComplete == true`) the
+    // prune resumes normally and a still-missing worktree is
+    // finally dropped.
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = Worktree(
+      id: repoRoot,
+      name: "main",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: repoRoot),
+      repositoryRootURL: URL(fileURLWithPath: repoRoot),
+    )
+    let featureWorktree = makeWorktree(
+      id: "/tmp/repo/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    // Initial repository list contains only the main worktree —
+    // simulating the transient roster race on first boot where
+    // the `feature` worktree hasn't hydrated yet.
+    let mainOnlyRepository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+
+    var initialState = RepositoriesFeature.State()
+    initialState.repositories = [mainOnlyRepository]
+    initialState.repositoryRoots = [mainOnlyRepository.rootURL]
+    initialState.isInitialLoadComplete = false
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoRoot] = .init(
+        buckets: [.pinned: .init(items: [featureWorktree.id: .init()])]
+      )
+    }
+
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    // First tick: migrated pin MUST survive the transient roster.
+    await store.send(
+      .repositoriesLoaded(
+        [mainOnlyRepository],
+        failures: [],
+        roots: [mainOnlyRepository.rootURL],
+        animated: false,
+      )
+    ) {
+      $0.isInitialLoadComplete = true
+    }
+    #expect(
+      store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] != nil
+    )
+
+    // Second tick with `isInitialLoadComplete == true`: the
+    // stale pinned entry is now eligible for the destructive
+    // drop because the reducer trusts the roster from load #2
+    // onward. The drop happens inside the `$sidebar.withLock`
+    // closure so the shared state is mutated in-place.
+    await store.send(
+      .repositoriesLoaded(
+        [mainOnlyRepository],
+        failures: [],
+        roots: [mainOnlyRepository.rootURL],
+        animated: false,
+      )
+    ) {
+      $0.$sidebar.withLock { sidebar in
+        sidebar.sections[repoRoot] = .init(buckets: [.pinned: .init(items: [:])])
+      }
+    }
+    #expect(
+      store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] == nil
+    )
+  }
+
   @Test func selectWorktreeSendsDelegate() async {
     let worktree = makeWorktree(id: "/tmp/wt", name: "fox")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
@@ -1764,19 +1847,23 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
-    // `@Shared(.sidebar)` caches are process-global across test
-    // runs; flip exhaustivity off so the asserted state diff
-    // doesn't drown out the sidebar bucket transitions and the
-    // test stays focused on the merged-archive shortcut.
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line — TCA processes synchronous
+    // `.send` follow-ups inside the original `send`, so
+    // `archivingWorktreeIDs` + selection + sidebar transitions
+    // land in one tick and the diff drowns out the actual
+    // coverage we care about. Relax exhaustivity and pin the
+    // meaningful end state via `#expect` below.
     store.exhaustivity = .off
 
     await store.send(.requestArchiveWorktree(featureWorktree.id, repository.id))
-    await store.receive(\.archiveWorktreeConfirmed)
-    await store.receive(\.archiveWorktreeApply) {
-      $0.selection = .worktree(mainWorktree.id)
-    }
-    await store.receive(\.delegate.repositoriesChanged)
-    await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.archiveWorktreeApply)
+    #expect(
+      store.state.sidebar.sections[repository.id]?
+        .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
+    #expect(store.state.sidebar.sections[repository.id]?.buckets[.pinned]?.items[featureWorktree.id] == nil)
+    #expect(store.state.selection == .worktree(mainWorktree.id))
   }
 
   @Test(.dependencies) func archiveWorktreeConfirmedDelegatesArchiveScript() async {
@@ -2009,17 +2096,19 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
-
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line — TCA processes synchronous
+    // `.send` follow-ups inside the original `send`. Relax
+    // exhaustivity and pin the meaningful end state via `#expect`.
     store.exhaustivity = .off
-    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil)) {
-      $0.archivingWorktreeIDs = []
-    }
+
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
     await store.receive(\.archiveWorktreeApply)
-    await store.receive(\.delegate.repositoriesChanged)
     #expect(
       store.state.sidebar.sections[repository.id]?
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
     )
+    #expect(store.state.archivingWorktreeIDs.isEmpty)
   }
 
   @Test(.dependencies) func archiveScriptCompletedFailureShowsAlert() async {
@@ -2209,6 +2298,9 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line. Relax exhaustivity and pin
+    // the meaningful end state via `#expect`.
     store.exhaustivity = .off
 
     await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id))
@@ -2960,7 +3052,6 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
-    store.exhaustivity = .off
 
     await store.send(
       .repositoriesLoaded(
@@ -2969,7 +3060,11 @@ struct RepositoriesFeatureTests {
         roots: [repository.rootURL],
         animated: false
       )
-    )
+    ) {
+      $0.loadFailuresByID = [repository.id: "boom"]
+      $0.repositories = []
+      $0.isInitialLoadComplete = true
+    }
 
     await store.receive(\.delegate.repositoriesChanged)
     expectNoDifference(
@@ -3100,7 +3195,6 @@ struct RepositoriesFeatureTests {
     } withDependencies: {
       $0.gitClient.worktrees = { _ in [mainWorktree] }
     }
-    store.exhaustivity = .off
 
     await store.send(
       .worktreeDeleted(
@@ -3116,14 +3210,15 @@ struct RepositoriesFeatureTests {
       $0.pendingWorktrees = []
       $0.worktreeInfoByID = [:]
       $0.repositories = [updatedRepository]
+      $0.$sidebar.withLock { sidebar in
+        sidebar.removeAnywhere(worktree: removedWorktree.id, in: repository.id)
+      }
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
-    await store.receive(\.repositoriesLoaded)
-    #expect(
-      store.state.sidebar.sections[repository.id]?
-        .buckets[.pinned]?.items[removedWorktree.id] == nil
-    )
+    await store.receive(\.repositoriesLoaded) {
+      $0.isInitialLoadComplete = true
+    }
   }
 
   @Test func worktreeDeletedResetsSelectionWhenDriftedToDeletingWorktree() async {
@@ -3224,6 +3319,9 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line. Relax exhaustivity and pin
+    // the meaningful end state via `#expect`.
     store.exhaustivity = .off
     let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
 
@@ -3232,19 +3330,14 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
-        addedLines: nil,
-        removedLines: nil,
-        pullRequest: mergedPullRequest
-      )
-    }
-    await store.receive(\.archiveWorktreeConfirmed)
+    )
     await store.receive(\.archiveWorktreeApply)
-    await store.receive(\.delegate.repositoriesChanged)
     #expect(
       store.state.sidebar.sections[repository.id]?
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
+    #expect(
+      store.state.worktreeInfoByID[featureWorktree.id]?.pullRequest == mergedPullRequest
     )
   }
 

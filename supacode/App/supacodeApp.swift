@@ -119,9 +119,21 @@ struct SupacodeApp: App {
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
     // Fold the six legacy sidebar-state sources into `sidebar.json`
-    // before any @Shared binding observes them. Idempotent — gates
-    // on whether `sidebar.json` already exists — so the downgrade →
-    // re-upgrade path can't double-migrate.
+    // before any @Shared binding observes them:
+    //   1. `@Shared(.appStorage("sidebarCollapsedRepositoryIDs"))`.
+    //   2. `@Shared(.appStorage("repositoryOrderIDs"))`.
+    //   3. `@Shared(.appStorage("worktreeOrderByRepository"))`.
+    //   4. `@Shared(.appStorage("lastFocusedWorktreeID"))`.
+    //   5. `@Shared(.appStorage("archivedWorktreeDates"))` (the
+    //      legacy key; the client that wrapped it is being retired
+    //      in a parallel task).
+    //   6. `settingsFile.pinnedWorktreeIDs` (the `SettingsFile`
+    //      slice).
+    // Idempotent — gates on whether `sidebar.json` already exists
+    // AND carries `schemaVersion >= 1` — so the downgrade →
+    // re-upgrade path can't double-migrate, while a prior
+    // half-finished migration that left a `schemaVersion == 0` file
+    // still gets retried.
     SidebarPersistenceMigrator.migrateIfNeeded()
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
@@ -214,6 +226,18 @@ struct SupacodeApp: App {
         },
         events: {
           worktreeInfoWatcher.eventStream()
+        }
+      )
+      // Bridge the archived-worktree timestamps from the canonical
+      // `@Shared(.sidebar)` bucket into the `SupacodeSettingsShared`
+      // package, which cannot see `SidebarState` directly. The
+      // settings auto-delete preflight uses this to decide whether
+      // to show a destructive-confirmation alert before shortening
+      // the retention window.
+      values.archivedWorktreeDatesClient = ArchivedWorktreeDatesClient(
+        load: {
+          @Shared(.sidebar) var sidebar: SidebarState
+          return sidebar.archivedWorktrees.map(\.archivedAt)
         }
       )
     }

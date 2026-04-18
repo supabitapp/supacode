@@ -397,9 +397,9 @@ struct RepositoriesFeature {
         if selectionChanged {
           allEffects.append(.send(.delegate(.selectedWorktreeChanged(selectedWorktree))))
         }
-        // The sidebar pruner (`pruneSidebarState`) already flushed
-        // any sidebar mutations through `$sidebar.withLock`, so no
-        // per-slice save effects are needed here — the SharedKey
+        // The sidebar reconciler (`reconcileSidebarState`) already
+        // flushed any sidebar mutations through `$sidebar.withLock`,
+        // so no per-slice save effects are needed here — the SharedKey
         // writes `sidebar.json` atomically.
         if state.autoDeleteArchivedWorktreesAfterDays != nil {
           allEffects.append(.send(.autoDeleteExpiredArchivedWorktrees))
@@ -1391,8 +1391,8 @@ struct RepositoriesFeature {
           state.alert = nil
           // Drop the item from its current pinned/unpinned bucket
           // and insert into `.archived` with the timestamp. The
-          // seed pass in `pruneSidebarState` guarantees every live
-          // non-main worktree lives in either `.pinned` or
+          // seed pass in `reconcileSidebarState` guarantees every
+          // live non-main worktree lives in either `.pinned` or
           // `.unpinned` before this runs.
           state.$sidebar.withLock { sidebar in
             let from = sidebar.currentBucket(of: worktreeID, in: repositoryID) ?? .unpinned
@@ -2748,7 +2748,31 @@ struct RepositoriesFeature {
       state.archivingWorktreeIDs = filteredArchivingIDs
       state.worktreeInfoByID = filteredWorktreeInfo
     }
-    pruneSidebarState(roots: roots, state: &state)
+    // Reconcile unconditionally so the seed invariant ("every live
+    // non-main worktree has a bucket") holds after partial-failure
+    // loads too — gating this on `failures.isEmpty` would skip the
+    // seed pass whenever any root failed to resolve and leave
+    // `sidebar.sections` empty for the healthy repos, which breaks
+    // the view. Cross-repo archive loss on transient roster misses
+    // is already guarded by the orphan-preservation pass inside
+    // `reconcileSidebarState`, which copies `.archived` + `.pinned`
+    // forward for any repo that drops out of `availableRepoIDs`.
+    //
+    // Gate the `.pinned` / `.unpinned` liveness prune on the initial
+    // load: on the very first `.repositoriesLoaded` tick,
+    // `Repository.worktrees` hydration can race with the
+    // migrator-written IDs in `sidebar.json`, so a transient roster
+    // view may not yet contain every curated worktree. Skipping the
+    // destructive drop until the second load lets migrated curation
+    // survive that transient view. The seed pass and the
+    // orphan-preservation pass still run on the first load, so newly
+    // discovered worktrees still land in `.unpinned` and vanished
+    // repos still get tombstoned.
+    reconcileSidebarState(
+      roots: roots,
+      state: &state,
+      pruneLivenessAgainstRoster: state.isInitialLoadComplete
+    )
     let didPruneArchivedWorktreeIDs =
       shouldPruneArchivedWorktreeIDs
       ? pruneArchivedWorktreeIDs(availableWorktreeIDs: availableWorktreeIDs, state: &state)
@@ -3159,10 +3183,6 @@ extension RepositoriesFeature.State {
   }
 
   func isWorktreePinned(_ worktree: Worktree) -> Bool {
-    let localID = worktree.repositoryRootURL.standardizedFileURL.path(percentEncoded: false)
-    if sidebar.sections[localID]?.buckets[.pinned]?.items[worktree.id] != nil {
-      return true
-    }
     guard let owningRepositoryID = repositoryID(containing: worktree.id) else {
       return false
     }
@@ -3697,7 +3717,7 @@ private func repositoryForWorktreeCreation(
   return nil
 }
 
-/// Prune the nested `SidebarState` against the currently-known
+/// Reconcile the nested `SidebarState` against the currently-known
 /// repositories + worktrees in one atomic `$sidebar.withLock`.
 /// Replaces the legacy four-way prune (pinned / collapsed / repo
 /// order / worktree order) that each needed a separate save effect.
@@ -3715,14 +3735,34 @@ private func repositoryForWorktreeCreation(
 /// Also seeds `.unpinned` entries for every live non-main worktree
 /// that isn't already curated in some bucket, so the mutation path
 /// can assume "every live worktree has a bucketed entry" and the
-/// pin/archive actions don't need fallback materialisation.
+/// pin/archive actions don't need fallback materialisation. This
+/// seed is the load-bearing invariant the rest of the reducer relies
+/// on — renaming away from "prune" makes that contract explicit.
+///
+/// Finally, sections whose repository has disappeared from the live
+/// roots but still carry user-curated `.archived` or `.pinned`
+/// buckets are carried forward as stripped tombstones (archived +
+/// pinned only, collapsed reset, `.unpinned` dropped) so a repo
+/// temporarily missing from a partial reload doesn't destroy the
+/// archive record or pin list.
 ///
 /// The rebuilt `sections` is compared to the current value before
 /// the `withLock`; identical rebuilds short-circuit so branch-flutter
 /// reloads don't re-encode + re-save `sidebar.json` on every tick.
-private func pruneSidebarState(
+///
+/// `pruneLivenessAgainstRoster` gates the destructive drop of
+/// `.pinned` / `.unpinned` items whose worktree isn't in the live
+/// roster. When `false`, curated items in those buckets are copied
+/// forward verbatim — only the main-row filter and the seed pass
+/// apply. The call site passes `state.isInitialLoadComplete` so the
+/// first `.repositoriesLoaded` (which can race with
+/// `Repository.worktrees` hydration and transiently miss
+/// migrator-written IDs) can't silently drop curation. Subsequent
+/// loads prune as before.
+private func reconcileSidebarState(
   roots: [URL],
-  state: inout RepositoriesFeature.State
+  state: inout RepositoriesFeature.State,
+  pruneLivenessAgainstRoster: Bool
 ) {
   // Empty-everything reload → bail. A settings-file read failure or
   // a pre-rehydration window can land here with zero roots + zero
@@ -3751,8 +3791,12 @@ private func pruneSidebarState(
     // Walk every bucket. `.archived` is the archive record —
     // preserve its items regardless of live-roster membership.
     // `.pinned` and `.unpinned` only hold curated pointers into
-    // the live roster, so drop entries whose worktree no longer
-    // exists or that point at the main row.
+    // the live roster, so normally drop entries whose worktree
+    // no longer exists or that point at the main row. When
+    // `pruneLivenessAgainstRoster` is `false` (first load after
+    // migration), keep every curated item that isn't the main
+    // row so migrated IDs survive a transient roster view; the
+    // next `.repositoriesLoaded` will prune for real.
     var seenInCuratedBuckets: Set<Worktree.ID> = []
     for (bucketID, bucket) in copy.buckets {
       if bucketID == .archived {
@@ -3760,7 +3804,10 @@ private func pruneSidebarState(
       }
       var prunedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
       for (worktreeID, item) in bucket.items {
-        guard worktreeIDs.contains(worktreeID), worktreeID != mainID else {
+        if worktreeID == mainID {
+          continue
+        }
+        if pruneLivenessAgainstRoster, !worktreeIDs.contains(worktreeID) {
           continue
         }
         prunedItems[worktreeID] = item
@@ -3794,6 +3841,12 @@ private func pruneSidebarState(
     rebuilt[repoID] = copy
   }
 
+  preserveOrphanSections(
+    from: state.sidebar.sections,
+    availableRepoIDs: availableRepoIDs,
+    into: &rebuilt
+  )
+
   // Equality-gate the write. Branch-change and filesystem-flutter
   // reloads fire `.repositoriesLoaded` every few seconds even when
   // the roster is unchanged; entering `$sidebar.withLock` with an
@@ -3804,6 +3857,37 @@ private func pruneSidebarState(
   }
   state.$sidebar.withLock { sidebar in
     sidebar.sections = rebuilt
+  }
+}
+
+/// Preserve user-curated `.archived` and `.pinned` buckets for
+/// repositories no longer present in `availableRepoIDs`. A repo can
+/// vanish from the live roster for legitimate reasons (removed from
+/// Settings → Repositories) or transient ones (a partial reload
+/// where resolution failed). In either case the archive record and
+/// pin list are user-curated data we must not drop silently. This
+/// emits a stripped tombstone section: only non-empty `.archived`
+/// and `.pinned` are carried verbatim, `.unpinned` is dropped (it's
+/// regenerated by the seed pass on the next full load), and
+/// `collapsed` resets to its default because there's no rendered
+/// section to collapse. Tombstones are appended after the active
+/// repos so the natural ordering stays "live repos first,
+/// orphan-but-curated at the tail".
+private func preserveOrphanSections(
+  from oldSections: OrderedDictionary<Repository.ID, SidebarState.Section>,
+  availableRepoIDs: Set<Repository.ID>,
+  into rebuilt: inout OrderedDictionary<Repository.ID, SidebarState.Section>
+) {
+  for (repoID, section) in oldSections where !availableRepoIDs.contains(repoID) {
+    var preservedBuckets: OrderedDictionary<SidebarState.BucketID, SidebarState.Bucket> = [:]
+    if let archived = section.buckets[.archived], !archived.items.isEmpty {
+      preservedBuckets[.archived] = archived
+    }
+    if let pinned = section.buckets[.pinned], !pinned.items.isEmpty {
+      preservedBuckets[.pinned] = pinned
+    }
+    guard !preservedBuckets.isEmpty else { continue }
+    rebuilt[repoID] = .init(collapsed: false, buckets: preservedBuckets)
   }
 }
 

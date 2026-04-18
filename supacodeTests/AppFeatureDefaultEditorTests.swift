@@ -34,12 +34,11 @@ struct AppFeatureDefaultEditorTests {
       }
     }
 
-    // The reducer now writes `sidebar.focusedWorktreeID` on the
-    // selection-changed path, which isn't what this test cares
-    // about — flip off exhaustivity so the sidebar mutation
-    // doesn't drown out the open-action assertion.
-    store.exhaustivity = .off
-    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree)))) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.focusedWorktreeID = worktree.id
+      }
+    }
     await store.receive(\.worktreeSettingsLoaded)
     #expect(store.state.openActionSelection == .finder)
     #expect(store.state.scripts.isEmpty)
@@ -98,8 +97,11 @@ struct AppFeatureDefaultEditorTests {
       $0.repositoryLocalSettingsStorage = localStorage.storage
     }
 
-    store.exhaustivity = .off
-    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree)))) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.focusedWorktreeID = worktree.id
+      }
+    }
     await store.receive(\.worktreeSettingsLoaded) {
       $0.openActionSelection = .terminal
       $0.scripts = localRepositorySettings.scripts
@@ -132,8 +134,11 @@ struct AppFeatureDefaultEditorTests {
       $0.settingsFileURL = settingsFileURL
     }
 
-    store.exhaustivity = .off
-    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree)))) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.focusedWorktreeID = worktree.id
+      }
+    }
     await store.receive(\.worktreeSettingsLoaded) {
       $0.openActionSelection = expectedOpenActionSelection
     }
