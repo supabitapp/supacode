@@ -2,6 +2,7 @@ import ComposableArchitecture
 import Darwin
 import DependenciesTestSupport
 import Foundation
+import OrderedCollections
 import Sharing
 import Testing
 
@@ -42,7 +43,13 @@ struct AppFeatureDeeplinkTests {
   @Test(.dependencies) func unpinWorktreeDeeplink() async {
     let worktree = makeWorktree()
     var repositories = makeRepositoriesState(worktree: worktree)
-    repositories.pinnedWorktreeIDs = [worktree.id]
+    let repositoryID = repositories.repositories.first?.id
+    repositories.$sidebar.withLock { sidebar in
+      guard let repositoryID else { return }
+      sidebar.sections[repositoryID, default: .init()]
+        .buckets[.pinned, default: .init()]
+        .items[worktree.id] = .init()
+    }
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositories,

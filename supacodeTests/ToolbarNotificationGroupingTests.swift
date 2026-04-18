@@ -1,5 +1,7 @@
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
+import Sharing
 import Testing
 
 @testable import supacode
@@ -22,8 +24,19 @@ struct ToolbarNotificationGroupingTests {
 
     var state = RepositoriesFeature.State(repositories: [repoA, repoB])
     state.repositoryRoots = [repoA.rootURL, repoB.rootURL]
-    state.repositoryOrderIDs = [repoB.id, repoA.id]
-    state.worktreeOrderByRepository[repoA.id] = [repoATwo.id, repoAOne.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoB.id] = .init()
+      sidebar.sections[repoA.id] = .init(
+        buckets: [
+          .unpinned: .init(
+            items: [
+              repoATwo.id: .init(),
+              repoAOne.id: .init(),
+            ]
+          )
+        ]
+      )
+    }
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     manager.state(for: repoAOne).notifications = [
@@ -58,7 +71,14 @@ struct ToolbarNotificationGroupingTests {
 
     var state = RepositoriesFeature.State(repositories: [repoA, repoB])
     state.repositoryRoots = [repoA.rootURL, repoB.rootURL]
-    state.archivedWorktreeDates[repoAArchived.id] = Date(timeIntervalSince1970: 1_000_000)
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: repoAArchived.id,
+        in: repoA.id,
+        bucket: .archived,
+        item: .init(archivedAt: Date(timeIntervalSince1970: 1_000_000))
+      )
+    }
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     manager.state(for: repoAArchived).notifications = [

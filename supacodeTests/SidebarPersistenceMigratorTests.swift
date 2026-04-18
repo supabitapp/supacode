@@ -205,4 +205,3 @@ struct SidebarPersistenceMigratorTests {
     }
   }
 }
-

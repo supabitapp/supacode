@@ -152,36 +152,34 @@ struct AppFeature {
 
       case .repositories(.delegate(.selectedWorktreeChanged(let worktree))):
         let lastFocusedWorktreeID = worktree?.id
-        let repositoryPersistence = repositoryPersistence
         guard let worktree else {
           state.openActionSelection = .finder
           state.scripts = []
-          var effects: [Effect<Action>] = [
+          // Selecting the archived list must NOT overwrite the last
+          // focused live worktree — preserve `focusedWorktreeID` so
+          // returning from archives restores the prior row.
+          if !state.repositories.isShowingArchivedWorktrees {
+            state.repositories.$sidebar.withLock { sidebar in
+              sidebar.focusedWorktreeID = lastFocusedWorktreeID
+            }
+          }
+          return .merge(
             .run { _ in
               await terminalClient.send(.setSelectedWorktreeID(nil))
             },
             .run { _ in
               await worktreeInfoWatcher.send(.setSelectedWorktreeID(nil))
-            },
-          ]
-          if !state.repositories.isShowingArchivedWorktrees {
-            effects.insert(
-              .run { _ in
-                await repositoryPersistence.saveLastFocusedWorktreeID(lastFocusedWorktreeID)
-              },
-              at: 0
-            )
-          }
-          return .merge(effects)
+            }
+          )
         }
         let rootURL = worktree.repositoryRootURL
         let worktreeID = worktree.id
+        state.repositories.$sidebar.withLock { sidebar in
+          sidebar.focusedWorktreeID = lastFocusedWorktreeID
+        }
         @Shared(.repositorySettings(rootURL)) var repositorySettings
         let settings = repositorySettings
         return .merge(
-          .run { _ in
-            await repositoryPersistence.saveLastFocusedWorktreeID(lastFocusedWorktreeID)
-          },
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
           },

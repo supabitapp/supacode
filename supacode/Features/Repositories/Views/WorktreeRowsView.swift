@@ -303,26 +303,29 @@ private struct WorktreeContextMenu: View {
       )
     }
 
-    let archiveLabel = isBulkSelection ? "Archive Worktrees…" : "Archive Worktree…"
-    Button(archiveLabel, systemImage: "archivebox") {
-      if archiveTargets.count == 1, let target = archiveTargets.first {
-        store.send(.requestArchiveWorktree(target.worktreeID, target.repositoryID))
-      } else {
-        store.send(.requestArchiveWorktrees(archiveTargets))
+    if !archiveTargets.isEmpty || !deleteTargets.isEmpty {
+      let archiveLabel = isBulkSelection ? "Archive Worktrees…" : "Archive Worktree…"
+      Button(archiveLabel, systemImage: "archivebox") {
+        if archiveTargets.count == 1, let target = archiveTargets.first {
+          store.send(.requestArchiveWorktree(target.worktreeID, target.repositoryID))
+        } else {
+          store.send(.requestArchiveWorktrees(archiveTargets))
+        }
       }
-    }
-    .appKeyboardShortcut(archiveShortcut)
-    .disabled(archiveTargets.isEmpty)
+      .appKeyboardShortcut(archiveShortcut)
+      .disabled(archiveTargets.isEmpty)
 
-    let deleteLabel = isBulkSelection ? "Delete Worktrees…" : "Delete Worktree…"
-    Button(deleteLabel, systemImage: "trash", role: .destructive) {
-      if deleteTargets.count == 1, let target = deleteTargets.first {
-        store.send(.requestDeleteWorktree(target.worktreeID, target.repositoryID))
-      } else {
-        store.send(.requestDeleteWorktrees(deleteTargets))
+      let deleteLabel = isBulkSelection ? "Delete Worktrees…" : "Delete Worktree…"
+      Button(deleteLabel, systemImage: "trash", role: .destructive) {
+        if deleteTargets.count == 1, let target = deleteTargets.first {
+          store.send(.requestDeleteWorktree(target.worktreeID, target.repositoryID))
+        } else {
+          store.send(.requestDeleteWorktrees(deleteTargets))
+        }
       }
+      .appKeyboardShortcut(deleteShortcut)
+      .disabled(deleteTargets.isEmpty)
     }
-    .appKeyboardShortcut(deleteShortcut)
   }
 
   @ViewBuilder
