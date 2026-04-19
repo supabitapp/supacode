@@ -4969,6 +4969,42 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
+  @Test func loadPersistedRepositoriesSurfacesMissingFolderAsFailureRow() async {
+    // Regression: folder-kind roots silently became empty folder
+    // repositories when the directory no longer existed on disk.
+    // Users who deleted a tracked folder from Finder saw a row
+    // with no indication that the path was gone. The loader now
+    // routes missing roots through `loadFailuresByID` so the
+    // sidebar renders the error row the way git failures do.
+    let repoRoot = "/tmp/\(UUID().uuidString)-missing-folder"
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [repoRoot] }
+      $0.gitClient.rootDirectoryExists = { _ in false }
+      $0.gitClient.isGitRepository = { _ in
+        Issue.record("isGitRepository() must not be called once the root is known to be missing")
+        return false
+      }
+      $0.gitClient.worktrees = { _ in
+        Issue.record("worktrees() must not be called for a missing root")
+        return []
+      }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = []
+      $0.repositoryRoots = [URL(fileURLWithPath: repoRoot)]
+      $0.isInitialLoadComplete = true
+      $0.loadFailuresByID = [
+        repoRoot: "Directory not found at \(repoRoot). It may have been moved or deleted."
+      ]
+    }
+    await store.finish()
+  }
+
   @Test func loadPersistedRepositoriesClassifiesMixedGitAndFolderRoots() async {
     let gitRoot = "/tmp/\(UUID().uuidString)-git"
     let folderRoot = "/tmp/\(UUID().uuidString)-folder"

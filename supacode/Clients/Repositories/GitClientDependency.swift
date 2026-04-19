@@ -4,6 +4,15 @@ import Foundation
 struct GitClientDependency: Sendable {
   var repoRoot: @Sendable (URL) async throws -> URL
   var isGitRepository: @Sendable (URL) async -> Bool
+  /// Whether a root URL still points at a readable directory on
+  /// disk. Separate from `isGitRepository` because a folder-kind
+  /// root can exist without being a git repository, and we need
+  /// to distinguish "directory is gone" (surface a load failure)
+  /// from "directory exists but isn't git" (classify as folder).
+  /// Defaults to `true` in `testValue` so fixtures with fake
+  /// `/tmp/...` paths keep working; tests that exercise the
+  /// missing-directory path override explicitly.
+  var rootDirectoryExists: @Sendable (URL) async -> Bool
   var worktrees: @Sendable (URL) async throws -> [Worktree]
   var pruneWorktrees: @Sendable (URL) async throws -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
@@ -46,6 +55,14 @@ extension GitClientDependency: DependencyKey {
   static let liveValue = GitClientDependency(
     repoRoot: { try await GitClient().repoRoot(for: $0) },
     isGitRepository: { Repository.isGitRepository(at: $0) },
+    rootDirectoryExists: { url in
+      var isDirectory: ObjCBool = false
+      let exists = FileManager.default.fileExists(
+        atPath: url.standardizedFileURL.path(percentEncoded: false),
+        isDirectory: &isDirectory
+      )
+      return exists && isDirectory.boolValue
+    },
     worktrees: { try await GitClient().worktrees(for: $0) },
     pruneWorktrees: { try await GitClient().pruneWorktrees(for: $0) },
     localBranchNames: { try await GitClient().localBranchNames(for: $0) },
@@ -99,6 +116,7 @@ extension GitClientDependency: DependencyKey {
   static var testValue: GitClientDependency {
     var value = liveValue
     value.isGitRepository = { _ in true }
+    value.rootDirectoryExists = { _ in true }
     return value
   }
 }

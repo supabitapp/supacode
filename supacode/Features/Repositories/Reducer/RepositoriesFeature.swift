@@ -3178,6 +3178,27 @@ struct RepositoriesFeature {
       for root in roots {
         let gitClient = self.gitClient
         group.addTask {
+          // Directory-existence check first — if the root is gone
+          // (user trashed it from Finder while Supacode was
+          // running, external tooling removed it, the volume is
+          // unmounted), surface a load failure so the sidebar
+          // shows the error row. Otherwise `gitClient.isGitRepository`
+          // returns `false` for the missing path and the loader
+          // silently synthesizes an empty folder repository, which
+          // hides the real problem from the user. Routed through
+          // the dependency so tests with fake `/tmp/...` paths
+          // don't trip the check — they override it explicitly.
+          let exists = await gitClient.rootDirectoryExists(root)
+          guard exists else {
+            return WorktreesFetchResult(
+              root: root,
+              isGitRepository: false,
+              worktrees: nil,
+              errorMessage:
+                "Directory not found at \(root.standardizedFileURL.path(percentEncoded: false)). "
+                + "It may have been moved or deleted."
+            )
+          }
           // Classify through the git client so tests can override
           // without touching the filesystem — non-git folders skip
           // the worktrees subprocess entirely.
@@ -3242,6 +3263,14 @@ struct RepositoriesFeature {
             )
           )
         }
+      } else if let errorMessage = result.errorMessage {
+        // Non-git root with an error — classifier couldn't open
+        // the directory (missing / unmounted / unreadable).
+        // Route through the same `LoadFailure` pipeline git
+        // repos use so the sidebar shows the error row.
+        failures.append(
+          LoadFailure(rootID: rootID, message: errorMessage)
+        )
       } else {
         // Folder repository — synthesize a single main-like worktree
         // so the existing sidebar selection + terminal plumbing keeps
