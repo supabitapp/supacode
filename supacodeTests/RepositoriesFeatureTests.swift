@@ -5780,6 +5780,77 @@ struct RepositoriesFeatureTests {
     )
   }
 
+  @Test func deleteSidebarItemConfirmedDoesNotClobberTerminalAlert() async {
+    // Pass-3 F1 regression: `.deleteSidebarItemConfirmed` used to
+    // unconditionally clear `state.alert`. The alert-confirm path
+    // already clears the alert at `.confirmDeleteSidebarItems`
+    // entry, so the only effect of the second clear was to wipe
+    // unrelated alerts dispatched programmatically (e.g., the
+    // consolidated trash-failure alert set by the batch aggregator
+    // just before the auto-delete sweep fires
+    // `.deleteSidebarItemConfirmed` for an expired archived git
+    // worktree).
+    let gitRoot = "/tmp/alert-clobber-\(UUID().uuidString)-repo"
+    let gitURL = URL(fileURLWithPath: gitRoot)
+    let worktree = Worktree(
+      id: "\(gitRoot)/wt-1",
+      name: "wt-1",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "\(gitRoot)/wt-1"),
+      repositoryRootURL: gitURL
+    )
+    let mainWorktree = Worktree(
+      id: gitRoot,
+      name: "repo",
+      detail: "",
+      workingDirectory: gitURL,
+      repositoryRootURL: gitURL
+    )
+    let gitRepo = Repository(
+      id: gitRoot, rootURL: gitURL, name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [mainWorktree, worktree]),
+      isGitRepository: true
+    )
+
+    let sentinelAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Do not wipe me")
+    } actions: {
+      ButtonState(role: .cancel) { TextState("OK") }
+    } message: {
+      TextState("Terminal failure alert from the aggregator.")
+    }
+    var state = RepositoriesFeature.State()
+    state.repositories = [gitRepo]
+    state.repositoryRoots = [gitURL]
+    state.isInitialLoadComplete = true
+    state.alert = sentinelAlert
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.gitClient.removeWorktree = { _, _ in
+        URL(fileURLWithPath: "\(gitRoot)/wt-1")
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    // Programmatic `.deleteSidebarItemConfirmed` — the code path
+    // that `.autoDeleteExpiredArchivedWorktrees` uses.
+    await store.send(.deleteSidebarItemConfirmed(worktree.id, gitRepo.id))
+    await store.skipReceivedActions()
+
+    #expect(
+      store.state.alert == sentinelAlert,
+      "terminal alerts must survive a programmatic .deleteSidebarItemConfirmed"
+    )
+  }
+
   @Test func deleteScriptCompletedDrainsBatchWhenOwningRepoVanished() async {
     // C4 regression: if the owning repo got pruned from
     // `state.repositories` between confirmation and script
@@ -6271,7 +6342,7 @@ struct RepositoriesFeatureTests {
     // Folder completion arrives: drains its own batch, fires its own
     // terminal, leaves the git batch alone.
     await store.send(
-      .repositoryRemovalCompleted(folderRepo.id, succeeded: true, selectionWasRemoved: false))
+      .repositoryRemovalCompleted(folderRepo.id, outcome: .success, selectionWasRemoved: false))
     await store.skipReceivedActions()
     #expect(store.state.activeRemovalBatches[folderBatchID] == nil)
     #expect(store.state.repositories.contains(where: { $0.id == gitRepo.id }) == false)
@@ -6325,7 +6396,8 @@ struct RepositoriesFeatureTests {
       store.exhaustivity = .off(showSkippedAssertions: false)
 
       await store.send(
-        .repositoryRemovalCompleted(folderRepo.id, succeeded: false, selectionWasRemoved: false))
+        .repositoryRemovalCompleted(
+          folderRepo.id, outcome: .failure(message: nil), selectionWasRemoved: false))
       await store.skipReceivedActions()
       #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
       #expect(!store.state.deletingWorktreeIDs.contains(folderWorktree.id))
@@ -6375,7 +6447,7 @@ struct RepositoriesFeatureTests {
       store.exhaustivity = .off(showSkippedAssertions: false)
 
       await store.send(
-        .repositoryRemovalCompleted(folderRepo.id, succeeded: true, selectionWasRemoved: false))
+        .repositoryRemovalCompleted(folderRepo.id, outcome: .success, selectionWasRemoved: false))
       await store.skipReceivedActions()
       #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
       #expect(!store.state.repositories.contains(where: { $0.id == folderRepo.id }))

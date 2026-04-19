@@ -1026,23 +1026,30 @@ struct AppFeature {
       let folderRepo = state.repositories.repositories[id: folderRepoID],
       !folderRepo.isGitRepository
     {
-      let incompatibleActionName: String?
+      let incompatibleAction: RepositoriesFeature.FolderIncompatibleAction?
       switch action {
-      case .archive: incompatibleActionName = "Archive"
-      case .unarchive: incompatibleActionName = "Unarchive"
-      case .pin: incompatibleActionName = "Pin"
-      case .unpin: incompatibleActionName = "Unpin"
-      default: incompatibleActionName = nil
+      case .archive: incompatibleAction = .archive
+      case .unarchive: incompatibleAction = .unarchive
+      case .pin: incompatibleAction = .pin
+      case .unpin: incompatibleAction = .unpin
+      default: incompatibleAction = nil
       }
-      if let incompatibleActionName {
+      if let incompatibleAction {
+        // Shared copy construction with the in-reducer folder
+        // hotkey handlers via
+        // `RepositoriesFeature.FolderIncompatibleAction.displayName`.
+        // Keeping this here (vs a shared `AlertState<_>` helper)
+        // avoids a cross-feature `AlertState<Alert>` type dance
+        // while still sourcing the display strings from one place.
+        let name = incompatibleAction.displayName
         state.alert = AlertState {
-          TextState("\(incompatibleActionName) not available")
+          TextState("\(name) not available")
         } actions: {
           ButtonState(role: .cancel, action: .dismiss) {
             TextState("OK")
           }
         } message: {
-          TextState("\(incompatibleActionName) only applies to git repositories.")
+          TextState("\(name) only applies to git repositories.")
         }
         return .none
       }

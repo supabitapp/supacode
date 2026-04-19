@@ -67,11 +67,37 @@ struct Repository: Identifiable, Hashable, Sendable {
       && fileManager.fileExists(atPath: refs)
   }
 
+  /// Prefix on folder-synthetic worktree ids. Single source of truth
+  /// so reducer call sites that need to recover the repo id from a
+  /// folder worktree id (see `repositoryID(fromFolderWorktreeID:)`)
+  /// stay in sync with the constructor below.
+  nonisolated static let folderWorktreeIDPrefix = "folder:"
+
   /// Stable synthetic worktree id for folder repositories. Keeps the
   /// existing `SidebarSelection.worktree(id)` + terminal-manager
   /// plumbing unchanged — folders reuse the same selection path.
   nonisolated static func folderWorktreeID(for rootURL: URL) -> Worktree.ID {
-    "folder:" + rootURL.standardizedFileURL.path(percentEncoded: false)
+    folderWorktreeIDPrefix + rootURL.standardizedFileURL.path(percentEncoded: false)
+  }
+
+  /// Round-trip for `folderWorktreeID(for:)`: recover the owning
+  /// `Repository.ID` (the standardized path) from a folder-synthetic
+  /// worktree id. Returns `nil` for non-folder ids so callers can
+  /// distinguish "this isn't a folder worktree" from "this is a
+  /// folder worktree without a known repo."
+  nonisolated static func repositoryID(
+    fromFolderWorktreeID worktreeID: Worktree.ID
+  ) -> Repository.ID? {
+    guard worktreeID.hasPrefix(folderWorktreeIDPrefix) else { return nil }
+    return String(worktreeID.dropFirst(folderWorktreeIDPrefix.count))
+  }
+
+  /// Whether `worktreeID` is a folder-synthetic worktree id (as
+  /// produced by `folderWorktreeID(for:)`). Cheaper than calling
+  /// `repositoryID(fromFolderWorktreeID:)` when the caller only
+  /// wants the discrimination.
+  nonisolated static func isFolderWorktreeID(_ worktreeID: Worktree.ID) -> Bool {
+    worktreeID.hasPrefix(folderWorktreeIDPrefix)
   }
 
   static func name(for rootURL: URL) -> String {
