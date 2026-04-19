@@ -432,7 +432,7 @@ struct WorktreeDetailView: View {
   }
 
   private func loadingInfo(
-    for selectedRow: WorktreeRowModel?,
+    for selectedRow: SidebarItemModel?,
     selectedWorktreeID: Worktree.ID?,
     repositories: RepositoriesFeature.State
   ) -> WorktreeLoadingInfo? {

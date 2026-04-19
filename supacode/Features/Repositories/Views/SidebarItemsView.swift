@@ -6,16 +6,16 @@ import SwiftUI
 
 private nonisolated let notificationLogger = SupaLogger("Notifications")
 
-struct WorktreeRowsView: View {
+struct SidebarItemsView: View {
   private struct GroupConfiguration: Identifiable {
     let id: String
-    let rows: [WorktreeRowModel]
+    let rows: [SidebarItemModel]
     let hideSubtitle: Bool
-    let moveBehavior: WorktreeRowGroupView.MoveBehavior
+    let moveBehavior: SidebarItemGroupView.MoveBehavior
   }
 
   let repository: Repository
-  let hotkeyRows: [WorktreeRowModel]
+  let hotkeyRows: [SidebarItemModel]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -24,7 +24,7 @@ struct WorktreeRowsView: View {
 
   var body: some View {
     let state = store.state
-    let sections = state.worktreeRowSections(in: repository)
+    let sections = state.sidebarItemSections(in: repository)
     let isSoleDefaultWorktree = sections.allRows.count == 1 && sections.main != nil
     let isRepositoryRemoving = state.isRemovingRepository(repository)
     let showShortcutHints = commandKeyObserver.isPressed
@@ -60,7 +60,7 @@ struct WorktreeRowsView: View {
     ]
 
     ForEach(groupConfigurations) { groupConfiguration in
-      WorktreeRowGroupView(
+      SidebarItemGroupView(
         rows: groupConfiguration.rows,
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
@@ -76,14 +76,14 @@ struct WorktreeRowsView: View {
 
 }
 
-private struct WorktreeRowGroupView: View {
+private struct SidebarItemGroupView: View {
   enum MoveBehavior: Hashable {
     case disabled
     case pinned(Repository.ID)
     case unpinned(Repository.ID)
   }
 
-  let rows: [WorktreeRowModel]
+  let rows: [SidebarItemModel]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -94,23 +94,37 @@ private struct WorktreeRowGroupView: View {
   let shortcutIndexByID: [Worktree.ID: Int]
 
   var body: some View {
-    ForEach(rows) { row in
-      WorktreeRowContainer(
-        row: row,
-        store: store,
-        terminalManager: terminalManager,
-        selectedWorktreeIDs: selectedWorktreeIDs,
-        draggingWorktreeIDs: $draggingWorktreeIDs,
-        isRepositoryRemoving: isRepositoryRemoving,
-        hideSubtitle: hideSubtitle,
-        moveDisabled: moveDisabled(for: row),
-        shortcutHint: shortcutHint(for: shortcutIndexByID[row.id])
-      )
+    // Only attach `.onMove` when the group actually participates in
+    // intra-section reorder. A no-op `onMove` on a single-row group
+    // (e.g. the folder row or a repo's main worktree) still gets
+    // picked up by SwiftUI's sidebar List as a drag target and
+    // steals the repo-level reorder gesture, so the enclosing
+    // section becomes un-draggable.
+    switch moveBehavior {
+    case .disabled:
+      ForEach(rows) { row in rowContainer(for: row) }
+    case .pinned, .unpinned:
+      ForEach(rows) { row in rowContainer(for: row) }
+        .onMove(perform: moveRows)
     }
-    .onMove(perform: moveRows)
   }
 
-  private func moveDisabled(for row: WorktreeRowModel) -> Bool {
+  @ViewBuilder
+  private func rowContainer(for row: SidebarItemModel) -> some View {
+    SidebarItemContainer(
+      row: row,
+      store: store,
+      terminalManager: terminalManager,
+      selectedWorktreeIDs: selectedWorktreeIDs,
+      draggingWorktreeIDs: $draggingWorktreeIDs,
+      isRepositoryRemoving: isRepositoryRemoving,
+      hideSubtitle: hideSubtitle,
+      moveDisabled: moveDisabled(for: row),
+      shortcutHint: shortcutHint(for: shortcutIndexByID[row.id])
+    )
+  }
+
+  private func moveDisabled(for row: SidebarItemModel) -> Bool {
     switch moveBehavior {
     case .disabled:
       true
@@ -141,8 +155,8 @@ private struct WorktreeRowGroupView: View {
 
 // MARK: - Row container.
 
-private struct WorktreeRowContainer: View {
-  let row: WorktreeRowModel
+private struct SidebarItemContainer: View {
+  let row: SidebarItemModel
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let selectedWorktreeIDs: Set<Worktree.ID>
@@ -156,7 +170,7 @@ private struct WorktreeRowContainer: View {
   @Environment(\.scriptsByID) private var scriptsByID
 
   var body: some View {
-    WorktreeRow(
+    SidebarItemView(
       row: row,
       displayMode: displayMode,
       hideSubtitle: hideSubtitle,
@@ -184,7 +198,7 @@ private struct WorktreeRowContainer: View {
     .moveDisabled(moveDisabled)
     .contextMenu {
       if row.isRemovable, let worktree = store.state.worktree(for: row.id), !isRepositoryRemoving {
-        WorktreeContextMenu(
+        SidebarItemContextMenu(
           worktree: worktree,
           row: row,
           store: store,
@@ -217,16 +231,51 @@ private struct WorktreeRowContainer: View {
 
 }
 
+// MARK: - Folder row.
+
+/// Folder repositories render exactly one row (the synthesized main
+/// item) and must sit as a *direct* child of the outer
+/// `ForEach(sidebarRootRows)` in `SidebarListView` — otherwise the
+/// enclosing `.onMove` can't route repo-level drags to the folder.
+/// Bypassing `SidebarItemsView`'s nested ForEach-of-groups keeps the
+/// folder row flat, matching the `SidebarFailedRepositoryRow`
+/// pattern that already reorders correctly.
+struct SidebarFolderRow: View {
+  let repository: Repository
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+  @State private var draggingWorktreeIDs: Set<Worktree.ID> = []
+
+  var body: some View {
+    let state = store.state
+    let isRepositoryRemoving = state.isRemovingRepository(repository)
+    if let row = state.sidebarItemSections(in: repository).main {
+      SidebarItemContainer(
+        row: row,
+        store: store,
+        terminalManager: terminalManager,
+        selectedWorktreeIDs: selectedWorktreeIDs,
+        draggingWorktreeIDs: $draggingWorktreeIDs,
+        isRepositoryRemoving: isRepositoryRemoving,
+        hideSubtitle: true,
+        moveDisabled: false,
+        shortcutHint: nil
+      )
+    }
+  }
+}
+
 // MARK: - Context menu.
 
-private struct WorktreeContextMenu: View {
+private struct SidebarItemContextMenu: View {
   let worktree: Worktree
-  let row: WorktreeRowModel
+  let row: SidebarItemModel
   @Bindable var store: StoreOf<RepositoriesFeature>
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Shared(.settingsFile) private var settingsFile
 
-  private var contextRows: [WorktreeRowModel] {
+  private var contextRows: [SidebarItemModel] {
     guard selectedWorktreeIDs.count > 1, selectedWorktreeIDs.contains(row.id) else {
       return [row]
     }
@@ -280,11 +329,21 @@ private struct WorktreeContextMenu: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(worktree.workingDirectory.path, forType: .string)
       }
-      Button("Copy as Branch Name") {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(worktree.name, forType: .string)
+      if !row.isFolder {
+        Button("Copy as Branch Name") {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(worktree.name, forType: .string)
+        }
       }
       Divider()
+      if row.isFolder {
+        // Folder rows have no section-header ellipsis menu, so the
+        // Settings entry lives alongside Delete in the context menu.
+        Button("Folder Settings…", systemImage: "gear") {
+          store.send(.openRepositorySettings(row.repositoryID))
+        }
+        Divider()
+      }
     }
 
     let archiveTargets =
@@ -303,7 +362,7 @@ private struct WorktreeContextMenu: View {
       )
     }
 
-    if !archiveTargets.isEmpty || !deleteTargets.isEmpty {
+    if !archiveTargets.isEmpty {
       let archiveLabel = isBulkSelection ? "Archive Worktrees…" : "Archive Worktree…"
       Button(archiveLabel, systemImage: "archivebox") {
         if archiveTargets.count == 1, let target = archiveTargets.first {
@@ -313,9 +372,12 @@ private struct WorktreeContextMenu: View {
         }
       }
       .appKeyboardShortcut(archiveShortcut)
-      .disabled(archiveTargets.isEmpty)
-
-      let deleteLabel = isBulkSelection ? "Delete Worktrees…" : "Delete Worktree…"
+    }
+    if !deleteTargets.isEmpty {
+      let deleteLabel =
+        isBulkSelection
+        ? "Delete Worktrees…"
+        : (row.isFolder ? "Remove Folder…" : "Delete Worktree…")
       Button(deleteLabel, systemImage: "trash", role: .destructive) {
         if deleteTargets.count == 1, let target = deleteTargets.first {
           store.send(.requestDeleteWorktree(target.worktreeID, target.repositoryID))
@@ -324,7 +386,6 @@ private struct WorktreeContextMenu: View {
         }
       }
       .appKeyboardShortcut(deleteShortcut)
-      .disabled(deleteTargets.isEmpty)
     }
   }
 

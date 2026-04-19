@@ -228,17 +228,14 @@ struct CommandPaletteFeature {
     #if DEBUG
       items.append(contentsOf: debugToastItems())
     #endif
-    for row in repositories.orderedWorktreeRows() {
+    for row in repositories.orderedSidebarItems() {
       guard row.status == .idle else { continue }
       let repositoryName = repositories.repositoryName(for: row.repositoryID) ?? "Repository"
       // Folder rows only have a synthetic "main" worktree whose name
       // matches the repository, so the usual `repo / worktree`
       // format would render as `Foo / Foo`. Use the repository name
       // alone for folders.
-      let isFolderRow =
-        row.isMainWorktree
-        && repositories.repositories[id: row.repositoryID]?.isGitRepository == false
-      let title = isFolderRow ? repositoryName : "\(repositoryName) / \(row.name)"
+      let title = row.isFolder ? repositoryName : "\(repositoryName) / \(row.name)"
       items.append(
         CommandPaletteItem(
           id: CommandPaletteItemID.worktreeSelect(row.id),

@@ -1,6 +1,11 @@
 import Foundation
 
-struct WorktreeRowModel: Identifiable, Hashable {
+struct SidebarItemModel: Identifiable, Hashable {
+  enum Kind: Hashable {
+    case git
+    case folder
+  }
+
   enum Status: Hashable {
     case idle
     case pending
@@ -10,6 +15,7 @@ struct WorktreeRowModel: Identifiable, Hashable {
 
   let id: String
   let repositoryID: Repository.ID
+  let kind: Kind
   let name: String
   let detail: String
   let info: WorktreeInfoEntry?
@@ -17,6 +23,7 @@ struct WorktreeRowModel: Identifiable, Hashable {
   let isMainWorktree: Bool
   let status: Status
 
+  var isFolder: Bool { kind == .folder }
   var isPending: Bool { status == .pending }
   var isArchiving: Bool { status == .archiving }
   var isDeleting: Bool { if case .deleting = status { true } else { false } }

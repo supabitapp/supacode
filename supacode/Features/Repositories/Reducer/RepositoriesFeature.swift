@@ -561,7 +561,7 @@ struct RepositoriesFeature {
         return .send(.delegate(.selectedWorktreeChanged(nil)))
 
       case .setSidebarSelectedWorktreeIDs(let worktreeIDs):
-        let validWorktreeIDs = Set(state.orderedWorktreeRows().map(\.id))
+        let validWorktreeIDs = Set(state.orderedSidebarItems().map(\.id))
         var nextWorktreeIDs = worktreeIDs.intersection(validWorktreeIDs)
         if let selectedWorktreeID = state.selectedWorktreeID, validWorktreeIDs.contains(selectedWorktreeID) {
           nextWorktreeIDs.insert(selectedWorktreeID)
@@ -3119,8 +3119,8 @@ extension RepositoriesFeature.State {
     selection?.worktreeID
   }
 
-  var effectiveSidebarSelectedRows: [WorktreeRowModel] {
-    let selectedRows = orderedWorktreeRows().filter { sidebarSelectedWorktreeIDs.contains($0.id) }
+  var effectiveSidebarSelectedRows: [SidebarItemModel] {
+    let selectedRows = orderedSidebarItems().filter { sidebarSelectedWorktreeIDs.contains($0.id) }
     return selectedRows.isEmpty ? (selectedRow(for: selectedWorktreeID).map { [$0] } ?? []) : selectedRows
   }
 
@@ -3149,7 +3149,7 @@ extension RepositoriesFeature.State {
   }
 
   func worktreeID(byOffset offset: Int) -> Worktree.ID? {
-    let rows = orderedWorktreeRows(includingRepositoryIDs: expandedRepositoryIDs)
+    let rows = orderedSidebarItems(includingRepositoryIDs: expandedRepositoryIDs)
     guard !rows.isEmpty else { return nil }
     if let currentID = selectedWorktreeID,
       let currentIndex = rows.firstIndex(where: { $0.id == currentID })
@@ -3257,14 +3257,17 @@ extension RepositoriesFeature.State {
     pendingTerminalFocusWorktreeIDs.contains(worktreeID)
   }
 
-  private func makePendingWorktreeRow(_ pending: PendingWorktree) -> WorktreeRowModel {
-    let status: WorktreeRowModel.Status =
+  private func makePendingSidebarItem(_ pending: PendingWorktree) -> SidebarItemModel {
+    let status: SidebarItemModel.Status =
       removingRepositoryIDs[pending.repositoryID] != nil
       ? .deleting(inTerminal: false)
       : .pending
-    return WorktreeRowModel(
+    // Folders cannot have pending worktrees — creation is gated on
+    // `isGitRepository` before reaching `.createWorktreeStream`.
+    return SidebarItemModel(
       id: pending.id,
       repositoryID: pending.repositoryID,
+      kind: .git,
       name: pending.progress.worktreeName ?? "Creating…",
       detail: pending.progress.worktreeName ?? "",
       info: worktreeInfo(for: pending.id),
@@ -3274,19 +3277,20 @@ extension RepositoriesFeature.State {
     )
   }
 
-  private func makeWorktreeRow(
+  private func makeSidebarItem(
     _ worktree: Worktree,
     repositoryID: Repository.ID,
+    kind: SidebarItemModel.Kind,
     isPinned: Bool,
     isMainWorktree: Bool
-  ) -> WorktreeRowModel {
+  ) -> SidebarItemModel {
     // `deleteScriptWorktreeIDs` wins over `removingRepositoryIDs` so
     // a folder delete with a blocking script shows the terminal
     // indicator and stays clickable (matching the worktree flow),
     // rather than being immediately masked by the repo-level
     // "removing" flag that the folder pipeline sets up front to
     // carry the removal intent.
-    let status: WorktreeRowModel.Status =
+    let status: SidebarItemModel.Status =
       if deleteScriptWorktreeIDs.contains(worktree.id) {
         .deleting(inTerminal: true)
       } else if removingRepositoryIDs[repositoryID] != nil
@@ -3298,9 +3302,10 @@ extension RepositoriesFeature.State {
       } else {
         .idle
       }
-    return WorktreeRowModel(
+    return SidebarItemModel(
       id: worktree.id,
       repositoryID: repositoryID,
+      kind: kind,
       name: worktree.name,
       detail: worktree.detail,
       info: worktreeInfo(for: worktree.id),
@@ -3310,19 +3315,20 @@ extension RepositoriesFeature.State {
     )
   }
 
-  func selectedRow(for id: Worktree.ID?) -> WorktreeRowModel? {
+  func selectedRow(for id: Worktree.ID?) -> SidebarItemModel? {
     guard let id else { return nil }
     if isWorktreeArchived(id) {
       return nil
     }
     if let pending = pendingWorktree(for: id) {
-      return makePendingWorktreeRow(pending)
+      return makePendingSidebarItem(pending)
     }
     for repository in repositories {
       if let worktree = repository.worktrees[id: id] {
-        return makeWorktreeRow(
+        return makeSidebarItem(
           worktree,
           repositoryID: repository.id,
+          kind: repository.isGitRepository ? .git : .folder,
           isPinned: isWorktreePinned(worktree),
           isMainWorktree: isMainWorktree(worktree)
         )
@@ -3482,43 +3488,47 @@ extension RepositoriesFeature.State {
     return true
   }
 
-  func worktreeRowSections(in repository: Repository) -> WorktreeRowSections {
+  func sidebarItemSections(in repository: Repository) -> SidebarItemSections {
+    let kind: SidebarItemModel.Kind = repository.isGitRepository ? .git : .folder
     let mainWorktree = repository.worktrees.first(where: { isMainWorktree($0) })
     let pinnedWorktrees = orderedPinnedWorktrees(in: repository)
     let unpinnedWorktrees = orderedUnpinnedWorktrees(in: repository)
     let pendingEntries = pendingWorktrees.filter { $0.repositoryID == repository.id }
-    let mainRow: WorktreeRowModel? =
+    let mainRow: SidebarItemModel? =
       if let mainWorktree, !isWorktreeArchived(mainWorktree.id) {
-        makeWorktreeRow(
+        makeSidebarItem(
           mainWorktree,
           repositoryID: repository.id,
+          kind: kind,
           isPinned: false,
           isMainWorktree: true
         )
       } else {
         nil
       }
-    var pinnedRows: [WorktreeRowModel] = []
+    var pinnedRows: [SidebarItemModel] = []
     for worktree in pinnedWorktrees {
       pinnedRows.append(
-        makeWorktreeRow(
+        makeSidebarItem(
           worktree,
           repositoryID: repository.id,
+          kind: kind,
           isPinned: true,
           isMainWorktree: false
         )
       )
     }
-    var pendingRows: [WorktreeRowModel] = []
+    var pendingRows: [SidebarItemModel] = []
     for pending in pendingEntries {
-      pendingRows.append(makePendingWorktreeRow(pending))
+      pendingRows.append(makePendingSidebarItem(pending))
     }
-    var unpinnedRows: [WorktreeRowModel] = []
+    var unpinnedRows: [SidebarItemModel] = []
     for worktree in unpinnedWorktrees {
       unpinnedRows.append(
-        makeWorktreeRow(
+        makeSidebarItem(
           worktree,
           repositoryID: repository.id,
+          kind: kind,
           isPinned: false,
           isMainWorktree: false
         )
@@ -3534,15 +3544,16 @@ extension RepositoriesFeature.State {
         !unpinnedIDSet.contains(worktree.id)
       else { continue }
       unpinnedRows.append(
-        makeWorktreeRow(
+        makeSidebarItem(
           worktree,
           repositoryID: repository.id,
+          kind: kind,
           isPinned: false,
           isMainWorktree: false
         )
       )
     }
-    return WorktreeRowSections(
+    return SidebarItemSections(
       main: mainRow,
       pinned: pinnedRows,
       pending: pendingRows,
@@ -3550,32 +3561,32 @@ extension RepositoriesFeature.State {
     )
   }
 
-  func worktreeRows(in repository: Repository) -> [WorktreeRowModel] {
-    let sections = worktreeRowSections(in: repository)
+  func sidebarItems(in repository: Repository) -> [SidebarItemModel] {
+    let sections = sidebarItemSections(in: repository)
     return sections.allRows
   }
 
-  func orderedWorktreeRows() -> [WorktreeRowModel] {
-    orderedWorktreeRows(includingRepositoryIDs: Set(repositories.map(\.id)))
+  func orderedSidebarItems() -> [SidebarItemModel] {
+    orderedSidebarItems(includingRepositoryIDs: Set(repositories.map(\.id)))
   }
 
-  func orderedWorktreeRows(includingRepositoryIDs: Set<Repository.ID>) -> [WorktreeRowModel] {
+  func orderedSidebarItems(includingRepositoryIDs: Set<Repository.ID>) -> [SidebarItemModel] {
     let repositoriesByID = Dictionary(uniqueKeysWithValues: repositories.map { ($0.id, $0) })
     return orderedRepositoryIDs()
       .filter { includingRepositoryIDs.contains($0) }
       .compactMap { repositoriesByID[$0] }
-      .flatMap { worktreeRows(in: $0) }
+      .flatMap { sidebarItems(in: $0) }
   }
 }
 
-struct WorktreeRowSections {
-  let main: WorktreeRowModel?
-  let pinned: [WorktreeRowModel]
-  let pending: [WorktreeRowModel]
-  let unpinned: [WorktreeRowModel]
+struct SidebarItemSections {
+  let main: SidebarItemModel?
+  let pinned: [SidebarItemModel]
+  let pending: [SidebarItemModel]
+  let unpinned: [SidebarItemModel]
 
-  var allRows: [WorktreeRowModel] {
-    var rows: [WorktreeRowModel] = []
+  var allRows: [SidebarItemModel] {
+    var rows: [SidebarItemModel] = []
     if let main {
       rows.append(main)
     }
@@ -3914,7 +3925,7 @@ private func reduceSelectionChanged(
     return .send(.delegate(.selectedWorktreeChanged(nil)))
   }
 
-  let orderedRows = state.orderedWorktreeRows()
+  let orderedRows = state.orderedSidebarItems()
   let orderedWorktreeIDs = orderedRows.map(\.id)
   let allWorktreeIDs = Set(orderedWorktreeIDs)
   let requestedWorktreeIDs = Set(selections.compactMap(\.worktreeID))

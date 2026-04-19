@@ -12,7 +12,7 @@ struct SidebarListView: View {
   var body: some View {
     let state = store.state
     let expandedRepoIDs = state.expandedRepositoryIDs
-    let hotkeyRows = state.orderedWorktreeRows(includingRepositoryIDs: expandedRepoIDs)
+    let hotkeyRows = state.orderedSidebarItems(includingRepositoryIDs: expandedRepoIDs)
     let orderedRoots = state.orderedRepositoryRoots()
     let selectedWorktreeIDs = state.sidebarSelectedWorktreeIDs
     let currentSelections = state.sidebarSelections
@@ -32,17 +32,13 @@ struct SidebarListView: View {
           SidebarPlaceholderView()
         } else if orderedRoots.isEmpty {
           ForEach(store.repositories) { repository in
-            if repository.isGitRepository {
-              SidebarRepositorySectionView(
-                repository: repository,
-                hotkeyRows: hotkeyRows,
-                selectedWorktreeIDs: selectedWorktreeIDs,
-                store: store,
-                terminalManager: terminalManager
-              )
-            } else {
-              SidebarFolderSectionView(repository: repository, store: store)
-            }
+            SidebarRootView(
+              repository: repository,
+              hotkeyRows: hotkeyRows,
+              selectedWorktreeIDs: selectedWorktreeIDs,
+              store: store,
+              terminalManager: terminalManager
+            )
           }
         } else {
           ForEach(sidebarRootRows(from: orderedRoots), id: \.repositoryID) { row in
@@ -53,17 +49,13 @@ struct SidebarListView: View {
                 store: store
               )
             } else if let repository = repositoriesByID[row.repositoryID] {
-              if repository.isGitRepository {
-                SidebarRepositorySectionView(
-                  repository: repository,
-                  hotkeyRows: hotkeyRows,
-                  selectedWorktreeIDs: selectedWorktreeIDs,
-                  store: store,
-                  terminalManager: terminalManager
-                )
-              } else {
-                SidebarFolderSectionView(repository: repository, store: store)
-              }
+              SidebarRootView(
+                repository: repository,
+                hotkeyRows: hotkeyRows,
+                selectedWorktreeIDs: selectedWorktreeIDs,
+                store: store,
+                terminalManager: terminalManager
+              )
             }
           }
           .onMove { offsets, destination in
@@ -131,16 +123,52 @@ struct SidebarListView: View {
   }
 }
 
-private struct SidebarRepositorySectionView: View {
+private struct SidebarRootView: View {
   let repository: Repository
-  let hotkeyRows: [WorktreeRowModel]
+  let hotkeyRows: [SidebarItemModel]
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+
+  var body: some View {
+    if repository.isGitRepository {
+      SidebarSectionView(
+        repository: repository,
+        hotkeyRows: hotkeyRows,
+        selectedWorktreeIDs: selectedWorktreeIDs,
+        store: store,
+        terminalManager: terminalManager
+      )
+    } else {
+      // Folder repos render a single flat row so the outer
+      // `ForEach(sidebarRootRows).onMove` can reorder them alongside
+      // git sections. `SidebarItemsView`'s nested
+      // ForEach-of-groups-of-rows would hide the folder from the
+      // outer `.onMove`, breaking sidebar-wide drag.
+      Section {
+        SidebarFolderRow(
+          repository: repository,
+          selectedWorktreeIDs: selectedWorktreeIDs,
+          store: store,
+          terminalManager: terminalManager
+        )
+      } header: {
+        EmptyView()
+      }
+    }
+  }
+}
+
+private struct SidebarSectionView: View {
+  let repository: Repository
+  let hotkeyRows: [SidebarItemModel]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   var body: some View {
     let isRemovingRepository = store.state.isRemovingRepository(repository)
     Section(isExpanded: repositoryExpansionBinding) {
-      WorktreeRowsView(
+      SidebarItemsView(
         repository: repository,
         hotkeyRows: hotkeyRows,
         selectedWorktreeIDs: selectedWorktreeIDs,
@@ -154,7 +182,7 @@ private struct SidebarRepositorySectionView: View {
       )
     }
     .sectionActions {
-      SidebarRepositorySectionActionsView(
+      SidebarSectionActionsView(
         repositoryID: repository.id,
         isRemovingRepository: isRemovingRepository,
         store: store
@@ -172,7 +200,7 @@ private struct SidebarRepositorySectionView: View {
   }
 }
 
-private struct SidebarRepositorySectionActionsView: View {
+private struct SidebarSectionActionsView: View {
   let repositoryID: Repository.ID
   let isRemovingRepository: Bool
   let store: StoreOf<RepositoriesFeature>
@@ -213,134 +241,6 @@ private struct SidebarRepositorySectionActionsView: View {
     .foregroundStyle(.secondary)
     .help("New Worktree")
     .padding(.trailing, 4)
-  }
-}
-
-private struct SidebarFolderSectionView: View {
-  let repository: Repository
-  @Bindable var store: StoreOf<RepositoriesFeature>
-
-  var body: some View {
-    let isRemovingRepository = store.state.isRemovingRepository(repository)
-    Section {
-      Label {
-        HStack(spacing: 6) {
-          Text(repository.name)
-            .fontWeight(.semibold)
-          if isRemovingRepository {
-            ProgressView()
-              .controlSize(.small)
-              .accessibilityLabel("Removing folder")
-          }
-        }
-      } icon: {
-        Image(systemName: "folder")
-          .accessibilityHidden(true)
-      }
-      .labelStyle(.verticallyCentered)
-      .tag(SidebarSelection.worktree(Repository.folderWorktreeID(for: repository.rootURL)))
-      .contextMenu {
-        FolderContextMenu(
-          repository: repository,
-          store: store,
-          isRemovingRepository: isRemovingRepository
-        )
-      }
-      .disabled(isRemovingRepository)
-    }
-  }
-}
-
-// MARK: - Folder context menu.
-
-/// Mirrors `WorktreeContextMenu` item-by-item, applies the
-/// main-worktree limitations (no pin, no archive) since a folder's
-/// synthetic worktree is always main, drops the git-specific
-/// "Copy as Branch Name" item, and uses "Folder" copy for the
-/// destructive action. Delete routes through
-/// `.requestDeleteWorktree` so the existing blocking-script +
-/// delete pipeline handles the delete-script → sidebar removal
-/// sequence (the reducer branches on `isGitRepository` to skip the
-/// git `removeWorktree` step that makes no sense for folders).
-private struct FolderContextMenu: View {
-  let repository: Repository
-  @Bindable var store: StoreOf<RepositoriesFeature>
-  let isRemovingRepository: Bool
-  @Shared(.settingsFile) private var settingsFile
-
-  private var worktreeID: Worktree.ID {
-    Repository.folderWorktreeID(for: repository.rootURL)
-  }
-
-  private var openActionSelection: OpenWorktreeAction {
-    @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
-    return OpenWorktreeAction.fromSettingsID(
-      repositorySettings.openActionID,
-      defaultEditorID: settingsFile.global.defaultEditorID
-    )
-  }
-
-  var body: some View {
-    let overrides = settingsFile.global.shortcutOverrides
-    let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
-
-    openActions(overrides: overrides)
-    Divider()
-
-    Button("Copy as Pathname", systemImage: "doc.on.doc") {
-      NSPasteboard.general.clearContents()
-      NSPasteboard.general.setString(repository.rootURL.path, forType: .string)
-    }
-    Divider()
-
-    // Folder rows have an empty section header (no ellipsis menu),
-    // so the "Folder Settings…" entry lives in the context menu
-    // alongside Delete — mirroring the repo section actions.
-    Button("Folder Settings…", systemImage: "gear") {
-      store.send(.openRepositorySettings(repository.id))
-    }
-    .help("Folder Settings")
-
-    Button("Remove Folder…", systemImage: "trash", role: .destructive) {
-      store.send(.requestDeleteWorktree(worktreeID, repository.id))
-    }
-    .appKeyboardShortcut(deleteShortcut)
-    .help("Remove Folder")
-    .disabled(isRemovingRepository)
-  }
-
-  @ViewBuilder
-  private func openActions(overrides: [AppShortcutID: AppShortcutOverride]) -> some View {
-    let availableActions = OpenWorktreeAction.availableCases.filter { $0 != .finder }
-    let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
-    let primarySelection = resolved == .finder ? availableActions.first : resolved
-    let openShortcut = AppShortcuts.openWorktree.effective(from: overrides)
-    let revealShortcut = AppShortcuts.revealInFinder.effective(from: overrides)
-
-    if let primarySelection {
-      Button("Open with \(primarySelection.labelTitle)", systemImage: "arrow.up.right.square") {
-        store.send(.contextMenuOpenWorktree(worktreeID, primarySelection))
-      }
-      .appKeyboardShortcut(openShortcut)
-      .help("Open with \(primarySelection.labelTitle) (\(openShortcut?.display ?? "none"))")
-    }
-
-    Menu("Open With") {
-      ForEach(availableActions) { action in
-        Button {
-          store.send(.contextMenuOpenWorktree(worktreeID, action))
-        } label: {
-          OpenWorktreeActionMenuLabelView(action: action, shortcutHint: nil)
-        }
-        .help("Open with \(action.labelTitle)")
-      }
-    }
-
-    Button("Reveal in Finder", systemImage: "folder") {
-      store.send(.contextMenuOpenWorktree(worktreeID, .finder))
-    }
-    .appKeyboardShortcut(revealShortcut)
-    .help("Reveal in Finder (\(revealShortcut?.display ?? "none"))")
   }
 }
 

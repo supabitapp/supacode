@@ -24,7 +24,7 @@ struct WorktreeCommands: Commands {
   var body: some Commands {
     let overrides = store.settings.shortcutOverrides
     let repositories = store.repositories
-    let orderedRows = visibleHotkeyWorktreeRows ?? repositories.orderedWorktreeRows()
+    let orderedRows = visibleHotkeyWorktreeRows ?? repositories.orderedSidebarItems()
     let pullRequestURL = selectedPullRequestURL
     let githubIntegrationEnabled = store.settings.githubIntegrationEnabled
     let selectNext = AppShortcuts.selectNextWorktree.effective(from: overrides)
@@ -171,10 +171,10 @@ struct WorktreeCommands: Commands {
 private struct WorktreeShortcutButton: View {
   let index: Int
   let shortcut: AppShortcut?
-  let orderedRows: [WorktreeRowModel]
+  let orderedRows: [SidebarItemModel]
   let store: StoreOf<AppFeature>
 
-  private var row: WorktreeRowModel? {
+  private var row: SidebarItemModel? {
     orderedRows.indices.contains(index) ? orderedRows[index] : nil
   }
 
@@ -260,7 +260,7 @@ extension FocusedValues {
     set { self[StopRunScriptActionKey.self] = newValue }
   }
 
-  var visibleHotkeyWorktreeRows: [WorktreeRowModel]? {
+  var visibleHotkeyWorktreeRows: [SidebarItemModel]? {
     get { self[VisibleHotkeyWorktreeRowsKey.self] }
     set { self[VisibleHotkeyWorktreeRowsKey.self] = newValue }
   }
@@ -275,5 +275,5 @@ private struct StopRunScriptActionKey: FocusedValueKey {
 }
 
 private struct VisibleHotkeyWorktreeRowsKey: FocusedValueKey {
-  typealias Value = [WorktreeRowModel]
+  typealias Value = [SidebarItemModel]
 }

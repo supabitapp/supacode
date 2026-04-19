@@ -2826,7 +2826,7 @@ struct RepositoriesFeatureTests {
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.createdAt == createdAt)
   }
 
-  @Test func orderedWorktreeRowsAreGlobal() {
+  @Test func orderedSidebarItemsAreGlobal() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",
       worktrees: [
@@ -2843,7 +2843,7 @@ struct RepositoriesFeatureTests {
     let state = makeState(repositories: [repoA, repoB])
 
     expectNoDifference(
-      state.orderedWorktreeRows().map(\.id),
+      state.orderedSidebarItems().map(\.id),
       [
         "/tmp/repo-a/wt1",
         "/tmp/repo-a/wt2",
@@ -2852,7 +2852,7 @@ struct RepositoriesFeatureTests {
     )
   }
 
-  @Test func orderedWorktreeRowsRespectRepositoryOrderIDs() {
+  @Test func orderedSidebarItemsRespectRepositoryOrderIDs() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",
       worktrees: [
@@ -2872,7 +2872,7 @@ struct RepositoriesFeatureTests {
     }
 
     expectNoDifference(
-      state.orderedWorktreeRows().map(\.id),
+      state.orderedSidebarItems().map(\.id),
       [
         "/tmp/repo-b/wt2",
         "/tmp/repo-a/wt1",
@@ -2880,7 +2880,7 @@ struct RepositoriesFeatureTests {
     )
   }
 
-  @Test func orderedWorktreeRowsCanFilterCollapsedRepositoriesForHotkeys() {
+  @Test func orderedSidebarItemsCanFilterCollapsedRepositoriesForHotkeys() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",
       worktrees: [
@@ -2900,7 +2900,7 @@ struct RepositoriesFeatureTests {
     }
 
     expectNoDifference(
-      state.orderedWorktreeRows(includingRepositoryIDs: [repoB.id]).map(\.id),
+      state.orderedSidebarItems(includingRepositoryIDs: [repoB.id]).map(\.id),
       [
         "/tmp/repo-b/wt2"
       ]
@@ -5294,8 +5294,9 @@ struct RepositoriesFeatureTests {
     state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
 
     #expect(state.isRemovingRepository(folderRepo) == false)
-    let rows = state.worktreeRows(in: folderRepo)
+    let rows = state.sidebarItems(in: folderRepo)
     #expect(rows.first?.status == .deleting(inTerminal: true))
+    #expect(rows.first?.kind == .folder)
   }
 
   @Test func deleteWorktreeScriptFailureForFolderClearsRemovingState() async {

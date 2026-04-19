@@ -17,7 +17,6 @@ private struct RepositoryLabel: View {
   var body: some View {
     Label {
       Text(name)
-        .fontWeight(isGitRepository ? .regular : .semibold)
     } icon: {
       if isGitRepository {
         KFImage(avatarURL)

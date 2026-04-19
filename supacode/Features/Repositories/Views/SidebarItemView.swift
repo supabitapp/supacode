@@ -1,7 +1,8 @@
 import SupacodeSettingsShared
 import SwiftUI
 
-struct WorktreeRow: View {
+struct SidebarItemView: View {
+  let kind: SidebarItemModel.Kind
   let name: String
   let subtitle: String?
   let worktreeColor: WorktreeColor
@@ -57,7 +58,7 @@ struct WorktreeRow: View {
   }
 
   init(
-    row: WorktreeRowModel,
+    row: SidebarItemModel,
     displayMode: WorktreeRowDisplayMode,
     hideSubtitle: Bool,
     hideSubtitleOnMatch: Bool,
@@ -68,6 +69,7 @@ struct WorktreeRow: View {
     notifications: [WorktreeTerminalNotification],
     shortcutHint: String?
   ) {
+    self.kind = row.kind
     self.isArchiving = row.isArchiving
     self.isDeleting = row.isDeleting
     self.isPending = row.isPending
@@ -82,6 +84,18 @@ struct WorktreeRow: View {
     // Worktree color.
     self.worktreeColor =
       if row.isMainWorktree { .main } else if row.isPinned { .pinned } else { .default }
+
+    // Folders have no branch / no PR — show the folder name alone,
+    // ignore display-mode and PR computation entirely.
+    if row.kind == .folder {
+      self.name = row.name
+      self.subtitle = nil
+      self.pullRequestBadgeText = nil
+      self.gitIconName = "folder"
+      self.gitIconColor = AnyShapeStyle(.secondary)
+      self.checkBadgeState = nil
+      return
+    }
 
     // Title and subtitle based on display mode.
     let branchName = row.name
@@ -150,7 +164,7 @@ struct WorktreeRow: View {
     }
   }
 
-  private static func worktreeName(for row: WorktreeRowModel) -> String {
+  private static func worktreeName(for row: SidebarItemModel) -> String {
     guard !row.isMainWorktree else { return "Default" }
     if row.id.contains("/") {
       let pathName = URL(fileURLWithPath: row.id).lastPathComponent
@@ -185,6 +199,7 @@ struct WorktreeRow: View {
       }
     } icon: {
       IconView(
+        kind: kind,
         isArchiving: isArchiving,
         isDeleting: isDeleting,
         isPending: isPending,
@@ -204,7 +219,7 @@ struct WorktreeRow: View {
 private struct TitleView: View {
   let name: String
   let subtitle: String?
-  let worktreeColor: WorktreeRow.WorktreeColor
+  let worktreeColor: SidebarItemView.WorktreeColor
   let isBusy: Bool
   @Environment(\.backgroundProminence) private var backgroundProminence
 
@@ -236,12 +251,13 @@ private struct TitleView: View {
 // MARK: - Icon.
 
 private struct IconView: View {
+  let kind: SidebarItemModel.Kind
   let isArchiving: Bool
   let isDeleting: Bool
   let isPending: Bool
   let gitIconName: String
   let gitIconColor: AnyShapeStyle
-  let checkBadgeState: WorktreeRow.CheckBadgeState?
+  let checkBadgeState: SidebarItemView.CheckBadgeState?
   @Environment(\.backgroundProminence) private var backgroundProminence
 
   private var isEmphasized: Bool {
@@ -263,8 +279,14 @@ private struct IconView: View {
     return gitIconColor
   }
 
+  // Folder idle rendering uses the SF Symbol "folder"; busy-state
+  // overrides (pending/archiving/deleting) already use system images.
   private var isSystemImage: Bool {
-    isPending || isArchiving || isDeleting
+    isPending || isArchiving || isDeleting || kind == .folder
+  }
+
+  private var isIdleFolder: Bool {
+    kind == .folder && !isPending && !isArchiving && !isDeleting
   }
 
   private var accessibilityLabel: String? {
@@ -278,6 +300,7 @@ private struct IconView: View {
     Group {
       if isSystemImage {
         Image(systemName: resolvedName)
+          .fontWeight(.semibold)
       } else {
         Image(resolvedName)
           .renderingMode(.template)
