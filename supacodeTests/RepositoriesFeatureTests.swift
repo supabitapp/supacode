@@ -4726,31 +4726,6 @@ struct RepositoriesFeatureTests {
     )
   }
 
-  /// Build a fresh folder-kind `Repository` plus its synthesized main
-  /// worktree for tests that exercise the non-git folder flows. The
-  /// default path is a throwaway `/tmp` UUID so parallel tests don't
-  /// alias.
-  private func makeFolderFixture(
-    rootPath: String = "/tmp/\(UUID().uuidString)-folder"
-  ) -> (repo: Repository, worktree: Worktree, url: URL) {
-    let url = URL(fileURLWithPath: rootPath)
-    let worktree = Worktree(
-      id: Repository.folderWorktreeID(for: url),
-      name: Repository.name(for: url),
-      detail: "",
-      workingDirectory: url,
-      repositoryRootURL: url
-    )
-    let repo = Repository(
-      id: rootPath,
-      rootURL: url,
-      name: Repository.name(for: url),
-      worktrees: IdentifiedArray(uniqueElements: [worktree]),
-      isGitRepository: false
-    )
-    return (repo, worktree, url)
-  }
-
   private func expectedScriptFailureAlert(
     kind: BlockingScriptKind,
     exitMessage: String,
@@ -4942,7 +4917,7 @@ struct RepositoriesFeatureTests {
     try fileManager.createDirectory(at: bareRoot, withIntermediateDirectories: true)
     try fileManager.createDirectory(at: bareRoot.appending(path: "objects"), withIntermediateDirectories: true)
     try fileManager.createDirectory(at: bareRoot.appending(path: "refs"), withIntermediateDirectories: true)
-    try "ref: refs/heads/main\n".data(using: .utf8)!.write(to: bareRoot.appending(path: "HEAD"))
+    try Data("ref: refs/heads/main\n".utf8).write(to: bareRoot.appending(path: "HEAD"))
     defer { try? fileManager.removeItem(at: bareRoot) }
 
     #expect(Repository.isGitRepository(at: bareRoot))

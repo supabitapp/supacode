@@ -1642,9 +1642,13 @@ struct RepositoriesFeature {
             + (deleteBranchOnDeleteWorktree ? "their local branches" : "keep their local branches")
         let title = count == 1 ? "🚨 Delete worktree?" : "🚨 Delete \(count) worktrees?"
         let buttonLabel = count == 1 ? "Delete (⌘↩)" : "Delete \(count) (⌘↩)"
+        let singleTargetName =
+          validTargets.first.flatMap {
+            state.repositories[id: $0.repositoryID]?.worktrees[id: $0.worktreeID]?.name
+          }
         let messageSubject =
           count == 1
-          ? "Delete \(validTargets.first.flatMap { state.repositories[id: $0.repositoryID]?.worktrees[id: $0.worktreeID]?.name } ?? "worktree")?"
+          ? "Delete \(singleTargetName ?? "worktree")?"
           : "Delete \(count) worktrees?"
         state.alert = AlertState {
           TextState(title)
@@ -1739,27 +1743,15 @@ struct RepositoriesFeature {
         // against re-entry for both git worktrees and folders —
         // the empty-script folder branch below populates
         // `deletingWorktreeIDs` so a rapid repeat lands here as a
-        // no-op.
-        //
-        // Folders arriving here have already been seeded into the
-        // batch aggregator by `.confirmDeleteSidebarItems`, so a
-        // silent `return .none` would leave `batch.pending`
-        // containing this repo forever — no future completion
-        // signal ever lands, the terminal `.repositoriesRemoved`
-        // never fires, and the row is stuck in `.deleting`. Drain
-        // the target as a silent failure so the aggregator moves
-        // on. Silent because any alert the caller wanted to show
-        // has already been set on `state.alert`; the aggregator
-        // must not clobber it with a consolidated trash alert.
+        // no-op. The first in-flight tap's
+        // `.repositoryRemovalCompleted` is the one that drains
+        // the aggregator batch; draining here as well would
+        // double-drain `batch.pending` and orphan the first tap's
+        // completion into the `reportIssue` path.
         if state.archivingWorktreeIDs.contains(worktree.id)
           || state.deletingWorktreeIDs.contains(worktree.id)
           || state.deleteScriptWorktreeIDs.contains(worktree.id)
         {
-          if !repository.isGitRepository,
-            state.removingRepositoryIDs[repository.id] != nil
-          {
-            return signalFolderRemovalFailure(worktreeID: worktree.id, state: &state)
-          }
           return .none
         }
         // F4: folder targets only arrive here after the alert's
@@ -3318,51 +3310,8 @@ struct RepositoriesFeature {
     let filteredWorktreeInfo = state.worktreeInfoByID.filter {
       availableWorktreeIDs.contains($0.key)
     }
-    // Symmetric prune for the repo-level removal trackers — every
-    // other tracker in this block is intersected against the live
-    // roster; leaving these two alone would let a mid-flight removal
-    // dangle if a concurrent reload drops the owning repo before the
-    // detached trash/unlink effect reports completion. Orphan
-    // completion handlers in `.repositoryRemovalCompleted` already
-    // tolerate missing records, but dropping them here matches the
-    // surrounding pattern and surfaces the invariant break via
-    // `reportIssue` so tests catch future regressions.
-    var filteredRemovingRepositoryIDs = state.removingRepositoryIDs
-    var filteredActiveRemovalBatches = state.activeRemovalBatches
-    let droppedRemovingRepositoryIDs = filteredRemovingRepositoryIDs.keys.filter {
-      !repositoryIDs.contains($0)
-    }
-    for droppedID in droppedRemovingRepositoryIDs {
-      reportIssue(
-        """
-        applyRepositories: active removal record for \(droppedID) survived a reload that \
-        dropped the repo. Pruning to match the other seven tracker intersections. The \
-        orphan-completion branch in .repositoryRemovalCompleted handles any detached \
-        effect still in flight.
-        """
-      )
-      filteredRemovingRepositoryIDs[droppedID] = nil
-    }
-    for (batchID, batch) in filteredActiveRemovalBatches {
-      let survivingPending = batch.pending.intersection(repositoryIDs)
-      guard survivingPending.count != batch.pending.count else { continue }
-      if survivingPending.isEmpty, batch.succeeded.isEmpty {
-        // Batch had no in-flight work left for live repos — drop it.
-        // Nothing will fire the terminal, but there's also no
-        // surviving target to prune from state, so this is a no-op
-        // beyond cleanup.
-        filteredActiveRemovalBatches[batchID] = nil
-      } else {
-        var pruned = batch
-        pruned.pending = survivingPending
-        // Clear messages for pruned repos — they're no longer part
-        // of the batch and shouldn't appear in a consolidated alert.
-        for droppedID in batch.pending.subtracting(survivingPending) {
-          pruned.failureMessagesByRepositoryID[droppedID] = nil
-        }
-        filteredActiveRemovalBatches[batchID] = pruned
-      }
-    }
+    let (filteredRemovingRepositoryIDs, filteredActiveRemovalBatches) =
+      prunedRemovalTrackers(state: state, availableRepoIDs: repositoryIDs)
     let identifiedRepositories = IdentifiedArray(uniqueElements: repositories)
     if animated {
       withAnimation {
@@ -3438,6 +3387,48 @@ struct RepositoriesFeature {
       state.shouldSelectFirstAfterReload = false
     }
     return ApplyRepositoriesResult(didPruneArchivedWorktreeIDs: didPruneArchivedWorktreeIDs)
+  }
+
+  /// Symmetric prune for the repo-level removal trackers — every
+  /// other tracker in `applyRepositories` is intersected against
+  /// the live roster; leaving these two alone would let a
+  /// mid-flight removal dangle if a concurrent reload drops the
+  /// owning repo before the detached trash/unlink effect reports
+  /// completion. The prune is silent: orphan-completion handlers
+  /// in `.repositoryRemovalCompleted` already tolerate missing
+  /// records, and a `reportIssue` here would fire on legitimate
+  /// reload-during-removal flows (especially the synchronous
+  /// `.gitRepositoryUnlink` path). The symmetry itself is the
+  /// win — a future regression that leaves real garbage here
+  /// would now be cleared on the next reload instead of
+  /// silently piling up.
+  private func prunedRemovalTrackers(
+    state: State,
+    availableRepoIDs: Set<Repository.ID>
+  ) -> (
+    removingRepositoryIDs: [Repository.ID: RepositoryRemovalRecord],
+    activeRemovalBatches: [BatchID: ActiveRemovalBatch]
+  ) {
+    var removing = state.removingRepositoryIDs
+    var batches = state.activeRemovalBatches
+    for droppedID in removing.keys where !availableRepoIDs.contains(droppedID) {
+      removing[droppedID] = nil
+    }
+    for (batchID, batch) in batches {
+      let surviving = batch.pending.intersection(availableRepoIDs)
+      guard surviving.count != batch.pending.count else { continue }
+      if surviving.isEmpty, batch.succeeded.isEmpty {
+        batches[batchID] = nil
+      } else {
+        var pruned = batch
+        pruned.pending = surviving
+        for droppedID in batch.pending.subtracting(surviving) {
+          pruned.failureMessagesByRepositoryID[droppedID] = nil
+        }
+        batches[batchID] = pruned
+      }
+    }
+    return (removing, batches)
   }
 
   private func blockingScriptFailureAlert(
