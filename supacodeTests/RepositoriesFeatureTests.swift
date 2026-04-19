@@ -1859,23 +1859,28 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("Action not available")
-    } actions: {
-      ButtonState(role: .cancel) { TextState("OK") }
-    } message: {
-      TextState("This action only applies to git repositories.")
+    // The helper produces a per-action title + body so users know
+    // which action they just tried. Keep each expected alert
+    // narrow to the one being exercised.
+    func expectedAlert(name: String) -> AlertState<RepositoriesFeature.Alert> {
+      AlertState {
+        TextState("\(name) not available")
+      } actions: {
+        ButtonState(role: .cancel) { TextState("OK") }
+      } message: {
+        TextState("\(name) only applies to git repositories.")
+      }
     }
     await store.send(.requestArchiveWorktree(folderWorktree.id, folderRepo.id)) {
-      $0.alert = expectedAlert
+      $0.alert = expectedAlert(name: "Archive")
     }
     await store.send(.alert(.dismiss)) { $0.alert = nil }
     await store.send(.pinWorktree(folderWorktree.id)) {
-      $0.alert = expectedAlert
+      $0.alert = expectedAlert(name: "Pin")
     }
     await store.send(.alert(.dismiss)) { $0.alert = nil }
     await store.send(.unpinWorktree(folderWorktree.id)) {
-      $0.alert = expectedAlert
+      $0.alert = expectedAlert(name: "Unpin")
     }
   }
 
@@ -5688,6 +5693,143 @@ struct RepositoriesFeatureTests {
       store.state.removingRepositoryIDs[folderRepo.id] == nil,
       "removing indicator must clear on failure"
     )
+    // Regression: trash failure used to leave `deletingWorktreeIDs`
+    // populated (seeded by the empty-script folder branch), so the
+    // sidebar row rendered `.deleting(inTerminal: false)` forever.
+    // The failure path now clears per-worktree trackers too.
+    #expect(
+      !store.state.deletingWorktreeIDs.contains(folderWorktree.id),
+      "deletingWorktreeIDs must clear on trash failure"
+    )
+    #expect(
+      !store.state.deleteScriptWorktreeIDs.contains(folderWorktree.id),
+      "deleteScriptWorktreeIDs must clear on trash failure"
+    )
+    #expect(store.state.activeRemovalBatches.isEmpty)
+  }
+
+  @Test func bulkFolderTrashFailuresCoalesceIntoSingleAlert() async {
+    // C3 regression: parallel per-target `FileManager.trashItem`
+    // failures used to each fire `.presentAlert` and clobber
+    // `state.alert` in a last-write-wins race. The batch aggregator
+    // now collects per-target `failureMessage`s and surfaces one
+    // consolidated alert naming every failed folder when the batch
+    // drains.
+    let rootA = "/tmp/missing-trash-\(UUID().uuidString)-a"
+    let rootB = "/tmp/missing-trash-\(UUID().uuidString)-b"
+    let urlA = URL(fileURLWithPath: rootA)
+    let urlB = URL(fileURLWithPath: rootB)
+    func makeFolderRepo(url: URL, id: String) -> (Worktree, Repository) {
+      let worktree = Worktree(
+        id: Repository.folderWorktreeID(for: url),
+        name: Repository.name(for: url), detail: "",
+        workingDirectory: url, repositoryRootURL: url
+      )
+      let repo = Repository(
+        id: id, rootURL: url, name: Repository.name(for: url),
+        worktrees: IdentifiedArray(uniqueElements: [worktree]),
+        isGitRepository: false
+      )
+      return (worktree, repo)
+    }
+    let (worktreeA, folderA) = makeFolderRepo(url: urlA, id: rootA)
+    let (worktreeB, folderB) = makeFolderRepo(url: urlB, id: rootB)
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderA, folderB]
+    state.repositoryRoots = [urlA, urlB]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    let targets = [
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktreeA.id, repositoryID: folderA.id),
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktreeB.id, repositoryID: folderB.id),
+    ]
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems(targets, disposition: .folderTrash)))
+    )
+    await store.skipReceivedActions()
+
+    // Both folders stay (trash failed), and the alert mentions BOTH
+    // folder names — not just the last one.
+    #expect(store.state.repositories.count == 2)
+    #expect(store.state.activeRemovalBatches.isEmpty)
+    #expect(store.state.removingRepositoryIDs.isEmpty)
+    guard let alert = store.state.alert else {
+      Issue.record("Expected consolidated trash-failure alert")
+      return
+    }
+    let titleText = String(describing: alert.title)
+    let messageText = String(describing: alert.message ?? TextState(""))
+    #expect(titleText.contains("Delete from disk failed"))
+    #expect(
+      messageText.contains(folderA.name) && messageText.contains(folderB.name),
+      "consolidated alert must name every failed folder (both \(folderA.name) and \(folderB.name))"
+    )
+  }
+
+  @Test func deleteScriptCompletedDrainsBatchWhenOwningRepoVanished() async {
+    // C4 regression: if the owning repo got pruned from
+    // `state.repositories` between confirmation and script
+    // completion (concurrent reload, `.removeFailedRepository`,
+    // file-system observer race, etc.), the exit=0 branch used to
+    // fall into the generic "Delete failed / not found" alert and
+    // return `.none` — leaving the `removingRepositoryIDs` record
+    // and `activeRemovalBatches` entry orphaned, so sibling folders
+    // in the same batch hung forever.
+    //
+    // Reproduces by seeding the batch + record but NOT adding the
+    // repo to `state.repositories`, then firing exit=0.
+    let folderRoot = "/tmp/vanished-\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktreeID = Repository.folderWorktreeID(for: folderURL)
+
+    var state = RepositoriesFeature.State()
+    // Intentionally empty — simulating the repo vanishing mid-script.
+    state.repositories = []
+    state.repositoryRoots = []
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktreeID)
+    let batchID = state.seedRemovalBatch(pending: [folderRoot: .folderUnlink])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktreeID, exitCode: 0, tabId: nil)
+    )
+    await store.skipReceivedActions()
+
+    #expect(
+      store.state.removingRepositoryIDs[folderRoot] == nil,
+      "record must drain even when owning repo vanished mid-script"
+    )
+    #expect(
+      store.state.activeRemovalBatches[batchID] == nil,
+      "batch must drain (succeeded:false) so sibling targets don't hang"
+    )
+    #expect(!store.state.deleteScriptWorktreeIDs.contains(folderWorktreeID))
   }
 
   @Test func bulkFolderUnlinkTerminatesWithEmptyState() async {

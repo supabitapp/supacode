@@ -1026,22 +1026,23 @@ struct AppFeature {
       let folderRepo = state.repositories.repositories[id: folderRepoID],
       !folderRepo.isGitRepository
     {
-      let isFolderIncompatibleAction: Bool
+      let incompatibleActionName: String?
       switch action {
-      case .archive, .unarchive, .pin, .unpin:
-        isFolderIncompatibleAction = true
-      default:
-        isFolderIncompatibleAction = false
+      case .archive: incompatibleActionName = "Archive"
+      case .unarchive: incompatibleActionName = "Unarchive"
+      case .pin: incompatibleActionName = "Pin"
+      case .unpin: incompatibleActionName = "Unpin"
+      default: incompatibleActionName = nil
       }
-      if isFolderIncompatibleAction {
+      if let incompatibleActionName {
         state.alert = AlertState {
-          TextState("Action not available")
+          TextState("\(incompatibleActionName) not available")
         } actions: {
           ButtonState(role: .cancel, action: .dismiss) {
             TextState("OK")
           }
         } message: {
-          TextState("This action only applies to git repositories.")
+          TextState("\(incompatibleActionName) only applies to git repositories.")
         }
         return .none
       }
