@@ -713,7 +713,12 @@ struct AppFeature {
         return .send(.repositories(.setOpenPanelPresented(true)))
 
       case .commandPalette(.delegate(.removeWorktree(let worktreeID, let repositoryID))):
-        return .send(.repositories(.requestDeleteWorktree(worktreeID, repositoryID)))
+        return .send(
+          .repositories(
+            .requestDeleteSidebarItems([
+              RepositoriesFeature.DeleteWorktreeTarget(
+                worktreeID: worktreeID, repositoryID: repositoryID)
+            ])))
 
       case .commandPalette(.delegate(.archiveWorktree(let worktreeID, let repositoryID))):
         return .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
@@ -1349,7 +1354,7 @@ struct AppFeature {
         state: &state
       )
     }
-    return .send(.repositories(.deleteWorktreeConfirmed(worktreeID, repositoryID)))
+    return .send(.repositories(.deleteSidebarItemConfirmed(worktreeID, repositoryID)))
   }
 
   private func resolveRepositoryID(

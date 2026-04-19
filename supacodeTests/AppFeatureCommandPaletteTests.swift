@@ -149,10 +149,15 @@ struct AppFeatureCommandPaletteTests {
       AppFeature()
     }
 
+    let target = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: worktree.id, repositoryID: repository.id)
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("🚨 Delete worktree?")
     } actions: {
-      ButtonState(role: .destructive, action: .confirmDeleteWorktree(worktree.id, repository.id)) {
+      ButtonState(
+        role: .destructive,
+        action: .confirmDeleteSidebarItems([target], disposition: .gitWorktreeDelete)
+      ) {
         TextState("Delete (⌘↩)")
       }
       ButtonState(role: .cancel) {
@@ -163,7 +168,7 @@ struct AppFeatureCommandPaletteTests {
     }
 
     await store.send(.commandPalette(.delegate(.removeWorktree(worktree.id, repository.id))))
-    await store.receive(\.repositories.requestDeleteWorktree) {
+    await store.receive(\.repositories.requestDeleteSidebarItems) {
       $0.repositories.alert = expectedAlert
     }
   }

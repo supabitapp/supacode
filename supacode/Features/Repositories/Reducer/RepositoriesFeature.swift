@@ -9,6 +9,7 @@ import SwiftUI
 
 private enum CancelID {
   static let load = "repositories.load"
+  static let persistRoots = "repositories.persistRoots"
   static let toastAutoDismiss = "repositories.toastAutoDismiss"
   static let githubIntegrationAvailability = "repositories.githubIntegrationAvailability"
   static let githubIntegrationRecovery = "repositories.githubIntegrationRecovery"
@@ -81,12 +82,35 @@ struct RepositoriesFeature {
     var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
     /// Repositories with an in-flight removal. The value records
-    /// *what kind of removal* was confirmed, so
-    /// `.deleteScriptCompleted` can route by intent rather than by
-    /// live classification (which a `git init` mid-delete could
-    /// flip). An empty key means no removal; presence also drives
-    /// the sidebar's "removing" indicator.
-    var removingRepositoryIDs: [Repository.ID: RemovalIntent] = [:]
+    /// the removal intent confirmed for this repo.
+    /// `.deleteScriptCompleted` routes by the stored intent rather
+    /// than by live kind classification (which a `git init`
+    /// mid-delete could flip). An empty key means no removal;
+    /// presence also drives the sidebar's "removing" indicator.
+    /// In-flight repo-level removals keyed by repository id. Each
+    /// record carries the disposition (which only ever holds
+    /// `.gitRepositoryUnlink` / `.folderUnlink` / `.folderTrash` —
+    /// the per-worktree `.gitWorktreeDelete` flow uses
+    /// `deletingWorktreeIDs` instead) and the id of the batch
+    /// aggregator responsible for draining its per-target
+    /// completion. Folding disposition + batch id into one record
+    /// keeps them in lockstep: a repo can't be "being removed"
+    /// without an owning batch, and a batch always knows the
+    /// disposition of each of its targets.
+    var removingRepositoryIDs: [Repository.ID: RepositoryRemovalRecord] = [:]
+    /// Bulk-removal aggregators keyed by batch id. Populated by the
+    /// confirm handler for repo-level deletes (folder rows + git-repo
+    /// section removals). As each per-target completion arrives via
+    /// `.repositoryRemovalCompleted`, its id is drained from
+    /// `pending` and (if succeeded) appended to `succeeded`. The
+    /// batch fires a single `.repositoriesRemoved([ids], ...)` when
+    /// `pending` is empty, replacing the per-target reloads that
+    /// previously raced through `CancelID.persistRoots`. The dict
+    /// (rather than a single optional) lets overlapping removals —
+    /// e.g. a folder bulk trash in-flight while the user confirms a
+    /// git-repo section remove — each complete independently
+    /// without clobbering each other's pending set.
+    var activeRemovalBatches: [BatchID: ActiveRemovalBatch] = [:]
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var mergedWorktreeAction: MergedWorktreeAction?
     var moveNotifiedWorktreeToTop = true
@@ -111,35 +135,95 @@ struct RepositoriesFeature {
     @Shared(.sidebar) var sidebar: SidebarState
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var alert: AlertState<Alert>?
+
+    /// Seed an active removal batch for tests that drop straight
+    /// into `.deleteSidebarItemConfirmed` / `.deleteScriptCompleted`
+    /// without going through the confirm handler that normally
+    /// mints the id and records dispositions. Callers pass the
+    /// disposition each pending repo was confirmed with so the
+    /// per-repo record stays coherent. Returns the batch id so
+    /// tests can assert its lifecycle.
+    @discardableResult
+    mutating func seedRemovalBatch(
+      pending: [Repository.ID: DeleteDisposition],
+      id: BatchID = UUID()
+    ) -> BatchID {
+      for (repositoryID, disposition) in pending {
+        removingRepositoryIDs[repositoryID] = RepositoryRemovalRecord(
+          disposition: disposition, batchID: id
+        )
+      }
+      activeRemovalBatches[id] = ActiveRemovalBatch(id: id, pending: Set(pending.keys))
+      return id
+    }
   }
 
-  /// The kind of removal confirmed for a repository. `.folderTrash`
-  /// additionally asks for the folder to be moved to the Trash
-  /// before the sidebar entry is dropped; `.folderSidebar` leaves
-  /// the directory on disk; `.git` is the repository-level removal
-  /// of a git repo. Folder intents diverge with a clear error if
-  /// the repository's kind flips (e.g. `git init`) between
-  /// confirmation and completion.
-  enum RemovalIntent: Equatable, Sendable {
-    case git
-    case folderSidebar
+  /// What actually happens on disk when a delete request resolves.
+  /// One closed sum for the four real outcomes — this replaces the
+  /// former 2×2 split between the user-facing `DeleteAction` choice
+  /// and the recorded `RemovalIntent`, which could encode impossible
+  /// combinations like `(git worktree, .unlink)` and gave `.delete`
+  /// two different meanings depending on target kind.
+  ///
+  /// `.gitWorktreeDelete` removes the worktree directory (and
+  /// optionally its branch) and is per-worktree; the other three
+  /// are repo-level and drop the whole section from Supacode, with
+  /// `.folderTrash` additionally moving the folder to the Trash.
+  enum DeleteDisposition: Equatable, Sendable {
+    case gitWorktreeDelete
+    case gitRepositoryUnlink
+    case folderUnlink
     case folderTrash
 
-    /// Nested sub-kind for folder intents — used at completion time
-    /// to decide whether to trash the directory before the sidebar
-    /// removal. `nil` when the intent is git-repo-level.
-    enum FolderIntent: Equatable, Sendable {
-      case sidebar
-      case trash
-    }
-
-    var folderIntent: FolderIntent? {
+    /// Whether the disposition targets a folder repository. Used by
+    /// the delete-script pipeline to decide whether a completion
+    /// should drain the repo-level batch aggregator.
+    var isFolder: Bool {
       switch self {
-      case .git: nil
-      case .folderSidebar: .sidebar
-      case .folderTrash: .trash
+      case .gitWorktreeDelete, .gitRepositoryUnlink: false
+      case .folderUnlink, .folderTrash: true
       }
     }
+
+    /// Whether the disposition removes an entire repo from state
+    /// (true for every case except the per-worktree git delete).
+    /// Only repo-level dispositions are ever stored in
+    /// `removingRepositoryIDs`.
+    var isRepositoryLevel: Bool {
+      switch self {
+      case .gitWorktreeDelete: false
+      case .gitRepositoryUnlink, .folderUnlink, .folderTrash: true
+      }
+    }
+  }
+
+  /// Opaque identifier for a batch of repo-level removals. Minted
+  /// by the confirm handler so each concurrent flow owns its own
+  /// aggregator and they can't clobber one another.
+  typealias BatchID = UUID
+
+  /// Per-repo bookkeeping for an in-flight repo-level removal.
+  /// Couples the user-confirmed disposition with the owning batch
+  /// id so the aggregator can drain the right batch when each
+  /// target's `.repositoryRemovalCompleted` lands.
+  struct RepositoryRemovalRecord: Equatable, Sendable {
+    let disposition: DeleteDisposition
+    let batchID: BatchID
+  }
+
+  /// Accumulates per-target completion signals for a bulk repo-level
+  /// deletion so the reducer can fire a single terminal
+  /// `.repositoriesRemoved([ids], ...)` after the whole batch drains.
+  /// `pending` starts populated with every target the confirm
+  /// handler accepted; each `.repositoryRemovalCompleted` removes
+  /// its ID and (on success) appends to `succeeded`.
+  /// `selectionWasRemoved` is OR'ed across targets so the sidebar
+  /// selection resets exactly once at the terminal.
+  struct ActiveRemovalBatch: Equatable, Sendable {
+    let id: BatchID
+    var pending: Set<Repository.ID>
+    var succeeded: [Repository.ID] = []
+    var selectionWasRemoved: Bool = false
   }
 
   enum GithubIntegrationAvailability: Equatable {
@@ -241,9 +325,8 @@ struct RepositoriesFeature {
     case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
     case archiveWorktreeApply(Worktree.ID, Repository.ID)
     case unarchiveWorktree(Worktree.ID)
-    case requestDeleteWorktree(Worktree.ID, Repository.ID)
-    case requestDeleteWorktrees([DeleteWorktreeTarget])
-    case deleteWorktreeConfirmed(Worktree.ID, Repository.ID)
+    case requestDeleteSidebarItems([DeleteWorktreeTarget])
+    case deleteSidebarItemConfirmed(Worktree.ID, Repository.ID)
     case deleteScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
     case deleteWorktreeApply(Worktree.ID, Repository.ID)
     case worktreeDeleted(
@@ -256,9 +339,22 @@ struct RepositoriesFeature {
     case pinnedWorktreesMoved(repositoryID: Repository.ID, IndexSet, Int)
     case unpinnedWorktreesMoved(repositoryID: Repository.ID, IndexSet, Int)
     case deleteWorktreeFailed(String, worktreeID: Worktree.ID)
-    case requestRemoveRepository(Repository.ID)
+    case requestDeleteRepository(Repository.ID)
     case removeFailedRepository(Repository.ID)
-    case repositoryRemoved(Repository.ID, selectionWasRemoved: Bool)
+    /// Per-target signal feeding the batch aggregator. Every
+    /// repo-level removal path (folder via delete pipeline,
+    /// git-repo section-level) emits one of these when the target's
+    /// per-item work concludes. `succeeded=false` covers script
+    /// failures / cancellations / kind-flip so a bulk batch drains
+    /// even when individual targets fail.
+    case repositoryRemovalCompleted(
+      Repository.ID, succeeded: Bool, selectionWasRemoved: Bool)
+    /// Bulk terminal: fired exactly once per batch after every
+    /// target's `.repositoryRemovalCompleted` has been collected.
+    /// Replaces the per-target `.repositoryRemoved` that raced on
+    /// `.repositoriesLoaded`. For single-item paths the batch has
+    /// size 1 — same code.
+    case repositoriesRemoved([Repository.ID], selectionWasRemoved: Bool)
     case pinWorktree(Worktree.ID)
     case unpinWorktree(Worktree.ID)
     case presentAlert(title: String, message: String)
@@ -316,10 +412,8 @@ struct RepositoriesFeature {
   enum Alert: Equatable {
     case confirmArchiveWorktree(Worktree.ID, Repository.ID)
     case confirmArchiveWorktrees([ArchiveWorktreeTarget])
-    case confirmDeleteWorktree(Worktree.ID, Repository.ID)
-    case confirmDeleteWorktrees([DeleteWorktreeTarget])
-    case confirmDeleteFolderFromDisk(Worktree.ID, Repository.ID)
-    case confirmRemoveRepository(Repository.ID)
+    case confirmDeleteSidebarItems([DeleteWorktreeTarget], disposition: DeleteDisposition)
+    case confirmDeleteRepository(Repository.ID)
     case viewTerminalTab(Worktree.ID, tabId: TerminalTabID)
   }
 
@@ -1511,49 +1605,74 @@ struct RepositoriesFeature {
         let repositories = state.repositories
         return .send(.delegate(.repositoriesChanged(repositories)))
 
-      case .requestDeleteWorktree(let worktreeID, let repositoryID):
-        if state.removingRepositoryIDs[repositoryID] != nil {
+      case .requestDeleteSidebarItems(let targets):
+        // Kind discriminator: folders skip the main-worktree guard
+        // (their synthetic worktree IS main). Mixed kind selections
+        // get rejected — the context menu already blocks mixed
+        // bulk, so this only trips if a hotkey somehow routes a
+        // heterogeneous selection here.
+        var validTargets: [DeleteWorktreeTarget] = []
+        var validKinds: Set<SidebarItemModel.Kind> = []
+        var seenWorktreeIDs: Set<Worktree.ID> = []
+        var rejectedMainWorktreeCount = 0
+        for target in targets {
+          guard seenWorktreeIDs.insert(target.worktreeID).inserted,
+            state.removingRepositoryIDs[target.repositoryID] == nil,
+            let repository = state.repositories[id: target.repositoryID],
+            let worktree = repository.worktrees[id: target.worktreeID],
+            !state.deletingWorktreeIDs.contains(worktree.id),
+            !state.deleteScriptWorktreeIDs.contains(worktree.id),
+            !state.archivingWorktreeIDs.contains(worktree.id)
+          else { continue }
+          if repository.isGitRepository {
+            if state.isMainWorktree(worktree) {
+              rejectedMainWorktreeCount += 1
+              continue
+            }
+            validKinds.insert(.git)
+          } else {
+            validKinds.insert(.folder)
+          }
+          validTargets.append(target)
+        }
+        guard !validTargets.isEmpty, validKinds.count == 1 else {
+          // Single-target main-worktree rejection: surface the same
+          // "Delete not allowed" feedback the deeplink path already
+          // shows, so palette / hotkey / context-menu entries behave
+          // consistently instead of silently no-opping.
+          if targets.count == 1, validTargets.isEmpty, rejectedMainWorktreeCount == 1 {
+            state.alert = messageAlert(
+              title: "Delete not allowed",
+              message: "Deleting the main worktree is not allowed."
+            )
+          }
           return .none
         }
-        guard let repository = state.repositories[id: repositoryID],
-          let worktree = repository.worktrees[id: worktreeID]
-        else {
-          return .none
-        }
-        // The "main worktree" lock still applies to git repositories
-        // (git refuses to remove the main working tree) but folders
-        // piggy-back on this pipeline specifically to delete their
-        // only entry — there's no git operation to refuse.
-        if state.isMainWorktree(worktree), repository.isGitRepository {
-          state.alert = messageAlert(
-            title: "Delete not allowed",
-            message: "Deleting the main worktree is not allowed."
-          )
-          return .none
-        }
-        if state.archivingWorktreeIDs.contains(worktree.id) {
-          return .none
-        }
-        if state.deletingWorktreeIDs.contains(worktree.id)
-          || state.deleteScriptWorktreeIDs.contains(worktree.id)
-        {
-          return .none
-        }
-        // Destructive-action voice: the git worktree-delete alert
-        // keeps the 🚨 emoji (actual data loss on disk); the folder
-        // "remove" alert drops it because the primary action leaves
-        // the folder on disk. Folders get a secondary destructive
-        // option to wipe the directory from disk as well.
-        if !repository.isGitRepository {
+        let count = validTargets.count
+        if validKinds == [.folder] {
+          let folders = validTargets.compactMap { state.repositories[id: $0.repositoryID] }
+          let namesList = folders.map(\.name)
+            .sorted(by: { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending })
+            .joined(separator: ", ")
+          let title = count == 1 ? "Remove folder?" : "Remove \(count) folders?"
+          let messageSubject = count == 1 ? folders.first?.name ?? "this folder" : namesList
+          let stayOnDiskCopy =
+            count == 1
+            ? "managing the folder (it stays on disk)"
+            : "managing the folders (they stay on disk)"
+          let trashCopy =
+            count == 1 ? "move the folder to the Trash" : "move them to the Trash"
           state.alert = AlertState {
-            TextState("Remove folder?")
+            TextState(title)
           } actions: {
-            ButtonState(action: .confirmDeleteWorktree(worktree.id, repository.id)) {
+            ButtonState(
+              action: .confirmDeleteSidebarItems(validTargets, disposition: .folderUnlink)
+            ) {
               TextState("Remove from Supacode")
             }
             ButtonState(
               role: .destructive,
-              action: .confirmDeleteFolderFromDisk(worktree.id, repository.id)
+              action: .confirmDeleteSidebarItems(validTargets, disposition: .folderTrash)
             ) {
               TextState("Delete from disk")
             }
@@ -1562,107 +1681,113 @@ struct RepositoriesFeature {
             }
           } message: {
             TextState(
-              "Remove \(worktree.name)? Choose \"Remove from Supacode\" to stop managing "
-                + "the folder (it stays on disk), or \"Delete from disk\" to move the "
-                + "folder to the Trash."
+              "Remove \(messageSubject)? Choose \"Remove from Supacode\" to stop "
+                + stayOnDiskCopy
+                + ", or \"Delete from disk\" to " + trashCopy + "."
             )
           }
           return .none
         }
         @Shared(.settingsFile) var settingsFile
         let deleteBranchOnDeleteWorktree = settingsFile.global.deleteBranchOnDeleteWorktree
-        let removalMessage =
-          deleteBranchOnDeleteWorktree
-          ? "This deletes the worktree directory and its local branch."
-          : "This deletes the worktree directory and keeps the local branch."
-        let alertMessage = "Delete \(worktree.name)? " + removalMessage
+        let removalSubject =
+          count == 1
+          ? "the worktree directory and "
+            + (deleteBranchOnDeleteWorktree ? "its local branch" : "keep the local branch")
+          : "the worktree directories and "
+            + (deleteBranchOnDeleteWorktree ? "their local branches" : "keep their local branches")
+        let title = count == 1 ? "🚨 Delete worktree?" : "🚨 Delete \(count) worktrees?"
+        let buttonLabel = count == 1 ? "Delete (⌘↩)" : "Delete \(count) (⌘↩)"
+        let messageSubject =
+          count == 1
+          ? "Delete \(validTargets.first.flatMap { state.repositories[id: $0.repositoryID]?.worktrees[id: $0.worktreeID]?.name } ?? "worktree")?"
+          : "Delete \(count) worktrees?"
         state.alert = AlertState {
-          TextState("🚨 Delete worktree?")
+          TextState(title)
         } actions: {
-          ButtonState(role: .destructive, action: .confirmDeleteWorktree(worktree.id, repository.id)) {
-            TextState("Delete (⌘↩)")
+          ButtonState(
+            role: .destructive,
+            action: .confirmDeleteSidebarItems(validTargets, disposition: .gitWorktreeDelete)
+          ) {
+            TextState(buttonLabel)
           }
           ButtonState(role: .cancel) {
             TextState("Cancel")
           }
         } message: {
-          TextState(alertMessage)
+          TextState("\(messageSubject) This deletes \(removalSubject).")
         }
         return .none
 
-      case .requestDeleteWorktrees(let targets):
+      case .alert(.presented(.confirmDeleteSidebarItems(let targets, let disposition))):
+        // Kind-and-disposition mapping: folders carry the
+        // disposition into `removingRepositoryIDs` so
+        // `.deleteScriptCompleted` can route by stored choice later.
+        // Git worktrees run the standard per-worktree pipeline and
+        // don't record a repo-level disposition. Kind / disposition
+        // mismatches are impossible under the current alert surface
+        // and a caller bypassing those guards is a bug — flag it via
+        // `reportIssue` instead of dropping silently.
+        state.alert = nil
         var validTargets: [DeleteWorktreeTarget] = []
-        var seenWorktreeIDs: Set<Worktree.ID> = []
+        var folderBatchIDs: Set<Repository.ID> = []
         for target in targets {
-          guard seenWorktreeIDs.insert(target.worktreeID).inserted else { continue }
-          if state.removingRepositoryIDs[target.repositoryID] != nil {
-            continue
-          }
           guard let repository = state.repositories[id: target.repositoryID],
-            let worktree = repository.worktrees[id: target.worktreeID]
-          else {
-            continue
-          }
-          if state.isMainWorktree(worktree)
-            || state.deletingWorktreeIDs.contains(worktree.id)
-            || state.deleteScriptWorktreeIDs.contains(worktree.id)
-            || state.archivingWorktreeIDs.contains(worktree.id)
-          {
-            continue
+            state.removingRepositoryIDs[target.repositoryID] == nil
+          else { continue }
+          if repository.isGitRepository {
+            guard disposition == .gitWorktreeDelete else {
+              reportIssue(
+                """
+                confirmDeleteSidebarItems: received \(disposition) for git worktree \
+                \(target.worktreeID) — git targets only support .gitWorktreeDelete. \
+                Dropping target.
+                """
+              )
+              continue
+            }
+          } else {
+            guard disposition.isFolder else {
+              reportIssue(
+                """
+                confirmDeleteSidebarItems: received \(disposition) for folder \
+                \(target.repositoryID) — folder targets only support .folderUnlink / \
+                .folderTrash. Dropping target.
+                """
+              )
+              continue
+            }
+            folderBatchIDs.insert(target.repositoryID)
           }
           validTargets.append(target)
         }
-        guard !validTargets.isEmpty else {
-          return .none
-        }
-        @Shared(.settingsFile) var settingsFile
-        let deleteBranchOnDeleteWorktree = settingsFile.global.deleteBranchOnDeleteWorktree
-        let removalMessage =
-          deleteBranchOnDeleteWorktree
-          ? "This deletes the worktree directories and their local branches."
-          : "This deletes the worktree directories and keeps their local branches."
-        let count = validTargets.count
-        state.alert = AlertState {
-          TextState("🚨 Delete \(count) worktrees?")
-        } actions: {
-          ButtonState(role: .destructive, action: .confirmDeleteWorktrees(validTargets)) {
-            TextState("Delete \(count) (⌘↩)")
+        guard !validTargets.isEmpty else { return .none }
+        if !folderBatchIDs.isEmpty {
+          // All folder targets in this batch share the same
+          // disposition (the alert only ever produces one), so one
+          // record shape per repo keeps disposition + batch id in
+          // lockstep.
+          let batchID = uuid()
+          for repositoryID in folderBatchIDs {
+            state.removingRepositoryIDs[repositoryID] = RepositoryRemovalRecord(
+              disposition: disposition, batchID: batchID
+            )
           }
-          ButtonState(role: .cancel) {
-            TextState("Cancel")
-          }
-        } message: {
-          TextState("Delete \(count) worktrees? " + removalMessage)
+          state.activeRemovalBatches[batchID] =
+            ActiveRemovalBatch(id: batchID, pending: folderBatchIDs)
         }
-        return .none
-
-      case .alert(.presented(.confirmDeleteWorktree(let worktreeID, let repositoryID))):
-        // For folders the alert's primary button records the
-        // sidebar-only intent up front so
-        // `.deleteScriptCompleted` can route by intent rather than
-        // live classification.
-        if let repo = state.repositories[id: repositoryID], !repo.isGitRepository {
-          state.removingRepositoryIDs[repositoryID] = .folderSidebar
-        }
-        return .send(.deleteWorktreeConfirmed(worktreeID, repositoryID))
-
-      case .alert(.presented(.confirmDeleteFolderFromDisk(let worktreeID, let repositoryID))):
-        state.removingRepositoryIDs[repositoryID] = .folderTrash
-        return .send(.deleteWorktreeConfirmed(worktreeID, repositoryID))
-
-      case .alert(.presented(.confirmDeleteWorktrees(let targets))):
         return .merge(
-          targets.map { target in
-            .send(.deleteWorktreeConfirmed(target.worktreeID, target.repositoryID))
+          validTargets.map {
+            .send(.deleteSidebarItemConfirmed($0.worktreeID, $0.repositoryID))
           }
         )
 
-      case .deleteWorktreeConfirmed(let worktreeID, let repositoryID):
+      case .deleteSidebarItemConfirmed(let worktreeID, let repositoryID):
         guard let repository = state.repositories[id: repositoryID],
           let worktree = repository.worktrees[id: worktreeID]
         else {
           repositoriesLogger.debug(
-            "deleteWorktreeConfirmed: worktree \(worktreeID) not found in repository \(repositoryID)."
+            "deleteSidebarItemConfirmed: worktree \(worktreeID) not found in repository \(repositoryID)."
           )
           return .none
         }
@@ -1681,14 +1806,24 @@ struct RepositoriesFeature {
         @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
         let script = repositorySettings.deleteScript
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-        let folderIntent = state.removingRepositoryIDs[repository.id]?.folderIntent
+        // Only folder-row intents (`.folderUnlink` / `.folderTrash`)
+        // route through the folder-removal success branch.
+        // `.gitRepositoryUnlink` is a concurrent git-repo section
+        // removal that has no bearing on this worktree's delete flow.
+        // `nil` is a git worktree delete (no repo-level intent).
+        let folderIntent: DeleteDisposition? = {
+          guard let record = state.removingRepositoryIDs[repository.id],
+            record.disposition.isFolder
+          else { return nil }
+          return record.disposition
+        }()
         if trimmed.isEmpty {
           if let folderIntent {
             // Empty script: finish the folder flow immediately,
             // trashing the directory first if the user asked for it.
             state.deletingWorktreeIDs.insert(worktree.id)
             let selectionWasRemoved = state.selectedWorktreeID == worktreeID
-            let trashURL = folderIntent == .trash ? repository.rootURL : nil
+            let trashURL = folderIntent == .folderTrash ? repository.rootURL : nil
             return folderRemovalEffect(
               repositoryID: repository.id,
               selectionWasRemoved: selectionWasRemoved,
@@ -1703,7 +1838,9 @@ struct RepositoriesFeature {
 
       case .deleteScriptCompleted(let worktreeID, let exitCode, let tabId):
         guard state.deleteScriptWorktreeIDs.contains(worktreeID) else {
-          repositoriesLogger.debug("Ignoring deleteScriptCompleted for \(worktreeID): not in deleteScriptWorktreeIDs")
+          repositoriesLogger.debug(
+            "Ignoring deleteScriptCompleted for \(worktreeID): not in deleteScriptWorktreeIDs."
+          )
           return .none
         }
         state.deleteScriptWorktreeIDs.remove(worktreeID)
@@ -1714,7 +1851,15 @@ struct RepositoriesFeature {
         let owningRepo = state.repositories.first(where: {
           $0.worktrees.contains(where: { $0.id == worktreeID })
         })
-        let folderIntent = owningRepo.flatMap { state.removingRepositoryIDs[$0.id]?.folderIntent }
+        // Only a folder-row intent (`.folderUnlink` / `.folderTrash`)
+        // routes this completion into repo-level removal.
+        // `.gitRepositoryUnlink` is a concurrent git-repo remove
+        // running independently; it shouldn't hijack the
+        // worktree-delete pipeline. `nil` means plain git worktree
+        // delete.
+        let folderIntent: DeleteDisposition? = owningRepo
+          .flatMap { state.removingRepositoryIDs[$0.id] }
+          .flatMap { $0.disposition.isFolder ? $0.disposition : nil }
         switch exitCode {
         case 0:
           guard let folderIntent, let owningRepo else {
@@ -1734,35 +1879,40 @@ struct RepositoriesFeature {
           if owningRepo.isGitRepository {
             // Kind flipped between confirmation and completion —
             // bail out rather than silently picking a path.
-            state.removingRepositoryIDs[owningRepo.id] = nil
             state.alert = messageAlert(
               title: "Folder is now a git repository",
               message: "Supacode stopped the removal because \(owningRepo.name) became a git "
                 + "repository while the delete script was running. Review it and try again."
             )
-            return .none
+            return signalFolderRemovalFailure(
+              folderIntent: folderIntent, owningRepo: owningRepo, state: &state
+            )
           }
           let selectionWasRemoved = state.selectedWorktreeID == worktreeID
-          let trashURL = folderIntent == .trash ? owningRepo.rootURL : nil
+          let trashURL = folderIntent == .folderTrash ? owningRepo.rootURL : nil
           return folderRemovalEffect(
             repositoryID: owningRepo.id,
             selectionWasRemoved: selectionWasRemoved,
             diskDeletionURL: trashURL
           )
         case nil:
-          if let owningRepo {
-            state.removingRepositoryIDs[owningRepo.id] = nil
-          }
-          repositoriesLogger.debug("Delete script cancelled or tab closed for worktree \(worktreeID)")
-          return .none
+          // User closed the script tab.
+          repositoriesLogger.debug(
+            "Delete script cancelled or tab closed for worktree \(worktreeID).")
+          return signalFolderRemovalFailure(
+            folderIntent: folderIntent, owningRepo: owningRepo, state: &state
+          )
         case let code?:
-          if let owningRepo {
-            state.removingRepositoryIDs[owningRepo.id] = nil
-          }
+          // Script failed. Show the standard failure alert AND — for
+          // folder removals — signal the aggregator so bulk batches
+          // don't hang waiting for this target. Git worktree delete
+          // has no batch.
           state.alert = blockingScriptFailureAlert(
             kind: .delete, exitCode: code, worktreeID: worktreeID, tabId: tabId, state: state
           )
-          return .none
+          return signalFolderRemovalFailure(
+            folderIntent: folderIntent, owningRepo: owningRepo, state: &state
+          )
         }
 
       case .deleteWorktreeApply(let worktreeID, let repositoryID):
@@ -1913,7 +2063,7 @@ struct RepositoriesFeature {
         state.alert = messageAlert(title: "Unable to delete worktree", message: message)
         return .none
 
-      case .requestRemoveRepository(let repositoryID):
+      case .requestDeleteRepository(let repositoryID):
         state.alert = confirmationAlertForRepositoryRemoval(repositoryID: repositoryID, state: state)
         return .none
 
@@ -1942,7 +2092,7 @@ struct RepositoriesFeature {
         }
         .cancellable(id: CancelID.load, cancelInFlight: true)
 
-      case .alert(.presented(.confirmRemoveRepository(let repositoryID))):
+      case .alert(.presented(.confirmDeleteRepository(let repositoryID))):
         guard let repository = state.repositories[id: repositoryID] else {
           return .none
         }
@@ -1950,42 +2100,132 @@ struct RepositoriesFeature {
           return .none
         }
         state.alert = nil
-        state.removingRepositoryIDs[repository.id] = repository.isGitRepository ? .git : .folderSidebar
+        // Section-level removal — Supacode never nukes a git repo's
+        // on-disk state. No script runs; signal completion
+        // immediately and let the aggregator (batch of 1) emit the
+        // terminal.
         let selectionWasRemoved =
           state.selectedWorktreeID.map { id in
             repository.worktrees.contains(where: { $0.id == id })
           } ?? false
-        return .send(.repositoryRemoved(repository.id, selectionWasRemoved: selectionWasRemoved))
+        let batchID = uuid()
+        state.removingRepositoryIDs[repository.id] = RepositoryRemovalRecord(
+          disposition: .gitRepositoryUnlink, batchID: batchID
+        )
+        state.activeRemovalBatches[batchID] =
+          ActiveRemovalBatch(id: batchID, pending: [repository.id])
+        return .send(
+          .repositoryRemovalCompleted(
+            repository.id, succeeded: true, selectionWasRemoved: selectionWasRemoved))
 
-      case .repositoryRemoved(let repositoryID, let selectionWasRemoved):
-        let kind = (state.repositories[id: repositoryID]?.isGitRepository ?? true) ? "git" : "folder"
-        analyticsClient.capture("repository_removed", ["kind": kind])
-        state.removingRepositoryIDs[repositoryID] = nil
+      case .repositoryRemovalCompleted(let repositoryID, let succeeded, let selectionWasRemoved):
+        // Aggregator entry point. Every repo-level removal
+        // (successful or not) drains through here so bulk batches
+        // fire a single terminal `.repositoriesRemoved` after the
+        // last target reports in. `succeeded=false` signals keep
+        // the batch progressing past failures without removing the
+        // repo from state.
+        guard let record = state.removingRepositoryIDs[repositoryID],
+          var batch = state.activeRemovalBatches[record.batchID]
+        else {
+          // Orphaned completion — every sender seeds the record +
+          // batch before signalling, so arriving here means a bug
+          // (e.g. future caller skipped setup). Surface it loudly
+          // via `reportIssue` so tests fail and release builds emit
+          // a warning, and defensively clean up any state the
+          // absent terminal would otherwise leave hanging.
+          reportIssue(
+            """
+            repositoryRemovalCompleted: no active batch for \(repositoryID). \
+            This indicates an invariant violation — every confirm handler \
+            must seed a batch before per-target work fires.
+            """
+          )
+          state.removingRepositoryIDs[repositoryID] = nil
+          if succeeded {
+            return .send(
+              .repositoriesRemoved([repositoryID], selectionWasRemoved: selectionWasRemoved))
+          }
+          // `succeeded=false` under an orphaned completion: clear
+          // per-worktree trackers for any worktree belonging to
+          // this repo so `deletingWorktreeIDs` / `deleteScriptWorktreeIDs`
+          // entries can't leak beyond the failed attempt.
+          if let repository = state.repositories[id: repositoryID] {
+            for worktree in repository.worktrees {
+              state.deletingWorktreeIDs.remove(worktree.id)
+              state.deleteScriptWorktreeIDs.remove(worktree.id)
+            }
+          }
+          return .none
+        }
+        let batchID = record.batchID
+        batch.pending.remove(repositoryID)
+        batch.selectionWasRemoved = batch.selectionWasRemoved || selectionWasRemoved
+        if succeeded {
+          batch.succeeded.append(repositoryID)
+          // `.repositoriesRemoved` clears `removingRepositoryIDs`
+          // for the successful targets as part of the terminal —
+          // leave the record in place so the UI keeps showing the
+          // "removing" indicator until then.
+        } else {
+          // Failure drains the target from the batch without
+          // removing the repo from state. Clear the record
+          // immediately so the sidebar row stops showing "removing"
+          // and the user can retry.
+          state.removingRepositoryIDs[repositoryID] = nil
+        }
+        if batch.pending.isEmpty {
+          state.activeRemovalBatches[batchID] = nil
+          guard !batch.succeeded.isEmpty else { return .none }
+          return .send(
+            .repositoriesRemoved(
+              batch.succeeded, selectionWasRemoved: batch.selectionWasRemoved))
+        }
+        state.activeRemovalBatches[batchID] = batch
+        return .none
+
+      case .repositoriesRemoved(let repositoryIDs, let selectionWasRemoved):
+        // Bulk terminal: mutates `repositories` / `repositoryRoots`
+        // synchronously, emits one `.repositoriesLoaded` for
+        // reconciliation and a single cancellable persistence save.
+        // Firing once per batch (instead of once per target) removes
+        // the reload race.
+        guard !repositoryIDs.isEmpty else { return .none }
+        let idSet = Set(repositoryIDs)
+        for id in repositoryIDs {
+          let kind = (state.repositories[id: id]?.isGitRepository ?? true) ? "git" : "folder"
+          analyticsClient.capture("repository_removed", ["kind": kind])
+          state.removingRepositoryIDs[id] = nil
+        }
         if selectionWasRemoved {
           state.selection = nil
           state.shouldSelectFirstAfterReload = true
         }
         let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
+        let remainingRepositories = Array(state.repositories.filter { !idSet.contains($0.id) })
+        let remainingRoots = state.repositoryRoots.filter {
+          !idSet.contains($0.standardizedFileURL.path(percentEncoded: false))
+        }
+        let remainingFailures = state.loadFailuresByID
+          .filter { !idSet.contains($0.key) }
+          .map { LoadFailure(rootID: $0.key, message: $0.value) }
+        let pathsToPersist = remainingRoots.map {
+          $0.standardizedFileURL.path(percentEncoded: false)
+        }
         return .merge(
           .send(.delegate(.selectedWorktreeChanged(selectedWorktree))),
-          .run { send in
-            let loadedPaths = await repositoryPersistence.loadRoots()
-            var seen: Set<String> = []
-            let rootPaths = loadedPaths.filter { seen.insert($0).inserted }
-            let remaining = rootPaths.filter { $0 != repositoryID }
-            await repositoryPersistence.saveRoots(remaining)
-            let roots = remaining.map { URL(fileURLWithPath: $0) }
-            let (repositories, failures) = await loadRepositoriesData(roots)
-            await send(
-              .repositoriesLoaded(
-                repositories,
-                failures: failures,
-                roots: roots,
-                animated: true
-              )
+          .send(
+            .repositoriesLoaded(
+              remainingRepositories,
+              failures: remainingFailures,
+              roots: remainingRoots,
+              animated: true
             )
+          ),
+          .run { _ in
+            await repositoryPersistence.saveRoots(pathsToPersist)
           }
-          .cancellable(id: CancelID.load, cancelInFlight: true)
+          .cancellable(id: CancelID.persistRoots, cancelInFlight: true)
         )
 
       case .pinWorktree(let worktreeID):
@@ -2332,7 +2572,7 @@ struct RepositoriesFeature {
         }
         let effects: [Effect<Action>] =
           archiveWorktreeIDs.map { .send(.archiveWorktreeConfirmed($0, repositoryID)) }
-          + deleteWorktreeIDs.map { .send(.deleteWorktreeConfirmed($0, repositoryID)) }
+          + deleteWorktreeIDs.map { .send(.deleteSidebarItemConfirmed($0, repositoryID)) }
         guard !effects.isEmpty else {
           return .none
         }
@@ -2702,7 +2942,7 @@ struct RepositoriesFeature {
         repositoriesLogger.info("Auto-deleting \(targets.count) expired archived worktree(s).")
         return .merge(
           targets.map { worktreeID, repositoryID in
-            .send(.deleteWorktreeConfirmed(worktreeID, repositoryID))
+            .send(.deleteSidebarItemConfirmed(worktreeID, repositoryID))
           }
         )
 
@@ -3012,20 +3252,36 @@ struct RepositoriesFeature {
     return ApplyRepositoriesResult(didPruneArchivedWorktreeIDs: didPruneArchivedWorktreeIDs)
   }
 
-  /// Build the effect that closes a folder-delete flow. When
-  /// `diskDeletionURL` is non-`nil`, the folder is moved to the
-  /// Trash via `FileManager.trashItem` before the sidebar removal
-  /// dispatches; when `nil`, the folder is removed from Supacode
-  /// only and stays on disk. Trash (rather than `removeItem`) is
-  /// intentional so the user can recover if they changed their
-  /// mind.
+  /// Shared failure tail for `.deleteScriptCompleted` cancel /
+  /// non-zero-exit branches. Folder removals drain the batch so
+  /// bulk aggregations don't hang; the aggregator is responsible
+  /// for clearing `removingRepositoryIDs` on failure (lookup needs
+  /// the record to find the batch). Git worktree deletes have no
+  /// repo-level record so this is a no-op for them.
+  private func signalFolderRemovalFailure(
+    folderIntent: DeleteDisposition?,
+    owningRepo: Repository?,
+    state: inout State
+  ) -> Effect<Action> {
+    guard folderIntent != nil, let owningRepo else { return .none }
+    return .send(
+      .repositoryRemovalCompleted(
+        owningRepo.id, succeeded: false, selectionWasRemoved: false))
+  }
+
   private func folderRemovalEffect(
     repositoryID: Repository.ID,
     selectionWasRemoved: Bool,
     diskDeletionURL: URL?
   ) -> Effect<Action> {
+    // Completion always routes through `.repositoryRemovalCompleted`
+    // so the batch aggregator can decide whether to fire the bulk
+    // terminal. For the trash path, the effect awaits the trash
+    // operation before reporting completion.
     guard let diskDeletionURL else {
-      return .send(.repositoryRemoved(repositoryID, selectionWasRemoved: selectionWasRemoved))
+      return .send(
+        .repositoryRemovalCompleted(
+          repositoryID, succeeded: true, selectionWasRemoved: selectionWasRemoved))
     }
     return .run { send in
       do {
@@ -3038,7 +3294,9 @@ struct RepositoriesFeature {
             + error.localizedDescription
         )
       }
-      await send(.repositoryRemoved(repositoryID, selectionWasRemoved: selectionWasRemoved))
+      await send(
+        .repositoryRemovalCompleted(
+          repositoryID, succeeded: true, selectionWasRemoved: selectionWasRemoved))
     }
   }
 
@@ -3096,7 +3354,7 @@ struct RepositoriesFeature {
     return AlertState {
       TextState(isGitRepository ? "Remove repository?" : "Remove folder?")
     } actions: {
-      ButtonState(role: .destructive, action: .confirmRemoveRepository(repository.id)) {
+      ButtonState(role: .destructive, action: .confirmDeleteRepository(repository.id)) {
         TextState(isGitRepository ? "Remove repository" : "Remove folder")
       }
       ButtonState(role: .cancel) {
@@ -3465,11 +3723,8 @@ extension RepositoriesFeature.State {
       if case .confirmArchiveWorktrees(let targets)? = button.action.action {
         return .confirmArchiveWorktrees(targets)
       }
-      if case .confirmDeleteWorktree(let worktreeID, let repositoryID)? = button.action.action {
-        return .confirmDeleteWorktree(worktreeID, repositoryID)
-      }
-      if case .confirmDeleteWorktrees(let targets)? = button.action.action {
-        return .confirmDeleteWorktrees(targets)
+      if case .confirmDeleteSidebarItems(let targets, let disposition)? = button.action.action {
+        return .confirmDeleteSidebarItems(targets, disposition: disposition)
       }
     }
     return nil

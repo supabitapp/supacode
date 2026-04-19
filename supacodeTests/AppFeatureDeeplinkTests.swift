@@ -105,7 +105,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .delete)))
     #expect(store.state.deeplinkInputConfirmation == nil)
-    await store.receive(\.repositories.deleteWorktreeConfirmed)
+    await store.receive(\.repositories.deleteSidebarItemConfirmed)
   }
 
   @Test(.dependencies) func deleteWorktreeDeeplinkConfirmationAcceptedSendsDeleteConfirmed() async {
@@ -137,7 +137,7 @@ struct AppFeatureDeeplinkTests {
         $0.deeplinkInputConfirmation = nil
       }
     }
-    await store.receive(\.repositories.deleteWorktreeConfirmed)
+    await store.receive(\.repositories.deleteSidebarItemConfirmed)
     await store.finish()
   }
 

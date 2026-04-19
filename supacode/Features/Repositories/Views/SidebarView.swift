@@ -84,11 +84,7 @@ struct SidebarView: View {
       }
     guard !targets.isEmpty else { return nil }
     return {
-      if targets.count == 1, let target = targets.first {
-        store.send(.requestDeleteWorktree(target.worktreeID, target.repositoryID))
-      } else {
-        store.send(.requestDeleteWorktrees(targets))
-      }
+      store.send(.requestDeleteSidebarItems(targets))
     }
   }
 }

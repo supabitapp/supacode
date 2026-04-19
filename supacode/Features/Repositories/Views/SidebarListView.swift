@@ -213,7 +213,7 @@ private struct SidebarSectionActionsView: View {
       .help("Repository Settings")
       Divider()
       Button("Remove Repository…", systemImage: "folder.badge.minus", role: .destructive) {
-        store.send(.requestRemoveRepository(repositoryID))
+        store.send(.requestDeleteRepository(repositoryID))
       }
       .help("Remove Repository")
       .disabled(isRemovingRepository)

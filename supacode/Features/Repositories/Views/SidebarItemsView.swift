@@ -283,6 +283,19 @@ private struct SidebarItemContextMenu: View {
     return rows.isEmpty ? [row] : rows
   }
 
+  /// A bulk context menu only makes sense for selections whose rows
+  /// are all of the same kind — the per-kind actions (archive, pin,
+  /// branch-name copy, folder disk deletion) don't compose. Mixed
+  /// selections surface no menu at all; the user-facing affordances
+  /// for that state live in the multi-selection detail view.
+  private var hasMixedKindSelection: Bool {
+    contextRows.count > 1 && Set(contextRows.map(\.kind)).count > 1
+  }
+
+  private var isAllFoldersBulk: Bool {
+    contextRows.count > 1 && contextRows.allSatisfy(\.isFolder)
+  }
+
   private var openActionSelection: OpenWorktreeAction {
     @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
     return OpenWorktreeAction.fromSettingsID(
@@ -292,11 +305,29 @@ private struct SidebarItemContextMenu: View {
   }
 
   var body: some View {
-    let contextRows = contextRows
-    let isBulkSelection = contextRows.count > 1
-    let overrides = settingsFile.global.shortcutOverrides
+    // A mixed folders + worktrees selection has no composable bulk
+    // action, so we render no menu at all. The multi-selection
+    // detail view explains what remains available per kind.
+    if hasMixedKindSelection {
+      EmptyView()
+    } else {
+      menuContents(
+        contextRows: contextRows,
+        isBulkSelection: contextRows.count > 1,
+        overrides: settingsFile.global.shortcutOverrides
+      )
+    }
+  }
+
+  @ViewBuilder
+  private func menuContents(
+    contextRows: [SidebarItemModel],
+    isBulkSelection: Bool,
+    overrides: [AppShortcutID: AppShortcutOverride]
+  ) -> some View {
     let archiveShortcut = AppShortcuts.archiveWorktree.effective(from: overrides)
     let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
+    let isAllFoldersBulk = isAllFoldersBulk
 
     if !isBulkSelection {
       openActions(overrides: overrides)
@@ -376,14 +407,10 @@ private struct SidebarItemContextMenu: View {
     if !deleteTargets.isEmpty {
       let deleteLabel =
         isBulkSelection
-        ? "Delete Worktrees…"
+        ? (isAllFoldersBulk ? "Remove Folders…" : "Delete Worktrees…")
         : (row.isFolder ? "Remove Folder…" : "Delete Worktree…")
       Button(deleteLabel, systemImage: "trash", role: .destructive) {
-        if deleteTargets.count == 1, let target = deleteTargets.first {
-          store.send(.requestDeleteWorktree(target.worktreeID, target.repositoryID))
-        } else {
-          store.send(.requestDeleteWorktrees(deleteTargets))
-        }
+        store.send(.requestDeleteSidebarItems(deleteTargets))
       }
       .appKeyboardShortcut(deleteShortcut)
     }
