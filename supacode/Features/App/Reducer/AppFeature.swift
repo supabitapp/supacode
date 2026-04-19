@@ -1330,8 +1330,19 @@ struct AppFeature {
     guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "delete", state: &state) else {
       return .none
     }
+    // Folder repos have a synthesized main-worktree whose
+    // `workingDirectory == rootURL`, so `isMainWorktree(worktree)`
+    // is true by geometry — rejecting them here would show a
+    // misleading "main worktree" alert and prevent folders from
+    // ever being removed via deeplink. Route folder targets to
+    // `.requestDeleteSidebarItems([target])` so the 3-button folder
+    // alert pipeline (Remove / Delete / Cancel) handles the
+    // confirmation and the batch aggregator drains normally.
+    let repository = state.repositories.repositories[id: repositoryID]
+    let isFolder = repository?.isGitRepository == false
     if let worktree = state.repositories.worktree(for: worktreeID),
-      state.repositories.isMainWorktree(worktree)
+      state.repositories.isMainWorktree(worktree),
+      !isFolder
     {
       state.alert = AlertState {
         TextState("Delete not allowed")
@@ -1343,6 +1354,17 @@ struct AppFeature {
         TextState("Deleting the main worktree is not allowed.")
       }
       return .none
+    }
+    let target = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: worktreeID, repositoryID: repositoryID
+    )
+    if isFolder {
+      // Folders always surface the 3-button confirmation so users
+      // can pick between `.folderUnlink` (drop from sidebar, stay
+      // on disk) and `.folderTrash` (move to Trash). The deeplink
+      // `bypassConfirmation` flag still shows it — there's no
+      // reasonable default disposition for folders.
+      return .send(.repositories(.requestDeleteSidebarItems([target])))
     }
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? worktreeID
     guard bypassConfirmation else {

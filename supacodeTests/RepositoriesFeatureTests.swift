@@ -1837,6 +1837,48 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func requestArchiveWorktreeForFolderShowsActionNotAvailable() async {
+    // S1: the deeplink layer rejects archive/pin/unpin on folders,
+    // but the hotkey / context-menu path used to silently no-op
+    // because the synthetic main-worktree satisfies `isMainWorktree`
+    // geometrically. Surface the same "Action not available" alert
+    // the deeplink shows.
+    let folderRoot = "/tmp/folder-archive-\(UUID().uuidString)"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL), detail: "",
+      workingDirectory: folderURL, repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    let store = TestStore(initialState: makeState(repositories: [folderRepo])) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Action not available")
+    } actions: {
+      ButtonState(role: .cancel) { TextState("OK") }
+    } message: {
+      TextState("This action only applies to git repositories.")
+    }
+    await store.send(.requestArchiveWorktree(folderWorktree.id, folderRepo.id)) {
+      $0.alert = expectedAlert
+    }
+    await store.send(.alert(.dismiss)) { $0.alert = nil }
+    await store.send(.pinWorktree(folderWorktree.id)) {
+      $0.alert = expectedAlert
+    }
+    await store.send(.alert(.dismiss)) { $0.alert = nil }
+    await store.send(.unpinWorktree(folderWorktree.id)) {
+      $0.alert = expectedAlert
+    }
+  }
+
   @Test func requestArchiveWorktreesShowsBatchConfirmation() async {
     let worktree1 = makeWorktree(id: "/tmp/repo/wt1", name: "owl", repoRoot: "/tmp/repo")
     let worktree2 = makeWorktree(id: "/tmp/repo/wt2", name: "hawk", repoRoot: "/tmp/repo")
@@ -5592,6 +5634,62 @@ struct RepositoriesFeatureTests {
     #expect(!FileManager.default.fileExists(atPath: standardized.path(percentEncoded: false)))
   }
 
+  @Test func folderTrashFailureSurfacesAlertAndKeepsRepo() async {
+    // F2: `folderRemovalEffect` used to always dispatch
+    // `succeeded: true` on `FileManager.trashItem` failure, silently
+    // making the folder disappear from Supacode even though its
+    // on-disk contents stayed put. Fix dispatches `succeeded: false`
+    // AND surfaces a "Delete from disk failed" alert so the user
+    // knows what happened.
+    let missingRoot = "/tmp/supacode-missing-\(UUID().uuidString)"
+    let missingURL = URL(fileURLWithPath: missingRoot)
+    let rootID = missingURL.standardizedFileURL.path(percentEncoded: false)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: missingURL),
+      name: Repository.name(for: missingURL), detail: "",
+      workingDirectory: missingURL, repositoryRootURL: missingURL
+    )
+    let folderRepo = Repository(
+      id: rootID, rootURL: missingURL, name: Repository.name(for: missingURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [missingURL]
+    state.isInitialLoadComplete = true
+    let folderTarget = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: folderWorktree.id, repositoryID: folderRepo.id)
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems([folderTarget], disposition: .folderTrash)))
+    )
+    await store.skipReceivedActions()
+
+    #expect(store.state.alert != nil, "trash failure must surface an alert")
+    #expect(
+      store.state.repositories.contains(where: { $0.id == folderRepo.id }),
+      "folder must remain in state when trash fails"
+    )
+    #expect(
+      store.state.removingRepositoryIDs[folderRepo.id] == nil,
+      "removing indicator must clear on failure"
+    )
+  }
+
   @Test func bulkFolderUnlinkTerminatesWithEmptyState() async {
     // Regression: per-target `.repositoryRemoved` chaining used to
     // race `cancelInFlight: true` on the persistence save, leaving
@@ -6091,6 +6189,54 @@ struct RepositoriesFeatureTests {
       #expect(!store.state.deletingWorktreeIDs.contains(folderWorktree.id))
       #expect(!store.state.deleteScriptWorktreeIDs.contains(folderWorktree.id))
       #expect(store.state.repositories.contains(where: { $0.id == folderRepo.id }))
+    }
+  }
+
+  @Test func orphanCompletionSucceededFiresSoloTerminalAndRemovesRepo() async {
+    // S4 companion: the `succeeded: true` branch of the orphan
+    // fallback should still fire a solo `.repositoriesRemoved` so
+    // the repo leaves state, even though the invariant is
+    // technically broken. `reportIssue` surfaces the bug; the
+    // reducer still cleans up.
+    await withKnownIssue {
+      let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+      let folderURL = URL(fileURLWithPath: folderRoot)
+      let folderWorktree = Worktree(
+        id: Repository.folderWorktreeID(for: folderURL),
+        name: Repository.name(for: folderURL), detail: "",
+        workingDirectory: folderURL, repositoryRootURL: folderURL
+      )
+      let folderRepo = Repository(
+        id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+        worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+        isGitRepository: false
+      )
+
+      var state = RepositoriesFeature.State()
+      state.repositories = [folderRepo]
+      state.repositoryRoots = [folderURL]
+      state.isInitialLoadComplete = true
+      state.removingRepositoryIDs[folderRepo.id] = RepositoriesFeature.RepositoryRemovalRecord(
+        disposition: .folderUnlink, batchID: UUID()
+      )
+
+      let store = TestStore(initialState: state) {
+        RepositoriesFeature()
+      } withDependencies: {
+        $0.repositoryPersistence.loadRoots = { [] }
+        $0.repositoryPersistence.saveRoots = { _ in }
+        $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+        $0.gitClient.isGitRepository = { _ in false }
+        $0.gitClient.worktrees = { _ in [] }
+        $0.analyticsClient.capture = { _, _ in }
+      }
+      store.exhaustivity = .off(showSkippedAssertions: false)
+
+      await store.send(
+        .repositoryRemovalCompleted(folderRepo.id, succeeded: true, selectionWasRemoved: false))
+      await store.skipReceivedActions()
+      #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+      #expect(!store.state.repositories.contains(where: { $0.id == folderRepo.id }))
     }
   }
 
