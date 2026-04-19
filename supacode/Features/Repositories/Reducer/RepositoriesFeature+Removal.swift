@@ -87,44 +87,44 @@ extension RepositoriesFeature {
     /// finishes so bulk trash failures don't clobber each other
     /// via per-target `.presentAlert` races.
     var failureMessagesByRepositoryID: [Repository.ID: String] = [:]
+    /// Set to `true` when any target in the batch reported a
+    /// `.failureSilent` outcome — i.e. a failure whose caller
+    /// already set `state.alert` directly (blocking-script
+    /// failure, user cancel, kind-flip). At drain time the
+    /// aggregator uses this to avoid overwriting the caller's
+    /// alert with the consolidated trash alert; any accumulated
+    /// trash-failure messages are logged instead so they stay
+    /// visible in telemetry without clobbering the UI.
+    var hasSilentFailure: Bool = false
   }
 
   /// What a per-target `.repositoryRemovalCompleted` signal reports
-  /// back to the batch aggregator. Replaces the former
-  /// `(succeeded: Bool, failureMessage: String?)` pair so the type
-  /// system can no longer express the illegal "succeeded=true AND
-  /// failureMessage != nil" combination, and so future failure
-  /// reasons can carry structured payloads without another action
-  /// parameter.
+  /// back to the batch aggregator. Split into three cases so the
+  /// type system distinguishes "caller owns the alert" (silent
+  /// failure) from "aggregator owns the alert" (failure with a
+  /// user-facing message) — previously folded into a single
+  /// `.failure(message: String?)` case where `nil` meant the
+  /// former. With the silent variant separated, the aggregator can
+  /// never accidentally overwrite a script-failure alert that
+  /// shares a batch with a trash failure.
   enum RemovalOutcome: Equatable, Sendable {
     /// Target completed cleanly. Aggregator appends to
     /// `batch.succeeded` and the terminal `.repositoriesRemoved`
     /// prunes it from state.
     case success
-    /// Target failed. `message` is non-nil only when the failure
-    /// carries a user-facing explanation the aggregator should
-    /// include in the consolidated alert (e.g. `FileManager.trashItem`
-    /// errors). Script failures / cancellations / kind-flips pass
-    /// `nil` because their alert is already set directly by the
-    /// script-completion handler.
-    case failure(message: String?)
-
-    /// Shorthand for the success/failure discrimination — keeps
-    /// aggregator logic terse when the payload isn't needed.
-    var succeeded: Bool {
-      switch self {
-      case .success: true
-      case .failure: false
-      }
-    }
-
-    /// User-facing failure message, if this outcome carries one.
-    var failureMessage: String? {
-      switch self {
-      case .success: nil
-      case .failure(let message): message
-      }
-    }
+    /// Target failed AND the caller has already set `state.alert`
+    /// (e.g. blocking-script failure, user-cancelled confirm,
+    /// kind-flip after `git init`). Aggregator drains the target
+    /// without touching `state.alert` and without contributing to
+    /// the consolidated trash-failure alert.
+    case failureSilent
+    /// Target failed with a user-facing explanation the aggregator
+    /// should include in the consolidated alert (primarily
+    /// `FileManager.trashItem` errors). The aggregator coalesces
+    /// parallel `.failureWithMessage` outcomes into a single alert
+    /// so each failure doesn't overwrite the last via per-target
+    /// `.presentAlert` races.
+    case failureWithMessage(String)
   }
 
   /// Git-only sidebar actions that can be dispatched against a
@@ -148,41 +148,20 @@ extension RepositoriesFeature {
       case .unpin: "Unpin"
       }
     }
-  }
-}
 
-#if DEBUG
-  extension RepositoriesFeature.State {
-    /// Seed an active removal batch for tests that drop straight
-    /// into `.deleteSidebarItemConfirmed` / `.deleteScriptCompleted`
-    /// without going through the confirm handler that normally
-    /// mints the id and records dispositions. Callers pass the
-    /// disposition each pending repo was confirmed with so the
-    /// per-repo record stays coherent. Returns the batch id so
-    /// tests can assert its lifecycle.
-    ///
-    /// `#if DEBUG`-gated because production callers have no reason
-    /// to seed the removal state machine externally — the
-    /// `.requestDeleteSidebarItems` → `.confirmDeleteSidebarItems`
-    /// flow owns that setup — and a misuse from production code
-    /// would silently corrupt the batch aggregator.
-    @discardableResult
-    mutating func seedRemovalBatch(
-      pending: [Repository.ID: RepositoriesFeature.DeleteDisposition],
-      id: RepositoriesFeature.BatchID = UUID()
-    ) -> RepositoriesFeature.BatchID {
-      for (repositoryID, disposition) in pending {
-        removingRepositoryIDs[repositoryID] = RepositoriesFeature.RepositoryRemovalRecord(
-          disposition: disposition, batchID: id
-        )
-      }
-      activeRemovalBatches[id] = RepositoriesFeature.ActiveRemovalBatch(
-        id: id, pending: Set(pending.keys)
-      )
-      return id
+    /// Single source of truth for the "git-only action dispatched
+    /// against a folder" alert copy. Both the reducer's
+    /// `folderIncompatibleAlert` helper and `AppFeature`'s
+    /// deeplink folder-rejection handler consume this — the
+    /// `AlertState<Alert>` shape diverges between the two features
+    /// (different `Alert` action types), but the title / message
+    /// strings must stay identical so users see the same wording
+    /// regardless of entry point.
+    var alertCopy: (title: String, message: String) {
+      ("\(displayName) not available", "\(displayName) only applies to git repositories.")
     }
   }
-#endif
+}
 
 extension RepositoriesFeature {
   /// Shared failure tail for `.deleteScriptCompleted` cancel /
@@ -209,7 +188,7 @@ extension RepositoriesFeature {
     else { return .none }
     return .send(
       .repositoryRemovalCompleted(
-        repositoryID, outcome: .failure(message: nil), selectionWasRemoved: false))
+        repositoryID, outcome: .failureSilent, selectionWasRemoved: false))
   }
 
   /// Shared "Action not available" alert shown when a git-only
@@ -218,10 +197,8 @@ extension RepositoriesFeature {
   /// `AlertState` inline before this helper existed — now they
   /// share one construction so the copy can't drift.
   func folderIncompatibleAlert(action: FolderIncompatibleAction) -> AlertState<Alert> {
-    messageAlert(
-      title: "\(action.displayName) not available",
-      message: "\(action.displayName) only applies to git repositories."
-    )
+    let copy = action.alertCopy
+    return messageAlert(title: copy.title, message: copy.message)
   }
 
   /// Consolidated alert shown when one or more folder trashes
@@ -256,7 +233,8 @@ extension RepositoriesFeature {
         message: "Couldn't move \(displayName(for: id)) to the Trash: \(message)"
       )
     }
-    let lines = failureMessagesByRepositoryID
+    let lines =
+      failureMessagesByRepositoryID
       .map { id, message -> String in "• \(displayName(for: id)): \(message)" }
       .sorted()
       .joined(separator: "\n")
@@ -276,7 +254,7 @@ extension RepositoriesFeature {
     // terminal. For the trash path, the effect awaits the trash
     // operation before reporting completion — on failure we pass
     // the localized error message via
-    // `RemovalOutcome.failure(message:)` so the aggregator can
+    // `RemovalOutcome.failureWithMessage` so the aggregator can
     // coalesce parallel failures into a single alert instead of
     // each overwriting `state.alert`.
     guard let diskDeletionURL else {
@@ -300,7 +278,7 @@ extension RepositoriesFeature {
         await send(
           .repositoryRemovalCompleted(
             repositoryID,
-            outcome: .failure(message: error.localizedDescription),
+            outcome: .failureWithMessage(error.localizedDescription),
             selectionWasRemoved: false
           ))
       }

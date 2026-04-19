@@ -1,5 +1,8 @@
 import Foundation
 import IdentifiedCollections
+import SupacodeSettingsShared
+
+private nonisolated let repositoryClassificationLogger = SupaLogger("RepositoryClassification")
 
 struct Repository: Identifiable, Hashable, Sendable {
   let id: String
@@ -62,9 +65,23 @@ struct Repository: Identifiable, Hashable, Sendable {
     let head = rootURL.appending(path: "HEAD", directoryHint: .notDirectory).path(percentEncoded: false)
     let objects = rootURL.appending(path: "objects", directoryHint: .isDirectory).path(percentEncoded: false)
     let refs = rootURL.appending(path: "refs", directoryHint: .isDirectory).path(percentEncoded: false)
-    return fileManager.fileExists(atPath: head)
-      && fileManager.fileExists(atPath: objects)
-      && fileManager.fileExists(atPath: refs)
+    let hasHead = fileManager.fileExists(atPath: head)
+    let hasObjects = fileManager.fileExists(atPath: objects)
+    let hasRefs = fileManager.fileExists(atPath: refs)
+    if hasHead && hasObjects && hasRefs {
+      return true
+    }
+    // `.git`-suffixed directory missing one of the three structural
+    // parts of a bare clone — log so the ambiguous "looks like a
+    // damaged bare clone but classifies as a folder" case is
+    // observable in telemetry without widening classification and
+    // creating false positives for empty `.git` directories.
+    repositoryClassificationLogger.warning(
+      "Directory ending in .git missing bare-clone structure — "
+        + "classified as folder. path=\(rootURL.path(percentEncoded: false)) "
+        + "hasHead=\(hasHead) hasObjects=\(hasObjects) hasRefs=\(hasRefs)"
+    )
+    return false
   }
 
   /// Prefix on folder-synthetic worktree ids. Single source of truth

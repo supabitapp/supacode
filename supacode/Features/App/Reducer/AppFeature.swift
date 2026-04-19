@@ -1035,21 +1035,21 @@ struct AppFeature {
       default: incompatibleAction = nil
       }
       if let incompatibleAction {
-        // Shared copy construction with the in-reducer folder
-        // hotkey handlers via
-        // `RepositoriesFeature.FolderIncompatibleAction.displayName`.
-        // Keeping this here (vs a shared `AlertState<_>` helper)
-        // avoids a cross-feature `AlertState<Alert>` type dance
-        // while still sourcing the display strings from one place.
-        let name = incompatibleAction.displayName
+        // Copy shared with the in-reducer folder hotkey handlers
+        // via `FolderIncompatibleAction.alertCopy`. The
+        // `AlertState<_>` type diverges (this feature's `Alert`
+        // has its own action surface) so the struct itself can't
+        // be shared, but the title / message strings live in one
+        // place and can't drift between entry points.
+        let copy = incompatibleAction.alertCopy
         state.alert = AlertState {
-          TextState("\(name) not available")
+          TextState(copy.title)
         } actions: {
           ButtonState(role: .cancel, action: .dismiss) {
             TextState("OK")
           }
         } message: {
-          TextState("\(name) only applies to git repositories.")
+          TextState(copy.message)
         }
         return .none
       }

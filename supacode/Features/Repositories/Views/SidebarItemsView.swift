@@ -373,6 +373,7 @@ private struct SidebarItemContextMenu: View {
         Button("Folder Settings…", systemImage: "gear") {
           store.send(.openRepositorySettings(row.repositoryID))
         }
+        .help("Open folder settings")
         Divider()
       }
     }

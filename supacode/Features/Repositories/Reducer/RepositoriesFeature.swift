@@ -1740,10 +1740,26 @@ struct RepositoriesFeature {
         // the empty-script folder branch below populates
         // `deletingWorktreeIDs` so a rapid repeat lands here as a
         // no-op.
+        //
+        // Folders arriving here have already been seeded into the
+        // batch aggregator by `.confirmDeleteSidebarItems`, so a
+        // silent `return .none` would leave `batch.pending`
+        // containing this repo forever — no future completion
+        // signal ever lands, the terminal `.repositoriesRemoved`
+        // never fires, and the row is stuck in `.deleting`. Drain
+        // the target as a silent failure so the aggregator moves
+        // on. Silent because any alert the caller wanted to show
+        // has already been set on `state.alert`; the aggregator
+        // must not clobber it with a consolidated trash alert.
         if state.archivingWorktreeIDs.contains(worktree.id)
           || state.deletingWorktreeIDs.contains(worktree.id)
           || state.deleteScriptWorktreeIDs.contains(worktree.id)
         {
+          if !repository.isGitRepository,
+            state.removingRepositoryIDs[repository.id] != nil
+          {
+            return signalFolderRemovalFailure(worktreeID: worktree.id, state: &state)
+          }
           return .none
         }
         // F4: folder targets only arrive here after the alert's
@@ -1828,7 +1844,8 @@ struct RepositoriesFeature {
         // running independently; it shouldn't hijack the
         // worktree-delete pipeline. `nil` means plain git worktree
         // delete.
-        let folderIntent: DeleteDisposition? = owningRepo
+        let folderIntent: DeleteDisposition? =
+          owningRepo
           .flatMap { state.removingRepositoryIDs[$0.id] }
           .flatMap { $0.disposition.isFolder ? $0.disposition : nil }
         switch exitCode {
@@ -2126,91 +2143,118 @@ struct RepositoriesFeature {
             """
           )
           state.removingRepositoryIDs[repositoryID] = nil
+          // Shared cleanup for the two failure-under-orphan paths:
+          // clear per-worktree trackers for this repo's folder-synthetic
+          // worktree id so `deletingWorktreeIDs` /
+          // `deleteScriptWorktreeIDs` entries can't leak beyond the
+          // failed attempt. Only the folder-synthetic id is ever
+          // populated by the folder removal pipeline; narrow the
+          // cleanup to it so a future caller passing a git repo id
+          // here can't accidentally clobber in-flight worktree-delete
+          // trackers for sibling git worktrees.
+          let orphanFolderWorktreeID = Repository.folderWorktreeID(
+            for: URL(fileURLWithPath: repositoryID)
+          )
           switch outcome {
           case .success:
             return .send(
               .repositoriesRemoved([repositoryID], selectionWasRemoved: selectionWasRemoved))
-          case .failure(let message):
-            // `.failure` under an orphaned completion: clear
-            // per-worktree trackers for any worktree belonging to
-            // this repo so `deletingWorktreeIDs` /
-            // `deleteScriptWorktreeIDs` entries can't leak beyond
-            // the failed attempt. Only the folder-synthetic
-            // worktree id ever gets populated by the folder
-            // removal pipeline; narrow the cleanup to it so a
-            // future caller passing a git repo id here can't
-            // accidentally clobber in-flight worktree-delete
-            // trackers for sibling git worktrees.
-            let folderWorktreeID = Repository.folderWorktreeID(
-              for: URL(fileURLWithPath: repositoryID)
+          case .failureSilent:
+            state.deletingWorktreeIDs.remove(orphanFolderWorktreeID)
+            state.deleteScriptWorktreeIDs.remove(orphanFolderWorktreeID)
+            return .none
+          case .failureWithMessage(let message):
+            state.deletingWorktreeIDs.remove(orphanFolderWorktreeID)
+            state.deleteScriptWorktreeIDs.remove(orphanFolderWorktreeID)
+            state.alert = messageAlert(
+              title: "Delete from disk failed", message: message
             )
-            state.deletingWorktreeIDs.remove(folderWorktreeID)
-            state.deleteScriptWorktreeIDs.remove(folderWorktreeID)
-            if let message {
-              state.alert = messageAlert(
-                title: "Delete from disk failed", message: message
-              )
-            }
             return .none
           }
         }
         let batchID = record.batchID
         batch.pending.remove(repositoryID)
         batch.selectionWasRemoved = batch.selectionWasRemoved || selectionWasRemoved
-        if outcome.succeeded {
+        // Shared failure cleanup — drain the target from the batch
+        // without removing the repo from state. Clears the record
+        // AND the folder-synthetic per-worktree trackers —
+        // `deletingWorktreeIDs` / `deleteScriptWorktreeIDs`
+        // entries seeded by the empty-script folder branch (or the
+        // blocking-script run) would otherwise leave the row stuck
+        // in `.deleting` forever. Scoped to the synthetic folder
+        // worktree id because only folder dispositions ever reach
+        // a failure completion (`.gitRepositoryUnlink` hardcodes
+        // `.success` at confirm time); clearing every worktree of
+        // the repo would reach too far if a future caller extends
+        // this path to git repos.
+        let folderWorktreeIDForFailure: Worktree.ID? =
+          record.disposition.isFolder
+          ? Repository.folderWorktreeID(for: URL(fileURLWithPath: repositoryID))
+          : nil
+        switch outcome {
+        case .success:
           batch.succeeded.append(repositoryID)
-          // `.repositoriesRemoved` clears `removingRepositoryIDs`
-          // for the successful targets as part of the terminal —
-          // leave the record in place so the UI keeps showing the
-          // "removing" indicator until then.
-        } else {
-          // Failure drains the target from the batch without
-          // removing the repo from state. Clear the record AND
-          // the folder-synthetic per-worktree trackers —
-          // `deletingWorktreeIDs` / `deleteScriptWorktreeIDs`
-          // entries seeded by the empty-script folder branch (or
-          // the blocking-script run) would otherwise leave the
-          // row stuck in `.deleting` forever. Scoped to the
-          // synthetic folder worktree id because only folder
-          // dispositions ever reach a `.failure` completion
-          // (`.gitRepositoryUnlink` hardcodes `.success` at
-          // confirm time); clearing every worktree of the repo
-          // would reach too far if a future caller extends this
-          // path to git repos.
+        // `.repositoriesRemoved` clears `removingRepositoryIDs`
+        // for the successful targets as part of the terminal —
+        // leave the record in place so the UI keeps showing the
+        // "removing" indicator until then.
+        case .failureSilent:
           state.removingRepositoryIDs[repositoryID] = nil
-          if record.disposition.isFolder {
-            let folderWorktreeID = Repository.folderWorktreeID(
-              for: URL(fileURLWithPath: repositoryID)
-            )
-            state.deletingWorktreeIDs.remove(folderWorktreeID)
-            state.deleteScriptWorktreeIDs.remove(folderWorktreeID)
+          if let folderWorktreeIDForFailure {
+            state.deletingWorktreeIDs.remove(folderWorktreeIDForFailure)
+            state.deleteScriptWorktreeIDs.remove(folderWorktreeIDForFailure)
           }
-          if let message = outcome.failureMessage {
-            batch.failureMessagesByRepositoryID[repositoryID] = message
+          batch.hasSilentFailure = true
+        case .failureWithMessage(let message):
+          state.removingRepositoryIDs[repositoryID] = nil
+          if let folderWorktreeIDForFailure {
+            state.deletingWorktreeIDs.remove(folderWorktreeIDForFailure)
+            state.deleteScriptWorktreeIDs.remove(folderWorktreeIDForFailure)
           }
+          batch.failureMessagesByRepositoryID[repositoryID] = message
         }
         if batch.pending.isEmpty {
           state.activeRemovalBatches[batchID] = nil
           // Consolidated failure alert — when any target in the
-          // batch reported a `failureMessage`, surface one alert
-          // listing them. Avoids parallel `.presentAlert` races
-          // where the last trash failure overwrites the others.
+          // batch reported a `.failureWithMessage`, surface one
+          // alert listing them. Avoids parallel `.presentAlert`
+          // races where the last trash failure overwrites the
+          // others.
+          //
+          // When a `.failureSilent` target in the same batch has
+          // already set `state.alert` directly (blocking-script
+          // failure / user cancel / kind-flip), preserve the
+          // caller's alert and log the trash failures instead of
+          // clobbering. macOS only shows one alert at a time, and
+          // the script-failure alert carries actionable context
+          // (the "View Terminal" button) that the consolidated
+          // trash alert does not.
           if !batch.failureMessagesByRepositoryID.isEmpty {
-            // Resolve names NOW (while `state.repositories` still
-            // has every batch member) so the alert stays
-            // user-recognizable even if the downstream
-            // `.repositoriesRemoved` → `.repositoriesLoaded`
-            // reloads prune an entry before the alert is read.
-            var namesByRepositoryID: [Repository.ID: String] = [:]
-            for id in batch.failureMessagesByRepositoryID.keys {
-              if let name = state.repositories[id: id]?.name {
-                namesByRepositoryID[id] = name
+            if batch.hasSilentFailure {
+              for (id, message) in batch.failureMessagesByRepositoryID {
+                let name = state.repositories[id: id]?.name ?? id
+                repositoriesLogger.warning(
+                  "Trash failure for \(name) (\(id)) suppressed "
+                    + "(silent-failure alert already showing for sibling target): \(message)"
+                )
               }
+            } else {
+              // Resolve names NOW (while `state.repositories`
+              // still has every batch member) so the alert stays
+              // user-recognizable even if the downstream
+              // `.repositoriesRemoved` → `.repositoriesLoaded`
+              // reloads prune an entry before the alert is read.
+              var namesByRepositoryID: [Repository.ID: String] = [:]
+              for id in batch.failureMessagesByRepositoryID.keys {
+                if let name = state.repositories[id: id]?.name {
+                  namesByRepositoryID[id] = name
+                }
+              }
+              state.alert = consolidatedTrashFailureAlert(
+                failureMessagesByRepositoryID: batch.failureMessagesByRepositoryID,
+                namesByRepositoryID: namesByRepositoryID
+              )
             }
-            state.alert = consolidatedTrashFailureAlert(
-              failureMessagesByRepositoryID: batch.failureMessagesByRepositoryID,
-              namesByRepositoryID: namesByRepositoryID
-            )
           }
           guard !batch.succeeded.isEmpty else { return .none }
           return .send(
@@ -3274,6 +3318,51 @@ struct RepositoriesFeature {
     let filteredWorktreeInfo = state.worktreeInfoByID.filter {
       availableWorktreeIDs.contains($0.key)
     }
+    // Symmetric prune for the repo-level removal trackers — every
+    // other tracker in this block is intersected against the live
+    // roster; leaving these two alone would let a mid-flight removal
+    // dangle if a concurrent reload drops the owning repo before the
+    // detached trash/unlink effect reports completion. Orphan
+    // completion handlers in `.repositoryRemovalCompleted` already
+    // tolerate missing records, but dropping them here matches the
+    // surrounding pattern and surfaces the invariant break via
+    // `reportIssue` so tests catch future regressions.
+    var filteredRemovingRepositoryIDs = state.removingRepositoryIDs
+    var filteredActiveRemovalBatches = state.activeRemovalBatches
+    let droppedRemovingRepositoryIDs = filteredRemovingRepositoryIDs.keys.filter {
+      !repositoryIDs.contains($0)
+    }
+    for droppedID in droppedRemovingRepositoryIDs {
+      reportIssue(
+        """
+        applyRepositories: active removal record for \(droppedID) survived a reload that \
+        dropped the repo. Pruning to match the other seven tracker intersections. The \
+        orphan-completion branch in .repositoryRemovalCompleted handles any detached \
+        effect still in flight.
+        """
+      )
+      filteredRemovingRepositoryIDs[droppedID] = nil
+    }
+    for (batchID, batch) in filteredActiveRemovalBatches {
+      let survivingPending = batch.pending.intersection(repositoryIDs)
+      guard survivingPending.count != batch.pending.count else { continue }
+      if survivingPending.isEmpty, batch.succeeded.isEmpty {
+        // Batch had no in-flight work left for live repos — drop it.
+        // Nothing will fire the terminal, but there's also no
+        // surviving target to prune from state, so this is a no-op
+        // beyond cleanup.
+        filteredActiveRemovalBatches[batchID] = nil
+      } else {
+        var pruned = batch
+        pruned.pending = survivingPending
+        // Clear messages for pruned repos — they're no longer part
+        // of the batch and shouldn't appear in a consolidated alert.
+        for droppedID in batch.pending.subtracting(survivingPending) {
+          pruned.failureMessagesByRepositoryID[droppedID] = nil
+        }
+        filteredActiveRemovalBatches[batchID] = pruned
+      }
+    }
     let identifiedRepositories = IdentifiedArray(uniqueElements: repositories)
     if animated {
       withAnimation {
@@ -3287,6 +3376,8 @@ struct RepositoriesFeature {
 
         state.archivingWorktreeIDs = filteredArchivingIDs
         state.worktreeInfoByID = filteredWorktreeInfo
+        state.removingRepositoryIDs = filteredRemovingRepositoryIDs
+        state.activeRemovalBatches = filteredActiveRemovalBatches
       }
     } else {
       state.repositories = identifiedRepositories
@@ -3298,6 +3389,8 @@ struct RepositoriesFeature {
       state.runningScriptsByWorktreeID = filteredRunningScripts
       state.archivingWorktreeIDs = filteredArchivingIDs
       state.worktreeInfoByID = filteredWorktreeInfo
+      state.removingRepositoryIDs = filteredRemovingRepositoryIDs
+      state.activeRemovalBatches = filteredActiveRemovalBatches
     }
     // Reconcile unconditionally so the seed invariant ("every live
     // non-main worktree has a bucket") holds after partial-failure

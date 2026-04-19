@@ -6397,7 +6397,7 @@ struct RepositoriesFeatureTests {
 
       await store.send(
         .repositoryRemovalCompleted(
-          folderRepo.id, outcome: .failure(message: nil), selectionWasRemoved: false))
+          folderRepo.id, outcome: .failureSilent, selectionWasRemoved: false))
       await store.skipReceivedActions()
       #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
       #expect(!store.state.deletingWorktreeIDs.contains(folderWorktree.id))
