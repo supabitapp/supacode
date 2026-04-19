@@ -80,7 +80,13 @@ struct RepositoriesFeature {
     var archivingWorktreeIDs: Set<Worktree.ID> = []
     var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
-    var removingRepositoryIDs: Set<Repository.ID> = []
+    /// Repositories with an in-flight removal. The value records
+    /// *what kind of removal* was confirmed, so
+    /// `.deleteScriptCompleted` can route by intent rather than by
+    /// live classification (which a `git init` mid-delete could
+    /// flip). An empty key means no removal; presence also drives
+    /// the sidebar's "removing" indicator.
+    var removingRepositoryIDs: [Repository.ID: RemovalIntent] = [:]
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var mergedWorktreeAction: MergedWorktreeAction?
     var moveNotifiedWorktreeToTop = true
@@ -105,6 +111,35 @@ struct RepositoriesFeature {
     @Shared(.sidebar) var sidebar: SidebarState
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var alert: AlertState<Alert>?
+  }
+
+  /// The kind of removal confirmed for a repository. `.folderTrash`
+  /// additionally asks for the folder to be moved to the Trash
+  /// before the sidebar entry is dropped; `.folderSidebar` leaves
+  /// the directory on disk; `.git` is the repository-level removal
+  /// of a git repo. Folder intents diverge with a clear error if
+  /// the repository's kind flips (e.g. `git init`) between
+  /// confirmation and completion.
+  enum RemovalIntent: Equatable, Sendable {
+    case git
+    case folderSidebar
+    case folderTrash
+
+    /// Nested sub-kind for folder intents — used at completion time
+    /// to decide whether to trash the directory before the sidebar
+    /// removal. `nil` when the intent is git-repo-level.
+    enum FolderIntent: Equatable, Sendable {
+      case sidebar
+      case trash
+    }
+
+    var folderIntent: FolderIntent? {
+      switch self {
+      case .git: nil
+      case .folderSidebar: .sidebar
+      case .folderTrash: .trash
+      }
+    }
   }
 
   enum GithubIntegrationAvailability: Equatable {
@@ -283,6 +318,7 @@ struct RepositoriesFeature {
     case confirmArchiveWorktrees([ArchiveWorktreeTarget])
     case confirmDeleteWorktree(Worktree.ID, Repository.ID)
     case confirmDeleteWorktrees([DeleteWorktreeTarget])
+    case confirmDeleteFolderFromDisk(Worktree.ID, Repository.ID)
     case confirmRemoveRepository(Repository.ID)
     case viewTerminalTab(Worktree.ID, tabId: TerminalTabID)
   }
@@ -419,7 +455,27 @@ struct RepositoriesFeature {
               let root = try await gitClient.repoRoot(url)
               resolvedRoots.append(root)
             } catch {
-              invalidRoots.append(url.path(percentEncoded: false))
+              // `gitClient.repoRoot` throws for non-git paths, but
+              // also for transient `wt` / subprocess failures. To
+              // avoid silently reclassifying a git repo as a folder
+              // on transient errors, double-check via the injected
+              // `gitClient.isGitRepository` — if the path actually
+              // has `.git`, surface the original error as an invalid
+              // root. Non-git readable directories are accepted as
+              // folder-kind repositories.
+              let standardized = url.standardizedFileURL
+              var isDirectory: ObjCBool = false
+              let exists = FileManager.default.fileExists(
+                atPath: standardized.path(percentEncoded: false),
+                isDirectory: &isDirectory
+              )
+              if exists, isDirectory.boolValue,
+                await !gitClient.isGitRepository(standardized)
+              {
+                resolvedRoots.append(standardized)
+              } else {
+                invalidRoots.append(url.path(percentEncoded: false))
+              }
             }
           }
           let resolvedRootPaths = RepositoryPathNormalizer.normalize(
@@ -457,9 +513,9 @@ struct RepositoriesFeature {
           uniqueKeysWithValues: failures.map { ($0.rootID, $0.message) }
         )
         if !invalidRoots.isEmpty {
-          let message = invalidRoots.map { "\($0) is not a Git repository." }.joined(separator: "\n")
+          let message = invalidRoots.map { "Supacode couldn't read \($0)." }.joined(separator: "\n")
           state.alert = messageAlert(
-            title: "Some folders couldn't be opened",
+            title: "Some items couldn't be opened",
             message: message
           )
         }
@@ -603,7 +659,19 @@ struct RepositoriesFeature {
           )
           return .none
         }
-        if state.removingRepositoryIDs.contains(repository.id) {
+        // Worktree creation needs a git repository. Folder-kind entries
+        // surface the same menu / hotkey / deeplink path, so reject
+        // them up front with a clear alert instead of letting the
+        // request fall into `gitClient.createWorktreeStream` and fail
+        // with a raw subprocess error.
+        if !repository.isGitRepository {
+          state.alert = messageAlert(
+            title: "Unable to create worktree",
+            message: "Worktrees are only supported for git repositories."
+          )
+          return .none
+        }
+        if state.removingRepositoryIDs[repository.id] != nil {
           state.alert = messageAlert(
             title: "Unable to create worktree",
             message: "This repository is being removed."
@@ -785,7 +853,17 @@ struct RepositoriesFeature {
           )
           return .none
         }
-        if state.removingRepositoryIDs.contains(repository.id) {
+        // Guard against folder-kind entries arriving here via
+        // deeplink / palette paths that bypass
+        // `.createRandomWorktreeInRepository`.
+        if !repository.isGitRepository {
+          state.alert = messageAlert(
+            title: "Unable to create worktree",
+            message: "Worktrees are only supported for git repositories."
+          )
+          return .none
+        }
+        if state.removingRepositoryIDs[repository.id] != nil {
           state.alert = messageAlert(
             title: "Unable to create worktree",
             message: "This repository is being removed."
@@ -1186,7 +1264,7 @@ struct RepositoriesFeature {
         return .none
 
       case .requestArchiveWorktree(let worktreeID, let repositoryID):
-        if state.removingRepositoryIDs.contains(repositoryID) {
+        if state.removingRepositoryIDs[repositoryID] != nil {
           return .none
         }
         guard let repository = state.repositories[id: repositoryID],
@@ -1236,7 +1314,7 @@ struct RepositoriesFeature {
         var seenWorktreeIDs: Set<Worktree.ID> = []
         for target in targets {
           guard seenWorktreeIDs.insert(target.worktreeID).inserted else { continue }
-          if state.removingRepositoryIDs.contains(target.repositoryID) {
+          if state.removingRepositoryIDs[target.repositoryID] != nil {
             continue
           }
           guard let repository = state.repositories[id: target.repositoryID],
@@ -1434,7 +1512,7 @@ struct RepositoriesFeature {
         return .send(.delegate(.repositoriesChanged(repositories)))
 
       case .requestDeleteWorktree(let worktreeID, let repositoryID):
-        if state.removingRepositoryIDs.contains(repositoryID) {
+        if state.removingRepositoryIDs[repositoryID] != nil {
           return .none
         }
         guard let repository = state.repositories[id: repositoryID],
@@ -1442,7 +1520,11 @@ struct RepositoriesFeature {
         else {
           return .none
         }
-        if state.isMainWorktree(worktree) {
+        // The "main worktree" lock still applies to git repositories
+        // (git refuses to remove the main working tree) but folders
+        // piggy-back on this pipeline specifically to delete their
+        // only entry — there's no git operation to refuse.
+        if state.isMainWorktree(worktree), repository.isGitRepository {
           state.alert = messageAlert(
             title: "Delete not allowed",
             message: "Deleting the main worktree is not allowed."
@@ -1457,12 +1539,43 @@ struct RepositoriesFeature {
         {
           return .none
         }
+        // Destructive-action voice: the git worktree-delete alert
+        // keeps the 🚨 emoji (actual data loss on disk); the folder
+        // "remove" alert drops it because the primary action leaves
+        // the folder on disk. Folders get a secondary destructive
+        // option to wipe the directory from disk as well.
+        if !repository.isGitRepository {
+          state.alert = AlertState {
+            TextState("Remove folder?")
+          } actions: {
+            ButtonState(action: .confirmDeleteWorktree(worktree.id, repository.id)) {
+              TextState("Remove from Supacode")
+            }
+            ButtonState(
+              role: .destructive,
+              action: .confirmDeleteFolderFromDisk(worktree.id, repository.id)
+            ) {
+              TextState("Delete from disk")
+            }
+            ButtonState(role: .cancel) {
+              TextState("Cancel")
+            }
+          } message: {
+            TextState(
+              "Remove \(worktree.name)? Choose \"Remove from Supacode\" to stop managing "
+                + "the folder (it stays on disk), or \"Delete from disk\" to move the "
+                + "folder to the Trash."
+            )
+          }
+          return .none
+        }
         @Shared(.settingsFile) var settingsFile
         let deleteBranchOnDeleteWorktree = settingsFile.global.deleteBranchOnDeleteWorktree
         let removalMessage =
           deleteBranchOnDeleteWorktree
           ? "This deletes the worktree directory and its local branch."
           : "This deletes the worktree directory and keeps the local branch."
+        let alertMessage = "Delete \(worktree.name)? " + removalMessage
         state.alert = AlertState {
           TextState("🚨 Delete worktree?")
         } actions: {
@@ -1473,7 +1586,7 @@ struct RepositoriesFeature {
             TextState("Cancel")
           }
         } message: {
-          TextState("Delete \(worktree.name)? " + removalMessage)
+          TextState(alertMessage)
         }
         return .none
 
@@ -1482,7 +1595,7 @@ struct RepositoriesFeature {
         var seenWorktreeIDs: Set<Worktree.ID> = []
         for target in targets {
           guard seenWorktreeIDs.insert(target.worktreeID).inserted else { continue }
-          if state.removingRepositoryIDs.contains(target.repositoryID) {
+          if state.removingRepositoryIDs[target.repositoryID] != nil {
             continue
           }
           guard let repository = state.repositories[id: target.repositoryID],
@@ -1524,6 +1637,17 @@ struct RepositoriesFeature {
         return .none
 
       case .alert(.presented(.confirmDeleteWorktree(let worktreeID, let repositoryID))):
+        // For folders the alert's primary button records the
+        // sidebar-only intent up front so
+        // `.deleteScriptCompleted` can route by intent rather than
+        // live classification.
+        if let repo = state.repositories[id: repositoryID], !repo.isGitRepository {
+          state.removingRepositoryIDs[repositoryID] = .folderSidebar
+        }
+        return .send(.deleteWorktreeConfirmed(worktreeID, repositoryID))
+
+      case .alert(.presented(.confirmDeleteFolderFromDisk(let worktreeID, let repositoryID))):
+        state.removingRepositoryIDs[repositoryID] = .folderTrash
         return .send(.deleteWorktreeConfirmed(worktreeID, repositoryID))
 
       case .alert(.presented(.confirmDeleteWorktrees(let targets))):
@@ -1542,10 +1666,13 @@ struct RepositoriesFeature {
           )
           return .none
         }
-        if state.archivingWorktreeIDs.contains(worktree.id) {
-          return .none
-        }
-        if state.deletingWorktreeIDs.contains(worktree.id)
+        // `deletingWorktreeIDs` / `deleteScriptWorktreeIDs` guard
+        // against re-entry for both git worktrees and folders —
+        // the empty-script folder branch below populates
+        // `deletingWorktreeIDs` so a rapid repeat lands here as a
+        // no-op.
+        if state.archivingWorktreeIDs.contains(worktree.id)
+          || state.deletingWorktreeIDs.contains(worktree.id)
           || state.deleteScriptWorktreeIDs.contains(worktree.id)
         {
           return .none
@@ -1554,7 +1681,20 @@ struct RepositoriesFeature {
         @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
         let script = repositorySettings.deleteScript
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folderIntent = state.removingRepositoryIDs[repository.id]?.folderIntent
         if trimmed.isEmpty {
+          if let folderIntent {
+            // Empty script: finish the folder flow immediately,
+            // trashing the directory first if the user asked for it.
+            state.deletingWorktreeIDs.insert(worktree.id)
+            let selectionWasRemoved = state.selectedWorktreeID == worktreeID
+            let trashURL = folderIntent == .trash ? repository.rootURL : nil
+            return folderRemovalEffect(
+              repositoryID: repository.id,
+              selectionWasRemoved: selectionWasRemoved,
+              diskDeletionURL: trashURL
+            )
+          }
           return .send(.deleteWorktreeApply(worktreeID, repositoryID))
         }
         state.deleteScriptWorktreeIDs.insert(worktree.id)
@@ -1567,24 +1707,58 @@ struct RepositoriesFeature {
           return .none
         }
         state.deleteScriptWorktreeIDs.remove(worktreeID)
+        // Route by recorded intent, not live classification — a
+        // `git init` mid-script would otherwise flip the check and
+        // lose folder intent. Kind divergence is treated as an
+        // explicit error so the user can decide what to do.
+        let owningRepo = state.repositories.first(where: {
+          $0.worktrees.contains(where: { $0.id == worktreeID })
+        })
+        let folderIntent = owningRepo.flatMap { state.removingRepositoryIDs[$0.id]?.folderIntent }
         switch exitCode {
         case 0:
-          guard let repositoryID = state.repositoryID(containing: worktreeID) else {
-            repositoriesLogger.warning(
-              "Delete script succeeded but repository not found for worktree \(worktreeID)"
-            )
+          guard let folderIntent, let owningRepo else {
+            guard let repositoryID = state.repositoryID(containing: worktreeID) else {
+              repositoriesLogger.warning(
+                "Delete script succeeded but repository not found for worktree \(worktreeID)"
+              )
+              state.alert = messageAlert(
+                title: "Delete failed",
+                message: "The delete script completed successfully, but the worktree could not be found."
+                  + " It may have been removed."
+              )
+              return .none
+            }
+            return .send(.deleteWorktreeApply(worktreeID, repositoryID))
+          }
+          if owningRepo.isGitRepository {
+            // Kind flipped between confirmation and completion —
+            // bail out rather than silently picking a path.
+            state.removingRepositoryIDs[owningRepo.id] = nil
             state.alert = messageAlert(
-              title: "Delete failed",
-              message: "The delete script completed successfully, but the worktree could not be found."
-                + " It may have been removed."
+              title: "Folder is now a git repository",
+              message: "Supacode stopped the removal because \(owningRepo.name) became a git "
+                + "repository while the delete script was running. Review it and try again."
             )
             return .none
           }
-          return .send(.deleteWorktreeApply(worktreeID, repositoryID))
+          let selectionWasRemoved = state.selectedWorktreeID == worktreeID
+          let trashURL = folderIntent == .trash ? owningRepo.rootURL : nil
+          return folderRemovalEffect(
+            repositoryID: owningRepo.id,
+            selectionWasRemoved: selectionWasRemoved,
+            diskDeletionURL: trashURL
+          )
         case nil:
+          if let owningRepo {
+            state.removingRepositoryIDs[owningRepo.id] = nil
+          }
           repositoriesLogger.debug("Delete script cancelled or tab closed for worktree \(worktreeID)")
           return .none
         case let code?:
+          if let owningRepo {
+            state.removingRepositoryIDs[owningRepo.id] = nil
+          }
           state.alert = blockingScriptFailureAlert(
             kind: .delete, exitCode: code, worktreeID: worktreeID, tabId: tabId, state: state
           )
@@ -1772,11 +1946,11 @@ struct RepositoriesFeature {
         guard let repository = state.repositories[id: repositoryID] else {
           return .none
         }
-        if state.removingRepositoryIDs.contains(repository.id) {
+        if state.removingRepositoryIDs[repository.id] != nil {
           return .none
         }
         state.alert = nil
-        state.removingRepositoryIDs.insert(repository.id)
+        state.removingRepositoryIDs[repository.id] = repository.isGitRepository ? .git : .folderSidebar
         let selectionWasRemoved =
           state.selectedWorktreeID.map { id in
             repository.worktrees.contains(where: { $0.id == id })
@@ -1784,8 +1958,9 @@ struct RepositoriesFeature {
         return .send(.repositoryRemoved(repository.id, selectionWasRemoved: selectionWasRemoved))
 
       case .repositoryRemoved(let repositoryID, let selectionWasRemoved):
-        analyticsClient.capture("repository_removed", nil)
-        state.removingRepositoryIDs.remove(repositoryID)
+        let kind = (state.repositories[id: repositoryID]?.isGitRepository ?? true) ? "git" : "folder"
+        analyticsClient.capture("repository_removed", ["kind": kind])
+        state.removingRepositoryIDs[repositoryID] = nil
         if selectionWasRemoved {
           state.selection = nil
           state.shouldSelectFirstAfterReload = true
@@ -2622,6 +2797,7 @@ struct RepositoriesFeature {
 
   private struct WorktreesFetchResult: Sendable {
     let root: URL
+    let isGitRepository: Bool
     let worktrees: [Worktree]?
     let errorMessage: String?
   }
@@ -2631,12 +2807,30 @@ struct RepositoriesFeature {
       for root in roots {
         let gitClient = self.gitClient
         group.addTask {
+          // Classify through the git client so tests can override
+          // without touching the filesystem — non-git folders skip
+          // the worktrees subprocess entirely.
+          let isGit = await gitClient.isGitRepository(root)
+          guard isGit else {
+            return WorktreesFetchResult(
+              root: root,
+              isGitRepository: false,
+              worktrees: [],
+              errorMessage: nil
+            )
+          }
           do {
             let worktrees = try await gitClient.worktrees(root)
-            return WorktreesFetchResult(root: root, worktrees: worktrees, errorMessage: nil)
+            return WorktreesFetchResult(
+              root: root,
+              isGitRepository: true,
+              worktrees: worktrees,
+              errorMessage: nil
+            )
           } catch {
             return WorktreesFetchResult(
               root: root,
+              isGitRepository: true,
               worktrees: nil,
               errorMessage: error.localizedDescription
             )
@@ -2658,22 +2852,44 @@ struct RepositoriesFeature {
       let normalizedRoot = root.standardizedFileURL
       let rootID = normalizedRoot.path(percentEncoded: false)
       guard let result = fetchResults[rootID] else { continue }
-      if let worktrees = result.worktrees {
-        let name = Repository.name(for: normalizedRoot)
+      let name = Repository.name(for: normalizedRoot)
+      if result.isGitRepository {
+        if let worktrees = result.worktrees {
+          let repository = Repository(
+            id: rootID,
+            rootURL: normalizedRoot,
+            name: name,
+            worktrees: IdentifiedArray(uniqueElements: worktrees),
+            isGitRepository: true
+          )
+          loaded.append(repository)
+        } else {
+          failures.append(
+            LoadFailure(
+              rootID: rootID,
+              message: result.errorMessage ?? "Unknown error"
+            )
+          )
+        }
+      } else {
+        // Folder repository — synthesize a single main-like worktree
+        // so the existing sidebar selection + terminal plumbing keeps
+        // working without new entity types.
+        let synthetic = Worktree(
+          id: Repository.folderWorktreeID(for: normalizedRoot),
+          name: name,
+          detail: "",
+          workingDirectory: normalizedRoot,
+          repositoryRootURL: normalizedRoot
+        )
         let repository = Repository(
           id: rootID,
           rootURL: normalizedRoot,
           name: name,
-          worktrees: IdentifiedArray(uniqueElements: worktrees)
+          worktrees: IdentifiedArray(uniqueElements: [synthetic]),
+          isGitRepository: false
         )
         loaded.append(repository)
-      } else {
-        failures.append(
-          LoadFailure(
-            rootID: rootID,
-            message: result.errorMessage ?? "Unknown error"
-          )
-        )
       }
     }
     return (loaded, failures)
@@ -2796,6 +3012,36 @@ struct RepositoriesFeature {
     return ApplyRepositoriesResult(didPruneArchivedWorktreeIDs: didPruneArchivedWorktreeIDs)
   }
 
+  /// Build the effect that closes a folder-delete flow. When
+  /// `diskDeletionURL` is non-`nil`, the folder is moved to the
+  /// Trash via `FileManager.trashItem` before the sidebar removal
+  /// dispatches; when `nil`, the folder is removed from Supacode
+  /// only and stays on disk. Trash (rather than `removeItem`) is
+  /// intentional so the user can recover if they changed their
+  /// mind.
+  private func folderRemovalEffect(
+    repositoryID: Repository.ID,
+    selectionWasRemoved: Bool,
+    diskDeletionURL: URL?
+  ) -> Effect<Action> {
+    guard let diskDeletionURL else {
+      return .send(.repositoryRemoved(repositoryID, selectionWasRemoved: selectionWasRemoved))
+    }
+    return .run { send in
+      do {
+        try await Task.detached {
+          try FileManager.default.trashItem(at: diskDeletionURL, resultingItemURL: nil)
+        }.value
+      } catch {
+        repositoriesLogger.warning(
+          "Failed to trash folder at \(diskDeletionURL.path(percentEncoded: false)): "
+            + error.localizedDescription
+        )
+      }
+      await send(.repositoryRemoved(repositoryID, selectionWasRemoved: selectionWasRemoved))
+    }
+  }
+
   private func blockingScriptFailureAlert(
     kind: BlockingScriptKind,
     exitCode: Int,
@@ -2846,19 +3092,22 @@ struct RepositoriesFeature {
     guard let repository = state.repositories[id: repositoryID] else {
       return nil
     }
+    let isGitRepository = repository.isGitRepository
     return AlertState {
-      TextState("Remove repository?")
+      TextState(isGitRepository ? "Remove repository?" : "Remove folder?")
     } actions: {
       ButtonState(role: .destructive, action: .confirmRemoveRepository(repository.id)) {
-        TextState("Remove repository")
+        TextState(isGitRepository ? "Remove repository" : "Remove folder")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
       TextState(
-        "This removes the repository from Supacode. "
-          + "Worktrees and the main repository folder stay on disk."
+        isGitRepository
+          ? "This removes the repository from Supacode. "
+            + "Worktrees and the main repository folder stay on disk."
+          : "This removes the folder from Supacode. The folder stays on disk."
       )
     }
   }
@@ -2941,7 +3190,13 @@ extension RepositoriesFeature.State {
   }
 
   func worktreesForInfoWatcher() -> [Worktree] {
-    let worktrees = repositories.flatMap(\.worktrees)
+    // Folder repositories are non-git — skip them so the watcher
+    // doesn't attempt to observe HEAD / diff stats on a directory
+    // without a `.git` path.
+    let worktrees =
+      repositories
+      .filter(\.isGitRepository)
+      .flatMap(\.worktrees)
     guard !isShowingArchivedWorktrees else {
       return worktrees
     }
@@ -2966,7 +3221,7 @@ extension RepositoriesFeature.State {
       return false
     }
     if let repository = repositoryForWorktreeCreation(self) {
-      return !removingRepositoryIDs.contains(repository.id)
+      return removingRepositoryIDs[repository.id] == nil
     }
     return false
   }
@@ -3004,7 +3259,7 @@ extension RepositoriesFeature.State {
 
   private func makePendingWorktreeRow(_ pending: PendingWorktree) -> WorktreeRowModel {
     let status: WorktreeRowModel.Status =
-      removingRepositoryIDs.contains(pending.repositoryID)
+      removingRepositoryIDs[pending.repositoryID] != nil
       ? .deleting(inTerminal: false)
       : .pending
     return WorktreeRowModel(
@@ -3025,13 +3280,19 @@ extension RepositoriesFeature.State {
     isPinned: Bool,
     isMainWorktree: Bool
   ) -> WorktreeRowModel {
+    // `deleteScriptWorktreeIDs` wins over `removingRepositoryIDs` so
+    // a folder delete with a blocking script shows the terminal
+    // indicator and stays clickable (matching the worktree flow),
+    // rather than being immediately masked by the repo-level
+    // "removing" flag that the folder pipeline sets up front to
+    // carry the removal intent.
     let status: WorktreeRowModel.Status =
-      if removingRepositoryIDs.contains(repositoryID)
+      if deleteScriptWorktreeIDs.contains(worktree.id) {
+        .deleting(inTerminal: true)
+      } else if removingRepositoryIDs[repositoryID] != nil
         || deletingWorktreeIDs.contains(worktree.id)
       {
         .deleting(inTerminal: false)
-      } else if deleteScriptWorktreeIDs.contains(worktree.id) {
-        .deleting(inTerminal: true)
       } else if archivingWorktreeIDs.contains(worktree.id) {
         .archiving
       } else {
@@ -3209,7 +3470,16 @@ extension RepositoriesFeature.State {
   }
 
   func isRemovingRepository(_ repository: Repository) -> Bool {
-    removingRepositoryIDs.contains(repository.id)
+    guard removingRepositoryIDs[repository.id] != nil else { return false }
+    // While a folder's delete script is running, don't treat the
+    // repo as "removing" — the sidebar row must stay clickable so
+    // the user can view the script terminal and, on failure, retry
+    // or cancel.
+    let folderWorktreeID = Repository.folderWorktreeID(for: repository.rootURL)
+    if !repository.isGitRepository, deleteScriptWorktreeIDs.contains(folderWorktreeID) {
+      return false
+    }
+    return true
   }
 
   func worktreeRowSections(in repository: Repository) -> WorktreeRowSections {
@@ -3702,17 +3972,25 @@ private func selectionDidChange(
 private func repositoryForWorktreeCreation(
   _ state: RepositoriesFeature.State
 ) -> Repository? {
+  // Only git repositories can host new worktrees — folders are
+  // filtered out so the "New Worktree" hotkey / palette entry
+  // resolves to a sibling git repo (or nothing) when the current
+  // selection lives in a folder.
   if let selectedWorktreeID = state.selectedWorktreeID {
-    if let pending = state.pendingWorktree(for: selectedWorktreeID) {
-      return state.repositories[id: pending.repositoryID]
+    if let pending = state.pendingWorktree(for: selectedWorktreeID),
+      let pendingRepo = state.repositories[id: pending.repositoryID],
+      pendingRepo.isGitRepository
+    {
+      return pendingRepo
     }
     for repository in state.repositories
-    where repository.worktrees[id: selectedWorktreeID] != nil {
+    where repository.isGitRepository && repository.worktrees[id: selectedWorktreeID] != nil {
       return repository
     }
   }
-  if state.repositories.count == 1 {
-    return state.repositories.first
+  let gitRepositories = state.repositories.filter(\.isGitRepository)
+  if gitRepositories.count == 1 {
+    return gitRepositories.first
   }
   return nil
 }
@@ -3839,6 +4117,20 @@ private func reconcileSidebarState(
       copy.buckets[.unpinned] = unpinned
     }
     rebuilt[repoID] = copy
+  }
+
+  // Seed a default (empty) section for every live repository that
+  // doesn't yet have a `sidebar.sections` entry. Without this, a
+  // brand-new repo (git or folder) only surfaces through the
+  // `orderedRepositoryRoots()` fallback path and SwiftUI's List
+  // diffing can miss the insertion until the next reconcile pass.
+  //
+  // Folders intentionally keep an empty section — they have no
+  // pin / unpin / archive buckets — so the entry stays trivial. A
+  // user re-`git init`-ing a folder would have the section ready
+  // to accept curated bucket entries without a follow-up reconcile.
+  for repository in state.repositories where rebuilt[repository.id] == nil {
+    rebuilt[repository.id] = SidebarState.Section()
   }
 
   preserveOrphanSections(

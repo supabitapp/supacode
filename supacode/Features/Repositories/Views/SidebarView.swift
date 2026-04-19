@@ -28,9 +28,9 @@ struct SidebarView: View {
         } label: {
           Image(systemName: "folder.badge.plus")
             .offset(y: -1)
-            .accessibilityLabel("Add Repository")
+            .accessibilityLabel("Add Repository or Folder")
         }
-        .help("Add Repository (\(openRepo?.display ?? "none"))")
+        .help("Add Repository or Folder (\(openRepo?.display ?? "none"))")
       }
     }
     .focusedSceneValue(\.confirmWorktreeAction, confirmWorktreeAction)

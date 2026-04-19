@@ -6,9 +6,72 @@ struct Repository: Identifiable, Hashable, Sendable {
   let rootURL: URL
   let name: String
   let worktrees: IdentifiedArrayOf<Worktree>
+  // Runtime classification — `false` means the rootURL is a plain
+  // directory (no `.git` / `.bare`) and the repository is treated as
+  // a non-git folder. Persistence is unchanged; this flips freely on
+  // reload when the directory is (un)initialized as a git repo.
+  let isGitRepository: Bool
+
+  init(
+    id: String,
+    rootURL: URL,
+    name: String,
+    worktrees: IdentifiedArrayOf<Worktree>,
+    isGitRepository: Bool = true
+  ) {
+    self.id = id
+    self.rootURL = rootURL
+    self.name = name
+    self.worktrees = worktrees
+    self.isGitRepository = isGitRepository
+  }
 
   var initials: String {
     Self.initials(from: name)
+  }
+
+  /// Synchronous check for whether a root URL is a git repository.
+  /// Covers the two layouts git actually produces:
+  ///   1. `rootURL` IS the metadata dir — `.git/` for a normal repo,
+  ///      `.bare` for the naming convention Supacode's `name(for:)`
+  ///      helper already recognizes. Lastpathcomponent check.
+  ///   2. Standard repo: `rootURL/.git` exists — a directory for
+  ///      primary repos, a worktree-pointer file for linked
+  ///      worktrees (also the git-wt bare wrapper, where `.git` is
+  ///      a pointer file to the sibling bare dir).
+  /// Pure FileManager call — safe to invoke off the main actor from
+  /// the `GitClientDependency` closure.
+  nonisolated static func isGitRepository(at rootURL: URL) -> Bool {
+    let fileManager = FileManager.default
+    let lastComponent = rootURL.lastPathComponent
+    if lastComponent == ".bare" || lastComponent == ".git" {
+      return true
+    }
+    let dotGitPath =
+      rootURL
+      .appending(path: ".git", directoryHint: .notDirectory)
+      .path(percentEncoded: false)
+    if fileManager.fileExists(atPath: dotGitPath) {
+      return true
+    }
+    // Bare-clone convention: `<name>.git/` with HEAD + objects/ + refs/
+    // at the root (what `git clone --bare` produces). The name-only
+    // `.bare` / `.git` shortcuts above cover Supacode's own layouts;
+    // this catches user-managed bare clones imported via the Open panel.
+    guard lastComponent.hasSuffix(".git") else { return false }
+    let head = rootURL.appending(path: "HEAD", directoryHint: .notDirectory).path(percentEncoded: false)
+    let objects = rootURL.appending(path: "objects", directoryHint: .isDirectory).path(percentEncoded: false)
+    let refs = rootURL.appending(path: "refs", directoryHint: .isDirectory).path(percentEncoded: false)
+    return fileManager.fileExists(atPath: head)
+      && fileManager.fileExists(atPath: objects)
+      && fileManager.fileExists(atPath: refs)
+  }
+
+  /// Stable synthetic worktree id for folder repositories. Keeps the
+  /// existing `SidebarSelection.worktree(id)` + terminal-manager
+  /// plumbing unchanged — folders reuse the same selection path.
+  nonisolated static func folderWorktreeID(for rootURL: URL) -> Worktree.ID {
+    "folder:" + rootURL.standardizedFileURL.path(percentEncoded: false)
   }
 
   static func name(for rootURL: URL) -> String {

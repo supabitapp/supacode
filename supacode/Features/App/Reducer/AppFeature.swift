@@ -220,7 +220,13 @@ struct AppFeature {
           .send(
             .settings(
               .repositoriesChanged(
-                repositories.map { SettingsRepositorySummary(id: $0.id, name: $0.name) }
+                repositories.map {
+                  SettingsRepositorySummary(
+                    id: $0.id,
+                    name: $0.name,
+                    isGitRepository: $0.isGitRepository
+                  )
+                }
               )
             )
           ),
@@ -249,10 +255,16 @@ struct AppFeature {
         return openWorktreeEffect(worktree: worktree, action: action, source: .contextMenu, state: state)
 
       case .repositories(.delegate(.openRepositorySettings(let repositoryID))):
-        guard state.repositories.repositories.contains(where: { $0.id == repositoryID }) else {
+        guard let repository = state.repositories.repositories[id: repositoryID] else {
           return .none
         }
-        return .send(.settings(.setSelection(.repository(repositoryID))))
+        // Folders don't expose the general `.repository` page (no
+        // branches, worktree config, etc.) — route them straight to
+        // the scripts page which is the only settings surface that
+        // applies to them.
+        let section: SettingsSection =
+          repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
+        return .send(.settings(.setSelection(section)))
 
       case .repositories(.delegate(.runBlockingScript(let worktree, _, let kind, let script))):
         return .run { _ in
@@ -916,7 +928,7 @@ struct AppFeature {
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
     case .repoWorktreeNew(let repositoryID, let branch, let baseRef, let fetchOrigin):
-      guard state.repositories.repositories[id: repositoryID] != nil else {
+      guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found: \(repositoryID)")
         state.alert = AlertState {
           TextState("Repository not found")
@@ -926,6 +938,24 @@ struct AppFeature {
           }
         } message: {
           TextState("No repository matching the deeplink could be found.")
+        }
+        return .none
+      }
+      // Worktree creation is git-only. Reject the deeplink with a
+      // clear alert when it targets a folder rather than letting the
+      // request fall into `createWorktreeStream`.
+      guard repository.isGitRepository else {
+        deeplinkLogger.warning(
+          "Ignoring repoWorktreeNew deeplink for folder repository: \(repositoryID)"
+        )
+        state.alert = AlertState {
+          TextState("Worktrees not available")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("Worktrees are only supported for git repositories.")
         }
         return .none
       }
@@ -945,7 +975,7 @@ struct AppFeature {
     case .settings(let section):
       return handleSettingsDeeplink(section: section)
     case .settingsRepo(let repositoryID):
-      guard state.repositories.repositories[id: repositoryID] != nil else {
+      guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found for settings deeplink: \(repositoryID)")
         state.alert = AlertState {
           TextState("Repository not found")
@@ -958,7 +988,11 @@ struct AppFeature {
         }
         return .none
       }
-      return .send(.settings(.setSelection(.repository(repositoryID))))
+      // Folders have no general settings pane — send them to the
+      // scripts page (the only settings surface that applies).
+      let section: SettingsSection =
+        repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
+      return .send(.settings(.setSelection(section)))
     }
   }
 
@@ -977,6 +1011,35 @@ struct AppFeature {
       deeplinkLogger.warning("Worktree not found: \(rawWorktreeID)")
       state.alert = worktreeNotFoundAlert()
       return .none
+    }
+    // Folders expose the worktree deeplink surface only for the
+    // actions that actually apply — select, open terminals, delete,
+    // run scripts. `.archive` / `.unarchive` / `.pin` / `.unpin`
+    // make no sense for a folder's synthetic main worktree, so
+    // reject them explicitly rather than silently no-op-ing.
+    if let folderRepoID = state.repositories.repositoryID(for: worktreeID),
+      let folderRepo = state.repositories.repositories[id: folderRepoID],
+      !folderRepo.isGitRepository
+    {
+      let isFolderIncompatibleAction: Bool
+      switch action {
+      case .archive, .unarchive, .pin, .unpin:
+        isFolderIncompatibleAction = true
+      default:
+        isFolderIncompatibleAction = false
+      }
+      if isFolderIncompatibleAction {
+        state.alert = AlertState {
+          TextState("Action not available")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("This action only applies to git repositories.")
+        }
+        return .none
+      }
     }
 
     let policyBypass = state.settings.automatedActionPolicy.allowsBypass(from: source)

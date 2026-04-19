@@ -13,19 +13,19 @@ struct EmptyStateView: View {
       Image(systemName: "tray")
         .font(.title2)
         .accessibilityHidden(true)
-      Text("Open a git repository")
+      Text("Open a repository or folder")
         .font(.headline)
       Text(
         "Press \(openRepo?.display ?? AppShortcuts.openRepository.display) "
-          + "or click Open Repository to choose a repository."
+          + "or click Open Repository or Folder to choose one."
       )
       .font(.subheadline)
       .foregroundStyle(.secondary)
-      Button("Open Repository...") {
+      Button("Open Repository or Folder...") {
         store.send(.setOpenPanelPresented(true))
       }
       .appKeyboardShortcut(openRepo)
-      .help("Open Repository (\(openRepo?.display ?? "none"))")
+      .help("Open Repository or Folder (\(openRepo?.display ?? "none"))")
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(nsColor: .windowBackgroundColor))

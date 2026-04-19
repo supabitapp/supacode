@@ -160,6 +160,31 @@ struct SettingsFeatureTests {
     }
   }
 
+  @Test(.dependencies) func repositoriesChangedFlipsIsGitRepositoryWithoutRebuildingState() async {
+    let summary = SettingsRepositorySummary(id: "/tmp/repo", name: "Repo", isGitRepository: true)
+    let scriptsSelection = SettingsSection.repositoryScripts(summary.id)
+    var initial = SettingsFeature.State()
+    initial.selection = scriptsSelection
+    initial.repositorySummaries = [summary]
+    initial.repositorySettings = RepositorySettingsFeature.State(
+      rootURL: summary.rootURL,
+      isGitRepository: true,
+      settings: .default
+    )
+    let store = TestStore(initialState: initial) {
+      SettingsFeature()
+    }
+
+    // Same path, kind flipped git → folder: the feature state must
+    // mutate in place so the scripts page picks the folder render
+    // path without discarding the loaded `RepositorySettings`.
+    let flipped = SettingsRepositorySummary(id: summary.id, name: summary.name, isGitRepository: false)
+    await store.send(.repositoriesChanged([flipped])) {
+      $0.repositorySummaries = [flipped]
+      $0.repositorySettings?.isGitRepository = false
+    }
+  }
+
   @Test(.dependencies) func setSelectionNilClosesSettingsWindow() async {
     var state = SettingsFeature.State()
     state.selection = .general

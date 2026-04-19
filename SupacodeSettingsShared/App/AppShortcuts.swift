@@ -111,7 +111,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .selectWorktree(let index): "Select Worktree \(index == 0 ? 10 : index)"
     case .openWorktree: "Open Worktree"
     case .revealInFinder: "Reveal in Finder"
-    case .openRepository: "Open Repository"
+    case .openRepository: "Open Repository or Folder"
     case .openPullRequest: "Open Pull Request"
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"

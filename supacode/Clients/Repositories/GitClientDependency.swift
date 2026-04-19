@@ -3,6 +3,7 @@ import Foundation
 
 struct GitClientDependency: Sendable {
   var repoRoot: @Sendable (URL) async throws -> URL
+  var isGitRepository: @Sendable (URL) async -> Bool
   var worktrees: @Sendable (URL) async throws -> [Worktree]
   var pruneWorktrees: @Sendable (URL) async throws -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
@@ -44,6 +45,7 @@ struct GitClientDependency: Sendable {
 extension GitClientDependency: DependencyKey {
   static let liveValue = GitClientDependency(
     repoRoot: { try await GitClient().repoRoot(for: $0) },
+    isGitRepository: { Repository.isGitRepository(at: $0) },
     worktrees: { try await GitClient().worktrees(for: $0) },
     pruneWorktrees: { try await GitClient().pruneWorktrees(for: $0) },
     localBranchNames: { try await GitClient().localBranchNames(for: $0) },
@@ -90,7 +92,15 @@ extension GitClientDependency: DependencyKey {
       await GitClient().remoteInfo(for: repositoryRoot)
     }
   )
-  static let testValue = liveValue
+  // Tests default to "git repository" classification so existing
+  // fixtures that mock `gitClient.worktrees` without creating real
+  // `.git` directories on disk keep exercising the git code path.
+  // Folder-kind tests override this closure explicitly.
+  static var testValue: GitClientDependency {
+    var value = liveValue
+    value.isGitRepository = { _ in true }
+    return value
+  }
 }
 
 extension DependencyValues {

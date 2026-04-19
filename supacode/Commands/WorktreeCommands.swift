@@ -141,11 +141,11 @@ struct WorktreeCommands: Commands {
       }
     }
     CommandGroup(replacing: .newItem) {
-      Button("Add Repository...", systemImage: "folder.badge.plus") {
+      Button("Add Repository or Folder...", systemImage: "folder.badge.plus") {
         store.send(.repositories(.setOpenPanelPresented(true)))
       }
       .appKeyboardShortcut(openRepo)
-      .help("Add Repository (\(openRepo?.display ?? "none"))")
+      .help("Add Repository or Folder (\(openRepo?.display ?? "none"))")
       Button("Confirm Action") {
         confirmWorktreeAction?()
       }

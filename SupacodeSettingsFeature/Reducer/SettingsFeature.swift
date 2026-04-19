@@ -563,8 +563,14 @@ public struct SettingsFeature {
       @Shared(.repositorySettings(summary.rootURL)) var repositorySettings
       state.repositorySettings = RepositorySettingsFeature.State(
         rootURL: summary.rootURL,
+        isGitRepository: summary.isGitRepository,
         settings: repositorySettings
       )
+    } else {
+      // Summary can flip kind at runtime (git → folder or vice versa)
+      // without the selection changing — keep the feature state in
+      // sync so the scripts page picks the right render path.
+      state.repositorySettings?.isGitRepository = summary.isGitRepository
     }
     state.syncGlobalDefaults(from: state.globalSettings)
   }

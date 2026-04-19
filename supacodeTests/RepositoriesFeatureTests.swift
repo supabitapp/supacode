@@ -4628,6 +4628,31 @@ struct RepositoriesFeatureTests {
     )
   }
 
+  /// Build a fresh folder-kind `Repository` plus its synthesized main
+  /// worktree for tests that exercise the non-git folder flows. The
+  /// default path is a throwaway `/tmp` UUID so parallel tests don't
+  /// alias.
+  private func makeFolderFixture(
+    rootPath: String = "/tmp/\(UUID().uuidString)-folder"
+  ) -> (repo: Repository, worktree: Worktree, url: URL) {
+    let url = URL(fileURLWithPath: rootPath)
+    let worktree = Worktree(
+      id: Repository.folderWorktreeID(for: url),
+      name: Repository.name(for: url),
+      detail: "",
+      workingDirectory: url,
+      repositoryRootURL: url
+    )
+    let repo = Repository(
+      id: rootPath,
+      rootURL: url,
+      name: Repository.name(for: url),
+      worktrees: IdentifiedArray(uniqueElements: [worktree]),
+      isGitRepository: false
+    )
+    return (repo, worktree, url)
+  }
+
   private func expectedScriptFailureAlert(
     kind: BlockingScriptKind,
     exitMessage: String,
@@ -4769,6 +4794,877 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.finish()
+  }
+
+  // MARK: - Folder (non-git) repositories.
+
+  @Test func isGitRepositoryDetectsDotGitDirectory() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let dotGit = tempDir.appending(path: ".git", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: dotGit, withIntermediateDirectories: true)
+
+    #expect(Repository.isGitRepository(at: tempDir))
+  }
+
+  @Test func isGitRepositoryRecognizesDotGitWorktreePointerFile() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    // Linked worktrees have a `.git` file (not directory) pointing
+    // at the parent's gitdir — the classifier must honor both.
+    let pointer = tempDir.appending(path: ".git", directoryHint: .notDirectory)
+    try "gitdir: /somewhere/.git/worktrees/foo\n".write(to: pointer, atomically: true, encoding: .utf8)
+
+    #expect(Repository.isGitRepository(at: tempDir))
+  }
+
+  @Test func isGitRepositoryReturnsFalseForPlainDirectory() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    #expect(!Repository.isGitRepository(at: tempDir))
+  }
+
+  @Test func isGitRepositoryRecognizesBareAndDotGitRootNames() {
+    #expect(Repository.isGitRepository(at: URL(fileURLWithPath: "/tmp/repo/.bare")))
+    #expect(Repository.isGitRepository(at: URL(fileURLWithPath: "/tmp/repo/.git")))
+  }
+
+  @Test func isGitRepositoryRecognizesBareCloneConvention() throws {
+    // `git clone --bare` produces `<name>.git/` with HEAD + objects/ +
+    // refs/ at the root (no `.git` metadata file, no `.bare` rename).
+    let bareRoot = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-myrepo.git")
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(at: bareRoot, withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: bareRoot.appending(path: "objects"), withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: bareRoot.appending(path: "refs"), withIntermediateDirectories: true)
+    try "ref: refs/heads/main\n".data(using: .utf8)!.write(to: bareRoot.appending(path: "HEAD"))
+    defer { try? fileManager.removeItem(at: bareRoot) }
+
+    #expect(Repository.isGitRepository(at: bareRoot))
+
+    // A plain directory whose name happens to end in `.git` is not a bare repo.
+    let fakeRoot = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-notbare.git")
+    try fileManager.createDirectory(at: fakeRoot, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: fakeRoot) }
+
+    #expect(Repository.isGitRepository(at: fakeRoot) == false)
+  }
+
+  @Test func loadPersistedRepositoriesClassifiesNonGitPathAsFolder() async {
+    let repoRoot = "/tmp/\(UUID().uuidString)-folder"
+    let rootURL = URL(fileURLWithPath: repoRoot)
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [repoRoot] }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in
+        Issue.record("worktrees() must not be called for folder repositories")
+        return []
+      }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: rootURL),
+      name: Repository.name(for: rootURL),
+      detail: "",
+      workingDirectory: rootURL,
+      repositoryRootURL: rootURL
+    )
+    let folderRepo = Repository(
+      id: repoRoot,
+      rootURL: rootURL,
+      name: Repository.name(for: rootURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = [folderRepo]
+      $0.repositoryRoots = [rootURL]
+      $0.isInitialLoadComplete = true
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func loadPersistedRepositoriesClassifiesMixedGitAndFolderRoots() async {
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let gitWorktree = makeWorktree(id: "\(gitRoot)/main", name: "main", repoRoot: gitRoot)
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot, folderRoot] }
+      $0.gitClient.isGitRepository = { $0.path(percentEncoded: false) == gitRoot }
+      $0.gitClient.worktrees = { root in
+        #expect(root.path(percentEncoded: false) == gitRoot)
+        return [gitWorktree]
+      }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = [
+        Repository(
+          id: gitRoot,
+          rootURL: URL(fileURLWithPath: gitRoot),
+          name: URL(fileURLWithPath: gitRoot).lastPathComponent,
+          worktrees: [gitWorktree],
+          isGitRepository: true
+        ),
+        {
+          let url = URL(fileURLWithPath: folderRoot)
+          let synthetic = Worktree(
+            id: Repository.folderWorktreeID(for: url),
+            name: Repository.name(for: url),
+            detail: "",
+            workingDirectory: url,
+            repositoryRootURL: url
+          )
+          return Repository(
+            id: folderRoot,
+            rootURL: url,
+            name: Repository.name(for: url),
+            worktrees: [synthetic],
+            isGitRepository: false
+          )
+        }(),
+      ]
+      $0.repositoryRoots = [gitRoot, folderRoot].map { URL(fileURLWithPath: $0) }
+      $0.isInitialLoadComplete = true
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func openRepositoriesWithNonGitDirectoryAppearsImmediately() async throws {
+    // Reproduces the "folders don't appear immediately after being
+    // added" bug: dropping a non-git directory should flow through
+    // `.openRepositoriesFinished` and show up in `state.repositories`
+    // plus `state.repositoryRoots` on the next render tick.
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let standardizedURL = tempDir.standardizedFileURL
+    let rootID = standardizedURL.path(percentEncoded: false)
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.repoRoot = { _ in
+        throw GitClientError.commandFailed(command: "wt root", message: "not a git repository")
+      }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in
+        Issue.record("worktrees() must not be called for folder repositories")
+        return []
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: standardizedURL),
+      name: Repository.name(for: standardizedURL),
+      detail: "",
+      workingDirectory: standardizedURL,
+      repositoryRootURL: standardizedURL
+    )
+    let folderRepo = Repository(
+      id: rootID,
+      rootURL: standardizedURL,
+      name: Repository.name(for: standardizedURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    await store.send(.openRepositories([tempDir]))
+    await store.receive(\.openRepositoriesFinished) {
+      $0.repositories = [folderRepo]
+      $0.repositoryRoots = [standardizedURL]
+      $0.isInitialLoadComplete = true
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func worktreesForInfoWatcherSkipsFolderRepositories() {
+    let gitWorktree = makeWorktree(id: "/tmp/git/main", name: "main", repoRoot: "/tmp/git")
+    let gitRepo = Repository(
+      id: "/tmp/git",
+      rootURL: URL(fileURLWithPath: "/tmp/git"),
+      name: "git",
+      worktrees: [gitWorktree],
+      isGitRepository: true
+    )
+    let folderURL = URL(fileURLWithPath: "/tmp/folder")
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: "folder",
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: "/tmp/folder",
+      rootURL: folderURL,
+      name: "folder",
+      worktrees: [folderWorktree],
+      isGitRepository: false
+    )
+    var state = RepositoriesFeature.State()
+    state.repositories = [gitRepo, folderRepo]
+
+    #expect(state.worktreesForInfoWatcher() == [gitWorktree])
+  }
+
+  @Test func requestDeleteWorktreeForFolderSkipsMainWorktreeLockAndRoutesToRepositoryRemoved() async {
+    // Folders pipe their "Delete Folder…" context-menu action
+    // through `.requestDeleteWorktree` using the synthetic main
+    // worktree. The usual main-worktree lock would normally refuse
+    // it, but the reducer is expected to recognize folder repos and
+    // proceed, show a folder-flavored alert, and on confirm route
+    // into `.deleteWorktreeConfirmed` → `.repositoryRemoved`
+    // (no git `removeWorktree` since there is none).
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [folderRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    await store.send(.requestDeleteWorktree(folderWorktree.id, folderRepo.id)) {
+      $0.alert = AlertState {
+        TextState("Remove folder?")
+      } actions: {
+        ButtonState(action: .confirmDeleteWorktree(folderWorktree.id, folderRepo.id)) {
+          TextState("Remove from Supacode")
+        }
+        ButtonState(
+          role: .destructive,
+          action: .confirmDeleteFolderFromDisk(folderWorktree.id, folderRepo.id)
+        ) {
+          TextState("Delete from disk")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState(
+          "Remove \(folderWorktree.name)? Choose \"Remove from Supacode\" to stop managing "
+            + "the folder (it stays on disk), or \"Delete from disk\" to move the "
+            + "folder to the Trash."
+        )
+      }
+    }
+
+    await store.send(.alert(.presented(.confirmDeleteWorktree(folderWorktree.id, folderRepo.id)))) {
+      $0.removingRepositoryIDs[folderRepo.id] = .folderSidebar
+    }
+
+    await store.receive(\.deleteWorktreeConfirmed) {
+      $0.alert = nil
+      $0.deletingWorktreeIDs.insert(folderWorktree.id)
+    }
+    await store.receive(\.repositoryRemoved) {
+      $0.removingRepositoryIDs[folderRepo.id] = nil
+    }
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = []
+      $0.repositoryRoots = []
+      // applyRepositories filters deletingWorktreeIDs against the
+      // new (empty) available worktree IDs — the synthetic folder
+      // worktree is gone so this clears.
+      $0.deletingWorktreeIDs.remove(folderWorktree.id)
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func requestRemoveRepositoryForFolderConfirmsAndRemovesRoot() async {
+    // Legacy path: `.requestRemoveRepository` also works for folders
+    // (it just skips the blocking-script branch; no worktrees to
+    // archive either), but the primary UI surface uses the
+    // `.requestDeleteWorktree` path tested above.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [folderRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    await store.send(.requestRemoveRepository(folderRepo.id)) {
+      $0.alert = AlertState {
+        TextState("Remove folder?")
+      } actions: {
+        ButtonState(role: .destructive, action: .confirmRemoveRepository(folderRepo.id)) {
+          TextState("Remove folder")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState("This removes the folder from Supacode. The folder stays on disk.")
+      }
+    }
+
+    await store.send(.alert(.presented(.confirmRemoveRepository(folderRepo.id)))) {
+      $0.alert = nil
+      $0.removingRepositoryIDs[folderRepo.id] = .folderSidebar
+    }
+
+    await store.receive(\.repositoryRemoved) {
+      $0.removingRepositoryIDs[folderRepo.id] = nil
+    }
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = []
+      $0.repositoryRoots = []
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func deleteWorktreeConfirmedRunsBlockingDeleteScriptForFolder() async {
+    // When a delete script is defined, folder deletion piggy-backs on
+    // the worktree-delete blocking-script pipeline: the reducer marks
+    // the folder as "removing", delegates the script run, and only
+    // forwards to `.repositoryRemoved` after `.deleteScriptCompleted`
+    // reports exit 0 — so the folder stays visible with a progress
+    // indicator while the script runs and `gitClient.removeWorktree`
+    // is never called.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    // Intent is normally recorded by the alert handler before
+    // `.deleteWorktreeConfirmed` runs — seed it here since the test
+    // dispatches the action directly.
+    state.removingRepositoryIDs[folderRepo.id] = .folderSidebar
+
+    @Shared(.repositorySettings(folderURL)) var repositorySettings
+    $repositorySettings.withLock { $0.deleteScript = "echo goodbye" }
+    defer { $repositorySettings.withLock { $0.deleteScript = "" } }
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [folderRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.gitClient.removeWorktree = { _, _ in
+        Issue.record("removeWorktree must not be called for a folder repository")
+        return folderURL
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    await store.send(.deleteWorktreeConfirmed(folderWorktree.id, folderRepo.id)) {
+      $0.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+    }
+    await store.receive(\.delegate.runBlockingScript)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: 0, tabId: nil)
+    ) {
+      $0.deleteScriptWorktreeIDs.remove(folderWorktree.id)
+    }
+    await store.receive(\.repositoryRemoved) {
+      $0.removingRepositoryIDs[folderRepo.id] = nil
+    }
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = []
+      $0.repositoryRoots = []
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func folderDeleteScriptRunningKeepsRowClickableWithTerminalIndicator() {
+    // While a folder's delete script is running, the sidebar row
+    // must stay clickable (so the user can view the script output)
+    // and show the terminal-backed deleting status — matching the
+    // regular worktree delete flow. `removingRepositoryIDs` is set
+    // upfront to carry folder intent, so the status + removing
+    // checks must give the terminal indicator priority.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.removingRepositoryIDs[folderRepo.id] = .folderSidebar
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+
+    #expect(state.isRemovingRepository(folderRepo) == false)
+    let rows = state.worktreeRows(in: folderRepo)
+    #expect(rows.first?.status == .deleting(inTerminal: true))
+  }
+
+  @Test func deleteWorktreeScriptFailureForFolderClearsRemovingState() async {
+    // Script failure during folder deletion surfaces the standard
+    // alert AND rolls back `removingRepositoryIDs` so the sidebar
+    // row returns to its normal enabled state. The folder must stay
+    // in `state.repositories` — nothing is removed.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+    state.removingRepositoryIDs[folderRepo.id] = .folderSidebar
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Delete Script failed")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("Dismiss")
+      }
+    } message: {
+      TextState("\(folderRepo.name) — \(folderWorktree.name)\n\nScript exited with code 2.")
+    }
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: 2, tabId: nil)
+    ) {
+      $0.deleteScriptWorktreeIDs.remove(folderWorktree.id)
+      $0.removingRepositoryIDs[folderRepo.id] = nil
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func deleteScriptCompletedForFolderKindFlipShowsErrorAndStops() async {
+    // If a `git init` flips the classification between the alert
+    // confirmation and the delete-script completion, the handler
+    // surfaces an explicit error and aborts — safer than silently
+    // trashing the directory or running `gitClient.removeWorktree`.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let flippedRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: true
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [flippedRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+    state.removingRepositoryIDs[flippedRepo.id] = .folderTrash
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.removeWorktree = { _, _ in
+        Issue.record("removeWorktree must not run on kind-flip abort")
+        return folderURL
+      }
+    }
+
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Folder is now a git repository")
+    } actions: {
+      ButtonState(role: .cancel) {
+        TextState("OK")
+      }
+    } message: {
+      TextState(
+        "Supacode stopped the removal because \(flippedRepo.name) became a git "
+          + "repository while the delete script was running. Review it and try again."
+      )
+    }
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: 0, tabId: nil)
+    ) {
+      $0.deleteScriptWorktreeIDs.remove(folderWorktree.id)
+      $0.removingRepositoryIDs[flippedRepo.id] = nil
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func createRandomWorktreeInRepositoryRejectsFolderRepositories() async {
+    // Hotkey / palette / deeplink can all target a folder; the
+    // reducer must stop the action up front with an alert rather
+    // than sending it into `gitClient.createWorktreeStream`.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          Issue.record("createWorktreeStream must not run for folder repositories")
+          continuation.finish()
+        }
+      }
+    }
+
+    await store.send(.createRandomWorktreeInRepository(folderRepo.id)) {
+      $0.alert = AlertState {
+        TextState("Unable to create worktree")
+      } actions: {
+        ButtonState(role: .cancel) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("Worktrees are only supported for git repositories.")
+      }
+    }
+  }
+
+  @Test func deleteScriptCancellationForFolderClearsRemovingState() async {
+    // Cancelling the delete-script tab (exitCode: nil) must also
+    // release `removingRepositoryIDs` — otherwise the folder row
+    // stays visually "removing" forever.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+    state.removingRepositoryIDs[folderRepo.id] = .folderSidebar
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: nil, tabId: nil)
+    ) {
+      $0.deleteScriptWorktreeIDs.remove(folderWorktree.id)
+      $0.removingRepositoryIDs[folderRepo.id] = nil
+    }
+  }
+
+  @Test func confirmDeleteFolderFromDiskRecordsDiskIntentAndTrashesAfterRemoval() async throws {
+    // The `Delete from disk` alert action records the `.folderTrash`
+    // intent and forwards to `.deleteWorktreeConfirmed`. On an empty
+    // delete script the flow finishes by moving the directory to the
+    // Trash (via `FileManager.trashItem`) and then dispatching
+    // `.repositoryRemoved`.
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)-folder", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let standardized = tempDir.standardizedFileURL
+    let rootID = standardized.path(percentEncoded: false)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: standardized),
+      name: Repository.name(for: standardized),
+      detail: "",
+      workingDirectory: standardized,
+      repositoryRootURL: standardized
+    )
+    let folderRepo = Repository(
+      id: rootID,
+      rootURL: standardized,
+      name: Repository.name(for: standardized),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [standardized]
+    state.isInitialLoadComplete = true
+    state.alert = AlertState {
+      TextState("Remove folder?")
+    } actions: {
+      ButtonState(action: .confirmDeleteWorktree(folderWorktree.id, folderRepo.id)) {
+        TextState("Remove from Supacode")
+      }
+      ButtonState(
+        role: .destructive,
+        action: .confirmDeleteFolderFromDisk(folderWorktree.id, folderRepo.id)
+      ) {
+        TextState("Delete from disk")
+      }
+      ButtonState(role: .cancel) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("Remove \(folderWorktree.name)?")
+    }
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .alert(.presented(.confirmDeleteFolderFromDisk(folderWorktree.id, folderRepo.id)))
+    ) {
+      $0.removingRepositoryIDs[folderRepo.id] = .folderTrash
+    }
+    await store.receive(\.deleteWorktreeConfirmed)
+    await store.receive(\.repositoryRemoved)
+    await store.skipReceivedActions()
+
+    // The trash effect ran and moved the directory away (or logged
+    // a warning if trashItem refused). Either way the folder must no
+    // longer live at its original path.
+    #expect(!FileManager.default.fileExists(atPath: standardized.path(percentEncoded: false)))
+  }
+
+  @Test func deleteScriptCompletedDoesNotMisrouteWhenGitRepoIsRemovingConcurrently() async {
+    // Regression: when a git repo's worktree has a delete script
+    // in flight AND the user confirmed repo-level removal on the
+    // same git repo, `removingRepositoryIDs` carries a `.git`
+    // intent. `.deleteScriptCompleted` must still route to the git
+    // `.deleteWorktreeApply` path (so `gitClient.removeWorktree`
+    // deletes the worktree on disk) and not mistake the entry for
+    // folder intent.
+    let repoRoot = "/tmp/\(UUID().uuidString)-git"
+    let repoURL = URL(fileURLWithPath: repoRoot)
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let gitRepo = Repository(
+      id: repoRoot,
+      rootURL: repoURL,
+      name: URL(fileURLWithPath: repoRoot).lastPathComponent,
+      worktrees: IdentifiedArray(uniqueElements: [mainWorktree, featureWorktree]),
+      isGitRepository: true
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [gitRepo]
+    state.repositoryRoots = [repoURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(featureWorktree.id)
+    state.removingRepositoryIDs[gitRepo.id] = .git
+
+    let removeCalled = LockIsolated(false)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.removeWorktree = { worktree, _ in
+        removeCalled.setValue(true)
+        return await MainActor.run { worktree.workingDirectory }
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil)
+    )
+    await store.receive(\.deleteWorktreeApply)
+    await store.skipReceivedActions()
+
+    #expect(removeCalled.value == true)
+  }
+
+  @Test func deleteWorktreeConfirmedIsIdempotentForFolderWithEmptyScript() async {
+    // Regression for the double-tap bug: the empty-script folder
+    // branch of `.deleteWorktreeConfirmed` used to re-fire
+    // `.repositoryRemoved` (and duplicate analytics) on every repeat
+    // of the confirm action because it had no re-entrancy guard.
+    // The first invocation sets `removingRepositoryIDs` and sends
+    // `.repositoryRemoved`; the second must now be a no-op.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    // Already-set: matches the state after the first
+    // `.deleteWorktreeConfirmed` has enqueued `.repositoryRemoved`.
+    state.removingRepositoryIDs[folderRepo.id] = .folderSidebar
+    state.deletingWorktreeIDs.insert(folderWorktree.id)
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    // Second rapid tap: reducer must short-circuit before the
+    // empty-script branch to avoid firing `.repositoryRemoved` again.
+    await store.send(.deleteWorktreeConfirmed(folderWorktree.id, folderRepo.id))
   }
 
   private actor AsyncGate {
