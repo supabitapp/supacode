@@ -2079,6 +2079,7 @@ struct RepositoriesFeature {
           let rootPaths = loadedPaths.filter { seen.insert($0).inserted }
           let remaining = rootPaths.filter { $0 != repositoryID }
           await repositoryPersistence.saveRoots(remaining)
+          await repositoryPersistence.pruneRepositoryConfigs([repositoryID])
           let roots = remaining.map { URL(fileURLWithPath: $0) }
           let (repositories, failures) = await loadRepositoriesData(roots)
           await send(
@@ -2212,6 +2213,7 @@ struct RepositoriesFeature {
         let pathsToPersist = remainingRoots.map {
           $0.standardizedFileURL.path(percentEncoded: false)
         }
+        let removedIDs = Array(idSet)
         return .merge(
           .send(.delegate(.selectedWorktreeChanged(selectedWorktree))),
           .send(
@@ -2223,7 +2225,15 @@ struct RepositoriesFeature {
             )
           ),
           .run { _ in
+            // `saveRoots` replaces the `repositoryRoots` array with
+            // the pruned list; `pruneRepositoryConfigs` drops the
+            // `repositories` dict entries (scripts / run config /
+            // open action) for repos that just left. Without the
+            // second step those entries pile up forever —
+            // especially visible for folder repos that users add +
+            // remove while exploring.
             await repositoryPersistence.saveRoots(pathsToPersist)
+            await repositoryPersistence.pruneRepositoryConfigs(removedIDs)
           }
           .cancellable(id: CancelID.persistRoots, cancelInFlight: true)
         )

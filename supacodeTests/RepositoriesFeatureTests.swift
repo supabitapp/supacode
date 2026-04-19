@@ -5655,6 +5655,79 @@ struct RepositoriesFeatureTests {
     #expect(store.state.activeRemovalBatches.isEmpty)
   }
 
+  @Test func folderRemovalPrunesRootsAndConfigsFromSettings() async {
+    // Regression: the `.repositoriesRemoved` terminal must write the
+    // pruned list to `settings.json` AND drop the per-repo config
+    // entry from `settingsFile.repositories`. The latter half used
+    // to leak forever — users who added and removed folders for
+    // testing saw stale entries pile up in the JSON.
+    let rootA = "/tmp/\(UUID().uuidString)-folder-a"
+    let rootB = "/tmp/\(UUID().uuidString)-folder-b"
+    let urlA = URL(fileURLWithPath: rootA).standardizedFileURL
+    let urlB = URL(fileURLWithPath: rootB).standardizedFileURL
+    let idA = urlA.path(percentEncoded: false)
+    let idB = urlB.path(percentEncoded: false)
+    let worktreeA = Worktree(
+      id: Repository.folderWorktreeID(for: urlA),
+      name: Repository.name(for: urlA), detail: "",
+      workingDirectory: urlA, repositoryRootURL: urlA
+    )
+    let folderA = Repository(
+      id: idA, rootURL: urlA, name: Repository.name(for: urlA),
+      worktrees: IdentifiedArray(uniqueElements: [worktreeA]),
+      isGitRepository: false
+    )
+    let worktreeB = Worktree(
+      id: Repository.folderWorktreeID(for: urlB),
+      name: Repository.name(for: urlB), detail: "",
+      workingDirectory: urlB, repositoryRootURL: urlB
+    )
+    let folderB = Repository(
+      id: idB, rootURL: urlB, name: Repository.name(for: urlB),
+      worktrees: IdentifiedArray(uniqueElements: [worktreeB]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderA, folderB]
+    state.repositoryRoots = [urlA, urlB]
+    state.isInitialLoadComplete = true
+
+    let savedPaths = LockIsolated<[[String]]>([])
+    let prunedIDs = LockIsolated<[[String]]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [idA, idB] }
+      $0.repositoryPersistence.saveRoots = { paths in
+        savedPaths.withValue { $0.append(paths) }
+      }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { ids in
+        prunedIDs.withValue { $0.append(ids) }
+      }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    let targetA = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: worktreeA.id, repositoryID: folderA.id)
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems([targetA], disposition: .folderUnlink)))
+    )
+    await store.skipReceivedActions()
+
+    #expect(savedPaths.value.last == [idB], "saveRoots must persist the pruned root list")
+    #expect(
+      prunedIDs.value.flatMap { $0 } == [idA],
+      "pruneRepositoryConfigs must drop the removed repo's config entry"
+    )
+    #expect(store.state.repositories.map(\.id) == [idB])
+    #expect(store.state.repositoryRoots.map { $0.path(percentEncoded: false) } == [idB])
+  }
+
   @Test func requestDeleteSidebarItemsShowsFolderAlertAndFanOutsForAllFolderBulk() async {
     // `.requestDeleteSidebarItems` is the single entry point for bulk
     // remove — it uses the target repos' kind as a discriminator to
