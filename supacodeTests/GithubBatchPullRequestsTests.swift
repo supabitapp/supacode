@@ -329,6 +329,111 @@ struct GithubBatchPullRequestsTests {
     #expect(prs["feature-a"]?.title == "Merged Newer")
   }
 
+  @Test func intactForkPRWinsOverNewerDeletedForkPR() throws {
+    // Tier 2 (intact fork) must outrank Tier 3 (deleted fork) even
+    // when the Tier 3 candidate is MERGED and more recent — a
+    // deleted-fork entry should never outrank one with verifiable
+    // provenance.
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 50,
+                  "title": "Deleted Fork PR",
+                  "state": "MERGED",
+                  "additions": 1,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2026-04-10T00:00:00Z",
+                  "url": "https://github.com/octo/repo/pull/50",
+                  "headRefName": "feature-a",
+                  "baseRefName": "main",
+                  "headRepository": null
+                },
+                {
+                  "number": 51,
+                  "title": "Intact Fork PR",
+                  "state": "OPEN",
+                  "additions": 2,
+                  "deletions": 1,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2026-01-01T00:00:00Z",
+                  "url": "https://github.com/fork/repo/pull/51",
+                  "headRefName": "feature-a",
+                  "baseRefName": "main",
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "fork" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "feature-a"],
+      owner: "octo",
+      repo: "repo"
+    )
+    #expect(prs["feature-a"]?.number == 51)
+  }
+
+  @Test func includesMergedPRWithDeletedForkHead() throws {
+    // Merged PRs whose source fork has been deleted return
+    // headRepository: null from GitHub. When no intact-fork or
+    // upstream candidate exists, the deleted-fork PR is the
+    // correct match for the local branch (baseRefName still
+    // differs, so the "user:main → main" confusion is absent).
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 248,
+                  "title": "Add RubyMine editor option",
+                  "state": "MERGED",
+                  "additions": 30,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2026-04-15T00:00:00Z",
+                  "url": "https://github.com/supabitapp/supacode/pull/248",
+                  "headRefName": "feat/add-support-for-rubymine",
+                  "baseRefName": "main",
+                  "headRepository": null
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "feat/add-support-for-rubymine"],
+      owner: "supabitapp",
+      repo: "supacode"
+    )
+    #expect(prs["feat/add-support-for-rubymine"]?.number == 248)
+    #expect(prs["feat/add-support-for-rubymine"]?.state == "MERGED")
+  }
+
   @Test func excludesForkPRWithNilBaseRefName() throws {
     // When baseRefName is nil the filter cannot determine whether the
     // local branch is the PR's target, so the PR is excluded conservatively.
