@@ -294,7 +294,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run|stop|archive|unarchive|delete|pin|unpin] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch]]`
@@ -302,9 +302,10 @@ nonisolated enum CLISkillContent {
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
-    Use these IDs directly as `-w`, `-t`, `-s`, `-r` flag values.
+    `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 }

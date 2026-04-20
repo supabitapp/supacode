@@ -69,7 +69,7 @@ nonisolated struct KiroHookSettingsFileInstaller {
     let hookEntries = try hookEntriesByEvent()
     let commandsToPrune = Self.commands(from: hookEntries)
     var mergedObject = settingsObject
-    var hooksObject = (mergedObject["hooks"]?.objectValue) ?? [:]
+    var hooksObject = try existingHooksObject(in: mergedObject)
 
     // Remove existing managed commands before re-adding.
     for event in hooksObject.keys {
@@ -82,7 +82,6 @@ nonisolated struct KiroHookSettingsFileInstaller {
       }
     }
 
-    // Add new entries.
     for (event, newEntries) in hookEntries {
       let existing = hooksObject[event]?.arrayValue ?? []
       hooksObject[event] = .array(existing + newEntries)
@@ -101,7 +100,7 @@ nonisolated struct KiroHookSettingsFileInstaller {
     let settingsObject = try loadSettingsObject(at: settingsURL)
     let commandsToPrune = Self.commands(from: try hookEntriesByEvent())
     var mergedObject = settingsObject
-    var hooksObject = (mergedObject["hooks"]?.objectValue) ?? [:]
+    var hooksObject = try existingHooksObject(in: mergedObject)
 
     for event in hooksObject.keys {
       let existing = try existingEntries(for: event, hooksObject: hooksObject)
@@ -138,6 +137,16 @@ nonisolated struct KiroHookSettingsFileInstaller {
     else { return false }
     if commands.contains(command) { return true }
     return AgentHookCommandOwnership.isLegacyCommand(command)
+  }
+
+  private func existingHooksObject(
+    in settingsObject: [String: JSONValue]
+  ) throws -> [String: JSONValue] {
+    guard let hooksValue = settingsObject["hooks"] else { return [:] }
+    guard let hooksObject = hooksValue.objectValue else {
+      throw errors.invalidHooksObject()
+    }
+    return hooksObject
   }
 
   private func existingEntries(

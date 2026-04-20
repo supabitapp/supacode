@@ -171,4 +171,120 @@ struct KiroHookSettingsFileInstallerTests {
     try installer.uninstall(settingsURL: url, hookEntriesByEvent: entries)
     #expect(installer.containsMatchingHooks(settingsURL: url, hookEntriesByEvent: entries) == false)
   }
+
+  // MARK: - Error paths.
+
+  @Test func installThrowsInvalidJSONForMalformedFile() throws {
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true,
+    )
+    try Data("{{{".utf8).write(to: url)
+
+    let installer = makeInstaller()
+    #expect(throws: TestInstallerError.self) {
+      try installer.install(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+    }
+  }
+
+  @Test func installThrowsInvalidRootObjectForArrayRoot() throws {
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true,
+    )
+    try Data("[1,2,3]".utf8).write(to: url)
+
+    let installer = makeInstaller()
+    #expect(throws: TestInstallerError.invalidRootObject) {
+      try installer.install(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+    }
+  }
+
+  @Test func installThrowsInvalidHooksObjectWhenHooksIsNotAnObject() throws {
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true,
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let settings: JSONValue = .object(["hooks": .string("definitely not an object")])
+    try encoder.encode(settings).write(to: url)
+
+    let installer = makeInstaller()
+    #expect(throws: TestInstallerError.invalidHooksObject) {
+      try installer.install(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+    }
+    #expect(throws: TestInstallerError.invalidHooksObject) {
+      try installer.uninstall(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+    }
+  }
+
+  @Test func installThrowsInvalidEventHooksWhenEventValueIsNotAnArray() throws {
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true,
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let settings: JSONValue = .object([
+      "hooks": .object(["stop": .string("not an array")])
+    ])
+    try encoder.encode(settings).write(to: url)
+
+    let installer = makeInstaller()
+    #expect(throws: TestInstallerError.invalidEventHooks("stop")) {
+      try installer.install(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+    }
+  }
+
+  @Test func uninstallRemovesLegacyManagedCommands() throws {
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true,
+    )
+    let legacyCommand = "SUPACODE_CLI_PATH=/usr/bin/supacode agent-hook --stop"
+    #expect(AgentHookCommandOwnership.isLegacyCommand(legacyCommand))
+    let seeded: JSONValue = .object([
+      "hooks": .object([
+        "stop": .array([
+          .object(["command": .string(legacyCommand), "timeout_ms": 5_000]),
+          .object(["command": .string("echo user-hook"), "timeout_ms": 5_000]),
+        ])
+      ])
+    ])
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(seeded).write(to: url)
+
+    let installer = makeInstaller()
+    try installer.uninstall(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+
+    let data = try Data(contentsOf: url)
+    let root = try JSONDecoder().decode(JSONValue.self, from: data)
+    let remaining = root.objectValue?["hooks"]?.objectValue?["stop"]?.arrayValue ?? []
+    #expect(remaining.count == 1)
+    #expect(remaining.first?.objectValue?["command"]?.stringValue == "echo user-hook")
+  }
+}
+
+private enum TestInstallerError: Error, Equatable {
+  case invalidEventHooks(String)
+  case invalidHooksObject
+  case invalidJSON(String)
+  case invalidRootObject
 }

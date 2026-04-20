@@ -395,9 +395,7 @@ final class AgentHookSocketServer {
       return nil
     }
 
-    // Kiro emits assistant_response on stop; Claude uses message, Codex uses last_assistant_message.
-    let body = payload.message ?? payload.lastAssistantMessage ?? payload.assistantResponse
-    if body == nil {
+    if payload.body == nil {
       socketLogger.warning(
         "All body fields nil in \(agent) \(payload.hookEventName ?? "unknown") notification")
     }
@@ -405,7 +403,7 @@ final class AgentHookSocketServer {
       agent: agent,
       event: payload.hookEventName ?? "unknown",
       title: payload.title,
-      body: body
+      body: payload.body
     )
   }
 
@@ -437,20 +435,48 @@ nonisolated struct AgentHookNotification: Equatable, Sendable {
   let body: String?
 }
 
-/// Raw JSON payload from a coding agent hook event.
+/// Raw JSON payload from a coding agent hook event. The `body` is decoded from
+/// whichever agent-specific field is present: Claude uses `message`, Codex uses
+/// `last_assistant_message`, Kiro uses `assistant_response`. Precedence favors
+/// `message` so unknown agents that speak the Claude shape keep working.
 private nonisolated struct AgentHookPayload: Decodable {
   let hookEventName: String?
   let title: String?
-  let message: String?
-  let lastAssistantMessage: String?
-  let assistantResponse: String?
+  let body: String?
 
-  enum CodingKeys: String, CodingKey {
+  private enum CodingKeys: String, CodingKey {
     case hookEventName = "hook_event_name"
     case title
     case message
     case lastAssistantMessage = "last_assistant_message"
     case assistantResponse = "assistant_response"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    hookEventName = try container.decodeIfPresent(String.self, forKey: .hookEventName)
+    title = try container.decodeIfPresent(String.self, forKey: .title)
+    // Tolerate per-field decode errors (e.g. `"message": 42`) so a single
+    // malformed field does not drop the whole notification — fall through
+    // to the next candidate instead.
+    let candidates = [CodingKeys.message, .lastAssistantMessage, .assistantResponse]
+      .map { key in Self.decodeOptionalString(container, forKey: key) }
+    // Skip empty strings too: Claude occasionally emits `"message": ""`, in
+    // which case Codex's `last_assistant_message` / Kiro's `assistant_response`
+    // still hold the useful body.
+    body = candidates.compactMap { $0 }.first { !$0.isEmpty }
+  }
+
+  private static func decodeOptionalString(
+    _ container: KeyedDecodingContainer<CodingKeys>,
+    forKey key: CodingKeys
+  ) -> String? {
+    do {
+      return try container.decodeIfPresent(String.self, forKey: key)
+    } catch {
+      socketLogger.warning("Failed to decode hook payload field \(key.rawValue): \(error)")
+      return nil
+    }
   }
 }
 

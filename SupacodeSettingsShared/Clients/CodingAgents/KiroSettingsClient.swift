@@ -29,10 +29,10 @@ extension KiroSettingsClient: DependencyKey {
       KiroSettingsInstaller().isInstalled(progress: progress)
     },
     installProgress: {
-      try KiroSettingsInstaller().installProgressHooks()
+      try await KiroSettingsInstaller().installProgressHooks()
     },
     installNotifications: {
-      try KiroSettingsInstaller().installNotificationHooks()
+      try await KiroSettingsInstaller().installNotificationHooks()
     },
     uninstallProgress: {
       try KiroSettingsInstaller().uninstallProgressHooks()
@@ -50,8 +50,8 @@ extension KiroSettingsClient: DependencyKey {
   )
 }
 
-public extension DependencyValues {
-  var kiroSettingsClient: KiroSettingsClient {
+extension DependencyValues {
+  public var kiroSettingsClient: KiroSettingsClient {
     get { self[KiroSettingsClient.self] }
     set { self[KiroSettingsClient.self] = newValue }
   }

@@ -102,12 +102,28 @@ struct AgentHookSocketServerTests {
     #expect(notification.body == "kiro body")
   }
 
-  @Test func messageFieldTakesPrecedenceOverAllFallbacks() {
+  @Test func lastAssistantMessageTakesPrecedenceOverAssistantResponse() {
     let tabID = UUID()
     let surfaceID = UUID()
     let payload = """
-      {"hook_event_name":"Stop","message":"primary","last_assistant_message":"secondary","assistant_response":"tertiary"}
+      {"hook_event_name":"Stop","last_assistant_message":"codex body","assistant_response":"kiro body"}
       """
+    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) codex\n\(payload)"
+    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
+
+    guard case .notification(_, _, _, let notification) = message else {
+      Issue.record("Expected notification message")
+      return
+    }
+    #expect(notification.body == "codex body")
+  }
+
+  @Test func messageFieldTakesPrecedenceOverAllFallbacks() {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    let payload =
+      #"{"hook_event_name":"Stop","message":"primary","#
+      + #""last_assistant_message":"secondary","assistant_response":"tertiary"}"#
     let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) claude\n\(payload)"
     let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
 
@@ -116,6 +132,52 @@ struct AgentHookSocketServerTests {
       return
     }
     #expect(notification.body == "primary")
+  }
+
+  @Test func nullMessageFieldFallsThroughToLastAssistantMessage() {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    let payload = #"{"hook_event_name":"Stop","message":null,"last_assistant_message":"fallback"}"#
+    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) codex\n\(payload)"
+    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
+
+    guard case .notification(_, _, _, let notification) = message else {
+      Issue.record("Expected notification message")
+      return
+    }
+    #expect(notification.body == "fallback")
+  }
+
+  @Test func emptyStringMessageFieldFallsThroughToFallback() {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    let payload =
+      #"{"hook_event_name":"Stop","message":"","last_assistant_message":"real body"}"#
+    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) codex\n\(payload)"
+    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
+
+    guard case .notification(_, _, _, let notification) = message else {
+      Issue.record("Expected notification message")
+      return
+    }
+    #expect(notification.body == "real body")
+  }
+
+  @Test func typeMismatchOnMessageFieldFallsThroughToFallback() {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    // Claude-shape with an unexpectedly numeric message: decoder must
+    // tolerate the mismatch and fall through to assistant_response.
+    let payload =
+      #"{"hook_event_name":"stop","message":42,"assistant_response":"kiro body"}"#
+    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) kiro\n\(payload)"
+    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
+
+    guard case .notification(_, _, _, let notification) = message else {
+      Issue.record("Expected notification message")
+      return
+    }
+    #expect(notification.body == "kiro body")
   }
 
   @Test func invalidJSONPayloadDropsNotification() {
