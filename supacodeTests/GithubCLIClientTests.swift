@@ -1,3 +1,4 @@
+import ConcurrencyExtras
 import Foundation
 import Testing
 
@@ -178,6 +179,155 @@ struct GithubCLIClientTests {
     #expect(snapshot.ghCallCount == 2)
     #expect(snapshot.whichCallCount == 1)
     #expect(snapshot.loginCallCount == 2)
+  }
+
+  @Test func resolveRemoteInfoUsesGhRepoViewAndParsesHost() async {
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        #expect(arguments == ["repo", "view", "--json", "owner,name,url"])
+        let stdout = """
+          {"name":"upstream-repo","owner":{"login":"upstream-org"},\
+          "url":"https://github.com/upstream-org/upstream-repo"}
+          """
+        return ShellOutput(stdout: stdout, stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+
+    let info = await client.resolveRemoteInfo(URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(info == GithubRemoteInfo(host: "github.com", owner: "upstream-org", repo: "upstream-repo"))
+  }
+
+  @Test func resolveRemoteInfoReturnsNilWhenGhFails() async {
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in
+        throw ShellClientError(command: "gh repo view", stdout: "", stderr: "nope", exitCode: 1)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+
+    let info = await client.resolveRemoteInfo(URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(info == nil)
+  }
+
+  @Test func mergePullRequestForwardsRepoSlugWhenRemoteProvided() async throws {
+    let recordedArguments = LockIsolated<[[String]]>([])
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        recordedArguments.withValue { $0.append(arguments) }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+    let remote = GithubRemoteInfo(host: "github.com", owner: "upstream-org", repo: "upstream-repo")
+
+    try await client.mergePullRequest(URL(fileURLWithPath: "/tmp/fork"), remote, 42, .squash)
+
+    #expect(
+      recordedArguments.value == [
+        ["pr", "merge", "42", "--squash", "--repo", "github.com/upstream-org/upstream-repo"]
+      ]
+    )
+  }
+
+  @Test func mergePullRequestOmitsRepoFlagWhenRemoteMissing() async throws {
+    let recordedArguments = LockIsolated<[[String]]>([])
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        recordedArguments.withValue { $0.append(arguments) }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+
+    try await client.mergePullRequest(URL(fileURLWithPath: "/tmp/fork"), nil, 42, .squash)
+
+    #expect(recordedArguments.value == [["pr", "merge", "42", "--squash"]])
+  }
+
+  @Test func closePullRequestForwardsRepoSlug() async throws {
+    let recordedArguments = LockIsolated<[[String]]>([])
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        recordedArguments.withValue { $0.append(arguments) }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+    let remote = GithubRemoteInfo(host: "ghe.acme.com", owner: "team", repo: "repo")
+
+    try await client.closePullRequest(URL(fileURLWithPath: "/tmp/fork"), remote, 7)
+
+    #expect(recordedArguments.value == [["pr", "close", "7", "--repo", "ghe.acme.com/team/repo"]])
+  }
+
+  @Test func markPullRequestReadyForwardsRepoSlug() async throws {
+    let recordedArguments = LockIsolated<[[String]]>([])
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        recordedArguments.withValue { $0.append(arguments) }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+    let remote = GithubRemoteInfo(host: "github.com", owner: "owner", repo: "repo")
+
+    try await client.markPullRequestReady(URL(fileURLWithPath: "/tmp/fork"), remote, 13)
+
+    #expect(recordedArguments.value == [["pr", "ready", "13", "--repo", "github.com/owner/repo"]])
   }
 
   @Test func executableResolutionIsSingleFlightAndReused() async {

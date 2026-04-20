@@ -22,6 +22,23 @@ private enum CancelID {
 
 nonisolated let repositoriesLogger = SupaLogger("Repositories")
 private nonisolated let githubIntegrationRecoveryInterval: Duration = .seconds(15)
+
+// Resolve `(host, owner, repo)` for a repository root. `gh repo
+// view` honours the user's default-repo resolution (fork →
+// upstream), so it wins when available. The git remote parser is
+// the fallback for when `gh` is unavailable or unauthenticated.
+@Sendable
+private func resolveRemoteInfo(
+  repositoryRootURL: URL,
+  githubCLI: GithubCLIClient,
+  gitClient: GitClientDependency
+) async -> GithubRemoteInfo? {
+  if let info = await githubCLI.resolveRemoteInfo(repositoryRootURL) {
+    return info
+  }
+  return await gitClient.remoteInfo(repositoryRootURL)
+}
+
 private nonisolated let worktreeCreationProgressLineLimit = 200
 private nonisolated let worktreeCreationProgressUpdateStride = 20
 
@@ -2746,6 +2763,7 @@ struct RepositoriesFeature {
 
         case .markReadyForReview:
           let githubCLI = githubCLI
+          let gitClient = gitClient
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -2757,9 +2775,14 @@ struct RepositoriesFeature {
               )
               return
             }
+            let remote = await resolveRemoteInfo(
+              repositoryRootURL: repoRoot,
+              githubCLI: githubCLI,
+              gitClient: gitClient
+            )
             await send(.showToast(.inProgress("Marking PR ready…")))
             do {
-              try await githubCLI.markPullRequestReady(worktreeRoot, pullRequest.number)
+              try await githubCLI.markPullRequestReady(worktreeRoot, remote, pullRequest.number)
               await send(.showToast(.success("Pull request marked ready")))
               await send(.delayedPullRequestRefresh(worktreeID))
             } catch {
@@ -2775,6 +2798,7 @@ struct RepositoriesFeature {
 
         case .merge:
           let githubCLI = githubCLI
+          let gitClient = gitClient
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -2790,9 +2814,14 @@ struct RepositoriesFeature {
             @Shared(.settingsFile) var settingsFile
             let strategy =
               repositorySettings.pullRequestMergeStrategy ?? settingsFile.global.pullRequestMergeStrategy
+            let remote = await resolveRemoteInfo(
+              repositoryRootURL: repoRoot,
+              githubCLI: githubCLI,
+              gitClient: gitClient
+            )
             await send(.showToast(.inProgress("Merging pull request…")))
             do {
-              try await githubCLI.mergePullRequest(worktreeRoot, pullRequest.number, strategy)
+              try await githubCLI.mergePullRequest(worktreeRoot, remote, pullRequest.number, strategy)
               await send(.showToast(.success("Pull request merged")))
               await send(.worktreeInfoEvent(pullRequestRefresh))
               await send(.delayedPullRequestRefresh(worktreeID))
@@ -2809,6 +2838,7 @@ struct RepositoriesFeature {
 
         case .close:
           let githubCLI = githubCLI
+          let gitClient = gitClient
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -2820,9 +2850,14 @@ struct RepositoriesFeature {
               )
               return
             }
+            let remote = await resolveRemoteInfo(
+              repositoryRootURL: repoRoot,
+              githubCLI: githubCLI,
+              gitClient: gitClient
+            )
             await send(.showToast(.inProgress("Closing pull request…")))
             do {
-              try await githubCLI.closePullRequest(worktreeRoot, pullRequest.number)
+              try await githubCLI.closePullRequest(worktreeRoot, remote, pullRequest.number)
               await send(.showToast(.success("Pull request closed")))
               await send(.worktreeInfoEvent(pullRequestRefresh))
               await send(.delayedPullRequestRefresh(worktreeID))
@@ -3118,7 +3153,13 @@ struct RepositoriesFeature {
     let gitClient = gitClient
     let githubCLI = githubCLI
     return .run { send in
-      guard let remoteInfo = await gitClient.remoteInfo(repositoryRootURL) else {
+      guard
+        let remoteInfo = await resolveRemoteInfo(
+          repositoryRootURL: repositoryRootURL,
+          githubCLI: githubCLI,
+          gitClient: gitClient
+        )
+      else {
         await send(.repositoryPullRequestRefreshCompleted(repositoryID))
         return
       }

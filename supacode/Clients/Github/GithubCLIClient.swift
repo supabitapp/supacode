@@ -44,10 +44,11 @@ extension GithubAuthStatusResponse.GithubAuthAccount: Decodable {
 struct GithubCLIClient: Sendable {
   var defaultBranch: @Sendable (URL) async throws -> String
   var latestRun: @Sendable (URL, String) async throws -> GithubWorkflowRun?
+  var resolveRemoteInfo: @Sendable (URL) async -> GithubRemoteInfo?
   var batchPullRequests: @Sendable (String, String, String, [String]) async throws -> [String: GithubPullRequest]
-  var mergePullRequest: @Sendable (URL, Int, PullRequestMergeStrategy) async throws -> Void
-  var closePullRequest: @Sendable (URL, Int) async throws -> Void
-  var markPullRequestReady: @Sendable (URL, Int) async throws -> Void
+  var mergePullRequest: @Sendable (URL, GithubRemoteInfo?, Int, PullRequestMergeStrategy) async throws -> Void
+  var closePullRequest: @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void
+  var markPullRequestReady: @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void
   var rerunFailedJobs: @Sendable (URL, Int) async throws -> Void
   var failedRunLogs: @Sendable (URL, Int) async throws -> String
   var runLogs: @Sendable (URL, Int) async throws -> String
@@ -63,6 +64,7 @@ extension GithubCLIClient: DependencyKey {
     return GithubCLIClient(
       defaultBranch: defaultBranchFetcher(shell: shell, resolver: resolver),
       latestRun: latestRunFetcher(shell: shell, resolver: resolver),
+      resolveRemoteInfo: resolveRemoteInfoFetcher(shell: shell, resolver: resolver),
       batchPullRequests: batchPullRequestsFetcher(shell: shell, resolver: resolver),
       mergePullRequest: mergePullRequestFetcher(shell: shell, resolver: resolver),
       closePullRequest: closePullRequestFetcher(shell: shell, resolver: resolver),
@@ -78,10 +80,11 @@ extension GithubCLIClient: DependencyKey {
   static let testValue = GithubCLIClient(
     defaultBranch: { _ in "main" },
     latestRun: { _, _ in nil },
+    resolveRemoteInfo: { _ in nil },
     batchPullRequests: { _, _, _, _ in [:] },
-    mergePullRequest: { _, _, _ in },
-    closePullRequest: { _, _ in },
-    markPullRequestReady: { _, _ in },
+    mergePullRequest: { _, _, _, _ in },
+    closePullRequest: { _, _, _ in },
+    markPullRequestReady: { _, _, _ in },
     rerunFailedJobs: { _, _ in },
     failedRunLogs: { _, _ in "" },
     runLogs: { _, _ in "" },
@@ -229,6 +232,66 @@ nonisolated private func latestRunFetcher(
   }
 }
 
+nonisolated private struct GithubRepoViewRemoteInfoResponse: Decodable, Sendable {
+  let name: String
+  let owner: Owner
+  let url: String?
+
+  nonisolated struct Owner: Decodable, Sendable {
+    let login: String
+  }
+}
+
+nonisolated private func resolveRemoteInfoFetcher(
+  shell: ShellClient,
+  resolver: GithubCLIExecutableResolver
+) -> @Sendable (URL) async -> GithubRemoteInfo? {
+  { repoRoot in
+    do {
+      let output = try await runGh(
+        shell: shell,
+        resolver: resolver,
+        arguments: ["repo", "view", "--json", "owner,name,url"],
+        repoRoot: repoRoot
+      )
+      let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else {
+        return nil
+      }
+      let response = try JSONDecoder().decode(
+        GithubRepoViewRemoteInfoResponse.self,
+        from: Data(trimmed.utf8)
+      )
+      let host = hostFromRepoViewURL(response.url) ?? "github.com"
+      guard !response.owner.login.isEmpty, !response.name.isEmpty else {
+        return nil
+      }
+      return GithubRemoteInfo(
+        host: host,
+        owner: response.owner.login,
+        repo: response.name
+      )
+    } catch {
+      return nil
+    }
+  }
+}
+
+nonisolated private func hostFromRepoViewURL(_ urlString: String?) -> String? {
+  guard let urlString, !urlString.isEmpty,
+    let url = URL(string: urlString),
+    let host = url.host,
+    !host.isEmpty
+  else {
+    return nil
+  }
+  return host
+}
+
+nonisolated private func repoSlug(for remote: GithubRemoteInfo) -> String {
+  "\(remote.host)/\(remote.owner)/\(remote.repo)"
+}
+
 nonisolated private func batchPullRequestsFetcher(
   shell: ShellClient,
   resolver: GithubCLIExecutableResolver
@@ -259,17 +322,16 @@ nonisolated private func batchPullRequestsFetcher(
 nonisolated private func mergePullRequestFetcher(
   shell: ShellClient,
   resolver: GithubCLIExecutableResolver
-) -> @Sendable (URL, Int, PullRequestMergeStrategy) async throws -> Void {
-  { repoRoot, pullRequestNumber, strategy in
+) -> @Sendable (URL, GithubRemoteInfo?, Int, PullRequestMergeStrategy) async throws -> Void {
+  { repoRoot, remote, pullRequestNumber, strategy in
+    var arguments: [String] = ["pr", "merge", "\(pullRequestNumber)", "--\(strategy.ghArgument)"]
+    if let remote {
+      arguments.append(contentsOf: ["--repo", repoSlug(for: remote)])
+    }
     _ = try await runGh(
       shell: shell,
       resolver: resolver,
-      arguments: [
-        "pr",
-        "merge",
-        "\(pullRequestNumber)",
-        "--\(strategy.ghArgument)",
-      ],
+      arguments: arguments,
       repoRoot: repoRoot
     )
   }
@@ -278,16 +340,16 @@ nonisolated private func mergePullRequestFetcher(
 nonisolated private func closePullRequestFetcher(
   shell: ShellClient,
   resolver: GithubCLIExecutableResolver
-) -> @Sendable (URL, Int) async throws -> Void {
-  { repoRoot, pullRequestNumber in
+) -> @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void {
+  { repoRoot, remote, pullRequestNumber in
+    var arguments: [String] = ["pr", "close", "\(pullRequestNumber)"]
+    if let remote {
+      arguments.append(contentsOf: ["--repo", repoSlug(for: remote)])
+    }
     _ = try await runGh(
       shell: shell,
       resolver: resolver,
-      arguments: [
-        "pr",
-        "close",
-        "\(pullRequestNumber)",
-      ],
+      arguments: arguments,
       repoRoot: repoRoot
     )
   }
@@ -296,16 +358,16 @@ nonisolated private func closePullRequestFetcher(
 nonisolated private func markPullRequestReadyFetcher(
   shell: ShellClient,
   resolver: GithubCLIExecutableResolver
-) -> @Sendable (URL, Int) async throws -> Void {
-  { repoRoot, pullRequestNumber in
+) -> @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void {
+  { repoRoot, remote, pullRequestNumber in
+    var arguments: [String] = ["pr", "ready", "\(pullRequestNumber)"]
+    if let remote {
+      arguments.append(contentsOf: ["--repo", repoSlug(for: remote)])
+    }
     _ = try await runGh(
       shell: shell,
       resolver: resolver,
-      arguments: [
-        "pr",
-        "ready",
-        "\(pullRequestNumber)",
-      ],
+      arguments: arguments,
       repoRoot: repoRoot
     )
   }

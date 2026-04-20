@@ -3713,7 +3713,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     } withDependencies: {
       $0.githubIntegration.isAvailable = { true }
-      $0.githubCLI.mergePullRequest = { _, number, _ in
+      $0.githubCLI.mergePullRequest = { _, _, number, _ in
         mergedNumbers.withValue { $0.append(number) }
       }
     }
@@ -3755,7 +3755,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     } withDependencies: {
       $0.githubIntegration.isAvailable = { true }
-      $0.githubCLI.closePullRequest = { _, number in
+      $0.githubCLI.closePullRequest = { _, _, number in
         closedNumbers.withValue { $0.append(number) }
       }
     }
@@ -3771,6 +3771,170 @@ struct RepositoriesFeatureTests {
     await store.receive(\.worktreeInfoEvent)
     #expect(closedNumbers.value == [12])
     await store.finish()
+  }
+
+  @Test func worktreeInfoEventRepositoryPullRequestRefreshPrefersGhResolvedRemote() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .available
+    let batchCalls = LockIsolated<[GithubRemoteInfo]>([])
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+      }
+      $0.gitClient.remoteInfo = { _ in
+        Issue.record("gitClient.remoteInfo should be the fallback, not the first choice")
+        return GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { host, owner, repo, _ in
+        batchCalls.withValue { $0.append(GithubRemoteInfo(host: host, owner: owner, repo: repo)) }
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+
+    #expect(batchCalls.value == [GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")])
+  }
+
+  @Test func worktreeInfoEventRepositoryPullRequestRefreshFallsBackToGitRemote() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .available
+    let batchCalls = LockIsolated<[GithubRemoteInfo]>([])
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.resolveRemoteInfo = { _ in nil }
+      $0.gitClient.remoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { host, owner, repo, _ in
+        batchCalls.withValue { $0.append(GithubRemoteInfo(host: host, owner: owner, repo: repo)) }
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+
+    #expect(batchCalls.value == [GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")])
+  }
+
+  @Test func pullRequestActionMergePassesResolvedRemoteToGh() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 88)
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .disabled
+    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      addedLines: nil,
+      removedLines: nil,
+      pullRequest: openPullRequest
+    )
+    let recordedRemote = LockIsolated<GithubRemoteInfo?>(nil)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubIntegration.isAvailable = { true }
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+      }
+      $0.githubCLI.mergePullRequest = { _, remote, _, _ in
+        recordedRemote.withValue { $0 = remote }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.pullRequestAction(featureWorktree.id, .merge))
+    await store.receive(\.showToast)
+    await store.receive(\.showToast)
+    await store.receive(\.worktreeInfoEvent)
+    await store.finish()
+
+    #expect(recordedRemote.value == GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project"))
+  }
+
+  @Test func pullRequestActionMergeFallsBackToGitRemoteWhenGhResolverReturnsNil() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 88)
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .disabled
+    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      addedLines: nil,
+      removedLines: nil,
+      pullRequest: openPullRequest
+    )
+    let recordedRemote = LockIsolated<GithubRemoteInfo?>(nil)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubIntegration.isAvailable = { true }
+      $0.githubCLI.resolveRemoteInfo = { _ in nil }
+      $0.gitClient.remoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")
+      }
+      $0.githubCLI.mergePullRequest = { _, remote, _, _ in
+        recordedRemote.withValue { $0 = remote }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.pullRequestAction(featureWorktree.id, .merge))
+    await store.receive(\.showToast)
+    await store.receive(\.showToast)
+    await store.receive(\.worktreeInfoEvent)
+    await store.finish()
+
+    #expect(recordedRemote.value == GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project"))
   }
 
   @Test func worktreeInfoEventRepositoryPullRequestRefreshMarksInFlightThenCompletes() async {
