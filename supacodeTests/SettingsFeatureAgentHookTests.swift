@@ -148,6 +148,13 @@ struct SettingsFeatureAgentHookTests {
         }
         return progress
       }
+      $0[PiSettingsClient.self].checkInstalled = {
+        _ = startedChecks.withValue { $0.insert("piHooks") }
+        await withCheckedContinuation { continuation in
+          continuations.withValue { $0.append(continuation) }
+        }
+        return false
+      }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -156,9 +163,9 @@ struct SettingsFeatureAgentHookTests {
 
     // CLI/skill/hook checks run in parallel via `.merge`.
     // CLI/skill mocks return immediately; hook checks block on continuations.
-    // Wait for all six hook checks to start.
+    // Wait for all seven hook checks to start.
     await eventually {
-      startedChecks.value.count == 6
+      startedChecks.value.count == 7
     }
 
     continuations.withValue { continuations in
@@ -171,7 +178,7 @@ struct SettingsFeatureAgentHookTests {
     await store.skipReceivedActions()
   }
 
-  @Test(.dependencies) func taskChecksAllSixHookSlotsOnStartup() async {
+  @Test(.dependencies) func taskChecksAllHookSlotsOnStartup() async {
     let checkedSlots = LockIsolated<[String]>([])
 
     let store = TestStore(initialState: SettingsFeature.State()) {
@@ -191,6 +198,10 @@ struct SettingsFeatureAgentHookTests {
         checkedSlots.withValue { $0.append(progress ? "kiroProgress" : "kiroNotifications") }
         return progress
       }
+      $0[PiSettingsClient.self].checkInstalled = {
+        checkedSlots.withValue { $0.append("piHooks") }
+        return false
+      }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -206,7 +217,40 @@ struct SettingsFeatureAgentHookTests {
         "codexNotifications",
         "kiroProgress",
         "kiroNotifications",
+        "piHooks",
       ])
+  }
+
+  @Test(.dependencies) func taskChecksAllSkillsOnStartup() async {
+    let checkedSkills = LockIsolated<[String]>([])
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[CLIInstallerClient.self].checkInstalled = { false }
+      $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
+      $0[CodexSettingsClient.self].checkInstalled = { _ in false }
+      $0[KiroSettingsClient.self].checkInstalled = { _ in false }
+      $0[PiSettingsClient.self].checkInstalled = { false }
+      $0[CLISkillClient.self].checkInstalled = { agent in
+        let key: String =
+          switch agent {
+          case .claude: "claude"
+          case .codex: "codex"
+          case .kiro: "kiro"
+          case .pi: "pi"
+          }
+        checkedSkills.withValue { $0.append(key) }
+        return false
+      }
+    }
+
+    store.exhaustivity = .off(showSkippedAssertions: false)
+    await store.send(.task)
+    await store.receive(\.settingsLoaded)
+    await store.skipReceivedActions()
+
+    #expect(Set(checkedSkills.value) == ["claude", "codex", "kiro", "pi"])
   }
 
   // MARK: - Kiro hook actions.
@@ -609,13 +653,12 @@ struct SettingsFeatureAgentHookTests {
   @Test(.dependencies) func piHookInstallTransitionsToFailedOnError() async {
     var state = SettingsFeature.State()
     state.piHooksState = .notInstalled
-    let errorMessage = "Install failed"
 
     let store = TestStore(initialState: state) {
       SettingsFeature()
     } withDependencies: {
       $0[PiSettingsClient.self].install = {
-        throw NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+        throw PiSettingsInstallerError.extensionNotManaged
       }
     }
 
@@ -623,7 +666,7 @@ struct SettingsFeatureAgentHookTests {
       $0.piHooksState = .installing
     }
     await store.receive(\.agentHookActionCompleted) {
-      $0.piHooksState = .failed(errorMessage)
+      $0.piHooksState = .failed(PiSettingsInstallerError.extensionNotManaged.localizedDescription)
     }
   }
 
@@ -653,6 +696,26 @@ struct SettingsFeatureAgentHookTests {
     }
     await store.receive(\.agentHookActionCompleted) {
       $0.piHooksState = .notInstalled
+    }
+  }
+
+  @Test(.dependencies) func piHookUninstallTransitionsToFailedOnError() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .installed
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[PiSettingsClient.self].uninstall = {
+        throw PiSettingsInstallerError.extensionNotManaged
+      }
+    }
+
+    await store.send(.agentHookUninstallTapped(.piHooks)) {
+      $0.piHooksState = .uninstalling
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.piHooksState = .failed(PiSettingsInstallerError.extensionNotManaged.localizedDescription)
     }
   }
 
@@ -696,5 +759,65 @@ struct SettingsFeatureAgentHookTests {
     await store.receive(\.cliSkillCompleted) {
       $0.piSkillState = .installed
     }
+  }
+
+  @Test(.dependencies) func piSkillInstallTransitionsToFailedOnError() async {
+    var state = SettingsFeature.State()
+    state.piSkillState = .notInstalled
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[CLISkillClient.self].install = { _ in
+        throw PiSettingsInstallerError.extensionNotManaged
+      }
+    }
+
+    await store.send(.cliSkillInstallTapped(.pi)) {
+      $0.piSkillState = .installing
+    }
+    await store.receive(\.cliSkillCompleted) {
+      $0.piSkillState = .failed(PiSettingsInstallerError.extensionNotManaged.localizedDescription)
+    }
+  }
+
+  @Test(.dependencies) func piSkillUninstallTransitionsToNotInstalledOnSuccess() async {
+    var state = SettingsFeature.State()
+    state.piSkillState = .installed
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[CLISkillClient.self].uninstall = { _ in }
+    }
+
+    await store.send(.cliSkillUninstallTapped(.pi)) {
+      $0.piSkillState = .uninstalling
+    }
+    await store.receive(\.cliSkillCompleted) {
+      $0.piSkillState = .notInstalled
+    }
+  }
+
+  @Test(.dependencies) func piSkillInstallWhileLoadingIsNoOp() async {
+    var state = SettingsFeature.State()
+    state.piSkillState = .installing
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.cliSkillInstallTapped(.pi))
+  }
+
+  @Test(.dependencies) func piSkillUninstallWhileLoadingIsNoOp() async {
+    var state = SettingsFeature.State()
+    state.piSkillState = .uninstalling
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.cliSkillUninstallTapped(.pi))
   }
 }

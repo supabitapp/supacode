@@ -6,6 +6,7 @@ import SwiftUI
 struct DeveloperSettingsView: View {
   let store: StoreOf<SettingsFeature>
   @State private var kiroExpanded = false
+  @State private var piExpanded = false
 
   var body: some View {
     Form {
@@ -124,7 +125,7 @@ struct DeveloperSettingsView: View {
         }
         .labelStyle(.titleTrailingIcon)
       }
-      Section {
+      Section(isExpanded: $piExpanded) {
         AgentInstallRow(
           installAction: { store.send(.agentHookInstallTapped(.piHooks)) },
           uninstallAction: { store.send(.agentHookUninstallTapped(.piHooks)) },
@@ -150,8 +151,6 @@ struct DeveloperSettingsView: View {
             .accessibilityHidden(true)
         }
         .labelStyle(.titleTrailingIcon)
-      } footer: {
-        Text("Applied to `~/.pi/agent`.")
       }
     }
     .formStyle(.grouped)

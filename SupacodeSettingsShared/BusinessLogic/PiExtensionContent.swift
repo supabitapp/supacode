@@ -33,10 +33,6 @@ nonisolated enum PiExtensionContent {
     import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
     import { createConnection } from "node:net";
 
-    // ---------------------------------------------------------------------------
-    // Types
-    // ---------------------------------------------------------------------------
-
     interface SupacodeEnv {
       socketPath: string;
       worktreeId: string;
@@ -51,10 +47,6 @@ nonisolated enum PiExtensionContent {
       last_assistant_message?: string;
     }
 
-    // ---------------------------------------------------------------------------
-    // Env helpers
-    // ---------------------------------------------------------------------------
-
     function readSupacodeEnv(): SupacodeEnv | null {
       const socketPath = process.env["SUPACODE_SOCKET_PATH"];
       const worktreeId = process.env["SUPACODE_WORKTREE_ID"];
@@ -65,13 +57,11 @@ nonisolated enum PiExtensionContent {
       return { socketPath, worktreeId, tabId, surfaceId };
     }
 
-    // ---------------------------------------------------------------------------
-    // Socket transport
-    // ---------------------------------------------------------------------------
-
     /**
      * Sends raw bytes to a Unix domain socket and closes the connection.
-     * Times out after 1 s and swallows all errors — hook delivery is best-effort.
+     * Times out after 1 s (Pi serializes hook callbacks, so a stalled
+     * delivery would stall the agent) and swallows all errors —
+     * hook delivery is best-effort.
      */
     function sendToSocket(socketPath: string, data: Buffer): Promise<void> {
       return new Promise<void>((resolve) => {
@@ -83,12 +73,11 @@ nonisolated enum PiExtensionContent {
           }
         };
 
+        const client = createConnection({ path: socketPath });
         const timer = setTimeout(() => {
           client.destroy();
           done();
         }, 1000);
-
-        const client = createConnection({ path: socketPath });
 
         client.on("connect", () => {
           client.write(data, () => {
@@ -98,17 +87,12 @@ nonisolated enum PiExtensionContent {
           });
         });
 
-        client.on("close", done);
         client.on("error", () => {
           clearTimeout(timer);
           done();
         });
       });
     }
-
-    // ---------------------------------------------------------------------------
-    // Message helpers
-    // ---------------------------------------------------------------------------
 
     function sendBusy(env: SupacodeEnv, active: boolean): Promise<void> {
       const flag = active ? "1" : "0";
@@ -121,10 +105,6 @@ nonisolated enum PiExtensionContent {
       const body = JSON.stringify(payload) + "\\n";
       return sendToSocket(env.socketPath, Buffer.from(header + body, "utf8"));
     }
-
-    // ---------------------------------------------------------------------------
-    // Session helpers
-    // ---------------------------------------------------------------------------
 
     function lastAssistantText(ctx: { sessionManager: { getEntries(): any[] } }): string | undefined {
       const entries = ctx.sessionManager.getEntries();
@@ -147,22 +127,16 @@ nonisolated enum PiExtensionContent {
       return undefined;
     }
 
-    // ---------------------------------------------------------------------------
-    // Extension entry point
-    // ---------------------------------------------------------------------------
-
     export default function (pi: ExtensionAPI) {
       const env = readSupacodeEnv();
 
       // Not running under Supacode — skip lifecycle hooks.
       if (!env) return;
 
-      // agent_start → busy = 1
       pi.on("agent_start", async (_event, _ctx) => {
         await sendBusy(env, true);
       });
 
-      // agent_end → busy = 0 + Stop notification
       pi.on("agent_end", async (_event, ctx) => {
         await sendBusy(env, false);
 
@@ -173,7 +147,6 @@ nonisolated enum PiExtensionContent {
         });
       });
 
-      // session_shutdown → busy = 0
       pi.on("session_shutdown", async (_event, _ctx) => {
         await sendBusy(env, false);
       });

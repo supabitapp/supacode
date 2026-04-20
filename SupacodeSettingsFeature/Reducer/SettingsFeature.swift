@@ -191,11 +191,11 @@ public struct SettingsFeature {
               async let claude = cliSkillClient.checkInstalled(.claude)
               async let codex = cliSkillClient.checkInstalled(.codex)
               async let kiro = cliSkillClient.checkInstalled(.kiro)
-              async let pi = cliSkillClient.checkInstalled(.pi)
+              async let piSkill = cliSkillClient.checkInstalled(.pi)
               await send(.cliSkillChecked(agent: .claude, installed: await claude))
               await send(.cliSkillChecked(agent: .codex, installed: await codex))
               await send(.cliSkillChecked(agent: .kiro, installed: await kiro))
-              await send(.cliSkillChecked(agent: .pi, installed: await pi))
+              await send(.cliSkillChecked(agent: .pi, installed: await piSkill))
             },
             .run { [claudeSettingsClient, codexSettingsClient, kiroSettingsClient, piSettingsClient] send in
               async let claudeProgressInstalled = claudeSettingsClient.checkInstalled(true)
