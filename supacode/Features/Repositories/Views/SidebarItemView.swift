@@ -300,19 +300,25 @@ private struct IconView: View {
     Group {
       if isSystemImage {
         Image(systemName: resolvedName)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
           .fontWeight(.semibold)
       } else {
         Image(resolvedName)
           .renderingMode(.template)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
       }
     }
     .foregroundStyle(resolvedColor)
+    .frame(width: 16, height: 16)
     .overlay(alignment: .bottomTrailing) {
       if let checkBadgeState, !isSystemImage {
         let badgeColor = AnyShapeStyle(checkBadgeState.color)
         let background = AnyShapeStyle(.windowBackground)
         Image(systemName: checkBadgeState.symbolName)
           .resizable()
+          .aspectRatio(contentMode: .fit)
           .symbolVariant(.circle.fill)
           .symbolRenderingMode(.palette)
           .fontWeight(.black)

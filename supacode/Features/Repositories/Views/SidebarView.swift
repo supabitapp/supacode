@@ -26,10 +26,15 @@ struct SidebarView: View {
         Button {
           store.send(.setOpenPanelPresented(true))
         } label: {
-          Image(systemName: "folder.badge.plus")
-            .offset(y: -1)
-            .accessibilityLabel("Add Repository or Folder")
+          Label {
+            Text("Add…")
+          } icon: {
+            Image(systemName: "folder.badge.plus")
+              .offset(y: -1)
+              .accessibilityHidden(true)
+          }
         }
+        .labelStyle(.iconOnly)
         .help("Add Repository or Folder (\(openRepo?.display ?? "none"))")
       }
     }
