@@ -1021,8 +1021,12 @@ final class GhosttySurfaceView: NSView, Identifiable {
     guard focused else { return false }
 
     if let bindingFlags = bindingFlags(for: event, surface: surface) {
+      // Only forward to the main menu when the event actually matches one of our registered
+      // menu items. `NSMenu.performKeyEquivalent` can otherwise intercept Ghostty-only
+      // shortcuts (e.g. `⌘⇧,` → reload_config) via AppKit's built-in menu matching quirks.
       if shouldAttemptMenu(for: bindingFlags),
         let menu = NSApp.mainMenu,
+        Self.mainMenuHasMatchingItem(for: event, in: menu),
         menu.performKeyEquivalent(with: event)
       {
         return true
@@ -1213,6 +1217,29 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   @IBAction func changeTitle(_ sender: Any?) {
     performBindingAction("prompt_surface_title")
+  }
+
+  /// Recursively walks the main menu looking for any item whose key equivalent and
+  /// modifier mask match `event` exactly. We require an exact modifier match so that a
+  /// shortcut like `⌘,` (Settings) doesn't eat `⌘⇧,` (Ghostty's `reload_config`).
+  ///
+  /// An uppercase `keyEquivalent` encodes shift implicitly (AppKit convention), so we
+  /// fold that into the item's effective mask before comparing.
+  private static func mainMenuHasMatchingItem(for event: NSEvent, in menu: NSMenu) -> Bool {
+    guard let characters = event.charactersIgnoringModifiers?.lowercased(), !characters.isEmpty else { return false }
+    let shortcutMask: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+    let eventModifiers = event.modifierFlags.intersection(shortcutMask)
+    for item in menu.items {
+      if let submenu = item.submenu, mainMenuHasMatchingItem(for: event, in: submenu) { return true }
+      guard !item.keyEquivalent.isEmpty else { continue }
+      let itemKey = item.keyEquivalent
+      guard itemKey.lowercased() == characters else { continue }
+      var itemMask = item.keyEquivalentModifierMask.intersection(shortcutMask)
+      if itemKey != itemKey.lowercased() { itemMask.insert(.shift) }
+      guard itemMask == eventModifiers else { continue }
+      return true
+    }
+    return false
   }
 
   private func shouldAttemptMenu(for flags: ghostty_binding_flags_e) -> Bool {
