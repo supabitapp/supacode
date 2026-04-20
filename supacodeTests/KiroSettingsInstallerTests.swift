@@ -20,7 +20,18 @@ struct KiroSettingsInstallerTests {
     try installer.installProgressHooks()
 
     let settingsURL = KiroSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
-    #expect(fileManager.fileExists(atPath: settingsURL.path))
+    let data = try Data(contentsOf: settingsURL)
+    let json = try JSONDecoder().decode(JSONValue.self, from: data)
+    let root = try #require(json.objectValue)
+    #expect(root["name"] == .string("kiro_default"))
+    #expect(root["tools"] == .array([.string("*")]))
+    #expect(root["useLegacyMcpJson"] == .bool(true))
+    let resources = try #require(root["resources"]?.arrayValue)
+    #expect(resources.count == 4)
+    #expect(resources.contains(.string("file://AGENTS.md")))
+    #expect(resources.contains(.string("skill://~/.kiro/skills/**/SKILL.md")))
+    #expect(resources.contains(.string("skill://~/.kiro/steering/**/*.md")))
+    #expect(root["hooks"]?.objectValue != nil)
   }
 
   @Test func installNotificationHooksCreatesDefaultConfigWhenMissing() throws {
@@ -31,7 +42,11 @@ struct KiroSettingsInstallerTests {
     try installer.installNotificationHooks()
 
     let settingsURL = KiroSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
-    #expect(fileManager.fileExists(atPath: settingsURL.path))
+    let data = try Data(contentsOf: settingsURL)
+    let json = try JSONDecoder().decode(JSONValue.self, from: data)
+    let root = try #require(json.objectValue)
+    #expect(root["name"] == .string("kiro_default"))
+    #expect(root["tools"] == .array([.string("*")]))
   }
 
   @Test func installProgressHooksDoesNotOverwriteExistingConfig() throws {
@@ -48,12 +63,7 @@ struct KiroSettingsInstallerTests {
     try installer.installProgressHooks()
     let secondWrite = try Data(contentsOf: settingsURL)
 
-    // Content must still be valid JSON after second install.
-    #expect(try JSONDecoder().decode(JSONValue.self, from: secondWrite).objectValue != nil)
-    // Hooks section should still exist.
-    let json = try JSONDecoder().decode(JSONValue.self, from: secondWrite)
-    #expect(json.objectValue?["hooks"] != nil)
-    _ = firstWrite  // used
+    #expect(firstWrite == secondWrite)
   }
 
   @Test func uninstallProgressHooksIsNoOpWhenFileMissing() throws {

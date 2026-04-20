@@ -87,6 +87,37 @@ struct AgentHookSocketServerTests {
     #expect(notification.body == "fallback body")
   }
 
+  @Test func parsesNotificationWithAssistantResponseFallback() {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    let payload = #"{"hook_event_name":"stop","assistant_response":"kiro body"}"#
+    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) kiro\n\(payload)"
+    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
+
+    guard case .notification(_, _, _, let notification) = message else {
+      Issue.record("Expected notification message")
+      return
+    }
+    #expect(notification.agent == "kiro")
+    #expect(notification.body == "kiro body")
+  }
+
+  @Test func messageFieldTakesPrecedenceOverAllFallbacks() {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    let payload = """
+      {"hook_event_name":"Stop","message":"primary","last_assistant_message":"secondary","assistant_response":"tertiary"}
+      """
+    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) claude\n\(payload)"
+    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
+
+    guard case .notification(_, _, _, let notification) = message else {
+      Issue.record("Expected notification message")
+      return
+    }
+    #expect(notification.body == "primary")
+  }
+
   @Test func invalidJSONPayloadDropsNotification() {
     let tabID = UUID()
     let surfaceID = UUID()

@@ -79,8 +79,8 @@ nonisolated struct KiroSettingsInstaller {
       "resources": .array([
         .string("file://AGENTS.md"),
         .string("file://README.md"),
-        .string("skill://.kiro/skills/**/SKILL.md"),
-        .string("skill://.kiro/steering/**/*.md"),
+        .string("skill://~/.kiro/skills/**/SKILL.md"),
+        .string("skill://~/.kiro/steering/**/*.md"),
       ]),
       "useLegacyMcpJson": .bool(true),
       "hooks": .object([:]),
@@ -106,7 +106,8 @@ nonisolated struct KiroSettingsInstaller {
 
   private static func reportInvalidHookConfiguration(_ error: Error, progress: Bool) {
     #if DEBUG
-      assertionFailure("Kiro \(progress ? "progress" : "notification") hook configuration is invalid: \(error)")
+      assertionFailure(
+        "Kiro \(progress ? "progress" : "notification") hook configuration is invalid: \(error)")
     #endif
   }
 
