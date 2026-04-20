@@ -8,9 +8,15 @@ struct WorktreeTerminalTabsView: View {
   let forceAutoFocus: Bool
   let createTab: () -> Void
   @State private var windowActivity = WindowActivityState.inactive
+  // SwiftUI invalidation token. Runtime config values aren't Observable, so
+  // we bump this counter on `.ghosttyRuntimeConfigDidChange` to force body
+  // to re-read `manager.unfocusedSplitOverlay()` after a live reload.
+  @State private var configReloadCounter = 0
 
   var body: some View {
     let state = manager.state(for: worktree) { shouldRunSetupScript }
+    let _ = configReloadCounter
+    let unfocusedSplitOverlay = manager.unfocusedSplitOverlay()
     VStack(spacing: 0) {
       if !state.shouldHideTabBar {
         TerminalTabBarView(
@@ -40,7 +46,11 @@ struct WorktreeTerminalTabsView: View {
       }
       if let selectedId = state.tabManager.selectedTabId {
         TerminalTabContentStack(tabs: state.tabManager.tabs, selectedTabId: selectedId) { tabId in
-          TerminalSplitTreeAXContainer(tree: state.splitTree(for: tabId)) { operation in
+          TerminalSplitTreeAXContainer(
+            tree: state.splitTree(for: tabId),
+            activeSurfaceID: state.activeSurfaceID(for: tabId),
+            unfocusedSplitOverlay: unfocusedSplitOverlay
+          ) { operation in
             state.performSplitOperation(operation, in: tabId)
           }
         }
@@ -69,6 +79,9 @@ struct WorktreeTerminalTabsView: View {
       }
       let activity = resolvedWindowActivity
       state.syncFocus(windowIsKey: activity.isKeyWindow, windowIsVisible: activity.isVisible)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .ghosttyRuntimeConfigDidChange)) { _ in
+      configReloadCounter &+= 1
     }
   }
 

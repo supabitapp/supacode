@@ -1160,10 +1160,7 @@ final class WorktreeTerminalState {
     }
     view.onFocusChange = { [weak self, weak view] focused in
       guard let self, let view, focused else { return }
-      self.focusedSurfaceIdByTab[tabId] = view.id
-      self.markNotificationsRead(forSurfaceID: view.id)
-      self.updateTabTitle(for: tabId)
-      self.emitFocusChangedIfNeeded(view.id)
+      self.recordActiveSurface(view, in: tabId)
       self.emitTaskStatusIfChanged()
     }
     surfaces[view.id] = view
@@ -1224,13 +1221,26 @@ final class WorktreeTerminalState {
 
   private func focusSurface(_ surface: GhosttySurfaceView, in tabId: TerminalTabID) {
     let previousSurface = focusedSurfaceIdByTab[tabId].flatMap { surfaces[$0] }
-    focusedSurfaceIdByTab[tabId] = surface.id
-    markNotificationsRead(forSurfaceID: surface.id)
-    updateTabTitle(for: tabId)
+    recordActiveSurface(surface, in: tabId)
     guard tabId == tabManager.selectedTabId else { return }
     let fromSurface = (previousSurface === surface) ? nil : previousSurface
     GhosttySurfaceView.moveFocus(to: surface, from: fromSurface)
+  }
+
+  // Single choke point for mutating the "active pane" of a tab. Reached both
+  // from explicit focus paths (programmatic focus, split navigation, zoom)
+  // and from AppKit responder changes when the user clicks a pane.
+  private func recordActiveSurface(_ surface: GhosttySurfaceView, in tabId: TerminalTabID) {
+    focusedSurfaceIdByTab[tabId] = surface.id
+    markNotificationsRead(forSurfaceID: surface.id)
+    updateTabTitle(for: tabId)
     emitFocusChangedIfNeeded(surface.id)
+  }
+
+  // Single source of truth for the tab's active pane so the overlay renderer
+  // can't drift across surfaces.
+  func activeSurfaceID(for tabId: TerminalTabID) -> UUID? {
+    focusedSurfaceIdByTab[tabId]
   }
 
   /// Appends a notification from an agent hook on a specific surface.

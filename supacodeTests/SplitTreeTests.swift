@@ -90,6 +90,50 @@ struct SplitTreeTests {
     #expect(visibleLeaves.count == 2)
   }
 
+  // Locks in that both the AppKit responder path (clicks -> onFocusChange)
+  // and the explicit focus path (goto_split / focusSurface) route through
+  // the same choke point and produce one focus-changed emission per real
+  // transition.
+  @Test func recordActiveSurfaceSymmetryAcrossClickAndGotoSplitPaths() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    let first = fixture.first
+    let second = try #require(fixture.second)
+    let state = fixture.state
+    let tabId = fixture.tabId
+
+    var emissions: [UUID] = []
+    state.onFocusChanged = { emissions.append($0) }
+
+    // Creating the split already focused `second`, but `onFocusChanged`
+    // wasn't wired yet; establish the baseline.
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+
+    // Simulates the AppKit responder path (a user clicking a pane).
+    first.onFocusChange?(true)
+    #expect(state.activeSurfaceID(for: tabId) == first.id)
+
+    // Same surface reported twice should dedup.
+    first.onFocusChange?(true)
+    #expect(state.activeSurfaceID(for: tabId) == first.id)
+
+    // Simulates the explicit focus path (keybinding / palette / goto_split).
+    #expect(state.performSplitAction(.gotoSplit(direction: .next), for: first.id))
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+
+    // Explicit-path idempotence: re-focusing the already-active surface
+    // must not re-emit.
+    #expect(state.focusSurface(id: second.id))
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+
+    // Focus loss (e.g. window resign) must not wipe the active pane or emit
+    // a stray focus-changed event — the overlay needs to remember the last
+    // active surface across window key transitions.
+    second.onFocusChange?(false)
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+
+    #expect(emissions == [first.id, second.id])
+  }
+
   private func makeWorktreeFixture(preserveZoomOnNavigation: Bool) -> WorktreeFixture {
     let state = WorktreeTerminalState(
       runtime: GhosttyRuntime(),

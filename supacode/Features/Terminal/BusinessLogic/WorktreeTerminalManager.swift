@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import Sharing
 import SupacodeSettingsShared
+import SwiftUI
 
 private let terminalLogger = SupaLogger("Terminal")
 
@@ -416,6 +417,10 @@ final class WorktreeTerminalManager {
 
   func surfaceBackgroundOpacity() -> Double {
     runtime.backgroundOpacity()
+  }
+
+  func unfocusedSplitOverlay() -> (fill: Color?, opacity: Double) {
+    (runtime.unfocusedSplitFill(), runtime.unfocusedSplitOverlayOpacity())
   }
 
   private func emit(_ event: TerminalClient.Event) {

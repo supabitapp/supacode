@@ -4,6 +4,14 @@ import UniformTypeIdentifiers
 
 struct TerminalSplitTreeView: View {
   let tree: SplitTree<GhosttySurfaceView>
+  // Single source of truth for which pane is active in this tab. Any surface
+  // whose id does not match this gets the unfocused-split dim overlay.
+  let activeSurfaceID: UUID?
+  // Supacode renders surfaces directly (no Ghostty SurfaceWrapper), so the
+  // unfocused-pane dim overlay is applied here from the `unfocused-split-fill`
+  // and `unfocused-split-opacity` config values. Fill is nil when the config
+  // is unreadable; callers must skip the overlay in that case.
+  let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
   let action: (Operation) -> Void
 
   private static let dragType = UTType(exportedAs: "sh.supacode.ghosttySurfaceId")
@@ -22,8 +30,14 @@ struct TerminalSplitTreeView: View {
 
   var body: some View {
     if let node = tree.visibleNode {
-      SubtreeView(node: node, isRoot: node == tree.root, action: action)
-        .id(node.structuralIdentity)
+      SubtreeView(
+        node: node,
+        isRoot: node == tree.root,
+        activeSurfaceID: activeSurfaceID,
+        unfocusedSplitOverlay: unfocusedSplitOverlay,
+        action: action
+      )
+      .id(node.structuralIdentity)
     }
   }
 
@@ -36,12 +50,20 @@ struct TerminalSplitTreeView: View {
   struct SubtreeView: View {
     let node: SplitTree<GhosttySurfaceView>.Node
     var isRoot: Bool = false
+    let activeSurfaceID: UUID?
+    let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
     let action: (Operation) -> Void
 
     var body: some View {
       switch node {
       case .leaf(let leafView):
-        LeafView(surfaceView: leafView, isSplit: !isRoot, action: action)
+        LeafView(
+          surfaceView: leafView,
+          isSplit: !isRoot,
+          activeSurfaceID: activeSurfaceID,
+          unfocusedSplitOverlay: unfocusedSplitOverlay,
+          action: action
+        )
       case .split(let split):
         let splitViewDirection: SplitView<SubtreeView, SubtreeView>.Direction =
           switch split.direction {
@@ -57,13 +79,23 @@ struct TerminalSplitTreeView: View {
             set: {
               action(.resize(node: node, ratio: Double($0)))
             }),
-          dividerColor: .secondary,
+          dividerColor: Color(nsColor: .separatorColor),
           resizeIncrements: .init(width: 1, height: 1),
           left: {
-            SubtreeView(node: split.left, action: action)
+            SubtreeView(
+              node: split.left,
+              activeSurfaceID: activeSurfaceID,
+              unfocusedSplitOverlay: unfocusedSplitOverlay,
+              action: action
+            )
           },
           right: {
-            SubtreeView(node: split.right, action: action)
+            SubtreeView(
+              node: split.right,
+              activeSurfaceID: activeSurfaceID,
+              unfocusedSplitOverlay: unfocusedSplitOverlay,
+              action: action
+            )
           },
           onEqualize: {
             action(.equalize)
@@ -76,14 +108,30 @@ struct TerminalSplitTreeView: View {
   struct LeafView: View {
     let surfaceView: GhosttySurfaceView
     let isSplit: Bool
+    let activeSurfaceID: UUID?
+    let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
     let action: (Operation) -> Void
 
     @State private var dropState: DropState = .idle
+
+    private var isDimmed: Bool {
+      // During initialization activeSurfaceID is nil and nothing should be
+      // dimmed.
+      guard isSplit, let activeSurfaceID else { return false }
+      return activeSurfaceID != surfaceView.id
+    }
 
     var body: some View {
       GeometryReader { geometry in
         GhosttyTerminalView(surfaceView: surfaceView)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .overlay {
+            if isDimmed, let fill = unfocusedSplitOverlay.fill, unfocusedSplitOverlay.opacity > 0 {
+              fill
+                .opacity(unfocusedSplitOverlay.opacity)
+                .allowsHitTesting(false)
+            }
+          }
           .overlay(alignment: .top) {
             GhosttySurfaceProgressOverlay(state: surfaceView.bridge.state)
           }
@@ -281,6 +329,8 @@ struct TerminalSplitTreeView: View {
 /// list of terminal panes to assistive technologies.
 struct TerminalSplitTreeAXContainer: NSViewRepresentable {
   let tree: SplitTree<GhosttySurfaceView>
+  let activeSurfaceID: UUID?
+  let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
   let action: (TerminalSplitTreeView.Operation) -> Void
 
   func makeNSView(context: Context) -> TerminalSplitAXContainerView {
@@ -289,7 +339,14 @@ struct TerminalSplitTreeAXContainer: NSViewRepresentable {
 
   func updateNSView(_ nsView: TerminalSplitAXContainerView, context: Context) {
     nsView.update(
-      rootView: AnyView(TerminalSplitTreeView(tree: tree, action: action)),
+      rootView: AnyView(
+        TerminalSplitTreeView(
+          tree: tree,
+          activeSurfaceID: activeSurfaceID,
+          unfocusedSplitOverlay: unfocusedSplitOverlay,
+          action: action
+        )
+      ),
       panes: tree.visibleLeaves()
     )
   }
