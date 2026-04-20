@@ -4,14 +4,22 @@ struct EmptyTerminalPaneView: View {
   let message: String
 
   var body: some View {
-    VStack {
-      Text(message)
-        .font(.headline)
-      Text("Use the plus button to open a terminal.")
-        .font(.subheadline)
+    VStack(spacing: 12) {
+      Image(systemName: "apple.terminal.on.rectangle")
+        .font(.title)
+        .imageScale(.large)
+        .accessibilityHidden(true)
         .foregroundStyle(.secondary)
+      VStack(spacing: 4) {
+        Text(message)
+          .font(.title3)
+        Text("Use the \(Text("+").bold()) button to open a terminal.")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .multilineTextAlignment(.center)
+    .background(Color(nsColor: .windowBackgroundColor))
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
