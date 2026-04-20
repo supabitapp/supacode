@@ -447,14 +447,14 @@ struct WorktreeDetailView: View {
   ) -> WorktreeToolbarState.Kind {
     let selectedRow = repositories.selectedRow(for: selectedWorktree.id)
     guard selectedRow?.isFolder != true else { return .folder }
-    guard let pr = repositories.worktreeInfo(for: selectedWorktree.id)?.pullRequest else {
+    guard let pullRequest = repositories.worktreeInfo(for: selectedWorktree.id)?.pullRequest else {
       return .git(pullRequest: nil)
     }
     // Only surface the PR when its head branch matches the current
     // worktree — otherwise stale info sticks around after a rename
     // or branch switch.
-    let matches = pr.headRefName == nil || pr.headRefName == selectedWorktree.name
-    return .git(pullRequest: matches ? pr : nil)
+    let matches = pullRequest.headRefName == nil || pullRequest.headRefName == selectedWorktree.name
+    return .git(pullRequest: matches ? pullRequest : nil)
   }
 
   private func loadingInfo(
