@@ -142,7 +142,8 @@ final class AgentHookSocketServer {
       guard let base = buffer.baseAddress else { return }
       var totalWritten = 0
       while totalWritten < data.count {
-        let written = write(fileDescriptor, base.advanced(by: totalWritten), data.count - totalWritten)
+        let written = write(
+          fileDescriptor, base.advanced(by: totalWritten), data.count - totalWritten)
         if written < 0 {
           guard errno == EINTR else {
             socketLogger.warning("write() failed: \(String(cString: strerror(errno)))")
@@ -207,7 +208,8 @@ final class AgentHookSocketServer {
 
   nonisolated enum Message: Sendable {
     case busy(worktreeID: String, tabID: UUID, surfaceID: UUID, active: Bool)
-    case notification(worktreeID: String, tabID: UUID, surfaceID: UUID, notification: AgentHookNotification)
+    case notification(
+      worktreeID: String, tabID: UUID, surfaceID: UUID, notification: AgentHookNotification)
     /// CLI command with the client FD kept open for writing a response.
     case command(deeplinkURL: URL, clientFD: Int32)
     /// CLI query with the client FD kept open for writing data back.
@@ -219,7 +221,8 @@ final class AgentHookSocketServer {
     let json: [String: Any] = ["ok": true, "data": data]
     guard let encoded = try? JSONSerialization.data(withJSONObject: json) else {
       socketLogger.warning("Failed to encode query response")
-      writeAll(to: clientFD, data: Data("{\"ok\":false,\"error\":\"Internal encoding error.\"}".utf8))
+      writeAll(
+        to: clientFD, data: Data("{\"ok\":false,\"error\":\"Internal encoding error.\"}".utf8))
       close(clientFD)
       return
     }
@@ -228,12 +231,15 @@ final class AgentHookSocketServer {
   }
 
   /// Writes a JSON response to a command client and closes the FD.
-  nonisolated static func sendCommandResponse(clientFD: Int32, ok succeeded: Bool, error: String? = nil) {
+  nonisolated static func sendCommandResponse(
+    clientFD: Int32, ok succeeded: Bool, error: String? = nil
+  ) {
     var json: [String: Any] = ["ok": succeeded]
     if let error { json["error"] = error }
     guard let data = try? JSONSerialization.data(withJSONObject: json) else {
       socketLogger.warning("Failed to encode command response")
-      writeAll(to: clientFD, data: Data("{\"ok\":false,\"error\":\"Internal encoding error.\"}".utf8))
+      writeAll(
+        to: clientFD, data: Data("{\"ok\":false,\"error\":\"Internal encoding error.\"}".utf8))
       close(clientFD)
       return
     }
@@ -255,7 +261,10 @@ final class AgentHookSocketServer {
 
     // Set a read timeout so a misbehaving client cannot block the accept loop.
     var timeout = timeval(tv_sec: 5, tv_usec: 0)
-    guard setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0 else {
+    guard
+      setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        == 0
+    else {
       socketLogger.warning("setsockopt(SO_RCVTIMEO) failed: \(String(cString: strerror(errno)))")
       close(clientFD)
       return nil
@@ -386,7 +395,12 @@ final class AgentHookSocketServer {
       return nil
     }
 
+    // Kiro emits assistant_response on stop; Claude uses message, Codex uses last_assistant_message.
     let body = payload.message ?? payload.lastAssistantMessage ?? payload.assistantResponse
+    if body == nil {
+      socketLogger.warning(
+        "All body fields nil in \(agent) \(payload.hookEventName ?? "unknown") notification")
+    }
     return AgentHookNotification(
       agent: agent,
       event: payload.hookEventName ?? "unknown",
@@ -446,7 +460,9 @@ private nonisolated enum SocketCommandRequest {
   case query(resource: String, params: [String: String])
 
   init?(data: Data) {
-    guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return nil
+    }
     var extracted: [String: String] = [:]
     for (key, value) in dict where key != "deeplink" && key != "query" {
       if let str = value as? String { extracted[key] = str }

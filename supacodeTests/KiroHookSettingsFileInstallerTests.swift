@@ -32,8 +32,8 @@ struct KiroHookSettingsFileInstallerTests {
         .object([
           "command": .string(AgentHookSettingsCommand.busyCommand(active: false)),
           "timeout_ms": 10_000,
-        ]),
-      ],
+        ])
+      ]
     ]
   }
 
@@ -109,12 +109,46 @@ struct KiroHookSettingsFileInstallerTests {
     #expect(stopEntries == nil || stopEntries?.isEmpty == true)
   }
 
+  @Test func uninstallRemovesOnlyMatchingCommands() throws {
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    let installer = makeInstaller()
+    let entries = sampleHookEntries()
+    try installer.install(settingsURL: url, hookEntriesByEvent: entries)
+
+    // Add a user's hand-written hook entry alongside the managed one.
+    var data = try Data(contentsOf: url)
+    var root = try JSONDecoder().decode(JSONValue.self, from: data).objectValue!
+    var hooks = root["hooks"]!.objectValue!
+    var stopEntries = hooks["stop"]!.arrayValue!
+    stopEntries.append(.object(["command": .string("echo user-hook"), "timeout_ms": 5_000]))
+    hooks["stop"] = .array(stopEntries)
+    root["hooks"] = .object(hooks)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(JSONValue.object(root)).write(to: url)
+
+    // Uninstall managed hooks.
+    try installer.uninstall(settingsURL: url, hookEntriesByEvent: entries)
+
+    data = try Data(contentsOf: url)
+    let updated = try JSONDecoder().decode(JSONValue.self, from: data)
+    let remaining = updated.objectValue?["hooks"]?.objectValue?["stop"]?.arrayValue ?? []
+
+    // User's hook should remain.
+    #expect(remaining.count == 1)
+    #expect(remaining[0].objectValue?["command"]?.stringValue == "echo user-hook")
+  }
+
   // MARK: - Check.
 
   @Test func containsMatchingHooksReturnsFalseForMissingFile() {
     let url = makeTempURL()
     let installer = makeInstaller()
-    #expect(installer.containsMatchingHooks(settingsURL: url, hookEntriesByEvent: sampleHookEntries()) == false)
+    #expect(
+      installer.containsMatchingHooks(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+        == false)
   }
 
   @Test func containsMatchingHooksReturnsTrueAfterInstall() throws {
