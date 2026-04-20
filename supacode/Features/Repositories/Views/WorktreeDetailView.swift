@@ -365,11 +365,7 @@ struct WorktreeDetailView: View {
           pullRequest: toolbarState.pullRequest
         )
         .padding(.horizontal)
-      }
-
-      if !toolbarState.notificationGroups.isEmpty {
-        ToolbarSpacer(.fixed)
-        ToolbarItemGroup {
+        if !toolbarState.notificationGroups.isEmpty {
           ToolbarNotificationsPopoverButton(
             groups: toolbarState.notificationGroups,
             unseenWorktreeCount: toolbarState.unseenNotificationWorktreeCount,
@@ -399,7 +395,6 @@ struct WorktreeDetailView: View {
           onManageScripts: onManageScripts
         )
       }
-
     }
 
     @ViewBuilder
