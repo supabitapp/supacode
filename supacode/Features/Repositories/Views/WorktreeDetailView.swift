@@ -95,6 +95,7 @@ struct WorktreeDetailView: View {
         )
       }
     }
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     let hasRunningRunScript = state.hasRunningRunScript
     let actions = makeFocusedActions(
       hasActiveWorktree: hasActiveWorktree,
@@ -544,6 +545,7 @@ private struct DetailPlaceholderView: View {
         .contentTransition(.numericText())
         .shimmer(isActive: true)
     }
+    .multilineTextAlignment(.center)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(nsColor: .windowBackgroundColor))
     .task {
