@@ -124,6 +124,35 @@ struct DeveloperSettingsView: View {
         }
         .labelStyle(.titleTrailingIcon)
       }
+      Section {
+        AgentInstallRow(
+          installAction: { store.send(.agentHookInstallTapped(.piHooks)) },
+          uninstallAction: { store.send(.agentHookUninstallTapped(.piHooks)) },
+          installState: store.piHooksState,
+          title: "Hooks",
+          subtitle: "Display agent activity in tab, sidebar, and forward notifications."
+        )
+        AgentInstallRow(
+          installAction: { store.send(.cliSkillInstallTapped(.pi)) },
+          uninstallAction: { store.send(.cliSkillUninstallTapped(.pi)) },
+          installState: store.piSkillState,
+          title: "CLI Skill",
+          subtitle: "Teach Pi how to use the Supacode CLI."
+        )
+      } header: {
+        Label {
+          Text("Pi")
+        } icon: {
+          Image("pi-mark")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 18, height: 18)
+            .accessibilityHidden(true)
+        }
+        .labelStyle(.titleTrailingIcon)
+      } footer: {
+        Text("Applied to `~/.pi/agent`.")
+      }
     }
     .formStyle(.grouped)
     .padding(.top, -20)

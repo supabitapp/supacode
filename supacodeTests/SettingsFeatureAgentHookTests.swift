@@ -559,4 +559,142 @@ struct SettingsFeatureAgentHookTests {
 
     await store.send(.cliSkillUninstallTapped(.claude))
   }
+
+  // MARK: - Pi hooks.
+
+  @Test(.dependencies) func piHookCheckedSetsInstalled() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .checking
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.agentHookChecked(.piHooks, installed: true)) {
+      $0.piHooksState = .installed
+    }
+  }
+
+  @Test(.dependencies) func piHookCheckedSetsNotInstalled() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .checking
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.agentHookChecked(.piHooks, installed: false)) {
+      $0.piHooksState = .notInstalled
+    }
+  }
+
+  @Test(.dependencies) func piHookInstallTransitionsToInstalledOnSuccess() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .notInstalled
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[PiSettingsClient.self].install = {}
+    }
+
+    await store.send(.agentHookInstallTapped(.piHooks)) {
+      $0.piHooksState = .installing
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.piHooksState = .installed
+    }
+  }
+
+  @Test(.dependencies) func piHookInstallTransitionsToFailedOnError() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .notInstalled
+    let errorMessage = "Install failed"
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[PiSettingsClient.self].install = {
+        throw NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+      }
+    }
+
+    await store.send(.agentHookInstallTapped(.piHooks)) {
+      $0.piHooksState = .installing
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.piHooksState = .failed(errorMessage)
+    }
+  }
+
+  @Test(.dependencies) func piHookInstallWhileLoadingIsNoOp() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .installing
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.agentHookInstallTapped(.piHooks))
+  }
+
+  @Test(.dependencies) func piHookUninstallTransitionsToNotInstalledOnSuccess() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .installed
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[PiSettingsClient.self].uninstall = {}
+    }
+
+    await store.send(.agentHookUninstallTapped(.piHooks)) {
+      $0.piHooksState = .uninstalling
+    }
+    await store.receive(\.agentHookActionCompleted) {
+      $0.piHooksState = .notInstalled
+    }
+  }
+
+  @Test(.dependencies) func piHookUninstallWhileLoadingIsNoOp() async {
+    var state = SettingsFeature.State()
+    state.piHooksState = .uninstalling
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.agentHookUninstallTapped(.piHooks))
+  }
+
+  @Test(.dependencies) func piSkillCheckedSetsInstalled() async {
+    var state = SettingsFeature.State()
+    state.piSkillState = .checking
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.cliSkillChecked(agent: .pi, installed: true)) {
+      $0.piSkillState = .installed
+    }
+  }
+
+  @Test(.dependencies) func piSkillInstallTransitionsToInstalledOnSuccess() async {
+    var state = SettingsFeature.State()
+    state.piSkillState = .notInstalled
+
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[CLISkillClient.self].install = { _ in }
+    }
+
+    await store.send(.cliSkillInstallTapped(.pi)) {
+      $0.piSkillState = .installing
+    }
+    await store.receive(\.cliSkillCompleted) {
+      $0.piSkillState = .installed
+    }
+  }
 }

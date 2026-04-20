@@ -37,4 +37,5 @@ public enum AgentHookSlot: Equatable, Sendable {
   case codexNotifications
   case kiroProgress
   case kiroNotifications
+  case piHooks
 }

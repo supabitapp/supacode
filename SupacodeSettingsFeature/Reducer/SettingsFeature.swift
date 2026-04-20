@@ -44,6 +44,8 @@ public struct SettingsFeature {
     public var kiroProgressState = AgentHooksInstallState.checking
     public var kiroNotificationsState = AgentHooksInstallState.checking
     public var kiroSkillState = AgentHooksInstallState.checking
+    public var piHooksState = AgentHooksInstallState.checking
+    public var piSkillState = AgentHooksInstallState.checking
     /// `nil` when the settings window is closed; non-nil selects the visible section.
     public var selection: SettingsSection?
     public var repositorySummaries: [SettingsRepositorySummary] = []
@@ -165,6 +167,7 @@ public struct SettingsFeature {
   @Dependency(ClaudeSettingsClient.self) private var claudeSettingsClient
   @Dependency(CodexSettingsClient.self) private var codexSettingsClient
   @Dependency(KiroSettingsClient.self) private var kiroSettingsClient
+  @Dependency(PiSettingsClient.self) private var piSettingsClient
   @Dependency(ArchivedWorktreeDatesClient.self) private var archivedWorktreeDatesClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(\.date.now) private var now
@@ -188,17 +191,20 @@ public struct SettingsFeature {
               async let claude = cliSkillClient.checkInstalled(.claude)
               async let codex = cliSkillClient.checkInstalled(.codex)
               async let kiro = cliSkillClient.checkInstalled(.kiro)
+              async let pi = cliSkillClient.checkInstalled(.pi)
               await send(.cliSkillChecked(agent: .claude, installed: await claude))
               await send(.cliSkillChecked(agent: .codex, installed: await codex))
               await send(.cliSkillChecked(agent: .kiro, installed: await kiro))
+              await send(.cliSkillChecked(agent: .pi, installed: await pi))
             },
-            .run { [claudeSettingsClient, codexSettingsClient, kiroSettingsClient] send in
+            .run { [claudeSettingsClient, codexSettingsClient, kiroSettingsClient, piSettingsClient] send in
               async let claudeProgressInstalled = claudeSettingsClient.checkInstalled(true)
               async let claudeNotificationsInstalled = claudeSettingsClient.checkInstalled(false)
               async let codexProgressInstalled = codexSettingsClient.checkInstalled(true)
               async let codexNotificationsInstalled = codexSettingsClient.checkInstalled(false)
               async let kiroProgressInstalled = kiroSettingsClient.checkInstalled(true)
               async let kiroNotificationsInstalled = kiroSettingsClient.checkInstalled(false)
+              async let piHooksInstalled = piSettingsClient.checkInstalled()
 
               await send(.agentHookChecked(.claudeProgress, installed: await claudeProgressInstalled))
               await send(
@@ -209,6 +215,7 @@ public struct SettingsFeature {
               await send(.agentHookChecked(.kiroProgress, installed: await kiroProgressInstalled))
               await send(
                 .agentHookChecked(.kiroNotifications, installed: await kiroNotificationsInstalled))
+              await send(.agentHookChecked(.piHooks, installed: await piHooksInstalled))
             }
           )
         )
@@ -383,7 +390,7 @@ public struct SettingsFeature {
       case .agentHookInstallTapped(let slot):
         guard !state[hookSlot: slot].isLoading else { return .none }
         state[hookSlot: slot] = .installing
-        return .run { [claudeSettingsClient, codexSettingsClient, kiroSettingsClient] send in
+        return .run { [claudeSettingsClient, codexSettingsClient, kiroSettingsClient, piSettingsClient] send in
           do {
             switch slot {
             case .claudeProgress: try await claudeSettingsClient.installProgress()
@@ -392,6 +399,7 @@ public struct SettingsFeature {
             case .codexNotifications: try await codexSettingsClient.installNotifications()
             case .kiroProgress: try await kiroSettingsClient.installProgress()
             case .kiroNotifications: try await kiroSettingsClient.installNotifications()
+            case .piHooks: try await piSettingsClient.install()
             }
             await send(.agentHookActionCompleted(slot, .success(true)))
           } catch {
@@ -402,7 +410,7 @@ public struct SettingsFeature {
       case .agentHookUninstallTapped(let slot):
         guard !state[hookSlot: slot].isLoading else { return .none }
         state[hookSlot: slot] = .uninstalling
-        return .run { [claudeSettingsClient, codexSettingsClient, kiroSettingsClient] send in
+        return .run { [claudeSettingsClient, codexSettingsClient, kiroSettingsClient, piSettingsClient] send in
           do {
             switch slot {
             case .claudeProgress: try await claudeSettingsClient.uninstallProgress()
@@ -411,6 +419,7 @@ public struct SettingsFeature {
             case .codexNotifications: try await codexSettingsClient.uninstallNotifications()
             case .kiroProgress: try await kiroSettingsClient.uninstallProgress()
             case .kiroNotifications: try await kiroSettingsClient.uninstallNotifications()
+            case .piHooks: try await piSettingsClient.uninstall()
             }
             await send(.agentHookActionCompleted(slot, .success(false)))
           } catch {
@@ -609,6 +618,7 @@ extension SettingsFeature.State {
       case .claude: claudeSkillState
       case .codex: codexSkillState
       case .kiro: kiroSkillState
+      case .pi: piSkillState
       }
     }
     set {
@@ -616,6 +626,7 @@ extension SettingsFeature.State {
       case .claude: claudeSkillState = newValue
       case .codex: codexSkillState = newValue
       case .kiro: kiroSkillState = newValue
+      case .pi: piSkillState = newValue
       }
     }
   }
@@ -629,6 +640,7 @@ extension SettingsFeature.State {
       case .codexNotifications: codexNotificationsState
       case .kiroProgress: kiroProgressState
       case .kiroNotifications: kiroNotificationsState
+      case .piHooks: piHooksState
       }
     }
     set {
@@ -639,6 +651,7 @@ extension SettingsFeature.State {
       case .codexNotifications: codexNotificationsState = newValue
       case .kiroProgress: kiroProgressState = newValue
       case .kiroNotifications: kiroNotificationsState = newValue
+      case .piHooks: piHooksState = newValue
       }
     }
   }
