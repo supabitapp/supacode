@@ -1,48 +1,75 @@
+import Kingfisher
 import SwiftUI
 
+/// Detail toolbar title: rename-popover button for git worktrees;
+/// static folder label for non-git folder repositories.
 struct WorktreeDetailTitleView: View {
-  let branchName: String
-  let onSubmit: (String) -> Void
+  let title: String
+  let rootURL: URL
+  let isFolder: Bool
+  let onRenameBranch: (String) -> Void
 
   @State private var isPresented = false
-  @State private var isHovered = false
   @State private var draftName = ""
 
   var body: some View {
     Button {
-      draftName = branchName
+      draftName = title
       isPresented = true
     } label: {
-      HStack(spacing: 6) {
-        Image(systemName: "arrow.trianglehead.branch")
-          .foregroundStyle(.secondary)
-          .accessibilityHidden(true)
-        Text(branchName)
-        if isHovered {
-          Image(systemName: "pencil")
-            .foregroundStyle(.secondary)
+      Label {
+        Text(title)
+      } icon: {
+        if isFolder {
+          Image(systemName: "folder")
             .accessibilityHidden(true)
+        } else {
+          RepositoryOwnerAvatar(rootURL: rootURL)
         }
       }
-      .font(.headline)
+      .labelStyle(.titleAndIcon)
     }
-    .help("Rename branch (⌘M)")
-    .keyboardShortcut("m", modifiers: .command)
-    .onHover { hovering in
-      isHovered = hovering
-    }
+    .help("Rename \(isFolder ? "folder" : "branch")")
+    .disabled(isFolder)
     .popover(isPresented: $isPresented) {
       RenameBranchPopover(
         draftName: $draftName,
         onCancel: { isPresented = false },
         onSubmit: { newName in
           isPresented = false
-          if newName != branchName {
-            onSubmit(newName)
-          }
+          guard newName != title else { return }
+          onRenameBranch(newName)
         }
       )
     }
+  }
+}
+
+/// Falls back to a branch glyph while loading or when the remote
+/// doesn't resolve to a GitHub owner.
+private struct RepositoryOwnerAvatar: View {
+  let rootURL: URL
+  @State private var avatarURL: URL?
+
+  var body: some View {
+    KFImage(avatarURL)
+      .placeholder {
+        Image(systemName: "arrow.trianglehead.branch")
+          .accessibilityHidden(true)
+      }
+      .resizable()
+      .aspectRatio(1, contentMode: .fit)
+      .frame(width: 20, height: 20)
+      .clipShape(RoundedRectangle(cornerRadius: 8))
+      .task(id: rootURL) { avatarURL = await Self.ownerAvatarURL(for: rootURL) }
+  }
+
+  private static func ownerAvatarURL(for rootURL: URL) async -> URL? {
+    guard let info = await GitClient().remoteInfo(for: rootURL) else {
+      return nil
+    }
+    // 64 px covers retina rendering of the 20 pt icon frame.
+    return URL(string: "https://github.com/\(info.owner).png?size=64")
   }
 }
 
@@ -88,4 +115,46 @@ private struct RenameBranchPopover: View {
     guard !trimmed.isEmpty else { return }
     onSubmit(trimmed)
   }
+}
+
+#Preview("supabitapp/supacode") {
+  // Walk up from this source file to the repo root so the live preview
+  // resolves the real supabitapp/supacode origin.
+  let supacodeRepoRoot: URL = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()  // Views
+    .deletingLastPathComponent()  // Repositories
+    .deletingLastPathComponent()  // Features
+    .deletingLastPathComponent()  // supacode
+    .deletingLastPathComponent()  // repo root
+
+  Text("").toolbar {
+    WorktreeDetailTitleView(
+      title: "sbertix/small-ui-improvements",
+      rootURL: supacodeRepoRoot,
+      isFolder: false,
+      onRenameBranch: { _ in }
+    )
+  }.frame(width: 600, height: 600)
+}
+
+#Preview("Folder") {
+  Text("").toolbar {
+    WorktreeDetailTitleView(
+      title: "Documents",
+      rootURL: URL(fileURLWithPath: "/Users/stefanobertagno/Documents"),
+      isFolder: true,
+      onRenameBranch: { _ in }
+    )
+  }.frame(width: 600, height: 600)
+}
+
+#Preview("Missing repo") {
+  Text("").toolbar {
+    WorktreeDetailTitleView(
+      title: "ghost-branch",
+      rootURL: URL(fileURLWithPath: "/tmp/supacode-preview-no-such-repo"),
+      isFolder: false,
+      onRenameBranch: { _ in }
+    )
+  }.frame(width: 600, height: 600)
 }
