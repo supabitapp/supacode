@@ -3,96 +3,87 @@ import SwiftUI
 struct WorktreeLoadingView: View {
   let info: WorktreeLoadingInfo
   @Environment(\.surfaceBackgroundOpacity) private var surfaceBackgroundOpacity
-  private let bottomAnchorID = "worktree-loading-bottom"
 
   var body: some View {
-    let actionLabel =
-      if info.state == .creating {
-        "Creating"
-      } else if info.state == .archiving {
-        "Archiving"
-      } else {
-        "Removing"
-      }
-    let fallbackStatus =
-      if let repositoryName = info.repositoryName {
-        "\(actionLabel) worktree in \(repositoryName)"
-      } else {
-        "\(actionLabel) worktree..."
-      }
-    let statusLine = info.statusDetail ?? info.statusTitle ?? fallbackStatus
-    let statusCommand = info.statusCommand
-    VStack(spacing: 10) {
+    let subtitle = subtitleText()
+    VStack(spacing: 12) {
       ProgressView()
-      Text(info.name)
-        .font(.headline)
-        .multilineTextAlignment(.center)
-      if info.statusLines.isEmpty {
-        Text(statusLine)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-        if let statusCommand {
-          Text(statusCommand)
-            .font(.caption)
+        .controlSize(.large)
+      VStack(spacing: 4) {
+        Text(info.name)
+          .font(.title3)
+        if let command = info.progress?.statusCommand {
+          Text(command)
+            .font(.subheadline)
             .monospaced()
             .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
+            .lineLimit(1)
+            .truncationMode(.middle)
         }
-      } else {
-        ScrollViewReader { scrollProxy in
-          ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-              if let statusCommand {
-                Text(statusCommand)
-                  .font(.caption)
-                  .monospaced()
-                  .foregroundStyle(.secondary)
-                  .multilineTextAlignment(.leading)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-              ForEach(Array(info.statusLines.enumerated()), id: \.offset) { _, line in
-                Text(line)
-                  .font(.caption)
-                  .monospaced()
-                  .foregroundStyle(.secondary)
-                  .multilineTextAlignment(.leading)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-              Color.clear
-                .frame(height: 1)
-                .id(bottomAnchorID)
-            }
-            .padding(12)
-          }
-          .frame(maxWidth: 560, minHeight: 180, maxHeight: 380)
-          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-          .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-              .strokeBorder(.quaternary, lineWidth: 1)
-          }
-          .onAppear {
-            scrollToBottom(using: scrollProxy, animated: false)
-          }
-          .onChange(of: info.statusLines) { _, _ in
-            scrollToBottom(using: scrollProxy, animated: true)
-          }
-        }
+        Text(subtitle)
+          .font(.subheadline)
+          .monospaced()
+          .foregroundStyle(.tertiary)
+          .lineLimit(5, reservesSpace: true)
+          .truncationMode(.head)
+          .contentTransition(.opacity)
+          .animation(.easeInOut, value: subtitle)
       }
     }
-    .frame(maxWidth: 640)
-    .padding(.horizontal, 16)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    .multilineTextAlignment(.center)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(nsColor: .windowBackgroundColor).opacity(surfaceBackgroundOpacity))
   }
 
-  private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
-    if animated {
-      withAnimation(.easeOut(duration: 0.12)) {
-        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-      }
-    } else {
-      proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+  private func subtitleText() -> String {
+    if let progress = info.progress {
+      let tail = progress.statusLines.suffix(5)
+      guard tail.isEmpty else { return tail.joined(separator: "\n") }
+      if let text = progress.statusDetail ?? progress.statusTitle { return text }
+    }
+    let noun = info.isFolder ? "folder" : "worktree"
+    // Folder repositories are their own root — the repository name
+    // duplicates the folder name, so skip the "in <name>" suffix.
+    if !info.isFolder, let repositoryName = info.repositoryName {
+      return "\(info.actionLabel) \(noun) in \(repositoryName)"
+    }
+    return "\(info.actionLabel) \(noun)…"
+  }
+}
+
+#Preview("Streaming output") {
+  @Previewable @State var statusLines: [String] = []
+  WorktreeLoadingView(
+    info: WorktreeLoadingInfo(
+      name: "sbertix/small-ui-improvements",
+      repositoryName: "supacode",
+      kind: .creating(
+        WorktreeLoadingInfo.Progress(
+          statusTitle: "Creating worktree",
+          statusDetail: nil,
+          statusCommand: "git worktree add",
+          statusLines: statusLines
+        )
+      )
+    )
+  )
+  .frame(width: 600, height: 400)
+  .task {
+    // Drip lines in so the preview exercises the trailing-lines
+    // animation rather than showing a frozen tail.
+    let pool = [
+      "Preparing worktree (new branch 'sbertix/small-ui-improvements')",
+      "Enumerating objects: 1248, done.",
+      "Counting objects: 100% (1248/1248), done.",
+      "Compressing objects: 100% (512/512), done.",
+      "Writing objects: 100% (1248/1248), 3.21 MiB | 5.40 MiB/s, done.",
+      "Resolving deltas: 100% (842/842), done.",
+      "HEAD is now at c4e9be3 bump v0.8.1",
+    ]
+    let clock = ContinuousClock()
+    for line in pool {
+      try? await clock.sleep(for: .milliseconds(600))
+      statusLines.append(line)
     }
   }
 }

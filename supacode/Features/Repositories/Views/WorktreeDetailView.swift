@@ -445,11 +445,7 @@ struct WorktreeDetailView: View {
       return WorktreeLoadingInfo(
         name: selectedRow.name,
         repositoryName: repositoryName,
-        state: .removing,
-        statusTitle: nil,
-        statusDetail: nil,
-        statusCommand: nil,
-        statusLines: []
+        kind: .removing(isFolder: selectedRow.isFolder)
       )
     case .archiving, .deleting(inTerminal: true):
       // The script runs in a terminal tab, so let the
@@ -467,11 +463,14 @@ struct WorktreeDetailView: View {
       return WorktreeLoadingInfo(
         name: displayName,
         repositoryName: repositoryName,
-        state: .creating,
-        statusTitle: progress?.titleText ?? selectedRow.name,
-        statusDetail: progress?.detailText ?? selectedRow.detail,
-        statusCommand: progress?.commandText,
-        statusLines: progress?.liveOutputLines ?? []
+        kind: .creating(
+          WorktreeLoadingInfo.Progress(
+            statusTitle: progress?.titleText ?? selectedRow.name,
+            statusDetail: progress?.detailText ?? selectedRow.detail,
+            statusCommand: progress?.commandText,
+            statusLines: progress?.liveOutputLines ?? []
+          )
+        )
       )
     }
     return nil
