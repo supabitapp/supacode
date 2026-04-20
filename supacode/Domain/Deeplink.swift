@@ -19,6 +19,8 @@ enum Deeplink: Equatable, Sendable {
     case select
     case run
     case stop
+    case runScript(scriptID: UUID)
+    case stopScript(scriptID: UUID)
     case archive
     case unarchive
     case delete

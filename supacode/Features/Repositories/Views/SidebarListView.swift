@@ -1,4 +1,7 @@
+import AppKit
 import ComposableArchitecture
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct SidebarListView: View {
@@ -9,7 +12,7 @@ struct SidebarListView: View {
   var body: some View {
     let state = store.state
     let expandedRepoIDs = state.expandedRepositoryIDs
-    let hotkeyRows = state.orderedWorktreeRows(includingRepositoryIDs: expandedRepoIDs)
+    let hotkeyRows = state.orderedSidebarItems(includingRepositoryIDs: expandedRepoIDs)
     let orderedRoots = state.orderedRepositoryRoots()
     let selectedWorktreeIDs = state.sidebarSelectedWorktreeIDs
     let currentSelections = state.sidebarSelections
@@ -29,7 +32,7 @@ struct SidebarListView: View {
           SidebarPlaceholderView()
         } else if orderedRoots.isEmpty {
           ForEach(store.repositories) { repository in
-            SidebarRepositorySectionView(
+            SidebarRootView(
               repository: repository,
               hotkeyRows: hotkeyRows,
               selectedWorktreeIDs: selectedWorktreeIDs,
@@ -46,7 +49,7 @@ struct SidebarListView: View {
                 store: store
               )
             } else if let repository = repositoriesByID[row.repositoryID] {
-              SidebarRepositorySectionView(
+              SidebarRootView(
                 repository: repository,
                 hotkeyRows: hotkeyRows,
                 selectedWorktreeIDs: selectedWorktreeIDs,
@@ -120,16 +123,52 @@ struct SidebarListView: View {
   }
 }
 
-private struct SidebarRepositorySectionView: View {
+private struct SidebarRootView: View {
   let repository: Repository
-  let hotkeyRows: [WorktreeRowModel]
+  let hotkeyRows: [SidebarItemModel]
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+
+  var body: some View {
+    if repository.isGitRepository {
+      SidebarSectionView(
+        repository: repository,
+        hotkeyRows: hotkeyRows,
+        selectedWorktreeIDs: selectedWorktreeIDs,
+        store: store,
+        terminalManager: terminalManager
+      )
+    } else {
+      // Folder repos render a single flat row so the outer
+      // `ForEach(sidebarRootRows).onMove` can reorder them alongside
+      // git sections. `SidebarItemsView`'s nested
+      // ForEach-of-groups-of-rows would hide the folder from the
+      // outer `.onMove`, breaking sidebar-wide drag.
+      Section {
+        SidebarFolderRow(
+          repository: repository,
+          selectedWorktreeIDs: selectedWorktreeIDs,
+          store: store,
+          terminalManager: terminalManager
+        )
+      } header: {
+        EmptyView()
+      }
+    }
+  }
+}
+
+private struct SidebarSectionView: View {
+  let repository: Repository
+  let hotkeyRows: [SidebarItemModel]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   var body: some View {
     let isRemovingRepository = store.state.isRemovingRepository(repository)
     Section(isExpanded: repositoryExpansionBinding) {
-      WorktreeRowsView(
+      SidebarItemsView(
         repository: repository,
         hotkeyRows: hotkeyRows,
         selectedWorktreeIDs: selectedWorktreeIDs,
@@ -143,7 +182,7 @@ private struct SidebarRepositorySectionView: View {
       )
     }
     .sectionActions {
-      SidebarRepositorySectionActionsView(
+      SidebarSectionActionsView(
         repositoryID: repository.id,
         isRemovingRepository: isRemovingRepository,
         store: store
@@ -161,7 +200,7 @@ private struct SidebarRepositorySectionView: View {
   }
 }
 
-private struct SidebarRepositorySectionActionsView: View {
+private struct SidebarSectionActionsView: View {
   let repositoryID: Repository.ID
   let isRemovingRepository: Bool
   let store: StoreOf<RepositoriesFeature>
@@ -174,7 +213,7 @@ private struct SidebarRepositorySectionActionsView: View {
       .help("Repository Settings")
       Divider()
       Button("Remove Repository…", systemImage: "folder.badge.minus", role: .destructive) {
-        store.send(.requestRemoveRepository(repositoryID))
+        store.send(.requestDeleteRepository(repositoryID))
       }
       .help("Remove Repository")
       .disabled(isRemovingRepository)

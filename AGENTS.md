@@ -31,7 +31,7 @@ Supacode is a macOS orchestrator for running multiple coding agents in parallel,
 
 ```
 AppFeature (root TCA store)
-├─ RepositoriesFeature (repos, worktrees, PR state, archive/delete flows)
+├─ RepositoriesFeature (repos + folders, worktrees, PR state, archive/delete flows)
 ├─ CommandPaletteFeature
 ├─ SettingsFeature (general, notifications, coding agents, shortcuts, github, worktree, repo settings)
 └─ UpdatesFeature (Sparkle auto-updates)
@@ -128,6 +128,16 @@ Reducer ← .repositories(.worktreeInfoEvent(Event)) ← AsyncStream<Event>
 - Automatically commit your changes and your changes only. Do not use `git add .`
 - Before you go on your task, check the current git branch name, if it's something generic like an animal name, name it accordingly. Do not do this for main branch
 - After implementing an execplan, always submit a PR if you're not in the main branch
+
+## Folder (non-git) repositories
+
+- `Repository.isGitRepository` classifies each root at load time via `Repository.isGitRepository(at:)` (checks `.git` dir/file and the `.bare` / `.git` root-name conventions). Classification runs through the injected `GitClientDependency.isGitRepository` closure so tests can override it without touching the filesystem.
+- A folder-kind repository has exactly one synthesized "main" `Worktree` with `id = "folder:" + path` (see `Repository.folderWorktreeID(for:)`), `workingDirectory == rootURL`. Selection and terminal binding reuse the standard `SidebarSelection.worktree(id)` machinery — nothing git-specific runs for folders.
+- The sidebar renders each folder as its own `Section` with an empty header and a single selectable row. The context menu offers the same entries as a git worktree row, minus pin / archive / "Copy as Branch Name", plus "Folder Settings…" (the section has no header so there is no ellipsis menu).
+- The Delete Script for a folder runs through the existing `.requestDeleteSidebarItems` → `.confirmDeleteSidebarItems` → `.deleteSidebarItemConfirmed` → `.deleteScriptCompleted` pipeline; the handlers branch inside so `gitClient.removeWorktree` is never called for a folder and the success path emits `.repositoryRemovalCompleted`, which the batch aggregator drains into a single `.repositoriesRemoved` terminal. `removingRepositoryIDs` is the source of truth for "this is a folder delete" so the intent survives a `git init` happening between confirmation and completion.
+- Settings hides the Setup and Archive Script sections for folders; Delete Script and user-defined scripts stay. `openRepositorySettings` (context menu + deeplink) routes folders to `.repositoryScripts` because there is no general pane for them.
+- `worktreesForInfoWatcher()` filters out folder repositories so the HEAD watcher never probes a non-git path. The command palette renders folder rows as the repo name alone instead of `Foo / Foo`, and worktree deeplinks (`.archive`, `.unarchive`, `.pin`, `.unpin`) reject folder targets with an explanatory alert.
+- Creating new worktrees on a folder is rejected up front in `createRandomWorktreeInRepository` / `createWorktreeInRepository` and in the `.repoWorktreeNew` deeplink handler — the menu / hotkey / palette never reaches `gitClient.createWorktreeStream` for a folder target.
 
 ## Submodules
 

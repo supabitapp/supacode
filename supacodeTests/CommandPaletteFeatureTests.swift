@@ -2,6 +2,8 @@ import ComposableArchitecture
 import CustomDump
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
+import Sharing
 import SupacodeSettingsShared
 import Testing
 
@@ -286,8 +288,14 @@ struct CommandPaletteFeatureTests {
         unpinned,
       ])
     var state = RepositoriesFeature.State(repositories: [repository])
-    state.pinnedWorktreeIDs = [pinned.id]
-    state.worktreeOrderByRepository = [repository.id: [unpinned.id]]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [
+          .pinned: .init(items: [pinned.id: .init()]),
+          .unpinned: .init(items: [unpinned.id: .init()]),
+        ]
+      )
+    }
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
     let selectIDs = items.compactMap { item in

@@ -45,26 +45,9 @@ struct RepositoryPersistenceClientTests {
     #expect(result.isEmpty)
   }
 
-  // MARK: - Legacy Migration
+  // MARK: - Roots
 
-  @Test(.dependencies) func loadArchivedWorktreeDatesMigratesLegacyKey() async {
-    let client = RepositoryPersistenceClient.liveValue
-    @Shared(.appStorage("archivedWorktreeIDs")) var legacyIDs: [Worktree.ID] = []
-    @Shared(.appStorage(archivedWorktreeDatesStorageKey)) var dates: [Worktree.ID: Date] = [:]
-    $legacyIDs.withLock { $0 = ["/tmp/repo/feature", "/tmp/repo/bugfix"] }
-    $dates.withLock { $0 = [:] }
-
-    let result = await client.loadArchivedWorktreeDates()
-    #expect(result.count == 2)
-    #expect(result["/tmp/repo/feature"] != nil)
-    #expect(result["/tmp/repo/bugfix"] != nil)
-    // Legacy key should be cleared after migration.
-    #expect(legacyIDs.isEmpty)
-  }
-
-  // MARK: - Roots and Pins
-
-  @Test(.dependencies) func savesAndLoadsRootsAndPins() async throws {
+  @Test(.dependencies) func savesAndLoadsRoots() async throws {
     let storage = SettingsTestStorage()
 
     withDependencies {
@@ -77,7 +60,7 @@ struct RepositoryPersistenceClientTests {
     }
 
     let client = RepositoryPersistenceClient.liveValue
-    let result = await withDependencies {
+    let roots = await withDependencies {
       $0.settingsFileStorage = storage.storage
     } operation: {
       await client.saveRoots([
@@ -85,17 +68,10 @@ struct RepositoryPersistenceClientTests {
         "/tmp/repo-a",
         "/tmp/repo-b/../repo-b",
       ])
-      await client.savePinnedWorktreeIDs([
-        "/tmp/repo-a/wt-1",
-        "/tmp/repo-a/wt-1",
-      ])
-      let roots = await client.loadRoots()
-      let pinned = await client.loadPinnedWorktreeIDs()
-      return (roots: roots, pinned: pinned)
+      return await client.loadRoots()
     }
 
-    #expect(result.roots == ["/tmp/repo-a", "/tmp/repo-b"])
-    #expect(result.pinned == ["/tmp/repo-a/wt-1"])
+    #expect(roots == ["/tmp/repo-a", "/tmp/repo-b"])
 
     let finalSettings: SettingsFile = withDependencies {
       $0.settingsFileStorage = storage.storage

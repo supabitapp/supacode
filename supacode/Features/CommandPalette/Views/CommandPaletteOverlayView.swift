@@ -504,7 +504,7 @@ private struct CommandPaletteRowView: View {
     case .checkForUpdates:
       base = "Check for Updates"
     case .openRepository:
-      base = "Open Repository"
+      base = "Open Repository or Folder"
     case .openSettings:
       base = "Open Settings"
     case .newWorktree:

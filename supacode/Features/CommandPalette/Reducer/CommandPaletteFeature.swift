@@ -185,7 +185,7 @@ struct CommandPaletteFeature {
       ),
       CommandPaletteItem(
         id: CommandPaletteItemID.globalOpenRepository,
-        title: "Open Repository",
+        title: "Open Repository or Folder",
         subtitle: nil,
         kind: .openRepository
       ),
@@ -228,10 +228,14 @@ struct CommandPaletteFeature {
     #if DEBUG
       items.append(contentsOf: debugToastItems())
     #endif
-    for row in repositories.orderedWorktreeRows() {
+    for row in repositories.orderedSidebarItems() {
       guard row.status == .idle else { continue }
       let repositoryName = repositories.repositoryName(for: row.repositoryID) ?? "Repository"
-      let title = "\(repositoryName) / \(row.name)"
+      // Folder rows only have a synthetic "main" worktree whose name
+      // matches the repository, so the usual `repo / worktree`
+      // format would render as `Foo / Foo`. Use the repository name
+      // alone for folders.
+      let title = row.isFolder ? repositoryName : "\(repositoryName) / \(row.name)"
       items.append(
         CommandPaletteItem(
           id: CommandPaletteItemID.worktreeSelect(row.id),

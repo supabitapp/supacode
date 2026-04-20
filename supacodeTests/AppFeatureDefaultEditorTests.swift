@@ -34,7 +34,11 @@ struct AppFeatureDefaultEditorTests {
       }
     }
 
-    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree)))) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.focusedWorktreeID = worktree.id
+      }
+    }
     await store.receive(\.worktreeSettingsLoaded)
     #expect(store.state.openActionSelection == .finder)
     #expect(store.state.scripts.isEmpty)
@@ -93,7 +97,11 @@ struct AppFeatureDefaultEditorTests {
       $0.repositoryLocalSettingsStorage = localStorage.storage
     }
 
-    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree)))) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.focusedWorktreeID = worktree.id
+      }
+    }
     await store.receive(\.worktreeSettingsLoaded) {
       $0.openActionSelection = .terminal
       $0.scripts = localRepositorySettings.scripts
@@ -118,7 +126,6 @@ struct AppFeatureDefaultEditorTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.repositoryPersistence.saveLastFocusedWorktreeID = { _ in }
       $0.terminalClient.send = { _ in }
       $0.worktreeInfoWatcher.send = { command in
         watcherCommands.withValue { $0.append(command) }
@@ -127,7 +134,11 @@ struct AppFeatureDefaultEditorTests {
       $0.settingsFileURL = settingsFileURL
     }
 
-    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree)))) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.focusedWorktreeID = worktree.id
+      }
+    }
     await store.receive(\.worktreeSettingsLoaded) {
       $0.openActionSelection = expectedOpenActionSelection
     }

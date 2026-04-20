@@ -152,36 +152,34 @@ struct AppFeature {
 
       case .repositories(.delegate(.selectedWorktreeChanged(let worktree))):
         let lastFocusedWorktreeID = worktree?.id
-        let repositoryPersistence = repositoryPersistence
         guard let worktree else {
           state.openActionSelection = .finder
           state.scripts = []
-          var effects: [Effect<Action>] = [
+          // Selecting the archived list must NOT overwrite the last
+          // focused live worktree — preserve `focusedWorktreeID` so
+          // returning from archives restores the prior row.
+          if !state.repositories.isShowingArchivedWorktrees {
+            state.repositories.$sidebar.withLock { sidebar in
+              sidebar.focusedWorktreeID = lastFocusedWorktreeID
+            }
+          }
+          return .merge(
             .run { _ in
               await terminalClient.send(.setSelectedWorktreeID(nil))
             },
             .run { _ in
               await worktreeInfoWatcher.send(.setSelectedWorktreeID(nil))
-            },
-          ]
-          if !state.repositories.isShowingArchivedWorktrees {
-            effects.insert(
-              .run { _ in
-                await repositoryPersistence.saveLastFocusedWorktreeID(lastFocusedWorktreeID)
-              },
-              at: 0
-            )
-          }
-          return .merge(effects)
+            }
+          )
         }
         let rootURL = worktree.repositoryRootURL
         let worktreeID = worktree.id
+        state.repositories.$sidebar.withLock { sidebar in
+          sidebar.focusedWorktreeID = lastFocusedWorktreeID
+        }
         @Shared(.repositorySettings(rootURL)) var repositorySettings
         let settings = repositorySettings
         return .merge(
-          .run { _ in
-            await repositoryPersistence.saveLastFocusedWorktreeID(lastFocusedWorktreeID)
-          },
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
           },
@@ -222,7 +220,13 @@ struct AppFeature {
           .send(
             .settings(
               .repositoriesChanged(
-                repositories.map { SettingsRepositorySummary(id: $0.id, name: $0.name) }
+                repositories.map {
+                  SettingsRepositorySummary(
+                    id: $0.id,
+                    name: $0.name,
+                    isGitRepository: $0.isGitRepository
+                  )
+                }
               )
             )
           ),
@@ -251,10 +255,16 @@ struct AppFeature {
         return openWorktreeEffect(worktree: worktree, action: action, source: .contextMenu, state: state)
 
       case .repositories(.delegate(.openRepositorySettings(let repositoryID))):
-        guard state.repositories.repositories.contains(where: { $0.id == repositoryID }) else {
+        guard let repository = state.repositories.repositories[id: repositoryID] else {
           return .none
         }
-        return .send(.settings(.setSelection(.repository(repositoryID))))
+        // Folders don't expose the general `.repository` page (no
+        // branches, worktree config, etc.) — route them straight to
+        // the scripts page which is the only settings surface that
+        // applies to them.
+        let section: SettingsSection =
+          repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
+        return .send(.settings(.setSelection(section)))
 
       case .repositories(.delegate(.runBlockingScript(let worktree, _, let kind, let script))):
         return .run { _ in
@@ -703,7 +713,12 @@ struct AppFeature {
         return .send(.repositories(.setOpenPanelPresented(true)))
 
       case .commandPalette(.delegate(.removeWorktree(let worktreeID, let repositoryID))):
-        return .send(.repositories(.requestDeleteWorktree(worktreeID, repositoryID)))
+        return .send(
+          .repositories(
+            .requestDeleteSidebarItems([
+              RepositoriesFeature.DeleteWorktreeTarget(
+                worktreeID: worktreeID, repositoryID: repositoryID)
+            ])))
 
       case .commandPalette(.delegate(.archiveWorktree(let worktreeID, let repositoryID))):
         return .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
@@ -918,7 +933,7 @@ struct AppFeature {
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
     case .repoWorktreeNew(let repositoryID, let branch, let baseRef, let fetchOrigin):
-      guard state.repositories.repositories[id: repositoryID] != nil else {
+      guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found: \(repositoryID)")
         state.alert = AlertState {
           TextState("Repository not found")
@@ -928,6 +943,24 @@ struct AppFeature {
           }
         } message: {
           TextState("No repository matching the deeplink could be found.")
+        }
+        return .none
+      }
+      // Worktree creation is git-only. Reject the deeplink with a
+      // clear alert when it targets a folder rather than letting the
+      // request fall into `createWorktreeStream`.
+      guard repository.isGitRepository else {
+        deeplinkLogger.warning(
+          "Ignoring repoWorktreeNew deeplink for folder repository: \(repositoryID)"
+        )
+        state.alert = AlertState {
+          TextState("Worktrees not available")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("Worktrees are only supported for git repositories.")
         }
         return .none
       }
@@ -947,7 +980,7 @@ struct AppFeature {
     case .settings(let section):
       return handleSettingsDeeplink(section: section)
     case .settingsRepo(let repositoryID):
-      guard state.repositories.repositories[id: repositoryID] != nil else {
+      guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found for settings deeplink: \(repositoryID)")
         state.alert = AlertState {
           TextState("Repository not found")
@@ -960,7 +993,11 @@ struct AppFeature {
         }
         return .none
       }
-      return .send(.settings(.setSelection(.repository(repositoryID))))
+      // Folders have no general settings pane — send them to the
+      // scripts page (the only settings surface that applies).
+      let section: SettingsSection =
+        repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
+      return .send(.settings(.setSelection(section)))
     }
   }
 
@@ -977,16 +1014,45 @@ struct AppFeature {
     let worktreeID = resolveWorktreeID(rawWorktreeID, state: state)
     guard state.repositories.worktree(for: worktreeID) != nil else {
       deeplinkLogger.warning("Worktree not found: \(rawWorktreeID)")
-      state.alert = AlertState {
-        TextState("Worktree not found")
-      } actions: {
-        ButtonState(role: .cancel, action: .dismiss) {
-          TextState("OK")
-        }
-      } message: {
-        TextState("No worktree matching the deeplink could be found. It may have been removed.")
-      }
+      state.alert = worktreeNotFoundAlert()
       return .none
+    }
+    // Folders expose the worktree deeplink surface only for the
+    // actions that actually apply — select, open terminals, delete,
+    // run scripts. `.archive` / `.unarchive` / `.pin` / `.unpin`
+    // make no sense for a folder's synthetic main worktree, so
+    // reject them explicitly rather than silently no-op-ing.
+    if let folderRepoID = state.repositories.repositoryID(for: worktreeID),
+      let folderRepo = state.repositories.repositories[id: folderRepoID],
+      !folderRepo.isGitRepository
+    {
+      let incompatibleAction: RepositoriesFeature.FolderIncompatibleAction?
+      switch action {
+      case .archive: incompatibleAction = .archive
+      case .unarchive: incompatibleAction = .unarchive
+      case .pin: incompatibleAction = .pin
+      case .unpin: incompatibleAction = .unpin
+      default: incompatibleAction = nil
+      }
+      if let incompatibleAction {
+        // Copy shared with the in-reducer folder hotkey handlers
+        // via `FolderIncompatibleAction.alertCopy`. The
+        // `AlertState<_>` type diverges (this feature's `Alert`
+        // has its own action surface) so the struct itself can't
+        // be shared, but the title / message strings live in one
+        // place and can't drift between entry points.
+        let copy = incompatibleAction.alertCopy
+        state.alert = AlertState {
+          TextState(copy.title)
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState(copy.message)
+        }
+        return .none
+      }
     }
 
     let policyBypass = state.settings.automatedActionPolicy.allowsBypass(from: source)
@@ -1017,6 +1083,16 @@ struct AppFeature {
       return .send(.runScript)
     case .stop:
       return .send(.stopRunScripts)
+    case .runScript(let scriptID):
+      return runScriptDeeplinkEffect(
+        worktreeID: worktreeID,
+        scriptID: scriptID,
+        state: &state,
+        bypassConfirmation: bypassConfirmation,
+        responseFD: responseFD
+      )
+    case .stopScript(let scriptID):
+      return stopScriptDeeplinkEffect(worktreeID: worktreeID, scriptID: scriptID, state: &state)
     case .archive:
       guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
         return .none
@@ -1138,6 +1214,120 @@ struct AppFeature {
     }
   }
 
+  private func runScriptDeeplinkEffect(
+    worktreeID: Worktree.ID,
+    scriptID: UUID,
+    state: inout State,
+    bypassConfirmation: Bool,
+    responseFD: Int32?
+  ) -> Effect<Action> {
+    // Read the target worktree's scripts directly so cross-worktree
+    // deeplinks do not depend on the currently selected worktree's
+    // `state.scripts`, which may still reflect an older selection.
+    guard let worktree = state.repositories.worktree(for: worktreeID) else {
+      state.alert = worktreeNotFoundAlert()
+      return .none
+    }
+    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
+      state.alert = scriptAlert(
+        title: "Script not found",
+        message: "No script matching the deeplink could be found. It may have been removed."
+      )
+      return .none
+    }
+    let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      state.alert = scriptAlert(
+        title: "Script has no command",
+        message: "\"\(definition.displayName)\" has an empty command. Configure it in Settings first."
+      )
+      return .none
+    }
+    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? []
+    guard !runningIDs.contains(scriptID) else {
+      state.alert = scriptAlert(
+        title: "Script already running",
+        message: "\"\(definition.displayName)\" is already running in this worktree."
+      )
+      return .none
+    }
+    if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
+      return presentDeeplinkConfirmation(
+        worktreeID: worktreeID,
+        responseFD: responseFD,
+        message: .command(definition.command),
+        action: .runScript(scriptID: scriptID),
+        state: &state
+      )
+    }
+    analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
+    var updated = runningIDs
+    updated.insert(scriptID)
+    state.repositories.runningScriptsByWorktreeID[worktreeID] = updated
+    let terminalClient = terminalClient
+    return .run { _ in
+      await terminalClient.send(
+        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+      )
+    }
+  }
+
+  private func stopScriptDeeplinkEffect(
+    worktreeID: Worktree.ID,
+    scriptID: UUID,
+    state: inout State
+  ) -> Effect<Action> {
+    guard let worktree = state.repositories.worktree(for: worktreeID) else {
+      state.alert = worktreeNotFoundAlert()
+      return .none
+    }
+    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
+      state.alert = scriptAlert(
+        title: "Script not found",
+        message: "No script matching the deeplink could be found. It may have been removed."
+      )
+      return .none
+    }
+    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? []
+    guard runningIDs.contains(scriptID) else {
+      state.alert = scriptAlert(
+        title: "Script not running",
+        message: "\"\(definition.displayName)\" is not currently running in this worktree."
+      )
+      return .none
+    }
+    let terminalClient = terminalClient
+    return .run { _ in
+      await terminalClient.send(.stopScript(worktree, definitionID: scriptID))
+    }
+  }
+
+  private func scriptAlert(title: String, message: String) -> AlertState<Alert> {
+    AlertState {
+      TextState(title)
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState(message)
+    }
+  }
+
+  private func worktreeNotFoundAlert() -> AlertState<Alert> {
+    AlertState {
+      TextState("Worktree not found")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("No worktree matching the deeplink could be found. It may have been removed.")
+    }
+  }
+
   private func deeplinkDeleteWorktreeEffect(
     worktreeID: Worktree.ID,
     action: Deeplink.WorktreeAction,
@@ -1148,8 +1338,19 @@ struct AppFeature {
     guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "delete", state: &state) else {
       return .none
     }
+    // Folder repos have a synthesized main-worktree whose
+    // `workingDirectory == rootURL`, so `isMainWorktree(worktree)`
+    // is true by geometry — rejecting them here would show a
+    // misleading "main worktree" alert and prevent folders from
+    // ever being removed via deeplink. Route folder targets to
+    // `.requestDeleteSidebarItems([target])` so the 3-button folder
+    // alert pipeline (Remove / Delete / Cancel) handles the
+    // confirmation and the batch aggregator drains normally.
+    let repository = state.repositories.repositories[id: repositoryID]
+    let isFolder = repository?.isGitRepository == false
     if let worktree = state.repositories.worktree(for: worktreeID),
-      state.repositories.isMainWorktree(worktree)
+      state.repositories.isMainWorktree(worktree),
+      !isFolder
     {
       state.alert = AlertState {
         TextState("Delete not allowed")
@@ -1162,6 +1363,17 @@ struct AppFeature {
       }
       return .none
     }
+    let target = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: worktreeID, repositoryID: repositoryID
+    )
+    if isFolder {
+      // Folders always surface the 3-button confirmation so users
+      // can pick between `.folderUnlink` (drop from sidebar, stay
+      // on disk) and `.folderTrash` (move to Trash). The deeplink
+      // `bypassConfirmation` flag still shows it — there's no
+      // reasonable default disposition for folders.
+      return .send(.repositories(.requestDeleteSidebarItems([target])))
+    }
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? worktreeID
     guard bypassConfirmation else {
       return presentDeeplinkConfirmation(
@@ -1172,7 +1384,7 @@ struct AppFeature {
         state: &state
       )
     }
-    return .send(.repositories(.deleteWorktreeConfirmed(worktreeID, repositoryID)))
+    return .send(.repositories(.deleteSidebarItemConfirmed(worktreeID, repositoryID)))
   }
 
   private func resolveRepositoryID(

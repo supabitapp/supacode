@@ -2,6 +2,7 @@ import ComposableArchitecture
 import Darwin
 import DependenciesTestSupport
 import Foundation
+import OrderedCollections
 import Sharing
 import Testing
 
@@ -42,7 +43,13 @@ struct AppFeatureDeeplinkTests {
   @Test(.dependencies) func unpinWorktreeDeeplink() async {
     let worktree = makeWorktree()
     var repositories = makeRepositoriesState(worktree: worktree)
-    repositories.pinnedWorktreeIDs = [worktree.id]
+    let repositoryID = repositories.repositories.first?.id
+    repositories.$sidebar.withLock { sidebar in
+      guard let repositoryID else { return }
+      sidebar.sections[repositoryID, default: .init()]
+        .buckets[.pinned, default: .init()]
+        .items[worktree.id] = .init()
+    }
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositories,
@@ -98,7 +105,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .delete)))
     #expect(store.state.deeplinkInputConfirmation == nil)
-    await store.receive(\.repositories.deleteWorktreeConfirmed)
+    await store.receive(\.repositories.deleteSidebarItemConfirmed)
   }
 
   @Test(.dependencies) func deleteWorktreeDeeplinkConfirmationAcceptedSendsDeleteConfirmed() async {
@@ -130,7 +137,7 @@ struct AppFeatureDeeplinkTests {
         $0.deeplinkInputConfirmation = nil
       }
     }
-    await store.receive(\.repositories.deleteWorktreeConfirmed)
+    await store.receive(\.repositories.deleteSidebarItemConfirmed)
     await store.finish()
   }
 
@@ -141,6 +148,49 @@ struct AppFeatureDeeplinkTests {
     await store.send(.deeplink(.worktree(id: mainWorktree.id, action: .delete)))
     #expect(store.state.deeplinkInputConfirmation == nil)
     #expect(store.state.alert != nil)
+  }
+
+  @Test(.dependencies) func deleteFolderDeeplinkRoutesToFolderAlertPipeline() async {
+    // Regression: folders have a synthetic main-worktree
+    // (`workingDirectory == rootURL`), so the `isMainWorktree` gate
+    // in the deeplink handler used to reject them with a
+    // "main worktree not allowed" alert — making folders
+    // undeletable via deeplink. Fix routes folder targets to
+    // `.requestDeleteSidebarItems([target])` so the 3-button
+    // folder confirmation fires.
+    let folderRoot = "/tmp/folder-deeplink-\(UUID().uuidString)"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: [folderWorktree],
+      isGitRepository: false
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [folderRepo]
+    repositoriesState.repositoryRoots = [folderURL]
+    repositoriesState.isInitialLoadComplete = true
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: folderWorktree.id, action: .delete)))
+    await store.receive(\.repositories.requestDeleteSidebarItems)
+    #expect(store.state.repositories.alert != nil, "folder alert should be presented")
   }
 
   @Test(.dependencies) func deleteWorktreeDeeplinkWithUnknownIDShowsAlert() async {
@@ -166,6 +216,331 @@ struct AppFeatureDeeplinkTests {
     await store.send(.deeplink(.worktree(id: worktree.id, action: .stop)))
     await store.receive(\.repositories.selectWorktree)
     await store.receive(\.stopRunScripts)
+  }
+
+  // MARK: - Named script deeplinks.
+
+  @Test(.dependencies) func runScriptDeeplinkShowsConfirmation() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
+    #expect(store.state.deeplinkInputConfirmation?.message == .command("npm test"))
+    #expect(store.state.deeplinkInputConfirmation?.action == .runScript(scriptID: definition.id))
+  }
+
+  @Test(.dependencies) func runScriptDeeplinkSkipsConfirmationWhenPolicyAllows() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
+    await store.finish()
+
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    let hasRun = sent.value.contains(where: {
+      if case .runBlockingScript(_, .script(let sentDefinition), _) = $0 {
+        return sentDefinition.id == definition.id
+      }
+      return false
+    })
+    #expect(hasRun)
+  }
+
+  @Test(.dependencies) func runScriptDeeplinkWithUnknownScriptShowsAlert() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: UUID()))))
+    #expect(store.state.alert != nil)
+    #expect(store.state.deeplinkInputConfirmation == nil)
+  }
+
+  @Test(.dependencies) func stopScriptDeeplinkSendsStopCommand() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .stopScript(scriptID: definition.id))))
+    await store.finish()
+
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    let hasStop = sent.value.contains(where: {
+      if case .stopScript(_, let definitionID) = $0 { return definitionID == definition.id }
+      return false
+    })
+    #expect(hasStop)
+  }
+
+  @Test(.dependencies) func stopScriptDeeplinkWithUnknownScriptShowsAlert() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .stopScript(scriptID: UUID()))))
+    #expect(store.state.alert != nil)
+  }
+
+  @Test(.dependencies) func stopScriptDeeplinkWhenNotRunningShowsAlert() async {
+    // A user running `supacode worktree stop --script <uuid>` for a script
+    // that isn't currently running should get an explicit alert, not a
+    // silent success that misleads the CLI into reporting ok:true.
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .stopScript(scriptID: definition.id))))
+    #expect(store.state.alert != nil)
+    let didStop = sent.value.contains(where: {
+      if case .stopScript = $0 { return true }
+      return false
+    })
+    #expect(!didStop)
+  }
+
+  @Test(.dependencies) func runScriptDeeplinkWithEmptyCommandShowsAlert() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "   ")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
+    #expect(store.state.alert != nil)
+    let didRun = sent.value.contains(where: {
+      if case .runBlockingScript = $0 { return true }
+      return false
+    })
+    #expect(!didRun)
+  }
+
+  @Test(.dependencies) func runScriptDeeplinkWhenAlreadyRunningShowsAlert() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositories, settings: settings)
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
+    #expect(store.state.alert != nil)
+    let didRun = sent.value.contains(where: {
+      if case .runBlockingScript = $0 { return true }
+      return false
+    })
+    #expect(!didRun)
+  }
+
+  @Test(.dependencies) func runScriptConfirmationAcceptedDispatchesCommand() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initialState.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
+      worktreeID: worktree.id,
+      worktreeName: worktree.name,
+      repositoryName: "repo",
+      message: .command(definition.command),
+      action: .runScript(scriptID: definition.id)
+    )
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(worktreeID: worktree.id, action: .runScript(scriptID: definition.id), alwaysAllow: false)))
+        )
+      ) {
+        $0.deeplinkInputConfirmation = nil
+      }
+    }
+    await store.finish()
+
+    let hasRun = sent.value.contains(where: {
+      if case .runBlockingScript(_, .script(let sentDefinition), _) = $0 {
+        return sentDefinition.id == definition.id
+      }
+      return false
+    })
+    #expect(hasRun)
+  }
+
+  @Test(.dependencies) func stopScriptSocketDeeplinkSendsErrorWhenNotRunning() async {
+    // Regression guard: stopping a script that exists but isn't running
+    // must surface an error on the socket responseFD so the CLI exits
+    // non-zero instead of reporting a false positive.
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .stopScript(scriptID: definition.id)),
+        source: .socket,
+        responseFD: writeFD
+      )
+    )
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.isEmpty == false)
+  }
+
+  @Test(.dependencies) func runScriptSocketDeeplinkStoresResponseFDInConfirmation() async {
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [definition] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .runScript(scriptID: definition.id)),
+        source: .socket,
+        responseFD: 42
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == 42)
+    #expect(store.state.deeplinkInputConfirmation?.action == .runScript(scriptID: definition.id))
   }
 
   // MARK: - Help deeplink.

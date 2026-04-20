@@ -1,9 +1,17 @@
 import Dependencies
 import Foundation
 
-nonisolated struct RepositoryLocalSettingsStorage: Sendable {
-  var load: @Sendable (URL) throws -> Data
-  var save: @Sendable (Data, URL) throws -> Void
+public nonisolated struct RepositoryLocalSettingsStorage: Sendable {
+  public var load: @Sendable (URL) throws -> Data
+  public var save: @Sendable (Data, URL) throws -> Void
+
+  public init(
+    load: @escaping @Sendable (URL) throws -> Data,
+    save: @escaping @Sendable (Data, URL) throws -> Void
+  ) {
+    self.load = load
+    self.save = save
+  }
 }
 
 nonisolated enum RepositoryLocalSettingsStorageKey: DependencyKey {
@@ -23,7 +31,7 @@ nonisolated enum RepositoryLocalSettingsStorageKey: DependencyKey {
 }
 
 extension DependencyValues {
-  nonisolated var repositoryLocalSettingsStorage: RepositoryLocalSettingsStorage {
+  public nonisolated var repositoryLocalSettingsStorage: RepositoryLocalSettingsStorage {
     get { self[RepositoryLocalSettingsStorageKey.self] }
     set { self[RepositoryLocalSettingsStorageKey.self] = newValue }
   }

@@ -8,6 +8,7 @@ public struct RepositorySettingsFeature {
   @ObservableState
   public struct State: Equatable {
     public var rootURL: URL
+    public var isGitRepository: Bool
     public var settings: RepositorySettings
     public var globalDefaultWorktreeBaseDirectoryPath: String?
     public var globalCopyIgnoredOnWorktreeCreate: Bool = false
@@ -31,6 +32,7 @@ public struct RepositorySettingsFeature {
 
     public init(
       rootURL: URL,
+      isGitRepository: Bool = true,
       settings: RepositorySettings,
       globalDefaultWorktreeBaseDirectoryPath: String? = nil,
       globalCopyIgnoredOnWorktreeCreate: Bool = false,
@@ -42,6 +44,7 @@ public struct RepositorySettingsFeature {
       isBranchDataLoaded: Bool = false
     ) {
       self.rootURL = rootURL
+      self.isGitRepository = isGitRepository
       self.settings = settings
       self.globalDefaultWorktreeBaseDirectoryPath = globalDefaultWorktreeBaseDirectoryPath
       self.globalCopyIgnoredOnWorktreeCreate = globalCopyIgnoredOnWorktreeCreate
@@ -92,6 +95,7 @@ public struct RepositorySettingsFeature {
       switch action {
       case .task:
         let rootURL = state.rootURL
+        let isGitRepository = state.isGitRepository
         @Shared(.repositorySettings(rootURL)) var repositorySettings
         @Shared(.settingsFile) var settingsFile
         let settings = repositorySettings
@@ -102,6 +106,24 @@ public struct RepositorySettingsFeature {
         let globalMergeStrategy = global.pullRequestMergeStrategy
         let gitClient = gitClient
         return .run { send in
+          // Folders don't expose the general settings page, so skip
+          // the git-only queries (`isBareRepository`, `branchRefs`,
+          // `automaticWorktreeBaseRef`) that would otherwise log
+          // subprocess warnings against a non-git directory.
+          guard isGitRepository else {
+            await send(
+              .settingsLoaded(
+                settings,
+                isBareRepository: false,
+                globalDefaultWorktreeBaseDirectoryPath: globalDefaultWorktreeBaseDirectoryPath,
+                globalCopyIgnoredOnWorktreeCreate: globalCopyIgnored,
+                globalCopyUntrackedOnWorktreeCreate: globalCopyUntracked,
+                globalPullRequestMergeStrategy: globalMergeStrategy
+              )
+            )
+            await send(.branchDataLoaded([], defaultBaseRef: "HEAD"))
+            return
+          }
           let isBareRepository = (try? await gitClient.isBareRepository(rootURL)) ?? false
           await send(
             .settingsLoaded(

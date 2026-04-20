@@ -117,6 +117,8 @@ struct WorktreeDetailView: View {
         repositories.selectedRow(for: worktreeID).map {
           MultiSelectedWorktreeSummary(
             id: $0.id,
+            repositoryID: $0.repositoryID,
+            kind: $0.kind,
             name: $0.name,
             repositoryName: repositories.repositoryName(for: $0.repositoryID)
           )
@@ -432,7 +434,7 @@ struct WorktreeDetailView: View {
   }
 
   private func loadingInfo(
-    for selectedRow: WorktreeRowModel?,
+    for selectedRow: SidebarItemModel?,
     selectedWorktreeID: Worktree.ID?,
     repositories: RepositoriesFeature.State
   ) -> WorktreeLoadingInfo? {
@@ -605,6 +607,8 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
 
 private struct MultiSelectedWorktreeSummary: Identifiable {
   let id: Worktree.ID
+  let repositoryID: Repository.ID
+  let kind: SidebarItemModel.Kind
   let name: String
   let repositoryName: String?
 }
@@ -621,45 +625,111 @@ private struct MultiSelectedWorktreesDetailView: View {
 
   private let visibleRowsLimit = 8
 
+  private var worktreeRows: [MultiSelectedWorktreeSummary] {
+    rows.filter { $0.kind == .git }
+  }
+
+  private var folderRows: [MultiSelectedWorktreeSummary] {
+    rows.filter { $0.kind == .folder }
+  }
+
+  private var isMixedKindSelection: Bool {
+    !worktreeRows.isEmpty && !folderRows.isEmpty
+  }
+
   var body: some View {
     let archiveShortcut = KeyboardShortcut(.delete, modifiers: .command).display
     let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
-    VStack(alignment: .leading, spacing: 16) {
-      Text("\(rows.count) worktrees selected")
+    VStack(alignment: .leading, spacing: 20) {
+      Text("\(rows.count) items selected")
         .font(.title3)
-      VStack(alignment: .leading, spacing: 8) {
-        ForEach(Array(rows.prefix(visibleRowsLimit))) { row in
-          HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(row.name)
-              .lineLimit(1)
-            if let repositoryName = row.repositoryName {
-              Text(repositoryName)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-          }
-          .font(.body)
-        }
-        if rows.count > visibleRowsLimit {
-          Text("+\(rows.count - visibleRowsLimit) more")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+
+      if !worktreeRows.isEmpty {
+        selectionSection(
+          title: "Worktrees (\(worktreeRows.count))",
+          rows: worktreeRows,
+          actions: isMixedKindSelection
+            ? []
+            : [
+              "Archive selected (\(archiveShortcut))",
+              "Delete selected (\(deleteShortcut))",
+              "Right-click any selected worktree to apply actions to all selected worktrees.",
+            ]
+        )
+      }
+
+      if !folderRows.isEmpty {
+        selectionSection(
+          title: "Folders (\(folderRows.count))",
+          rows: folderRows,
+          actions: isMixedKindSelection
+            ? []
+            : [
+              "Remove selected from Supacode (\(deleteShortcut))",
+              "Right-click any selected folder to remove them all from Supacode.",
+            ]
+        )
+      }
+
+      if isMixedKindSelection {
+        VStack(alignment: .leading, spacing: 6) {
+          Label("No bulk action available", systemImage: "exclamationmark.triangle")
+            .font(.headline)
+          Text(
+            "Worktrees and folders don't share bulk actions. Deselect "
+              + "one kind to archive/delete worktrees or remove folders."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
         }
       }
-      Divider()
-      VStack(alignment: .leading, spacing: 6) {
-        Text("Available actions")
-          .font(.headline)
-        Text("Archive selected (\(archiveShortcut))")
-        Text("Delete selected (\(deleteShortcut))")
-        Text("Right-click any selected worktree to apply actions to all selected worktrees.")
-      }
-      .font(.caption)
-      .foregroundStyle(.secondary)
+
       Spacer(minLength: 0)
     }
     .padding(20)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
+  @ViewBuilder
+  private func selectionSection(
+    title: String,
+    rows: [MultiSelectedWorktreeSummary],
+    actions: [String]
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(title)
+        .font(.headline)
+      ForEach(Array(rows.prefix(visibleRowsLimit))) { row in
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+          Text(row.name)
+            .lineLimit(1)
+          if let repositoryName = row.repositoryName, row.kind == .git {
+            Text(repositoryName)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+        }
+        .font(.body)
+      }
+      if rows.count > visibleRowsLimit {
+        Text("+\(rows.count - visibleRowsLimit) more")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      if !actions.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Available actions")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+          ForEach(actions, id: \.self) { action in
+            Text(action)
+          }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.top, 4)
+      }
+    }
   }
 }
 

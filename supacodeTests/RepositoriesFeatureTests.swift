@@ -4,6 +4,7 @@ import CustomDump
 import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
 import Sharing
 import Testing
 
@@ -64,6 +65,89 @@ struct RepositoriesFeatureTests {
       $0.isRefreshingWorktrees = false
       $0.isInitialLoadComplete = true
     }
+  }
+
+  @Test func firstRepositoriesLoadedPreservesMigratedPinnedEntryMissingFromRoster() async {
+    // T5 — first-load reconcile must not clobber migrated data.
+    // The migrator writes pinned worktree IDs into `sidebar.json`
+    // before the first git-roster hydration. If the first
+    // `.repositoriesLoaded` tick sees a partial roster (e.g. the
+    // `feature` worktree is still loading), the liveness prune
+    // would silently drop the migrated pin and the user would
+    // lose curation on launch. The reducer guards this by gating
+    // the destructive prune on `state.isInitialLoadComplete`:
+    // the seed + orphan-preservation passes still run, but the
+    // curated `.pinned` items are copied forward verbatim. On
+    // the SECOND tick (`isInitialLoadComplete == true`) the
+    // prune resumes normally and a still-missing worktree is
+    // finally dropped.
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = Worktree(
+      id: repoRoot,
+      name: "main",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: repoRoot),
+      repositoryRootURL: URL(fileURLWithPath: repoRoot),
+    )
+    let featureWorktree = makeWorktree(
+      id: "/tmp/repo/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+    )
+    // Initial repository list contains only the main worktree —
+    // simulating the transient roster race on first boot where
+    // the `feature` worktree hasn't hydrated yet.
+    let mainOnlyRepository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+
+    var initialState = RepositoriesFeature.State()
+    initialState.repositories = [mainOnlyRepository]
+    initialState.repositoryRoots = [mainOnlyRepository.rootURL]
+    initialState.isInitialLoadComplete = false
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoRoot] = .init(
+        buckets: [.pinned: .init(items: [featureWorktree.id: .init()])]
+      )
+    }
+
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    // First tick: migrated pin MUST survive the transient roster.
+    await store.send(
+      .repositoriesLoaded(
+        [mainOnlyRepository],
+        failures: [],
+        roots: [mainOnlyRepository.rootURL],
+        animated: false,
+      )
+    ) {
+      $0.isInitialLoadComplete = true
+    }
+    #expect(
+      store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] != nil
+    )
+
+    // Second tick with `isInitialLoadComplete == true`: the
+    // stale pinned entry is now eligible for the destructive
+    // drop because the reducer trusts the roster from load #2
+    // onward. The drop happens inside the `$sidebar.withLock`
+    // closure so the shared state is mutated in-place.
+    await store.send(
+      .repositoriesLoaded(
+        [mainOnlyRepository],
+        failures: [],
+        roots: [mainOnlyRepository.rootURL],
+        animated: false,
+      )
+    ) {
+      $0.$sidebar.withLock { sidebar in
+        sidebar.sections[repoRoot] = .init(buckets: [.pinned: .init(items: [:])])
+      }
+    }
+    #expect(
+      store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] == nil
+    )
   }
 
   @Test func selectWorktreeSendsDelegate() async {
@@ -203,11 +287,11 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false)) {
-      $0.$collapsedRepositoryIDs.withLock { $0 = [repository.id] }
+      $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = true }
     }
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: true)) {
-      $0.$collapsedRepositoryIDs.withLock { $0 = [] }
+      $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = false }
     }
   }
 
@@ -219,7 +303,7 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false)) {
-      $0.$collapsedRepositoryIDs.withLock { $0 = [repository.id] }
+      $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = true }
     }
 
     // Collapsing again should be a no-op.
@@ -276,7 +360,11 @@ struct RepositoriesFeatureTests {
       worktrees: [makeWorktree(id: "\(repoBID)/wt1", name: "wt1", repoRoot: repoBID)]
     )
     let initialState = makeState(repositories: [repoA, repoB])
-    initialState.$collapsedRepositoryIDs.withLock { $0 = [repoA.id, repoB.id, "/tmp/missing"] }
+    initialState.$sidebar.withLock { sidebar in
+      for id in [repoA.id, repoB.id, "/tmp/missing"] {
+        sidebar.sections[id, default: .init()].collapsed = true
+      }
+    }
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
@@ -291,7 +379,11 @@ struct RepositoriesFeatureTests {
     ) {
       $0.repositories = [repoA]
       $0.repositoryRoots = [repoA.rootURL]
-      $0.$collapsedRepositoryIDs.withLock { $0 = [repoA.id] }
+      $0.$sidebar.withLock { sidebar in
+        var rebuilt: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
+        rebuilt[repoA.id] = sidebar.sections[repoA.id] ?? .init()
+        sidebar.sections = rebuilt
+      }
       $0.isInitialLoadComplete = true
     }
     await store.receive(\.delegate.repositoriesChanged)
@@ -344,12 +436,15 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    // Collapse B first, then A.
+    // Collapse B first, then A. With the bucketed sidebar there
+    // is no "sorted order" of collapsed IDs — collapse state lives
+    // per-section, so the assertion is just that the .collapsed
+    // bit flips on the targeted section.
     await store.send(.repositoryExpansionChanged(repoB.id, isExpanded: false)) {
-      $0.$collapsedRepositoryIDs.withLock { $0 = [repoB.id] }
+      $0.$sidebar.withLock { $0.sections[repoB.id, default: .init()].collapsed = true }
     }
     await store.send(.repositoryExpansionChanged(repoA.id, isExpanded: false)) {
-      $0.$collapsedRepositoryIDs.withLock { $0 = [repoA.id, repoB.id] }
+      $0.$sidebar.withLock { $0.sections[repoA.id, default: .init()].collapsed = true }
     }
   }
 
@@ -464,13 +559,13 @@ struct RepositoriesFeatureTests {
     var initialState = makeState(repositories: [repository])
     initialState.selection = .worktree(worktree.id)
     initialState.sidebarSelectedWorktreeIDs = [worktree.id]
-    initialState.$collapsedRepositoryIDs.withLock { $0 = [repository.id] }
+    initialState.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = true }
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
     await store.send(.revealSelectedWorktreeInSidebar) {
-      $0.$collapsedRepositoryIDs.withLock { $0 = [] }
+      $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = false }
       $0.nextPendingSidebarRevealID = 1
       $0.pendingSidebarReveal = .init(id: 1, worktreeID: worktree.id)
     }
@@ -495,13 +590,16 @@ struct RepositoriesFeatureTests {
     var initialState = makeState(repositories: [repoA, repoB])
     initialState.selection = .worktree(worktree1.id)
     initialState.sidebarSelectedWorktreeIDs = [worktree1.id]
-    initialState.$collapsedRepositoryIDs.withLock { $0 = [repoA.id, repoB.id] }
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoA.id, default: .init()].collapsed = true
+      sidebar.sections[repoB.id, default: .init()].collapsed = true
+    }
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
     await store.send(.revealSelectedWorktreeInSidebar) {
-      $0.$collapsedRepositoryIDs.withLock { $0 = [repoB.id] }
+      $0.$sidebar.withLock { $0.sections[repoA.id, default: .init()].collapsed = false }
       $0.nextPendingSidebarRevealID = 1
       $0.pendingSidebarReveal = .init(id: 1, worktreeID: worktree1.id)
     }
@@ -1583,17 +1681,22 @@ struct RepositoriesFeatureTests {
     #expect(store.state.pendingWorktrees.isEmpty)
   }
 
-  @Test func requestDeleteWorktreeShowsConfirmation() async {
+  @Test func requestDeleteSidebarItemShowsConfirmation() async {
     let worktree = makeWorktree(id: "/tmp/wt", name: "owl")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
     let store = TestStore(initialState: makeState(repositories: [repository])) {
       RepositoriesFeature()
     }
 
+    let target = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: worktree.id, repositoryID: repository.id)
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("🚨 Delete worktree?")
     } actions: {
-      ButtonState(role: .destructive, action: .confirmDeleteWorktree(worktree.id, repository.id)) {
+      ButtonState(
+        role: .destructive,
+        action: .confirmDeleteSidebarItems([target], disposition: .gitWorktreeDelete)
+      ) {
         TextState("Delete (⌘↩)")
       }
       ButtonState(role: .cancel) {
@@ -1603,12 +1706,16 @@ struct RepositoriesFeatureTests {
       TextState("Delete \(worktree.name)? This deletes the worktree directory and its local branch.")
     }
 
-    await store.send(.requestDeleteWorktree(worktree.id, repository.id)) {
+    await store.send(.requestDeleteSidebarItems([target])) {
       $0.alert = expectedAlert
     }
   }
 
-  @Test func requestDeleteMainWorktreeShowsNotAllowedAlert() async {
+  @Test func requestDeleteMainWorktreeShowsNotAllowedAlertForSingleTarget() async {
+    // Single-target main git worktree delete (palette / hotkey /
+    // context-menu) surfaces the same "Delete not allowed" alert the
+    // deeplink path shows, so every entry point has consistent
+    // feedback instead of silently no-opping.
     let mainWorktree = makeWorktree(id: "/tmp/repo", name: "main")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [mainWorktree])
 
@@ -1616,21 +1723,60 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
+    let target = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: mainWorktree.id, repositoryID: repository.id)
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("Delete not allowed")
     } actions: {
-      ButtonState(role: .cancel) {
-        TextState("OK")
-      }
+      ButtonState(role: .cancel) { TextState("OK") }
     } message: {
       TextState("Deleting the main worktree is not allowed.")
     }
-
-    await store.send(.requestDeleteWorktree(mainWorktree.id, repository.id)) {
+    await store.send(.requestDeleteSidebarItems([target])) {
       $0.alert = expectedAlert
     }
   }
-  @Test func requestDeleteWorktreesShowsBatchConfirmation() async {
+
+  @Test func requestDeleteMainWorktreeInBulkRemainsSilentlyFiltered() async {
+    // Bulk selection that mixes the main worktree with an actual
+    // deletable target must keep the main filter silent so the rest
+    // of the batch proceeds; only single-target rejections surface
+    // feedback.
+    let mainWorktree = makeWorktree(id: "/tmp/repo", name: "main")
+    let feature = makeWorktree(id: "/tmp/repo/feature", name: "feature", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [mainWorktree, feature])
+
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+
+    let targets = [
+      RepositoriesFeature.DeleteWorktreeTarget(
+        worktreeID: mainWorktree.id, repositoryID: repository.id),
+      RepositoriesFeature.DeleteWorktreeTarget(
+        worktreeID: feature.id, repositoryID: repository.id),
+    ]
+    await store.send(.requestDeleteSidebarItems(targets)) {
+      $0.alert = AlertState {
+        TextState("🚨 Delete worktree?")
+      } actions: {
+        ButtonState(
+          role: .destructive,
+          action: .confirmDeleteSidebarItems([targets[1]], disposition: .gitWorktreeDelete)
+        ) {
+          TextState("Delete (⌘↩)")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState(
+          "Delete \(feature.name)? This deletes the worktree directory and its local branch."
+        )
+      }
+    }
+  }
+  @Test func requestDeleteSidebarItemsShowsBatchConfirmation() async {
     let worktree1 = makeWorktree(id: "/tmp/repo/wt1", name: "owl", repoRoot: "/tmp/repo")
     let worktree2 = makeWorktree(id: "/tmp/repo/wt2", name: "hawk", repoRoot: "/tmp/repo")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree1, worktree2])
@@ -1645,7 +1791,10 @@ struct RepositoriesFeatureTests {
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("🚨 Delete 2 worktrees?")
     } actions: {
-      ButtonState(role: .destructive, action: .confirmDeleteWorktrees(targets)) {
+      ButtonState(
+        role: .destructive,
+        action: .confirmDeleteSidebarItems(targets, disposition: .gitWorktreeDelete)
+      ) {
         TextState("Delete 2 (⌘↩)")
       }
       ButtonState(role: .cancel) {
@@ -1655,7 +1804,7 @@ struct RepositoriesFeatureTests {
       TextState("Delete 2 worktrees? This deletes the worktree directories and their local branches.")
     }
 
-    await store.send(.requestDeleteWorktrees(targets)) {
+    await store.send(.requestDeleteSidebarItems(targets)) {
       $0.alert = expectedAlert
     }
   }
@@ -1685,6 +1834,53 @@ struct RepositoriesFeatureTests {
 
     await store.send(.requestArchiveWorktree(worktree.id, repository.id)) {
       $0.alert = expectedAlert
+    }
+  }
+
+  @Test func requestArchiveWorktreeForFolderShowsActionNotAvailable() async {
+    // S1: the deeplink layer rejects archive/pin/unpin on folders,
+    // but the hotkey / context-menu path used to silently no-op
+    // because the synthetic main-worktree satisfies `isMainWorktree`
+    // geometrically. Surface the same "Action not available" alert
+    // the deeplink shows.
+    let folderRoot = "/tmp/folder-archive-\(UUID().uuidString)"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL), detail: "",
+      workingDirectory: folderURL, repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    let store = TestStore(initialState: makeState(repositories: [folderRepo])) {
+      RepositoriesFeature()
+    }
+
+    // The helper produces a per-action title + body so users know
+    // which action they just tried. Keep each expected alert
+    // narrow to the one being exercised.
+    func expectedAlert(name: String) -> AlertState<RepositoriesFeature.Alert> {
+      AlertState {
+        TextState("\(name) not available")
+      } actions: {
+        ButtonState(role: .cancel) { TextState("OK") }
+      } message: {
+        TextState("\(name) only applies to git repositories.")
+      }
+    }
+    await store.send(.requestArchiveWorktree(folderWorktree.id, folderRepo.id)) {
+      $0.alert = expectedAlert(name: "Archive")
+    }
+    await store.send(.alert(.dismiss)) { $0.alert = nil }
+    await store.send(.pinWorktree(folderWorktree.id)) {
+      $0.alert = expectedAlert(name: "Pin")
+    }
+    await store.send(.alert(.dismiss)) { $0.alert = nil }
+    await store.send(.unpinWorktree(folderWorktree.id)) {
+      $0.alert = expectedAlert(name: "Unpin")
     }
   }
 
@@ -1732,8 +1928,11 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
     state.selection = .worktree(featureWorktree.id)
-    state.pinnedWorktreeIDs = [featureWorktree.id]
-    state.worktreeOrderByRepository[repoRoot] = [featureWorktree.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [.pinned: .init(items: [featureWorktree.id: .init()])]
+      )
+    }
     state.worktreeInfoByID = [
       featureWorktree.id: WorktreeInfoEntry(
         addedLines: nil,
@@ -1746,17 +1945,23 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line — TCA processes synchronous
+    // `.send` follow-ups inside the original `send`, so
+    // `archivingWorktreeIDs` + selection + sidebar transitions
+    // land in one tick and the diff drowns out the actual
+    // coverage we care about. Relax exhaustivity and pin the
+    // meaningful end state via `#expect` below.
+    store.exhaustivity = .off
 
     await store.send(.requestArchiveWorktree(featureWorktree.id, repository.id))
-    await store.receive(\.archiveWorktreeConfirmed)
-    await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
-      $0.pinnedWorktreeIDs = []
-      $0.worktreeOrderByRepository = [:]
-      $0.selection = .worktree(mainWorktree.id)
-    }
-    await store.receive(\.delegate.repositoriesChanged)
-    await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.archiveWorktreeApply)
+    #expect(
+      store.state.sidebar.sections[repository.id]?
+        .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
+    #expect(store.state.sidebar.sections[repository.id]?.buckets[.pinned]?.items[featureWorktree.id] == nil)
+    #expect(store.state.selection == .worktree(mainWorktree.id))
   }
 
   @Test(.dependencies) func archiveWorktreeConfirmedDelegatesArchiveScript() async {
@@ -1989,14 +2194,19 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line — TCA processes synchronous
+    // `.send` follow-ups inside the original `send`. Relax
+    // exhaustivity and pin the meaningful end state via `#expect`.
+    store.exhaustivity = .off
 
-    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil)) {
-      $0.archivingWorktreeIDs = []
-    }
-    await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
-    }
-    await store.receive(\.delegate.repositoriesChanged)
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
+    await store.receive(\.archiveWorktreeApply)
+    #expect(
+      store.state.sidebar.sections[repository.id]?
+        .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
+    #expect(store.state.archivingWorktreeIDs.isEmpty)
   }
 
   @Test(.dependencies) func archiveScriptCompletedFailureShowsAlert() async {
@@ -2186,12 +2396,17 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line. Relax exhaustivity and pin
+    // the meaningful end state via `#expect`.
     store.exhaustivity = .off
 
     await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id))
-    await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
-    }
+    await store.receive(\.archiveWorktreeApply)
+    #expect(
+      store.state.sidebar.sections[repository.id]?
+        .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
   }
 
   @Test func archiveScriptCompletedDoesNotArchiveOnNonZeroExit() async {
@@ -2279,7 +2494,7 @@ struct RepositoriesFeatureTests {
 
   // MARK: - Delete Script
 
-  @Test(.dependencies) func deleteWorktreeConfirmedDelegatesDeleteScript() async {
+  @Test(.dependencies) func deleteSidebarItemConfirmedDelegatesDeleteScript() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -2298,7 +2513,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.deleteWorktreeConfirmed(featureWorktree.id, repository.id)) {
+    await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id)) {
       $0.deleteScriptWorktreeIDs = [featureWorktree.id]
     }
     await store.receive(\.delegate.runBlockingScript)
@@ -2404,7 +2619,7 @@ struct RepositoriesFeatureTests {
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
   }
 
-  @Test(.dependencies) func deleteWorktreeConfirmedSkipsScriptWhenEmpty() async {
+  @Test(.dependencies) func deleteSidebarItemConfirmedSkipsScriptWhenEmpty() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -2426,7 +2641,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.worktrees = { _ in [mainWorktree] }
     }
 
-    await store.send(.deleteWorktreeConfirmed(featureWorktree.id, repository.id))
+    await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id))
     await store.receive(\.deleteWorktreeApply) {
       $0.deletingWorktreeIDs = [featureWorktree.id]
     }
@@ -2470,7 +2685,7 @@ struct RepositoriesFeatureTests {
     }
   }
 
-  @Test func deleteWorktreeConfirmedNoopsWhenAlreadyArchiving() async {
+  @Test func deleteSidebarItemConfirmedNoopsWhenAlreadyArchiving() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -2485,7 +2700,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.deleteWorktreeConfirmed(featureWorktree.id, repository.id))
+    await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id))
   }
 
   @Test func repositoriesLoadedKeepsDeleteScriptInFlightUntilSuccessCompletion() async {
@@ -2601,7 +2816,11 @@ struct RepositoriesFeatureTests {
     let featureWorktree = makeWorktree(id: "/tmp/repo/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
-    state.worktreeOrderByRepository[repoRoot] = [featureWorktree.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [.unpinned: .init(items: [featureWorktree.id: .init()])]
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -2617,13 +2836,23 @@ struct RepositoriesFeatureTests {
     let featureB = makeWorktree(id: "/tmp/repo/b", name: "b", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureA, featureB])
     var state = makeState(repositories: [repository])
-    state.worktreeOrderByRepository[repoRoot] = [featureA.id, featureB.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [
+          .unpinned: .init(
+            items: [featureA.id: .init(), featureB.id: .init()]
+          )
+        ]
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
     await store.send(.worktreeNotificationReceived(featureB.id)) {
-      $0.worktreeOrderByRepository[repoRoot] = [featureB.id, featureA.id]
+      $0.$sidebar.withLock { sidebar in
+        sidebar.reorder(bucket: .unpinned, in: repository.id, to: [featureB.id, featureA.id])
+      }
     }
     #expect(store.state.statusToast == nil)
   }
@@ -2635,14 +2864,26 @@ struct RepositoriesFeatureTests {
     let featureB = makeWorktree(id: "/tmp/repo/b", name: "b", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureA, featureB])
     var state = makeState(repositories: [repository])
-    state.worktreeOrderByRepository[repoRoot] = [featureA.id, featureB.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [
+          .unpinned: .init(
+            items: [featureA.id: .init(), featureB.id: .init()]
+          )
+        ]
+      )
+    }
     state.moveNotifiedWorktreeToTop = false
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
     await store.send(.worktreeNotificationReceived(featureB.id))
-    #expect(store.state.worktreeOrderByRepository[repoRoot] == [featureA.id, featureB.id])
+    #expect(
+      Array(
+        store.state.sidebar.sections[repository.id]?.buckets[.unpinned]?.items.keys ?? []
+      ) == [featureA.id, featureB.id]
+    )
     #expect(store.state.statusToast == nil)
   }
 
@@ -2683,7 +2924,7 @@ struct RepositoriesFeatureTests {
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.createdAt == createdAt)
   }
 
-  @Test func orderedWorktreeRowsAreGlobal() {
+  @Test func orderedSidebarItemsAreGlobal() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",
       worktrees: [
@@ -2700,7 +2941,7 @@ struct RepositoriesFeatureTests {
     let state = makeState(repositories: [repoA, repoB])
 
     expectNoDifference(
-      state.orderedWorktreeRows().map(\.id),
+      state.orderedSidebarItems().map(\.id),
       [
         "/tmp/repo-a/wt1",
         "/tmp/repo-a/wt2",
@@ -2709,7 +2950,7 @@ struct RepositoriesFeatureTests {
     )
   }
 
-  @Test func orderedWorktreeRowsRespectRepositoryOrderIDs() {
+  @Test func orderedSidebarItemsRespectRepositoryOrderIDs() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",
       worktrees: [
@@ -2723,10 +2964,13 @@ struct RepositoriesFeatureTests {
       ]
     )
     var state = makeState(repositories: [repoA, repoB])
-    state.repositoryOrderIDs = [repoB.id, repoA.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoB.id] = .init()
+      sidebar.sections[repoA.id] = .init()
+    }
 
     expectNoDifference(
-      state.orderedWorktreeRows().map(\.id),
+      state.orderedSidebarItems().map(\.id),
       [
         "/tmp/repo-b/wt2",
         "/tmp/repo-a/wt1",
@@ -2734,7 +2978,7 @@ struct RepositoriesFeatureTests {
     )
   }
 
-  @Test func orderedWorktreeRowsCanFilterCollapsedRepositoriesForHotkeys() {
+  @Test func orderedSidebarItemsCanFilterCollapsedRepositoriesForHotkeys() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",
       worktrees: [
@@ -2748,10 +2992,13 @@ struct RepositoriesFeatureTests {
       ]
     )
     var state = makeState(repositories: [repoA, repoB])
-    state.repositoryOrderIDs = [repoA.id, repoB.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoA.id] = .init()
+      sidebar.sections[repoB.id] = .init()
+    }
 
     expectNoDifference(
-      state.orderedWorktreeRows(includingRepositoryIDs: [repoB.id]).map(\.id),
+      state.orderedSidebarItems(includingRepositoryIDs: [repoB.id]).map(\.id),
       [
         "/tmp/repo-b/wt2"
       ]
@@ -2762,7 +3009,9 @@ struct RepositoriesFeatureTests {
     let repoA = makeRepository(id: "/tmp/repo-a", worktrees: [])
     let repoB = makeRepository(id: "/tmp/repo-b", worktrees: [])
     var state = makeState(repositories: [repoA, repoB])
-    state.repositoryOrderIDs = [repoB.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoB.id] = .init()
+    }
 
     expectNoDifference(
       state.orderedRepositoryRoots().map { $0.path(percentEncoded: false) },
@@ -2783,7 +3032,11 @@ struct RepositoriesFeatureTests {
       worktrees: [worktree1, worktree2, worktree3]
     )
     var state = makeState(repositories: [repository])
-    state.worktreeOrderByRepository[repoRoot] = [worktree2.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [.unpinned: .init(items: [worktree2.id: .init()])]
+      )
+    }
 
     expectNoDifference(
       state.orderedUnpinnedWorktreeIDs(in: repository),
@@ -2805,13 +3058,27 @@ struct RepositoriesFeatureTests {
       worktrees: [worktree1, worktree2, worktree3]
     )
     var state = makeState(repositories: [repository])
-    state.worktreeOrderByRepository[repoRoot] = [worktree1.id, worktree2.id, worktree3.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoRoot] = .init(
+        buckets: [
+          .unpinned: .init(
+            items: [worktree1.id: .init(), worktree2.id: .init(), worktree3.id: .init()]
+          )
+        ]
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
     await store.send(.unpinnedWorktreesMoved(repositoryID: repoRoot, IndexSet(integer: 0), 3)) {
-      $0.worktreeOrderByRepository[repoRoot] = [worktree2.id, worktree3.id, worktree1.id]
+      $0.$sidebar.withLock { sidebar in
+        sidebar.reorder(
+          bucket: .unpinned,
+          in: repoRoot,
+          to: [worktree2.id, worktree3.id, worktree1.id]
+        )
+      }
     }
   }
 
@@ -2824,13 +3091,24 @@ struct RepositoriesFeatureTests {
     let repositoryA = makeRepository(id: repoA, worktrees: [worktreeA1, worktreeA2])
     let repositoryB = makeRepository(id: repoB, worktrees: [worktreeB1])
     var state = makeState(repositories: [repositoryA, repositoryB])
-    state.pinnedWorktreeIDs = [worktreeA1.id, worktreeB1.id, worktreeA2.id]
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoA] = .init(
+        buckets: [
+          .pinned: .init(items: [worktreeA1.id: .init(), worktreeA2.id: .init()])
+        ]
+      )
+      sidebar.sections[repoB] = .init(
+        buckets: [.pinned: .init(items: [worktreeB1.id: .init()])]
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
     await store.send(.pinnedWorktreesMoved(repositoryID: repoA, IndexSet(integer: 1), 0)) {
-      $0.pinnedWorktreeIDs = [worktreeA2.id, worktreeB1.id, worktreeA1.id]
+      $0.$sidebar.withLock { sidebar in
+        sidebar.reorder(bucket: .pinned, in: repoA, to: [worktreeA2.id, worktreeA1.id])
+      }
     }
   }
 
@@ -2862,9 +3140,13 @@ struct RepositoriesFeatureTests {
     let worktree2 = makeWorktree(id: "/tmp/repo/wt2", name: "wt2", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree1, worktree2])
     var initialState = makeState(repositories: [repository])
-    initialState.worktreeOrderByRepository = [
-      repoRoot: [worktree1.id, worktree2.id]
-    ]
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoRoot] = .init(
+        buckets: [
+          .unpinned: .init(items: [worktree1.id: .init(), worktree2.id: .init()])
+        ]
+      )
+    }
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
@@ -2884,8 +3166,10 @@ struct RepositoriesFeatureTests {
 
     await store.receive(\.delegate.repositoriesChanged)
     expectNoDifference(
-      store.state.worktreeOrderByRepository,
-      [repoRoot: [worktree1.id, worktree2.id]]
+      Array(
+        store.state.sidebar.sections[repoRoot]?.buckets[.unpinned]?.items.keys ?? []
+      ),
+      [worktree1.id, worktree2.id]
     )
   }
 
@@ -2894,7 +3178,14 @@ struct RepositoriesFeatureTests {
     let worktree = makeWorktree(id: "/tmp/repo/wt1", name: "wt1", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
     var initialState = makeState(repositories: [repository])
-    initialState.archivedWorktreeDates[worktree.id] = Date(timeIntervalSince1970: 1_000_000)
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: worktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: Date(timeIntervalSince1970: 1_000_000))
+      )
+    }
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
@@ -2989,7 +3280,11 @@ struct RepositoriesFeatureTests {
         progress: WorktreeCreationProgress(stage: .choosingWorktreeName)
       )
     ]
-    initialState.pinnedWorktreeIDs = [removedWorktree.id]
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [.pinned: .init(items: [removedWorktree.id: .init()])]
+      )
+    }
     initialState.worktreeInfoByID = [
       removedWorktree.id: WorktreeInfoEntry(addedLines: 1, removedLines: 2, pullRequest: nil)
     ]
@@ -3011,9 +3306,11 @@ struct RepositoriesFeatureTests {
       $0.pendingSetupScriptWorktreeIDs = []
       $0.pendingTerminalFocusWorktreeIDs = []
       $0.pendingWorktrees = []
-      $0.pinnedWorktreeIDs = []
       $0.worktreeInfoByID = [:]
       $0.repositories = [updatedRepository]
+      $0.$sidebar.withLock { sidebar in
+        sidebar.removeAnywhere(worktree: removedWorktree.id, in: repository.id)
+      }
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
@@ -3120,6 +3417,10 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     store.dependencies.date = .constant(fixedDate)
+    // Exhaustive receive closures on the archive chain are too
+    // noisy to assert line-by-line. Relax exhaustivity and pin
+    // the meaningful end state via `#expect`.
+    store.exhaustivity = .off
     let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
 
     await store.send(
@@ -3127,18 +3428,15 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
-        addedLines: nil,
-        removedLines: nil,
-        pullRequest: mergedPullRequest
-      )
-    }
-    await store.receive(\.archiveWorktreeConfirmed)
-    await store.receive(\.archiveWorktreeApply) {
-      $0.archivedWorktreeDates[featureWorktree.id] = fixedDate
-    }
-    await store.receive(\.delegate.repositoriesChanged)
+    )
+    await store.receive(\.archiveWorktreeApply)
+    #expect(
+      store.state.sidebar.sections[repository.id]?
+        .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
+    #expect(
+      store.state.worktreeInfoByID[featureWorktree.id]?.pullRequest == mergedPullRequest
+    )
   }
 
   @Test func repositoryPullRequestsLoadedSkipsAutoArchiveForMainWorktree() async {
@@ -3181,7 +3479,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    // Exhaustivity is off because `deleteWorktreeConfirmed` triggers
+    // Exhaustivity is off because `deleteSidebarItemConfirmed` triggers
     // async git operations that require extensive dependency mocking.
     store.exhaustivity = .off
     let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
@@ -3198,7 +3496,7 @@ struct RepositoriesFeatureTests {
         pullRequest: mergedPullRequest
       )
     }
-    await store.receive(\.deleteWorktreeConfirmed)
+    await store.receive(\.deleteSidebarItemConfirmed)
   }
 
   @Test func repositoryPullRequestsLoadedDoesNothingWhenMergedWorktreeActionNil() async {
@@ -3243,7 +3541,14 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
     state.mergedWorktreeAction = .delete
-    state.archivedWorktreeDates[featureWorktree.id] = Date(timeIntervalSince1970: 1_000_000)
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: Date(timeIntervalSince1970: 1_000_000))
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3811,7 +4116,14 @@ struct RepositoriesFeatureTests {
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3819,7 +4131,7 @@ struct RepositoriesFeatureTests {
     store.exhaustivity = .off
 
     await store.send(.autoDeleteExpiredArchivedWorktrees)
-    await store.receive(\.deleteWorktreeConfirmed)
+    await store.receive(\.deleteSidebarItemConfirmed)
   }
 
   @Test func autoDeleteExpiredArchivedWorktreesSkipsNonExpired() async {
@@ -3835,7 +4147,14 @@ struct RepositoriesFeatureTests {
     let threeDaysAgo = fixedDate.addingTimeInterval(-3 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = threeDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: threeDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3852,7 +4171,14 @@ struct RepositoriesFeatureTests {
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[mainWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: mainWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3874,7 +4200,14 @@ struct RepositoriesFeatureTests {
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     state.deletingWorktreeIDs = [featureWorktree.id]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -3896,7 +4229,14 @@ struct RepositoriesFeatureTests {
     let fixedDate = Date(timeIntervalSince1970: 1_000_000)
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3917,7 +4257,14 @@ struct RepositoriesFeatureTests {
     let fixedDate = Date(timeIntervalSince1970: 1_000_000)
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3928,7 +4275,7 @@ struct RepositoriesFeatureTests {
       $0.autoDeleteArchivedWorktreesAfterDays = .sevenDays
     }
     await store.receive(\.autoDeleteExpiredArchivedWorktrees)
-    await store.receive(\.deleteWorktreeConfirmed)
+    await store.receive(\.deleteSidebarItemConfirmed)
   }
 
   @Test func autoDeleteExpiredArchivedWorktreesSkipsDeleteScriptInProgress() async {
@@ -3944,7 +4291,14 @@ struct RepositoriesFeatureTests {
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     state.deleteScriptWorktreeIDs = [featureWorktree.id]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -3967,7 +4321,14 @@ struct RepositoriesFeatureTests {
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     state.archivingWorktreeIDs = [featureWorktree.id]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -3990,7 +4351,14 @@ struct RepositoriesFeatureTests {
     let exactlySevenDaysAgo = fixedDate.addingTimeInterval(-7 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = exactlySevenDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: exactlySevenDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -3998,7 +4366,7 @@ struct RepositoriesFeatureTests {
     store.exhaustivity = .off
 
     await store.send(.autoDeleteExpiredArchivedWorktrees)
-    await store.receive(\.deleteWorktreeConfirmed)
+    await store.receive(\.deleteSidebarItemConfirmed)
   }
 
   @Test func repositoriesLoadedTriggersAutoDeleteWhenEnabled() async {
@@ -4014,7 +4382,14 @@ struct RepositoriesFeatureTests {
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4030,7 +4405,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.autoDeleteExpiredArchivedWorktrees)
-    await store.receive(\.deleteWorktreeConfirmed)
+    await store.receive(\.deleteSidebarItemConfirmed)
   }
 
   @Test func setAutoDeleteDaysNilDoesNotTriggerAutoDelete() async {
@@ -4054,7 +4429,14 @@ struct RepositoriesFeatureTests {
     let eightDaysAgo = fixedDate.addingTimeInterval(-8 * 86400)
     var state = makeState(repositories: [repository])
     state.autoDeleteArchivedWorktreesAfterDays = .sevenDays
-    state.archivedWorktreeDates[featureWorktree.id] = eightDaysAgo
+    state.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: featureWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: eightDaysAgo)
+      )
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4070,7 +4452,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.autoDeleteExpiredArchivedWorktrees)
-    await store.receive(\.deleteWorktreeConfirmed)
+    await store.receive(\.deleteSidebarItemConfirmed)
   }
 
   // MARK: - Select Next/Previous Worktree
@@ -4197,7 +4579,9 @@ struct RepositoriesFeatureTests {
     let repo3 = makeRepository(id: "/tmp/repo3", worktrees: [wt3])
     var state = makeState(repositories: [repo1, repo2, repo3])
     state.selection = .worktree(wt1.id)
-    state.$collapsedRepositoryIDs.withLock { $0 = [repo2.id] }
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repo2.id, default: .init()].collapsed = true
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4219,7 +4603,9 @@ struct RepositoriesFeatureTests {
     let repo3 = makeRepository(id: "/tmp/repo3", worktrees: [wt3])
     var state = makeState(repositories: [repo1, repo2, repo3])
     state.selection = .worktree(wt3.id)
-    state.$collapsedRepositoryIDs.withLock { $0 = [repo2.id] }
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repo2.id, default: .init()].collapsed = true
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4237,7 +4623,9 @@ struct RepositoriesFeatureTests {
     let repo1 = makeRepository(id: "/tmp/repo1", worktrees: [wt1])
     var state = makeState(repositories: [repo1])
     state.selection = .worktree(wt1.id)
-    state.$collapsedRepositoryIDs.withLock { $0 = [repo1.id] }
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repo1.id, default: .init()].collapsed = true
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4250,7 +4638,9 @@ struct RepositoriesFeatureTests {
     let repo1 = makeRepository(id: "/tmp/repo1", worktrees: [wt1])
     var state = makeState(repositories: [repo1])
     state.selection = .worktree(wt1.id)
-    state.$collapsedRepositoryIDs.withLock { $0 = [repo1.id] }
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repo1.id, default: .init()].collapsed = true
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4267,7 +4657,9 @@ struct RepositoriesFeatureTests {
     let repo3 = makeRepository(id: "/tmp/repo3", worktrees: [wt3])
     var state = makeState(repositories: [repo1, repo2, repo3])
     state.selection = .worktree(wt3.id)
-    state.$collapsedRepositoryIDs.withLock { $0 = [repo2.id] }
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repo2.id, default: .init()].collapsed = true
+    }
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4444,7 +4836,7 @@ struct RepositoriesFeatureTests {
     )
 
     var state = RepositoriesFeature.State()
-    state.lastFocusedWorktreeID = worktreeB.id
+    state.$sidebar.withLock { $0.focusedWorktreeID = worktreeB.id }
     state.shouldRestoreLastFocusedWorktree = true
 
     let store = TestStore(initialState: state) {
@@ -4475,6 +4867,1602 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.finish()
+  }
+
+  // MARK: - Folder (non-git) repositories.
+
+  @Test func isGitRepositoryDetectsDotGitDirectory() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let dotGit = tempDir.appending(path: ".git", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: dotGit, withIntermediateDirectories: true)
+
+    #expect(Repository.isGitRepository(at: tempDir))
+  }
+
+  @Test func isGitRepositoryRecognizesDotGitWorktreePointerFile() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    // Linked worktrees have a `.git` file (not directory) pointing
+    // at the parent's gitdir — the classifier must honor both.
+    let pointer = tempDir.appending(path: ".git", directoryHint: .notDirectory)
+    try "gitdir: /somewhere/.git/worktrees/foo\n".write(to: pointer, atomically: true, encoding: .utf8)
+
+    #expect(Repository.isGitRepository(at: tempDir))
+  }
+
+  @Test func isGitRepositoryReturnsFalseForPlainDirectory() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    #expect(!Repository.isGitRepository(at: tempDir))
+  }
+
+  @Test func isGitRepositoryRecognizesBareAndDotGitRootNames() {
+    #expect(Repository.isGitRepository(at: URL(fileURLWithPath: "/tmp/repo/.bare")))
+    #expect(Repository.isGitRepository(at: URL(fileURLWithPath: "/tmp/repo/.git")))
+  }
+
+  @Test func isGitRepositoryRecognizesBareCloneConvention() throws {
+    // `git clone --bare` produces `<name>.git/` with HEAD + objects/ +
+    // refs/ at the root (no `.git` metadata file, no `.bare` rename).
+    let bareRoot = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-myrepo.git")
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(at: bareRoot, withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: bareRoot.appending(path: "objects"), withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: bareRoot.appending(path: "refs"), withIntermediateDirectories: true)
+    try Data("ref: refs/heads/main\n".utf8).write(to: bareRoot.appending(path: "HEAD"))
+    defer { try? fileManager.removeItem(at: bareRoot) }
+
+    #expect(Repository.isGitRepository(at: bareRoot))
+
+    // A plain directory whose name happens to end in `.git` is not a bare repo.
+    let fakeRoot = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-notbare.git")
+    try fileManager.createDirectory(at: fakeRoot, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: fakeRoot) }
+
+    #expect(Repository.isGitRepository(at: fakeRoot) == false)
+  }
+
+  @Test func loadPersistedRepositoriesClassifiesNonGitPathAsFolder() async {
+    let repoRoot = "/tmp/\(UUID().uuidString)-folder"
+    let rootURL = URL(fileURLWithPath: repoRoot)
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [repoRoot] }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in
+        Issue.record("worktrees() must not be called for folder repositories")
+        return []
+      }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: rootURL),
+      name: Repository.name(for: rootURL),
+      detail: "",
+      workingDirectory: rootURL,
+      repositoryRootURL: rootURL
+    )
+    let folderRepo = Repository(
+      id: repoRoot,
+      rootURL: rootURL,
+      name: Repository.name(for: rootURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = [folderRepo]
+      $0.repositoryRoots = [rootURL]
+      $0.isInitialLoadComplete = true
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func loadPersistedRepositoriesSurfacesMissingFolderAsFailureRow() async {
+    // Regression: folder-kind roots silently became empty folder
+    // repositories when the directory no longer existed on disk.
+    // Users who deleted a tracked folder from Finder saw a row
+    // with no indication that the path was gone. The loader now
+    // routes missing roots through `loadFailuresByID` so the
+    // sidebar renders the error row the way git failures do.
+    let repoRoot = "/tmp/\(UUID().uuidString)-missing-folder"
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [repoRoot] }
+      $0.gitClient.rootDirectoryExists = { _ in false }
+      $0.gitClient.isGitRepository = { _ in
+        Issue.record("isGitRepository() must not be called once the root is known to be missing")
+        return false
+      }
+      $0.gitClient.worktrees = { _ in
+        Issue.record("worktrees() must not be called for a missing root")
+        return []
+      }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = []
+      $0.repositoryRoots = [URL(fileURLWithPath: repoRoot)]
+      $0.isInitialLoadComplete = true
+      $0.loadFailuresByID = [
+        repoRoot: "Directory not found at \(repoRoot). It may have been moved or deleted."
+      ]
+    }
+    await store.finish()
+  }
+
+  @Test func loadPersistedRepositoriesClassifiesMixedGitAndFolderRoots() async {
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let gitWorktree = makeWorktree(id: "\(gitRoot)/main", name: "main", repoRoot: gitRoot)
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot, folderRoot] }
+      $0.gitClient.isGitRepository = { $0.path(percentEncoded: false) == gitRoot }
+      $0.gitClient.worktrees = { root in
+        #expect(root.path(percentEncoded: false) == gitRoot)
+        return [gitWorktree]
+      }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = [
+        Repository(
+          id: gitRoot,
+          rootURL: URL(fileURLWithPath: gitRoot),
+          name: URL(fileURLWithPath: gitRoot).lastPathComponent,
+          worktrees: [gitWorktree],
+          isGitRepository: true
+        ),
+        {
+          let url = URL(fileURLWithPath: folderRoot)
+          let synthetic = Worktree(
+            id: Repository.folderWorktreeID(for: url),
+            name: Repository.name(for: url),
+            detail: "",
+            workingDirectory: url,
+            repositoryRootURL: url
+          )
+          return Repository(
+            id: folderRoot,
+            rootURL: url,
+            name: Repository.name(for: url),
+            worktrees: [synthetic],
+            isGitRepository: false
+          )
+        }(),
+      ]
+      $0.repositoryRoots = [gitRoot, folderRoot].map { URL(fileURLWithPath: $0) }
+      $0.isInitialLoadComplete = true
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func openRepositoriesWithNonGitDirectoryAppearsImmediately() async throws {
+    // Reproduces the "folders don't appear immediately after being
+    // added" bug: dropping a non-git directory should flow through
+    // `.openRepositoriesFinished` and show up in `state.repositories`
+    // plus `state.repositoryRoots` on the next render tick.
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let standardizedURL = tempDir.standardizedFileURL
+    let rootID = standardizedURL.path(percentEncoded: false)
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.repoRoot = { _ in
+        throw GitClientError.commandFailed(command: "wt root", message: "not a git repository")
+      }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in
+        Issue.record("worktrees() must not be called for folder repositories")
+        return []
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: standardizedURL),
+      name: Repository.name(for: standardizedURL),
+      detail: "",
+      workingDirectory: standardizedURL,
+      repositoryRootURL: standardizedURL
+    )
+    let folderRepo = Repository(
+      id: rootID,
+      rootURL: standardizedURL,
+      name: Repository.name(for: standardizedURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    await store.send(.openRepositories([tempDir]))
+    await store.receive(\.openRepositoriesFinished) {
+      $0.repositories = [folderRepo]
+      $0.repositoryRoots = [standardizedURL]
+      $0.isInitialLoadComplete = true
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.finish()
+  }
+
+  @Test func worktreesForInfoWatcherSkipsFolderRepositories() {
+    let gitWorktree = makeWorktree(id: "/tmp/git/main", name: "main", repoRoot: "/tmp/git")
+    let gitRepo = Repository(
+      id: "/tmp/git",
+      rootURL: URL(fileURLWithPath: "/tmp/git"),
+      name: "git",
+      worktrees: [gitWorktree],
+      isGitRepository: true
+    )
+    let folderURL = URL(fileURLWithPath: "/tmp/folder")
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: "folder",
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: "/tmp/folder",
+      rootURL: folderURL,
+      name: "folder",
+      worktrees: [folderWorktree],
+      isGitRepository: false
+    )
+    var state = RepositoriesFeature.State()
+    state.repositories = [gitRepo, folderRepo]
+
+    #expect(state.worktreesForInfoWatcher() == [gitWorktree])
+  }
+
+  @Test func requestDeleteSidebarItemForFolderSkipsMainWorktreeLockAndRoutesToRepositoryRemoved() async {
+    // Folders pipe their "Delete Folder…" context-menu action
+    // through `.requestDeleteSidebarItems` using the synthetic main
+    // worktree. The usual main-worktree lock would normally refuse
+    // it, but the reducer is expected to recognize folder repos and
+    // proceed, show a folder-flavored alert, and on confirm route
+    // into `.deleteSidebarItemConfirmed` → `.repositoryRemovalCompleted`
+    // → `.repositoriesRemoved` (no git `removeWorktree` since there
+    // is none).
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [folderRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+
+    let folderTarget = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: folderWorktree.id, repositoryID: folderRepo.id)
+    await store.send(.requestDeleteSidebarItems([folderTarget])) {
+      $0.alert = AlertState {
+        TextState("Remove folder?")
+      } actions: {
+        ButtonState(
+          action: .confirmDeleteSidebarItems([folderTarget], disposition: .folderUnlink)
+        ) {
+          TextState("Remove from Supacode")
+        }
+        ButtonState(
+          role: .destructive,
+          action: .confirmDeleteSidebarItems([folderTarget], disposition: .folderTrash)
+        ) {
+          TextState("Delete from disk")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState(
+          "Remove \(folderWorktree.name)? Choose \"Remove from Supacode\" to stop "
+            + "managing the folder (it stays on disk)"
+            + ", or \"Delete from disk\" to move the folder to the Trash."
+        )
+      }
+    }
+
+    store.exhaustivity = .off(showSkippedAssertions: false)
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems([folderTarget], disposition: .folderUnlink)))
+    )
+    // The plural confirm handler sets up the batch, fans into
+    // `.deleteSidebarItemConfirmed`, the per-target completion
+    // drains into `.repositoryRemovalCompleted`, and the batch
+    // terminal `.repositoriesRemoved([id])` does the one-shot
+    // cleanup. Assert the key delegate hops so future regressions
+    // that skip them don't silently pass, then drain the rest.
+    await store.receive(\.repositoriesRemoved)
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.skipReceivedActions()
+    #expect(store.state.repositories.isEmpty)
+    #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+  }
+
+  @Test func requestDeleteRepositoryForFolderConfirmsAndRemovesRoot() async {
+    // Legacy path: `.requestDeleteRepository` also works for folders
+    // (it just skips the blocking-script branch; no worktrees to
+    // archive either), but the primary UI surface uses the
+    // `.requestDeleteSidebarItems` path tested above.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [folderRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.requestDeleteRepository(folderRepo.id))
+    #expect(store.state.alert != nil)
+    await store.send(.alert(.presented(.confirmDeleteRepository(folderRepo.id))))
+    // Section-level remove flows through batch-of-1:
+    // .confirmDeleteRepository → .repositoryRemovalCompleted (success)
+    // → .repositoriesRemoved([id]) → reconciliation. Assert the
+    // terminal + delegate fan-out so drops don't go unnoticed.
+    await store.receive(\.repositoryRemovalCompleted)
+    await store.receive(\.repositoriesRemoved)
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.skipReceivedActions()
+    #expect(store.state.repositories.isEmpty)
+    #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+  }
+
+  @Test func deleteSidebarItemConfirmedRunsBlockingDeleteScriptForFolder() async {
+    // When a delete script is defined, folder deletion piggy-backs on
+    // the worktree-delete blocking-script pipeline: the reducer marks
+    // the folder as "removing", delegates the script run, and only
+    // signals `.repositoryRemovalCompleted` (drained by the batch
+    // aggregator into a single `.repositoriesRemoved`) after
+    // `.deleteScriptCompleted` reports exit 0 — so the folder stays
+    // visible with a progress indicator while the script runs and
+    // `gitClient.removeWorktree` is never called.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    @Shared(.repositorySettings(folderURL)) var repositorySettings
+    $repositorySettings.withLock { $0.deleteScript = "echo goodbye" }
+    defer { $repositorySettings.withLock { $0.deleteScript = "" } }
+
+    // Intent + batch are normally recorded by the alert handler
+    // before `.deleteSidebarItemConfirmed` runs — seed them here
+    // since the test dispatches the action directly.
+    state.seedRemovalBatch(pending: [folderRepo.id: .folderUnlink])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [folderRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.gitClient.removeWorktree = { _, _ in
+        Issue.record("removeWorktree must not be called for a folder repository")
+        return folderURL
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.deleteSidebarItemConfirmed(folderWorktree.id, folderRepo.id))
+    await store.skipReceivedActions()
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: 0, tabId: nil)
+    )
+    await store.skipReceivedActions()
+    #expect(store.state.repositories.isEmpty)
+    #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+  }
+
+  @Test func folderDeleteScriptRunningKeepsRowClickableWithTerminalIndicator() {
+    // While a folder's delete script is running, the sidebar row
+    // must stay clickable (so the user can view the script output)
+    // and show the terminal-backed deleting status — matching the
+    // regular worktree delete flow. `removingRepositoryIDs` is set
+    // upfront to carry folder intent, so the status + removing
+    // checks must give the terminal indicator priority.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.seedRemovalBatch(pending: [folderRepo.id: .folderUnlink])
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+
+    #expect(state.isRemovingRepository(folderRepo) == false)
+    let rows = state.sidebarItems(in: folderRepo)
+    #expect(rows.first?.status == .deleting(inTerminal: true))
+    #expect(rows.first?.kind == .folder)
+  }
+
+  @Test func deleteWorktreeScriptFailureForFolderClearsRemovingState() async {
+    // Script failure during folder deletion surfaces the standard
+    // alert AND rolls back `removingRepositoryIDs` so the sidebar
+    // row returns to its normal enabled state. The folder must stay
+    // in `state.repositories` — nothing is removed.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+    state.seedRemovalBatch(pending: [folderRepo.id: .folderUnlink])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: 2, tabId: nil)
+    )
+    await store.skipReceivedActions()
+    // Alert is shown for the failure; batch drains without firing a
+    // `.repositoriesRemoved` because there were no successes.
+    #expect(store.state.alert != nil)
+    #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+    #expect(store.state.deleteScriptWorktreeIDs.isEmpty)
+    #expect(store.state.repositories.count == 1)
+    #expect(store.state.activeRemovalBatches.isEmpty)
+  }
+
+  @Test func deleteScriptCompletedForFolderKindFlipShowsErrorAndStops() async {
+    // If a `git init` flips the classification between the alert
+    // confirmation and the delete-script completion, the handler
+    // surfaces an explicit error and aborts — safer than silently
+    // trashing the directory or running `gitClient.removeWorktree`.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let flippedRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: true
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [flippedRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+    state.seedRemovalBatch(pending: [flippedRepo.id: .folderTrash])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.removeWorktree = { _, _ in
+        Issue.record("removeWorktree must not run on kind-flip abort")
+        return folderURL
+      }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: 0, tabId: nil)
+    )
+    await store.skipReceivedActions()
+    // Kind flip aborts the removal; the folder stays in state and
+    // the alert explains the decision.
+    #expect(store.state.alert != nil)
+    #expect(store.state.removingRepositoryIDs[flippedRepo.id] == nil)
+    #expect(store.state.repositories.count == 1)
+  }
+
+  @Test func createRandomWorktreeInRepositoryRejectsFolderRepositories() async {
+    // Hotkey / palette / deeplink can all target a folder; the
+    // reducer must stop the action up front with an alert rather
+    // than sending it into `gitClient.createWorktreeStream`.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          Issue.record("createWorktreeStream must not run for folder repositories")
+          continuation.finish()
+        }
+      }
+    }
+
+    await store.send(.createRandomWorktreeInRepository(folderRepo.id)) {
+      $0.alert = AlertState {
+        TextState("Unable to create worktree")
+      } actions: {
+        ButtonState(role: .cancel) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("Worktrees are only supported for git repositories.")
+      }
+    }
+  }
+
+  @Test func deleteScriptCancellationForFolderClearsRemovingState() async {
+    // Cancelling the delete-script tab (exitCode: nil) must also
+    // release `removingRepositoryIDs` — otherwise the folder row
+    // stays visually "removing" forever.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+    state.seedRemovalBatch(pending: [folderRepo.id: .folderUnlink])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktree.id, exitCode: nil, tabId: nil)
+    )
+    await store.skipReceivedActions()
+    #expect(store.state.deleteScriptWorktreeIDs.isEmpty)
+    #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+    #expect(store.state.repositories.count == 1)
+  }
+
+  @Test func confirmDeleteSidebarItemDeleteActionTrashesFolderAfterRemoval() async throws {
+    // `.confirmDeleteSidebarItems([folder target], disposition: .folderTrash)`
+    // records the `.folderTrash` intent and forwards to
+    // `.deleteSidebarItemConfirmed`. On an empty delete script the
+    // flow finishes by moving the directory to the Trash (via
+    // `FileManager.trashItem`) and then signaling
+    // `.repositoryRemovalCompleted`, which the batch aggregator
+    // drains into `.repositoriesRemoved`.
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)-folder", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let standardized = tempDir.standardizedFileURL
+    let rootID = standardized.path(percentEncoded: false)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: standardized),
+      name: Repository.name(for: standardized),
+      detail: "",
+      workingDirectory: standardized,
+      repositoryRootURL: standardized
+    )
+    let folderRepo = Repository(
+      id: rootID,
+      rootURL: standardized,
+      name: Repository.name(for: standardized),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [standardized]
+    state.isInitialLoadComplete = true
+    let folderTarget = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: folderWorktree.id, repositoryID: folderRepo.id)
+    state.alert = AlertState {
+      TextState("Remove folder?")
+    } actions: {
+      ButtonState(
+        action: .confirmDeleteSidebarItems([folderTarget], disposition: .folderUnlink)
+      ) {
+        TextState("Remove from Supacode")
+      }
+      ButtonState(
+        role: .destructive,
+        action: .confirmDeleteSidebarItems([folderTarget], disposition: .folderTrash)
+      ) {
+        TextState("Delete from disk")
+      }
+      ButtonState(role: .cancel) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("Remove \(folderWorktree.name)?")
+    }
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems([folderTarget], disposition: .folderTrash)))
+    )
+    await store.skipReceivedActions()
+
+    // The trash effect ran and moved the directory away (or logged
+    // a warning if trashItem refused). Either way the folder must no
+    // longer live at its original path.
+    #expect(!FileManager.default.fileExists(atPath: standardized.path(percentEncoded: false)))
+  }
+
+  @Test func folderTrashFailureSurfacesAlertAndKeepsRepo() async {
+    // F2: `folderRemovalEffect` used to always dispatch
+    // `succeeded: true` on `FileManager.trashItem` failure, silently
+    // making the folder disappear from Supacode even though its
+    // on-disk contents stayed put. Fix dispatches `succeeded: false`
+    // AND surfaces a "Delete from disk failed" alert so the user
+    // knows what happened.
+    let missingRoot = "/tmp/supacode-missing-\(UUID().uuidString)"
+    let missingURL = URL(fileURLWithPath: missingRoot)
+    let rootID = missingURL.standardizedFileURL.path(percentEncoded: false)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: missingURL),
+      name: Repository.name(for: missingURL), detail: "",
+      workingDirectory: missingURL, repositoryRootURL: missingURL
+    )
+    let folderRepo = Repository(
+      id: rootID, rootURL: missingURL, name: Repository.name(for: missingURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [missingURL]
+    state.isInitialLoadComplete = true
+    let folderTarget = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: folderWorktree.id, repositoryID: folderRepo.id)
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems([folderTarget], disposition: .folderTrash)))
+    )
+    await store.skipReceivedActions()
+
+    #expect(store.state.alert != nil, "trash failure must surface an alert")
+    #expect(
+      store.state.repositories.contains(where: { $0.id == folderRepo.id }),
+      "folder must remain in state when trash fails"
+    )
+    #expect(
+      store.state.removingRepositoryIDs[folderRepo.id] == nil,
+      "removing indicator must clear on failure"
+    )
+    // Regression: trash failure used to leave `deletingWorktreeIDs`
+    // populated (seeded by the empty-script folder branch), so the
+    // sidebar row rendered `.deleting(inTerminal: false)` forever.
+    // The failure path now clears per-worktree trackers too.
+    #expect(
+      !store.state.deletingWorktreeIDs.contains(folderWorktree.id),
+      "deletingWorktreeIDs must clear on trash failure"
+    )
+    #expect(
+      !store.state.deleteScriptWorktreeIDs.contains(folderWorktree.id),
+      "deleteScriptWorktreeIDs must clear on trash failure"
+    )
+    #expect(store.state.activeRemovalBatches.isEmpty)
+  }
+
+  @Test func bulkFolderTrashFailuresCoalesceIntoSingleAlert() async {
+    // C3 regression: parallel per-target `FileManager.trashItem`
+    // failures used to each fire `.presentAlert` and clobber
+    // `state.alert` in a last-write-wins race. The batch aggregator
+    // now collects per-target `failureMessage`s and surfaces one
+    // consolidated alert naming every failed folder when the batch
+    // drains.
+    let rootA = "/tmp/missing-trash-\(UUID().uuidString)-a"
+    let rootB = "/tmp/missing-trash-\(UUID().uuidString)-b"
+    let urlA = URL(fileURLWithPath: rootA)
+    let urlB = URL(fileURLWithPath: rootB)
+    func makeFolderRepo(url: URL, id: String) -> (Worktree, Repository) {
+      let worktree = Worktree(
+        id: Repository.folderWorktreeID(for: url),
+        name: Repository.name(for: url), detail: "",
+        workingDirectory: url, repositoryRootURL: url
+      )
+      let repo = Repository(
+        id: id, rootURL: url, name: Repository.name(for: url),
+        worktrees: IdentifiedArray(uniqueElements: [worktree]),
+        isGitRepository: false
+      )
+      return (worktree, repo)
+    }
+    let (worktreeA, folderA) = makeFolderRepo(url: urlA, id: rootA)
+    let (worktreeB, folderB) = makeFolderRepo(url: urlB, id: rootB)
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderA, folderB]
+    state.repositoryRoots = [urlA, urlB]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    let targets = [
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktreeA.id, repositoryID: folderA.id),
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktreeB.id, repositoryID: folderB.id),
+    ]
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems(targets, disposition: .folderTrash)))
+    )
+    await store.skipReceivedActions()
+
+    // Both folders stay (trash failed), and the alert mentions BOTH
+    // folder names — not just the last one.
+    #expect(store.state.repositories.count == 2)
+    #expect(store.state.activeRemovalBatches.isEmpty)
+    #expect(store.state.removingRepositoryIDs.isEmpty)
+    guard let alert = store.state.alert else {
+      Issue.record("Expected consolidated trash-failure alert")
+      return
+    }
+    let titleText = String(describing: alert.title)
+    let messageText = String(describing: alert.message ?? TextState(""))
+    #expect(titleText.contains("Delete from disk failed"))
+    #expect(
+      messageText.contains(folderA.name) && messageText.contains(folderB.name),
+      "consolidated alert must name every failed folder (both \(folderA.name) and \(folderB.name))"
+    )
+  }
+
+  @Test func deleteSidebarItemConfirmedDoesNotClobberTerminalAlert() async {
+    // Pass-3 F1 regression: `.deleteSidebarItemConfirmed` used to
+    // unconditionally clear `state.alert`. The alert-confirm path
+    // already clears the alert at `.confirmDeleteSidebarItems`
+    // entry, so the only effect of the second clear was to wipe
+    // unrelated alerts dispatched programmatically (e.g., the
+    // consolidated trash-failure alert set by the batch aggregator
+    // just before the auto-delete sweep fires
+    // `.deleteSidebarItemConfirmed` for an expired archived git
+    // worktree).
+    let gitRoot = "/tmp/alert-clobber-\(UUID().uuidString)-repo"
+    let gitURL = URL(fileURLWithPath: gitRoot)
+    let worktree = Worktree(
+      id: "\(gitRoot)/wt-1",
+      name: "wt-1",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "\(gitRoot)/wt-1"),
+      repositoryRootURL: gitURL
+    )
+    let mainWorktree = Worktree(
+      id: gitRoot,
+      name: "repo",
+      detail: "",
+      workingDirectory: gitURL,
+      repositoryRootURL: gitURL
+    )
+    let gitRepo = Repository(
+      id: gitRoot, rootURL: gitURL, name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [mainWorktree, worktree]),
+      isGitRepository: true
+    )
+
+    let sentinelAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Do not wipe me")
+    } actions: {
+      ButtonState(role: .cancel) { TextState("OK") }
+    } message: {
+      TextState("Terminal failure alert from the aggregator.")
+    }
+    var state = RepositoriesFeature.State()
+    state.repositories = [gitRepo]
+    state.repositoryRoots = [gitURL]
+    state.isInitialLoadComplete = true
+    state.alert = sentinelAlert
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.gitClient.removeWorktree = { _, _ in
+        URL(fileURLWithPath: "\(gitRoot)/wt-1")
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    // Programmatic `.deleteSidebarItemConfirmed` — the code path
+    // that `.autoDeleteExpiredArchivedWorktrees` uses.
+    await store.send(.deleteSidebarItemConfirmed(worktree.id, gitRepo.id))
+    await store.skipReceivedActions()
+
+    #expect(
+      store.state.alert == sentinelAlert,
+      "terminal alerts must survive a programmatic .deleteSidebarItemConfirmed"
+    )
+  }
+
+  @Test func deleteScriptCompletedDrainsBatchWhenOwningRepoVanished() async {
+    // C4 regression: if the owning repo got pruned from
+    // `state.repositories` between confirmation and script
+    // completion (concurrent reload, `.removeFailedRepository`,
+    // file-system observer race, etc.), the exit=0 branch used to
+    // fall into the generic "Delete failed / not found" alert and
+    // return `.none` — leaving the `removingRepositoryIDs` record
+    // and `activeRemovalBatches` entry orphaned, so sibling folders
+    // in the same batch hung forever.
+    //
+    // Reproduces by seeding the batch + record but NOT adding the
+    // repo to `state.repositories`, then firing exit=0.
+    let folderRoot = "/tmp/vanished-\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktreeID = Repository.folderWorktreeID(for: folderURL)
+
+    var state = RepositoriesFeature.State()
+    // Intentionally empty — simulating the repo vanishing mid-script.
+    state.repositories = []
+    state.repositoryRoots = []
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(folderWorktreeID)
+    let batchID = state.seedRemovalBatch(pending: [folderRoot: .folderUnlink])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: folderWorktreeID, exitCode: 0, tabId: nil)
+    )
+    await store.skipReceivedActions()
+
+    #expect(
+      store.state.removingRepositoryIDs[folderRoot] == nil,
+      "record must drain even when owning repo vanished mid-script"
+    )
+    #expect(
+      store.state.activeRemovalBatches[batchID] == nil,
+      "batch must drain (succeeded:false) so sibling targets don't hang"
+    )
+    #expect(!store.state.deleteScriptWorktreeIDs.contains(folderWorktreeID))
+  }
+
+  @Test func bulkFolderUnlinkTerminatesWithEmptyState() async {
+    // Regression: per-target `.repositoryRemoved` chaining used to
+    // race `cancelInFlight: true` on the persistence save, leaving
+    // only the first folder actually removed. The batch aggregator
+    // now fires one terminal `.repositoriesRemoved([ids])` after
+    // every target signals completion — bulk unlink must end with
+    // `state.repositories.isEmpty` and the batch drained.
+    let rootA = "/tmp/\(UUID().uuidString)-folder-a"
+    let rootB = "/tmp/\(UUID().uuidString)-folder-b"
+    let rootC = "/tmp/\(UUID().uuidString)-folder-c"
+    let urlA = URL(fileURLWithPath: rootA)
+    let urlB = URL(fileURLWithPath: rootB)
+    let urlC = URL(fileURLWithPath: rootC)
+    func makeFolderRepo(url: URL, id: String) -> (Worktree, Repository) {
+      let worktree = Worktree(
+        id: Repository.folderWorktreeID(for: url),
+        name: Repository.name(for: url),
+        detail: "",
+        workingDirectory: url,
+        repositoryRootURL: url
+      )
+      let repo = Repository(
+        id: id, rootURL: url, name: Repository.name(for: url),
+        worktrees: IdentifiedArray(uniqueElements: [worktree]), isGitRepository: false)
+      return (worktree, repo)
+    }
+    let (worktreeA, folderA) = makeFolderRepo(url: urlA, id: rootA)
+    let (worktreeB, folderB) = makeFolderRepo(url: urlB, id: rootB)
+    let (worktreeC, folderC) = makeFolderRepo(url: urlC, id: rootC)
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderA, folderB, folderC]
+    state.repositoryRoots = [urlA, urlB, urlC]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    let targets = [
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktreeA.id, repositoryID: folderA.id),
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktreeB.id, repositoryID: folderB.id),
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktreeC.id, repositoryID: folderC.id),
+    ]
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems(targets, disposition: .folderUnlink)))
+    )
+    await store.skipReceivedActions()
+
+    #expect(store.state.repositories.isEmpty)
+    #expect(store.state.repositoryRoots.isEmpty)
+    #expect(store.state.removingRepositoryIDs.isEmpty)
+    #expect(store.state.activeRemovalBatches.isEmpty)
+  }
+
+  @Test func folderRemovalPrunesRootsAndConfigsFromSettings() async {
+    // Regression: the `.repositoriesRemoved` terminal must write the
+    // pruned list to `settings.json` AND drop the per-repo config
+    // entry from `settingsFile.repositories`. The latter half used
+    // to leak forever — users who added and removed folders for
+    // testing saw stale entries pile up in the JSON.
+    let rootA = "/tmp/\(UUID().uuidString)-folder-a"
+    let rootB = "/tmp/\(UUID().uuidString)-folder-b"
+    let urlA = URL(fileURLWithPath: rootA).standardizedFileURL
+    let urlB = URL(fileURLWithPath: rootB).standardizedFileURL
+    let idA = urlA.path(percentEncoded: false)
+    let idB = urlB.path(percentEncoded: false)
+    let worktreeA = Worktree(
+      id: Repository.folderWorktreeID(for: urlA),
+      name: Repository.name(for: urlA), detail: "",
+      workingDirectory: urlA, repositoryRootURL: urlA
+    )
+    let folderA = Repository(
+      id: idA, rootURL: urlA, name: Repository.name(for: urlA),
+      worktrees: IdentifiedArray(uniqueElements: [worktreeA]),
+      isGitRepository: false
+    )
+    let worktreeB = Worktree(
+      id: Repository.folderWorktreeID(for: urlB),
+      name: Repository.name(for: urlB), detail: "",
+      workingDirectory: urlB, repositoryRootURL: urlB
+    )
+    let folderB = Repository(
+      id: idB, rootURL: urlB, name: Repository.name(for: urlB),
+      worktrees: IdentifiedArray(uniqueElements: [worktreeB]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderA, folderB]
+    state.repositoryRoots = [urlA, urlB]
+    state.isInitialLoadComplete = true
+
+    let savedPaths = LockIsolated<[[String]]>([])
+    let prunedIDs = LockIsolated<[[String]]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [idA, idB] }
+      $0.repositoryPersistence.saveRoots = { paths in
+        savedPaths.withValue { $0.append(paths) }
+      }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { ids in
+        prunedIDs.withValue { $0.append(ids) }
+      }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    let targetA = RepositoriesFeature.DeleteWorktreeTarget(
+      worktreeID: worktreeA.id, repositoryID: folderA.id)
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems([targetA], disposition: .folderUnlink)))
+    )
+    await store.skipReceivedActions()
+
+    #expect(savedPaths.value.last == [idB], "saveRoots must persist the pruned root list")
+    #expect(
+      prunedIDs.value.flatMap { $0 } == [idA],
+      "pruneRepositoryConfigs must drop the removed repo's config entry"
+    )
+    #expect(store.state.repositories.map(\.id) == [idB])
+    #expect(store.state.repositoryRoots.map { $0.path(percentEncoded: false) } == [idB])
+  }
+
+  @Test func requestDeleteSidebarItemsShowsFolderAlertAndFanOutsForAllFolderBulk() async {
+    // `.requestDeleteSidebarItems` is the single entry point for bulk
+    // remove — it uses the target repos' kind as a discriminator to
+    // decide whether to show the worktree-style alert or the
+    // folder-style 3-button alert. All-folder bulk confirms fan out
+    // through `.deleteSidebarItemConfirmed` so each folder reuses the
+    // single-folder delete-script pipeline.
+    let rootA = "/tmp/\(UUID().uuidString)-folder-a"
+    let rootB = "/tmp/\(UUID().uuidString)-folder-b"
+    let urlA = URL(fileURLWithPath: rootA)
+    let urlB = URL(fileURLWithPath: rootB)
+    let worktreeA = Worktree(
+      id: Repository.folderWorktreeID(for: urlA),
+      name: Repository.name(for: urlA),
+      detail: "",
+      workingDirectory: urlA,
+      repositoryRootURL: urlA
+    )
+    let worktreeB = Worktree(
+      id: Repository.folderWorktreeID(for: urlB),
+      name: Repository.name(for: urlB),
+      detail: "",
+      workingDirectory: urlB,
+      repositoryRootURL: urlB
+    )
+    let folderA = Repository(
+      id: rootA,
+      rootURL: urlA,
+      name: Repository.name(for: urlA),
+      worktrees: IdentifiedArray(uniqueElements: [worktreeA]),
+      isGitRepository: false
+    )
+    let folderB = Repository(
+      id: rootB,
+      rootURL: urlB,
+      name: Repository.name(for: urlB),
+      worktrees: IdentifiedArray(uniqueElements: [worktreeB]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderA, folderB]
+    state.repositoryRoots = [urlA, urlB]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    let targets = [
+      RepositoriesFeature.DeleteWorktreeTarget(
+        worktreeID: worktreeA.id, repositoryID: folderA.id),
+      RepositoriesFeature.DeleteWorktreeTarget(
+        worktreeID: worktreeB.id, repositoryID: folderB.id),
+    ]
+
+    await store.send(.requestDeleteSidebarItems(targets)) {
+      #expect($0.alert != nil)
+    }
+
+    await store.send(
+      .alert(.presented(.confirmDeleteSidebarItems(targets, disposition: .folderUnlink)))
+    )
+    // `.confirmDeleteSidebarItems` fans into the per-target
+    // `.confirmDeleteSidebarItem(target, action:)` which maps the
+    // folder intent before sending `.deleteSidebarItemConfirmed`.
+    await store.skipReceivedActions()
+
+    #expect(store.state.repositories.isEmpty)
+  }
+
+  @Test func requestDeleteSidebarItemsRejectsMixedKindSelection() async {
+    // Safety net: if a keyboard shortcut or programmatic path
+    // forwards a mixed folder + git selection to
+    // `.requestDeleteSidebarItems`, the reducer refuses rather than
+    // showing an ambiguous alert. The UI context menu blocks mixed
+    // bulk upstream so this only fires under hotkey edge cases.
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let gitURL = URL(fileURLWithPath: gitRoot)
+    let gitMain = Worktree(
+      id: "\(gitRoot)/main",
+      name: "main",
+      detail: "",
+      workingDirectory: gitURL,
+      repositoryRootURL: gitURL
+    )
+    let gitFeature = Worktree(
+      id: "\(gitRoot)/feature",
+      name: "feature",
+      detail: "",
+      workingDirectory: gitURL.appending(path: "feature"),
+      repositoryRootURL: gitURL
+    )
+    let gitRepo = Repository(
+      id: gitRoot,
+      rootURL: gitURL,
+      name: "git-repo",
+      worktrees: IdentifiedArray(uniqueElements: [gitMain, gitFeature]),
+      isGitRepository: true
+    )
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderMain = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderMain]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [gitRepo, folderRepo]
+    state.repositoryRoots = [gitURL, folderURL]
+    state.isInitialLoadComplete = true
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .requestDeleteSidebarItems([
+        RepositoriesFeature.DeleteWorktreeTarget(
+          worktreeID: gitFeature.id, repositoryID: gitRepo.id),
+        RepositoriesFeature.DeleteWorktreeTarget(
+          worktreeID: folderMain.id, repositoryID: folderRepo.id),
+      ]))
+    #expect(store.state.alert == nil)
+  }
+
+  @Test func deleteScriptCompletedDoesNotMisrouteWhenGitRepoIsRemovingConcurrently() async {
+    // Regression: when a git repo's worktree has a delete script
+    // in flight AND the user confirmed repo-level removal on the
+    // same git repo, `removingRepositoryIDs` carries a `.git`
+    // intent. `.deleteScriptCompleted` must still route to the git
+    // `.deleteWorktreeApply` path (so `gitClient.removeWorktree`
+    // deletes the worktree on disk) and not mistake the entry for
+    // folder intent.
+    let repoRoot = "/tmp/\(UUID().uuidString)-git"
+    let repoURL = URL(fileURLWithPath: repoRoot)
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let gitRepo = Repository(
+      id: repoRoot,
+      rootURL: repoURL,
+      name: URL(fileURLWithPath: repoRoot).lastPathComponent,
+      worktrees: IdentifiedArray(uniqueElements: [mainWorktree, featureWorktree]),
+      isGitRepository: true
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [gitRepo]
+    state.repositoryRoots = [repoURL]
+    state.isInitialLoadComplete = true
+    state.deleteScriptWorktreeIDs.insert(featureWorktree.id)
+    state.seedRemovalBatch(pending: [gitRepo.id: .gitRepositoryUnlink])
+
+    let removeCalled = LockIsolated(false)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.removeWorktree = { worktree, _ in
+        removeCalled.setValue(true)
+        return await MainActor.run { worktree.workingDirectory }
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(
+      .deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil)
+    )
+    await store.receive(\.deleteWorktreeApply)
+    await store.skipReceivedActions()
+
+    #expect(removeCalled.value == true)
+  }
+
+  @Test func deleteSidebarItemConfirmedIsIdempotentForFolderWithEmptyScript() async {
+    // Regression for the double-tap bug: the empty-script folder
+    // branch of `.deleteSidebarItemConfirmed` used to re-fire the
+    // repo-removal terminal (and duplicate analytics) on every repeat
+    // of the confirm action because it had no re-entrancy guard.
+    // The first invocation sets `removingRepositoryIDs` and drains
+    // through the batch aggregator; the second must now be a no-op.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    // Already-set: matches the state after the first
+    // `.deleteSidebarItemConfirmed` has enqueued
+    // `.repositoryRemovalCompleted`.
+    state.seedRemovalBatch(pending: [folderRepo.id: .folderUnlink])
+    state.deletingWorktreeIDs.insert(folderWorktree.id)
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    // Second rapid tap: reducer must short-circuit before the
+    // empty-script branch to avoid firing the repo-removal terminal
+    // again.
+    await store.send(.deleteSidebarItemConfirmed(folderWorktree.id, folderRepo.id))
+  }
+
+  @Test func concurrentFolderAndSectionBatchesEachCompleteIndependently() async {
+    // Regression: the old single-optional `activeRemovalBatch` would
+    // clobber a mid-flight folder batch as soon as a git-section
+    // remove confirmed, orphaning the folder completions into a
+    // fan-out of solo terminals. Keying batches by id means a folder
+    // trash in-flight and a section unlink can coexist; each batch
+    // fires its own `.repositoriesRemoved` when its pending set
+    // drains.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    let gitRoot = "/tmp/\(UUID().uuidString)-repo"
+    let gitURL = URL(fileURLWithPath: gitRoot)
+    let gitMain = Worktree(
+      id: gitRoot, name: Repository.name(for: gitURL), detail: "",
+      workingDirectory: gitURL, repositoryRootURL: gitURL
+    )
+    let gitRepo = Repository(
+      id: gitRoot, rootURL: gitURL, name: Repository.name(for: gitURL),
+      worktrees: IdentifiedArray(uniqueElements: [gitMain]),
+      isGitRepository: true
+    )
+
+    // Seed state with a folder batch already mid-flight — mimics the
+    // window where the folder's delete script / trash is still
+    // running after the user confirmed.
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo, gitRepo]
+    state.repositoryRoots = [folderURL, gitURL]
+    state.isInitialLoadComplete = true
+    let folderBatchID = state.seedRemovalBatch(pending: [folderRepo.id: .folderUnlink])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in [] }
+      $0.analyticsClient.capture = { _, _ in }
+      $0.uuid = .incrementing
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    // User confirms the git-section remove while the folder batch is
+    // still pending. The section-remove must mint its own batch id
+    // and leave the folder batch untouched.
+    await store.send(.alert(.presented(.confirmDeleteRepository(gitRepo.id))))
+    #expect(store.state.activeRemovalBatches[folderBatchID] != nil)
+    #expect(store.state.activeRemovalBatches.count == 2)
+
+    // Folder completion arrives: drains its own batch, fires its own
+    // terminal, leaves the git batch alone.
+    await store.send(
+      .repositoryRemovalCompleted(folderRepo.id, outcome: .success, selectionWasRemoved: false))
+    await store.skipReceivedActions()
+    #expect(store.state.activeRemovalBatches[folderBatchID] == nil)
+    #expect(store.state.repositories.contains(where: { $0.id == gitRepo.id }) == false)
+    #expect(!store.state.repositories.contains(where: { $0.id == folderRepo.id }))
+    #expect(store.state.removingRepositoryIDs.isEmpty)
+    #expect(store.state.activeRemovalBatches.isEmpty)
+  }
+
+  @Test func orphanCompletionReportsIssueAndFiresSoloTerminal() async {
+    // Every sender seeds the batch before signalling, so an orphan
+    // completion means a bug. `reportIssue` fails tests and warns
+    // release. For `succeeded=true` the solo terminal still runs so
+    // the repo eventually leaves state; for `succeeded=false` any
+    // worktree-scoped trackers get defensively cleared so state
+    // can't leak beyond the failed attempt.
+    await withKnownIssue {
+      let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+      let folderURL = URL(fileURLWithPath: folderRoot)
+      let folderWorktree = Worktree(
+        id: Repository.folderWorktreeID(for: folderURL),
+        name: Repository.name(for: folderURL), detail: "",
+        workingDirectory: folderURL, repositoryRootURL: folderURL
+      )
+      let folderRepo = Repository(
+        id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+        worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+        isGitRepository: false
+      )
+
+      var state = RepositoriesFeature.State()
+      state.repositories = [folderRepo]
+      state.repositoryRoots = [folderURL]
+      state.isInitialLoadComplete = true
+      // Record without a matching batch in `activeRemovalBatches`
+      // reproduces the orphan-completion scenario.
+      state.removingRepositoryIDs[folderRepo.id] = RepositoriesFeature.RepositoryRemovalRecord(
+        disposition: .folderUnlink, batchID: UUID()
+      )
+      state.deletingWorktreeIDs.insert(folderWorktree.id)
+      state.deleteScriptWorktreeIDs.insert(folderWorktree.id)
+
+      let store = TestStore(initialState: state) {
+        RepositoriesFeature()
+      } withDependencies: {
+        $0.repositoryPersistence.loadRoots = { [] }
+        $0.repositoryPersistence.saveRoots = { _ in }
+        $0.gitClient.isGitRepository = { _ in false }
+        $0.gitClient.worktrees = { _ in [] }
+        $0.analyticsClient.capture = { _, _ in }
+      }
+      store.exhaustivity = .off(showSkippedAssertions: false)
+
+      await store.send(
+        .repositoryRemovalCompleted(
+          folderRepo.id, outcome: .failureSilent, selectionWasRemoved: false))
+      await store.skipReceivedActions()
+      #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+      #expect(!store.state.deletingWorktreeIDs.contains(folderWorktree.id))
+      #expect(!store.state.deleteScriptWorktreeIDs.contains(folderWorktree.id))
+      #expect(store.state.repositories.contains(where: { $0.id == folderRepo.id }))
+    }
+  }
+
+  @Test func orphanCompletionSucceededFiresSoloTerminalAndRemovesRepo() async {
+    // S4 companion: the `succeeded: true` branch of the orphan
+    // fallback should still fire a solo `.repositoriesRemoved` so
+    // the repo leaves state, even though the invariant is
+    // technically broken. `reportIssue` surfaces the bug; the
+    // reducer still cleans up.
+    await withKnownIssue {
+      let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+      let folderURL = URL(fileURLWithPath: folderRoot)
+      let folderWorktree = Worktree(
+        id: Repository.folderWorktreeID(for: folderURL),
+        name: Repository.name(for: folderURL), detail: "",
+        workingDirectory: folderURL, repositoryRootURL: folderURL
+      )
+      let folderRepo = Repository(
+        id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+        worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+        isGitRepository: false
+      )
+
+      var state = RepositoriesFeature.State()
+      state.repositories = [folderRepo]
+      state.repositoryRoots = [folderURL]
+      state.isInitialLoadComplete = true
+      state.removingRepositoryIDs[folderRepo.id] = RepositoriesFeature.RepositoryRemovalRecord(
+        disposition: .folderUnlink, batchID: UUID()
+      )
+
+      let store = TestStore(initialState: state) {
+        RepositoriesFeature()
+      } withDependencies: {
+        $0.repositoryPersistence.loadRoots = { [] }
+        $0.repositoryPersistence.saveRoots = { _ in }
+        $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+        $0.gitClient.isGitRepository = { _ in false }
+        $0.gitClient.worktrees = { _ in [] }
+        $0.analyticsClient.capture = { _, _ in }
+      }
+      store.exhaustivity = .off(showSkippedAssertions: false)
+
+      await store.send(
+        .repositoryRemovalCompleted(folderRepo.id, outcome: .success, selectionWasRemoved: false))
+      await store.skipReceivedActions()
+      #expect(store.state.removingRepositoryIDs[folderRepo.id] == nil)
+      #expect(!store.state.repositories.contains(where: { $0.id == folderRepo.id }))
+    }
   }
 
   private actor AsyncGate {

@@ -361,6 +361,54 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .stop))
   }
 
+  // MARK: - Named script actions.
+
+  @Test func worktreeScriptRun() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let scriptID = UUID(uuidString: "AA0E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/script/\(scriptID.uuidString)/run")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .runScript(scriptID: scriptID))
+    )
+  }
+
+  @Test func worktreeScriptStop() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let scriptID = UUID(uuidString: "AA0E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/script/\(scriptID.uuidString)/stop")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .stopScript(scriptID: scriptID))
+    )
+  }
+
+  @Test func worktreeScriptInvalidUUIDReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/script/not-a-uuid/run")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreeScriptUnknownVerbReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let scriptID = UUID(uuidString: "AA0E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/script/\(scriptID.uuidString)/explode")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreeScriptMissingVerbReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let scriptID = UUID(uuidString: "AA0E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/script/\(scriptID.uuidString)")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreeScriptMissingIDReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/script")!
+    #expect(parse(url) == nil)
+  }
+
   // MARK: - Worktree with no ID.
 
   @Test func worktreeWithNoIDReturnsNil() {

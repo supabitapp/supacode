@@ -118,8 +118,35 @@ private nonisolated enum DeeplinkParser {
         pathSegments: pathSegments,
         queryItems: queryItems,
       )
+    case "script":
+      return parseWorktreeScript(worktreeID: worktreeID, pathSegments: pathSegments)
     default:
       logger.warning("Unrecognized worktree action: \(action)")
+      return nil
+    }
+  }
+
+  private static func parseWorktreeScript(
+    worktreeID: Worktree.ID,
+    pathSegments: [String]
+  ) -> Deeplink? {
+    // Expected: "script/<script-uuid>/run" or "script/<script-uuid>/stop".
+    guard pathSegments.count >= 4 else {
+      logger.warning("Script deeplink missing script ID or action")
+      return nil
+    }
+    guard let scriptID = UUID(uuidString: pathSegments[2]) else {
+      logger.warning("Invalid script UUID: \(pathSegments[2])")
+      return nil
+    }
+    let verb = pathSegments[3]
+    switch verb {
+    case "run":
+      return .worktree(id: worktreeID, action: .runScript(scriptID: scriptID))
+    case "stop":
+      return .worktree(id: worktreeID, action: .stopScript(scriptID: scriptID))
+    default:
+      logger.warning("Unrecognized script action: \(verb)")
       return nil
     }
   }

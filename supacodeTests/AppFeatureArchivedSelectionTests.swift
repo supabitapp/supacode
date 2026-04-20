@@ -2,6 +2,8 @@ import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
+import Sharing
 import Testing
 
 @testable import SupacodeSettingsFeature
@@ -27,7 +29,7 @@ struct AppFeatureArchivedSelectionTests {
     )
     var repositoriesState = RepositoriesFeature.State(repositories: [repository])
     repositoriesState.selection = .worktree(worktree.id)
-    let saved = LockIsolated<[Worktree.ID?]>([])
+    let priorFocus = repositoriesState.sidebar.focusedWorktreeID
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -36,9 +38,6 @@ struct AppFeatureArchivedSelectionTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.repositoryPersistence.saveLastFocusedWorktreeID = { id in
-        saved.withValue { $0.append(id) }
-      }
       $0.terminalClient.send = { _ in }
       $0.worktreeInfoWatcher.send = { _ in }
     }
@@ -48,7 +47,10 @@ struct AppFeatureArchivedSelectionTests {
     }
     await store.receive(\.repositories.delegate.selectedWorktreeChanged)
     await store.finish()
-    #expect(saved.value.isEmpty)
+    // Selecting the archived list must NOT overwrite the last
+    // focused live worktree — the sidebar focus should be
+    // untouched so returning from archives restores the prior row.
+    #expect(store.state.repositories.sidebar.focusedWorktreeID == priorFocus)
   }
 
   @Test(.dependencies) func repositoriesChangedPrunesArchivedWorktreesFromTerminalAndRunScriptStatus() async {
@@ -75,7 +77,14 @@ struct AppFeatureArchivedSelectionTests {
     )
     var repositoriesState = RepositoriesFeature.State(repositories: [repository])
     repositoriesState.selection = .worktree(activeWorktree.id)
-    repositoriesState.archivedWorktreeDates[archivedWorktree.id] = Date(timeIntervalSince1970: 1_000_000)
+    repositoriesState.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: archivedWorktree.id,
+        in: repository.id,
+        bucket: .archived,
+        item: .init(archivedAt: Date(timeIntervalSince1970: 1_000_000))
+      )
+    }
     var appState = AppFeature.State(
       repositories: repositoriesState,
       settings: SettingsFeature.State()

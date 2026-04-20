@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 
 /// Resolves a worktree ID from an explicit flag or `$SUPACODE_WORKTREE_ID`.
 nonisolated func resolveWorktreeID(_ explicit: String?) throws -> String {
@@ -38,6 +39,18 @@ nonisolated func resolveRepoID(_ explicit: String?) throws -> String {
     )
   }
   return id
+}
+
+/// Validates that a `--script` argument is a well-formed UUID and returns
+/// the canonical `UUID.uuidString` form (uppercased). Fails early so the
+/// CLI surfaces a helpful error before dispatching an unparsable deeplink.
+nonisolated func validatedScriptID(_ raw: String) throws -> String {
+  guard let uuid = UUID(uuidString: raw) else {
+    throw ValidationError(
+      "Invalid --script value: expected a UUID. Run `supacode worktree script list` to list script IDs."
+    )
+  }
+  return uuid.uuidString
 }
 
 private nonisolated func nonEmpty(_ value: String?) -> String? {

@@ -107,16 +107,26 @@ nonisolated extension SharedReaderKey where Self == PinnedWorktreeIDsKey.Default
 }
 
 public nonisolated enum RepositoryPathNormalizer {
+  /// Canonical single-path normalisation. Returns `nil` for empty
+  /// or whitespace-only inputs so callers can drop bogus entries
+  /// without constructing a throwaway array first. Every
+  /// repository / worktree identifier at rest goes through this
+  /// codepath so string comparisons against live `Repository.ID`
+  /// and `Worktree.ID` values stay consistent.
+  public static func normalize(_ path: String) -> String? {
+    let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    return URL(fileURLWithPath: trimmed)
+      .standardizedFileURL
+      .path(percentEncoded: false)
+  }
+
   public static func normalize(_ paths: [String]) -> [String] {
     var seen = Set<String>()
     var normalized: [String] = []
     normalized.reserveCapacity(paths.count)
     for path in paths {
-      let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty else { continue }
-      let resolved = URL(fileURLWithPath: trimmed)
-        .standardizedFileURL
-        .path(percentEncoded: false)
+      guard let resolved = normalize(path) else { continue }
       if seen.insert(resolved).inserted {
         normalized.append(resolved)
       }

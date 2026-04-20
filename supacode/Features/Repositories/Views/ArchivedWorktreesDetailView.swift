@@ -30,7 +30,7 @@ struct ArchivedWorktreesDetailView: View {
     let deleteWorktreeAction: (() -> Void)? = {
       guard !selectedTargets.isEmpty else { return nil }
       return {
-        store.send(.requestDeleteWorktrees(selectedTargets))
+        store.send(.requestDeleteSidebarItems(selectedTargets))
       }
     }()
     let confirmWorktreeAction: (() -> Void)? = {
@@ -58,7 +58,14 @@ struct ArchivedWorktreesDetailView: View {
                     store.send(.unarchiveWorktree(worktree.id))
                   },
                   onDelete: {
-                    store.send(.requestDeleteWorktree(worktree.id, group.repository.id))
+                    store.send(
+                      .requestDeleteSidebarItems([
+                        RepositoriesFeature.DeleteWorktreeTarget(
+                          worktreeID: worktree.id,
+                          repositoryID: group.repository.id
+                        )
+                      ])
+                    )
                   }
                 )
                 .tag(worktree.id)

@@ -36,6 +36,9 @@ function_body_length:
   warning: 100
   error: 150
 
+nesting:
+  type_level: 2
+
 redundant_discardable_let:
   ignore_swiftui_view_bodies: true
 

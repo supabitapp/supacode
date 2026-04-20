@@ -10,7 +10,7 @@ struct SidebarView: View {
 
   var body: some View {
     let state = store.state
-    let visibleHotkeyRows = state.orderedWorktreeRows(includingRepositoryIDs: state.expandedRepositoryIDs)
+    let visibleHotkeyRows = state.orderedSidebarItems(includingRepositoryIDs: state.expandedRepositoryIDs)
     let effectiveSelectedRows = state.effectiveSidebarSelectedRows
     let confirmWorktreeAction = makeConfirmWorktreeAction(state: state)
     let archiveWorktreeAction = makeArchiveWorktreeAction(rows: effectiveSelectedRows)
@@ -28,9 +28,9 @@ struct SidebarView: View {
         } label: {
           Image(systemName: "folder.badge.plus")
             .offset(y: -1)
-            .accessibilityLabel("Add Repository")
+            .accessibilityLabel("Add Repository or Folder")
         }
-        .help("Add Repository (\(openRepo?.display ?? "none"))")
+        .help("Add Repository or Folder (\(openRepo?.display ?? "none"))")
       }
     }
     .focusedSceneValue(\.confirmWorktreeAction, confirmWorktreeAction)
@@ -49,7 +49,7 @@ struct SidebarView: View {
   }
 
   private func makeArchiveWorktreeAction(
-    rows: [WorktreeRowModel]
+    rows: [SidebarItemModel]
   ) -> (() -> Void)? {
     let targets =
       rows
@@ -71,7 +71,7 @@ struct SidebarView: View {
   }
 
   private func makeDeleteWorktreeAction(
-    rows: [WorktreeRowModel]
+    rows: [SidebarItemModel]
   ) -> (() -> Void)? {
     let targets =
       rows
@@ -84,11 +84,7 @@ struct SidebarView: View {
       }
     guard !targets.isEmpty else { return nil }
     return {
-      if targets.count == 1, let target = targets.first {
-        store.send(.requestDeleteWorktree(target.worktreeID, target.repositoryID))
-      } else {
-        store.send(.requestDeleteWorktrees(targets))
-      }
+      store.send(.requestDeleteSidebarItems(targets))
     }
   }
 }
