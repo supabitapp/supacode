@@ -1018,7 +1018,13 @@ final class GhosttySurfaceView: NSView, Identifiable {
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     guard event.type == .keyDown else { return false }
     guard let surface else { return false }
-    guard focused else { return false }
+    // `focused` is a cached flag updated via `becomeFirstResponder` /
+    // `resignFirstResponder`, but AppKit calls `performKeyEquivalent`
+    // on every view in the window — including this one when the
+    // sidebar `List` has been clicked but didn't formally demote us
+    // out of the responder chain. Gate strictly on AppKit's current
+    // answer so a click on the sidebar lets ⌘⌫ reach the main menu.
+    guard focused, window?.firstResponder === self else { return false }
 
     if let bindingFlags = bindingFlags(for: event, surface: surface) {
       // Only forward to the main menu when the event actually matches one of our registered
