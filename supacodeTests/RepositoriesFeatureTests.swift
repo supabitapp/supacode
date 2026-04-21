@@ -1995,7 +1995,7 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2028,7 +2028,7 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2055,7 +2055,7 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2076,6 +2076,77 @@ struct RepositoriesFeatureTests {
     #expect(store.state.alert == nil)
   }
 
+  @Test func runningScriptColorsReturnsTintForWorktreeOutsideSelectedRepo() {
+    // Regression: running-script tint for a worktree in a repository
+    // other than the selected one used to fall back to `.green`
+    // because the view-side `scriptsByID` lookup only carried the
+    // selected repo's scripts. The tint now travels with the running
+    // entry, so this asserts the cross-repo resolution.
+    let repoA = "/tmp/repo-a"
+    let repoB = "/tmp/repo-b"
+    let worktreeA = makeWorktree(id: "\(repoA)/main", name: "main", repoRoot: repoA)
+    let worktreeB = makeWorktree(id: "\(repoB)/main", name: "main", repoRoot: repoB)
+    let repositoryA = makeRepository(id: repoA, worktrees: [worktreeA])
+    let repositoryB = makeRepository(id: repoB, worktrees: [worktreeB])
+    var state = makeState(repositories: [repositoryA, repositoryB])
+    state.selection = .worktree(worktreeA.id)
+    let scriptID = UUID()
+    state.runningScriptsByWorktreeID = [worktreeB.id: [scriptID: .purple]]
+
+    #expect(state.runningScriptColors(for: worktreeB.id) == [.purple])
+  }
+
+  @Test func runningScriptColorsOrdersMultipleScriptsBySortedID() {
+    let repoRoot = "/tmp/repo"
+    let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [worktree])
+    var state = makeState(repositories: [repository])
+    let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    state.runningScriptsByWorktreeID = [
+      worktree.id: [
+        secondID: .orange,
+        firstID: .purple,
+      ],
+    ]
+
+    #expect(state.runningScriptColors(for: worktree.id) == [.purple, .orange])
+  }
+
+  @Test(.dependencies) func scriptCompletedPartialCompletionPreservesSurvivors() async {
+    let repoRoot = "/tmp/repo"
+    let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [worktree])
+    let completing = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
+    let surviving = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
+    var state = makeState(repositories: [repository])
+    state.runningScriptsByWorktreeID = [
+      worktree.id: [
+        completing.id: completing.resolvedTintColor,
+        surviving.id: surviving.resolvedTintColor,
+      ],
+    ]
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .scriptCompleted(
+        worktreeID: worktree.id,
+        scriptID: completing.id,
+        kind: .script(completing),
+        exitCode: 0,
+        tabId: nil
+      )
+    ) {
+      $0.runningScriptsByWorktreeID = [
+        worktree.id: [surviving.id: surviving.resolvedTintColor],
+      ]
+    }
+    #expect(store.state.alert == nil)
+  }
+
   @Test(.dependencies) func viewTerminalTabSelectsWorktreeAndDelegatesTabSelection() async {
     let testID = UUID().uuidString
     let repoRoot = "/tmp/\(testID)-repo"
@@ -2084,7 +2155,7 @@ struct RepositoriesFeatureTests {
     let tabId = TerminalTabID()
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
-    state.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    state.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()

@@ -94,7 +94,7 @@ struct RepositoriesFeature {
     var pendingWorktrees: [PendingWorktree] = []
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
-    var runningScriptsByWorktreeID: [Worktree.ID: Set<UUID>] = [:]
+    var runningScriptsByWorktreeID: [Worktree.ID: [UUID: TerminalTabTintColor]] = [:]
     var archivingWorktreeIDs: Set<Worktree.ID> = []
     var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
@@ -1425,11 +1425,11 @@ struct RepositoriesFeature {
         )
 
       case .scriptCompleted(let worktreeID, let scriptID, let kind, let exitCode, let tabId):
-        guard var ids = state.runningScriptsByWorktreeID[worktreeID], ids.contains(scriptID) else {
+        guard var ids = state.runningScriptsByWorktreeID[worktreeID], ids[scriptID] != nil else {
           repositoriesLogger.debug("Ignoring scriptCompleted for \(worktreeID)/\(scriptID): not tracked")
           return .none
         }
-        ids.remove(scriptID)
+        ids.removeValue(forKey: scriptID)
         if ids.isEmpty {
           state.runningScriptsByWorktreeID.removeValue(forKey: worktreeID)
         } else {
@@ -3657,15 +3657,12 @@ extension RepositoriesFeature.State {
   }
 
   /// Tint colors for scripts currently running in the given worktree,
-  /// ordered deterministically by script ID. Falls back to `.green`
-  /// for script IDs not found in the lookup (e.g. when the selected
-  /// worktree belongs to a different repository).
-  func runningScriptColors(
-    for worktreeID: Worktree.ID,
-    scriptsByID: [UUID: ScriptDefinition]
-  ) -> [TerminalTabTintColor] {
-    guard let scriptIDs = runningScriptsByWorktreeID[worktreeID] else { return [] }
-    return scriptIDs.sorted().map { scriptsByID[$0]?.resolvedTintColor ?? .green }
+  /// ordered deterministically by script ID. The tint travels alongside
+  /// the running script ID so the color resolves correctly even when
+  /// the worktree belongs to a repository other than the selected one.
+  func runningScriptColors(for worktreeID: Worktree.ID) -> [TerminalTabTintColor] {
+    guard let tintsByID = runningScriptsByWorktreeID[worktreeID] else { return [] }
+    return tintsByID.sorted(by: { $0.key < $1.key }).map(\.value)
   }
 
   func pendingWorktree(for id: Worktree.ID?) -> PendingWorktree? {

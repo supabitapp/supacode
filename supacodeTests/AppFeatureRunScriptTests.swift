@@ -53,7 +53,7 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runScript)
     await store.receive(\.runNamedScript) {
-      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
 
     }
     await store.finish()
@@ -89,7 +89,7 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(.runNamedScript(definition)) {
-      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
     }
     await store.finish()
   }
@@ -104,7 +104,7 @@ struct AppFeatureRunScriptTests {
     )
     initialState.scripts = [definition]
     // Pre-populate running state to simulate an already-running script.
-    initialState.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    initialState.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: initialState) {
       AppFeature()
@@ -124,7 +124,7 @@ struct AppFeatureRunScriptTests {
     let repositories = makeRepositoriesState(worktree: worktree)
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
     var repositoriesState = repositories
-    repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
 
     let store = TestStore(
       initialState: AppFeature.State(
@@ -236,7 +236,7 @@ struct AppFeatureRunScriptTests {
     // Simulate a script that is running but has been removed from
     // the settings (e.g. user deleted it while it was executing).
     var repositoriesState = repositories
-    repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
 
     let store = TestStore(
       initialState: AppFeature.State(

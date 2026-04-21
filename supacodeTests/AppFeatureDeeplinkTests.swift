@@ -296,7 +296,7 @@ struct AppFeatureDeeplinkTests {
     $persisted.withLock { $0.scripts = [definition] }
     defer { $persisted.withLock { $0.scripts = [] } }
     var repositories = makeRepositoriesState(worktree: worktree)
-    repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
@@ -403,7 +403,7 @@ struct AppFeatureDeeplinkTests {
     $persisted.withLock { $0.scripts = [definition] }
     defer { $persisted.withLock { $0.scripts = [] } }
     var repositories = makeRepositoriesState(worktree: worktree)
-    repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id]]
+    repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
     let sent = LockIsolated<[TerminalClient.Command]>([])

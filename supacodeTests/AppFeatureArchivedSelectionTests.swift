@@ -90,9 +90,13 @@ struct AppFeatureArchivedSelectionTests {
       settings: SettingsFeature.State()
     )
     let scriptID = UUID()
+    // Distinct tints per worktree so the pruner is asserted to carry
+    // the surviving tint through untouched, not coincidentally match.
+    let activeTint: TerminalTabTintColor = .purple
+    let archivedTint: TerminalTabTintColor = .orange
     appState.repositories.runningScriptsByWorktreeID = [
-      activeWorktree.id: [scriptID],
-      archivedWorktree.id: [scriptID],
+      activeWorktree.id: [scriptID: activeTint],
+      archivedWorktree.id: [scriptID: archivedTint],
     ]
     let sentCommands = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: appState) {
@@ -106,7 +110,7 @@ struct AppFeatureArchivedSelectionTests {
     store.exhaustivity = .off
 
     await store.send(.repositories(.delegate(.repositoriesChanged([repository])))) {
-      $0.repositories.runningScriptsByWorktreeID = [activeWorktree.id: [scriptID]]
+      $0.repositories.runningScriptsByWorktreeID = [activeWorktree.id: [scriptID: activeTint]]
     }
     await store.finish()
 

@@ -46,8 +46,11 @@ struct AppFeature {
 
     /// Running script IDs for the currently selected worktree.
     var runningScriptIDs: Set<UUID> {
-      guard let worktreeID = repositories.selectedWorktreeID else { return [] }
-      return repositories.runningScriptsByWorktreeID[worktreeID] ?? []
+      guard
+        let worktreeID = repositories.selectedWorktreeID,
+        let tints = repositories.runningScriptsByWorktreeID[worktreeID]
+      else { return [] }
+      return Set(tints.keys)
     }
 
     /// Whether any `.run`-kind script is currently running in the selected worktree.
@@ -455,8 +458,8 @@ struct AppFeature {
         let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .none }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-        var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? []
-        ids.insert(definition.id)
+        var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
+        ids[definition.id] = definition.resolvedTintColor
         state.repositories.runningScriptsByWorktreeID[worktree.id] = ids
         return .run { _ in
           await terminalClient.send(
@@ -1244,8 +1247,8 @@ struct AppFeature {
       )
       return .none
     }
-    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? []
-    guard !runningIDs.contains(scriptID) else {
+    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? [:]
+    guard runningIDs[scriptID] == nil else {
       state.alert = scriptAlert(
         title: "Script already running",
         message: "\"\(definition.displayName)\" is already running in this worktree."
@@ -1263,7 +1266,7 @@ struct AppFeature {
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
     var updated = runningIDs
-    updated.insert(scriptID)
+    updated[scriptID] = definition.resolvedTintColor
     state.repositories.runningScriptsByWorktreeID[worktreeID] = updated
     let terminalClient = terminalClient
     return .run { _ in
@@ -1290,8 +1293,8 @@ struct AppFeature {
       )
       return .none
     }
-    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? []
-    guard runningIDs.contains(scriptID) else {
+    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? [:]
+    guard runningIDs[scriptID] != nil else {
       state.alert = scriptAlert(
         title: "Script not running",
         message: "\"\(definition.displayName)\" is not currently running in this worktree."

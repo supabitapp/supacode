@@ -167,7 +167,6 @@ private struct SidebarItemContainer: View {
   let shortcutHint: String?
   @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
-  @Environment(\.scriptsByID) private var scriptsByID
 
   var body: some View {
     SidebarItemView(
@@ -176,7 +175,7 @@ private struct SidebarItemContainer: View {
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       showsPullRequestInfo: !draggingWorktreeIDs.contains(row.id),
-      runningScriptColors: store.state.runningScriptColors(for: row.id, scriptsByID: scriptsByID),
+      runningScriptColors: store.state.runningScriptColors(for: row.id),
       isTaskRunning: terminalManager.stateIfExists(for: row.id)?.taskStatus == .running,
       showsNotificationIndicator: terminalManager.hasUnseenNotifications(for: row.id),
       notifications: terminalManager.stateIfExists(for: row.id)?.notifications ?? [],

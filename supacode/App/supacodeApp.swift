@@ -338,14 +338,14 @@ struct SupacodeApp: App {
         return
       }
       @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var settings
-      let runningIDs = store.repositories.runningScriptsByWorktreeID[worktree.id] ?? []
+      let runningIDs = store.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
       let data = settings.scripts.map { script in
         [
           "id": script.id.uuidString,
           "kind": script.kind.rawValue,
           "name": script.name,
           "displayName": script.displayName,
-          "running": runningIDs.contains(script.id) ? "1" : "",
+          "running": runningIDs[script.id] != nil ? "1" : "",
         ]
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
