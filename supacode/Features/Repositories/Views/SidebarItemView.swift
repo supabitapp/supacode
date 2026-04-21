@@ -457,7 +457,7 @@ private struct MultiColorPingDot: View {
     let resolved = uniqueColors
     if resolved.count <= 1 {
       PingDot(
-        style: resolved.first.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.green),
+        color: resolved.first ?? .green,
         size: size,
         showsSolidCenter: showsSolidCenter
       )
@@ -497,28 +497,22 @@ private struct CyclingDot: View {
   let colors: [Color]
   let size: CGFloat
   let showsSolidCenter: Bool
-  @State private var isPinging = false
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 2.0)) { timeline in
       let index = Self.colorIndex(for: timeline.date, count: colors.count)
+      let color = colors[index]
       ZStack {
-        Circle()
-          .stroke(colors[index], lineWidth: 1)
-          .frame(width: size, height: size)
-          .scaleEffect(isPinging ? 2 : 1)
-          .opacity(isPinging ? 0 : 0.6)
-          .animation(.easeOut(duration: 1).repeatForever(autoreverses: false), value: isPinging)
+        PingRing(color: color, size: size)
         if showsSolidCenter {
           Circle()
-            .fill(colors[index])
+            .fill(color)
             .frame(width: size, height: size)
         }
       }
       .animation(.easeInOut(duration: 0.6), value: index)
     }
     .accessibilityLabel("Run script active")
-    .task { isPinging = true }
   }
 
   private static func colorIndex(for date: Date, count: Int) -> Int {
@@ -530,28 +524,45 @@ private struct CyclingDot: View {
 
 // MARK: - Pulsing dot.
 
-private struct PingDot<S: ShapeStyle>: View {
-  let style: S
+private struct PingDot: View {
+  let color: Color
   let size: CGFloat
   let showsSolidCenter: Bool
-  @State private var isPinging = false
 
   var body: some View {
     ZStack {
-      Circle()
-        .stroke(style, lineWidth: 1)
-        .frame(width: size, height: size)
-        .scaleEffect(isPinging ? 2 : 1)
-        .opacity(isPinging ? 0 : 0.6)
-        .animation(.easeOut(duration: 1).repeatForever(autoreverses: false), value: isPinging)
+      PingRing(color: color, size: size)
       if showsSolidCenter {
         Circle()
-          .fill(style)
+          .fill(color)
           .frame(width: size, height: size)
       }
     }
     .accessibilityLabel("Run script active")
-    .task { isPinging = true }
+  }
+}
+
+/// Expanding, fading ring driven by `phaseAnimator` rather than
+/// `.repeatForever` so SwiftUI can pause the timeline when the view
+/// is occluded and so parent re-evaluations don't restart the cycle.
+private struct PingRing: View {
+  let color: Color
+  let size: CGFloat
+
+  var body: some View {
+    Circle()
+      .stroke(color, lineWidth: 1)
+      .frame(width: size, height: size)
+      .phaseAnimator([false, true]) { content, expanded in
+        content
+          .scaleEffect(expanded ? 2 : 1)
+          .opacity(expanded ? 0 : 0.6)
+      } animation: { expanded in
+        // Snap back to the seed phase instantly, then ease out the
+        // expansion — yields a non-autoreversing ping without the
+        // always-on `.repeatForever` animation driver.
+        expanded ? .easeOut(duration: 1) : .linear(duration: 0.001)
+      }
   }
 }
 

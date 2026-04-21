@@ -5,8 +5,6 @@ struct GhosttySurfaceProgressBar: View {
   let progressState: ghostty_action_progress_report_state_e
   let progressValue: Int?
 
-  @State private var position: CGFloat = 0
-
   var body: some View {
     let color: Color =
       switch progressState {
@@ -52,18 +50,11 @@ struct GhosttySurfaceProgressBar: View {
             Rectangle()
               .fill(color)
               .frame(width: geometry.size.width * 0.25, height: geometry.size.height)
-              .offset(x: position * (geometry.size.width * 0.75))
-          }
-          .onAppear {
-            withAnimation(
-              .easeInOut(duration: 1.2)
-                .repeatForever(autoreverses: true)
-            ) {
-              position = 1
-            }
-          }
-          .onDisappear {
-            position = 0
+              .phaseAnimator([false, true]) { content, moved in
+                content.offset(x: moved ? geometry.size.width * 0.75 : 0)
+              } animation: { _ in
+                .easeInOut(duration: 1.2)
+              }
           }
         }
       }
