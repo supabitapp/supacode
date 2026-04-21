@@ -6,6 +6,7 @@ struct TerminalTabsView: View {
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
+  let hasNotification: (TerminalTabID) -> Bool
 
   @State private var draggingTabId: TerminalTabID?
   @State private var draggingStartLocation: CGFloat?
@@ -32,6 +33,7 @@ struct TerminalTabsView: View {
             closeOthers: closeOthers,
             closeToRight: closeToRight,
             closeAll: closeAll,
+            hasNotification: hasNotification,
             scrollReader: scrollReader
           )
           .padding(.horizontal, TerminalTabBarMetrics.barPadding)

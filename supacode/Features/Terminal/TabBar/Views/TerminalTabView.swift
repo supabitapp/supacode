@@ -7,6 +7,7 @@ struct TerminalTabView: View {
   let isDragging: Bool
   let tabIndex: Int
   let fixedWidth: CGFloat?
+  let hasNotification: Bool
   let onSelect: () -> Void
   let onClose: () -> Void
   @Binding var closeButtonGestureActive: Bool
@@ -24,6 +25,7 @@ struct TerminalTabView: View {
           isActive: isActive,
           isHoveringTab: isHovering,
           isHoveringClose: isHoveringClose,
+          hasNotification: hasNotification,
           shortcutHint: shortcutHint,
           showsShortcutHint: showsShortcutHint
         )

@@ -53,6 +53,12 @@ final class WorktreeTerminalState {
     notifications.contains { !$0.isRead && $0.surfaceId == surfaceID }
   }
 
+  func hasUnseenNotification(forTabID tabID: TerminalTabID) -> Bool {
+    guard let tree = trees[tabID] else { return false }
+    let surfaceIDs = Set(tree.leaves().map(\.id))
+    return notifications.contains { !$0.isRead && surfaceIDs.contains($0.surfaceId) }
+  }
+
   /// Returns the most recent unread notification in this worktree, or nil.
   func latestUnreadNotification() -> WorktreeTerminalNotification? {
     notifications.filter { !$0.isRead }.max(by: { $0.createdAt < $1.createdAt })

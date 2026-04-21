@@ -12,6 +12,7 @@ struct TerminalTabsRowView: View {
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
+  let hasNotification: (TerminalTabID) -> Bool
   let scrollReader: ScrollViewProxy
 
   @State private var dropTargetIndex: Int?
@@ -28,6 +29,7 @@ struct TerminalTabsRowView: View {
               isDragging: draggingTabId == id,
               tabIndex: index,
               fixedWidth: fixedTabWidth,
+              hasNotification: hasNotification(id),
               onSelect: {
                 manager.selectTab(id)
               },

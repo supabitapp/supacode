@@ -10,6 +10,7 @@ struct TerminalTabBarView: View {
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
+  let hasNotification: (TerminalTabID) -> Bool
   @Environment(\.controlActiveState)
   private var activeState
 
@@ -20,7 +21,8 @@ struct TerminalTabBarView: View {
         closeTab: closeTab,
         closeOthers: closeOthers,
         closeToRight: closeToRight,
-        closeAll: closeAll
+        closeAll: closeAll,
+        hasNotification: hasNotification
       )
       Spacer(minLength: 0)
       TerminalTabBarTrailingAccessories(

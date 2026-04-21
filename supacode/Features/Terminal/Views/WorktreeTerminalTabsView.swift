@@ -40,6 +40,9 @@ struct WorktreeTerminalTabsView: View {
           },
           closeAll: {
             state.closeAllTabs()
+          },
+          hasNotification: { tabId in
+            state.hasUnseenNotification(forTabID: tabId)
           }
         )
         .transition(.move(edge: .top).combined(with: .opacity))

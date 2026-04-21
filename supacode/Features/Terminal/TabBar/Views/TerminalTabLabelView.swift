@@ -6,6 +6,7 @@ struct TerminalTabLabelView: View {
   let isActive: Bool
   let isHoveringTab: Bool
   let isHoveringClose: Bool
+  let hasNotification: Bool
   let shortcutHint: String?
   let showsShortcutHint: Bool
 
@@ -22,6 +23,13 @@ struct TerminalTabLabelView: View {
             height: TerminalTabBarMetrics.closeButtonSize
           )
           .accessibilityHidden(true)
+      }
+      if hasNotification {
+        Circle()
+          .fill(.orange)
+          .frame(width: 6, height: 6)
+          .transition(.opacity.combined(with: .scale))
+          .accessibilityLabel("Unread notifications")
       }
       Text(tab.title)
         .font(.caption)
