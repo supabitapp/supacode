@@ -2,8 +2,6 @@ import Foundation
 import IdentifiedCollections
 import SupacodeSettingsShared
 
-private nonisolated let repositoryClassificationLogger = SupaLogger("RepositoryClassification")
-
 struct Repository: Identifiable, Hashable, Sendable {
   let id: String
   let rootURL: URL
@@ -34,14 +32,21 @@ struct Repository: Identifiable, Hashable, Sendable {
   }
 
   /// Synchronous check for whether a root URL is a git repository.
-  /// Covers the two layouts git actually produces:
-  ///   1. `rootURL` IS the metadata dir — `.git/` for a normal repo,
-  ///      `.bare` for the naming convention Supacode's `name(for:)`
-  ///      helper already recognizes. Lastpathcomponent check.
-  ///   2. Standard repo: `rootURL/.git` exists — a directory for
-  ///      primary repos, a worktree-pointer file for linked
-  ///      worktrees (also the git-wt bare wrapper, where `.git` is
-  ///      a pointer file to the sibling bare dir).
+  /// Approximates git's own `is_git_directory()` heuristic so the
+  /// result matches what `git` itself would accept as a repo root:
+  ///   1. `.bare` / `.git` root names — cheap short-circuit covering
+  ///      Supacode's own `.bare` layout and the common `*.git` bare
+  ///      convention when the root is literally the metadata dir.
+  ///   2. `rootURL/.git` exists (file or directory) — standard
+  ///      worktree root. Primary repo, linked worktree pointer,
+  ///      submodule, `--separate-git-dir` pointer, or the git-wt
+  ///      bare wrapper all surface through this one check.
+  ///   3. `HEAD` + `objects` + `refs` all present at the root — any
+  ///      git dir (bare or otherwise) regardless of naming. Catches
+  ///      bare repos whose directory name does not end in `.git`.
+  ///      `HEAD` must be a regular file; git itself rejects a
+  ///      `HEAD` directory, so a directory with three child dirs
+  ///      named HEAD / objects / refs is not a repo.
   /// Pure FileManager call — safe to invoke off the main actor from
   /// the `GitClientDependency` closure.
   nonisolated static func isGitRepository(at rootURL: URL) -> Bool {
@@ -57,31 +62,14 @@ struct Repository: Identifiable, Hashable, Sendable {
     if fileManager.fileExists(atPath: dotGitPath) {
       return true
     }
-    // Bare-clone convention: `<name>.git/` with HEAD + objects/ + refs/
-    // at the root (what `git clone --bare` produces). The name-only
-    // `.bare` / `.git` shortcuts above cover Supacode's own layouts;
-    // this catches user-managed bare clones imported via the Open panel.
-    guard lastComponent.hasSuffix(".git") else { return false }
-    let head = rootURL.appending(path: "HEAD", directoryHint: .notDirectory).path(percentEncoded: false)
-    let objects = rootURL.appending(path: "objects", directoryHint: .isDirectory).path(percentEncoded: false)
-    let refs = rootURL.appending(path: "refs", directoryHint: .isDirectory).path(percentEncoded: false)
-    let hasHead = fileManager.fileExists(atPath: head)
-    let hasObjects = fileManager.fileExists(atPath: objects)
-    let hasRefs = fileManager.fileExists(atPath: refs)
-    if hasHead && hasObjects && hasRefs {
-      return true
-    }
-    // `.git`-suffixed directory missing one of the three structural
-    // parts of a bare clone — log so the ambiguous "looks like a
-    // damaged bare clone but classifies as a folder" case is
-    // observable in telemetry without widening classification and
-    // creating false positives for empty `.git` directories.
-    repositoryClassificationLogger.warning(
-      "Directory ending in .git missing bare-clone structure — "
-        + "classified as folder. path=\(rootURL.path(percentEncoded: false)) "
-        + "hasHead=\(hasHead) hasObjects=\(hasObjects) hasRefs=\(hasRefs)"
-    )
-    return false
+    let headPath = rootURL.appending(path: "HEAD", directoryHint: .notDirectory).path(percentEncoded: false)
+    let objectsPath = rootURL.appending(path: "objects", directoryHint: .isDirectory).path(percentEncoded: false)
+    let refsPath = rootURL.appending(path: "refs", directoryHint: .isDirectory).path(percentEncoded: false)
+    var headIsDirectory: ObjCBool = false
+    let headExists = fileManager.fileExists(atPath: headPath, isDirectory: &headIsDirectory)
+    guard headExists, !headIsDirectory.boolValue else { return false }
+    return fileManager.fileExists(atPath: objectsPath)
+      && fileManager.fileExists(atPath: refsPath)
   }
 
   /// Prefix on folder-synthetic worktree ids. Single source of truth

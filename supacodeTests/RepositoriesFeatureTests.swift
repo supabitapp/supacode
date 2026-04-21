@@ -5094,6 +5094,78 @@ struct RepositoriesFeatureTests {
     #expect(Repository.isGitRepository(at: fakeRoot) == false)
   }
 
+  @Test func isGitRepositoryRecognizesBareRepositoryRegardlessOfName() throws {
+    // A bare repo does not have to be named `*.git` — classification
+    // should match git's own `is_git_directory()` heuristic (HEAD +
+    // objects + refs) regardless of the directory name. Covers bare
+    // clones the user renamed away from the `*.git` convention,
+    // which previously misclassified as folders.
+    let bareRoot = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-renamed-bare")
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(at: bareRoot, withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: bareRoot.appending(path: "objects"), withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: bareRoot.appending(path: "refs"), withIntermediateDirectories: true)
+    try Data("ref: refs/heads/main\n".utf8).write(to: bareRoot.appending(path: "HEAD"))
+    defer { try? fileManager.removeItem(at: bareRoot) }
+
+    #expect(Repository.isGitRepository(at: bareRoot))
+  }
+
+  @Test func isGitRepositoryRejectsDirectoryMissingGitStructure() throws {
+    // A directory with only some of the HEAD/objects/refs trio is
+    // not a git dir — git itself would reject it, and so must we.
+    // Prevents false positives from directories that coincidentally
+    // contain one or two of those names.
+    let partialRoot = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-partial")
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(at: partialRoot, withIntermediateDirectories: true)
+    try fileManager.createDirectory(
+      at: partialRoot.appending(path: "objects"),
+      withIntermediateDirectories: true
+    )
+    try Data("ref: refs/heads/main\n".utf8).write(to: partialRoot.appending(path: "HEAD"))
+    defer { try? fileManager.removeItem(at: partialRoot) }
+
+    #expect(Repository.isGitRepository(at: partialRoot) == false)
+  }
+
+  @Test func isGitRepositoryRejectsHeadDirectoryLookalike() throws {
+    // In a real git dir `HEAD` is a regular file holding a symbolic
+    // ref. A directory that happens to contain `HEAD/`, `objects/`,
+    // and `refs/` as directories is not a git dir — git itself
+    // rejects it. Guards against false positives on unrelated
+    // directories that coincidentally share those three names.
+    let lookalikeRoot = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-head-dir")
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(at: lookalikeRoot, withIntermediateDirectories: true)
+    try fileManager.createDirectory(
+      at: lookalikeRoot.appending(path: "HEAD"),
+      withIntermediateDirectories: true
+    )
+    try fileManager.createDirectory(
+      at: lookalikeRoot.appending(path: "objects"),
+      withIntermediateDirectories: true
+    )
+    try fileManager.createDirectory(
+      at: lookalikeRoot.appending(path: "refs"),
+      withIntermediateDirectories: true
+    )
+    defer { try? fileManager.removeItem(at: lookalikeRoot) }
+
+    #expect(Repository.isGitRepository(at: lookalikeRoot) == false)
+  }
+
+  @Test func isGitRepositoryReturnsFalseForNonexistentPath() {
+    // The caller (`applyRepositories` in `RepositoriesFeature`)
+    // gates on `rootDirectoryExists` before classifying, but the
+    // classifier itself is a pure helper and must still return a
+    // clean `false` for a missing path — no crash, no fallback
+    // to `true` — in case the existence gate is bypassed or a
+    // race deletes the directory between the two calls.
+    let missing = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-never-existed")
+    #expect(Repository.isGitRepository(at: missing) == false)
+  }
+
   @Test func loadPersistedRepositoriesClassifiesNonGitPathAsFolder() async {
     let repoRoot = "/tmp/\(UUID().uuidString)-folder"
     let rootURL = URL(fileURLWithPath: repoRoot)
