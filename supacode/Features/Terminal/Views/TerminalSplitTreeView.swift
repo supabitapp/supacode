@@ -12,6 +12,10 @@ struct TerminalSplitTreeView: View {
   // and `unfocused-split-opacity` config values. Fill is nil when the config
   // is unreadable; callers must skip the overlay in that case.
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+  // Returns whether a given surface has unread notifications. The closure
+  // is read inside the leaf view so SwiftUI picks up per-surface changes
+  // via the Observation tracking on the underlying state.
+  let hasNotification: (UUID) -> Bool
   let action: (Operation) -> Void
 
   private static let dragType = UTType(exportedAs: "sh.supacode.ghosttySurfaceId")
@@ -35,6 +39,7 @@ struct TerminalSplitTreeView: View {
         isRoot: node == tree.root,
         activeSurfaceID: activeSurfaceID,
         unfocusedSplitOverlay: unfocusedSplitOverlay,
+        hasNotification: hasNotification,
         action: action
       )
       .id(node.structuralIdentity)
@@ -52,6 +57,7 @@ struct TerminalSplitTreeView: View {
     var isRoot: Bool = false
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+    let hasNotification: (UUID) -> Bool
     let action: (Operation) -> Void
 
     var body: some View {
@@ -62,6 +68,7 @@ struct TerminalSplitTreeView: View {
           isSplit: !isRoot,
           activeSurfaceID: activeSurfaceID,
           unfocusedSplitOverlay: unfocusedSplitOverlay,
+          hasNotification: hasNotification(leafView.id),
           action: action
         )
       case .split(let split):
@@ -86,6 +93,7 @@ struct TerminalSplitTreeView: View {
               node: split.left,
               activeSurfaceID: activeSurfaceID,
               unfocusedSplitOverlay: unfocusedSplitOverlay,
+              hasNotification: hasNotification,
               action: action
             )
           },
@@ -94,6 +102,7 @@ struct TerminalSplitTreeView: View {
               node: split.right,
               activeSurfaceID: activeSurfaceID,
               unfocusedSplitOverlay: unfocusedSplitOverlay,
+              hasNotification: hasNotification,
               action: action
             )
           },
@@ -110,6 +119,7 @@ struct TerminalSplitTreeView: View {
     let isSplit: Bool
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+    let hasNotification: Bool
     let action: (Operation) -> Void
 
     @State private var dropState: DropState = .idle
@@ -140,6 +150,15 @@ struct TerminalSplitTreeView: View {
               GhosttySurfaceSearchOverlay(surfaceView: surfaceView)
             }
           }
+          .overlay(alignment: .topTrailing) {
+            if hasNotification {
+              SurfaceNotificationDot()
+                .padding(6)
+                .allowsHitTesting(false)
+                .transition(.opacity.combined(with: .scale))
+            }
+          }
+          .animation(.easeInOut(duration: 0.2), value: hasNotification)
           .overlay(alignment: .top) {
             if isSplit {
               DragHandle(surfaceView: surfaceView)
@@ -323,6 +342,21 @@ struct TerminalSplitTreeView: View {
   }
 }
 
+// MARK: - Surface notification indicator.
+
+private struct SurfaceNotificationDot: View {
+  var body: some View {
+    Circle()
+      .fill(.orange)
+      .frame(width: 8, height: 8)
+      .overlay(
+        Circle()
+          .stroke(.background, lineWidth: 1)
+      )
+      .accessibilityLabel("Unread notifications")
+  }
+}
+
 // MARK: - Accessibility Container
 
 /// Wraps the SwiftUI split tree in an AppKit view so we can expose an ordered
@@ -331,6 +365,7 @@ struct TerminalSplitTreeAXContainer: NSViewRepresentable {
   let tree: SplitTree<GhosttySurfaceView>
   let activeSurfaceID: UUID?
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+  let hasNotification: (UUID) -> Bool
   let action: (TerminalSplitTreeView.Operation) -> Void
 
   func makeNSView(context: Context) -> TerminalSplitAXContainerView {
@@ -344,6 +379,7 @@ struct TerminalSplitTreeAXContainer: NSViewRepresentable {
           tree: tree,
           activeSurfaceID: activeSurfaceID,
           unfocusedSplitOverlay: unfocusedSplitOverlay,
+          hasNotification: hasNotification,
           action: action
         )
       ),

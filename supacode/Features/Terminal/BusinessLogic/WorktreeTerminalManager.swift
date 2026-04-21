@@ -290,8 +290,15 @@ final class WorktreeTerminalManager {
     state.isSelected = { [weak self] in
       self?.selectedWorktreeID == worktree.id
     }
-    state.onNotificationReceived = { [weak self] title, body in
-      self?.emit(.notificationReceived(worktreeID: worktree.id, title: title, body: body))
+    state.onNotificationReceived = { [weak self] surfaceID, title, body in
+      self?.emit(
+        .notificationReceived(
+          worktreeID: worktree.id,
+          surfaceID: surfaceID,
+          title: title,
+          body: body
+        )
+      )
     }
     state.onNotificationIndicatorChanged = { [weak self] in
       self?.emitNotificationIndicatorCountIfNeeded()
@@ -403,6 +410,35 @@ final class WorktreeTerminalManager {
 
   func hasUnseenNotifications(for worktreeID: Worktree.ID) -> Bool {
     states[worktreeID]?.hasUnseenNotification == true
+  }
+
+  /// Locates the most recent unread notification across all managed worktrees.
+  func latestUnreadNotificationLocation() -> NotificationLocation? {
+    var best: NotificationLocation?
+    var bestCreatedAt: Date?
+    for (worktreeID, state) in states {
+      guard let notification = state.latestUnreadNotification(),
+        let tabID = state.tabID(forSurfaceID: notification.surfaceId)
+      else { continue }
+      if let bestCreatedAt, bestCreatedAt >= notification.createdAt { continue }
+      best = NotificationLocation(
+        worktreeID: worktreeID,
+        tabID: tabID,
+        surfaceID: notification.surfaceId,
+        notificationID: notification.id,
+      )
+      bestCreatedAt = notification.createdAt
+    }
+    return best
+  }
+
+  /// Resolves the tab containing the given surface, if any.
+  func tabID(forWorktreeID worktreeID: Worktree.ID, surfaceID: UUID) -> TerminalTabID? {
+    states[worktreeID]?.tabID(forSurfaceID: surfaceID)
+  }
+
+  func markNotificationRead(worktreeID: Worktree.ID, notificationID: UUID) {
+    states[worktreeID]?.markNotificationRead(id: notificationID)
   }
 
   func saveAllLayoutSnapshots() {

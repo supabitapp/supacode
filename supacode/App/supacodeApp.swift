@@ -40,6 +40,11 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
       for url in buffered {
         appStore.send(.deeplinkReceived(url))
       }
+      // Route taps on delivered system notifications through the store
+      // so they follow the same dispatch path as URL-scheme deeplinks.
+      setSystemNotificationTapHandler { [weak appStore] url in
+        appStore?.send(.deeplinkReceived(url))
+      }
     }
   }
   var terminalManager: WorktreeTerminalManager?
@@ -218,6 +223,15 @@ struct SupacodeApp: App {
         },
         surfaceExistsInWorktree: { worktreeID, surfaceID in
           terminalManager.surfaceExistsInWorktree(worktreeID: worktreeID, surfaceID: surfaceID)
+        },
+        tabID: { worktreeID, surfaceID in
+          terminalManager.tabID(forWorktreeID: worktreeID, surfaceID: surfaceID)
+        },
+        latestUnreadNotification: {
+          terminalManager.latestUnreadNotificationLocation()
+        },
+        markNotificationRead: { worktreeID, notificationID in
+          terminalManager.markNotificationRead(worktreeID: worktreeID, notificationID: notificationID)
         }
       )
       values.worktreeInfoWatcher = WorktreeInfoWatcherClient(

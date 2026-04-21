@@ -166,7 +166,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemNotificationCount = 0
-      fixture.state.onNotificationReceived = { _, _ in
+      fixture.state.onNotificationReceived = { _, _, _ in
         systemNotificationCount += 1
       }
 
@@ -197,7 +197,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemNotificationCount = 0
-      fixture.state.onNotificationReceived = { _, _ in
+      fixture.state.onNotificationReceived = { _, _, _ in
         systemNotificationCount += 1
       }
 
@@ -224,7 +224,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemNotificationCount = 0
-      fixture.state.onNotificationReceived = { _, _ in
+      fixture.state.onNotificationReceived = { _, _, _ in
         systemNotificationCount += 1
       }
 

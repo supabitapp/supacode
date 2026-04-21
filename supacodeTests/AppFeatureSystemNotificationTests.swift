@@ -128,9 +128,10 @@ struct AppFeatureSystemNotificationTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.systemNotificationClient.send = { title, body in
+      $0.systemNotificationClient.send = { title, body, _ in
         sends.withValue { $0.append((title, body)) }
       }
+      $0.terminalClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
 
@@ -138,6 +139,7 @@ struct AppFeatureSystemNotificationTests {
       .terminalEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
           title: "Done",
           body: "Build succeeded"
         )
@@ -165,6 +167,8 @@ struct AppFeatureSystemNotificationTests {
       $0.notificationSoundClient.play = {
         plays.withValue { $0 += 1 }
       }
+      $0.systemNotificationClient.send = { _, _, _ in }
+      $0.terminalClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
 
@@ -172,6 +176,7 @@ struct AppFeatureSystemNotificationTests {
       .terminalEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
           title: "Done",
           body: "Build succeeded"
         )
@@ -198,7 +203,7 @@ struct AppFeatureSystemNotificationTests {
       $0.notificationSoundClient.play = {
         plays.withValue { $0 += 1 }
       }
-      $0.systemNotificationClient.send = { _, _ in
+      $0.systemNotificationClient.send = { _, _, _ in
         sends.withValue { $0 += 1 }
       }
     }
@@ -208,6 +213,7 @@ struct AppFeatureSystemNotificationTests {
       .terminalEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
           title: "Done",
           body: "Build succeeded"
         )

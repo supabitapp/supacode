@@ -3,13 +3,33 @@ import ComposableArchitecture
 import Foundation
 import UserNotifications
 
+/// Payload key under which the system notification stores the deeplink URL
+/// that should be dispatched when the user taps the notification banner.
+private nonisolated let deeplinkUserInfoKey = "supacode.deeplink"
+
+@MainActor
 private final class ForegroundSystemNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-  func userNotificationCenter(
+  var onDeeplinkTap: (@MainActor (URL) -> Void)?
+
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification
   ) async -> UNNotificationPresentationOptions {
     await Task.yield()
     return [.badge, .sound, .banner]
+  }
+
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse
+  ) async {
+    let userInfo = response.notification.request.content.userInfo
+    guard let raw = userInfo[deeplinkUserInfoKey] as? String,
+      let url = URL(string: raw)
+    else { return }
+    await MainActor.run {
+      onDeeplinkTap?(url)
+    }
   }
 }
 
@@ -23,6 +43,14 @@ private func configuredNotificationCenter() -> UNUserNotificationCenter {
     center.delegate = foregroundSystemNotificationDelegate
   }
   return center
+}
+
+/// Registers a handler invoked on the main actor whenever the user taps a
+/// delivered system notification that carries a supacode deeplink.
+@MainActor
+public func setSystemNotificationTapHandler(_ handler: @escaping @MainActor (URL) -> Void) {
+  _ = configuredNotificationCenter()
+  foregroundSystemNotificationDelegate.onDeeplinkTap = handler
 }
 
 public nonisolated struct SystemNotificationClient: Sendable {
@@ -44,13 +72,13 @@ public nonisolated struct SystemNotificationClient: Sendable {
 
   public var authorizationStatus: @MainActor @Sendable () async -> AuthorizationStatus
   public var requestAuthorization: @MainActor @Sendable () async -> AuthorizationRequestResult
-  public var send: @MainActor @Sendable (_ title: String, _ body: String) async -> Void
+  public var send: @MainActor @Sendable (_ title: String, _ body: String, _ deeplinkURL: URL?) async -> Void
   public var openSettings: @MainActor @Sendable () async -> Void
 
   public init(
     authorizationStatus: @escaping @MainActor @Sendable () async -> AuthorizationStatus,
     requestAuthorization: @escaping @MainActor @Sendable () async -> AuthorizationRequestResult,
-    send: @escaping @MainActor @Sendable (_ title: String, _ body: String) async -> Void,
+    send: @escaping @MainActor @Sendable (_ title: String, _ body: String, _ deeplinkURL: URL?) async -> Void,
     openSettings: @escaping @MainActor @Sendable () async -> Void
   ) {
     self.authorizationStatus = authorizationStatus
@@ -90,12 +118,15 @@ extension SystemNotificationClient: DependencyKey {
         )
       }
     },
-    send: { title, body in
+    send: { title, body, deeplinkURL in
       let center = configuredNotificationCenter()
       let content = UNMutableNotificationContent()
       content.title = title
       content.body = body
       content.sound = .default
+      if let deeplinkURL {
+        content.userInfo = [deeplinkUserInfoKey: deeplinkURL.absoluteString]
+      }
       let request = UNNotificationRequest(
         identifier: UUID().uuidString,
         content: content,
@@ -114,7 +145,7 @@ extension SystemNotificationClient: DependencyKey {
   public static let testValue = SystemNotificationClient(
     authorizationStatus: { .notDetermined },
     requestAuthorization: { AuthorizationRequestResult(granted: false, errorMessage: nil) },
-    send: { _, _ in },
+    send: { _, _, _ in },
     openSettings: {}
   )
 }

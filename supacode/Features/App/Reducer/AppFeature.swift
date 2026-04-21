@@ -74,6 +74,7 @@ struct AppFeature {
     case openWorktreeFailed(OpenActionError)
     case requestQuit
     case newTerminal
+    case jumpToLatestUnread
     case runScript
     case runNamedScript(ScriptDefinition)
     case stopScript(ScriptDefinition)
@@ -437,6 +438,21 @@ struct AppFeature {
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
         }
 
+      case .jumpToLatestUnread:
+        guard let location = terminalClient.latestUnreadNotification(),
+          let worktree = state.repositories.worktree(for: location.worktreeID)
+        else { return .none }
+        analyticsClient.capture("notifications_jump_to_latest_unread", nil)
+        return .merge(
+          .send(.repositories(.selectWorktree(location.worktreeID, focusTerminal: true))),
+          .run { _ in
+            await terminalClient.send(
+              .focusSurface(worktree, tabID: location.tabID, surfaceID: location.surfaceID)
+            )
+            await terminalClient.markNotificationRead(location.worktreeID, location.notificationID)
+          }
+        )
+
       case .runScript:
         // Find the selected or primary script and run it.
         guard let definition = state.primaryScript else {
@@ -785,14 +801,15 @@ struct AppFeature {
       case .commandPalette:
         return .none
 
-      case .terminalEvent(.notificationReceived(let worktreeID, let title, let body)):
+      case .terminalEvent(.notificationReceived(let worktreeID, let surfaceID, let title, let body)):
         var effects: [Effect<Action>] = [
           .send(.repositories(.worktreeNotificationReceived(worktreeID)))
         ]
         if state.settings.systemNotificationsEnabled {
+          let deeplinkURL = surfaceDeeplinkURL(worktreeID: worktreeID, surfaceID: surfaceID)
           effects.append(
             .run { _ in
-              await systemNotificationClient.send(title, body)
+              await systemNotificationClient.send(title, body, deeplinkURL)
             }
           )
         }
@@ -1571,5 +1588,22 @@ struct AppFeature {
       case .github: .github
       }
     return .send(.settings(.setSelection(settingsSection)))
+  }
+
+  /// Builds a `supacode://worktree/<id>/surface/<tabID>/<surfaceID>` URL for a
+  /// notification whose surface is known; falls back to the worktree-level
+  /// URL when the tab containing the surface can no longer be resolved.
+  private func surfaceDeeplinkURL(worktreeID: Worktree.ID, surfaceID: UUID) -> URL? {
+    let percentEncodingSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
+    let encodedWorktreeID =
+      worktreeID.addingPercentEncoding(withAllowedCharacters: percentEncodingSet) ?? worktreeID
+    guard let tabID = terminalClient.tabID(worktreeID, surfaceID) else {
+      return URL(string: "supacode://worktree/\(encodedWorktreeID)")
+    }
+    let tabRaw = tabID.rawValue.uuidString
+    let surfaceRaw = surfaceID.uuidString
+    return URL(
+      string: "supacode://worktree/\(encodedWorktreeID)/tab/\(tabRaw)/surface/\(surfaceRaw)"
+    )
   }
 }

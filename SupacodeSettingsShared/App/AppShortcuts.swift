@@ -13,6 +13,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectWorktree(Int)
   case openWorktree, revealInFinder, openRepository, openPullRequest, copyPath
   case runScript, stopRunScript
+  case jumpToLatestUnread
 
   // Stable string key for JSON dictionary persistence.
   public var codingKey: CodingKey {
@@ -54,6 +55,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "copyPath"
     case .runScript: "runScript"
     case .stopRunScript: "stopRunScript"
+    case .jumpToLatestUnread: "jumpToLatestUnread"
     }
   }
 
@@ -79,6 +81,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "copyPath": .copyPath,
     "runScript": .runScript,
     "stopRunScript": .stopRunScript,
+    "jumpToLatestUnread": .jumpToLatestUnread,
   ]
 
   private init?(stableKey: String) {
@@ -116,6 +119,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
     case .stopRunScript: "Stop Run Script"
+    case .jumpToLatestUnread: "Jump to Latest Unread"
     }
   }
 }
@@ -321,6 +325,9 @@ public enum AppShortcuts {
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
   public static let stopRunScript = AppShortcut(id: .stopRunScript, key: ".", modifiers: .command)
+  public static let jumpToLatestUnread = AppShortcut(
+    id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
+  )
 
   public static let worktreeSelection: [AppShortcut] = [
     selectWorktree1, selectWorktree2, selectWorktree3, selectWorktree4, selectWorktree5,
@@ -344,6 +351,7 @@ public enum AppShortcuts {
       category: .actions,
       shortcuts: [
         openWorktree, revealInFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript,
+        jumpToLatestUnread,
       ]
     ),
   ]

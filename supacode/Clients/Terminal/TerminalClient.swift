@@ -7,6 +7,9 @@ struct TerminalClient {
   var tabExists: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
   var surfaceExists: @MainActor @Sendable (Worktree.ID, TerminalTabID, UUID) -> Bool
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
+  var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TerminalTabID?
+  var latestUnreadNotification: @MainActor @Sendable () -> NotificationLocation?
+  var markNotificationRead: @MainActor @Sendable (Worktree.ID, UUID) -> Void
 
   enum Command: Equatable {
     case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil)
@@ -37,7 +40,7 @@ struct TerminalClient {
   }
 
   enum Event: Equatable {
-    case notificationReceived(worktreeID: Worktree.ID, title: String, body: String)
+    case notificationReceived(worktreeID: Worktree.ID, surfaceID: UUID, title: String, body: String)
     case notificationIndicatorChanged(count: Int)
     case tabCreated(worktreeID: Worktree.ID)
     case tabClosed(worktreeID: Worktree.ID)
@@ -56,7 +59,10 @@ extension TerminalClient: DependencyKey {
     events: { fatalError("TerminalClient.events not configured") },
     tabExists: { _, _ in fatalError("TerminalClient.tabExists not configured") },
     surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
-    surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") }
+    surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
+    tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
+    latestUnreadNotification: { fatalError("TerminalClient.latestUnreadNotification not configured") },
+    markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") }
   )
 
   static let testValue = TerminalClient(
@@ -64,7 +70,10 @@ extension TerminalClient: DependencyKey {
     events: { AsyncStream { $0.finish() } },
     tabExists: unimplemented("TerminalClient.tabExists", placeholder: true),
     surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true),
-    surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true)
+    surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
+    tabID: unimplemented("TerminalClient.tabID", placeholder: nil),
+    latestUnreadNotification: unimplemented("TerminalClient.latestUnreadNotification", placeholder: nil),
+    markNotificationRead: unimplemented("TerminalClient.markNotificationRead")
   )
 }
 

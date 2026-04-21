@@ -2107,7 +2107,7 @@ struct RepositoriesFeatureTests {
       worktree.id: [
         secondID: .orange,
         firstID: .purple,
-      ],
+      ]
     ]
 
     #expect(state.runningScriptColors(for: worktree.id) == [.purple, .orange])
@@ -2124,7 +2124,7 @@ struct RepositoriesFeatureTests {
       worktree.id: [
         completing.id: completing.resolvedTintColor,
         surviving.id: surviving.resolvedTintColor,
-      ],
+      ]
     ]
 
     let store = TestStore(initialState: state) {
@@ -2141,7 +2141,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [
-        worktree.id: [surviving.id: surviving.resolvedTintColor],
+        worktree.id: [surviving.id: surviving.resolvedTintColor]
       ]
     }
     #expect(store.state.alert == nil)

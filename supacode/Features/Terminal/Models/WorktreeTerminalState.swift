@@ -48,13 +48,27 @@ final class WorktreeTerminalState {
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
   }
+
+  func hasUnseenNotification(forSurfaceID surfaceID: UUID) -> Bool {
+    notifications.contains { !$0.isRead && $0.surfaceId == surfaceID }
+  }
+
+  /// Returns the most recent unread notification in this worktree, or nil.
+  func latestUnreadNotification() -> WorktreeTerminalNotification? {
+    notifications.filter { !$0.isRead }.max(by: { $0.createdAt < $1.createdAt })
+  }
+
+  /// Returns the tab that owns the given surface, or nil.
+  func tabID(forSurfaceID surfaceID: UUID) -> TerminalTabID? {
+    tabId(containing: surfaceID)
+  }
   #if DEBUG
     var debugRecentHookCount: Int {
       recentHookBySurfaceID.count
     }
   #endif
   var isSelected: () -> Bool = { false }
-  var onNotificationReceived: ((String, String) -> Void)?
+  var onNotificationReceived: ((UUID, String, String) -> Void)?
   var onNotificationIndicatorChanged: (() -> Void)?
   var onTabCreated: (() -> Void)?
   var onTabClosed: (() -> Void)?
@@ -741,6 +755,15 @@ final class WorktreeTerminalState {
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
 
+  /// Marks a single notification as read, leaving others untouched.
+  func markNotificationRead(id: WorktreeTerminalNotification.ID) {
+    let previousHasUnseen = hasUnseenNotification
+    guard let index = notifications.firstIndex(where: { $0.id == id }) else { return }
+    guard !notifications[index].isRead else { return }
+    notifications[index].isRead = true
+    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+  }
+
   func dismissNotification(_ notificationID: WorktreeTerminalNotification.ID) {
     let previousHasUnseen = hasUnseenNotification
     notifications.removeAll { $0.id == notificationID }
@@ -1273,6 +1296,7 @@ final class WorktreeTerminalState {
           surfaceId: surfaceId,
           title: trimmedTitle,
           body: trimmedBody,
+          createdAt: now,
           isRead: isRead
         ),
         at: 0
@@ -1283,7 +1307,7 @@ final class WorktreeTerminalState {
     if !fromHook, shouldSuppressDesktopNotification(title: trimmedTitle, body: trimmedBody, surfaceId: surfaceId) {
       return
     }
-    onNotificationReceived?(trimmedTitle, trimmedBody)
+    onNotificationReceived?(surfaceId, trimmedTitle, trimmedBody)
   }
 
   // MARK: - Notification deduplication (matches supaterm's approach).

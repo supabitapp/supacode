@@ -41,6 +41,7 @@ struct WorktreeCommands: Commands {
     let refresh = AppShortcuts.refreshWorktrees.effective(from: overrides)
     let run = AppShortcuts.runScript.effective(from: overrides)
     let stop = AppShortcuts.stopRunScript.effective(from: overrides)
+    let jumpToLatestUnread = AppShortcuts.jumpToLatestUnread.effective(from: overrides)
     CommandMenu("Worktrees") {
       // Creation and opening.
       Button("New Worktree…", systemImage: "plus") {
@@ -113,6 +114,12 @@ struct WorktreeCommands: Commands {
       .appKeyboardShortcut(stop)
       .help("Stop Script (\(stop?.display ?? "none"))")
       .disabled(stopRunScriptAction == nil)
+      Button("Jump to Latest Unread", systemImage: "bell.badge") {
+        store.send(.jumpToLatestUnread)
+      }
+      .appKeyboardShortcut(jumpToLatestUnread)
+      .help("Jump to Latest Unread Notification (\(jumpToLatestUnread?.display ?? "none"))")
+      .disabled(store.notificationIndicatorCount == 0)
       Divider()
       // Navigation.
       Button("Select Next", systemImage: "chevron.down") {
