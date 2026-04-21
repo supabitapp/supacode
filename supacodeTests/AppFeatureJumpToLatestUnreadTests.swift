@@ -54,13 +54,20 @@ struct AppFeatureJumpToLatestUnreadTests {
     await store.receive(\.repositories.selectWorktree)
     await store.finish()
 
-    let expectedCommand = TerminalClient.Command.focusSurface(
+    let expectedFocus = TerminalClient.Command.focusSurface(
       worktree,
       tabID: TerminalTabID(rawValue: tabUUID),
       surfaceID: surfaceUUID,
       input: nil
     )
-    #expect(focused.value.contains(expectedCommand))
+    // Only the focus command should flow through `send`; the side-effect
+    // setSelectedWorktreeID is produced by the `selectWorktree` delegate
+    // and is tested separately. Using an exact-length assertion prevents
+    // a future refactor from quietly duplicating the focus command.
+    let focusCommands = focused.value.filter {
+      if case .focusSurface = $0 { return true } else { return false }
+    }
+    #expect(focusCommands == [expectedFocus])
 
     #expect(marked.value.count == 1)
     #expect(marked.value.first?.0 == worktree.id)

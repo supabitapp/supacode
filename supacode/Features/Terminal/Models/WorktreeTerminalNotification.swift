@@ -13,7 +13,7 @@ struct WorktreeTerminalNotification: Identifiable, Equatable, Sendable {
     surfaceId: UUID,
     title: String,
     body: String,
-    createdAt: Date = Date(),
+    createdAt: Date,
     isRead: Bool = false
   ) {
     self.id = id

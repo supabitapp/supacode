@@ -7,11 +7,17 @@ import UserNotifications
 /// that should be dispatched when the user taps the notification banner.
 private nonisolated let deeplinkUserInfoKey = "supacode.deeplink"
 
+private nonisolated let systemNotificationLogger = SupaLogger("SystemNotifications")
+
 @MainActor
 private final class ForegroundSystemNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-  var onDeeplinkTap: (@MainActor (URL) -> Void)?
+  var onDeeplinkTap: ((URL) -> Void)?
 
-  nonisolated func userNotificationCenter(
+  // Both delegate methods run on the main actor so reading / writing
+  // `onDeeplinkTap` is a plain isolated access with no bridging hop. The
+  // leading `Task.yield()` satisfies the async-without-await lint and
+  // matches the pattern used elsewhere for protocol-required async stubs.
+  func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification
   ) async -> UNNotificationPresentationOptions {
@@ -19,17 +25,18 @@ private final class ForegroundSystemNotificationDelegate: NSObject, UNUserNotifi
     return [.badge, .sound, .banner]
   }
 
-  nonisolated func userNotificationCenter(
+  func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse
   ) async {
+    await Task.yield()
     let userInfo = response.notification.request.content.userInfo
-    guard let raw = userInfo[deeplinkUserInfoKey] as? String,
-      let url = URL(string: raw)
-    else { return }
-    await MainActor.run {
-      onDeeplinkTap?(url)
+    guard let raw = userInfo[deeplinkUserInfoKey] as? String else { return }
+    guard let url = URL(string: raw) else {
+      systemNotificationLogger.warning("Dropped notification tap: userInfo deeplink is not a valid URL: \(raw)")
+      return
     }
+    onDeeplinkTap?(url)
   }
 }
 

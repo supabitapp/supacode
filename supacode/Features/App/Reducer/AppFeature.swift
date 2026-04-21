@@ -8,6 +8,8 @@ import SwiftUI
 
 private nonisolated let appLogger = SupaLogger("App")
 private nonisolated let deeplinkLogger = SupaLogger("Deeplink")
+private nonisolated let jumpLogger = SupaLogger("JumpToLatestUnread")
+private nonisolated let notificationsLogger = SupaLogger("Notifications")
 
 private enum CancelID {
   static let periodicRefresh = "app.periodicRefresh"
@@ -439,10 +441,17 @@ struct AppFeature {
         }
 
       case .jumpToLatestUnread:
-        guard let location = terminalClient.latestUnreadNotification(),
-          let worktree = state.repositories.worktree(for: location.worktreeID)
-        else { return .none }
+        guard let location = terminalClient.latestUnreadNotification() else { return .none }
+        guard let worktree = state.repositories.worktree(for: location.worktreeID) else {
+          jumpLogger.warning(
+            "jumpToLatestUnread: worktree \(location.worktreeID) vanished between notification lookup and dispatch."
+          )
+          return .none
+        }
         analyticsClient.capture("notifications_jump_to_latest_unread", nil)
+        // `.merge` is safe here: `focusSurface` carries the `Worktree`
+        // explicitly, so it does not depend on `selectWorktree` landing
+        // first. `.concatenate` would serialize unnecessarily.
         return .merge(
           .send(.repositories(.selectWorktree(location.worktreeID, focusTerminal: true))),
           .run { _ in
@@ -1598,12 +1607,24 @@ struct AppFeature {
     let encodedWorktreeID =
       worktreeID.addingPercentEncoding(withAllowedCharacters: percentEncodingSet) ?? worktreeID
     guard let tabID = terminalClient.tabID(worktreeID, surfaceID) else {
-      return URL(string: "supacode://worktree/\(encodedWorktreeID)")
+      notificationsLogger.debug(
+        "Surface \(surfaceID) is no longer attached to a tab in \(worktreeID); "
+          + "degrading tap deeplink to the worktree root."
+      )
+      return urlOrWarn("supacode://worktree/\(encodedWorktreeID)")
     }
     let tabRaw = tabID.rawValue.uuidString
     let surfaceRaw = surfaceID.uuidString
-    return URL(
-      string: "supacode://worktree/\(encodedWorktreeID)/tab/\(tabRaw)/surface/\(surfaceRaw)"
+    return urlOrWarn(
+      "supacode://worktree/\(encodedWorktreeID)/tab/\(tabRaw)/surface/\(surfaceRaw)"
     )
+  }
+
+  private func urlOrWarn(_ string: String) -> URL? {
+    guard let url = URL(string: string) else {
+      notificationsLogger.warning("Failed to build deeplink URL from string: \(string)")
+      return nil
+    }
+    return url
   }
 }

@@ -151,14 +151,12 @@ struct TerminalSplitTreeView: View {
             }
           }
           .overlay(alignment: .topTrailing) {
-            if hasNotification {
-              SurfaceNotificationDot()
-                .padding(6)
-                .allowsHitTesting(false)
-                .transition(.opacity.combined(with: .scale))
-            }
+            SurfaceNotificationDot()
+              .padding(6)
+              .opacity(hasNotification ? 1 : 0)
+              .allowsHitTesting(false)
+              .animation(.easeInOut(duration: 0.2), value: hasNotification)
           }
-          .animation(.easeInOut(duration: 0.2), value: hasNotification)
           .overlay(alignment: .top) {
             if isSplit {
               DragHandle(surfaceView: surfaceView)

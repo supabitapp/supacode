@@ -61,13 +61,14 @@ final class WorktreeTerminalState {
 
   /// Returns the most recent unread notification in this worktree, or nil.
   func latestUnreadNotification() -> WorktreeTerminalNotification? {
-    notifications.filter { !$0.isRead }.max(by: { $0.createdAt < $1.createdAt })
+    unreadNotifications().first
   }
 
-  /// Returns the tab that owns the given surface, or nil.
-  func tabID(forSurfaceID surfaceID: UUID) -> TerminalTabID? {
-    tabId(containing: surfaceID)
+  /// Returns all unread notifications in this worktree sorted newest first.
+  func unreadNotifications() -> [WorktreeTerminalNotification] {
+    notifications.filter { !$0.isRead }.sorted { $0.createdAt > $1.createdAt }
   }
+
   #if DEBUG
     var debugRecentHookCount: Int {
       recentHookBySurfaceID.count
@@ -340,7 +341,7 @@ final class WorktreeTerminalState {
   func listSurfaces(tabID: TerminalTabID) -> [[String: String]] {
     let focusedID = focusedSurfaceIdByTab[tabID]
     return surfaces.compactMap { surfaceID, _ in
-      guard tabId(containing: surfaceID) == tabID else { return nil }
+      guard self.tabID(containing: surfaceID) == tabID else { return nil }
       var entry = ["id": surfaceID.uuidString]
       if surfaceID == focusedID { entry["focused"] = "1" }
       return entry
@@ -449,7 +450,7 @@ final class WorktreeTerminalState {
 
   @discardableResult
   func focusSurface(id: UUID) -> Bool {
-    guard let tabId = tabId(containing: id),
+    guard let tabId = tabID(containing: id),
       let surface = surfaces[id]
     else {
       terminalStateLogger.warning("focusSurface: surface \(id) not found in worktree \(worktree.id).")
@@ -591,7 +592,7 @@ final class WorktreeTerminalState {
     newSurfaceID: UUID? = nil,
     initialInput: String? = nil
   ) -> Bool {
-    guard let tabId = tabId(containing: surfaceId), var tree = trees[tabId] else {
+    guard let tabId = tabID(containing: surfaceId), var tree = trees[tabId] else {
       return false
     }
     guard let targetNode = tree.find(id: surfaceId) else { return false }
@@ -1365,7 +1366,7 @@ final class WorktreeTerminalState {
     tabIsRunningById.removeValue(forKey: tabId)
   }
 
-  private func tabId(containing surfaceId: UUID) -> TerminalTabID? {
+  func tabID(containing surfaceId: UUID) -> TerminalTabID? {
     for (tabId, tree) in trees where tree.find(id: surfaceId) != nil {
       return tabId
     }
@@ -1482,7 +1483,7 @@ final class WorktreeTerminalState {
 
   private func handleCloseRequest(for view: GhosttySurfaceView, processAlive _: Bool) {
     guard surfaces[view.id] != nil else { return }
-    guard let tabId = tabId(containing: view.id), let tree = trees[tabId] else {
+    guard let tabId = tabID(containing: view.id), let tree = trees[tabId] else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
       return

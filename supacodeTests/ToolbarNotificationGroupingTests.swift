@@ -40,13 +40,17 @@ struct ToolbarNotificationGroupingTests {
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     manager.state(for: repoAOne).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "A1", body: "done", isRead: true)
+      WorktreeTerminalNotification(
+        surfaceId: UUID(), title: "A1", body: "done", createdAt: .distantPast, isRead: true
+      )
     ]
     manager.state(for: repoATwo).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "A2", body: "done")
+      WorktreeTerminalNotification(surfaceId: UUID(), title: "A2", body: "done", createdAt: .distantPast)
     ]
     manager.state(for: repoBOne).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "B1", body: "done", isRead: true)
+      WorktreeTerminalNotification(
+        surfaceId: UUID(), title: "B1", body: "done", createdAt: .distantPast, isRead: true
+      )
     ]
 
     let groups = state.toolbarNotificationGroups(terminalManager: manager)
@@ -82,7 +86,7 @@ struct ToolbarNotificationGroupingTests {
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     manager.state(for: repoAArchived).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "Archived", body: "hidden")
+      WorktreeTerminalNotification(surfaceId: UUID(), title: "Archived", body: "hidden", createdAt: .distantPast)
     ]
 
     let groups = state.toolbarNotificationGroups(terminalManager: manager)
@@ -102,11 +106,17 @@ struct ToolbarNotificationGroupingTests {
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     manager.state(for: readOnly).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "Read 1", body: "done", isRead: true)
+      WorktreeTerminalNotification(
+        surfaceId: UUID(), title: "Read 1", body: "done", createdAt: .distantPast, isRead: true
+      )
     ]
     manager.state(for: mixed).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "Read 2", body: "done", isRead: true),
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "Unread", body: "new", isRead: false),
+      WorktreeTerminalNotification(
+        surfaceId: UUID(), title: "Read 2", body: "done", createdAt: .distantPast, isRead: true
+      ),
+      WorktreeTerminalNotification(
+        surfaceId: UUID(), title: "Unread", body: "new", createdAt: .distantPast, isRead: false
+      ),
     ]
 
     let groups = state.toolbarNotificationGroups(terminalManager: manager)
@@ -127,7 +137,9 @@ struct ToolbarNotificationGroupingTests {
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     manager.state(for: feature).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "Read", body: "kept", isRead: true)
+      WorktreeTerminalNotification(
+        surfaceId: UUID(), title: "Read", body: "kept", createdAt: .distantPast, isRead: true
+      )
     ]
 
     let groups = state.toolbarNotificationGroups(terminalManager: manager)

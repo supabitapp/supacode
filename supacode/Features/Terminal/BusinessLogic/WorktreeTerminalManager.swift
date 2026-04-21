@@ -412,29 +412,39 @@ final class WorktreeTerminalManager {
     states[worktreeID]?.hasUnseenNotification == true
   }
 
-  /// Locates the most recent unread notification across all managed worktrees.
+  /// Locates the most recent unread notification across all managed
+  /// worktrees whose surface still exists. Notifications whose surface has
+  /// been closed are skipped in favour of the next-newest focusable unread.
   func latestUnreadNotificationLocation() -> NotificationLocation? {
     var best: NotificationLocation?
     var bestCreatedAt: Date?
+    var skippedClosedSurface = false
     for (worktreeID, state) in states {
-      guard let notification = state.latestUnreadNotification(),
-        let tabID = state.tabID(forSurfaceID: notification.surfaceId)
-      else { continue }
-      if let bestCreatedAt, bestCreatedAt >= notification.createdAt { continue }
-      best = NotificationLocation(
-        worktreeID: worktreeID,
-        tabID: tabID,
-        surfaceID: notification.surfaceId,
-        notificationID: notification.id,
-      )
-      bestCreatedAt = notification.createdAt
+      for notification in state.unreadNotifications() {
+        if let bestCreatedAt, bestCreatedAt >= notification.createdAt { break }
+        guard let tabID = state.tabID(containing: notification.surfaceId) else {
+          skippedClosedSurface = true
+          continue
+        }
+        best = NotificationLocation(
+          worktreeID: worktreeID,
+          tabID: tabID,
+          surfaceID: notification.surfaceId,
+          notificationID: notification.id,
+        )
+        bestCreatedAt = notification.createdAt
+        break
+      }
+    }
+    if best == nil, skippedClosedSurface {
+      terminalLogger.debug("latestUnreadNotificationLocation: all unread notifications point at closed surfaces.")
     }
     return best
   }
 
   /// Resolves the tab containing the given surface, if any.
   func tabID(forWorktreeID worktreeID: Worktree.ID, surfaceID: UUID) -> TerminalTabID? {
-    states[worktreeID]?.tabID(forSurfaceID: surfaceID)
+    states[worktreeID]?.tabID(containing: surfaceID)
   }
 
   func markNotificationRead(worktreeID: Worktree.ID, notificationID: UUID) {
