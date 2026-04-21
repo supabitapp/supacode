@@ -849,6 +849,42 @@ struct WorktreeTerminalManagerTests {
     #expect(location?.tabID == tab)
   }
 
+  @Test func latestUnreadNotificationComparesFocusableAcrossWorktreesAfterFallback() {
+    // Worktree A: newest unread is orphaned, but an older unread targets
+    // a live surface at t=1.
+    // Worktree B: only has a focusable unread at t=2, which is newer than
+    // A's focusable fallback but older than A's orphaned newest.
+    // Expected winner: B.
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktreeA = makeWorktree(id: "/tmp/repo/wt-a")
+    let worktreeB = makeWorktree(id: "/tmp/repo/wt-b")
+    let stateA = manager.state(for: worktreeA)
+    let stateB = manager.state(for: worktreeB)
+    guard
+      let tabA = stateA.createTab(),
+      let surfaceA = stateA.splitTree(for: tabA).root?.leftmostLeaf(),
+      let tabB = stateB.createTab(),
+      let surfaceB = stateB.splitTree(for: tabB).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected tabs and surfaces")
+      return
+    }
+
+    let orphanSurface = UUID()
+    stateA.notifications = [
+      makeNotification(surfaceId: orphanSurface, isRead: false, createdAt: Date(timeIntervalSince1970: 3)),
+      makeNotification(surfaceId: surfaceA.id, isRead: false, createdAt: Date(timeIntervalSince1970: 1)),
+    ]
+    stateB.notifications = [
+      makeNotification(surfaceId: surfaceB.id, isRead: false, createdAt: Date(timeIntervalSince1970: 2))
+    ]
+
+    let location = manager.latestUnreadNotificationLocation()
+    #expect(location?.worktreeID == worktreeB.id)
+    #expect(location?.surfaceID == surfaceB.id)
+    #expect(location?.tabID == tabB)
+  }
+
   @Test func latestUnreadNotificationReturnsNilWhenAllUnreadTargetClosedSurfaces() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
@@ -874,14 +910,17 @@ struct WorktreeTerminalManagerTests {
     _ = state.performSplitAction(.newSplit(direction: .right), for: surface.id)
     let leaves = state.splitTree(for: tab).leaves()
     #expect(leaves.count == 2)
-    let firstLeaf = leaves[0]
-    let secondLeaf = leaves[1]
 
     // No notifications yet.
     #expect(state.hasUnseenNotification(forTabID: tab) == false)
 
-    // Notification on the second leaf still marks the tab unread.
-    state.notifications = [makeNotification(surfaceId: secondLeaf.id, isRead: false, createdAt: .distantPast)]
+    // Notification on the first leaf lights up the tab.
+    state.notifications = [makeNotification(surfaceId: leaves[0].id, isRead: false, createdAt: .distantPast)]
+    #expect(state.hasUnseenNotification(forTabID: tab) == true)
+    state.markAllNotificationsRead()
+
+    // Notification on the second leaf also lights up the tab.
+    state.notifications = [makeNotification(surfaceId: leaves[1].id, isRead: false, createdAt: .distantPast)]
     #expect(state.hasUnseenNotification(forTabID: tab) == true)
 
     // Once read, the tab is clean again.
@@ -891,8 +930,6 @@ struct WorktreeTerminalManagerTests {
     // A notification tied to a surface outside this tab does NOT light it up.
     state.notifications = [makeNotification(surfaceId: UUID(), isRead: false, createdAt: .distantPast)]
     #expect(state.hasUnseenNotification(forTabID: tab) == false)
-
-    _ = firstLeaf  // Silence unused-binding warning in release builds.
   }
 
   @Test func markNotificationReadOnlyTouchesMatchingId() {

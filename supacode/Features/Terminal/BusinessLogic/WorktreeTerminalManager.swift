@@ -424,6 +424,10 @@ final class WorktreeTerminalManager {
         if let bestCreatedAt, bestCreatedAt >= notification.createdAt { break }
         guard let tabID = state.tabID(containing: notification.surfaceId) else {
           skippedClosedSurface = true
+          terminalLogger.debug(
+            "latestUnreadNotificationLocation: skipping closed surface \(notification.surfaceId) "
+              + "in \(worktreeID); trying older unread."
+          )
           continue
         }
         best = NotificationLocation(

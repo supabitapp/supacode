@@ -441,7 +441,10 @@ struct AppFeature {
         }
 
       case .jumpToLatestUnread:
-        guard let location = terminalClient.latestUnreadNotification() else { return .none }
+        guard let location = terminalClient.latestUnreadNotification() else {
+          jumpLogger.debug("jumpToLatestUnread invoked with no unread notifications.")
+          return .none
+        }
         guard let worktree = state.repositories.worktree(for: location.worktreeID) else {
           jumpLogger.warning(
             "jumpToLatestUnread: worktree \(location.worktreeID) vanished between notification lookup and dispatch."
@@ -1611,18 +1614,26 @@ struct AppFeature {
         "Surface \(surfaceID) is no longer attached to a tab in \(worktreeID); "
           + "degrading tap deeplink to the worktree root."
       )
-      return urlOrWarn("supacode://worktree/\(encodedWorktreeID)")
+      return urlOrWarn(
+        "supacode://worktree/\(encodedWorktreeID)",
+        worktreeID: worktreeID,
+        surfaceID: surfaceID
+      )
     }
     let tabRaw = tabID.rawValue.uuidString
     let surfaceRaw = surfaceID.uuidString
     return urlOrWarn(
-      "supacode://worktree/\(encodedWorktreeID)/tab/\(tabRaw)/surface/\(surfaceRaw)"
+      "supacode://worktree/\(encodedWorktreeID)/tab/\(tabRaw)/surface/\(surfaceRaw)",
+      worktreeID: worktreeID,
+      surfaceID: surfaceID
     )
   }
 
-  private func urlOrWarn(_ string: String) -> URL? {
+  private func urlOrWarn(_ string: String, worktreeID: Worktree.ID, surfaceID: UUID) -> URL? {
     guard let url = URL(string: string) else {
-      notificationsLogger.warning("Failed to build deeplink URL from string: \(string)")
+      notificationsLogger.warning(
+        "Failed to build deeplink URL for worktree \(worktreeID) surface \(surfaceID) from: \(string)"
+      )
       return nil
     }
     return url
