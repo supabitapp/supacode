@@ -265,6 +265,9 @@ struct SupacodeApp: App {
     terminalManager.onDeeplinkCommand = { url, clientFD in
       store.send(.deeplinkReceived(url, source: .socket, responseFD: clientFD))
     }
+    terminalManager.onActionCommand = { command, params, clientFD in
+      Self.handleActionCommand(command: command, params: params, clientFD: clientFD, store: store)
+    }
     terminalManager.onQuery = { resource, params, clientFD in
       Self.handleQuery(
         resource: resource,
@@ -277,6 +280,51 @@ struct SupacodeApp: App {
   }
 
   @MainActor
+  private static func handleActionCommand(
+    command: String,
+    params: [String: String],
+    clientFD: Int32,
+    store: StoreOf<AppFeature>
+  ) {
+    switch command {
+    case "comms.send":
+      let sender = params["sender"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "agent"
+      let title = params["title"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let body = params["body"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      guard let rawWorktreeID = params["worktreeID"], !rawWorktreeID.isEmpty else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD,
+          ok: false,
+          error: "Missing worktreeID for conversation send."
+        )
+        return
+      }
+      guard !body.isEmpty else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD,
+          ok: false,
+          error: "Conversation body cannot be empty."
+        )
+        return
+      }
+      let request = ConversationSendRequest(
+        worktreeID: rawWorktreeID.removingPercentEncoding ?? rawWorktreeID,
+        senderName: sender.isEmpty ? "agent" : sender,
+        title: title,
+        body: body
+      )
+      store.send(.conversationSendRequested(request, responseFD: clientFD))
+
+    default:
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD,
+        ok: false,
+        error: "Unknown command: \(command)"
+      )
+    }
+  }
+
+  @MainActor
   private static func handleQuery(
     resource: String,
     params: [String: String],
@@ -284,8 +332,9 @@ struct SupacodeApp: App {
     terminalManager: WorktreeTerminalManager,
     store: StoreOf<AppFeature>
   ) {
-    let repos = store.repositories.repositories
-    let selectedWorktreeID = store.repositories.selectedWorktreeID
+    let state = store.state
+    let repos = state.repositories.repositories
+    let selectedWorktreeID = state.repositories.selectedWorktreeID
     let pctSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
 
     switch resource {
@@ -352,7 +401,7 @@ struct SupacodeApp: App {
         return
       }
       @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var settings
-      let runningIDs = store.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
+      let runningIDs = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
       let data = settings.scripts.map { script in
         [
           "id": script.id.uuidString,
@@ -360,6 +409,54 @@ struct SupacodeApp: App {
           "name": script.name,
           "displayName": script.displayName,
           "running": runningIDs[script.id] != nil ? "1" : "",
+        ]
+      }
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
+    case "comms.messages":
+      guard let worktreeID = params["worktreeID"] else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD,
+          ok: false,
+          error: "Missing worktreeID for conversation list."
+        )
+        return
+      }
+      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+      let allWorktrees = repos.flatMap(\.worktrees)
+      let worktree =
+        allWorktrees.first(where: { $0.id == decoded })
+        ?? allWorktrees.first(where: { $0.id == decoded + "/" })
+      guard let worktree else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD,
+          ok: false,
+          error: "Worktree not found: \(worktreeID)"
+        )
+        return
+      }
+      let limit: Int?
+      if let rawLimit = params["limit"], !rawLimit.isEmpty {
+        guard let parsedLimit = Int(rawLimit), parsedLimit > 0 else {
+          AgentHookSocketServer.sendCommandResponse(
+            clientFD: clientFD,
+            ok: false,
+            error: "Invalid limit: \(rawLimit)"
+          )
+          return
+        }
+        limit = parsedLimit
+      } else {
+        limit = nil
+      }
+      let formatter = ISO8601DateFormatter()
+      let data = state.conversations.messages(for: worktree.id, limit: limit).map { message in
+        [
+          "id": message.id.uuidString,
+          "createdAt": formatter.string(from: message.createdAt),
+          "sender": message.sender.name,
+          "senderKind": message.sender.kind.rawValue,
+          "title": message.title ?? "",
+          "body": message.body,
         ]
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)

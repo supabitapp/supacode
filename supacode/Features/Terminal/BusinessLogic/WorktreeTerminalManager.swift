@@ -21,6 +21,8 @@ final class WorktreeTerminalManager {
   var loadLayoutSnapshot: ((Worktree.ID) -> TerminalLayoutSnapshot?)?
   /// Deeplink URL received from the CLI via socket. Second parameter is the client FD for response.
   var onDeeplinkCommand: ((URL, Int32) -> Void)?
+  /// Named action command received from the CLI via socket. Parameters: command name, params, client FD.
+  var onActionCommand: ((String, [String: String], Int32) -> Void)?
   /// Query received from the CLI via socket. Parameters: resource name, params, client FD.
   var onQuery: ((String, [String: String], Int32) -> Void)?
 
@@ -65,6 +67,13 @@ final class WorktreeTerminalManager {
         return
       }
       handler(deeplinkURL, clientFD)
+    }
+    server.onActionCommand = { [weak self] command, params, clientFD in
+      guard let handler = self?.onActionCommand else {
+        AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
+        return
+      }
+      handler(command, params, clientFD)
     }
     server.onQuery = { [weak self] resource, params, clientFD in
       guard let handler = self?.onQuery else {

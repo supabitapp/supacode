@@ -2,6 +2,7 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import PostHog
+import Sharing
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI
@@ -27,6 +28,7 @@ struct AppFeature {
     var scripts: [ScriptDefinition] = []
     var notificationIndicatorCount: Int = 0
     var lastKnownSystemNotificationsEnabled: Bool
+    @Shared(.conversations) var conversations: ConversationStore
     var pendingDeeplinks: [Deeplink] = []
     var isDeeplinkReferenceRequested = false
     @Presents var alert: AlertState<Alert>?
@@ -70,6 +72,7 @@ struct AppFeature {
     case commandPalette(CommandPaletteFeature.Action)
     case openActionSelectionChanged(OpenWorktreeAction)
     case worktreeSettingsLoaded(RepositorySettings, worktreeID: Worktree.ID)
+    case conversationSendRequested(ConversationSendRequest, responseFD: Int32?)
     case openSelectedWorktree
     case revealInFinder
     case openWorktree(OpenWorktreeAction)
@@ -110,6 +113,7 @@ struct AppFeature {
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(TerminalClient.self) private var terminalClient
   @Dependency(WorktreeInfoWatcherClient.self) private var worktreeInfoWatcher
+  @Dependency(\.date.now) private var now
 
   var body: some Reducer<State, Action> {
     let core = Reduce<State, Action> { state, action in
@@ -592,6 +596,45 @@ struct AppFeature {
         )
         state.scripts = settings.scripts
         return .none
+
+      case .conversationSendRequested(let request, let responseFD):
+        let worktreeID = resolveWorktreeID(request.worktreeID, state: state)
+        guard state.repositories.worktree(for: worktreeID) != nil else {
+          guard let responseFD else { return .none }
+          return sendSocketResponse(
+            clientFD: responseFD,
+            ok: false,
+            error: "Worktree not found: \(request.worktreeID)"
+          )
+        }
+        let message = request.makeMessage(createdAt: now)
+        state.$conversations.withLock { conversations in
+          conversations.append(message, to: worktreeID)
+        }
+        var effects: [Effect<Action>] = []
+        if state.settings.systemNotificationsEnabled {
+          let deeplinkURL = worktreeDeeplinkURL(worktreeID: worktreeID)
+          effects.append(
+            .run { _ in
+              await systemNotificationClient.send(
+                message.notificationTitle,
+                message.notificationBody,
+                deeplinkURL
+              )
+            }
+          )
+        }
+        if state.settings.notificationSoundEnabled && !state.settings.systemNotificationsEnabled {
+          effects.append(
+            .run { _ in
+              await notificationSoundClient.play()
+            }
+          )
+        }
+        if let responseFD {
+          effects.append(sendSocketResponse(clientFD: responseFD, ok: true))
+        }
+        return .merge(effects)
 
       case .deeplinkReceived(let url, let source, let responseFD):
         let deeplinkClient = deeplinkClient
@@ -1600,6 +1643,20 @@ struct AppFeature {
       case .github: .github
       }
     return .send(.settings(.setSelection(settingsSection)))
+  }
+
+  private func worktreeDeeplinkURL(worktreeID: Worktree.ID) -> URL? {
+    let percentEncodingSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
+    let encodedWorktreeID =
+      worktreeID.addingPercentEncoding(withAllowedCharacters: percentEncodingSet) ?? worktreeID
+    let string = "supacode://worktree/\(encodedWorktreeID)"
+    guard let url = URL(string: string) else {
+      notificationsLogger.warning(
+        "Failed to build worktree deeplink URL for \(worktreeID) from: \(string)"
+      )
+      return nil
+    }
+    return url
   }
 
   /// Builds a `supacode://worktree/<id>/surface/<tabID>/<surfaceID>` URL for a

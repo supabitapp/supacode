@@ -27,6 +27,7 @@ struct CLIReferenceView: View {
       CLISection(title: "Worktree", rows: Self.worktreeRows)
       CLISection(title: "Tab", rows: Self.tabRows)
       CLISection(title: "Surface", rows: Self.surfaceRows)
+      CLISection(title: "Comms", rows: Self.commsRows)
       CLISection(title: "Repository", rows: Self.repoRows)
       CLISection(title: "Settings", rows: Self.settingsRows)
       CLISection(title: "Socket", rows: Self.socketRows)
@@ -110,6 +111,17 @@ struct CLIReferenceView: View {
     ),
   ]
 
+  private static let commsRows: [CLIEntry] = [
+    .init(
+      command: "supacode comms list [-w <id>] [--limit <n>]",
+      description: "List recent conversation messages as tab-separated rows."
+    ),
+    .init(
+      command: "supacode comms send [-w <id>] [--sender <name>] [--title <text>] --body <text>",
+      description: "Append a message to the local conversation pane and fan out via system notifications when enabled."
+    ),
+  ]
+
   private static let repoRows: [CLIEntry] = [
     .init(command: "supacode repo list", description: "List repository IDs."),
     .init(command: "supacode repo open <path>", description: "Open a repository."),
@@ -139,6 +151,10 @@ struct CLIReferenceView: View {
     .init(command: "-d, --direction", description: "Split direction: horizontal (h) or vertical (v)."),
     .init(command: "-n, --id", description: "UUID for a new tab or surface."),
     .init(command: "-f, --focused", description: "Print only the focused item in list commands."),
+    .init(command: "-l, --limit", description: "Maximum conversation messages to print."),
+    .init(command: "--sender", description: "Sender name shown in the conversation pane."),
+    .init(command: "--title", description: "Optional conversation message title."),
+    .init(command: "--body", description: "Conversation message body."),
   ]
 }
 

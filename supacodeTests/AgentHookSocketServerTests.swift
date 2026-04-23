@@ -262,6 +262,31 @@ struct AgentHookSocketServerTests {
     #expect(message == nil)
   }
 
+  @Test func parsesValidActionCommandMessage() {
+    let json = #"{"command":"comms.send","worktreeID":"/tmp/repo","sender":"pi","body":"hello"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .actionCommand(let command, let params, _) = message else {
+      Issue.record("Expected action command message, got \(String(describing: message))")
+      return
+    }
+    #expect(command == "comms.send")
+    #expect(params["worktreeID"] == "/tmp/repo")
+    #expect(params["sender"] == "pi")
+    #expect(params["body"] == "hello")
+  }
+
+  @Test func actionCommandTakesPrecedenceOverDeeplink() {
+    let json = #"{"command":"comms.send","deeplink":"supacode://worktree/test"}"#
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .actionCommand(let command, _, _) = message else {
+      Issue.record("Expected action command message, got \(String(describing: message))")
+      return
+    }
+    #expect(command == "comms.send")
+  }
+
   @Test func commandDoesNotInterfereWithBusyMessages() {
     let tabID = UUID()
     let surfaceID = UUID()
@@ -300,8 +325,8 @@ struct AgentHookSocketServerTests {
     #expect(params["worktreeID"] == "/tmp/repo")
   }
 
-  @Test func queryTakesPrecedenceOverDeeplink() {
-    let json = #"{"query":"repos","deeplink":"supacode://worktree/test"}"#
+  @Test func queryTakesPrecedenceOverCommandAndDeeplink() {
+    let json = #"{"query":"repos","command":"comms.send","deeplink":"supacode://worktree/test"}"#
     let message = AgentHookSocketServer.parse(data: Data(json.utf8))
 
     guard case .query(let resource, _, _) = message else {

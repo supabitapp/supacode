@@ -7,11 +7,12 @@ private nonisolated let socketLogger = SupaLogger("AgentHookSocket")
 /// Lightweight Unix domain socket server that receives messages from
 /// agent hooks (via `nc -U`) and the Supacode CLI tool.
 ///
-/// Four message formats are supported:
+/// Five message formats are supported:
 /// - **Busy flag**: `<worktreeID> <tabID> <surfaceID> <0|1>\n`
 /// - **Notification**: `<worktreeID> <tabID> <surfaceID> <agent>\n<JSON payload>\n`.
 ///   The agent field defaults to `"unknown"` when absent.
-/// - **Command**: JSON object with a `"deeplink"` key wrapping a `supacode://` URL.
+/// - **Deeplink command**: JSON object with a `"deeplink"` key wrapping a `supacode://` URL.
+/// - **Action command**: JSON object with a `"command"` key and optional string parameters.
 /// - **Query**: JSON object with a `"query"` key and optional parameters.
 @MainActor
 final class AgentHookSocketServer {
@@ -24,6 +25,8 @@ final class AgentHookSocketServer {
   var onNotification: ((String, UUID, UUID, AgentHookNotification) -> Void)?
   /// Deeplink URL received from the CLI. Second parameter is the client FD for response.
   var onCommand: ((URL, Int32) -> Void)?
+  /// Named action command received from the CLI. Parameters: command name, params, client FD.
+  var onActionCommand: ((String, [String: String], Int32) -> Void)?
   /// Query received from the CLI. Parameters: resource name, extra params, client FD for response.
   var onQuery: ((String, [String: String], Int32) -> Void)?
 
@@ -122,6 +125,12 @@ final class AgentHookSocketServer {
               return
             }
             handler(deeplinkURL, clientFD)
+          case .actionCommand(let command, let params, let clientFD):
+            guard let self, let handler = self.onActionCommand else {
+              Self.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
+              return
+            }
+            handler(command, params, clientFD)
           case .query(let resource, let params, let clientFD):
             guard let self, let handler = self.onQuery else {
               Self.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
@@ -210,8 +219,10 @@ final class AgentHookSocketServer {
     case busy(worktreeID: String, tabID: UUID, surfaceID: UUID, active: Bool)
     case notification(
       worktreeID: String, tabID: UUID, surfaceID: UUID, notification: AgentHookNotification)
-    /// CLI command with the client FD kept open for writing a response.
+    /// CLI deeplink command with the client FD kept open for writing a response.
     case command(deeplinkURL: URL, clientFD: Int32)
+    /// CLI action command with the client FD kept open for writing a response.
+    case actionCommand(command: String, params: [String: String], clientFD: Int32)
     /// CLI query with the client FD kept open for writing data back.
     case query(resource: String, params: [String: String], clientFD: Int32)
   }
@@ -290,6 +301,8 @@ final class AgentHookSocketServer {
     switch message {
     case .command(let url, _):
       return .command(deeplinkURL: url, clientFD: clientFD)
+    case .actionCommand(let command, let params, _):
+      return .actionCommand(command: command, params: params, clientFD: clientFD)
     case .query(let resource, let params, _):
       return .query(resource: resource, params: params, clientFD: clientFD)
     default:
@@ -407,8 +420,8 @@ final class AgentHookSocketServer {
     )
   }
 
-  /// Parses a JSON CLI message into a command or query. The placeholder
-  /// `clientFD` of `-1` is replaced with the real FD in `acceptAndParse`.
+  /// Parses a JSON CLI message into a deeplink command, action command, or query.
+  /// The placeholder `clientFD` of `-1` is replaced with the real FD in `acceptAndParse`.
   private nonisolated static func parseCommand(data: Data) -> Message? {
     guard let request = SocketCommandRequest(data: data) else {
       socketLogger.warning("Failed to decode CLI message payload")
@@ -417,6 +430,8 @@ final class AgentHookSocketServer {
     switch request {
     case .query(let resource, let params):
       return .query(resource: resource, params: params, clientFD: -1)
+    case .action(let command, let params):
+      return .actionCommand(command: command, params: params, clientFD: -1)
     case .command(let deeplink, _):
       guard let url = URL(string: deeplink), url.scheme == "supacode" else {
         socketLogger.warning("Invalid CLI deeplink URL: \(deeplink)")
@@ -480,9 +495,10 @@ private nonisolated struct AgentHookPayload: Decodable {
   }
 }
 
-/// Parsed CLI request payload: either a deeplink command or a query with params.
+/// Parsed CLI request payload: a deeplink command, action command, or query with params.
 private nonisolated enum SocketCommandRequest {
   case command(deeplink: String, params: [String: String])
+  case action(command: String, params: [String: String])
   case query(resource: String, params: [String: String])
 
   init?(data: Data) {
@@ -490,12 +506,14 @@ private nonisolated enum SocketCommandRequest {
       return nil
     }
     var extracted: [String: String] = [:]
-    for (key, value) in dict where key != "deeplink" && key != "query" {
+    for (key, value) in dict where key != "deeplink" && key != "query" && key != "command" {
       if let str = value as? String { extracted[key] = str }
     }
-    // Query takes precedence when both keys are present.
+    // Query takes precedence when multiple keys are present. Action commands take precedence over deeplinks.
     if let resource = dict["query"] as? String {
       self = .query(resource: resource, params: extracted)
+    } else if let command = dict["command"] as? String {
+      self = .action(command: command, params: extracted)
     } else if let deeplink = dict["deeplink"] as? String {
       self = .command(deeplink: deeplink, params: extracted)
     } else {

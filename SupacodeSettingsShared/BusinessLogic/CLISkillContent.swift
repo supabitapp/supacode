@@ -123,6 +123,13 @@ nonisolated enum CLISkillContent {
     supacode surface close [-w <id>] [-t <id>] [-s <id>]                                     # Close surface.
     ```
 
+    ### Comms
+
+    ```
+    supacode comms list [-w <id>] [--limit <n>]                                               # List recent conversation messages as tab-separated rows.
+    supacode comms send [-w <id>] [--sender <name>] [--title <text>] --body <text>            # Append a conversation message.
+    ```
+
     ### Repository
 
     ```
@@ -156,6 +163,10 @@ nonisolated enum CLISkillContent {
     | `--input` | `-i` | — | Command to run in the terminal. |
     | `--direction` | `-d` | `horizontal` | Split direction (`horizontal`/`h` or `vertical`/`v`). |
     | `--id` | `-n` | random | UUID for new tab/surface. |
+    | `--limit` | `-l` | `20` | Maximum conversation messages to print. |
+    | `--sender` | — | `agent` | Sender label for `comms send`. |
+    | `--title` | — | — | Optional conversation message title. |
+    | `--body` | — | — | Conversation message body. |
     """
 
   // MARK: - Codex.
@@ -204,15 +215,17 @@ nonisolated enum CLISkillContent {
     - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
+    - `supacode comms [list [-w] [--limit <n>] | send [-w] [--sender <name>] [--title <text>] --body <text>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch]]`
     - `supacode settings [<section>]`
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `comms list` outputs tab-separated `<createdAt>\\t<sender>\\t<title>\\t<body>` rows with tabs/newlines escaped.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID), `-l` (conversation list limit), `--sender`, `--title`, `--body`.
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
@@ -248,7 +261,7 @@ nonisolated enum CLISkillContent {
     supacode surface split -d v -i "test"     # BAD: missing -t/-s, targets your shell
     ```
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID), `-l` (conversation list limit), `--sender`, `--title`, `--body`.
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
@@ -297,15 +310,17 @@ nonisolated enum CLISkillContent {
     - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
+    - `supacode comms [list [-w] [--limit <n>] | send [-w] [--sender <name>] [--title <text>] --body <text>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch]]`
     - `supacode settings [<section>]`
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `comms list` outputs tab-separated `<createdAt>\\t<sender>\\t<title>\\t<body>` rows with tabs/newlines escaped.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID), `-l` (conversation list limit), `--sender`, `--title`, `--body`.
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
@@ -354,15 +369,17 @@ nonisolated enum CLISkillContent {
     - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
+    - `supacode comms [list [-w] [--limit <n>] | send [-w] [--sender <name>] [--title <text>] --body <text>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch]]`
     - `supacode settings [<section>]`
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `comms list` outputs tab-separated `<createdAt>\\t<sender>\\t<title>\\t<body>` rows with tabs/newlines escaped.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID), `-l` (conversation list limit), `--sender`, `--title`, `--body`.
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 }

@@ -47,6 +47,7 @@ struct WorktreeDetailView: View {
     }
     let content = detailContent(
       repositories: repositories,
+      conversations: state.conversations,
       loadingInfo: loadingInfo,
       selectedWorktree: selectedWorktree,
       selectedWorktreeSummaries: selectedWorktreeSummaries
@@ -164,6 +165,7 @@ struct WorktreeDetailView: View {
   @ViewBuilder
   private func detailContent(
     repositories: RepositoriesFeature.State,
+    conversations: ConversationStore,
     loadingInfo: WorktreeLoadingInfo?,
     selectedWorktree: Worktree?,
     selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
@@ -182,21 +184,28 @@ struct WorktreeDetailView: View {
     } else if let selectedWorktree {
       let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
       let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-      WorktreeTerminalTabsView(
-        worktree: selectedWorktree,
-        manager: terminalManager,
-        shouldRunSetupScript: shouldRunSetupScript,
-        forceAutoFocus: shouldFocusTerminal,
-        createTab: { store.send(.newTerminal) }
-      )
-      .id(selectedWorktree.id)
+      let thread = conversations.thread(for: selectedWorktree.id)
+      VSplitView {
+        WorktreeTerminalTabsView(
+          worktree: selectedWorktree,
+          manager: terminalManager,
+          shouldRunSetupScript: shouldRunSetupScript,
+          forceAutoFocus: shouldFocusTerminal,
+          createTab: { store.send(.newTerminal) }
+        )
+        .id(selectedWorktree.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+          if shouldFocusTerminal {
+            store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
+          }
+        }
+
+        ConversationPaneView(thread: thread)
+          .frame(minHeight: 160, idealHeight: 220, maxHeight: 320)
+      }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .ignoresSafeArea(.container, edges: .bottom)
-      .onAppear {
-        if shouldFocusTerminal {
-          store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
-        }
-      }
     } else if !repositories.isInitialLoadComplete {
       DetailPlaceholderView()
     } else {
