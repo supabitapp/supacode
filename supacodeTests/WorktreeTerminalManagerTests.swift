@@ -987,6 +987,7 @@ struct WorktreeTerminalManagerTests {
         TerminalLayoutSnapshot.TabSnapshot(
           id: nil,
           title: "Terminal 1",
+          customTitle: nil,
           icon: nil,
           tintColor: nil,
           layout: .leaf(

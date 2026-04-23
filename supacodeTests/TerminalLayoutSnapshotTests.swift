@@ -10,6 +10,7 @@ struct TerminalLayoutSnapshotTests {
         TerminalLayoutSnapshot.TabSnapshot(
           id: nil,
           title: "main 1",
+          customTitle: nil,
           icon: "terminal",
           tintColor: nil,
           layout: .split(
@@ -32,6 +33,7 @@ struct TerminalLayoutSnapshotTests {
         TerminalLayoutSnapshot.TabSnapshot(
           id: nil,
           title: "main 2",
+          customTitle: nil,
           icon: nil,
           tintColor: nil,
           layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/Users/test")),
@@ -79,12 +81,40 @@ struct TerminalLayoutSnapshotTests {
     #expect(node.leafCount == 3)
   }
 
+  @Test func customTitleRoundTripsInSnapshot() throws {
+    let tabSnapshot = TerminalLayoutSnapshot.TabSnapshot(
+      id: UUID(),
+      title: "supacode 1",
+      customTitle: "my-tab",
+      icon: nil,
+      tintColor: nil,
+      layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: UUID(), workingDirectory: nil)),
+      focusedLeafIndex: 0
+    )
+    let snapshot = TerminalLayoutSnapshot(tabs: [tabSnapshot], selectedTabIndex: 0)
+    let data = try JSONEncoder().encode(snapshot)
+    let decoded = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: data)
+    #expect(decoded.tabs.first?.customTitle == "my-tab")
+  }
+
+  @Test func missingCustomTitleDecodesAsNil() throws {
+    let json = """
+      {"tabs":[{"title":"tab 1","layout":{"leaf":{"workingDirectory":null}},"focusedLeafIndex":0}],"selectedTabIndex":0}
+      """
+    let snapshot = try JSONDecoder().decode(
+      TerminalLayoutSnapshot.self,
+      from: Data(json.utf8)
+    )
+    #expect(snapshot.tabs.first?.customTitle == nil)
+  }
+
   @Test func singleLeafLayout() throws {
     let snapshot = TerminalLayoutSnapshot(
       tabs: [
         TerminalLayoutSnapshot.TabSnapshot(
           id: nil,
           title: "tab",
+          customTitle: nil,
           icon: nil,
           tintColor: nil,
           layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/home")),

@@ -806,6 +806,7 @@ final class WorktreeTerminalState {
         TerminalLayoutSnapshot.TabSnapshot(
           id: tab.id.rawValue,
           title: tab.title,
+          customTitle: isBlockingScriptTab ? nil : tab.customTitle,
           icon: isBlockingScriptTab ? nil : tab.icon,
           tintColor: isBlockingScriptTab ? nil : tab.tintColor,
           layout: layout,
@@ -867,6 +868,9 @@ final class WorktreeTerminalState {
         tintColor: tabSnapshot.tintColor,
         id: tabSnapshot.id,
       )
+      if let customTitle = tabSnapshot.customTitle {
+        tabManager.setCustomTitle(tabId, title: customTitle)
+      }
       let surface = createSurface(
         tabId: tabId,
         initialInput: nil,

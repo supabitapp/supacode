@@ -8,6 +8,7 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
   struct TabSnapshot: Codable, Equatable, Sendable {
     let id: UUID?
     let title: String
+    let customTitle: String?
     let icon: String?
     let tintColor: TerminalTabTintColor?
     let layout: LayoutNode

@@ -23,7 +23,7 @@ struct TerminalTabLabelView: View {
           )
           .accessibilityHidden(true)
       }
-      Text(tab.title)
+      Text(tab.displayTitle)
         .font(.caption)
         .lineLimit(1)
         .foregroundStyle(isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)

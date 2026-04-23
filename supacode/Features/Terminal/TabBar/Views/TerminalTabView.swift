@@ -10,11 +10,15 @@ struct TerminalTabView: View {
   let hasNotification: Bool
   let onSelect: () -> Void
   let onClose: () -> Void
+  let onRename: (String) -> Void
   @Binding var closeButtonGestureActive: Bool
+  @Binding var isEditing: Bool
 
   @State private var isHovering = false
   @State private var isHoveringClose = false
   @State private var isPressing = false
+  @State private var editingTitle = ""
+  @FocusState private var isFieldFocused: Bool
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
 
   var body: some View {
@@ -38,8 +42,10 @@ struct TerminalTabView: View {
       )
       .frame(width: fixedWidth)
       .contentShape(.rect)
-      .help("Open tab \(tab.title)")
-      .accessibilityLabel(tab.title)
+      .help("Open tab \(tab.displayTitle)")
+      .accessibilityLabel(tab.displayTitle)
+      .allowsHitTesting(!isEditing)
+      .opacity(isEditing ? 0 : 1)
 
       // The dot and close X share the same trailing slot: the dot is
       // visible when the tab is idle and has unread notifications, the
@@ -61,6 +67,28 @@ struct TerminalTabView: View {
       .animation(.easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration), value: isHovering)
       .animation(.easeInOut(duration: 0.2), value: hasNotification)
       .padding(.trailing, TerminalTabBarMetrics.tabHorizontalPadding)
+      .opacity(isEditing ? 0 : 1)
+      .allowsHitTesting(!isEditing)
+    }
+    .overlay {
+      if isEditing {
+        TextField("", text: $editingTitle)
+          .textFieldStyle(.plain)
+          .font(.caption)
+          .focused($isFieldFocused)
+          .foregroundStyle(TerminalTabBarColors.activeText)
+          .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
+          .padding(
+            .trailing,
+            TerminalTabBarMetrics.closeButtonSize + TerminalTabBarMetrics.contentSpacing
+          )
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+          .onSubmit { commitRename() }
+          .onExitCommand { isEditing = false }
+          .onChange(of: isFieldFocused) { _, focused in
+            if !focused && isEditing { commitRename() }
+          }
+      }
     }
     .background {
       TerminalTabBackground(
@@ -79,10 +107,29 @@ struct TerminalTabView: View {
     .onHover { hovering in
       isHovering = hovering
     }
+    .simultaneousGesture(
+      TapGesture(count: 2).onEnded {
+        guard !tab.isTitleLocked else { return }
+        isEditing = true
+      }
+    )
+    .onChange(of: isEditing) { _, editing in
+      if editing {
+        editingTitle = tab.displayTitle
+        isFieldFocused = true
+      }
+    }
     .zIndex(isActive ? 2 : (isDragging ? 3 : 0))
     .overlay {
       MiddleClickView(action: onClose)
     }
+  }
+
+  private func commitRename() {
+    let trimmed = editingTitle.trimmingCharacters(in: .whitespaces)
+    isEditing = false
+    guard !trimmed.isEmpty else { return }
+    onRename(trimmed)
   }
 
   private var shortcutHint: String? {

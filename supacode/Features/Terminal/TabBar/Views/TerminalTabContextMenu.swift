@@ -23,6 +23,13 @@ struct TerminalTabContextMenu: ViewModifier {
 
   func body(content: Content) -> some View {
     content.contextMenu {
+      if currentTab?.isTitleLocked == false {
+        Button("Rename Tab") {
+          actions.renameTab(tabId)
+        }
+        Divider()
+      }
+
       Button("Close Tab") {
         actions.closeTab(tabId)
       }
@@ -41,6 +48,10 @@ struct TerminalTabContextMenu: ViewModifier {
         actions.closeAll()
       }
     }
+  }
+
+  private var currentTab: TerminalTabItem? {
+    tabs.first { $0.id == tabId }
   }
 
   private var isLastTab: Bool {

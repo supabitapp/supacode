@@ -12,11 +12,13 @@ struct TerminalTabsRowView: View {
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
+  let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
   let scrollReader: ScrollViewProxy
 
   @State private var dropTargetIndex: Int?
   @State private var rowFrame: CGRect = .zero
+  @State private var editingTabId: TerminalTabID?
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -36,7 +38,14 @@ struct TerminalTabsRowView: View {
               onClose: {
                 closeTab(id)
               },
-              closeButtonGestureActive: $closeButtonGestureActive
+              onRename: { newTitle in
+                renameTab(id, newTitle)
+              },
+              closeButtonGestureActive: $closeButtonGestureActive,
+              isEditing: Binding(
+                get: { editingTabId == id },
+                set: { if $0 { editingTabId = id } else { editingTabId = nil } }
+              )
             )
             .background(
               TerminalTabMeasurementView(
@@ -54,7 +63,8 @@ struct TerminalTabsRowView: View {
                 closeTab: closeTab,
                 closeOthers: closeOthers,
                 closeToRight: closeToRight,
-                closeAll: closeAll
+                closeAll: closeAll,
+                renameTab: { editingTabId = $0 }
               )
             )
             .id(id)

@@ -41,6 +41,9 @@ struct WorktreeTerminalTabsView: View {
           closeAll: {
             state.closeAllTabs()
           },
+          renameTab: { tabId, newTitle in
+            state.tabManager.setCustomTitle(tabId, title: newTitle)
+          },
           hasNotification: { tabId in
             state.hasUnseenNotification(forTabID: tabId)
           }
