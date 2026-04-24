@@ -49,13 +49,13 @@ final class TerminalTabManager {
   func updateTitle(_ id: TerminalTabID, title: String) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     guard !tabs[index].isTitleLocked else { return }
-    guard tabs[index].customTitle == nil else { return }
     tabs[index].title = title
   }
 
-  func setCustomTitle(_ id: TerminalTabID, title: String?) {
+  func setCustomTitle(_ id: TerminalTabID, title: String) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-    tabs[index].customTitle = title
+    let trimmed = title.trimmingCharacters(in: .whitespaces)
+    tabs[index].customTitle = trimmed.isEmpty ? nil : trimmed
   }
 
   func unlockAndUpdateTitle(_ id: TerminalTabID, title: String) {

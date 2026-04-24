@@ -121,19 +121,30 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.first { $0.id == id }!.isTitleLocked == false)
   }
 
-  @Test func ghosttyUpdateIgnoredWhenCustomTitleSet() {
+  @Test func ghosttyUpdateDoesNotAffectDisplayTitleWhenCustomTitleSet() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
     manager.setCustomTitle(id, title: "my name")
     manager.updateTitle(id, title: "vim • main.swift")
-    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "my name")
+    let tab = manager.tabs.first { $0.id == id }!
+    #expect(tab.title == "vim • main.swift")
+    #expect(tab.displayTitle == "my name")
+  }
+
+  @Test func clearingCustomTitleRestoresLiveShellTitle() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.setCustomTitle(id, title: "my name")
+    manager.updateTitle(id, title: "zsh")
+    manager.setCustomTitle(id, title: "")
+    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "zsh")
   }
 
   @Test func ghosttyUpdateAppliedAfterCustomTitleCleared() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
     manager.setCustomTitle(id, title: "my name")
-    manager.setCustomTitle(id, title: nil)
+    manager.setCustomTitle(id, title: "")
     manager.updateTitle(id, title: "vim")
     #expect(manager.tabs.first { $0.id == id }!.displayTitle == "vim")
   }

@@ -128,7 +128,6 @@ struct TerminalTabView: View {
   private func commitRename() {
     let trimmed = editingTitle.trimmingCharacters(in: .whitespaces)
     isEditing = false
-    guard !trimmed.isEmpty else { return }
     onRename(trimmed)
   }
 
