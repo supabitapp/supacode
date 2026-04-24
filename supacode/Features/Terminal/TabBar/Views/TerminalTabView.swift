@@ -77,6 +77,7 @@ struct TerminalTabView: View {
           .font(.caption)
           .focused($isFieldFocused)
           .foregroundStyle(TerminalTabBarColors.activeText)
+          .accessibilityLabel("Tab name")
           .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
           .padding(
             .trailing,
