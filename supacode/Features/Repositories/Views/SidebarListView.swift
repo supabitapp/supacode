@@ -1,5 +1,6 @@
 import AppKit
 import ComposableArchitecture
+import OrderedCollections
 import Sharing
 import SupacodeSettingsShared
 import SwiftUI
@@ -167,6 +168,7 @@ private struct SidebarSectionView: View {
   let terminalManager: WorktreeTerminalManager
   var body: some View {
     let isRemovingRepository = store.state.isRemovingRepository(repository)
+    let section = store.state.sidebar.sections[repository.id]
     Section(isExpanded: repositoryExpansionBinding) {
       SidebarItemsView(
         repository: repository,
@@ -178,6 +180,8 @@ private struct SidebarSectionView: View {
     } header: {
       RepoSectionHeaderView(
         name: repository.name,
+        customTitle: section?.title,
+        color: section?.color,
         isRemoving: isRemovingRepository
       )
     }
@@ -207,6 +211,11 @@ private struct SidebarSectionActionsView: View {
 
   var body: some View {
     Menu {
+      Button("Customize Repository…", systemImage: "paintbrush") {
+        store.send(.requestCustomizeRepository(repositoryID))
+      }
+      .help("Customize sidebar title and color")
+      .disabled(isRemovingRepository)
       Button("Repository Settings…", systemImage: "gear") {
         store.send(.openRepositorySettings(repositoryID))
       }

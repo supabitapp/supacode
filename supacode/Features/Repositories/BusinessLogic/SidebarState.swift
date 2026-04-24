@@ -79,18 +79,31 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
   nonisolated struct Section: Equatable, Sendable, Codable {
     var collapsed: Bool
     var buckets: OrderedDictionary<BucketID, Bucket>
+    /// Optional user-supplied display title that overrides the
+    /// repository folder name in the sidebar header. `nil` (or
+    /// whitespace-only after trim) means "use the default name".
+    var title: String?
+    /// Optional user-supplied tint applied to the sidebar header.
+    /// `nil` means "default / no tint".
+    var color: RepositoryColor?
 
     init(
       collapsed: Bool = false,
-      buckets: OrderedDictionary<BucketID, Bucket> = [:]
+      buckets: OrderedDictionary<BucketID, Bucket> = [:],
+      title: String? = nil,
+      color: RepositoryColor? = nil
     ) {
       self.collapsed = collapsed
       self.buckets = buckets
+      self.title = title
+      self.color = color
     }
 
     private enum SectionCodingKeys: String, CodingKey {
       case collapsed
       case buckets
+      case title
+      case color
     }
 
     init(from decoder: any Decoder) throws {
@@ -104,6 +117,8 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
           OrderedDictionary<BucketID, Bucket>.self,
           forKey: .buckets
         ) ?? [:]
+      self.title = try container.decodeIfPresent(String.self, forKey: .title)
+      self.color = try container.decodeIfPresent(RepositoryColor.self, forKey: .color)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -112,6 +127,10 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // stays exhaustive and the migrator can rely on a stable shape.
       try container.encode(collapsed, forKey: .collapsed)
       try container.encode(buckets, forKey: .buckets)
+      // Customization fields are only emitted when set so the file
+      // stays clean for repos the user never touched.
+      try container.encodeIfPresent(title, forKey: .title)
+      try container.encodeIfPresent(color, forKey: .color)
     }
   }
 

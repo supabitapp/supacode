@@ -309,4 +309,36 @@ struct SidebarStateTests {
     #expect(decoded.collapsed == false)
     #expect(decoded.buckets.isEmpty)
   }
+
+  // MARK: - customization round-trip
+
+  @Test func sectionRoundtripPreservesTitleAndColor() throws {
+    var section = SidebarState.Section()
+    section.title = "Pretty Name"
+    section.color = .custom("#A1B2C3")
+    section.collapsed = true
+
+    let encoded = try JSONEncoder().encode(section)
+    let decoded = try JSONDecoder().decode(SidebarState.Section.self, from: encoded)
+
+    #expect(decoded.title == "Pretty Name")
+    #expect(decoded.color == .custom("#A1B2C3"))
+    #expect(decoded.collapsed == true)
+  }
+
+  @Test func sectionDecodesLegacyJSONWithoutCustomizationFields() throws {
+    // Sidebar files written before customization shipped have
+    // neither `title` nor `color`; they must surface as `nil`
+    // without throwing. `OrderedDictionary` encodes as a flat
+    // key/value array, so the legacy `buckets` payload uses `[]`
+    // rather than `{}`.
+    let legacyJSON = """
+      { "collapsed": false, "buckets": [] }
+      """
+    let data = Data(legacyJSON.utf8)
+    let decoded = try JSONDecoder().decode(SidebarState.Section.self, from: data)
+
+    #expect(decoded.title == nil)
+    #expect(decoded.color == nil)
+  }
 }

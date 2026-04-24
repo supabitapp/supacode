@@ -68,6 +68,14 @@ struct ContentView: View {
     ) { promptStore in
       WorktreeCreationPromptView(store: promptStore)
     }
+    .sheet(
+      store: repositoriesStore.scope(
+        state: \.$repositoryCustomization,
+        action: \.repositoryCustomization
+      )
+    ) { customizationStore in
+      RepositoryCustomizationView(store: customizationStore)
+    }
     .focusedSceneValue(\.toggleLeftSidebarAction, toggleLeftSidebar)
     .focusedSceneValue(\.revealInSidebarAction, revealInSidebarAction)
     .overlay {
