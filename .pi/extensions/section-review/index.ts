@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Editor, Key, matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
+import { Editor, Key, matchesKey, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 
 type Section = {
   id: string;
@@ -197,7 +197,14 @@ export default function sectionReviewExtension(pi: ExtensionAPI): void {
           if (cachedLines) return cachedLines;
 
           const lines: string[] = [];
-          const add = (line: string) => lines.push(truncateToWidth(line, width));
+          const add = (line: string) => {
+            const wrapped = wrapTextWithAnsi(line, Math.max(width, 1));
+            if (wrapped.length === 0) {
+              lines.push("");
+              return;
+            }
+            lines.push(...wrapped);
+          };
 
           add(theme.fg("accent", "─".repeat(width)));
           add(
