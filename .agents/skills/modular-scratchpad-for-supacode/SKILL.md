@@ -219,3 +219,11 @@ Avoid broad refactors outside these files.
 - Relevant tests pass: `make test` (or targeted `xcodebuild test -only-testing:...` while iterating)
 - Diff remains modular and rebase-friendly
 - Changes are split into focused commits for clean PR review
+
+## Final response footer requirement (required)
+
+At the very end of each response, include a short paragraph for the next agent that states:
+
+- short prompt file path
+- full plan file path
+- exact next slice to execute

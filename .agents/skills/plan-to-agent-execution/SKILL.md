@@ -157,6 +157,16 @@ At the end of each slice, produce this handoff block:
 5. **Next slice recommendation**
 6. **Exact next command to run**
 
+## Final response footer requirement (required)
+
+At the very end of the response, include a short paragraph (2-4 sentences max) for the next agent that explicitly states:
+
+- where the short prompt is located (exact path)
+- where the full plan is located (exact path)
+- what slice/step to execute next
+
+Use clear, copy-pastable paths.
+
 ## Commit strategy
 
 - Commit small, coherent changes.
