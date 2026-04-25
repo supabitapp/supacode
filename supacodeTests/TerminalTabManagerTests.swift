@@ -148,4 +148,52 @@ struct TerminalTabManagerTests {
     manager.updateTitle(id, title: "vim")
     #expect(manager.tabs.first { $0.id == id }!.displayTitle == "vim")
   }
+
+  @Test func beginTabRenameSetsPendingRenameID() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.beginTabRename(id)
+    #expect(manager.pendingRenameTabID == id)
+  }
+
+  @Test func beginTabRenameIgnoresLockedTab() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "Run Script", icon: nil, isTitleLocked: true)
+    manager.beginTabRename(id)
+    #expect(manager.pendingRenameTabID == nil)
+  }
+
+  @Test func closingTabClearsPendingRename() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.beginTabRename(id)
+    manager.closeTab(id)
+    #expect(manager.pendingRenameTabID == nil)
+  }
+
+  @Test func closeOthersClearsPendingRenameForRemovedTab() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "tab 1", icon: nil)
+    let second = manager.createTab(title: "tab 2", icon: nil)
+    manager.beginTabRename(first)
+    manager.closeOthers(keeping: second)
+    #expect(manager.pendingRenameTabID == nil)
+  }
+
+  @Test func closeToRightClearsPendingRenameForRemovedTab() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "tab 1", icon: nil)
+    let second = manager.createTab(title: "tab 2", icon: nil)
+    manager.beginTabRename(second)
+    manager.closeToRight(of: first)
+    #expect(manager.pendingRenameTabID == nil)
+  }
+
+  @Test func closeAllClearsPendingRename() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.beginTabRename(id)
+    manager.closeAll()
+    #expect(manager.pendingRenameTabID == nil)
+  }
 }

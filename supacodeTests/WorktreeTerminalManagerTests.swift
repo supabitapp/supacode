@@ -981,6 +981,21 @@ struct WorktreeTerminalManagerTests {
     )
   }
 
+  @Test func beginTabRenameCommandSetsPendingRenameID() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    guard let tabId = state.createTab() else {
+      Issue.record("Expected tab to be created")
+      return
+    }
+
+    manager.handleCommand(.beginTabRename(worktree))
+
+    #expect(state.tabManager.pendingRenameTabID == tabId)
+  }
+
   @Test func captureLayoutSnapshotStripsCustomTitleFromLockedTab() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()

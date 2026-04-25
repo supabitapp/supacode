@@ -33,6 +33,7 @@ struct TerminalClient {
       input: String?, id: UUID? = nil)
     case destroyTab(Worktree, tabID: TerminalTabID)
     case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID)
+    case beginTabRename(Worktree)
     case prune(Set<Worktree.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)

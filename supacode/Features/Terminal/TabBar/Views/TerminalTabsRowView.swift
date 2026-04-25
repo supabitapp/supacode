@@ -131,6 +131,11 @@ struct TerminalTabsRowView: View {
         }
       }
     }
+    .onChange(of: manager.pendingRenameTabID) { _, tabID in
+      guard let tabID else { return }
+      editingTabId = tabID
+      manager.consumePendingRename()
+    }
     .frame(height: TerminalTabBarMetrics.barHeight)
   }
 

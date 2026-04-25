@@ -764,6 +764,11 @@ struct AppFeature {
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           return .none
         }
+        if action.hasPrefix("prompt_title:") {
+          return .run { _ in
+            await terminalClient.send(.beginTabRename(worktree))
+          }
+        }
         return .run { _ in
           await terminalClient.send(.performBindingAction(worktree, action: action))
         }

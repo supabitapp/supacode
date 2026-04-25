@@ -7,6 +7,7 @@ import SupacodeSettingsShared
 final class TerminalTabManager {
   var tabs: [TerminalTabItem] = []
   var selectedTabId: TerminalTabID?
+  var pendingRenameTabID: TerminalTabID?
 
   private static let logger = SupaLogger("TabManager")
 
@@ -82,6 +83,7 @@ final class TerminalTabManager {
   func closeTab(_ id: TerminalTabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     tabs.remove(at: index)
+    clearStalePendingRename()
     guard selectedTabId == id else { return }
     if index > 0 {
       selectedTabId = tabs[index - 1].id
@@ -94,19 +96,37 @@ final class TerminalTabManager {
 
   func closeOthers(keeping id: TerminalTabID) {
     tabs = tabs.filter { $0.id == id }
+    clearStalePendingRename()
     selectedTabId = tabs.first?.id
   }
 
   func closeToRight(of id: TerminalTabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     tabs = Array(tabs.prefix(index + 1))
+    clearStalePendingRename()
     if let selectedTabId, !tabs.contains(where: { $0.id == selectedTabId }) {
       self.selectedTabId = tabs.last?.id
     }
   }
 
+  func beginTabRename(_ id: TerminalTabID) {
+    guard tabs.contains(where: { $0.id == id && !$0.isTitleLocked }) else { return }
+    pendingRenameTabID = id
+  }
+
+  func consumePendingRename() {
+    pendingRenameTabID = nil
+  }
+
   func closeAll() {
     tabs.removeAll()
+    pendingRenameTabID = nil
     selectedTabId = nil
+  }
+
+  private func clearStalePendingRename() {
+    if let id = pendingRenameTabID, !tabs.contains(where: { $0.id == id }) {
+      pendingRenameTabID = nil
+    }
   }
 }
