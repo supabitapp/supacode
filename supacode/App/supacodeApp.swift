@@ -59,12 +59,12 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     UserDefaults.standard.register(defaults: [
       "ApplePressAndHoldEnabled": false
     ])
-    // The system color panel (`NSColorPanel.shared`) survives across
-    // app launches via macOS window restoration, so a left-open
-    // panel from a previous session can return without the main
-    // window being visible. Hide it on launch so the user always
-    // lands on the main window.
-    NSColorPanel.shared.orderOut(nil)
+    // `NSColorPanel.shared` is `isRestorable = true` by default, so
+    // the system writes its visibility to the app's restoration
+    // archive and brings it back on next launch — independently of
+    // the main window. Opt the singleton out per-process so a panel
+    // left open from a previous session can't survive the relaunch.
+    NSColorPanel.shared.isRestorable = false
     appStore?.send(.appLaunched)
   }
 
@@ -396,7 +396,6 @@ struct SupacodeApp: App {
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)
     }
-    .restorationBehavior(.disabled)
     .handlesExternalEvents(matching: [])
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)

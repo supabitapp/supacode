@@ -89,4 +89,24 @@ struct RepositoryCustomizationFeatureTests {
       $0.color = RepositoryColor.custom(from: next)
     }
   }
+
+  @Test func bindingDemotesPredefinedColorOnUserDrivenWriteback() async {
+    // Documented trade-off: a deliberate ColorPicker drag from a
+    // predefined pick (`.red`) demotes `state.color` to a sRGB-
+    // quantized hex. Pin the behavior so a future refactor can't
+    // silently re-add a binding gate — the previous gate broke the
+    // very first user drag from registering as a custom selection.
+    var initial = makeState(color: .red)
+    initial.customColor = RepositoryColor.red.color
+    let store = TestStore(initialState: initial) {
+      RepositoryCustomizationFeature()
+    }
+
+    let quantized = Color(nsColor: NSColor.systemRed)
+    await store.send(.set(\.customColor, quantized)) {
+      $0.customColor = quantized
+      $0.color = RepositoryColor.custom(from: quantized)
+    }
+    #expect(store.state.color?.isCustom == true)
+  }
 }
