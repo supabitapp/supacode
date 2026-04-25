@@ -87,9 +87,12 @@ nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
     }
   }
 
-  /// Display label shown to the user (Settings popover swatches,
-  /// etc.). Predefined cases use their localized name; custom cases
-  /// echo their hex payload.
+  /// Display label for the color — used as the predefined swatch
+  /// tooltip in `RepositoryCustomizationView`. Predefined cases use
+  /// their capitalized name; the `.custom` arm echoes the hex
+  /// payload and is currently unreachable from the UI (the custom
+  /// swatch hard-codes "Custom"), kept only to keep the switch
+  /// exhaustive.
   var displayName: String {
     switch self {
     case .red: "Red"
@@ -107,21 +110,6 @@ nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
   var isCustom: Bool {
     if case .custom = self { return true }
     return false
-  }
-
-  /// `#RRGGBB` form for the resolved color, used to seed the
-  /// SwiftUI `ColorPicker` when the user opens the customization
-  /// sheet on an already-tinted repo.
-  var hexString: String {
-    switch self {
-    case .red: Self.hex(from: .systemRed)
-    case .orange: Self.hex(from: .systemOrange)
-    case .yellow: Self.hex(from: .systemYellow)
-    case .green: Self.hex(from: .systemGreen)
-    case .blue: Self.hex(from: .systemBlue)
-    case .purple: Self.hex(from: .systemPurple)
-    case .custom(let hex): hex
-    }
   }
 
   /// Build a custom color from a SwiftUI `Color`. Falls back to

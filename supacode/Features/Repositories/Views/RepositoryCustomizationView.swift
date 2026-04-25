@@ -1,3 +1,4 @@
+import AppKit
 import ComposableArchitecture
 import SwiftUI
 
@@ -43,6 +44,14 @@ struct RepositoryCustomizationView: View {
     }
     .frame(minWidth: 420)
     .task { isTitleFocused = true }
+    .onDisappear {
+      // The system color panel is a singleton (`NSColorPanel.shared`)
+      // and stays visible after the sheet is dismissed, so close it
+      // explicitly. Without this it persists, can outlive the
+      // sheet, and macOS window restoration may even bring it back
+      // on next launch with no main window in sight.
+      NSColorPanel.shared.orderOut(nil)
+    }
   }
 }
 
@@ -68,7 +77,6 @@ private struct ColorSwatchRowView: View {
       CustomSwatchButton(
         isSelected: store.color?.isCustom == true,
         color: $store.customColor,
-        onActivate: { store.send(.selectCustomColor) },
       )
     }
   }
@@ -121,7 +129,6 @@ private struct ColorSwatchButton: View {
 private struct CustomSwatchButton: View {
   let isSelected: Bool
   @Binding var color: Color
-  let onActivate: () -> Void
 
   var body: some View {
     // Visible swatch is a circular rainbow gradient with the
@@ -129,11 +136,7 @@ private struct CustomSwatchButton: View {
     // selected. The system `ColorPicker` sits underneath at the
     // same frame, with `labelsHidden` and near-zero opacity, so a
     // click anywhere on the swatch opens the macOS color panel
-    // without exposing the rounded-rectangle picker chrome. The
-    // simultaneous tap fires `onActivate` to enter `.custom` mode
-    // before the panel opens — without it, the reducer's binding
-    // gate would block the first user pick from promoting `.red`
-    // (or any predefined) to a `.custom` hex.
+    // without exposing the rounded-rectangle picker chrome.
     ZStack {
       ColorPicker("Custom Color", selection: $color, supportsOpacity: false)
         .labelsHidden()
@@ -155,8 +158,6 @@ private struct CustomSwatchButton: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
-    .simultaneousGesture(TapGesture().onEnded(onActivate))
-    .accessibilityAddTraits(.isButton)
     .modifier(SwatchSelectionRing(isSelected: isSelected))
     .help("Custom")
   }

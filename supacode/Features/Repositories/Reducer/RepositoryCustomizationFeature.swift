@@ -20,7 +20,6 @@ struct RepositoryCustomizationFeature {
   enum Action: BindableAction, Equatable {
     case binding(BindingAction<State>)
     case selectColor(RepositoryColor?)
-    case selectCustomColor
     case cancelButtonTapped
     case saveButtonTapped
     case delegate(Delegate)
@@ -37,18 +36,13 @@ struct RepositoryCustomizationFeature {
     Reduce { state, action in
       switch action {
       case .binding(\.customColor):
-        // Re-flow ColorPicker edits back into the canonical `color`
-        // payload so save delegates the right value without a
-        // separate "is custom mode active?" flag. Gated on
-        // `isCustom`: predefined picks mirror their swatch into
-        // `customColor` for ColorPicker preview, but a stray write
-        // back from SwiftUI (sRGB-quantization round-trip) must not
-        // demote `.red` to `.custom("#FF3B30")` — so the promotion
-        // only fires when the user is already editing in custom
-        // mode.
-        guard state.color?.isCustom == true else {
-          return .none
-        }
+        // ColorPicker edits flow into `state.color` as `.custom(hex)`.
+        // BindingReducer only fires for view-driven writes, so the
+        // mirror updates from `.selectColor` (predefined picks)
+        // don't loop back through this branch. The trade-off: an
+        // explicit drag in the panel demotes `.red` to a
+        // sRGB-quantized hex, which is correct intent capture but
+        // loses the predefined label.
         if let custom = RepositoryColor.custom(from: state.customColor) {
           state.color = custom
         }
@@ -61,20 +55,6 @@ struct RepositoryCustomizationFeature {
         state.color = color
         if let color {
           state.customColor = color.color
-        }
-        return .none
-
-      case .selectCustomColor:
-        // Explicit entry into custom mode — fires when the user
-        // taps the rainbow swatch. Gating the `binding(\.customColor)`
-        // arm on `isCustom == true` blocks SwiftUI write-backs from
-        // demoting a predefined pick, but the entry path needs its
-        // own action so the user can switch from `.red` to a
-        // `.custom` hex without first dragging in the system panel.
-        if state.color?.isCustom != true,
-          let custom = RepositoryColor.custom(from: state.customColor)
-        {
-          state.color = custom
         }
         return .none
 

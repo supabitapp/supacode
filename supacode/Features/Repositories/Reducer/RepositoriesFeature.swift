@@ -2293,6 +2293,17 @@ struct RepositoriesFeature {
           state.selection = nil
           state.shouldSelectFirstAfterReload = true
         }
+        // Drop sidebar sections for explicitly-removed repos before
+        // reconcile fires. `preserveOrphanSections` keeps customized
+        // tombstones across transient drops (filesystem flutter), but
+        // an explicit "Remove Repository" must not silently restore
+        // the user's old title / color when the same path is re-added
+        // later.
+        state.$sidebar.withLock { sidebar in
+          for id in repositoryIDs {
+            sidebar.sections.removeValue(forKey: id)
+          }
+        }
         let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
         let remainingRepositories = Array(state.repositories.filter { !idSet.contains($0.id) })
         let remainingRoots = state.repositoryRoots.filter {

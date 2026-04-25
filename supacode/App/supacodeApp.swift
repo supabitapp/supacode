@@ -59,12 +59,24 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     UserDefaults.standard.register(defaults: [
       "ApplePressAndHoldEnabled": false
     ])
+    // The system color panel (`NSColorPanel.shared`) survives across
+    // app launches via macOS window restoration, so a left-open
+    // panel from a previous session can return without the main
+    // window being visible. Hide it on launch so the user always
+    // lands on the main window.
+    NSColorPanel.shared.orderOut(nil)
     appStore?.send(.appLaunched)
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
     let app = NSApplication.shared
-    guard !app.windows.contains(where: \.isVisible) else { return }
+    // Filter `NSPanel` out of the visibility check — the system
+    // color / font panels (and any sheet-attached child panels) are
+    // not "main windows" that should suppress `showMainWindow`.
+    let hasVisibleMainWindow = app.windows.contains { window in
+      window.isVisible && !(window is NSPanel)
+    }
+    guard !hasVisibleMainWindow else { return }
     _ = showMainWindow(from: app)
   }
 
@@ -92,10 +104,15 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     if let window = sender.windows.first(where: { $0.identifier?.rawValue == WindowID.main }) {
       return window
     }
-    if let window = sender.windows.first(where: { $0.identifier?.rawValue != WindowID.settings }) {
+    // Skip NSPanel instances (color/font/etc. system panels) when
+    // falling back — `makeKeyAndOrderFront` on a restored
+    // `NSColorPanel` would just resurrect the dangling panel
+    // instead of surfacing the actual main window.
+    let candidates = sender.windows.filter { !($0 is NSPanel) }
+    if let window = candidates.first(where: { $0.identifier?.rawValue != WindowID.settings }) {
       return window
     }
-    return sender.windows.first
+    return candidates.first
   }
 
   private func showMainWindow(from sender: NSApplication) -> Bool {
@@ -379,6 +396,7 @@ struct SupacodeApp: App {
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)
     }
+    .restorationBehavior(.disabled)
     .handlesExternalEvents(matching: [])
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)

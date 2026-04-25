@@ -2,6 +2,7 @@ import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
 import OrderedCollections
+import SupacodeSettingsShared
 import SwiftUI
 import Testing
 
@@ -97,6 +98,34 @@ struct RepositoriesFeatureCustomizationTests {
         sidebar.sections[self.repoID, default: .init()].color = .red
       }
     }
+  }
+
+  @Test func explicitRemovalDropsCustomizationFromSidebar() async {
+    // `preserveOrphanSections` keeps customized tombstones across
+    // transient drops (filesystem flutter), but an explicit "Remove
+    // Repository" must purge `sidebar.sections[id]` so re-adding the
+    // same path doesn't silently restore the user's old title /
+    // color.
+    var initial = makeInitialState()
+    initial.$sidebar.withLock { sidebar in
+      sidebar.sections[self.repoID] = .init(
+        title: "Pretty",
+        color: .blue,
+      )
+    }
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.repositoriesRemoved([repoID], selectionWasRemoved: false))
+    await store.skipReceivedActions()
+
+    #expect(store.state.sidebar.sections[repoID] == nil)
   }
 
   @Test func cancelDelegateClearsPresentedState() async {
