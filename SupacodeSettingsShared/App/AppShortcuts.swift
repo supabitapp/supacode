@@ -10,6 +10,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
   case deleteWorktree, confirmWorktreeAction
   case selectNextWorktree, selectPreviousWorktree
+  case worktreeHistoryBack, worktreeHistoryForward
   case selectWorktree(Int)
   case openWorktree, revealInFinder, openRepository, openPullRequest, copyPath
   case runScript, stopRunScript
@@ -47,6 +48,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .confirmWorktreeAction: "confirmWorktreeAction"
     case .selectNextWorktree: "selectNextWorktree"
     case .selectPreviousWorktree: "selectPreviousWorktree"
+    case .worktreeHistoryBack: "worktreeHistoryBack"
+    case .worktreeHistoryForward: "worktreeHistoryForward"
     case .selectWorktree(let index): "selectWorktree\(index)"
     case .openWorktree: "openWorktree"
     case .revealInFinder: "revealInFinder"
@@ -73,6 +76,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "confirmWorktreeAction": .confirmWorktreeAction,
     "selectNextWorktree": .selectNextWorktree,
     "selectPreviousWorktree": .selectPreviousWorktree,
+    "worktreeHistoryBack": .worktreeHistoryBack,
+    "worktreeHistoryForward": .worktreeHistoryForward,
     "openWorktree": .openWorktree,
     "openFinder": .openWorktree,
     "revealInFinder": .revealInFinder,
@@ -111,6 +116,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .confirmWorktreeAction: "Confirm Worktree Action"
     case .selectNextWorktree: "Select Next Worktree"
     case .selectPreviousWorktree: "Select Previous Worktree"
+    case .worktreeHistoryBack: "Back in Worktree History"
+    case .worktreeHistoryForward: "Forward in Worktree History"
     case .selectWorktree(let index): "Select Worktree \(index == 0 ? 10 : index)"
     case .openWorktree: "Open Worktree"
     case .revealInFinder: "Reveal in Finder"
@@ -306,6 +313,14 @@ public enum AppShortcuts {
     id: .selectPreviousWorktree,
     keyEquivalent: .upArrow, ghosttyKeyName: "arrow_up", modifiers: [.command, .control]
   )
+  public static let worktreeHistoryBack = AppShortcut(
+    id: .worktreeHistoryBack,
+    keyEquivalent: .leftArrow, ghosttyKeyName: "arrow_left", modifiers: [.command, .control]
+  )
+  public static let worktreeHistoryForward = AppShortcut(
+    id: .worktreeHistoryForward,
+    keyEquivalent: .rightArrow, ghosttyKeyName: "arrow_right", modifiers: [.command, .control]
+  )
 
   public static let selectWorktree1 = AppShortcut(id: .selectWorktree(1), key: "1", modifiers: [.control])
   public static let selectWorktree2 = AppShortcut(id: .selectWorktree(2), key: "2", modifiers: [.control])
@@ -344,6 +359,7 @@ public enum AppShortcuts {
       shortcuts: [
         newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree,
         deleteWorktree, confirmWorktreeAction, selectNextWorktree, selectPreviousWorktree,
+        worktreeHistoryBack, worktreeHistoryForward,
       ]
     ),
     AppShortcutGroup(category: .worktreeSelection, shortcuts: worktreeSelection),

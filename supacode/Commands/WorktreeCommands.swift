@@ -29,6 +29,10 @@ struct WorktreeCommands: Commands {
     let githubIntegrationEnabled = store.settings.githubIntegrationEnabled
     let selectNext = AppShortcuts.selectNextWorktree.effective(from: overrides)
     let selectPrevious = AppShortcuts.selectPreviousWorktree.effective(from: overrides)
+    let historyBack = AppShortcuts.worktreeHistoryBack.effective(from: overrides)
+    let historyForward = AppShortcuts.worktreeHistoryForward.effective(from: overrides)
+    let canGoBack = repositories.canNavigateWorktreeHistoryBackward
+    let canGoForward = repositories.canNavigateWorktreeHistoryForward
     let archive = AppShortcuts.archiveWorktree.effective(from: overrides)
     let deleteWt = AppShortcuts.deleteWorktree.effective(from: overrides)
     let confirm = AppShortcuts.confirmWorktreeAction.effective(from: overrides)
@@ -134,6 +138,18 @@ struct WorktreeCommands: Commands {
       .appKeyboardShortcut(selectPrevious)
       .help("Select Previous (\(selectPrevious?.display ?? "none"))")
       .disabled(orderedRows.isEmpty)
+      Button("Back in Worktree History", systemImage: "chevron.left") {
+        store.send(.repositories(.worktreeHistoryBack))
+      }
+      .appKeyboardShortcut(historyBack)
+      .help("Back in Worktree History (\(historyBack?.display ?? "none"))")
+      .disabled(!canGoBack)
+      Button("Forward in Worktree History", systemImage: "chevron.right") {
+        store.send(.repositories(.worktreeHistoryForward))
+      }
+      .appKeyboardShortcut(historyForward)
+      .help("Forward in Worktree History (\(historyForward?.display ?? "none"))")
+      .disabled(!canGoForward)
       // Direct worktree shortcuts.
       let worktreeShortcutsList = worktreeShortcuts(from: overrides)
       Menu("Select Worktree") {
