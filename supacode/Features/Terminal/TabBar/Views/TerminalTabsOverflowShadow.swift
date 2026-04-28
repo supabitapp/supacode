@@ -9,6 +9,8 @@ struct TerminalTabsOverflowShadow: View {
   private var activeState
   @Environment(\.surfaceTopChromeBackgroundOpacity)
   private var surfaceTopChromeBackgroundOpacity
+  @Environment(\.surfaceChromeBackgroundColor)
+  private var surfaceChromeBackgroundColor
 
   var body: some View {
     Rectangle()
@@ -27,8 +29,8 @@ struct TerminalTabsOverflowShadow: View {
 
   private var gradientColors: [Color] {
     [
-      TerminalTabBarColors.barBackground.opacity(chromeBackgroundOpacity),
-      TerminalTabBarColors.barBackground.opacity(0),
+      surfaceChromeBackgroundColor.opacity(chromeBackgroundOpacity),
+      surfaceChromeBackgroundColor.opacity(0),
     ]
   }
 

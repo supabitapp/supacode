@@ -2,39 +2,39 @@ import AppKit
 import SwiftUI
 
 enum TerminalTabBarColors {
-  static var barBackground: Color {
-    Color(nsColor: .windowBackgroundColor)
-  }
-
-  static var activeTabBackground: Color {
-    Color(nsColor: .controlBackgroundColor)
-  }
-
-  static var hoveredTabBackground: Color {
-    Color(nsColor: .controlBackgroundColor).opacity(0.5)
-  }
-
   static var inactiveTabBackground: Color {
     .clear
   }
 
   static var activeText: Color {
-    Color(nsColor: .labelColor)
+    .primary
   }
 
   static var inactiveText: Color {
-    Color(nsColor: .secondaryLabelColor)
-  }
-
-  static var separator: Color {
-    Color(nsColor: .separatorColor)
+    .secondary
   }
 
   static var dropIndicator: Color {
     Color.accentColor
   }
+}
 
-  static var dirtyIndicator: Color {
-    Color(nsColor: .labelColor).opacity(0.6)
+private struct SurfaceChromeBackgroundColorKey: EnvironmentKey {
+  static let defaultValue = Color(nsColor: .windowBackgroundColor)
+}
+
+private struct SurfaceChromeColorSchemeKey: EnvironmentKey {
+  static let defaultValue = ColorScheme.dark
+}
+
+extension EnvironmentValues {
+  var surfaceChromeBackgroundColor: Color {
+    get { self[SurfaceChromeBackgroundColorKey.self] }
+    set { self[SurfaceChromeBackgroundColorKey.self] = newValue }
+  }
+
+  var surfaceChromeColorScheme: ColorScheme {
+    get { self[SurfaceChromeColorSchemeKey.self] }
+    set { self[SurfaceChromeColorSchemeKey.self] = newValue }
   }
 }

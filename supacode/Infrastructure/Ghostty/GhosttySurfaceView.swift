@@ -428,7 +428,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       return
     }
     window.isOpaque = true
-    window.titlebarAppearsTransparent = false
+    window.titlebarAppearsTransparent = !window.styleMask.contains(.fullScreen)
     window.backgroundColor = runtime.backgroundColor().withAlphaComponent(1)
   }
 

@@ -614,6 +614,10 @@ final class GhosttyRuntime {
     backgroundColor().isLightColor ? .aqua : .darkAqua
   }
 
+  func backgroundColorScheme() -> ColorScheme {
+    backgroundColor().isLightColor ? .light : .dark
+  }
+
   private func backgroundColorFromConfig() -> NSColor? {
     guard let config else { return nil }
     var color: ghostty_config_color_s = .init()

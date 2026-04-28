@@ -5,10 +5,12 @@ struct TerminalTabBarBackground: View {
   private var activeState
   @Environment(\.surfaceTopChromeBackgroundOpacity)
   private var surfaceTopChromeBackgroundOpacity
+  @Environment(\.surfaceChromeBackgroundColor)
+  private var surfaceChromeBackgroundColor
 
   var body: some View {
     Rectangle()
-      .fill(TerminalTabBarColors.barBackground.opacity(chromeBackgroundOpacity))
+      .fill(surfaceChromeBackgroundColor.opacity(chromeBackgroundOpacity))
   }
 
   private var chromeBackgroundOpacity: Double {

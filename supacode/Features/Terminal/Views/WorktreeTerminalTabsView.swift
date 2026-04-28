@@ -17,6 +17,8 @@ struct WorktreeTerminalTabsView: View {
     let state = manager.state(for: worktree) { shouldRunSetupScript }
     let _ = configReloadCounter
     let unfocusedSplitOverlay = manager.unfocusedSplitOverlay()
+    let surfaceChromeBackgroundColor = Color(nsColor: manager.surfaceBackgroundColor())
+    let surfaceChromeColorScheme = manager.surfaceBackgroundColorScheme()
     VStack(spacing: 0) {
       if !state.shouldHideTabBar {
         TerminalTabBarView(
@@ -65,6 +67,8 @@ struct WorktreeTerminalTabsView: View {
         EmptyTerminalPaneView(message: "No terminals open")
       }
     }
+    .environment(\.surfaceChromeBackgroundColor, surfaceChromeBackgroundColor)
+    .environment(\.surfaceChromeColorScheme, surfaceChromeColorScheme)
     .animation(.easeInOut(duration: 0.2), value: state.shouldHideTabBar)
     .background(
       WindowFocusObserverView { activity in

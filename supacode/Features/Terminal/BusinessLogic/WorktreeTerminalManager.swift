@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import Sharing
@@ -467,6 +468,14 @@ final class WorktreeTerminalManager {
 
   func surfaceBackgroundOpacity() -> Double {
     runtime.backgroundOpacity()
+  }
+
+  func surfaceBackgroundColor() -> NSColor {
+    runtime.backgroundColor()
+  }
+
+  func surfaceBackgroundColorScheme() -> ColorScheme {
+    runtime.backgroundColorScheme()
   }
 
   func unfocusedSplitOverlay() -> (fill: Color?, opacity: Double) {

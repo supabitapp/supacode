@@ -11,8 +11,8 @@ struct TerminalTabBarView: View {
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
   let hasNotification: (TerminalTabID) -> Bool
-  @Environment(\.controlActiveState)
-  private var activeState
+  @Environment(\.surfaceChromeColorScheme)
+  private var surfaceChromeColorScheme
 
   var body: some View {
     HStack(spacing: 0) {
@@ -33,8 +33,8 @@ struct TerminalTabBarView: View {
       )
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
+    .environment(\.colorScheme, surfaceChromeColorScheme)
     .background(TerminalTabBarBackground())
-    .saturation(activeState == .inactive ? 0 : 1)
     .clipped()
   }
 }

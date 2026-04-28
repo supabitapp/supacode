@@ -52,6 +52,7 @@ struct WorktreeDetailView: View {
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
     .toolbar(removing: .title)
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .toolbar {
       if showsToolbarPlaceholder {
         ToolbarPlaceholderContent()
@@ -95,7 +96,6 @@ struct WorktreeDetailView: View {
         )
       }
     }
-    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     let hasRunningRunScript = state.hasRunningRunScript
     let actions = makeFocusedActions(
       hasActiveWorktree: hasActiveWorktree,

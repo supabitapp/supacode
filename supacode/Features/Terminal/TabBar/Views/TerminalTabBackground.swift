@@ -8,12 +8,21 @@ struct TerminalTabBackground: View {
   var isHovering: Bool
   var tintColor: TerminalTabTintColor?
 
+  @Environment(\.surfaceChromeBackgroundColor)
+  private var surfaceChromeBackgroundColor
+  @Environment(\.surfaceChromeColorScheme)
+  private var surfaceChromeColorScheme
+
   var body: some View {
     ZStack(alignment: .top) {
       if isActive {
-        TerminalTabBarColors.activeTabBackground
+        Rectangle()
+          .fill(surfaceChromeBackgroundColor)
+        Rectangle()
+          .fill(chromeOverlayColor.opacity(0.14))
       } else if isHovering || isPressing || isDragging {
-        TerminalTabBarColors.hoveredTabBackground
+        Rectangle()
+          .fill(chromeOverlayColor.opacity(0.08))
       } else {
         TerminalTabBarColors.inactiveTabBackground
       }
@@ -27,10 +36,18 @@ struct TerminalTabBackground: View {
         VStack(spacing: 0) {
           Spacer(minLength: 0)
           Rectangle()
-            .fill(TerminalTabBarColors.separator)
+            .fill(chromeOverlayColor.opacity(separatorOpacity))
             .frame(height: 1)
         }
       }
     }
+  }
+
+  private var chromeOverlayColor: Color {
+    surfaceChromeColorScheme == .dark ? .white : .black
+  }
+
+  private var separatorOpacity: Double {
+    surfaceChromeColorScheme == .dark ? 0.22 : 0.14
   }
 }
