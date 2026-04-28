@@ -395,6 +395,9 @@ struct WorktreeDetailView: View {
           onStopRunScripts: onStopRunScripts,
           onManageScripts: onManageScripts
         )
+        // Rebuild the NSMenu per repo; the toolbar Menu otherwise caches first-opened items (#280).
+        .id(toolbarState.rootURL)
+        .transaction { $0.animation = nil }
       }
     }
 
