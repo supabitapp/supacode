@@ -7,6 +7,7 @@ struct OpenWorktreeActionTests {
   @Test func menuOrderIncludesExpectedWorkspaceActions() {
     let settingsIDs = OpenWorktreeAction.menuOrder.map(\.settingsID)
 
+    #expect(settingsIDs.contains("android-studio"))
     #expect(settingsIDs.contains("antigravity"))
     #expect(settingsIDs.contains("intellij"))
     #expect(settingsIDs.contains("rubymine"))
@@ -18,6 +19,7 @@ struct OpenWorktreeActionTests {
   }
 
   @Test func jetBrainsIDEsHaveCorrectBundleIdentifiers() {
+    #expect(OpenWorktreeAction.androidStudio.bundleIdentifier == "com.google.android.studio")
     #expect(OpenWorktreeAction.intellij.bundleIdentifier == "com.jetbrains.intellij")
     #expect(OpenWorktreeAction.webstorm.bundleIdentifier == "com.jetbrains.WebStorm")
     #expect(OpenWorktreeAction.pycharm.bundleIdentifier == "com.jetbrains.pycharm")
@@ -27,6 +29,7 @@ struct OpenWorktreeActionTests {
 
   @Test func jetBrainsIDEsAreInEditorPriority() {
     let editors = OpenWorktreeAction.editorPriority
+    #expect(editors.contains(.androidStudio))
     #expect(editors.contains(.intellij))
     #expect(editors.contains(.webstorm))
     #expect(editors.contains(.pycharm))

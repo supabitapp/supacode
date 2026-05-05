@@ -59,12 +59,24 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     UserDefaults.standard.register(defaults: [
       "ApplePressAndHoldEnabled": false
     ])
+    // `NSColorPanel.shared` is `isRestorable = true` by default, so
+    // the system writes its visibility to the app's restoration
+    // archive and brings it back on next launch — independently of
+    // the main window. Opt the singleton out per-process so a panel
+    // left open from a previous session can't survive the relaunch.
+    NSColorPanel.shared.isRestorable = false
     appStore?.send(.appLaunched)
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
     let app = NSApplication.shared
-    guard !app.windows.contains(where: \.isVisible) else { return }
+    // Filter `NSPanel` out of the visibility check — the system
+    // color / font panels (and any sheet-attached child panels) are
+    // not "main windows" that should suppress `showMainWindow`.
+    let hasVisibleMainWindow = app.windows.contains { window in
+      window.isVisible && !(window is NSPanel)
+    }
+    guard !hasVisibleMainWindow else { return }
     _ = showMainWindow(from: app)
   }
 
@@ -92,10 +104,15 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     if let window = sender.windows.first(where: { $0.identifier?.rawValue == WindowID.main }) {
       return window
     }
-    if let window = sender.windows.first(where: { $0.identifier?.rawValue != WindowID.settings }) {
+    // Skip NSPanel instances (color/font/etc. system panels) when
+    // falling back — `makeKeyAndOrderFront` on a restored
+    // `NSColorPanel` would just resurrect the dangling panel
+    // instead of surfacing the actual main window.
+    let candidates = sender.windows.filter { !($0 is NSPanel) }
+    if let window = candidates.first(where: { $0.identifier?.rawValue != WindowID.settings }) {
       return window
     }
-    return sender.windows.first
+    return candidates.first
   }
 
   private func showMainWindow(from sender: NSApplication) -> Bool {

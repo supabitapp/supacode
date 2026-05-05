@@ -142,6 +142,24 @@ struct RepositoriesFeature {
     var sidebarSelectedWorktreeIDs: Set<Worktree.ID> = []
     var nextPendingSidebarRevealID = 0
     var pendingSidebarReveal: PendingSidebarReveal?
+    /// Browser-style back/forward stacks for worktree selection.
+    /// Fresh selections push the previous worktree onto `back` and
+    /// clear `forward`; the dedicated `worktreeHistoryBack` /
+    /// `worktreeHistoryForward` actions move the cursor between
+    /// stacks without recording. In-memory only — not persisted.
+    ///
+    /// Recording is gated on both endpoints being concrete worktree
+    /// ids — transitions to/from "no selection" or the archive view
+    /// are explicitly NOT recorded (see `recordWorktreeHistoryTransition`).
+    /// Archive / delete / repository-removal paths additionally
+    /// bypass `setSingleWorktreeSelection` entirely (they assign
+    /// `state.selection` directly), so their auto-promoted next
+    /// selection is also non-recording. Both omissions are
+    /// intentional: the back stack should hold worktrees the user
+    /// can step back to, not transient empty-selection states or
+    /// system-driven cleanup promotions.
+    var worktreeHistoryBackStack: [Worktree.ID] = []
+    var worktreeHistoryForwardStack: [Worktree.ID] = []
     /// Single source of truth for all user-curated sidebar state —
     /// section order / collapse / pin / unpin / archive / focused
     /// worktree — persisted to `~/.supacode/sidebar.json`. Replaces
@@ -151,6 +169,7 @@ struct RepositoriesFeature {
     /// atomic file update per reducer action.
     @Shared(.sidebar) var sidebar: SidebarState
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
+    @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
     @Presents var alert: AlertState<Alert>?
   }
 
@@ -207,6 +226,8 @@ struct RepositoriesFeature {
     case selectWorktree(Worktree.ID?, focusTerminal: Bool = false)
     case selectNextWorktree
     case selectPreviousWorktree
+    case worktreeHistoryBack
+    case worktreeHistoryForward
     case revealSelectedWorktreeInSidebar
     case consumePendingSidebarReveal(Int)
     case requestRenameBranch(Worktree.ID, String)
@@ -323,8 +344,10 @@ struct RepositoriesFeature {
     case dismissToast
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
+    case requestCustomizeRepository(Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
+    case repositoryCustomization(PresentationAction<RepositoryCustomizationFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
   }
@@ -631,6 +654,12 @@ struct RepositoriesFeature {
       case .selectPreviousWorktree:
         guard let id = state.worktreeID(byOffset: -1) else { return .none }
         return .send(.selectWorktree(id))
+
+      case .worktreeHistoryBack:
+        return navigateWorktreeHistory(direction: .back, state: &state)
+
+      case .worktreeHistoryForward:
+        return navigateWorktreeHistory(direction: .forward, state: &state)
 
       case .revealSelectedWorktreeInSidebar:
         guard let worktreeID = state.selectedWorktreeID,
@@ -1244,7 +1273,12 @@ struct RepositoriesFeature {
         state.pendingTerminalFocusWorktreeIDs.insert(worktree.id)
         removePendingWorktree(pendingID, state: &state)
         if state.selection == .worktree(pendingID) {
-          setSingleWorktreeSelection(worktree.id, state: &state)
+          // History was already recorded when the pending row was
+          // selected (real → pending). Treat the swap into the real
+          // worktree id as a continuation of that same navigation
+          // so the back stack ends with the real id, not the
+          // throwaway pending id.
+          setSingleWorktreeSelection(worktree.id, state: &state, recordHistory: false)
         }
         insertWorktree(worktree, repositoryID: repositoryID, state: &state)
         return .merge(
@@ -2290,6 +2324,17 @@ struct RepositoriesFeature {
           state.selection = nil
           state.shouldSelectFirstAfterReload = true
         }
+        // Drop sidebar sections for explicitly-removed repos before
+        // reconcile fires. `preserveOrphanSections` keeps customized
+        // tombstones across transient drops (filesystem flutter), but
+        // an explicit "Remove Repository" must not silently restore
+        // the user's old title / color when the same path is re-added
+        // later.
+        state.$sidebar.withLock { sidebar in
+          for id in repositoryIDs {
+            sidebar.sections.removeValue(forKey: id)
+          }
+        }
         let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
         let remainingRepositories = Array(state.repositories.filter { !idSet.contains($0.id) })
         let remainingRoots = state.repositoryRoots.filter {
@@ -3119,6 +3164,49 @@ struct RepositoriesFeature {
       case .openRepositorySettings(let repositoryID):
         return .send(.delegate(.openRepositorySettings(repositoryID)))
 
+      case .requestCustomizeRepository(let repositoryID):
+        guard let repository = state.repositories[id: repositoryID] else {
+          return .none
+        }
+        // Folder-kind repositories render through `SidebarFolderRow`,
+        // which has no section header to tint and no ellipsis menu
+        // to expose. Guard the action so a future deeplink or
+        // command-palette hookup can't write customization that the
+        // sidebar would never display.
+        guard repository.isGitRepository else {
+          return .none
+        }
+        let section = state.sidebar.sections[repositoryID]
+        let storedTitle = section?.title ?? ""
+        let storedColor = section?.color
+        state.repositoryCustomization = RepositoryCustomizationFeature.State(
+          repositoryID: repositoryID,
+          defaultName: repository.name,
+          title: storedTitle,
+          color: storedColor,
+          customColor: storedColor?.color ?? .accentColor
+        )
+        return .none
+
+      case .repositoryCustomization(.presented(.delegate(.cancel))):
+        state.repositoryCustomization = nil
+        return .none
+
+      case .repositoryCustomization(.presented(.delegate(.save(let repositoryID, let title, let color)))):
+        state.$sidebar.withLock { sidebar in
+          sidebar.sections[repositoryID, default: .init()].title = title
+          sidebar.sections[repositoryID, default: .init()].color = color
+        }
+        state.repositoryCustomization = nil
+        return .none
+
+      case .repositoryCustomization(.dismiss):
+        state.repositoryCustomization = nil
+        return .none
+
+      case .repositoryCustomization:
+        return .none
+
       case .contextMenuOpenWorktree(let worktreeID, let action):
         return .send(.delegate(.openWorktreeInApp(worktreeID, action)))
 
@@ -3141,6 +3229,9 @@ struct RepositoriesFeature {
     }
     .ifLet(\.$worktreeCreationPrompt, action: \.worktreeCreationPrompt) {
       WorktreeCreationPromptFeature()
+    }
+    .ifLet(\.$repositoryCustomization, action: \.repositoryCustomization) {
+      RepositoryCustomizationFeature()
     }
   }
 
@@ -3557,6 +3648,27 @@ extension RepositoriesFeature.State {
     expandedRepositoryIDs.contains(repositoryID)
   }
 
+  // Menu/UI enablement for ⌘⌃← / ⌘⌃→. Raw `!isEmpty` lies whenever
+  // the back/forward stack contains only stale ids (worktrees
+  // archived/deleted between visits) or a self-referential entry
+  // equal to the current selection — both get drained silently by
+  // `navigateWorktreeHistory`. Filtering at read-time keeps the
+  // navigator's lazy-prune contract honest for the menu.
+  var canNavigateWorktreeHistoryBackward: Bool {
+    canNavigate(stack: worktreeHistoryBackStack)
+  }
+
+  var canNavigateWorktreeHistoryForward: Bool {
+    canNavigate(stack: worktreeHistoryForwardStack)
+  }
+
+  private func canNavigate(stack: [Worktree.ID]) -> Bool {
+    let current = selectedWorktreeID
+    return stack.contains { id in
+      id != current && worktreeExists(id)
+    }
+  }
+
   var sidebarSelections: Set<SidebarSelection> {
     guard !isShowingArchivedWorktrees else {
       return [.archivedWorktrees]
@@ -3796,6 +3908,19 @@ extension RepositoriesFeature.State {
       return repository.id
     }
     return nil
+  }
+
+  // Cheap "is this id selectable right now" check. Mirrors
+  // `selectedRow(for:)` semantics — archived worktrees are NOT
+  // selectable, pending worktrees ARE — but skips the
+  // `SidebarItemModel` construction in `makeSidebarItem`. Used by
+  // the worktree-history navigator and its menu-enablement filter,
+  // both of which only need a yes / no answer over potentially-many
+  // ids per evaluation.
+  func worktreeExists(_ worktreeID: Worktree.ID) -> Bool {
+    if isWorktreeArchived(worktreeID) { return false }
+    if pendingWorktree(for: worktreeID) != nil { return true }
+    return repositories.contains { $0.worktrees[id: worktreeID] != nil }
   }
 
   func isMainWorktree(_ worktree: Worktree) -> Bool {
@@ -4300,28 +4425,108 @@ private func restoreSelection(
   state: inout RepositoriesFeature.State
 ) {
   guard state.selection == .worktree(pendingID) else { return }
-  setSingleWorktreeSelection(
-    isSelectionValid(id, state: state) ? id : nil,
-    state: &state
-  )
+  let target = isSelectionValid(id, state: state) ? id : nil
+  setSingleWorktreeSelection(target, state: &state, recordHistory: false)
+  // The pending-id selection at create time pushed `target` onto the
+  // back stack. Restoring to that same id would leave the navigator
+  // with a self-referential top entry — `canGoBack` would report
+  // true while ⌘⌃← short-circuits via the equality check and drains
+  // silently. Pop the matching entry so the failure path is fully
+  // undone in history terms too.
+  if let target, state.worktreeHistoryBackStack.last == target {
+    state.worktreeHistoryBackStack.removeLast()
+  }
 }
 
 private func isSelectionValid(
   _ id: Worktree.ID?,
   state: RepositoriesFeature.State
 ) -> Bool {
-  state.selectedRow(for: id) != nil
+  guard let id else { return false }
+  return state.worktreeExists(id)
 }
 
 private func setSingleWorktreeSelection(
   _ worktreeID: Worktree.ID?,
-  state: inout RepositoriesFeature.State
+  state: inout RepositoriesFeature.State,
+  recordHistory: Bool = true
 ) {
+  let previousID = state.selectedWorktreeID
   state.selection = worktreeID.map(SidebarSelection.worktree)
   if let worktreeID {
     state.sidebarSelectedWorktreeIDs = [worktreeID]
   } else {
     state.sidebarSelectedWorktreeIDs = []
+  }
+  if recordHistory {
+    recordWorktreeHistoryTransition(from: previousID, to: worktreeID, in: &state)
+  }
+}
+
+// Maximum number of entries kept in each direction. Browser-style
+// back/forward; older entries are dropped when the cap is hit.
+private nonisolated let worktreeHistoryStackLimit = 50
+
+// Records a fresh worktree navigation: pushes the previous selection
+// onto the back stack and clears the forward stack. No-op when the
+// selection didn't actually change, or when either side is nil —
+// transitions to/from "no selection" (blank-sidebar click, switch to
+// the archive view) are not navigations the user can step forward
+// out of, so recording them would only inflate the back stack and
+// nuke an otherwise live forward stack.
+private func recordWorktreeHistoryTransition(
+  from previousID: Worktree.ID?,
+  to nextID: Worktree.ID?,
+  in state: inout RepositoriesFeature.State
+) {
+  guard let previousID, let nextID, previousID != nextID else { return }
+  state.worktreeHistoryBackStack.append(previousID)
+  state.worktreeHistoryForwardStack.removeAll()
+  if state.worktreeHistoryBackStack.count > worktreeHistoryStackLimit {
+    state.worktreeHistoryBackStack.removeFirst(
+      state.worktreeHistoryBackStack.count - worktreeHistoryStackLimit
+    )
+  }
+}
+
+private enum WorktreeHistoryDirection {
+  case back, forward
+}
+
+// Walks the back / forward stacks until we land on a worktree that
+// still exists and isn't already selected, then sets the selection
+// without recording history. Two kinds of entries are popped and
+// dropped silently: stale ids (worktrees archived / deleted between
+// visits) and self-referential ids (e.g. the failure-restore path
+// re-applies the same worktree id that was pushed at create time —
+// `restoreSelection` strips its own match, but a defensive skip
+// here keeps the navigator robust to any future path that fails to
+// sanitize). The "current" id is pushed onto the opposite stack
+// only after a candidate resolves successfully, so a stack full of
+// dead entries returns `.none` with the stack drained, rather than
+// shuffling the cursor into a degenerate state.
+private func navigateWorktreeHistory(
+  direction: WorktreeHistoryDirection,
+  state: inout RepositoriesFeature.State
+) -> Effect<RepositoriesFeature.Action> {
+  while true {
+    let candidate: Worktree.ID? = {
+      switch direction {
+      case .back: state.worktreeHistoryBackStack.popLast()
+      case .forward: state.worktreeHistoryForwardStack.popLast()
+      }
+    }()
+    guard let candidate else { return .none }
+    guard isSelectionValid(candidate, state: state) else { continue }
+    if state.selectedWorktreeID == candidate { continue }
+    if let currentID = state.selectedWorktreeID {
+      switch direction {
+      case .back: state.worktreeHistoryForwardStack.append(currentID)
+      case .forward: state.worktreeHistoryBackStack.append(currentID)
+      }
+    }
+    setSingleWorktreeSelection(candidate, state: &state, recordHistory: false)
+    return .send(.delegate(.selectedWorktreeChanged(state.worktree(for: candidate))))
   }
 }
 
@@ -4366,6 +4571,11 @@ private func reduceSelectionChanged(
 
   state.selection = nextSelectedWorktreeID.map(SidebarSelection.worktree)
   state.sidebarSelectedWorktreeIDs = nextSidebarSelectedWorktreeIDs
+  recordWorktreeHistoryTransition(
+    from: previousSelection,
+    to: nextSelectedWorktreeID,
+    in: &state
+  )
   if focusTerminal,
     let nextSelectedWorktreeID,
     previousSelection != nextSelectedWorktreeID
@@ -4577,19 +4787,21 @@ private func reconcileSidebarState(
   }
 }
 
-/// Preserve user-curated `.archived` and `.pinned` buckets for
-/// repositories no longer present in `availableRepoIDs`. A repo can
-/// vanish from the live roster for legitimate reasons (removed from
-/// Settings → Repositories) or transient ones (a partial reload
-/// where resolution failed). In either case the archive record and
-/// pin list are user-curated data we must not drop silently. This
-/// emits a stripped tombstone section: only non-empty `.archived`
-/// and `.pinned` are carried verbatim, `.unpinned` is dropped (it's
-/// regenerated by the seed pass on the next full load), and
-/// `collapsed` resets to its default because there's no rendered
-/// section to collapse. Tombstones are appended after the active
-/// repos so the natural ordering stays "live repos first,
-/// orphan-but-curated at the tail".
+/// Preserve user-curated `.archived` and `.pinned` buckets and
+/// `title` / `color` customization for repositories no longer
+/// present in `availableRepoIDs`. A repo can vanish from the live
+/// roster for legitimate reasons (removed from Settings →
+/// Repositories) or transient ones (a partial reload where
+/// resolution failed). In either case the archive record, pin list,
+/// and customization fields are user-curated data we must not drop
+/// silently. This emits a stripped tombstone section: only non-empty
+/// `.archived` and `.pinned` are carried verbatim, `.unpinned` is
+/// dropped (it's regenerated by the seed pass on the next full
+/// load), `collapsed` resets to its default, and `title` / `color`
+/// are carried so a transient reload doesn't strip a user's repo
+/// rename or tint. Tombstones are appended after the active repos so
+/// the natural ordering stays "live repos first, orphan-but-curated
+/// at the tail".
 private func preserveOrphanSections(
   from oldSections: OrderedDictionary<Repository.ID, SidebarState.Section>,
   availableRepoIDs: Set<Repository.ID>,
@@ -4603,8 +4815,14 @@ private func preserveOrphanSections(
     if let pinned = section.buckets[.pinned], !pinned.items.isEmpty {
       preservedBuckets[.pinned] = pinned
     }
-    guard !preservedBuckets.isEmpty else { continue }
-    rebuilt[repoID] = .init(collapsed: false, buckets: preservedBuckets)
+    let hasCustomization = section.title != nil || section.color != nil
+    guard !preservedBuckets.isEmpty || hasCustomization else { continue }
+    rebuilt[repoID] = .init(
+      collapsed: false,
+      buckets: preservedBuckets,
+      title: section.title,
+      color: section.color,
+    )
   }
 }
 
