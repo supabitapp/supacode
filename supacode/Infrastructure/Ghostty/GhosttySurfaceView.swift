@@ -153,6 +153,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
     .string,
     .fileURL,
     .URL,
+    .png,
+    .tiff,
   ]
 
   static func normalizedWorkingDirectoryPath(_ path: String) -> String {
@@ -1527,6 +1529,8 @@ extension GhosttySurfaceView {
       !urls.isEmpty
     {
       content = urls.map { NSPasteboard.ghosttyEscape($0.path) }.joined(separator: " ")
+    } else if let imagePath = pasteboard.writeImageToTempFile() {
+      content = imagePath
     } else if let str = pasteboard.string(forType: .string) {
       content = str
     } else {
