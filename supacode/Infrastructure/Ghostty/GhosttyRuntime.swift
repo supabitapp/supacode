@@ -739,6 +739,40 @@ extension NSPasteboard {
     return string(forType: .string)
   }
 
+  /// Extracts image data from the pasteboard (e.g. when copied from Preview.app)
+  /// and writes it to a temp PNG file. Returns the escaped file path on success.
+  /// Used to bridge image clipboards / drags into terminals so CLI agents can read them as files.
+  func writeImageToTempFile() -> String? {
+    let pngType = NSPasteboard.PasteboardType("public.png")
+    let tiffType = NSPasteboard.PasteboardType("public.tiff")
+
+    let pngData: Data?
+    if let direct = data(forType: pngType) {
+      pngData = direct
+    } else if let tiff = data(forType: tiffType),
+      let rep = NSBitmapImageRep(data: tiff)
+    {
+      pngData = rep.representation(using: .png, properties: [:])
+    } else {
+      pngData = nil
+    }
+
+    guard let data = pngData else { return nil }
+
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "supacode-pasted-images",
+      isDirectory: true
+    )
+    do {
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let url = dir.appendingPathComponent("pasted-\(UUID().uuidString).png")
+      try data.write(to: url)
+      return Self.ghosttyEscape(url.path)
+    } catch {
+      return nil
+    }
+  }
+
   static func ghostty(_ clipboard: ghostty_clipboard_e) -> NSPasteboard? {
     switch clipboard {
     case GHOSTTY_CLIPBOARD_STANDARD:
