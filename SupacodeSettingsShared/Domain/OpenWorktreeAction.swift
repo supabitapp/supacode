@@ -7,6 +7,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   }
 
   case alacritty
+  case androidStudio
   case antigravity
   case editor
   case finder
@@ -42,6 +43,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder: "Reveal in Finder"
     case .editor: "$EDITOR"
     case .alacritty: "Alacritty"
+    case .androidStudio: "Android Studio"
     case .antigravity: "Antigravity"
     case .cursor: "Cursor"
     case .githubDesktop: "GitHub Desktop"
@@ -74,10 +76,10 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     switch self {
     case .finder: "Finder"
     case .editor: "$EDITOR"
-    case .alacritty, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
-      .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge,
-      .terminal, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf,
-      .xcode, .zed:
+    case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
+      .gitup, .ghostty, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
+      .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp,
+      .webstorm, .wezterm, .windsurf, .xcode, .zed:
       title
     }
   }
@@ -97,10 +99,10 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     switch self {
     case .finder, .editor:
       return true
-    case .alacritty, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
-      .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge,
-      .terminal, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf,
-      .xcode, .zed:
+    case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
+      .gitup, .ghostty, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
+      .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp,
+      .webstorm, .wezterm, .windsurf, .xcode, .zed:
       return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
     }
   }
@@ -110,6 +112,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder: "finder"
     case .editor: "editor"
     case .alacritty: "alacritty"
+    case .androidStudio: "android-studio"
     case .antigravity: "antigravity"
     case .cursor: "cursor"
     case .fork: "fork"
@@ -143,6 +146,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder: "com.apple.finder"
     case .editor: ""
     case .alacritty: "org.alacritty"
+    case .androidStudio: "com.google.android.studio"
     case .antigravity: "com.google.antigravity"
     case .cursor: "com.todesktop.230313mzl4w4u92"
     case .fork: "com.DanPristupov.Fork"
@@ -180,6 +184,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     .windsurf,
     .vscodeInsiders,
     .vscodium,
+    .androidStudio,
     .intellij,
     .webstorm,
     .pycharm,

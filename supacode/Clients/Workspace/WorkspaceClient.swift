@@ -37,7 +37,7 @@ private func performOpenWorktreeAction(
     return
   case .finder:
     NSWorkspace.shared.activateFileViewerSelecting([worktree.workingDirectory])
-  case .intellij, .webstorm, .pycharm, .rubymine, .rustrover:
+  case .androidStudio, .intellij, .webstorm, .pycharm, .rubymine, .rustrover:
     guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.bundleIdentifier) else {
       onError(
         OpenActionError(
@@ -64,8 +64,8 @@ private func performOpenWorktreeAction(
       }
     }
   case .alacritty, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
-    .kitty, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium,
-    .warp, .wezterm, .windsurf, .xcode, .zed:
+    .kitty, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
+    .vscodium, .warp, .wezterm, .windsurf, .xcode, .zed:
     guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.bundleIdentifier) else {
       onError(
         OpenActionError(
