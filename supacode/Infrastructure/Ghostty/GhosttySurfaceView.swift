@@ -1265,6 +1265,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   @IBAction func paste(_ sender: Any?) {
+    let pb = NSPasteboard.general
+    let hasText =
+      pb.string(forType: .string) != nil
+      || (pb.readObjects(forClasses: [NSURL.self]) as? [URL])?.isEmpty == false
+    if !hasText, let imagePath = pb.writeImageToTempFile() {
+      insertText(imagePath, replacementRange: NSRange(location: 0, length: 0))
+      return
+    }
     performBindingAction("paste_from_clipboard")
   }
 
