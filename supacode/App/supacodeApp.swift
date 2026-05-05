@@ -72,17 +72,17 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     let app = NSApplication.shared
     // Filter `NSPanel` out of the visibility check — the system
     // color / font panels (and any sheet-attached child panels) are
-    // not "main windows" that should suppress `showMainWindow`.
+    // not "main windows" that should suppress surfacing.
     let hasVisibleMainWindow = app.windows.contains { window in
       window.isVisible && !(window is NSPanel)
     }
     guard !hasVisibleMainWindow else { return }
-    _ = showMainWindow(from: app)
+    app.surfaceMainWindow()
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     if flag { return true }
-    return showMainWindow(from: sender) ? false : true
+    return !sender.surfaceMainWindow()
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
@@ -98,31 +98,6 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     false
-  }
-
-  private func mainWindow(from sender: NSApplication) -> NSWindow? {
-    if let window = sender.windows.first(where: { $0.identifier?.rawValue == WindowID.main }) {
-      return window
-    }
-    // Skip NSPanel instances (color/font/etc. system panels) when
-    // falling back — `makeKeyAndOrderFront` on a restored
-    // `NSColorPanel` would just resurrect the dangling panel
-    // instead of surfacing the actual main window.
-    let candidates = sender.windows.filter { !($0 is NSPanel) }
-    if let window = candidates.first(where: { $0.identifier?.rawValue != WindowID.settings }) {
-      return window
-    }
-    return candidates.first
-  }
-
-  private func showMainWindow(from sender: NSApplication) -> Bool {
-    guard let window = mainWindow(from: sender) else { return false }
-    if window.isMiniaturized {
-      window.deminiaturize(nil)
-    }
-    sender.activate(ignoringOtherApps: true)
-    window.makeKeyAndOrderFront(nil)
-    return true
   }
 }
 
@@ -420,10 +395,7 @@ struct SupacodeApp: App {
         CommandGroup(replacing: .windowList) {}
         CommandGroup(replacing: .singleWindowList) {
           Button("Supacode") {
-            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == WindowID.main }) {
-              window.makeKeyAndOrderFront(nil)
-              NSApp.activate(ignoringOtherApps: true)
-            }
+            NSApplication.shared.surfaceMainWindow()
           }
           .keyboardShortcut("0")
           .help("Show main window (⌘0)")
