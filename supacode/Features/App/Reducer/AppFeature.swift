@@ -764,13 +764,18 @@ struct AppFeature {
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           return .none
         }
-        if action.hasPrefix("prompt_title:") {
-          return .run { _ in
-            await terminalClient.send(.beginTabRename(worktree))
-          }
+        // Ghostty void actions emit bare tag names; no colon.
+        let command: TerminalClient.Command
+        if action == "prompt_surface_title" || action == "prompt_tab_title" {
+          // Capture the focused tab synchronously so a fast tab switch between dispatch
+          // and effect execution can't redirect the rename to the wrong tab.
+          let tabID = terminalClient.selectedTabID(worktree.id)
+          command = .beginTabRename(worktree, tabID: tabID)
+        } else {
+          command = .performBindingAction(worktree, action: action)
         }
         return .run { _ in
-          await terminalClient.send(.performBindingAction(worktree, action: action))
+          await terminalClient.send(command)
         }
 
       case .commandPalette(.delegate(.openPullRequest(let worktreeID))):

@@ -121,7 +121,139 @@ struct AppFeatureCommandPaletteTests {
     )
   }
 
-  @Test(.dependencies) func promptTitleGhosttyCommandDispatchesBeginTabRename() async {
+  @Test(.dependencies) func promptSurfaceTitleGhosttyCommandCapturesSelectedTabIDSynchronously() async {
+    let worktree = makeWorktree(
+      id: "/tmp/repo-ghostty/wt-1",
+      name: "wt-1",
+      repoRoot: "/tmp/repo-ghostty"
+    )
+    let repository = makeRepository(id: "/tmp/repo-ghostty", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktree.id)
+    let capturedTabID = TerminalTabID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.selectedTabID = { _ in capturedTabID }
+    }
+
+    await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_surface_title"))))
+    await store.finish()
+
+    #expect(sent.value == [.beginTabRename(worktree, tabID: capturedTabID)])
+  }
+
+  @Test(.dependencies) func promptTabTitleGhosttyCommandCapturesSelectedTabIDSynchronously() async {
+    let worktree = makeWorktree(
+      id: "/tmp/repo-ghostty/wt-1",
+      name: "wt-1",
+      repoRoot: "/tmp/repo-ghostty"
+    )
+    let repository = makeRepository(id: "/tmp/repo-ghostty", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktree.id)
+    let capturedTabID = TerminalTabID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.selectedTabID = { _ in capturedTabID }
+    }
+
+    await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_tab_title"))))
+    await store.finish()
+
+    #expect(sent.value == [.beginTabRename(worktree, tabID: capturedTabID)])
+  }
+
+  @Test(.dependencies) func promptTitleGhosttyCommandCapturesSelectedTabIDBeforeAsyncDispatch() async {
+    let worktree = makeWorktree(
+      id: "/tmp/repo-ghostty/wt-1",
+      name: "wt-1",
+      repoRoot: "/tmp/repo-ghostty"
+    )
+    let repository = makeRepository(id: "/tmp/repo-ghostty", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktree.id)
+    let firstTabID = TerminalTabID()
+    let secondTabID = TerminalTabID()
+    let currentTabID = LockIsolated(firstTabID)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.selectedTabID = { _ in currentTabID.value }
+    }
+
+    let task = await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_surface_title"))))
+    // Mutate the source AFTER dispatch but before the async effect resolves.
+    // Synchronous capture means the originally-focused tab ID is locked into the command.
+    currentTabID.setValue(secondTabID)
+    await task.finish()
+
+    #expect(sent.value == [.beginTabRename(worktree, tabID: firstTabID)])
+  }
+
+  @Test(.dependencies) func promptTitleGhosttyCommandPassesNilTabIDWhenNoneSelected() async {
+    let worktree = makeWorktree(
+      id: "/tmp/repo-ghostty/wt-1",
+      name: "wt-1",
+      repoRoot: "/tmp/repo-ghostty"
+    )
+    let repository = makeRepository(id: "/tmp/repo-ghostty", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktree.id)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.selectedTabID = { _ in nil }
+    }
+
+    await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_surface_title"))))
+    await store.finish()
+
+    #expect(sent.value == [.beginTabRename(worktree, tabID: nil)])
+  }
+
+  @Test(.dependencies) func nonPromptTitleGhosttyCommandFallsThroughToBindingAction() async {
     let worktree = makeWorktree(
       id: "/tmp/repo-ghostty/wt-1",
       name: "wt-1",
@@ -145,10 +277,10 @@ struct AppFeatureCommandPaletteTests {
       }
     }
 
-    await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_title:surface"))))
+    await store.send(.commandPalette(.delegate(.ghosttyCommand("new_split:right"))))
     await store.finish()
 
-    #expect(sent.value == [.beginTabRename(worktree)])
+    #expect(sent.value == [.performBindingAction(worktree, action: "new_split:right")])
   }
 
   @Test(.dependencies) func closePullRequestDispatchesAction() async {

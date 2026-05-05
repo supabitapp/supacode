@@ -121,6 +121,36 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.first { $0.id == id }!.isTitleLocked == false)
   }
 
+  @Test func setCustomTitleIgnoresLockedTab() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "Run Script", icon: nil, isTitleLocked: true)
+    manager.setCustomTitle(id, title: "my name")
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+  }
+
+  @Test func setCustomTitleTrimsLeadingAndTrailingWhitespace() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.setCustomTitle(id, title: "  my name  ")
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == "my name")
+  }
+
+  @Test func setCustomTitleWithWhitespaceOnlyClearsCustomTitle() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.setCustomTitle(id, title: "first")
+    manager.setCustomTitle(id, title: "  \n\t  ")
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "tab 1")
+  }
+
+  @Test func setCustomTitleOnUnknownTabIsNoOp() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.setCustomTitle(TerminalTabID(), title: "my name")
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+  }
+
   @Test func ghosttyUpdateDoesNotAffectDisplayTitleWhenCustomTitleSet() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
@@ -140,6 +170,17 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.first { $0.id == id }!.displayTitle == "zsh")
   }
 
+  @Test func setCustomTitleWithCurrentLiveTitlePinsIt() {
+    // Manager does not treat same-value as idempotent — pins title; view-layer guard is the sole gate.
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "zsh", icon: nil)
+    manager.setCustomTitle(id, title: "zsh")
+    manager.updateTitle(id, title: "vim")
+    let tab = manager.tabs.first { $0.id == id }!
+    #expect(tab.customTitle == "zsh")
+    #expect(tab.displayTitle == "zsh")
+  }
+
   @Test func ghosttyUpdateAppliedAfterCustomTitleCleared() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
@@ -149,51 +190,75 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.first { $0.id == id }!.displayTitle == "vim")
   }
 
-  @Test func beginTabRenameSetsPendingRenameID() {
+  @Test func beginTabRenameSetsEditingTabID() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
     manager.beginTabRename(id)
-    #expect(manager.pendingRenameTabID == id)
+    #expect(manager.editingTabID == id)
   }
 
   @Test func beginTabRenameIgnoresLockedTab() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "Run Script", icon: nil, isTitleLocked: true)
     manager.beginTabRename(id)
-    #expect(manager.pendingRenameTabID == nil)
+    #expect(manager.editingTabID == nil)
   }
 
-  @Test func closingTabClearsPendingRename() {
+  @Test func closingTabClearsEditingTabID() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
     manager.beginTabRename(id)
     manager.closeTab(id)
-    #expect(manager.pendingRenameTabID == nil)
+    #expect(manager.editingTabID == nil)
   }
 
-  @Test func closeOthersClearsPendingRenameForRemovedTab() {
+  @Test func closeOthersClearsEditingTabIDForRemovedTab() {
     let manager = TerminalTabManager()
     let first = manager.createTab(title: "tab 1", icon: nil)
     let second = manager.createTab(title: "tab 2", icon: nil)
     manager.beginTabRename(first)
     manager.closeOthers(keeping: second)
-    #expect(manager.pendingRenameTabID == nil)
+    #expect(manager.editingTabID == nil)
   }
 
-  @Test func closeToRightClearsPendingRenameForRemovedTab() {
+  @Test func closeToRightClearsEditingTabIDForRemovedTab() {
     let manager = TerminalTabManager()
     let first = manager.createTab(title: "tab 1", icon: nil)
     let second = manager.createTab(title: "tab 2", icon: nil)
     manager.beginTabRename(second)
     manager.closeToRight(of: first)
-    #expect(manager.pendingRenameTabID == nil)
+    #expect(manager.editingTabID == nil)
   }
 
-  @Test func closeAllClearsPendingRename() {
+  @Test func closeAllClearsEditingTabID() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
     manager.beginTabRename(id)
     manager.closeAll()
-    #expect(manager.pendingRenameTabID == nil)
+    #expect(manager.editingTabID == nil)
+  }
+
+  @Test func closingDifferentTabPreservesEditingTabID() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "tab 1", icon: nil)
+    let second = manager.createTab(title: "tab 2", icon: nil)
+    manager.beginTabRename(first)
+    manager.closeTab(second)
+    #expect(manager.editingTabID == first)
+  }
+
+  @Test func endTabRenameClearsEditingTabID() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.beginTabRename(id)
+    manager.endTabRename()
+    #expect(manager.editingTabID == nil)
+  }
+
+  @Test func beginTabRenameIgnoresUnknownTabID() {
+    let manager = TerminalTabManager()
+    _ = manager.createTab(title: "tab 1", icon: nil)
+    manager.beginTabRename(TerminalTabID())
+    #expect(manager.editingTabID == nil)
   }
 }

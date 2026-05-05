@@ -132,9 +132,9 @@ final class WorktreeTerminalManager {
       _ = closeFocusedTab(in: worktree)
     case .closeFocusedSurface(let worktree):
       _ = closeFocusedSurface(in: worktree)
-    case .beginTabRename(let worktree):
+    case .beginTabRename(let worktree, let explicitTabID):
       let terminal = state(for: worktree)
-      guard let tabID = terminal.tabManager.selectedTabId else { break }
+      guard let tabID = explicitTabID ?? terminal.tabManager.selectedTabId else { break }
       terminal.tabManager.beginTabRename(tabID)
     case .selectTab(let worktree, let tabID):
       state(for: worktree).selectTab(tabID)

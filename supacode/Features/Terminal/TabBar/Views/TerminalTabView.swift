@@ -12,12 +12,16 @@ struct TerminalTabView: View {
   let onClose: () -> Void
   let onRename: (String) -> Void
   @Binding var closeButtonGestureActive: Bool
-  @Binding var isEditing: Bool
+  let isEditing: Bool
+  let onBeginRename: () -> Void
+  let onEndRename: () -> Void
 
   @State private var isHovering = false
   @State private var isHoveringClose = false
   @State private var isPressing = false
   @State private var editingTitle = ""
+  @State private var initialEditingTitle = ""
+  @State private var cancelOnExit = false
   @FocusState private var isFieldFocused: Bool
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
 
@@ -77,17 +81,21 @@ struct TerminalTabView: View {
           .font(.caption)
           .focused($isFieldFocused)
           .foregroundStyle(TerminalTabBarColors.activeText)
-          .accessibilityLabel("Tab name")
+          .accessibilityLabel("Rename tab")
           .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
           .padding(
             .trailing,
             TerminalTabBarMetrics.closeButtonSize + TerminalTabBarMetrics.contentSpacing
           )
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-          .onSubmit { commitRename() }
-          .onExitCommand { isEditing = false }
+          .onSubmit { onEndRename() }
+          .onExitCommand {
+            cancelOnExit = true
+            onEndRename()
+          }
           .onChange(of: isFieldFocused) { _, focused in
-            if !focused && isEditing { commitRename() }
+            guard !focused, isEditing else { return }
+            onEndRename()
           }
       }
     }
@@ -111,25 +119,31 @@ struct TerminalTabView: View {
     .simultaneousGesture(
       TapGesture(count: 2).onEnded {
         guard !tab.isTitleLocked else { return }
-        isEditing = true
+        onBeginRename()
       }
     )
     .onChange(of: isEditing) { _, editing in
       if editing {
         editingTitle = tab.displayTitle
+        initialEditingTitle = tab.displayTitle
+        cancelOnExit = false
         isFieldFocused = true
+      } else if cancelOnExit {
+        cancelOnExit = false
+      } else if editingTitle != initialEditingTitle {
+        onRename(editingTitle)
       }
+    }
+    .onDisappear {
+      guard isEditing else { return }
+      defer { onEndRename() }
+      guard !cancelOnExit, editingTitle != initialEditingTitle else { return }
+      onRename(editingTitle)
     }
     .zIndex(isActive ? 2 : (isDragging ? 3 : 0))
     .overlay {
       MiddleClickView(action: onClose)
     }
-  }
-
-  private func commitRename() {
-    let trimmed = editingTitle.trimmingCharacters(in: .whitespaces)
-    isEditing = false
-    onRename(trimmed)
   }
 
   private var shortcutHint: String? {

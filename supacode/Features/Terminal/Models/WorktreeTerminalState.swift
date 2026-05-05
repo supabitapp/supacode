@@ -800,8 +800,7 @@ final class WorktreeTerminalState {
         focusedId.flatMap { id in
           leaves.firstIndex(where: { $0.id == id })
         } ?? 0
-      // Detect blocking-script tabs by their locked title or tint color and normalize to default state.
-      let isBlockingScriptTab = tab.isTitleLocked || tab.tintColor != nil
+      let isBlockingScriptTab = blockingScripts[tab.id] != nil
       tabSnapshots.append(
         TerminalLayoutSnapshot.TabSnapshot(
           id: tab.id.rawValue,
@@ -1149,6 +1148,9 @@ final class WorktreeTerminalState {
       if self.focusedSurfaceIdByTab[tabId] == view.id {
         self.tabManager.updateTitle(tabId, title: title)
       }
+    }
+    view.bridge.onPromptTitle = { [weak self] in
+      self?.tabManager.beginTabRename(tabId)
     }
     view.bridge.onSplitAction = { [weak self, weak view] action in
       guard let self, let view else { return false }

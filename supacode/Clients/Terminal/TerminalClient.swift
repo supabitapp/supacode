@@ -8,6 +8,7 @@ struct TerminalClient {
   var surfaceExists: @MainActor @Sendable (Worktree.ID, TerminalTabID, UUID) -> Bool
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
   var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TerminalTabID?
+  var selectedTabID: @MainActor @Sendable (Worktree.ID) -> TerminalTabID?
   var latestUnreadNotification: @MainActor @Sendable () -> NotificationLocation?
   var markNotificationRead: @MainActor @Sendable (Worktree.ID, UUID) -> Void
 
@@ -33,7 +34,7 @@ struct TerminalClient {
       input: String?, id: UUID? = nil)
     case destroyTab(Worktree, tabID: TerminalTabID)
     case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID)
-    case beginTabRename(Worktree)
+    case beginTabRename(Worktree, tabID: TerminalTabID? = nil)
     case prune(Set<Worktree.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
@@ -62,6 +63,7 @@ extension TerminalClient: DependencyKey {
     surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
     surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
     tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
+    selectedTabID: { _ in fatalError("TerminalClient.selectedTabID not configured") },
     latestUnreadNotification: { fatalError("TerminalClient.latestUnreadNotification not configured") },
     markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") }
   )
@@ -73,6 +75,7 @@ extension TerminalClient: DependencyKey {
     surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true),
     surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
     tabID: unimplemented("TerminalClient.tabID", placeholder: nil),
+    selectedTabID: unimplemented("TerminalClient.selectedTabID", placeholder: nil),
     latestUnreadNotification: unimplemented("TerminalClient.latestUnreadNotification", placeholder: nil),
     markNotificationRead: unimplemented("TerminalClient.markNotificationRead")
   )

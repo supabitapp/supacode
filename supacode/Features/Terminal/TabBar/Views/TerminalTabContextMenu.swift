@@ -23,7 +23,7 @@ struct TerminalTabContextMenu: ViewModifier {
 
   func body(content: Content) -> some View {
     content.contextMenu {
-      if currentTab?.isTitleLocked == false {
+      if let currentTab, !currentTab.isTitleLocked {
         Button("Rename Tab") {
           actions.renameTab(tabId)
         }

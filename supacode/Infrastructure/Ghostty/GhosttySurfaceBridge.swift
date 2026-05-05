@@ -48,6 +48,7 @@ final class GhosttySurfaceBridge {
   var surface: ghostty_surface_t?
   weak var surfaceView: GhosttySurfaceView?
   var onTitleChange: ((String) -> Void)?
+  var onPromptTitle: (() -> Void)?
   var onSplitAction: ((GhosttySplitAction) -> Bool)?
   var onCloseRequest: ((Bool) -> Void)?
   var onNewTab: (() -> Bool)?
@@ -225,6 +226,7 @@ final class GhosttySurfaceBridge {
 
     case GHOSTTY_ACTION_PROMPT_TITLE:
       state.promptTitle = action.action.prompt_title
+      onPromptTitle?()
       return true
 
     case GHOSTTY_ACTION_PWD:

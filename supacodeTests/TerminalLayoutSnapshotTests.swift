@@ -98,9 +98,9 @@ struct TerminalLayoutSnapshotTests {
   }
 
   @Test func missingCustomTitleDecodesAsNil() throws {
-    let json = """
-      {"tabs":[{"title":"tab 1","layout":{"leaf":{"workingDirectory":null}},"focusedLeafIndex":0}],"selectedTabIndex":0}
-      """
+    let leaf = #"{"leaf":{"_0":{"workingDirectory":null}}}"#
+    let tab = #"{"title":"tab 1","layout":\#(leaf),"focusedLeafIndex":0}"#
+    let json = #"{"tabs":[\#(tab)],"selectedTabIndex":0}"#
     let snapshot = try JSONDecoder().decode(
       TerminalLayoutSnapshot.self,
       from: Data(json.utf8)

@@ -227,6 +227,9 @@ struct SupacodeApp: App {
         tabID: { worktreeID, surfaceID in
           terminalManager.tabID(forWorktreeID: worktreeID, surfaceID: surfaceID)
         },
+        selectedTabID: { worktreeID in
+          terminalManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
+        },
         latestUnreadNotification: {
           terminalManager.latestUnreadNotificationLocation()
         },

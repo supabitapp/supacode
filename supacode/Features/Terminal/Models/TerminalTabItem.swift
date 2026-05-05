@@ -3,7 +3,9 @@ import SupacodeSettingsShared
 
 struct TerminalTabItem: Identifiable, Equatable, Sendable {
   let id: TerminalTabID
+  /// Live shell title; for display use `displayTitle`.
   var title: String
+  /// User-supplied override; nil means follow the live shell title.
   var customTitle: String?
   var icon: String?
   var isDirty: Bool

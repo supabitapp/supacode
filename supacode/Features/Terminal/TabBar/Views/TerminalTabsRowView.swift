@@ -18,7 +18,6 @@ struct TerminalTabsRowView: View {
 
   @State private var dropTargetIndex: Int?
   @State private var rowFrame: CGRect = .zero
-  @State private var editingTabId: TerminalTabID?
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -42,10 +41,12 @@ struct TerminalTabsRowView: View {
                 renameTab(id, newTitle)
               },
               closeButtonGestureActive: $closeButtonGestureActive,
-              isEditing: Binding(
-                get: { editingTabId == id },
-                set: { if $0 { editingTabId = id } else { editingTabId = nil } }
-              )
+              isEditing: manager.editingTabID == id,
+              onBeginRename: { manager.beginTabRename(id) },
+              onEndRename: {
+                guard manager.editingTabID == id else { return }
+                manager.endTabRename()
+              }
             )
             .background(
               TerminalTabMeasurementView(
@@ -64,7 +65,7 @@ struct TerminalTabsRowView: View {
                 closeOthers: closeOthers,
                 closeToRight: closeToRight,
                 closeAll: closeAll,
-                renameTab: { editingTabId = $0 }
+                renameTab: { manager.beginTabRename($0) }
               )
             )
             .id(id)
@@ -130,11 +131,6 @@ struct TerminalTabsRowView: View {
           scrollReader.scrollTo(newValue)
         }
       }
-    }
-    .onChange(of: manager.pendingRenameTabID) { _, tabID in
-      guard let tabID else { return }
-      editingTabId = tabID
-      manager.consumePendingRename()
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
   }
