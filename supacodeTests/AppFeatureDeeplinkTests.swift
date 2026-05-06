@@ -1769,7 +1769,84 @@ struct AppFeatureDeeplinkTests {
     )
   }
 
-  // MARK: - Quit drains pending responseFD.
+  // MARK: - Quit confirmation.
+
+  // Tests exercising `.requestQuit` with `confirmBeforeQuit = false` MUST inject
+  // an `AppLifecycleClient.terminate` override; otherwise the live client kills
+  // the test process via `NSApplication.shared.terminate(nil)`.
+
+  @Test(.dependencies) func requestQuitWithConfirmShowsAlert() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.confirmBeforeQuit = true
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.requestQuit)
+
+    let alert = try? #require(store.state.alert)
+    #expect(alert?.title == TextState("Quit Supacode?"))
+    #expect(alert?.buttons.count == 2)
+  }
+
+  @Test(.dependencies) func requestQuitWithoutConfirmTerminates() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.confirmBeforeQuit = false
+    let terminated = LockIsolated(false)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.appLifecycleClient.terminate = { terminated.setValue(true) }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.requestQuit)
+    await store.finish()
+
+    #expect(terminated.value)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func cancelQuitAlertPreservesPendingResponseFD() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State(),
+    )
+    initialState.settings.confirmBeforeQuit = true
+    initialState.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
+      worktreeID: worktree.id,
+      worktreeName: worktree.name,
+      repositoryName: "repo",
+      message: .command("echo hello"),
+      action: .tabNew(input: "echo hello", id: nil),
+      responseFD: writeFD,
+    )
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.requestQuit)
+    await store.send(.alert(.dismiss))
+
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == writeFD)
+  }
 
   @Test(.dependencies) func dialogDismissDrainsPendingResponseFD() async {
     let worktree = makeWorktree()
@@ -1792,8 +1869,6 @@ struct AppFeatureDeeplinkTests {
     }
     store.exhaustivity = .off
 
-    // Test via .dismiss rather than .requestQuit to avoid NSApplication.terminate
-    // killing the test runner in DEBUG builds.
     await store.send(.deeplinkInputConfirmation(.dismiss))
     await store.finish()
 

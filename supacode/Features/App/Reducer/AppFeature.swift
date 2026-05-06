@@ -103,6 +103,7 @@ struct AppFeature {
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
+  @Dependency(AppLifecycleClient.self) private var appLifecycleClient
   @Dependency(DeeplinkClient.self) private var deeplinkClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(WorkspaceClient.self) private var workspaceClient
@@ -399,36 +400,28 @@ struct AppFeature {
         return .none
 
       case .requestQuit:
-        let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
-        #if !DEBUG
-          guard state.settings.confirmBeforeQuit else {
-            analyticsClient.capture("app_quit", nil)
-            return .concatenate(
-              pendingFDEffect,
-              .run { @MainActor _ in
-                NSApplication.shared.terminate(nil)
-              })
-          }
-          state.alert = AlertState {
-            TextState("Quit Supacode?")
-          } actions: {
-            ButtonState(action: .confirmQuit) {
-              TextState("Quit")
-            }
-            ButtonState(role: .cancel, action: .dismiss) {
-              TextState("Cancel")
-            }
-          } message: {
-            TextState("This will close all terminal sessions.")
-          }
-          return pendingFDEffect
-        #else
+        guard state.settings.confirmBeforeQuit else {
+          analyticsClient.capture("app_quit", nil)
+          let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
           return .concatenate(
             pendingFDEffect,
-            .run { @MainActor _ in
-              NSApplication.shared.terminate(nil)
-            })
-        #endif
+            .run { @MainActor [appLifecycleClient] _ in appLifecycleClient.terminate() },
+          )
+        }
+        state.alert = AlertState {
+          TextState("Quit Supacode?")
+        } actions: {
+          ButtonState(action: .confirmQuit) {
+            TextState("Quit")
+          }
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState("This will close all terminal sessions.")
+        }
+        // Surface the main window first; the alert is bound there.
+        return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
 
       case .newTerminal:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -662,9 +655,8 @@ struct AppFeature {
         state.alert = nil
         return .concatenate(
           pendingFDEffect,
-          .run { @MainActor _ in
-            NSApplication.shared.terminate(nil)
-          })
+          .run { @MainActor [appLifecycleClient] _ in appLifecycleClient.terminate() },
+        )
 
       case .alert:
         return .none
@@ -952,19 +944,7 @@ struct AppFeature {
   ) -> Effect<Action> {
     switch deeplink {
     case .open:
-      return .run { @MainActor _ in
-        let app = NSApplication.shared
-        guard let window = app.windows.first(where: { $0.identifier?.rawValue == WindowID.main })
-        else {
-          app.activate()
-          return
-        }
-        if window.isMiniaturized {
-          window.deminiaturize(nil)
-        }
-        window.makeKeyAndOrderFront(nil)
-        app.activate()
-      }
+      return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
     case .help:
       state.isDeeplinkReferenceRequested = true
       return .none

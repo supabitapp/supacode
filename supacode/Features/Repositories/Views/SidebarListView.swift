@@ -90,6 +90,18 @@ struct SidebarListView: View {
         terminalState.focusAndInsertText(keyPress.characters)
         return .handled
       }
+      .background(
+        // NSOutlineView consumes arrow keys before SwiftUI `onKeyPress` runs.
+        SidebarRightArrowMonitor(isSidebarFocused: isSidebarFocused) {
+          guard let worktreeID = store.selectedWorktreeID,
+            state.sidebarSelectedWorktreeIDs.count == 1,
+            state.sidebarSelectedWorktreeIDs.contains(worktreeID),
+            let terminalState = terminalManager.stateIfExists(for: worktreeID)
+          else { return false }
+          terminalState.focusSelectedTab()
+          return true
+        }
+      )
       .task(id: pendingSidebarReveal?.id) {
         await revealPendingSidebarWorktree(pendingSidebarReveal, with: scrollProxy)
       }
@@ -312,6 +324,61 @@ private struct SidebarPlaceholderView: View {
           .redacted(reason: .placeholder)
           .shimmer(isActive: true)
       }
+    }
+  }
+}
+
+private struct SidebarRightArrowMonitor: NSViewRepresentable {
+  let isSidebarFocused: Bool
+  let handle: () -> Bool
+
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    context.coordinator.update(isSidebarFocused: isSidebarFocused, handle: handle)
+    context.coordinator.install(host: view)
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    context.coordinator.update(isSidebarFocused: isSidebarFocused, handle: handle)
+  }
+
+  static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+    coordinator.uninstall()
+  }
+
+  @MainActor
+  final class Coordinator {
+    private var isSidebarFocused = false
+    private var handle: () -> Bool = { false }
+    private var monitor: Any?
+
+    func update(isSidebarFocused: Bool, handle: @escaping () -> Bool) {
+      self.isSidebarFocused = isSidebarFocused
+      self.handle = handle
+    }
+
+    func install(host: NSView) {
+      guard monitor == nil else { return }
+      // Local monitors are process-global; scope to the host's window so a
+      // stale `@FocusState` in another window can't steal the keystroke.
+      monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak host] event in
+        guard event.specialKey == .rightArrow else { return event }
+        let userModifiers: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
+        guard event.modifierFlags.isDisjoint(with: userModifiers) else { return event }
+        guard let host, event.window === host.window else { return event }
+        let consumed = MainActor.assumeIsolated {
+          (self?.isSidebarFocused ?? false) && (self?.handle() ?? false)
+        }
+        return consumed ? nil : event
+      }
+    }
+
+    func uninstall() {
+      if let monitor { NSEvent.removeMonitor(monitor) }
+      monitor = nil
     }
   }
 }

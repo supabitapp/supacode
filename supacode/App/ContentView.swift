@@ -90,6 +90,12 @@ struct ContentView: View {
     }
     .background(WindowTabbingDisabler())
     .background(WindowChromeObserver(runtime: terminalManager.ghosttyRuntime))
+    .navigationTitle(
+      WindowTitle.compute(
+        repositories: store.repositories,
+        terminalManager: terminalManager
+      )
+    )
   }
 
   private func toggleLeftSidebar() {
