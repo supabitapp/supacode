@@ -33,7 +33,6 @@ struct ContentView: View {
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!store.repositories.isInitialLoadComplete)
-    .environment(\.surfaceBackgroundOpacity, terminalManager.surfaceBackgroundOpacity())
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
     }
@@ -90,6 +89,7 @@ struct ContentView: View {
       )
     }
     .background(WindowTabbingDisabler())
+    .background(WindowChromeObserver(runtime: terminalManager.ghosttyRuntime))
   }
 
   private func toggleLeftSidebar() {
@@ -110,37 +110,4 @@ struct ContentView: View {
     store.send(.repositories(.revealSelectedWorktreeInSidebar))
   }
 
-}
-
-private struct SurfaceBackgroundOpacityKey: EnvironmentKey {
-  static let defaultValue: Double = 1
-}
-
-extension EnvironmentValues {
-  var surfaceBackgroundOpacity: Double {
-    get { self[SurfaceBackgroundOpacityKey.self] }
-    set { self[SurfaceBackgroundOpacityKey.self] = newValue }
-  }
-
-  var surfaceTopChromeBackgroundOpacity: Double {
-    get {
-      guard surfaceBackgroundOpacity < 1 else { return 1 }
-      let proportionalOpacity = surfaceBackgroundOpacity * 0.56
-      return max(0.36, min(proportionalOpacity, 0.62))
-    }
-    set {
-      surfaceBackgroundOpacity = newValue
-    }
-  }
-
-  var surfaceBottomChromeBackgroundOpacity: Double {
-    get {
-      guard surfaceBackgroundOpacity < 1 else { return 1 }
-      let proportionalOpacity = surfaceBackgroundOpacity * 0.78
-      return max(0.52, min(proportionalOpacity, 0.82))
-    }
-    set {
-      surfaceBackgroundOpacity = newValue
-    }
-  }
 }

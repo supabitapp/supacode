@@ -23,30 +23,36 @@ struct TerminalTabContextMenu: ViewModifier {
 
   func body(content: Content) -> some View {
     content.contextMenu {
-      if let currentTab, !currentTab.isTitleLocked {
-        Button("Rename Tab") {
-          actions.renameTab(tabId)
+      Group {
+        if let currentTab, !currentTab.isTitleLocked {
+          Button("Rename Tab") {
+            actions.renameTab(tabId)
+          }
+          Divider()
         }
-        Divider()
-      }
 
-      Button("Close Tab") {
-        actions.closeTab(tabId)
-      }
+        Button("Close Tab") {
+          actions.closeTab(tabId)
+        }
 
-      Button("Close Other Tabs") {
-        actions.closeOthers(tabId)
-      }
-      .disabled(tabs.count <= 1)
+        Button("Close Other Tabs") {
+          actions.closeOthers(tabId)
+        }
+        .disabled(tabs.count <= 1)
 
-      Button("Close Tabs to the Right") {
-        actions.closeToRight(tabId)
-      }
-      .disabled(isLastTab)
+        Button("Close Tabs to the Right") {
+          actions.closeToRight(tabId)
+        }
+        .disabled(isLastTab)
 
-      Button("Close All") {
-        actions.closeAll()
+        Button("Close All") {
+          actions.closeAll()
+        }
       }
+      // SwiftUI menu items containing Labels/Images receive `\.colorScheme`
+      // from the surrounding env, so without escaping the chrome override
+      // their tinting renders against the wrong appearance.
+      .inheritSystemColorScheme()
     }
   }
 

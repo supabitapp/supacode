@@ -77,6 +77,7 @@ struct TerminalTabBarTrailingAccessories: View {
           isHoveringPopover = false
           updateHoverPopoverVisibility()
         }
+        .inheritSystemColorScheme()
     }
   }
 

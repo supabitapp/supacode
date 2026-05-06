@@ -29,6 +29,10 @@ final class GhosttyRuntime {
   /// Whether the user has toggled background opacity to force
   /// an opaque window, overriding the configured transparency.
   private(set) var isBackgroundOpaque = false
+  /// User's intended `background-opacity` from their Ghostty config.
+  /// Stashed because we override Ghostty's value to 0 so its surface
+  /// renders transparent — the window provides the only tint.
+  private var userBackgroundOpacity: Double = 1
 
   func toggleIsBackgroundOpaque() {
     isBackgroundOpaque.toggle()
@@ -36,10 +40,12 @@ final class GhosttyRuntime {
   var onConfigChange: (() -> Void)?
 
   init() {
-    guard let config = Self.loadConfig() else {
+    guard let loaded = Self.loadConfig() else {
       preconditionFailure("ghostty_config_new failed")
     }
-    self.config = config
+    self.config = loaded.config
+    self.userBackgroundOpacity = loaded.userBackgroundOpacity
+    let config = loaded.config
 
     var runtimeConfig = ghostty_runtime_config_s(
       userdata: Unmanaged.passUnretained(self).toOpaque(),
@@ -137,6 +143,9 @@ final class GhosttyRuntime {
     lastColorScheme = ghosttyScheme
     ghostty_app_set_color_scheme(app, ghosttyScheme)
     applyColorSchemeToSurfaces(ghosttyScheme)
+    // Tell window-chrome observers so the no-surface tint repaints when the
+    // user has `theme = light:..,dark:..` and the system flips Light/Dark.
+    notifyConfigChanged()
   }
 
   func registerSurface(_ surface: ghostty_surface_t) -> SurfaceReference {
@@ -163,16 +172,18 @@ final class GhosttyRuntime {
     isBackgroundOpaque = false
     var target = ghostty_target_s()
     target.tag = GHOSTTY_TARGET_APP
-    guard let config = Self.loadConfig() else {
+    guard let loaded = Self.loadConfig() else {
       Self.logger.warning("Failed to reload app config.")
       return
     }
-    applyConfig(config, target: target, app: app)
-    ghostty_config_free(config)
+    userBackgroundOpacity = loaded.userBackgroundOpacity
+    applyConfig(loaded.config, target: target, app: app)
+    ghostty_config_free(loaded.config)
     if let lastColorScheme {
       ghostty_app_set_color_scheme(app, lastColorScheme)
       applyColorSchemeToSurfaces(lastColorScheme)
     }
+    notifyConfigChanged()
   }
 
   func reloadConfig(soft: Bool, target: ghostty_target_s) {
@@ -181,11 +192,26 @@ final class GhosttyRuntime {
       guard let clone = ghostty_config_clone(config) else { return }
       applyConfig(clone, target: target, app: app)
       ghostty_config_free(clone)
+      // Soft reload reuses the in-memory config (already overridden), so we
+      // re-snapshot the user's `background-opacity` from disk to keep the
+      // window tint in lockstep with what the user actually has configured.
+      if let snapshot = Self.loadConfig() {
+        userBackgroundOpacity = snapshot.userBackgroundOpacity
+        ghostty_config_free(snapshot.config)
+      }
+      notifyConfigChanged()
       return
     }
-    guard let config = Self.loadConfig() else { return }
-    applyConfig(config, target: target, app: app)
-    ghostty_config_free(config)
+    guard let loaded = Self.loadConfig() else { return }
+    userBackgroundOpacity = loaded.userBackgroundOpacity
+    applyConfig(loaded.config, target: target, app: app)
+    ghostty_config_free(loaded.config)
+    notifyConfigChanged()
+  }
+
+  fileprivate func notifyConfigChanged() {
+    onConfigChange?()
+    NotificationCenter.default.post(name: .ghosttyRuntimeConfigDidChange, object: self)
   }
 
   private func applyConfig(
@@ -392,8 +418,15 @@ final class GhosttyRuntime {
         let config = action.action.config_change.config
         guard let clone = ghostty_config_clone(config) else { return false }
         runtime.setConfig(clone)
-        runtime.onConfigChange?()
-        NotificationCenter.default.post(name: .ghosttyRuntimeConfigDidChange, object: runtime)
+        // Re-snapshot the user's `background-opacity` from disk: the incoming
+        // config may already carry our `loadBundledOverrides` overlay, so
+        // reading it from the clone would return the override (0) instead of
+        // the user's intended value.
+        if let snapshot = Self.loadConfig() {
+          runtime.userBackgroundOpacity = snapshot.userBackgroundOpacity
+          ghostty_config_free(snapshot.config)
+        }
+        runtime.notifyConfigChanged()
       }
       if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG {
         let soft = action.action.reload_config.soft
@@ -471,21 +504,47 @@ final class GhosttyRuntime {
     self.config = config
   }
 
-  private static func loadConfig() -> ghostty_config_t? {
+  private static func loadConfig() -> (config: ghostty_config_t, userBackgroundOpacity: Double)? {
     @Shared(.settingsFile) var settingsFile
+    let themeSyncEnabled = settingsFile.global.terminalThemeSyncEnabled
     guard let config = ghostty_config_new() else { return nil }
     ghostty_config_load_default_files(config)
     ghostty_config_load_recursive_files(config)
     ghostty_config_load_cli_args(config)
+    // Snapshot the user's opacity from a clone before the override clobbers it.
+    let userOpacity: Double
+    if let userView = ghostty_config_clone(config) {
+      loadBundledTheme(into: userView, enabled: themeSyncEnabled)
+      ghostty_config_finalize(userView)
+      userOpacity = readBackgroundOpacity(from: userView)
+      ghostty_config_free(userView)
+    } else {
+      userOpacity = 1
+    }
     loadBundledOverrides(into: config)
-    loadBundledTheme(into: config, enabled: settingsFile.global.terminalThemeSyncEnabled)
+    loadBundledTheme(into: config, enabled: themeSyncEnabled)
     ghostty_config_finalize(config)
-    return config
+    return (config, userOpacity)
   }
 
-  /// Applies Supacode-specific config (padding values) that takes precedence over user settings.
+  private static func readBackgroundOpacity(from config: ghostty_config_t) -> Double {
+    var value: Double = 1
+    let key = "background-opacity"
+    _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+    return min(max(value, 0), 1)
+  }
+
+  /// Applies Supacode-specific config (padding values, transparent surface)
+  /// that takes precedence over user settings.
   private static func loadBundledOverrides(into config: ghostty_config_t) {
-    let defaults = "window-padding-x = 14\nwindow-padding-y = 12,0\n"
+    // `background-opacity = 0` makes Ghostty's surface render with alpha 0
+    // so the window's tint is the only visual layer; the user's intended
+    // value is captured separately in `loadConfig` for window-level use.
+    let defaults = """
+      window-padding-x = 14
+      window-padding-y = 12,0
+      background-opacity = 0
+      """
     let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-defaults.conf")
     do {
       try defaults.write(to: tempURL, atomically: true, encoding: .utf8)
@@ -568,12 +627,11 @@ final class GhosttyRuntime {
     return value & (1 << 0) != 0
   }
 
+  // The user's intended opacity, applied at the window level. The Ghostty
+  // surface itself is forced to `background-opacity = 0` so the tint
+  // doesn't double up.
   func backgroundOpacity() -> Double {
-    guard let config else { return 1 }
-    var value: Double = 1
-    let key = "background-opacity"
-    _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
-    return min(max(value, 0.001), 1)
+    userBackgroundOpacity
   }
 
   // The `unfocused-split-opacity` config value is the *visible* opacity of
@@ -612,6 +670,17 @@ final class GhosttyRuntime {
 
   func scrollbarAppearanceName() -> NSAppearance.Name {
     backgroundColor().isLightColor ? .aqua : .darkAqua
+  }
+
+  // Uses the app's effective appearance — fine for Supacode's single-window
+  // model. If per-window appearance overrides are added, thread the owning
+  // window through and resolve under `window.effectiveAppearance` instead.
+  func backgroundColorScheme() -> ColorScheme {
+    var isLight = false
+    NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+      isLight = backgroundColor().isLightColor
+    }
+    return isLight ? .light : .dark
   }
 
   private func backgroundColorFromConfig() -> NSColor? {

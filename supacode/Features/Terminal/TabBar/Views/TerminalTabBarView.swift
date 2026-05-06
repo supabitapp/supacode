@@ -13,7 +13,7 @@ struct TerminalTabBarView: View {
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
   @Environment(\.controlActiveState)
-  private var activeState
+  private var controlActiveState
 
   var body: some View {
     HStack(spacing: 0) {
@@ -35,8 +35,7 @@ struct TerminalTabBarView: View {
       )
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
-    .background(TerminalTabBarBackground())
-    .saturation(activeState == .inactive ? 0 : 1)
+    .saturation(controlActiveState == .inactive ? 0 : 1)
     .clipped()
   }
 }

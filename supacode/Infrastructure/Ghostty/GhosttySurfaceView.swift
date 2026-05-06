@@ -326,6 +326,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
         queue: .main
       ) { [weak self] _ in
         Task { @MainActor [weak self] in
+          // Bust the equality cache so blur-only or other config changes
+          // not represented in `WindowAppearanceState` still re-invoke the
+          // window appearance + Ghostty blur API.
+          self?.lastAppliedWindowAppearance = nil
           self?.applyWindowBackgroundAppearance()
         }
       })
@@ -359,6 +363,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
     updateScreenObservers()
     updateContentScale()
     notifySizeChanged()
+    applyWindowBackgroundAppearance()
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    // Re-resolve `NSColor.windowBackgroundColor` (and any dynamic fallback) under
+    // the new appearance — `withAlphaComponent` flattens dynamic colors, so the
+    // transparent branch otherwise freezes at whatever scheme was current at first paint.
     applyWindowBackgroundAppearance()
   }
 
@@ -405,31 +417,15 @@ final class GhosttySurfaceView: NSView, Identifiable {
     addCursorRect(bounds, cursor: currentCursor)
   }
 
+  private var lastAppliedWindowAppearance: WindowAppearanceState?
+
   private func applyWindowBackgroundAppearance() {
-    guard let window else {
-      surfaceLogger.debug("applyWindowBackgroundAppearance: window unavailable, skipping.")
-      return
-    }
-    guard window.isVisible else {
-      surfaceLogger.debug("applyWindowBackgroundAppearance: window not visible, skipping.")
-      return
-    }
-    let opacity = runtime.backgroundOpacity()
-    if !window.styleMask.contains(.fullScreen), opacity < 1, !runtime.isBackgroundOpaque {
-      window.isOpaque = false
-      window.titlebarAppearsTransparent = true
-      window.backgroundColor = .white.withAlphaComponent(0.001)
-      if let app = runtime.app {
-        ghostty_set_window_background_blur(
-          app,
-          Unmanaged.passUnretained(window).toOpaque()
-        )
-      }
-      return
-    }
-    window.isOpaque = true
-    window.titlebarAppearsTransparent = false
-    window.backgroundColor = runtime.backgroundColor().withAlphaComponent(1)
+    guard let window else { return }
+    WindowChromeApplier.apply(
+      window: window,
+      runtime: runtime,
+      lastApplied: &lastAppliedWindowAppearance
+    )
   }
 
   func toggleBackgroundOpacity() -> Bool {

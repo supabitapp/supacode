@@ -4,6 +4,9 @@ struct TerminalTabCloseButtonBackground: View {
   let isPressing: Bool
   let isHoveringClose: Bool
 
+  @Environment(\.surfaceChromeAppearance)
+  private var chromeAppearance
+
   var body: some View {
     Circle()
       .fill(backgroundColor)
@@ -11,10 +14,10 @@ struct TerminalTabCloseButtonBackground: View {
 
   private var backgroundColor: Color {
     if isPressing {
-      return TerminalTabBarColors.hoveredTabBackground
+      return chromeAppearance.overlayTint.opacity(0.16)
     }
     if isHoveringClose {
-      return TerminalTabBarColors.hoveredTabBackground
+      return chromeAppearance.overlayTint.opacity(0.12)
     }
     return .clear
   }

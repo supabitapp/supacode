@@ -14,9 +14,7 @@ struct TerminalTabLabelView: View {
       if let icon = tab.icon {
         Image(systemName: icon)
           .imageScale(.small)
-          .foregroundStyle(
-            tab.tintColor?.color ?? (isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)
-          )
+          .foregroundStyle(tab.tintColor?.color ?? TerminalTabBarColors.activeText)
           .frame(
             width: TerminalTabBarMetrics.closeButtonSize,
             height: TerminalTabBarMetrics.closeButtonSize
@@ -25,8 +23,9 @@ struct TerminalTabLabelView: View {
       }
       Text(tab.displayTitle)
         .font(.caption)
+        .fontWeight(isActive ? .semibold : .regular)
         .lineLimit(1)
-        .foregroundStyle(isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)
+        .foregroundStyle(TerminalTabBarColors.activeText)
         .shimmer(isActive: tab.isDirty)
       Spacer(minLength: TerminalTabBarMetrics.contentTrailingSpacing)
       ZStack {

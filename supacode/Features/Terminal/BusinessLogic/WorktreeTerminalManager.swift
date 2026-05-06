@@ -469,9 +469,11 @@ final class WorktreeTerminalManager {
     }
   }
 
-  func surfaceBackgroundOpacity() -> Double {
-    runtime.backgroundOpacity()
+  func surfaceBackgroundColorScheme() -> ColorScheme {
+    runtime.backgroundColorScheme()
   }
+
+  var ghosttyRuntime: GhosttyRuntime { runtime }
 
   func unfocusedSplitOverlay() -> (fill: Color?, opacity: Double) {
     (runtime.unfocusedSplitFill(), runtime.unfocusedSplitOverlayOpacity())

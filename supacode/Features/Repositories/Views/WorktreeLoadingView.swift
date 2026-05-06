@@ -2,7 +2,6 @@ import SwiftUI
 
 struct WorktreeLoadingView: View {
   let info: WorktreeLoadingInfo
-  @Environment(\.surfaceBackgroundOpacity) private var surfaceBackgroundOpacity
 
   var body: some View {
     let subtitle = subtitleText()
@@ -32,7 +31,6 @@ struct WorktreeLoadingView: View {
     }
     .multilineTextAlignment(.center)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(nsColor: .windowBackgroundColor).opacity(surfaceBackgroundOpacity))
   }
 
   private func subtitleText() -> String {

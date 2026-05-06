@@ -19,7 +19,6 @@ struct EmptyTerminalPaneView: View {
       }
     }
     .multilineTextAlignment(.center)
-    .background(Color(nsColor: .windowBackgroundColor))
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }

@@ -52,6 +52,7 @@ struct WorktreeDetailView: View {
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
     .toolbar(removing: .title)
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .toolbar {
       if showsToolbarPlaceholder {
         ToolbarPlaceholderContent()
@@ -95,7 +96,6 @@ struct WorktreeDetailView: View {
         )
       }
     }
-    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     let hasRunningRunScript = state.hasRunningRunScript
     let actions = makeFocusedActions(
       hasActiveWorktree: hasActiveWorktree,
@@ -161,6 +161,11 @@ struct WorktreeDetailView: View {
     return !repositories.isInitialLoadComplete
   }
 
+  // Apply `windowTintColorScheme` here, inside the detail body, so that text
+  // and icons painted over the tinted window pick the right luminance — but
+  // the surrounding `.toolbar { ... }` items keep the system color scheme so
+  // they stay readable in fullscreen, where the titlebar paints with system
+  // appearance.
   @ViewBuilder
   private func detailContent(
     repositories: RepositoriesFeature.State,
@@ -168,40 +173,43 @@ struct WorktreeDetailView: View {
     selectedWorktree: Worktree?,
     selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
   ) -> some View {
-    if repositories.isShowingArchivedWorktrees {
-      ArchivedWorktreesDetailView(
-        store: store.scope(state: \.repositories, action: \.repositories)
-      )
-    } else if shouldShowMultiSelectionSummary(
-      repositories: repositories,
-      selectedWorktreeSummaries: selectedWorktreeSummaries
-    ) {
-      MultiSelectedWorktreesDetailView(rows: selectedWorktreeSummaries)
-    } else if let loadingInfo {
-      WorktreeLoadingView(info: loadingInfo)
-    } else if let selectedWorktree {
-      let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
-      let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-      WorktreeTerminalTabsView(
-        worktree: selectedWorktree,
-        manager: terminalManager,
-        shouldRunSetupScript: shouldRunSetupScript,
-        forceAutoFocus: shouldFocusTerminal,
-        createTab: { store.send(.newTerminal) }
-      )
-      .id(selectedWorktree.id)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .ignoresSafeArea(.container, edges: .bottom)
-      .onAppear {
-        if shouldFocusTerminal {
-          store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
+    Group {
+      if repositories.isShowingArchivedWorktrees {
+        ArchivedWorktreesDetailView(
+          store: store.scope(state: \.repositories, action: \.repositories)
+        )
+      } else if shouldShowMultiSelectionSummary(
+        repositories: repositories,
+        selectedWorktreeSummaries: selectedWorktreeSummaries
+      ) {
+        MultiSelectedWorktreesDetailView(rows: selectedWorktreeSummaries)
+      } else if let loadingInfo {
+        WorktreeLoadingView(info: loadingInfo)
+      } else if let selectedWorktree {
+        let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
+        let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
+        WorktreeTerminalTabsView(
+          worktree: selectedWorktree,
+          manager: terminalManager,
+          shouldRunSetupScript: shouldRunSetupScript,
+          forceAutoFocus: shouldFocusTerminal,
+          createTab: { store.send(.newTerminal) }
+        )
+        .id(selectedWorktree.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .bottom)
+        .onAppear {
+          if shouldFocusTerminal {
+            store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
+          }
         }
+      } else if !repositories.isInitialLoadComplete {
+        DetailPlaceholderView()
+      } else {
+        EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
       }
-    } else if !repositories.isInitialLoadComplete {
-      DetailPlaceholderView()
-    } else {
-      EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
     }
+    .windowTintColorScheme(manager: terminalManager)
   }
 
   private func applyFocusedActions<Content: View>(
@@ -550,7 +558,6 @@ private struct DetailPlaceholderView: View {
     }
     .multilineTextAlignment(.center)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(nsColor: .windowBackgroundColor))
     .task {
       let clock = ContinuousClock()
       while !Task.isCancelled {

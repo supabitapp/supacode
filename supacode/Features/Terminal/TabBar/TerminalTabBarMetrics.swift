@@ -25,4 +25,11 @@ enum TerminalTabBarMetrics {
   static let selectionAnimationDuration: Double = 0.15
   static let reorderAnimationDuration: Double = 0.3
   static let reorderAnimationBounce: Double = 0.15
+
+  // Inactive tabs use full-alpha `.primary` text and reduce to this opacity
+  // at the tab level so 11pt caption stays above WCAG AA 4.5:1 in both modes.
+  static let inactiveContentOpacityIdle: Double = 0.7
+  static let inactiveContentOpacityHover: Double = 0.85
+  static let inactiveContentSaturationIdle: Double = 0.4
+  static let inactiveContentSaturationHover: Double = 0.8
 }

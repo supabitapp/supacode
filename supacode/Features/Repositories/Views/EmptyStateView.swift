@@ -33,7 +33,6 @@ struct EmptyStateView: View {
       .help("Open Repository or Folder (\(openRepo?.display ?? "none"))")
     }
     .multilineTextAlignment(.center)
-    .background(Color(nsColor: .windowBackgroundColor))
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }

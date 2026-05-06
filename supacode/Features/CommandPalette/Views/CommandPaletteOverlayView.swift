@@ -163,10 +163,6 @@ private struct CommandPaletteCard: View {
     Color(nsColor: .windowBackgroundColor)
   }
 
-  private var colorScheme: ColorScheme {
-    NSColor.windowBackgroundColor.isLightColor ? .light : .dark
-  }
-
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       CommandPaletteQuery(query: $query, isTextFieldFocused: isQueryFocused) { event in
@@ -204,7 +200,6 @@ private struct CommandPaletteCard: View {
     )
     .shadow(radius: 32, x: 0, y: 12)
     .padding(Self.padding)
-    .environment(\.colorScheme, colorScheme)
   }
 }
 
