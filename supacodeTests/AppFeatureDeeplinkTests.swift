@@ -328,6 +328,113 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.alert != nil)
   }
 
+  @Test(.dependencies) func runScriptDeeplinkResolvesGlobalScript() async {
+    let worktree = makeWorktree()
+    let globalScript = ScriptDefinition(kind: .custom, name: "Lint", command: "make lint")
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.globalScripts = [globalScript] }
+    defer { $settingsFile.withLock { $0.global.globalScripts = [] } }
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: globalScript.id))))
+    await store.finish()
+
+    let hasRun = sent.value.contains(where: {
+      if case .runBlockingScript(_, .script(let definition), _) = $0 {
+        return definition.id == globalScript.id
+      }
+      return false
+    })
+    #expect(hasRun)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func stopScriptDeeplinkResolvesGlobalScript() async {
+    let worktree = makeWorktree()
+    let globalScript = ScriptDefinition(kind: .custom, name: "Lint", command: "make lint")
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.globalScripts = [globalScript] }
+    defer { $settingsFile.withLock { $0.global.globalScripts = [] } }
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.runningScriptsByWorktreeID = [worktree.id: [globalScript.id: globalScript.resolvedTintColor]]
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .stopScript(scriptID: globalScript.id))))
+    await store.finish()
+
+    let hasStop = sent.value.contains(where: {
+      if case .stopScript(_, let definitionID) = $0 { return definitionID == globalScript.id }
+      return false
+    })
+    #expect(hasStop)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func runScriptDeeplinkPrefersRepoOnIDCollision() async {
+    let sharedID = UUID()
+    let repoScript = ScriptDefinition(id: sharedID, kind: .test, name: "Repo", command: "echo repo")
+    let globalScript = ScriptDefinition(id: sharedID, kind: .custom, name: "Global", command: "echo global")
+    let worktree = makeWorktree()
+    let rootURL = worktree.repositoryRootURL
+    @Shared(.repositorySettings(rootURL)) var persisted = .default
+    $persisted.withLock { $0.scripts = [repoScript] }
+    defer { $persisted.withLock { $0.scripts = [] } }
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.globalScripts = [globalScript] }
+    defer { $settingsFile.withLock { $0.global.globalScripts = [] } }
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: sharedID))))
+    await store.finish()
+
+    let runCommands = sent.value.compactMap { command -> ScriptDefinition? in
+      if case .runBlockingScript(_, .script(let def), _) = command { return def }
+      return nil
+    }
+    #expect(runCommands.count == 1)
+    #expect(runCommands.first?.command == "echo repo")
+  }
+
   @Test(.dependencies) func stopScriptDeeplinkWhenNotRunningShowsAlert() async {
     // A user running `supacode worktree stop --script <uuid>` for a script
     // that isn't currently running should get an explicit alert, not a
@@ -786,6 +893,16 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.settings(section: .worktrees)))
     await store.receive(\.settings.setSelection)
+  }
+
+  @Test(.dependencies) func settingsDeeplinkOpensGlobalScriptsSection() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.settings(section: .scripts)))
+    await store.receive(\.settings.setSelection) {
+      $0.settings.selection = .scripts
+    }
   }
 
   @Test(.dependencies) func settingsRepoDeeplinkOpensRepoSettings() async {

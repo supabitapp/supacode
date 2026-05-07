@@ -30,7 +30,8 @@ private struct WindowTintColorScheme: ViewModifier {
       colorScheme: tintScheme,
       systemColorScheme: systemColorScheme
     )
-    return content
+    return
+      content
       .environment(\.surfaceChromeAppearance, appearance)
       .environment(\.colorScheme, tintScheme)
       .onReceive(NotificationCenter.default.publisher(for: .ghosttyRuntimeConfigDidChange)) { _ in

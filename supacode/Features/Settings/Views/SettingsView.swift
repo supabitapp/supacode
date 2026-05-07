@@ -98,6 +98,8 @@ private struct SettingsSidebarView: View {
         .tag(SettingsSection.github)
       Label("Shortcuts", systemImage: "keyboard")
         .tag(SettingsSection.shortcuts)
+      Label("Global Scripts", systemImage: "terminal")
+        .tag(SettingsSection.scripts)
       Label("Updates", systemImage: "arrow.down.circle")
         .tag(SettingsSection.updates)
 
@@ -171,6 +173,9 @@ private struct SettingsDetailView: View {
       UpdatesSettingsView(settingsStore: settingsStore, updatesStore: updatesStore)
     case .github:
       GithubSettingsView(store: settingsStore)
+    case .scripts:
+      GlobalScriptsSettingsView(store: settingsStore)
+        .navigationTitle("Global Scripts")
     case .repository:
       if let repository = selectedRepositorySummary {
         IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {

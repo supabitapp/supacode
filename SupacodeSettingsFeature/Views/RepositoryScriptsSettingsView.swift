@@ -136,18 +136,3 @@ private struct LifecycleScriptSection: View {
     }
   }
 }
-
-/// Monospaced text editor for script commands.
-private struct ScriptCommandEditor: View {
-  @Binding var text: String
-  let label: String
-
-  var body: some View {
-    TextEditor(text: $text)
-      .monospaced()
-      .textEditorStyle(.plain)
-      .autocorrectionDisabled()
-      .frame(height: 90)
-      .accessibilityLabel(label)
-  }
-}

@@ -34,6 +34,7 @@ public struct SettingsFeature {
     public var defaultWorktreeBaseDirectoryPath: String
     public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+    public var globalScripts: [ScriptDefinition]
     public var cliInstallState = AgentHooksInstallState.checking
     public var claudeSkillState = AgentHooksInstallState.checking
     public var codexSkillState = AgentHooksInstallState.checking
@@ -80,6 +81,7 @@ public struct SettingsFeature {
       automatedActionPolicy = settings.automatedActionPolicy
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
       shortcutOverrides = settings.shortcutOverrides
+      globalScripts = settings.globalScripts
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -114,7 +116,8 @@ public struct SettingsFeature {
           defaultWorktreeBaseDirectoryPath
         ),
         autoDeleteArchivedWorktreesAfterDays: autoDeleteArchivedWorktreesAfterDays,
-        shortcutOverrides: shortcutOverrides
+        shortcutOverrides: shortcutOverrides,
+        globalScripts: globalScripts
       )
     }
   }
@@ -145,6 +148,8 @@ public struct SettingsFeature {
     case agentHookUninstallTapped(AgentHookSlot)
     case agentHookActionCompleted(AgentHookSlot, Result<Bool, Error>)
     case repositorySettings(RepositorySettingsFeature.Action)
+    case addGlobalScript
+    case removeGlobalScript(ScriptDefinition.ID)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
@@ -154,6 +159,7 @@ public struct SettingsFeature {
     case dismiss
     case openSystemNotificationSettings
     case confirmAutoDeleteDaysChange(AutoDeletePeriod)
+    case confirmRemoveGlobalScript(ScriptDefinition.ID)
   }
 
   @CasePathable
@@ -263,6 +269,7 @@ public struct SettingsFeature {
         state.automatedActionPolicy = normalizedSettings.automatedActionPolicy
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
         state.shortcutOverrides = normalizedSettings.shortcutOverrides
+        state.globalScripts = normalizedSettings.globalScripts
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)
@@ -520,6 +527,32 @@ public struct SettingsFeature {
       case .alert(.presented(.confirmAutoDeleteDaysChange(let days))):
         state.alert = nil
         state.autoDeleteArchivedWorktreesAfterDays = days
+        return persist(state)
+
+      case .addGlobalScript:
+        // Globals are always .custom; no kind picker needed.
+        state.globalScripts.append(ScriptDefinition(kind: .custom))
+        return persist(state)
+
+      case .removeGlobalScript(let id):
+        guard let script = state.globalScripts.first(where: { $0.id == id }) else { return .none }
+        state.alert = AlertState {
+          TextState("Remove \"\(script.displayName)\" script?")
+        } actions: {
+          ButtonState(role: .destructive, action: .confirmRemoveGlobalScript(id)) {
+            TextState("Remove")
+          }
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState("This action cannot be undone.")
+        }
+        return .none
+
+      case .alert(.presented(.confirmRemoveGlobalScript(let id))):
+        state.alert = nil
+        state.globalScripts.removeAll { $0.id == id }
         return persist(state)
 
       case .repositoriesChanged(let repositories):

@@ -347,8 +347,13 @@ struct SupacodeApp: App {
         return
       }
       @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var settings
+      @SharedReader(.settingsFile) var settingsFile
       let runningIDs = store.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
-      let data = settings.scripts.map { script in
+      let scripts: [ScriptDefinition] = .merged(
+        repo: settings.scripts,
+        global: settingsFile.global.globalScripts,
+      )
+      let data = scripts.map { script in
         [
           "id": script.id.uuidString,
           "kind": script.kind.rawValue,

@@ -126,6 +126,85 @@ struct RepositorySettingsCodableTests {
   }
 }
 
+// MARK: - Global scripts decoding.
+
+struct GlobalSettingsScriptsCodableTests {
+  @Test func decodeMissingGlobalScriptsKeyDefaultsToEmpty() throws {
+    let json = try baseGlobalSettingsJSON()
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: Data(json.utf8))
+    #expect(settings.globalScripts.isEmpty)
+  }
+
+  @Test func decodeMalformedGlobalScriptsValueDefaultsToEmpty() throws {
+    var dict = baseGlobalSettingsDict()
+    dict["globalScripts"] = "not-an-array"
+    let data = try JSONSerialization.data(withJSONObject: dict)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(settings.globalScripts.isEmpty)
+  }
+
+  @Test func decodeWithUnknownGlobalScriptKindDropsOnlyInvalidEntries() throws {
+    var dict = baseGlobalSettingsDict()
+    dict["globalScripts"] = [
+      [
+        "id": "00000000-0000-0000-0000-000000000001",
+        "kind": "custom", "name": "Lint", "command": "make lint",
+      ],
+      [
+        "id": "00000000-0000-0000-0000-000000000002",
+        "kind": "unknown_future_kind", "name": "Bad", "command": "noop",
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: dict)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(settings.globalScripts.count == 1)
+    #expect(settings.globalScripts.first?.name == "Lint")
+  }
+
+  @Test func decodeNormalizesNonCustomGlobalScriptKindToCustom() throws {
+    // A hand-edited or forged settings file shipping a `.run` global must not
+    // be able to hijack the primary toolbar slot. Decoder forces `.custom`.
+    var dict = baseGlobalSettingsDict()
+    dict["globalScripts"] = [
+      [
+        "id": "00000000-0000-0000-0000-000000000001",
+        "kind": "run", "name": "Sneaky", "command": "rm -rf /",
+      ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: dict)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(settings.globalScripts.count == 1)
+    #expect(settings.globalScripts.first?.kind == .custom)
+  }
+
+  // MARK: - Helpers.
+
+  private func baseGlobalSettingsDict() -> [String: Any] {
+    [
+      "appearanceMode": "dark",
+      "defaultEditorID": "automatic",
+      "confirmBeforeQuit": true,
+      "updateChannel": "stable",
+      "updatesAutomaticallyCheckForUpdates": true,
+      "updatesAutomaticallyDownloadUpdates": false,
+      "inAppNotificationsEnabled": true,
+      "notificationSoundEnabled": true,
+      "systemNotificationsEnabled": false,
+      "moveNotifiedWorktreeToTop": true,
+      "analyticsEnabled": true,
+      "crashReportsEnabled": true,
+      "githubIntegrationEnabled": true,
+      "deleteBranchOnDeleteWorktree": true,
+      "promptForWorktreeCreation": true,
+    ]
+  }
+
+  private func baseGlobalSettingsJSON() throws -> String {
+    let data = try JSONSerialization.data(withJSONObject: baseGlobalSettingsDict())
+    return String(bytes: data, encoding: .utf8) ?? ""
+  }
+}
+
 /// Lightweight type-erased wrapper for JSON inspection in tests.
 private struct AnyCodable: Decodable {
   let value: Any

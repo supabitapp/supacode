@@ -42,7 +42,7 @@ struct AppFeatureRunScriptTests {
       repositories: repositories,
       settings: SettingsFeature.State()
     )
-    initialState.scripts = [definition]
+    initialState.repoScripts = [definition]
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
@@ -81,7 +81,7 @@ struct AppFeatureRunScriptTests {
       repositories: repositories,
       settings: SettingsFeature.State()
     )
-    initialState.scripts = [definition]
+    initialState.repoScripts = [definition]
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
@@ -102,7 +102,7 @@ struct AppFeatureRunScriptTests {
       repositories: repositories,
       settings: SettingsFeature.State()
     )
-    initialState.scripts = [definition]
+    initialState.repoScripts = [definition]
     // Pre-populate running state to simulate an already-running script.
     initialState.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
     let sent = LockIsolated<[TerminalClient.Command]>([])
@@ -226,7 +226,7 @@ struct AppFeatureRunScriptTests {
     store.exhaustivity = .off
 
     await store.send(.worktreeSettingsLoaded(settings, worktreeID: worktree.id))
-    #expect(store.state.scripts == [definition])
+    #expect(store.state.repoScripts == [definition])
   }
 
   @Test(.dependencies) func scriptCompletedCleansUpOrphanedIDAfterScriptDeletion() async {
@@ -247,7 +247,7 @@ struct AppFeatureRunScriptTests {
       AppFeature()
     }
     // Scripts array is empty — the definition was deleted from settings.
-    #expect(store.state.scripts.isEmpty)
+    #expect(store.state.repoScripts.isEmpty)
 
     await store.send(
       .repositories(
@@ -263,6 +263,167 @@ struct AppFeatureRunScriptTests {
       $0.repositories.runningScriptsByWorktreeID = [:]
 
     }
+  }
+
+  @Test(.dependencies) func allScriptsMergesRepoAndGlobalScripts() {
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let repoScript = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
+    let globalScript = ScriptDefinition(kind: .custom, name: "Lint Repo", command: "make lint")
+    var initialState = AppFeature.State(
+      repositories: repositories,
+      settings: SettingsFeature.State()
+    )
+    initialState.repoScripts = [repoScript]
+    initialState.globalScripts = [globalScript]
+
+    #expect(initialState.allScripts == [repoScript, globalScript])
+    #expect(initialState.primaryScript == repoScript)
+  }
+
+  @Test(.dependencies) func runNamedScriptInvokesGlobalScript() async {
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let globalScript = ScriptDefinition(kind: .custom, name: "Format", command: "swift-format")
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var initialState = AppFeature.State(
+      repositories: repositories,
+      settings: SettingsFeature.State()
+    )
+    initialState.globalScripts = [globalScript]
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.runNamedScript(globalScript)) {
+      $0.repositories.runningScriptsByWorktreeID = [
+        worktree.id: [globalScript.id: globalScript.resolvedTintColor]
+      ]
+    }
+    await store.finish()
+
+    #expect(sent.value.count == 1)
+    guard case .runBlockingScript(_, let kind, let script) = sent.value.first else {
+      Issue.record("Expected runBlockingScript command")
+      return
+    }
+    #expect(script == "swift-format")
+    guard case .script(let sentDefinition) = kind else {
+      Issue.record("Expected .script kind")
+      return
+    }
+    #expect(sentDefinition.id == globalScript.id)
+  }
+
+  @Test(.dependencies) func settingsChangedSyncsGlobalScripts() async {
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let globalScript = ScriptDefinition(kind: .custom, name: "Deploy", command: "fly deploy")
+    var settings = GlobalSettings.default
+    settings.globalScripts = [globalScript]
+
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    #expect(store.state.globalScripts == [globalScript])
+    #expect(store.state.allScripts == [globalScript])
+  }
+
+  @Test(.dependencies) func allScriptsDeduplicatesByIDPreferringRepo() {
+    let sharedID = UUID()
+    let repoScript = ScriptDefinition(id: sharedID, kind: .run, name: "Repo", command: "npm run dev")
+    let globalScript = ScriptDefinition(id: sharedID, kind: .custom, name: "Global", command: "echo global")
+    let worktree = makeWorktree()
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initialState.repoScripts = [repoScript]
+    initialState.globalScripts = [globalScript]
+
+    #expect(initialState.allScripts == [repoScript])
+  }
+
+  @Test(.dependencies) func settingsChangedDispatchesPruneRecencyOnGlobalScriptChange() async {
+    // Adding/removing globals must scrub orphaned recency entries; otherwise
+    // a removed script's runScript/stopScript palette IDs would linger forever.
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    var settings = GlobalSettings.default
+    settings.globalScripts = [ScriptDefinition(kind: .custom, name: "Lint", command: "make lint")]
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.receive(\.commandPalette.pruneRecency)
+  }
+
+  @Test(.dependencies) func runNamedScriptResolvesCollidingGlobalToRepoScript() async {
+    let sharedID = UUID()
+    let repoScript = ScriptDefinition(id: sharedID, kind: .test, name: "Repo", command: "echo repo")
+    let collidingGlobal = ScriptDefinition(id: sharedID, kind: .custom, name: "Global", command: "echo global")
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
+    initialState.repoScripts = [repoScript]
+    initialState.globalScripts = [collidingGlobal]
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    // The view passes the colliding global, but the reducer must resolve through allScripts
+    // and run the repo script's command instead.
+    await store.send(.runNamedScript(collidingGlobal))
+    await store.finish()
+
+    let runCommands = sent.value.compactMap { command -> ScriptDefinition? in
+      if case .runBlockingScript(_, .script(let def), _) = command { return def }
+      return nil
+    }
+    #expect(runCommands.count == 1)
+    #expect(runCommands.first?.command == "echo repo")
+  }
+
+  @Test(.dependencies) func primaryScriptIgnoresGlobalRunInjectedViaDecode() throws {
+    // Globals are nominally always `.custom`, but a hand-edited settings.json
+    // could ship a `.run` global. The merge order (repo wins) must prevent
+    // such an entry from hijacking the primary toolbar action.
+    let json = #"""
+      {"id":"\#(UUID().uuidString)","kind":"run","name":"Sneaky","command":"rm -rf /"}
+      """#
+    let injected = try JSONDecoder().decode(ScriptDefinition.self, from: Data(json.utf8))
+    let repoScript = ScriptDefinition(kind: .run, name: "Real", command: "npm run dev")
+    let worktree = makeWorktree()
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initialState.repoScripts = [repoScript]
+    initialState.globalScripts = [injected]
+
+    #expect(initialState.primaryScript == repoScript)
   }
 
   private func makeWorktree() -> Worktree {

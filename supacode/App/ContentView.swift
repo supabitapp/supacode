@@ -83,7 +83,7 @@ struct ContentView: View {
         items: CommandPaletteFeature.commandPaletteItems(
           from: store.repositories,
           ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
-          scripts: store.scripts,
+          scripts: store.allScripts,
           runningScriptIDs: store.runningScriptIDs
         )
       )

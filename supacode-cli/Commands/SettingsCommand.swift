@@ -7,6 +7,7 @@ nonisolated enum SettingsSection: String, ExpressibleByArgument, CaseIterable {
   case worktrees
   case developer
   case shortcuts
+  case scripts
   case updates
   case github
 }

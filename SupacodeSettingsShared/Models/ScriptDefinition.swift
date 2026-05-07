@@ -61,4 +61,13 @@ extension [ScriptDefinition] {
   public func hasRunningRunScript(in runningIDs: Set<UUID>) -> Bool {
     contains { $0.kind == .run && runningIDs.contains($0.id) }
   }
+
+  /// Repo scripts followed by globals; repo wins on ID collisions.
+  public static func merged(
+    repo: [ScriptDefinition],
+    global: [ScriptDefinition]
+  ) -> [ScriptDefinition] {
+    let repoIDs = Set(repo.map(\.id))
+    return repo + global.filter { !repoIDs.contains($0.id) }
+  }
 }

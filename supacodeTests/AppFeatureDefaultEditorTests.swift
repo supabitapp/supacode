@@ -41,7 +41,7 @@ struct AppFeatureDefaultEditorTests {
     }
     await store.receive(\.worktreeSettingsLoaded)
     #expect(store.state.openActionSelection == .finder)
-    #expect(store.state.scripts.isEmpty)
+    #expect(store.state.repoScripts.isEmpty)
     await store.finish()
   }
 
@@ -104,7 +104,7 @@ struct AppFeatureDefaultEditorTests {
     }
     await store.receive(\.worktreeSettingsLoaded) {
       $0.openActionSelection = .terminal
-      $0.scripts = localRepositorySettings.scripts
+      $0.repoScripts = localRepositorySettings.scripts
     }
     await store.finish()
   }

@@ -54,6 +54,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+  /// User-defined scripts available across every repository.
+  /// Always `.custom`-kind; never wins the primary-script slot
+  /// (which is reserved for `.run` repo scripts).
+  public var globalScripts: [ScriptDefinition]
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -82,7 +86,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     automatedActionPolicy: .cliOnly,
     defaultWorktreeBaseDirectoryPath: nil,
     autoDeleteArchivedWorktreesAfterDays: nil,
-    shortcutOverrides: [:]
+    shortcutOverrides: [:],
+    globalScripts: []
   )
 
   public init(
@@ -112,7 +117,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     automatedActionPolicy: AutomatedActionPolicy = .cliOnly,
     defaultWorktreeBaseDirectoryPath: String? = nil,
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
-    shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:]
+    shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:],
+    globalScripts: [ScriptDefinition] = []
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -141,6 +147,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
     self.shortcutOverrides = shortcutOverrides
+    self.globalScripts = globalScripts
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -252,5 +259,16 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     shortcutOverrides =
       try container.decodeIfPresent([AppShortcutID: AppShortcutOverride].self, forKey: .shortcutOverrides)
       ?? Self.default.shortcutOverrides
+    // Element-by-element decode so a single bad `ScriptKind` only drops that entry.
+    // Defense-in-depth with `SettingsFeature.addGlobalScript`: every load path normalizes
+    // kind to `.custom` so a hand-edited or forged settings file can't hijack the primary
+    // toolbar slot, and an empty `name` falls back to the kind default.
+    let wrappers = (try? container.decodeIfPresent([Lossy<ScriptDefinition>].self, forKey: .globalScripts)) ?? []
+    globalScripts = wrappers.compactMap(\.value).map {
+      var script = $0
+      script.kind = .custom
+      if script.name.isEmpty { script.name = ScriptKind.custom.defaultName }
+      return script
+    }
   }
 }

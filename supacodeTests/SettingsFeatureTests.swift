@@ -370,6 +370,77 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.restoreTerminalLayoutEnabled == true)
   }
 
+  // MARK: - Global scripts.
+
+  @Test(.dependencies) func addGlobalScriptAppendsCustomKindAndPersists() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.addGlobalScript)
+    await store.receive(\.delegate.settingsChanged)
+    #expect(store.state.globalScripts.count == 1)
+    #expect(store.state.globalScripts.first?.kind == .custom)
+    #expect(settingsFile.global.globalScripts.count == 1)
+  }
+
+  @Test(.dependencies) func removeGlobalScriptPresentsAlertWithDisplayName() async {
+    let script = ScriptDefinition(kind: .custom, name: "Lint", command: "make lint")
+    var initial = SettingsFeature.State()
+    initial.globalScripts = [script]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: initial) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.removeGlobalScript(script.id))
+    #expect(store.state.alert != nil)
+    #expect(store.state.globalScripts == [script])
+  }
+
+  @Test(.dependencies) func settingsLoadedSyncsGlobalScriptsFromDisk() async {
+    // Without this sync, the Settings UI binds to an empty array even though
+    // disk has user-defined globals — the user opens the pane, sees nothing,
+    // and any binding write clobbers the disk content.
+    let onDisk = ScriptDefinition(kind: .custom, name: "Disk", command: "echo disk")
+    var settings = GlobalSettings.default
+    settings.globalScripts = [onDisk]
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.settingsLoaded(settings))
+    #expect(store.state.globalScripts == [onDisk])
+  }
+
+  @Test(.dependencies) func confirmRemoveGlobalScriptRemovesAndPersists() async {
+    let kept = ScriptDefinition(kind: .custom, name: "Keep", command: "echo keep")
+    let removed = ScriptDefinition(kind: .custom, name: "Drop", command: "echo drop")
+    var initial = SettingsFeature.State()
+    initial.globalScripts = [kept, removed]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.globalScripts = [kept, removed] }
+
+    let store = TestStore(initialState: initial) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.alert(.presented(.confirmRemoveGlobalScript(removed.id))))
+    await store.receive(\.delegate.settingsChanged)
+    #expect(store.state.globalScripts == [kept])
+    #expect(settingsFile.global.globalScripts == [kept])
+  }
+
   // MARK: - Sorted repositories.
 
   @Test(.dependencies) func repositoriesChangedSortsByNameCaseInsensitive() async {

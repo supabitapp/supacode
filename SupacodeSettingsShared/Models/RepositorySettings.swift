@@ -152,12 +152,3 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     return wrappers.compactMap { $0.value }
   }
 }
-
-/// Wrapper that always succeeds at the container level,
-/// capturing decode failures as `nil` instead of throwing.
-private nonisolated struct Lossy<T: Decodable & Sendable>: Decodable, Sendable {
-  nonisolated let value: T?
-  nonisolated init(from decoder: Decoder) throws {
-    value = try? T(from: decoder)
-  }
-}
