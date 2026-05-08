@@ -336,11 +336,11 @@ struct WorktreeDetailView: View {
       return globalScripts.filter { !repoIDs.contains($0.id) }
     }
 
-    /// Cache key for the toolbar's NSMenu — busts on repo switch and global add/remove.
-    /// Excludes name/command so per-keystroke edits don't tear down the menu subtree.
+    /// NSMenu cache key — rootURL + script IDs only (no name/command).
     var scriptMenuIdentity: String {
-      let ids = globalScripts.map(\.id.uuidString).joined(separator: "|")
-      return "\(rootURL.absoluteString)#\(ids)"
+      let repoIDs = repoScripts.map(\.id.uuidString).joined(separator: "|")
+      let globalIDs = globalScripts.map(\.id.uuidString).joined(separator: "|")
+      return "\(rootURL.absoluteString)#repo:\(repoIDs)#global:\(globalIDs)"
     }
 
     /// The first `.run`-kind script, if any.

@@ -92,8 +92,8 @@ struct AppFeatureArchivedSelectionTests {
     let scriptID = UUID()
     // Distinct tints per worktree so the pruner is asserted to carry
     // the surviving tint through untouched, not coincidentally match.
-    let activeTint: TerminalTabTintColor = .purple
-    let archivedTint: TerminalTabTintColor = .orange
+    let activeTint: RepositoryColor = .purple
+    let archivedTint: RepositoryColor = .orange
     appState.repositories.runningScriptsByWorktreeID = [
       activeWorktree.id: [scriptID: activeTint],
       archivedWorktree.id: [scriptID: archivedTint],

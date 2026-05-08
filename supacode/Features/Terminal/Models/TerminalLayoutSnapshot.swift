@@ -10,7 +10,7 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
     let title: String
     let customTitle: String?
     let icon: String?
-    let tintColor: TerminalTabTintColor?
+    let tintColor: RepositoryColor?
     let layout: LayoutNode
     let focusedLeafIndex: Int
   }

@@ -1,9 +1,55 @@
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 struct TerminalLayoutSnapshotTests {
+  @Test func decodeLegacyTintColorPredefinedString() throws {
+    // Old layout snapshots (pre-RepositoryColor cascade) wrote `tintColor`
+    // as `TerminalTabTintColor` raw values. The new `RepositoryColor.parse`
+    // accepts the same names, so existing files migrate transparently.
+    let json = #"""
+      {
+        "tabs": [
+          {
+            "id": null,
+            "title": "tab",
+            "customTitle": null,
+            "icon": null,
+            "tintColor": "teal",
+            "layout": {"leaf": {"_0": {"id": null, "workingDirectory": null}}},
+            "focusedLeafIndex": 0
+          }
+        ],
+        "selectedTabIndex": 0
+      }
+      """#
+    let snapshot = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: Data(json.utf8))
+    #expect(snapshot.tabs.first?.tintColor == .teal)
+  }
+
+  @Test func decodeLayoutTintColorCustomHex() throws {
+    let json = #"""
+      {
+        "tabs": [
+          {
+            "id": null,
+            "title": "tab",
+            "customTitle": null,
+            "icon": null,
+            "tintColor": "#A1B2C3",
+            "layout": {"leaf": {"_0": {"id": null, "workingDirectory": null}}},
+            "focusedLeafIndex": 0
+          }
+        ],
+        "selectedTabIndex": 0
+      }
+      """#
+    let snapshot = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: Data(json.utf8))
+    #expect(snapshot.tabs.first?.tintColor == .custom("#A1B2C3"))
+  }
+
   @Test func codableRoundTrip() throws {
     let snapshot = TerminalLayoutSnapshot(
       tabs: [

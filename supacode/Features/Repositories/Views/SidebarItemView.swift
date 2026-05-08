@@ -15,7 +15,7 @@ struct SidebarItemView: View {
   let info: WorktreeInfoEntry?
   let pullRequestBadgeText: String?
   let showsPullRequestInfo: Bool
-  let runningScriptColors: [TerminalTabTintColor]
+  let runningScriptColors: [RepositoryColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
   let shortcutHint: String?
@@ -63,7 +63,7 @@ struct SidebarItemView: View {
     hideSubtitle: Bool,
     hideSubtitleOnMatch: Bool,
     showsPullRequestInfo: Bool,
-    runningScriptColors: [TerminalTabTintColor],
+    runningScriptColors: [RepositoryColor],
     isTaskRunning: Bool,
     showsNotificationIndicator: Bool,
     notifications: [WorktreeTerminalNotification],
@@ -344,7 +344,7 @@ private struct TrailingView: View {
   let info: WorktreeInfoEntry?
   let showsPullRequestInfo: Bool
   let pullRequestBadgeText: String?
-  let runningScriptColors: [TerminalTabTintColor]
+  let runningScriptColors: [RepositoryColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
 
@@ -397,7 +397,7 @@ private struct DiffStatsView: View {
 // MARK: - Status indicator.
 
 private struct StatusIndicator: View {
-  let runningScriptColors: [TerminalTabTintColor]
+  let runningScriptColors: [RepositoryColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
   @Environment(\.backgroundProminence) private var backgroundProminence
@@ -437,7 +437,7 @@ private struct StatusIndicator: View {
 /// colors when more than one script is running. Falls back to the
 /// single-color pulsing behavior when only one color is present.
 private struct MultiColorPingDot: View {
-  let colors: [TerminalTabTintColor]
+  let colors: [RepositoryColor]
   let isEmphasized: Bool
   let size: CGFloat
   let showsSolidCenter: Bool
@@ -446,7 +446,7 @@ private struct MultiColorPingDot: View {
   /// Unique, ordered colors derived from the input.
   private var uniqueColors: [Color] {
     guard !isEmphasized else { return [.primary] }
-    var seen = Set<TerminalTabTintColor>()
+    var seen = Set<RepositoryColor>()
     return colors.compactMap { tint in
       guard seen.insert(tint).inserted else { return nil }
       return tint.color

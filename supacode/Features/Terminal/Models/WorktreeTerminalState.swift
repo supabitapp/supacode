@@ -302,7 +302,7 @@ final class WorktreeTerminalState {
     let title: String
     let icon: String?
     let isTitleLocked: Bool
-    var tintColor: TerminalTabTintColor?
+    var tintColor: RepositoryColor?
     let command: String?
     let initialInput: String?
     let focusing: Bool

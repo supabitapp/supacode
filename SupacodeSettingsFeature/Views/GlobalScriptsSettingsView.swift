@@ -33,6 +33,7 @@ public struct GlobalScriptsSettingsView: View {
         .help("Add a new global script.")
       }
     }
+    .dismissSystemColorPanelOnDisappear()
   }
 
   private var scriptsForm: some View {
@@ -44,6 +45,9 @@ public struct GlobalScriptsSettingsView: View {
       ForEach($store.globalScripts) { $script in
         Section {
           TextField("Name", text: $script.name)
+          LabeledContent("Color") {
+            ColorSwatchRow(color: $script.tintColor)
+          }
           ScriptCommandEditor(text: $script.command, label: script.displayName)
           Button("Remove Script…", role: .destructive) {
             store.send(.removeGlobalScript(script.id))

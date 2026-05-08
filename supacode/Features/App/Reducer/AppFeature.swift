@@ -294,7 +294,9 @@ struct AppFeature {
         let shouldCheckSystemNotificationPermission =
           settings.systemNotificationsEnabled && !state.lastKnownSystemNotificationsEnabled
         state.lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
-        let globalScriptsChanged = state.globalScripts != settings.globalScripts
+        // Recency only depends on script IDs, so comparing names/commands here would
+        // re-prune on every keystroke in the Global Scripts pane.
+        let globalScriptIDsChanged = state.globalScripts.map(\.id) != settings.globalScripts.map(\.id)
         state.globalScripts = settings.globalScripts
         if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
           let rootURL = selectedWorktree.repositoryRootURL
@@ -349,7 +351,7 @@ struct AppFeature {
             }
           },
         ]
-        if globalScriptsChanged {
+        if globalScriptIDsChanged {
           effects.append(pruneScriptRecencyEffect(state: state))
         }
         return .merge(effects)
@@ -473,10 +475,9 @@ struct AppFeature {
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           return .none
         }
-        // Re-resolve through `allScripts` so a colliding global ID can't shadow a repo script.
-        // Fall back to the incoming definition when the ID is no longer in state (e.g. a stale
-        // menu binding from a script just removed in settings) so the action isn't swallowed.
-        let definition = state.allScripts.first(where: { $0.id == incoming.id }) ?? incoming
+        // Re-resolve through `allScripts` so a colliding global ID can't shadow a repo script,
+        // and so a tap on a script just removed in settings is silently dropped.
+        guard let definition = state.allScripts.first(where: { $0.id == incoming.id }) else { return .none }
         // Prevent running the same script twice.
         guard !state.runningScriptIDs.contains(definition.id) else { return .none }
         let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)

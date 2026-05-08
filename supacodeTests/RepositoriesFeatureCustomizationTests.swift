@@ -54,7 +54,6 @@ struct RepositoriesFeatureCustomizationTests {
         defaultName: "customize-repo",
         title: "Pretty",
         color: .blue,
-        customColor: RepositoryColor.blue.color,
       )
     }
   }
@@ -79,7 +78,6 @@ struct RepositoriesFeatureCustomizationTests {
       defaultName: "customize-repo",
       title: "",
       color: nil,
-      customColor: .accentColor,
     )
     let store = TestStore(initialState: initial) {
       RepositoriesFeature()
@@ -135,7 +133,6 @@ struct RepositoriesFeatureCustomizationTests {
       defaultName: "customize-repo",
       title: "",
       color: nil,
-      customColor: .accentColor,
     )
     let store = TestStore(initialState: initial) {
       RepositoriesFeature()

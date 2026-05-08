@@ -161,6 +161,62 @@ struct GlobalSettingsScriptsCodableTests {
     #expect(settings.globalScripts.first?.name == "Lint")
   }
 
+  @Test func decodeMissingRequiredFieldDropsOnlyThatEntry() throws {
+    // A script entry missing a required field (id / kind / name / command)
+    // is dropped by `Lossy<ScriptDefinition>` rather than failing the whole
+    // `globalScripts` decode.
+    var dict = baseGlobalSettingsDict()
+    dict["globalScripts"] = [
+      [
+        "id": "00000000-0000-0000-0000-000000000001",
+        "kind": "custom", "name": "Good", "command": "echo good",
+      ],
+      [
+        "kind": "custom", "name": "MissingID", "command": "echo bad",
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: dict)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(settings.globalScripts.count == 1)
+    #expect(settings.globalScripts.first?.name == "Good")
+  }
+
+  @Test func decodeMalformedTintColorPreservesScript() throws {
+    // A bad `tintColor` payload should drop just the override, not the
+    // entire script — otherwise one malformed hex wipes the user's name
+    // and command for that entry.
+    var dict = baseGlobalSettingsDict()
+    dict["globalScripts"] = [
+      [
+        "id": "00000000-0000-0000-0000-000000000001",
+        "kind": "custom", "name": "Lint", "command": "make lint",
+        "tintColor": "not-a-color",
+      ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: dict)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(settings.globalScripts.count == 1)
+    #expect(settings.globalScripts.first?.name == "Lint")
+    #expect(settings.globalScripts.first?.command == "make lint")
+    #expect(settings.globalScripts.first?.tintColor == nil)
+  }
+
+  @Test func decodeRoundTripsCustomHexTintOnGlobalScript() throws {
+    // Custom hex tint chosen via the SwiftUI color picker should survive a
+    // settings file round-trip without normalization stripping it.
+    var dict = baseGlobalSettingsDict()
+    dict["globalScripts"] = [
+      [
+        "id": "00000000-0000-0000-0000-000000000001",
+        "kind": "custom", "name": "Lint", "command": "make lint",
+        "tintColor": "#A1B2C3",
+      ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: dict)
+    let settings = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(settings.globalScripts.first?.tintColor == .custom("#A1B2C3"))
+  }
+
   @Test func decodeNormalizesNonCustomGlobalScriptKindToCustom() throws {
     // A hand-edited or forged settings file shipping a `.run` global must not
     // be able to hijack the primary toolbar slot. Decoder forces `.custom`.

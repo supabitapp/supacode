@@ -10,7 +10,7 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
   var icon: String?
   var isDirty: Bool
   var isTitleLocked: Bool
-  var tintColor: TerminalTabTintColor?
+  var tintColor: RepositoryColor?
 
   var displayTitle: String { customTitle ?? title }
 
@@ -21,7 +21,7 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
     icon: String?,
     isDirty: Bool = false,
     isTitleLocked: Bool = false,
-    tintColor: TerminalTabTintColor? = nil
+    tintColor: RepositoryColor? = nil
   ) {
     self.id = id
     self.title = title

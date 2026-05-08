@@ -21,7 +21,7 @@ final class TerminalTabManager {
     title: String,
     icon: String?,
     isTitleLocked: Bool = false,
-    tintColor: TerminalTabTintColor? = nil,
+    tintColor: RepositoryColor? = nil,
     id: UUID? = nil
   ) -> TerminalTabID {
     let tabID: TerminalTabID

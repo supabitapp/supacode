@@ -1,5 +1,6 @@
 import Foundation
 import OrderedCollections
+import SupacodeSettingsShared
 
 /// User-curated sidebar state persisted to `~/.supacode/sidebar.json`.
 ///

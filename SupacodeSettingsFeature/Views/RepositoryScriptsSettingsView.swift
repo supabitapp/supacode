@@ -51,6 +51,9 @@ public struct RepositoryScriptsSettingsView: View {
         Section {
           if script.kind == .custom {
             TextField("Name", text: $script.name)
+            LabeledContent("Color") {
+              ColorSwatchRow(color: $script.tintColor)
+            }
           }
           ScriptCommandEditor(text: $script.command, label: script.displayName)
           Button("Remove Script…", role: .destructive) {
@@ -101,6 +104,7 @@ public struct RepositoryScriptsSettingsView: View {
         .help("Add a new script.")
       }
     }
+    .dismissSystemColorPanelOnDisappear()
   }
 }
 

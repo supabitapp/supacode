@@ -12,7 +12,7 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
   /// Per-instance overrides — only meaningful for `.custom` kinds.
   /// Predefined kinds always resolve to the kind default.
   public var systemImage: String?
-  public var tintColor: TerminalTabTintColor?
+  public var tintColor: RepositoryColor?
 
   /// Display name for toolbar labels: predefined types show their
   /// kind name ("Run", "Test"), custom types show user-defined name.
@@ -28,7 +28,7 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
 
   /// Resolved tint color: predefined types always use the kind
   /// default so future color changes propagate automatically.
-  public nonisolated var resolvedTintColor: TerminalTabTintColor {
+  public nonisolated var resolvedTintColor: RepositoryColor {
     kind == .custom ? (tintColor ?? kind.defaultTintColor) : kind.defaultTintColor
   }
 
@@ -37,7 +37,7 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
     kind: ScriptKind,
     name: String? = nil,
     systemImage: String? = nil,
-    tintColor: TerminalTabTintColor? = nil,
+    tintColor: RepositoryColor? = nil,
     command: String = ""
   ) {
     self.id = id
@@ -46,6 +46,22 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
     self.systemImage = systemImage
     self.tintColor = tintColor
     self.command = command
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, kind, name, command, systemImage, tintColor
+  }
+
+  /// Optional fields use `try?` so a malformed `tintColor` / `systemImage`
+  /// drops just that override rather than the whole script entry.
+  public nonisolated init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    kind = try container.decode(ScriptKind.self, forKey: .kind)
+    name = try container.decode(String.self, forKey: .name)
+    command = try container.decode(String.self, forKey: .command)
+    systemImage = (try? container.decodeIfPresent(String.self, forKey: .systemImage)) ?? nil
+    tintColor = (try? container.decodeIfPresent(RepositoryColor.self, forKey: .tintColor)) ?? nil
   }
 }
 

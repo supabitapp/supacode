@@ -35,8 +35,8 @@ public enum ScriptKind: String, Codable, CaseIterable, Hashable, Sendable {
     }
   }
 
-  /// Default tab tint color for the script kind.
-  public nonisolated var defaultTintColor: TerminalTabTintColor {
+  /// Default tint color for the script kind.
+  public nonisolated var defaultTintColor: RepositoryColor {
     switch self {
     case .run: .green
     case .test: .yellow

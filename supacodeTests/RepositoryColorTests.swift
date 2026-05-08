@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -8,8 +9,18 @@ struct RepositoryColorTests {
   @Test func parseAcceptsPredefinedNamesCaseInsensitively() {
     #expect(RepositoryColor.parse("red") == .red)
     #expect(RepositoryColor.parse("RED") == .red)
+    #expect(RepositoryColor.parse("orange") == .orange)
+    #expect(RepositoryColor.parse("yellow") == .yellow)
+    #expect(RepositoryColor.parse("green") == .green)
+    #expect(RepositoryColor.parse("teal") == .teal)
     #expect(RepositoryColor.parse("Blue") == .blue)
     #expect(RepositoryColor.parse("purple") == .purple)
+  }
+
+  @Test func predefinedOrderingIsStable() {
+    #expect(
+      RepositoryColor.predefined == [.red, .orange, .yellow, .green, .teal, .blue, .purple]
+    )
   }
 
   @Test func parseAcceptsHexAndNormalizesCase() {
@@ -32,10 +43,26 @@ struct RepositoryColorTests {
   }
 
   @Test func encoderEmitsCanonicalRawValue() throws {
-    let predefined = try JSONEncoder().encode(RepositoryColor.green)
-    #expect(String(bytes: predefined, encoding: .utf8) == "\"green\"")
-
     let custom = try JSONEncoder().encode(RepositoryColor.custom("#A1B2C3"))
     #expect(String(bytes: custom, encoding: .utf8) == "\"#A1B2C3\"")
+  }
+
+  @Test(
+    arguments: [
+      (RepositoryColor.red, "red"),
+      (.orange, "orange"),
+      (.yellow, "yellow"),
+      (.green, "green"),
+      (.teal, "teal"),
+      (.blue, "blue"),
+      (.purple, "purple"),
+      (.custom("#A1B2C3"), "#A1B2C3"),
+    ]
+  )
+  func codableRoundTripsAllCases(color: RepositoryColor, rawValue: String) throws {
+    let encoded = try JSONEncoder().encode(color)
+    #expect(String(bytes: encoded, encoding: .utf8) == "\"\(rawValue)\"")
+    let decoded = try JSONDecoder().decode(RepositoryColor.self, from: encoded)
+    #expect(decoded == color)
   }
 }

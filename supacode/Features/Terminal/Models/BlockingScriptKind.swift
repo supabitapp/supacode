@@ -30,7 +30,7 @@ enum BlockingScriptKind: Sendable {
     }
   }
 
-  var tabColor: TerminalTabTintColor {
+  var tabColor: RepositoryColor {
     switch self {
     case .script(let definition): definition.resolvedTintColor
     case .archive: .orange

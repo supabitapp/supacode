@@ -259,10 +259,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     shortcutOverrides =
       try container.decodeIfPresent([AppShortcutID: AppShortcutOverride].self, forKey: .shortcutOverrides)
       ?? Self.default.shortcutOverrides
-    // Element-by-element decode so a single bad `ScriptKind` only drops that entry.
-    // Defense-in-depth with `SettingsFeature.addGlobalScript`: every load path normalizes
-    // kind to `.custom` so a hand-edited or forged settings file can't hijack the primary
-    // toolbar slot, and an empty `name` falls back to the kind default.
+    // Lossy element decode + force `.custom`: a forged kind can't hijack the primary
+    // toolbar slot, and an empty name falls back to the kind default.
     let wrappers = (try? container.decodeIfPresent([Lossy<ScriptDefinition>].self, forKey: .globalScripts)) ?? []
     globalScripts = wrappers.compactMap(\.value).map {
       var script = $0

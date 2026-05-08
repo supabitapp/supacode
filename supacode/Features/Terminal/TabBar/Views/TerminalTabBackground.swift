@@ -6,7 +6,7 @@ struct TerminalTabBackground: View {
   var isHovering: Bool
   var isPressing: Bool
   var isDragging: Bool
-  var tintColor: TerminalTabTintColor?
+  var tintColor: RepositoryColor?
 
   @Environment(\.surfaceChromeAppearance)
   private var chromeAppearance
