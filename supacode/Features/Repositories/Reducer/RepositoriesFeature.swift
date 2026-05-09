@@ -3768,9 +3768,9 @@ extension RepositoriesFeature.State {
   }
 
   /// Tint colors for scripts currently running in the given worktree,
-  /// ordered deterministically by script ID. The tint travels alongside
-  /// the running script ID so the color resolves correctly even when
-  /// the worktree belongs to a repository other than the selected one.
+  /// ordered deterministically by script ID. Snapshotted at run-time so a
+  /// live color edit only takes effect on the next run; this also keeps
+  /// the dot rendering when a script is deleted mid-run.
   func runningScriptColors(for worktreeID: Worktree.ID) -> [RepositoryColor] {
     guard let tintsByID = runningScriptsByWorktreeID[worktreeID] else { return [] }
     return tintsByID.sorted(by: { $0.key < $1.key }).map(\.value)

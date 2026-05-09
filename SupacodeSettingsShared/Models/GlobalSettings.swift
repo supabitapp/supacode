@@ -54,9 +54,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
-  /// User-defined scripts available across every repository.
-  /// Always `.custom`-kind; never wins the primary-script slot
-  /// (which is reserved for `.run` repo scripts).
+  /// Scripts shared across every repository. Always `.custom` kind.
   public var globalScripts: [ScriptDefinition]
 
   public static let `default` = GlobalSettings(
@@ -259,10 +257,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     shortcutOverrides =
       try container.decodeIfPresent([AppShortcutID: AppShortcutOverride].self, forKey: .shortcutOverrides)
       ?? Self.default.shortcutOverrides
-    // Lossy element decode + force `.custom`: a forged kind can't hijack the primary
-    // toolbar slot, and an empty name falls back to the kind default.
-    let wrappers = (try? container.decodeIfPresent([Lossy<ScriptDefinition>].self, forKey: .globalScripts)) ?? []
-    globalScripts = wrappers.compactMap(\.value).map {
+    // Force `.custom` so a forged `kind` can't hijack the primary toolbar slot.
+    // No legacy migration here, so missing-key and corrupt-array both collapse
+    // to `[]` (unlike `RepositorySettings.scripts` which distinguishes them).
+    let decoded: [ScriptDefinition] = container.decodeLossyArrayIfPresent(forKey: .globalScripts) ?? []
+    globalScripts = decoded.map {
       var script = $0
       script.kind = .custom
       if script.name.isEmpty { script.name = ScriptKind.custom.defaultName }

@@ -65,4 +65,16 @@ struct RepositoryColorTests {
     let decoded = try JSONDecoder().decode(RepositoryColor.self, from: encoded)
     #expect(decoded == color)
   }
+
+  /// `ScriptDefinition.tintColor` predates the `RepositoryColor` move; ensure
+  /// a settings file persisted before the move still decodes the lowercase
+  /// rawValue without a migration shim.
+  @Test func scriptDefinitionDecodesLegacyTintColorRawValue() throws {
+    let id = UUID()
+    let json = #"""
+      {"id":"\#(id.uuidString)","kind":"custom","name":"Lint","command":"make lint","tintColor":"green"}
+      """#
+    let decoded = try JSONDecoder().decode(ScriptDefinition.self, from: Data(json.utf8))
+    #expect(decoded.tintColor == .green)
+  }
 }

@@ -2,8 +2,7 @@ import AppKit
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Reusable color picker row: predefined palette + Default + Custom hex.
-/// Used by repository sidebar customization and per-script color overrides.
+/// Predefined palette + Default + Custom hex picker, shared between repo customization and per-script overrides.
 public struct ColorSwatchRow: View {
   @Binding var color: RepositoryColor?
 
@@ -11,9 +10,7 @@ public struct ColorSwatchRow: View {
     _color = color
   }
 
-  /// View-driven drags only — predefined / Default clicks bypass `set` so they
-  /// don't quantize to `.custom(hex)`. A panel drag onto a predefined hue is
-  /// intentionally captured as `.custom(hex)`.
+  // Only panel-driven drags route through `set`; predefined / Default clicks set `color` directly.
   private var customColorBinding: Binding<Color> {
     Binding(
       get: { color?.color ?? .accentColor },
@@ -60,8 +57,7 @@ private struct DefaultSwatchButton: View {
         Circle()
           .strokeBorder(.secondary, lineWidth: 1)
           .background(Circle().fill(.background))
-        // Single diagonal stroke reads as "no tint" without doubling
-        // up the circle outline the SF Symbol would draw.
+        // Diagonal stroke avoids doubling the SF Symbol's circle outline.
         Path { path in
           path.move(to: CGPoint(x: 4, y: 20))
           path.addLine(to: CGPoint(x: 20, y: 4))
@@ -100,9 +96,7 @@ private struct CustomSwatchButton: View {
   @Binding var color: Color
 
   var body: some View {
-    // Rainbow gradient + current pick on top, with a near-invisible system
-    // ColorPicker beneath the same frame so a click opens the macOS color
-    // panel without exposing the picker's rounded-rectangle chrome.
+    // Hidden `ColorPicker` opens the system color panel on click; the visible circle is purely decorative.
     ZStack {
       ColorPicker("Custom Color", selection: $color, supportsOpacity: false)
         .labelsHidden()
@@ -122,10 +116,11 @@ private struct CustomSwatchButton: View {
         }
         .frame(width: 24, height: 24)
         .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
     .modifier(SwatchSelectionRing(isSelected: isSelected))
+    .accessibilityElement(children: .ignore)
     .accessibilityLabel("Custom")
+    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     .help("Custom")
   }
 }
@@ -146,9 +141,8 @@ private struct SwatchSelectionRing: ViewModifier {
 }
 
 extension View {
-  /// Closes `NSColorPanel.shared` when this view disappears. Apply to settings
-  /// panes that embed `ColorSwatchRow` so the singleton system panel doesn't
-  /// outlive a page change, sheet dismissal, or window close.
+  // Closes the shared color panel so the singleton doesn't outlive this view.
+  // `public` is required: `supacode` (RepositoryCustomizationView) consumes this across module boundaries.
   public func dismissSystemColorPanelOnDisappear() -> some View {
     onDisappear { NSColorPanel.shared.orderOut(nil) }
   }

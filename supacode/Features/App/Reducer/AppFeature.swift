@@ -47,6 +47,12 @@ struct AppFeature {
       .merged(repo: repoScripts, global: globalScripts)
     }
 
+    /// Canonical script for `id` honoring "repo wins on collision". Returns
+    /// `nil` if the script was deleted between palette / view binding and dispatch.
+    func resolveScript(id: UUID) -> ScriptDefinition? {
+      allScripts.first { $0.id == id }
+    }
+
     /// The script that the primary toolbar button should run.
     var primaryScript: ScriptDefinition? {
       allScripts.primaryScript
@@ -294,9 +300,8 @@ struct AppFeature {
         let shouldCheckSystemNotificationPermission =
           settings.systemNotificationsEnabled && !state.lastKnownSystemNotificationsEnabled
         state.lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
-        // Recency only depends on script IDs, so comparing names/commands here would
-        // re-prune on every keystroke in the Global Scripts pane.
-        let globalScriptIDsChanged = state.globalScripts.map(\.id) != settings.globalScripts.map(\.id)
+        // Compare IDs as a set — name/command edits and pure reorders should not re-prune recency.
+        let globalScriptIDsChanged = Set(state.globalScripts.map(\.id)) != Set(settings.globalScripts.map(\.id))
         state.globalScripts = settings.globalScripts
         if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
           let rootURL = selectedWorktree.repositoryRootURL
@@ -475,9 +480,8 @@ struct AppFeature {
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           return .none
         }
-        // Re-resolve through `allScripts` so a colliding global ID can't shadow a repo script,
-        // and so a tap on a script just removed in settings is silently dropped.
-        guard let definition = state.allScripts.first(where: { $0.id == incoming.id }) else { return .none }
+        // Re-resolve so a stale view binding can't bypass repo-wins or run a since-deleted script.
+        guard let definition = state.resolveScript(id: incoming.id) else { return .none }
         // Prevent running the same script twice.
         guard !state.runningScriptIDs.contains(definition.id) else { return .none }
         let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)

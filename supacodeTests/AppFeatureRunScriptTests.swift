@@ -406,6 +406,37 @@ struct AppFeatureRunScriptTests {
     #expect(runCommands.first?.command == "echo repo")
   }
 
+  @Test(.dependencies) func paletteRunScriptResolvesCollidingGlobalToRepoScript() async {
+    let sharedID = UUID()
+    let repoScript = ScriptDefinition(id: sharedID, kind: .test, name: "Repo", command: "echo repo")
+    let collidingGlobal = ScriptDefinition(id: sharedID, kind: .custom, name: "Global", command: "echo global")
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
+    initialState.repoScripts = [repoScript]
+    initialState.globalScripts = [collidingGlobal]
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    // Palette delegate route — same collision-resolution invariant as direct dispatch.
+    await store.send(.commandPalette(.delegate(.runScript(collidingGlobal))))
+    await store.finish()
+
+    let runCommands = sent.value.compactMap { command -> ScriptDefinition? in
+      if case .runBlockingScript(_, .script(let def), _) = command { return def }
+      return nil
+    }
+    #expect(runCommands.count == 1)
+    #expect(runCommands.first?.command == "echo repo")
+  }
+
   @Test(.dependencies) func primaryScriptIgnoresGlobalRunInjectedViaDecode() throws {
     // Globals are nominally always `.custom`, but a hand-edited settings.json
     // could ship a `.run` global. The merge order (repo wins) must prevent

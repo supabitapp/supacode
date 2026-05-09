@@ -84,11 +84,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     runScript =
       try container.decodeIfPresent(String.self, forKey: .runScript)
       ?? Self.default.runScript
-    // Migrate legacy `runScript` into the new `scripts` array when
-    // the `scripts` key is absent from persisted JSON.
-    // Decode element-by-element so a single unknown `ScriptKind`
-    // only drops that entry, not the entire array.
-    let decodedScripts = Self.decodeScriptsLossily(from: container)
+    // Missing `scripts` triggers legacy `runScript` migration; corrupt array is `[]`.
+    let decodedScripts: [ScriptDefinition]? = container.decodeLossyArrayIfPresent(forKey: .scripts)
     if let decodedScripts {
       scripts = decodedScripts
     } else if !runScript.isEmpty {
@@ -133,22 +130,5 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     try container.encodeIfPresent(copyIgnoredOnWorktreeCreate, forKey: .copyIgnoredOnWorktreeCreate)
     try container.encodeIfPresent(copyUntrackedOnWorktreeCreate, forKey: .copyUntrackedOnWorktreeCreate)
     try container.encodeIfPresent(pullRequestMergeStrategy, forKey: .pullRequestMergeStrategy)
-  }
-
-  /// Decodes the `scripts` array element-by-element, silently
-  /// skipping entries that fail (e.g. unknown `ScriptKind`).
-  /// Returns `nil` when the key is absent (legacy JSON), or `[]`
-  /// when the key is present but corrupted (e.g. `null`).
-  private static func decodeScriptsLossily(
-    from container: KeyedDecodingContainer<CodingKeys>
-  ) -> [ScriptDefinition]? {
-    guard container.contains(.scripts) else { return nil }
-    guard let wrappers = try? container.decode([Lossy<ScriptDefinition>].self, forKey: .scripts) else {
-      // Key exists but value is not a valid array (e.g. null or
-      // wrong type). Return empty rather than triggering legacy
-      // migration which would overwrite with stale data.
-      return []
-    }
-    return wrappers.compactMap { $0.value }
   }
 }

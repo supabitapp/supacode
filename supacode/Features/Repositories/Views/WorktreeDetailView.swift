@@ -297,6 +297,12 @@ struct WorktreeDetailView: View {
     let stopRunScript: (() -> Void)?
   }
 
+  fileprivate struct ScriptMenuIdentity: Hashable {
+    let rootURL: URL
+    let repoScripts: [ScriptDefinition]
+    let globalScripts: [ScriptDefinition]
+  }
+
   fileprivate struct WorktreeToolbarState {
     // Folders have no git remote, so the PR payload is scoped to
     // `.git` — this makes "folder with a pull request" unrepresentable.
@@ -329,18 +335,17 @@ struct WorktreeDetailView: View {
       .merged(repo: repoScripts, global: globalScripts)
     }
 
-    /// Globals minus any entry shadowed by a repo script — what the toolbar's "Global"
-    /// section should render so collisions don't show twice.
+    // Drop globals shadowed by repo IDs (handled by `merged`) and globals with
+    // empty commands so half-configured entries don't surface in N repo toolbars.
     var visibleGlobalScripts: [ScriptDefinition] {
-      let repoIDs = Set(repoScripts.map(\.id))
-      return globalScripts.filter { !repoIDs.contains($0.id) }
+      Array(allScripts.dropFirst(repoScripts.count))
+        .filter { !$0.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    /// NSMenu cache key — rootURL + script IDs only (no name/command).
-    var scriptMenuIdentity: String {
-      let repoIDs = repoScripts.map(\.id.uuidString).joined(separator: "|")
-      let globalIDs = globalScripts.map(\.id.uuidString).joined(separator: "|")
-      return "\(rootURL.absoluteString)#repo:\(repoIDs)#global:\(globalIDs)"
+    // NSMenu cache key — rebuilds per keystroke during a Settings rename, but
+    // NSMenu rebuilds are cheap while the menu isn't open.
+    var scriptMenuIdentity: ScriptMenuIdentity {
+      ScriptMenuIdentity(rootURL: rootURL, repoScripts: repoScripts, globalScripts: globalScripts)
     }
 
     /// The first `.run`-kind script, if any.
@@ -429,8 +434,7 @@ struct WorktreeDetailView: View {
           onManageRepoScripts: onManageRepoScripts,
           onManageGlobalScripts: onManageGlobalScripts
         )
-        // Rebuild the NSMenu per repo (#280) and on global edits so renames /
-        // additions show up without a worktree switch.
+        // Rebuild the NSMenu when any field changes (#280) so renames propagate without a worktree switch.
         .id(toolbarState.scriptMenuIdentity)
         .transaction { $0.animation = nil }
       }
