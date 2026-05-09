@@ -150,17 +150,6 @@ private struct DeeplinkSection: View {
   }
 }
 
-struct DeeplinkReferenceMenuButton: View {
-  @Environment(\.openWindow) private var openWindow
-
-  var body: some View {
-    Button("Deeplink Reference") {
-      openWindow(id: WindowID.deeplinkReference)
-    }
-    .help("Open the deeplink reference.")
-  }
-}
-
 // MARK: - Deeplink → window bridge.
 
 /// Opens the deeplink reference window when the reducer sets `isDeeplinkReferenceRequested`.

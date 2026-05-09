@@ -388,23 +388,19 @@ struct SupacodeApp: App {
       TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
       WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
-        let cmdPalette = AppShortcuts.commandPalette.effective(from: store.settings.shortcutOverrides)
         Button("Command Palette") {
           store.send(.commandPalette(.togglePresented))
         }
-        .appKeyboardShortcut(cmdPalette)
-        .help("Command Palette (\(cmdPalette?.display ?? "none"))")
+        .appKeyboardShortcut(AppShortcuts.commandPalette.effective(from: store.settings.shortcutOverrides))
+        .help("Command Palette")
       }
       UpdateCommands(store: store.scope(state: \.updates, action: \.updates))
-      Group {
-        CommandGroup(replacing: .windowList) {}
-        CommandGroup(replacing: .singleWindowList) {
-          Button("Supacode") {
-            NSApplication.shared.surfaceMainWindow()
-          }
-          .keyboardShortcut("0")
-          .help("Show main window (⌘0)")
+      CommandGroup(replacing: .singleWindowList) {
+        Button("Supacode") {
+          NSApplication.shared.surfaceMainWindow()
         }
+        .appKeyboardShortcut(AppShortcuts.showMainWindow.effective(from: store.settings.shortcutOverrides))
+        .help("Show Main Window")
       }
       CommandGroup(replacing: .appSettings) {
         SettingsMenuButton(shortcutOverrides: store.settings.shortcutOverrides) {
@@ -412,8 +408,6 @@ struct SupacodeApp: App {
         }
       }
       CommandGroup(replacing: .help) {
-        DeeplinkReferenceMenuButton()
-        Divider()
         Button("Submit GitHub Issue") {
           guard let url = URL(string: "https://github.com/supabitapp/supacode/issues/new") else { return }
           NSWorkspace.shared.open(url)
