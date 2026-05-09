@@ -637,7 +637,6 @@ private func scriptItems(
   var items: [CommandPaletteItem] = []
   for script in scripts {
     let trimmed = script.command.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { continue }
     if runningScriptIDs.contains(script.id) {
       items.append(
         CommandPaletteItem(
@@ -646,6 +645,18 @@ private func scriptItems(
           subtitle: nil,
           kind: .stopScript(script.id, name: script.displayName),
           priorityTier: 0
+        )
+      )
+    } else if trimmed.isEmpty {
+      // Surface unconfigured scripts as discoverable entries; picking one
+      // navigates to the settings pane (handled in `runNamedScript`).
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.runScript(script.id),
+          title: "Configure: \(script.displayName)",
+          subtitle: "No command — opens Settings.",
+          kind: .runScript(script),
+          priorityTier: CommandPaletteItem.defaultPriorityTier + 50
         )
       )
     } else {

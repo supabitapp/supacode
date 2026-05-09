@@ -353,7 +353,10 @@ struct RepositorySettingsScriptTests {
           TextState("Cancel")
         }
       } message: {
-        TextState("This action cannot be undone.")
+        TextState(
+          "This action cannot be undone. Any running instance keeps running in its terminal "
+            + "tab until you close it manually."
+        )
       }
     }
 
@@ -379,7 +382,10 @@ struct RepositorySettingsScriptTests {
           TextState("Cancel")
         }
       } message: {
-        TextState("This action cannot be undone.")
+        TextState(
+          "This action cannot be undone. Any running instance keeps running in its terminal "
+            + "tab until you close it manually."
+        )
       }
     }
 

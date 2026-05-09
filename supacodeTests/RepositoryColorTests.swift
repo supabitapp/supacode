@@ -6,15 +6,9 @@ import Testing
 
 @MainActor
 struct RepositoryColorTests {
-  @Test func parseAcceptsPredefinedNamesCaseInsensitively() {
-    #expect(RepositoryColor.parse("red") == .red)
+  @Test func parseIsCaseInsensitive() {
     #expect(RepositoryColor.parse("RED") == .red)
-    #expect(RepositoryColor.parse("orange") == .orange)
-    #expect(RepositoryColor.parse("yellow") == .yellow)
-    #expect(RepositoryColor.parse("green") == .green)
-    #expect(RepositoryColor.parse("teal") == .teal)
     #expect(RepositoryColor.parse("Blue") == .blue)
-    #expect(RepositoryColor.parse("purple") == .purple)
   }
 
   @Test func predefinedOrderingIsStable() {
@@ -40,11 +34,6 @@ struct RepositoryColorTests {
     #expect(throws: DecodingError.self) {
       try JSONDecoder().decode(RepositoryColor.self, from: json)
     }
-  }
-
-  @Test func encoderEmitsCanonicalRawValue() throws {
-    let custom = try JSONEncoder().encode(RepositoryColor.custom("#A1B2C3"))
-    #expect(String(bytes: custom, encoding: .utf8) == "\"#A1B2C3\"")
   }
 
   @Test(

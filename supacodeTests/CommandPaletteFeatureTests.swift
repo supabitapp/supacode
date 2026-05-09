@@ -1057,7 +1057,7 @@ struct CommandPaletteFeatureTests {
     #expect(runItem == nil)
   }
 
-  @Test func commandPaletteItems_excludesEmptyCommandScripts() {
+  @Test func commandPaletteItems_surfacesEmptyCommandScriptsAsConfigure() {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
@@ -1072,7 +1072,9 @@ struct CommandPaletteFeatureTests {
       scripts: [emptyDef, validDef]
     )
 
-    #expect(items.contains { $0.id == "script.\(emptyDef.id).run" } == false)
+    let emptyItem = items.first { $0.id == "script.\(emptyDef.id).run" }
+    #expect(emptyItem != nil)
+    #expect(emptyItem?.title.hasPrefix("Configure:") == true)
     #expect(items.contains { $0.id == "script.\(validDef.id).run" })
   }
 

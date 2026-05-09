@@ -437,6 +437,32 @@ struct AppFeatureRunScriptTests {
     #expect(runCommands.first?.command == "echo repo")
   }
 
+  @Test(.dependencies) func runNamedScriptIgnoresSinceDeletedScriptID() async {
+    let orphan = ScriptDefinition(kind: .custom, name: "Stale", command: "echo stale")
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
+    initialState.repoScripts = []
+    initialState.globalScripts = []
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    // Stale view binding from before a remove — must drop, not run, and not
+    // mutate `runningScriptsByWorktreeID`.
+    await store.send(.runNamedScript(orphan))
+    await store.finish()
+
+    #expect(sent.value.isEmpty)
+    #expect(store.state.repositories.runningScriptsByWorktreeID[worktree.id] == nil)
+  }
+
   @Test(.dependencies) func primaryScriptIgnoresGlobalRunInjectedViaDecode() throws {
     // Globals are nominally always `.custom`, but a hand-edited settings.json
     // could ship a `.run` global. The merge order (repo wins) must prevent

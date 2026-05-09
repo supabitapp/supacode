@@ -299,8 +299,24 @@ struct WorktreeDetailView: View {
 
   fileprivate struct ScriptMenuIdentity: Hashable {
     let rootURL: URL
-    let repoScripts: [ScriptDefinition]
-    let globalScripts: [ScriptDefinition]
+    let repoFingerprints: [ScriptFingerprint]
+    let globalFingerprints: [ScriptFingerprint]
+  }
+
+  fileprivate struct ScriptFingerprint: Hashable {
+    let id: UUID
+    let displayName: String
+    let resolvedSystemImage: String
+    let resolvedTintColor: RepositoryColor
+    let isCommandBlank: Bool
+
+    init(_ script: ScriptDefinition) {
+      id = script.id
+      displayName = script.displayName
+      resolvedSystemImage = script.resolvedSystemImage
+      resolvedTintColor = script.resolvedTintColor
+      isCommandBlank = script.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
   }
 
   fileprivate struct WorktreeToolbarState {
@@ -342,10 +358,15 @@ struct WorktreeDetailView: View {
         .filter { !$0.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    // NSMenu cache key — rebuilds per keystroke during a Settings rename, but
-    // NSMenu rebuilds are cheap while the menu isn't open.
+    // NSMenu cache key — fingerprint covers only what the toolbar Menu actually renders
+    // (display name, icon, tint, has-command). Editing a command body is a no-op for the
+    // identity, which avoids per-keystroke menu rebuilds while still catching renames.
     var scriptMenuIdentity: ScriptMenuIdentity {
-      ScriptMenuIdentity(rootURL: rootURL, repoScripts: repoScripts, globalScripts: globalScripts)
+      ScriptMenuIdentity(
+        rootURL: rootURL,
+        repoFingerprints: repoScripts.map(ScriptFingerprint.init),
+        globalFingerprints: globalScripts.map(ScriptFingerprint.init),
+      )
     }
 
     /// The first `.run`-kind script, if any.

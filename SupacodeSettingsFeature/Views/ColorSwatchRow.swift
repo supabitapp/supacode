@@ -69,6 +69,7 @@ private struct DefaultSwatchButton: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel("Default")
+    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     .help("Default")
   }
 }
@@ -87,6 +88,7 @@ private struct ColorSwatchButton: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel(color.displayName)
+    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     .help(color.displayName)
   }
 }

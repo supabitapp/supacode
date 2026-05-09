@@ -263,6 +263,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     let decoded: [ScriptDefinition] = container.decodeLossyArrayIfPresent(forKey: .globalScripts) ?? []
     globalScripts = decoded.map {
       var script = $0
+      // Intentionally one-way — every load rewrites kind to `.custom`. Don't
+      // remove this assignment if a future schema legitimately needs another
+      // kind for globals; introduce a separate field instead.
       script.kind = .custom
       if script.name.isEmpty { script.name = ScriptKind.custom.defaultName }
       return script

@@ -40,6 +40,11 @@ struct AppFeature {
       self.repositories = repositories
       self.settings = settings
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
+      // Seed from settings so `state.allScripts` doesn't start empty before the
+      // first `settingsChanged` delegate fires. Globals aren't worktree-scoped,
+      // so deselection (line below in `selectedWorktreeChanged(nil)`)
+      // intentionally does not clear them.
+      globalScripts = settings.globalScripts
     }
 
     /// Repo scripts followed by global scripts; repo wins on ID collisions.
@@ -485,7 +490,18 @@ struct AppFeature {
         // Prevent running the same script twice.
         guard !state.runningScriptIDs.contains(definition.id) else { return .none }
         let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .none }
+        guard !trimmed.isEmpty else {
+          // Empty-command resolve (only reachable today via the palette's "Configure: …"
+          // entry) — route to the right settings pane so the user can finish setup.
+          let isGlobal =
+            state.globalScripts.contains { $0.id == definition.id }
+            && !state.repoScripts.contains { $0.id == definition.id }
+          if isGlobal {
+            return .send(.settings(.setSelection(.scripts)))
+          }
+          let repositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
+          return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
+        }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
         var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
         ids[definition.id] = definition.resolvedTintColor

@@ -10,7 +10,9 @@ nonisolated struct Lossy<T: Decodable & Sendable>: Decodable, Sendable {
     do {
       value = try T(from: decoder)
     } catch {
-      lossyLogger.warning("Dropped malformed \(T.self) entry: \(error).")
+      // Avoid `\(error)` — `DecodingError`'s description embeds raw values and
+      // would leak user-defined names / commands to the unified log.
+      lossyLogger.warning("Dropped malformed \(T.self) entry (decode error).")
       value = nil
     }
   }

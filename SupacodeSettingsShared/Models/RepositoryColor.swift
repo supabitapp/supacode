@@ -10,9 +10,9 @@ public nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
   case orange
   case yellow
   case green
+  case teal
   case blue
   case purple
-  case teal
   case custom(String)
 
   /// Wire format: `"red"` / `"orange"` / ... / `"#A1B2C3"`.
@@ -22,9 +22,9 @@ public nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
     case .orange: "orange"
     case .yellow: "yellow"
     case .green: "green"
+    case .teal: "teal"
     case .blue: "blue"
     case .purple: "purple"
-    case .teal: "teal"
     case .custom(let hex): hex
     }
   }
@@ -36,9 +36,9 @@ public nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
     case "orange": return .orange
     case "yellow": return .yellow
     case "green": return .green
+    case "teal": return .teal
     case "blue": return .blue
     case "purple": return .purple
-    case "teal": return .teal
     default:
       guard rawValue.hasPrefix("#"), Self.isValidHex(rawValue) else {
         return nil
@@ -73,9 +73,9 @@ public nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
     case .orange: .orange
     case .yellow: .yellow
     case .green: .green
+    case .teal: .teal
     case .blue: .blue
     case .purple: .purple
-    case .teal: .teal
     case .custom(let hex): Color(nsColor: Self.nsColor(fromHex: hex) ?? .systemGray)
     }
   }
@@ -87,9 +87,9 @@ public nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
     case .orange: .systemOrange
     case .yellow: .systemYellow
     case .green: .systemGreen
+    case .teal: .systemTeal
     case .blue: .systemBlue
     case .purple: .systemPurple
-    case .teal: .systemTeal
     case .custom(let hex): Self.nsColor(fromHex: hex) ?? .systemGray
     }
   }
@@ -101,9 +101,9 @@ public nonisolated enum RepositoryColor: Hashable, Sendable, Codable {
     case .orange: "Orange"
     case .yellow: "Yellow"
     case .green: "Green"
+    case .teal: "Teal"
     case .blue: "Blue"
     case .purple: "Purple"
-    case .teal: "Teal"
     case .custom(let hex): hex
     }
   }
