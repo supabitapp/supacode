@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated
+public nonisolated
   enum JSONValue: Hashable, Sendable, Codable,
     ExpressibleByNilLiteral, ExpressibleByBooleanLiteral,
     ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral,
@@ -17,7 +17,7 @@ nonisolated
 
   // MARK: - Codable.
 
-  init(from decoder: Decoder) throws {
+  public init(from decoder: Decoder) throws {
     let container = try decoder.singleValueContainer()
     if container.decodeNil() {
       self = .null
@@ -36,7 +36,7 @@ nonisolated
     }
   }
 
-  func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: Encoder) throws {
     var container = encoder.singleValueContainer()
     switch self {
     case .null: try container.encodeNil()
@@ -51,37 +51,37 @@ nonisolated
 
   // MARK: - Expressible-by literals.
 
-  init(nilLiteral: ()) { self = .null }
-  init(booleanLiteral value: Bool) { self = .bool(value) }
-  init(integerLiteral value: Int) { self = .int(value) }
-  init(floatLiteral value: Double) { self = .double(value) }
-  init(stringLiteral value: String) { self = .string(value) }
-  init(arrayLiteral elements: Self...) { self = .array(elements) }
+  public init(nilLiteral: ()) { self = .null }
+  public init(booleanLiteral value: Bool) { self = .bool(value) }
+  public init(integerLiteral value: Int) { self = .int(value) }
+  public init(floatLiteral value: Double) { self = .double(value) }
+  public init(stringLiteral value: String) { self = .string(value) }
+  public init(arrayLiteral elements: Self...) { self = .array(elements) }
 
-  init(dictionaryLiteral elements: (String, Self)...) {
+  public init(dictionaryLiteral elements: (String, Self)...) {
     self = .object(.init(uniqueKeysWithValues: elements))
   }
 
   // MARK: - Accessors.
 
-  var arrayValue: [Self]? {
+  public var arrayValue: [Self]? {
     guard case .array(let value) = self else { return nil }
     return value
   }
 
-  var objectValue: [String: Self]? {
+  public var objectValue: [String: Self]? {
     guard case .object(let value) = self else { return nil }
     return value
   }
 
-  var stringValue: String? {
+  public var stringValue: String? {
     guard case .string(let value) = self else { return nil }
     return value
   }
 
   // MARK: - Encodable bridging.
 
-  init<T: Encodable>(_ value: T) throws {
+  public init<T: Encodable>(_ value: T) throws {
     let data = try JSONEncoder().encode(EncodableBox(value))
     self = try JSONDecoder().decode(Self.self, from: data)
   }

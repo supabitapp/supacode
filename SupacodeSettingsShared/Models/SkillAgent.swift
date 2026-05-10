@@ -1,4 +1,4 @@
-public nonisolated enum SkillAgent: Equatable, Sendable, CaseIterable {
+public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, Codable {
   case claude
   case codex
   case kiro
@@ -13,6 +13,26 @@ public nonisolated enum SkillAgent: Equatable, Sendable, CaseIterable {
     case .codex: ".codex"
     case .kiro: ".kiro"
     case .pi: ".pi/agent"
+    }
+  }
+
+  /// User-facing name (e.g. "Claude Code", "Codex").
+  public var displayName: String {
+    switch self {
+    case .claude: "Claude Code"
+    case .codex: "Codex"
+    case .kiro: "Kiro"
+    case .pi: "Pi"
+    }
+  }
+
+  /// Asset catalog name for the agent's logo mark.
+  public var assetName: String {
+    switch self {
+    case .claude: "claude-code-mark"
+    case .codex: "codex-mark"
+    case .kiro: "kiro-mark"
+    case .pi: "pi-mark"
     }
   }
 }

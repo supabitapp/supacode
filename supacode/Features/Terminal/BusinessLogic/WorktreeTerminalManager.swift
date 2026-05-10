@@ -73,6 +73,12 @@ final class WorktreeTerminalManager {
       }
       handler(resource, params, clientFD)
     }
+    server.onEvent = { event in
+      let pid = event.pid.map(String.init) ?? "-"
+      terminalLogger.debug(
+        "hook event: agent=\(event.agent) event=\(event.event) surface=\(event.surfaceID) pid=\(pid)"
+      )
+    }
   }
 
   // MARK: - CLI queries.

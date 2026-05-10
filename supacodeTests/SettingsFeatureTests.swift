@@ -40,10 +40,6 @@ struct SettingsFeatureTests {
       SettingsFeature()
     } withDependencies: {
       $0[CLIInstallerClient.self].checkInstalled = { false }
-      $0[CLISkillClient.self].checkInstalled = { _ in false }
-      $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
-      $0[CodexSettingsClient.self].checkInstalled = { _ in false }
-      $0[KiroSettingsClient.self].checkInstalled = { _ in false }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -638,10 +634,6 @@ struct SettingsFeatureTests {
       SettingsFeature()
     } withDependencies: {
       $0[CLIInstallerClient.self].checkInstalled = { false }
-      $0[CLISkillClient.self].checkInstalled = { _ in false }
-      $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
-      $0[CodexSettingsClient.self].checkInstalled = { _ in false }
-      $0[KiroSettingsClient.self].checkInstalled = { _ in false }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -989,16 +981,10 @@ struct SettingsFeatureTests {
 
 @MainActor
 private func receiveStartupHookChecks(from store: TestStoreOf<SettingsFeature>) {
-  // CLI/skill/hook checks run in parallel via .merge.
+  // CLI + per-agent integration checks run in parallel via .merge.
   // Caller must drain effects before calling this. Assert final state only.
   #expect(store.state.cliInstallState == .notInstalled)
-  #expect(store.state.claudeSkillState == .notInstalled)
-  #expect(store.state.codexSkillState == .notInstalled)
-  #expect(store.state.kiroSkillState == .notInstalled)
-  #expect(store.state.claudeProgressState == .notInstalled)
-  #expect(store.state.claudeNotificationsState == .notInstalled)
-  #expect(store.state.codexProgressState == .notInstalled)
-  #expect(store.state.codexNotificationsState == .notInstalled)
-  #expect(store.state.kiroProgressState == .notInstalled)
-  #expect(store.state.kiroNotificationsState == .notInstalled)
+  for agent in SkillAgent.allCases {
+    #expect(store.state.agentIntegrationStates[agent] == .ready(.notInstalled))
+  }
 }

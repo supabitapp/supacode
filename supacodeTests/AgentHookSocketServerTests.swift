@@ -327,4 +327,166 @@ struct AgentHookSocketServerTests {
 
     #expect(payload == nil)
   }
+
+  // MARK: - Hook event JSON envelope.
+
+  @Test func parsesValidHookEventWithRequiredFieldsOnly() {
+    let surfaceID = UUID()
+    let tabID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "v": 1,
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "tab_id": "\(tabID.uuidString)",
+        "worktree_id": "/tmp/repo"
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event(let event) = message else {
+      Issue.record("Expected event message, got \(String(describing: message))")
+      return
+    }
+    #expect(event.event == "session_start")
+    #expect(event.eventName == .sessionStart)
+    #expect(event.agent == "claude")
+    #expect(event.surfaceID == surfaceID)
+    #expect(event.tabID == tabID)
+    #expect(event.worktreeID == "/tmp/repo")
+    #expect(event.pid == nil)
+    #expect(event.data == nil)
+  }
+
+  @Test func parsesHookEventWithPidTimestampAndOpaqueData() {
+    let surfaceID = UUID()
+    let tabID = UUID()
+    let json = """
+      {
+        "event": "notification",
+        "v": 1,
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "tab_id": "\(tabID.uuidString)",
+        "worktree_id": "/tmp/repo",
+        "pid": 12345,
+        "ts": "2026-05-10T12:00:00Z",
+        "data": {"title": "Done", "message": "All good"}
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event(let event) = message else {
+      Issue.record("Expected event message")
+      return
+    }
+    #expect(event.pid == 12345)
+    #expect(event.timestamp != nil)
+
+    struct NotificationPayload: Decodable, Equatable {
+      let title: String
+      let message: String
+    }
+    let decoded = event.decodeData(NotificationPayload.self)
+    #expect(decoded == NotificationPayload(title: "Done", message: "All good"))
+  }
+
+  @Test func unknownEventNameKeepsRawStringButHasNilEventName() {
+    let surfaceID = UUID()
+    let tabID = UUID()
+    let json = """
+      {
+        "event": "future_event_we_dont_know_yet",
+        "v": 1,
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "tab_id": "\(tabID.uuidString)",
+        "worktree_id": "/tmp/repo"
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event(let event) = message else {
+      Issue.record("Expected event message")
+      return
+    }
+    #expect(event.event == "future_event_we_dont_know_yet")
+    #expect(event.eventName == nil)
+  }
+
+  @Test func hookEventMissingSurfaceIDReturnsNil() {
+    let tabID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude",
+        "tab_id": "\(tabID.uuidString)",
+        "worktree_id": "/tmp/repo"
+      }
+      """
+    #expect(AgentHookSocketServer.parse(data: Data(json.utf8)) == nil)
+  }
+
+  @Test func hookEventMissingTabIDReturnsNil() {
+    let surfaceID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "worktree_id": "/tmp/repo"
+      }
+      """
+    #expect(AgentHookSocketServer.parse(data: Data(json.utf8)) == nil)
+  }
+
+  @Test func hookEventMissingWorktreeIDReturnsNil() {
+    let surfaceID = UUID()
+    let tabID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "tab_id": "\(tabID.uuidString)"
+      }
+      """
+    #expect(AgentHookSocketServer.parse(data: Data(json.utf8)) == nil)
+  }
+
+  @Test func hookEventWithMalformedSurfaceUUIDReturnsNil() {
+    let tabID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude",
+        "surface_id": "not-a-uuid",
+        "tab_id": "\(tabID.uuidString)",
+        "worktree_id": "/tmp/repo"
+      }
+      """
+    #expect(AgentHookSocketServer.parse(data: Data(json.utf8)) == nil)
+  }
+
+  @Test func eventDiscriminatorTakesPrecedenceOverDeeplinkInSamePayload() {
+    let surfaceID = UUID()
+    let tabID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "tab_id": "\(tabID.uuidString)",
+        "worktree_id": "/tmp/repo",
+        "deeplink": "supacode://worktree/test"
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event = message else {
+      Issue.record("Expected event message, got \(String(describing: message))")
+      return
+    }
+  }
 }

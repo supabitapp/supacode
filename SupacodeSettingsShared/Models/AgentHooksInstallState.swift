@@ -28,14 +28,3 @@ public nonisolated enum AgentHooksInstallState: Equatable, Sendable {
     return message
   }
 }
-
-/// Identifies a specific hook feature for a specific agent.
-public enum AgentHookSlot: Equatable, Sendable {
-  case claudeProgress
-  case claudeNotifications
-  case codexProgress
-  case codexNotifications
-  case kiroProgress
-  case kiroNotifications
-  case piHooks
-}

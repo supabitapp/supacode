@@ -99,7 +99,8 @@ nonisolated struct CodexSettingsInstaller {
   static func runEnableHooksCommand() async throws -> CommandResult {
     let process = Process()
     process.executableURL = loginShellURL()
-    process.arguments = ["-l", "-c", "codex features enable codex_hooks"]
+    // `codex_hooks` was renamed to `hooks` in newer Codex versions; the legacy name is deprecated.
+    process.arguments = ["-l", "-c", "codex features enable hooks"]
     let errorPipe = Pipe()
     process.standardError = errorPipe
     let status = try await withCheckedThrowingContinuation { continuation in

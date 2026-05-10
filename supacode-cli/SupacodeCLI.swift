@@ -13,6 +13,7 @@ struct SupacodeCLI: ParsableCommand {
       RepoCommand.self,
       SettingsCommand.self,
       SocketCommand.self,
+      IntegrationCommand.self,
     ],
     defaultSubcommand: OpenCommand.self
   )
