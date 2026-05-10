@@ -4,6 +4,8 @@ nonisolated enum KiroHookSettings {
   fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
   fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: "kiro")
+  fileprivate static let sessionStart = AgentHookSettingsCommand.sessionEventCommand(
+    event: "session_start", agent: "kiro")
   fileprivate static let defaultTimeoutMs = 10_000
 
   static func progressHookEntriesByEvent() throws -> [String: [JSONValue]] {
@@ -18,6 +20,15 @@ nonisolated enum KiroHookSettings {
       from: KiroNotificationPayload(),
       invalidConfiguration: KiroHookSettingsError.invalidConfiguration
     )
+  }
+
+  /// See `ClaudeHookSettings.allHookGroupsByEvent` for the rationale.
+  static func allHookEntriesByEvent() throws -> [String: [JSONValue]] {
+    var merged = try progressHookEntriesByEvent()
+    for (event, entries) in try notificationHookEntriesByEvent() {
+      merged[event, default: []].append(contentsOf: entries)
+    }
+    return merged
   }
 }
 
@@ -52,8 +63,15 @@ nonisolated struct KiroHookEntry: Encodable {
 
 // Kiro uses camelCase event names ("userPromptSubmit", "stop") unlike
 // Claude/Codex which use PascalCase ("UserPromptSubmit", "Stop").
+// `agentSpawn` is Kiro's session-start equivalent — it fires once when
+// the agent is activated, so the badge appears as soon as the user
+// opens a Kiro session. Kiro has no SessionEnd analogue, so the badge
+// clears via the pid liveness sweep when the agent process exits.
 private nonisolated struct KiroProgressPayload: Encodable {
   let hooks: [String: [KiroHookEntry]] = [
+    "agentSpawn": [
+      KiroHookEntry(command: KiroHookSettings.sessionStart, timeoutMs: 5_000)
+    ],
     "userPromptSubmit": [
       KiroHookEntry(command: KiroHookSettings.busyOn, timeoutMs: KiroHookSettings.defaultTimeoutMs)
     ],

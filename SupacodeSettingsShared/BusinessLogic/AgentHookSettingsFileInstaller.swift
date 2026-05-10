@@ -3,16 +3,7 @@ import Foundation
 private nonisolated let settingsInstallerLogger = SupaLogger("Settings")
 
 nonisolated struct AgentHookSettingsFileInstaller {
-  struct Errors {
-    let invalidEventHooks: @Sendable (String) -> Error
-    let invalidHooksObject: @Sendable () -> Error
-    let invalidJSON: @Sendable (String) -> Error
-    let invalidRootObject: @Sendable () -> Error
-  }
-
-  private enum LoadError: Error {
-    case invalidRootObject
-  }
+  typealias Errors = JSONHookSettingsFile.Errors
 
   let fileManager: FileManager
   let errors: Errors
@@ -28,42 +19,61 @@ nonisolated struct AgentHookSettingsFileInstaller {
     self.logWarning = logWarning
   }
 
-  /// Returns `true` when at least one command from the given hook groups
-  /// is present in the settings file.
-  func containsMatchingHooks(
+  private var file: JSONHookSettingsFile {
+    JSONHookSettingsFile(fileManager: fileManager, errors: errors)
+  }
+
+  /// Compare the set of Supacode-managed commands present in the settings
+  /// file against the expected (canonical) set:
+  /// - `.installed`     — actual Supacode commands == expected, no extras
+  /// - `.notInstalled`  — no Supacode-managed commands at all
+  /// - `.outdated`      — some present, but the set differs (extras, missing,
+  ///                      or stale variants from older Supacode versions)
+  func installState(
     settingsURL: URL,
     hookGroupsByEvent: [String: [JSONValue]]
-  ) -> Bool {
+  ) -> ComponentInstallState {
     do {
       let settingsObject = try loadSettingsObject(at: settingsURL)
-      guard let hooksValue = settingsObject["hooks"],
-        let hooksObject = hooksValue.objectValue
-      else {
-        return false
-      }
-      let expectedCommands = Self.commands(from: hookGroupsByEvent)
-      guard !expectedCommands.isEmpty else { return false }
-      for (_, value) in hooksObject {
-        guard let groups = value.arrayValue else { continue }
-        for group in groups {
-          guard let groupObject = group.objectValue,
-            let hooks = groupObject["hooks"]?.arrayValue
-          else { continue }
-          for hook in hooks {
-            guard let hookObject = hook.objectValue,
-              let command = hookObject["command"]?.stringValue
-            else { continue }
-            if expectedCommands.contains(command) { return true }
-          }
-        }
-      }
-      return false
+      let expected = Self.commands(from: hookGroupsByEvent)
+      guard !expected.isEmpty else { return .notInstalled }
+      let actual = Self.installedSupacodeCommands(in: settingsObject)
+      if actual.isEmpty { return .notInstalled }
+      return actual == expected ? .installed : .outdated
     } catch {
       if !Self.isFileNotFound(error) {
         logWarning("Failed to inspect hook settings at \(settingsURL.path): \(error)")
       }
-      return false
+      return .notInstalled
     }
+  }
+
+  /// All Supacode-marked `command` strings under the `hooks` map. Filters
+  /// via `AgentHookCommandOwnership` so user-authored hooks are never
+  /// treated as "ours."
+  private static func installedSupacodeCommands(
+    in settingsObject: [String: JSONValue]
+  ) -> Set<String> {
+    guard let hooksValue = settingsObject["hooks"],
+      let hooksObject = hooksValue.objectValue
+    else { return [] }
+    var commands = Set<String>()
+    for (_, value) in hooksObject {
+      guard let groups = value.arrayValue else { continue }
+      for group in groups {
+        guard let groupObject = group.objectValue,
+          let hooks = groupObject["hooks"]?.arrayValue
+        else { continue }
+        for hook in hooks {
+          guard let hookObject = hook.objectValue,
+            let command = hookObject["command"]?.stringValue,
+            AgentHookCommandOwnership.isSupacodeManagedCommand(command)
+          else { continue }
+          commands.insert(command)
+        }
+      }
+    }
+    return commands
   }
 
   private static func commands(from hookGroupsByEvent: [String: [JSONValue]]) -> Set<String> {
@@ -84,18 +94,21 @@ nonisolated struct AgentHookSettingsFileInstaller {
     return commands
   }
 
-  /// Removes matching hooks and any legacy Supacode-owned commands.
+  /// Removes every Supacode-managed command (current and legacy) from the
+  /// settings file. User-authored hooks are preserved — the trailing
+  /// `# supacode-managed-hook` sentinel is the source of truth for
+  /// ownership (see `AgentHookCommandOwnership`).
   func uninstall(
     settingsURL: URL,
     hookGroupsByEvent: @autoclosure () throws -> [String: [JSONValue]]
   ) throws {
+    _ = try hookGroupsByEvent()  // Eval for parity with `install` errors; we don't use the value.
     let settingsObject = try loadSettingsObject(at: settingsURL)
-    let commandsToPrune = Self.commands(from: try hookGroupsByEvent())
     var mergedObject = settingsObject
     var hooksObject = (mergedObject["hooks"]?.objectValue) ?? [:]
     for event in hooksObject.keys {
       let existing = try existingGroups(for: event, hooksObject: hooksObject)
-      let filtered = existing.compactMap { prunedGroup($0, removing: commandsToPrune) }
+      let filtered = existing.compactMap { stripAllSupacodeCommands(from: $0) }
       if filtered.isEmpty {
         hooksObject.removeValue(forKey: event)
       } else {
@@ -119,35 +132,15 @@ nonisolated struct AgentHookSettingsFileInstaller {
   }
 
   private func writeSettings(_ object: [String: JSONValue], to url: URL) throws {
-    try fileManager.createDirectory(
-      at: url.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let data = try encoder.encode(JSONValue.object(object))
-    try data.write(to: url, options: .atomic)
+    try file.write(object, to: url)
   }
 
   private func loadSettingsObject(at url: URL) throws -> [String: JSONValue] {
-    guard fileManager.fileExists(atPath: url.path) else { return [:] }
-    let data = try Data(contentsOf: url)
-    do {
-      let jsonValue = try JSONDecoder().decode(JSONValue.self, from: data)
-      guard let object = jsonValue.objectValue else {
-        throw LoadError.invalidRootObject
-      }
-      return object
-    } catch LoadError.invalidRootObject {
-      throw errors.invalidRootObject()
-    } catch {
-      throw errors.invalidJSON(error.localizedDescription)
-    }
+    try file.load(at: url)
   }
 
   private static func isFileNotFound(_ error: Error) -> Bool {
-    let nsError = error as NSError
-    return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoSuchFileError
+    JSONHookSettingsFile.isFileNotFound(error)
   }
 
   private func mergedSettingsObject(
@@ -165,12 +158,13 @@ nonisolated struct AgentHookSettingsFileInstaller {
       hooksObject = [:]
     }
 
-    // Only prune commands that belong to the feature being installed
-    // (or uninstalled). This preserves hooks from other features.
-    let commandsToPrune = Self.commands(from: hookGroupsByEvent)
+    // Strip every Supacode-managed command across every event. The caller
+    // passes the canonical (combined) hook set for the agent, so anything
+    // Supacode-marked still in the file after this prune is a stale variant
+    // from an older version that shouldn't survive the upgrade.
     for event in hooksObject.keys {
       let existing = try existingGroups(for: event, hooksObject: hooksObject)
-      let filtered = existing.compactMap { prunedGroup($0, removing: commandsToPrune) }
+      let filtered = existing.compactMap { stripAllSupacodeCommands(from: $0) }
       if filtered.isEmpty {
         hooksObject.removeValue(forKey: event)
       } else {
@@ -178,7 +172,7 @@ nonisolated struct AgentHookSettingsFileInstaller {
       }
     }
 
-    // Add the new hooks.
+    // Add the canonical hooks 1:1.
     for (event, canonicalGroups) in hookGroupsByEvent {
       let existing = hooksObject[event]?.arrayValue ?? []
       hooksObject[event] = .array(existing + canonicalGroups)
@@ -199,7 +193,9 @@ nonisolated struct AgentHookSettingsFileInstaller {
     return groups
   }
 
-  private func prunedGroup(_ group: JSONValue, removing commandsToPrune: Set<String>) -> JSONValue? {
+  /// Strip every Supacode-managed command from the group. User-authored
+  /// hooks (no `# supacode-managed-hook` sentinel) survive untouched.
+  private func stripAllSupacodeCommands(from group: JSONValue) -> JSONValue? {
     guard var groupObject = group.objectValue else { return group }
     guard let hooksValue = groupObject["hooks"] else { return group }
     guard let hooks = hooksValue.arrayValue else { return group }
@@ -207,11 +203,7 @@ nonisolated struct AgentHookSettingsFileInstaller {
       guard let hookObject = hook.objectValue,
         let command = hookObject["command"]?.stringValue
       else { return true }
-      // Remove if it matches the specific feature being installed,
-      // or if it's a legacy Supacode command.
-      if commandsToPrune.contains(command) { return false }
-      if AgentHookCommandOwnership.isLegacyCommand(command) { return false }
-      return true
+      return !AgentHookCommandOwnership.isSupacodeManagedCommand(command)
     }
     guard !filteredHooks.isEmpty else { return nil }
     groupObject["hooks"] = .array(filteredHooks)

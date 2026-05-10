@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabBarView: View {
@@ -12,6 +13,7 @@ struct TerminalTabBarView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
+  let runningAgents: (TerminalTabID) -> [SkillAgent]
   @Environment(\.controlActiveState)
   private var controlActiveState
 
@@ -24,7 +26,8 @@ struct TerminalTabBarView: View {
         closeToRight: closeToRight,
         closeAll: closeAll,
         renameTab: renameTab,
-        hasNotification: hasNotification
+        hasNotification: hasNotification,
+        runningAgents: runningAgents
       )
       Spacer(minLength: 0)
       TerminalTabBarTrailingAccessories(

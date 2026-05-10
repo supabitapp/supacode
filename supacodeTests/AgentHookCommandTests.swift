@@ -25,9 +25,10 @@ struct AgentHookCommandTests {
     #expect(command.contains("SUPACODE_SURFACE_ID"))
   }
 
-  @Test func busyCommandSuppressesErrors() {
+  @Test func busyCommandSuppressesErrorsAndCarriesSentinel() {
     let command = AgentHookSettingsCommand.busyCommand(active: true)
-    #expect(command.hasSuffix("2>/dev/null || true"))
+    #expect(command.contains(">/dev/null 2>&1 || true"))
+    #expect(command.hasSuffix(AgentHookSettingsCommand.ownershipMarker))
   }
 
   @Test func notificationCommandIncludesAgent() {
@@ -75,6 +76,39 @@ struct AgentHookCommandTests {
     #expect(!AgentHookCommandOwnership.isLegacyCommand(command))
   }
 
+  @Test func userAuthoredCommandReferencingSocketEnvVarIsNotOwned() {
+    // A power user's hook that legitimately references the documented
+    // `SUPACODE_SOCKET_PATH` env var must NOT be classified as
+    // Supacode-managed, otherwise install would silently strip it.
+    let userHook = #"echo "saw $SUPACODE_SOCKET_PATH" >> ~/my-debug.log"#
+    #expect(!AgentHookCommandOwnership.isSupacodeManagedCommand(userHook))
+    #expect(!AgentHookCommandOwnership.isLegacyCommand(userHook))
+  }
+
+  @Test func legacyCLIShimSessionEventCommandIsRecognized() {
+    // The transitional shape (between the agent-hook CLI era and the
+    // direct-nc era) shelled out to `supacode integration event`.
+    // Strip-on-update must still recognise it as Supacode-managed,
+    // otherwise the canonical hook is appended on top instead of
+    // replacing it — producing duplicate SessionStart hooks.
+    let legacy =
+      #"[ -n "${SUPACODE_SOCKET_PATH:-}" ] && supacode integration event session_start --agent claude --pid "$PPID" 2>/dev/null || true"#
+    #expect(AgentHookCommandOwnership.isSupacodeManagedCommand(legacy))
+    #expect(AgentHookCommandOwnership.isLegacyCommand(legacy))
+  }
+
+  @Test func managedCommandSilencesStdoutAndStderr() {
+    // Codex parses SessionStart hook stdout as structured JSON output
+    // and rejects anything that doesn't match its hook output schema —
+    // so the `{"ok":true}` ack the socket server writes back through
+    // `nc` would fail the run. Hook commands must redirect both
+    // streams to /dev/null.
+    let busy = AgentHookSettingsCommand.busyCommand(active: true)
+    let session = AgentHookSettingsCommand.sessionEventCommand(event: "session_start", agent: "claude")
+    #expect(busy.contains(">/dev/null 2>&1"))
+    #expect(session.contains(">/dev/null 2>&1"))
+  }
+
   // MARK: - Shared constants consistency.
 
   @Test func socketPathEnvVarPresentInGeneratedCommands() {
@@ -82,5 +116,72 @@ struct AgentHookCommandTests {
     let notify = AgentHookSettingsCommand.notificationCommand(agent: "test")
     #expect(busy.contains(AgentHookSettingsCommand.socketPathEnvVar))
     #expect(notify.contains(AgentHookSettingsCommand.socketPathEnvVar))
+  }
+
+  // MARK: - Envelope round-trip.
+
+  /// Executes the command in a real shell with all required env vars set
+  /// and a fake `nc` on PATH that captures stdin to a file. Verifies the
+  /// JSON the hook produced is parseable by the same code that consumes
+  /// it on the socket — a regression guard against future Swift changes
+  /// that subtly break the envelope template.
+  @Test func sessionEventCommandProducesParseableJSON() async throws {
+    let surfaceID = UUID()
+    let agentPid: pid_t = getpid()
+    let captured = try runHookCommandCapturingStdin(
+      AgentHookSettingsCommand.sessionEventCommand(event: "session_start", agent: "claude"),
+      env: [
+        "SUPACODE_SOCKET_PATH": "/tmp/supacode-roundtrip-\(UUID().uuidString)",
+        "SUPACODE_WORKTREE_ID": "/some/worktree",
+        "SUPACODE_TAB_ID": UUID().uuidString,
+        "SUPACODE_SURFACE_ID": surfaceID.uuidString,
+      ]
+    )
+    guard case .event(let parsed) = AgentHookSocketServer.parse(data: captured) else {
+      Issue.record("Expected parser to recognise envelope; got nil/non-event from \(captured.count) bytes")
+      return
+    }
+    #expect(parsed.eventName == .sessionStart)
+    #expect(parsed.agent == "claude")
+    #expect(parsed.surfaceID == surfaceID)
+    // PPID inside the shell is whatever spawned it (Process), not the
+    // test's pid — so just check it's positive and decodes cleanly.
+    #expect((parsed.pid ?? 0) > 0)
+  }
+
+  /// Run `command` via `/bin/zsh -c`, with a stub `nc` on PATH that
+  /// dumps its stdin to a temp file. Returns the captured stdin bytes.
+  private func runHookCommandCapturingStdin(
+    _ command: String, env: [String: String]
+  ) throws -> Data {
+    let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-hook-rt-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workDir) }
+
+    // Stub nc that ignores its args (e.g. `-U -w1 <socket>`) and writes
+    // stdin to ./capture so we can read the JSON the hook produced.
+    let stubBin = workDir.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: stubBin, withIntermediateDirectories: true)
+    let stubNC = stubBin.appendingPathComponent("nc")
+    let captureFile = workDir.appendingPathComponent("capture")
+    try "#!/bin/sh\ncat > '\(captureFile.path)'\n".write(to: stubNC, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stubNC.path)
+
+    // The hook hard-codes `/usr/bin/nc`, so symlink that path target
+    // into a private prefix. We cheat by patching the command string
+    // for this test to call the stub instead.
+    let patched = command.replacing("/usr/bin/nc", with: stubNC.path)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    process.arguments = ["-c", patched]
+    var environment = ProcessInfo.processInfo.environment
+    for (key, value) in env { environment[key] = value }
+    process.environment = environment
+    try process.run()
+    process.waitUntilExit()
+
+    return (try? Data(contentsOf: captureFile)) ?? Data()
   }
 }

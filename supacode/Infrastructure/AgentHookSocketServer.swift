@@ -5,8 +5,7 @@ import SupacodeSettingsShared
 private nonisolated let socketLogger = SupaLogger("AgentHookSocket")
 
 /// Lightweight Unix domain socket server that receives messages from
-/// agent hooks (via `nc -U` or `supacode integration event`) and the
-/// Supacode CLI tool.
+/// agent hooks (via `nc -U`) and the Supacode CLI tool.
 ///
 /// Five message formats are supported:
 /// - **Busy flag** (legacy): `<worktreeID> <tabID> <surfaceID> <0|1>\n`
@@ -30,9 +29,9 @@ final class AgentHookSocketServer {
   var onCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI. Parameters: resource name, extra params, client FD for response.
   var onQuery: ((String, [String: String], Int32) -> Void)?
-  /// Hook event from an agent bridge (via `supacode integration event`).
-  /// Fire-and-forget — the server has already acked the client by the time
-  /// this fires, so handlers must not block.
+  /// Hook event from an agent bridge (the JSON envelope hook commands write
+  /// directly to the socket). Fire-and-forget — the server has already acked
+  /// the client by the time this fires, so handlers must not block.
   var onEvent: ((AgentHookEvent) -> Void)?
 
   init() {
@@ -476,9 +475,9 @@ nonisolated struct AgentHookNotification: Equatable, Sendable {
 }
 
 /// JSON envelope for hook events sent by the agent bridge.
-/// Surface scope (`surface_id`, `tab_id`, `worktree_id`) is required — every
-/// event we route is per-surface, and a malformed bridge invocation should
-/// fail loudly rather than show up as a half-attributed event.
+/// `surface_id` is the only required scope field — tab and worktree are
+/// derived app-side from the current terminal topology so a moved/split
+/// surface never carries stale attribution.
 ///
 /// Wire shape:
 /// ```json
@@ -487,8 +486,6 @@ nonisolated struct AgentHookNotification: Equatable, Sendable {
 ///   "v": 1,                     // protocol version (required)
 ///   "agent": "claude",          // SkillAgent rawValue (required)
 ///   "surface_id": "<UUID>",     // required
-///   "tab_id": "<UUID>",         // required
-///   "worktree_id": "<path>",    // required, percent-decoded by sender
 ///   "pid": 12345,               // optional, agent process pid
 ///   "ts": "<ISO8601>",          // optional, sender clock
 ///   "data": { ... }             // optional, event-specific
@@ -511,8 +508,6 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
   let agent: String
   let event: String
   let surfaceID: UUID
-  let tabID: UUID
-  let worktreeID: String
   let pid: pid_t?
   let timestamp: Date?
   /// Event-specific payload preserved as opaque JSON. Handlers decode with
@@ -542,8 +537,6 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
     case event, agent, pid, data
     case version = "v"
     case surfaceID = "surface_id"
-    case tabID = "tab_id"
-    case worktreeID = "worktree_id"
     case timestamp = "ts"
   }
 
@@ -555,23 +548,18 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
         forKey: .event, in: container, debugDescription: "`event` must be non-empty.")
     }
     self.event = event
-    let worktreeID = try container.decode(String.self, forKey: .worktreeID)
-    guard !worktreeID.isEmpty else {
-      throw DecodingError.dataCorruptedError(
-        forKey: .worktreeID, in: container,
-        debugDescription: "`worktree_id` must be non-empty.")
-    }
-    self.worktreeID = worktreeID
     self.surfaceID = try Self.decodeUUID(from: container, forKey: .surfaceID)
-    self.tabID = try Self.decodeUUID(from: container, forKey: .tabID)
     self.agent = try container.decodeIfPresent(String.self, forKey: .agent) ?? "unknown"
     self.version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
     if let rawPid = try container.decodeIfPresent(Int.self, forKey: .pid) {
-      // pid_t is Int32; bound-check so a nonsense value can't trap us.
-      guard let bounded = pid_t(exactly: rawPid) else {
+      // Reject 0 and negatives — `kill(0, 0)` succeeds for the caller's
+      // process group and `kill(-N, 0)` for group N, both of which would
+      // pin a permanent badge in the liveness sweep on a buggy hook (e.g.
+      // `pid:$$` from a subshell that recycled).
+      guard let bounded = pid_t(exactly: rawPid), bounded > 0 else {
         throw DecodingError.dataCorruptedError(
           forKey: .pid, in: container,
-          debugDescription: "`pid` \(rawPid) does not fit in pid_t.")
+          debugDescription: "`pid` \(rawPid) is not a positive pid_t value.")
       }
       self.pid = bounded
     } else {

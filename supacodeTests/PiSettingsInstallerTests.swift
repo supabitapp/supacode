@@ -23,7 +23,7 @@ struct PiSettingsInstallerTests {
   @Test func isInstalledReturnsFalseWhenNoFileExists() throws {
     let home = try makeTempHome()
     let installer = makeInstaller(homeDirectoryURL: home)
-    #expect(!installer.isInstalled())
+    #expect(installer.installState() == .notInstalled)
   }
 
   @Test func isInstalledReturnsFalseWhenFileExistsWithoutMarker() throws {
@@ -36,7 +36,7 @@ struct PiSettingsInstallerTests {
     try "// some other extension".write(to: indexURL, atomically: true, encoding: .utf8)
 
     let installer = makeInstaller(homeDirectoryURL: home)
-    #expect(!installer.isInstalled())
+    #expect(installer.installState() == .notInstalled)
   }
 
   @Test func isInstalledReturnsFalseForPartialMarker() throws {
@@ -50,7 +50,7 @@ struct PiSettingsInstallerTests {
     try "/* supacode-managed".write(to: indexURL, atomically: true, encoding: .utf8)
 
     let installer = makeInstaller(homeDirectoryURL: home)
-    #expect(!installer.isInstalled())
+    #expect(installer.installState() == .notInstalled)
   }
 
   @Test func isInstalledReturnsFalseWhenFileIsUnreadableAsUTF8() throws {
@@ -65,14 +65,14 @@ struct PiSettingsInstallerTests {
     try Data([0xFF, 0xFE, 0xFD, 0x00]).write(to: indexURL)
 
     let installer = makeInstaller(homeDirectoryURL: home)
-    #expect(!installer.isInstalled())
+    #expect(installer.installState() == .notInstalled)
   }
 
   @Test func isInstalledReturnsTrueWhenMarkerPresent() throws {
     let home = try makeTempHome()
     let installer = makeInstaller(homeDirectoryURL: home)
     try installer.install()
-    #expect(installer.isInstalled())
+    #expect(installer.installState() == .installed)
   }
 
   @Test func installCreatesExtensionFile() throws {
@@ -94,10 +94,10 @@ struct PiSettingsInstallerTests {
     let home = try makeTempHome()
     let installer = makeInstaller(homeDirectoryURL: home)
     try installer.install()
-    #expect(installer.isInstalled())
+    #expect(installer.installState() == .installed)
 
     try installer.uninstall()
-    #expect(!installer.isInstalled())
+    #expect(installer.installState() == .notInstalled)
 
     let dirURL = PiSettingsInstaller.extensionDirectoryURL(homeDirectoryURL: home)
     #expect(!FileManager.default.fileExists(atPath: dirURL.path(percentEncoded: false)))
@@ -191,6 +191,6 @@ struct PiSettingsInstallerTests {
     // managed paths would otherwise slip past `isInstalled()`.
     let dirURL = PiSettingsInstaller.extensionDirectoryURL(homeDirectoryURL: home)
     #expect(FileManager.default.fileExists(atPath: dirURL.path(percentEncoded: false)))
-    #expect(installer.isInstalled())
+    #expect(installer.installState() == .installed)
   }
 }

@@ -9,66 +9,76 @@ import Foundation
 /// `@unchecked Sendable` because the closure components may capture per-agent
 /// installer values that hold a `FileManager` (not formally Sendable); those
 /// captures are stateless value types in practice.
-public nonisolated struct AgentIntegration: @unchecked Sendable {
-  public let agent: SkillAgent
+nonisolated struct AgentIntegration: @unchecked Sendable {
+  let agent: SkillAgent
 
   /// Components in install order. `install()` runs front-to-back and
   /// `uninstall()` reverses the order so any inter-component setup (e.g.
   /// Codex's `enable hooks` flag) unwinds last.
-  public let components: [Component]
+  let components: [Component]
 
-  public init(agent: SkillAgent, components: [Component]) {
+  init(agent: SkillAgent, components: [Component]) {
     self.agent = agent
     self.components = components
   }
 
-  public struct Component {
-    public let kind: Kind
-    public let isInstalled: () -> Bool
-    public let install: () async throws -> Void
-    public let uninstall: () throws -> Void
+  struct Component {
+    let kind: Kind
+    let state: () -> ComponentInstallState
+    let install: () async throws -> Void
+    let uninstall: () throws -> Void
 
-    public init(
+    init(
       kind: Kind,
-      isInstalled: @escaping () -> Bool,
+      state: @escaping () -> ComponentInstallState,
       install: @escaping () async throws -> Void,
       uninstall: @escaping () throws -> Void
     ) {
       self.kind = kind
-      self.isInstalled = isInstalled
+      self.state = state
       self.install = install
       self.uninstall = uninstall
     }
 
-    public enum Kind: String, Sendable, Equatable, CaseIterable {
-      case progressHooks
-      case notificationHooks
-      /// Single combined hook block (Pi).
+    enum Kind: String, Sendable, Equatable, CaseIterable {
+      /// All hooks (progress + notification) installed in one shot.
       case unifiedHooks
       case cliSkill
     }
   }
 }
 
-/// Aggregate install state for a `AgentIntegration`.
+/// State of a single integration component on disk. Hook components can be
+/// `.outdated` (some expected commands present but not all) — the user has
+/// an older Supacode version's hooks installed and needs to upgrade. Skill
+/// components only ever report `.notInstalled` or `.installed`.
+public nonisolated enum ComponentInstallState: Equatable, Sendable {
+  case notInstalled
+  case installed
+  case outdated
+}
+
+/// Aggregate install state for an `AgentIntegration`. `.outdated` covers both
+/// "some components missing" and "some components stale" — both demand the
+/// same user action (run install again to upgrade).
 public nonisolated enum AgentIntegrationState: Equatable, Sendable {
   case notInstalled
-  case partiallyInstalled(missing: [AgentIntegration.Component.Kind])
   case installed
+  case outdated
 }
 
 nonisolated extension AgentIntegration {
-  public func state() -> AgentIntegrationState {
-    let missing = components.filter { !$0.isInstalled() }.map(\.kind)
-    if missing.isEmpty { return .installed }
-    if missing.count == components.count { return .notInstalled }
-    return .partiallyInstalled(missing: missing)
+  func state() -> AgentIntegrationState {
+    let states = components.map { $0.state() }
+    if states.allSatisfy({ $0 == .installed }) { return .installed }
+    if states.allSatisfy({ $0 == .notInstalled }) { return .notInstalled }
+    return .outdated
   }
 
   /// Installs every component in order. On partial failure the components
   /// that succeeded are rolled back so the user is never left in a state
   /// where some hooks are present and others aren't.
-  public func install() async throws {
+  func install() async throws {
     var rollback: [Component] = []
     do {
       for component in components {
@@ -87,7 +97,7 @@ nonisolated extension AgentIntegration {
   /// components don't stop the sweep — they're collected and the first one
   /// is rethrown after the sweep completes, so a stuck artifact never blocks
   /// removing the rest.
-  public func uninstall() throws {
+  func uninstall() throws {
     var firstError: Error?
     for component in components.reversed() {
       do {

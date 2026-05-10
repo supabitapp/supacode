@@ -136,7 +136,7 @@ struct KiroSettingsInstallerTests {
   @Test func isInstalledProgressReturnsFalseBeforeInstall() {
     let homeURL = makeTempHomeURL()
     let installer = makeInstaller(homeURL: homeURL)
-    #expect(installer.isInstalled(progress: true) == false)
+    #expect(installer.installState(progress: true) == .notInstalled)
   }
 
   @Test func isInstalledProgressReturnsTrueAfterInstall() async throws {
@@ -145,7 +145,7 @@ struct KiroSettingsInstallerTests {
 
     let installer = makeInstaller(homeURL: homeURL)
     try await installer.installProgressHooks()
-    #expect(installer.isInstalled(progress: true) == true)
+    #expect(installer.installState(progress: true) == .installed)
   }
 
   @Test func isInstalledNotificationsReturnsTrueAfterInstall() async throws {
@@ -154,7 +154,7 @@ struct KiroSettingsInstallerTests {
 
     let installer = makeInstaller(homeURL: homeURL)
     try await installer.installNotificationHooks()
-    #expect(installer.isInstalled(progress: false) == true)
+    #expect(installer.installState(progress: false) == .installed)
   }
 
   @Test func isInstalledProgressReturnsFalseAfterUninstall() async throws {
@@ -164,7 +164,7 @@ struct KiroSettingsInstallerTests {
     let installer = makeInstaller(homeURL: homeURL)
     try await installer.installProgressHooks()
     try installer.uninstallProgressHooks()
-    #expect(installer.isInstalled(progress: true) == false)
+    #expect(installer.installState(progress: true) == .notInstalled)
   }
 
   @Test func settingsURLPointsToExpectedPath() {

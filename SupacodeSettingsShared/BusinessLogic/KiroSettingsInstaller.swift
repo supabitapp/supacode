@@ -47,7 +47,36 @@ nonisolated struct KiroSettingsInstaller {
     self.runKiroVersionCommand = runKiroVersionCommand
   }
 
-  func isInstalled(progress: Bool) -> Bool {
+  /// Combined progress + notification install state — see
+  /// `ClaudeSettingsInstaller.installState()` for rationale.
+  func installState() -> ComponentInstallState {
+    let entries: [String: [JSONValue]]
+    do {
+      entries = try KiroHookSettings.allHookEntriesByEvent()
+    } catch {
+      Self.reportInvalidHookConfiguration(error, progress: true)
+      return .notInstalled
+    }
+    return fileInstaller.installState(settingsURL: settingsURL, hookEntriesByEvent: entries)
+  }
+
+  func installAllHooks() async throws {
+    try await validateSupportedKiroVersion()
+    try await ensureDefaultAgentConfig()
+    try fileInstaller.install(
+      settingsURL: settingsURL,
+      hookEntriesByEvent: try KiroHookSettings.allHookEntriesByEvent()
+    )
+  }
+
+  func uninstallAllHooks() throws {
+    try fileInstaller.uninstall(
+      settingsURL: settingsURL,
+      hookEntriesByEvent: try KiroHookSettings.allHookEntriesByEvent()
+    )
+  }
+
+  func installState(progress: Bool) -> ComponentInstallState {
     let entries: [String: [JSONValue]]
     do {
       entries =
@@ -56,9 +85,9 @@ nonisolated struct KiroSettingsInstaller {
         : KiroHookSettings.notificationHookEntriesByEvent()
     } catch {
       Self.reportInvalidHookConfiguration(error, progress: progress)
-      return false
+      return .notInstalled
     }
-    return fileInstaller.containsMatchingHooks(
+    return fileInstaller.installState(
       settingsURL: settingsURL,
       hookEntriesByEvent: entries
     )

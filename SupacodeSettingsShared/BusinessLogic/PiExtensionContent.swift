@@ -24,10 +24,12 @@ nonisolated enum PiExtensionContent {
      *   SUPACODE_SURFACE_ID   — terminal surface UUID
      *
      * Hook event mapping:
+     *   extension load      → session_start  (agent presence badge)
      *   Pi agent_start      → busy = 1       (UserPromptSubmit equivalent)
      *   Pi agent_end        → busy = 0       (Stop equivalent)
      *                       → notification with last_assistant_message
-     *   Pi session_shutdown → busy = 0       (SessionEnd equivalent)
+     *   Pi session_shutdown → session_end    (SessionEnd equivalent)
+     *                       → busy = 0
      */
 
     import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -106,6 +108,18 @@ nonisolated enum PiExtensionContent {
       return sendToSocket(env.socketPath, Buffer.from(header + body, "utf8"));
     }
 
+    function sendSessionEvent(env: SupacodeEnv, eventName: string): Promise<void> {
+      const envelope = {
+        event: eventName,
+        v: 1,
+        agent: "pi",
+        surface_id: env.surfaceId,
+        pid: process.pid,
+      };
+      const body = JSON.stringify(envelope) + "\\n";
+      return sendToSocket(env.socketPath, Buffer.from(body, "utf8"));
+    }
+
     function lastAssistantText(ctx: { sessionManager: { getEntries(): any[] } }): string | undefined {
       const entries = ctx.sessionManager.getEntries();
       for (let i = entries.length - 1; i >= 0; i--) {
@@ -133,6 +147,10 @@ nonisolated enum PiExtensionContent {
       // Not running under Supacode — skip lifecycle hooks.
       if (!env) return;
 
+      // Extension load = agent process running. Pi has no equivalent of
+      // Claude's SessionStart hook, so we fire it ourselves.
+      void sendSessionEvent(env, "session_start");
+
       pi.on("agent_start", async (_event, _ctx) => {
         await sendBusy(env, true);
       });
@@ -148,6 +166,7 @@ nonisolated enum PiExtensionContent {
       });
 
       pi.on("session_shutdown", async (_event, _ctx) => {
+        await sendSessionEvent(env, "session_end");
         await sendBusy(env, false);
       });
     }

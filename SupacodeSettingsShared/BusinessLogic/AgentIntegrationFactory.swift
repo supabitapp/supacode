@@ -3,8 +3,8 @@ import Foundation
 /// Builds an `AgentIntegration` for each agent by composing the existing
 /// per-agent installers. The component list per agent is the canonical
 /// definition of "what installing the integration means" for that agent.
-public nonisolated enum AgentIntegrationFactory {
-  public static func make(
+nonisolated enum AgentIntegrationFactory {
+  static func make(
     for agent: SkillAgent,
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
     fileManager: FileManager = .default
@@ -27,16 +27,10 @@ public nonisolated enum AgentIntegrationFactory {
       agent: .claude,
       components: [
         AgentIntegration.Component(
-          kind: .progressHooks,
-          isInstalled: { installer.isInstalled(progress: true) },
-          install: { try installer.installProgressHooks() },
-          uninstall: { try installer.uninstallProgressHooks() }
-        ),
-        AgentIntegration.Component(
-          kind: .notificationHooks,
-          isInstalled: { installer.isInstalled(progress: false) },
-          install: { try installer.installNotificationHooks() },
-          uninstall: { try installer.uninstallNotificationHooks() }
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.installAllHooks() },
+          uninstall: { try installer.uninstallAllHooks() }
         ),
         skillComponent(agent: .claude, installer: skill),
       ]
@@ -51,16 +45,10 @@ public nonisolated enum AgentIntegrationFactory {
       agent: .codex,
       components: [
         AgentIntegration.Component(
-          kind: .progressHooks,
-          isInstalled: { installer.isInstalled(progress: true) },
-          install: { try await installer.installProgressHooks() },
-          uninstall: { try installer.uninstallProgressHooks() }
-        ),
-        AgentIntegration.Component(
-          kind: .notificationHooks,
-          isInstalled: { installer.isInstalled(progress: false) },
-          install: { try await installer.installNotificationHooks() },
-          uninstall: { try installer.uninstallNotificationHooks() }
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try await installer.installAllHooks() },
+          uninstall: { try installer.uninstallAllHooks() }
         ),
         skillComponent(agent: .codex, installer: skill),
       ]
@@ -75,16 +63,10 @@ public nonisolated enum AgentIntegrationFactory {
       agent: .kiro,
       components: [
         AgentIntegration.Component(
-          kind: .progressHooks,
-          isInstalled: { installer.isInstalled(progress: true) },
-          install: { try await installer.installProgressHooks() },
-          uninstall: { try installer.uninstallProgressHooks() }
-        ),
-        AgentIntegration.Component(
-          kind: .notificationHooks,
-          isInstalled: { installer.isInstalled(progress: false) },
-          install: { try await installer.installNotificationHooks() },
-          uninstall: { try installer.uninstallNotificationHooks() }
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try await installer.installAllHooks() },
+          uninstall: { try installer.uninstallAllHooks() }
         ),
         skillComponent(agent: .kiro, installer: skill),
       ]
@@ -100,7 +82,7 @@ public nonisolated enum AgentIntegrationFactory {
       components: [
         AgentIntegration.Component(
           kind: .unifiedHooks,
-          isInstalled: { installer.isInstalled() },
+          state: { installer.installState() },
           install: { try installer.install() },
           uninstall: { try installer.uninstall() }
         ),
@@ -114,7 +96,7 @@ public nonisolated enum AgentIntegrationFactory {
   ) -> AgentIntegration.Component {
     AgentIntegration.Component(
       kind: .cliSkill,
-      isInstalled: { installer.isInstalled(agent) },
+      state: { installer.installState(agent) },
       install: { try installer.install(agent) },
       uninstall: { try installer.uninstall(agent) }
     )

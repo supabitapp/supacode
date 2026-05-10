@@ -100,6 +100,43 @@ struct SettingsFeatureAgentIntegrationTests {
 
     #expect(checked.value == Set(SkillAgent.allCases))
   }
+
+  @Test(.dependencies) func tappingInstallTwiceCancelsTheFirstEffect() async {
+    // Verifies `.cancellable(cancelInFlight:)`. The proof mechanism is
+    // TCA's TestStore: at end-of-test, an unfinished effect would
+    // record an "in-flight effect" issue. The first install suspends
+    // on a 5s sleep that completes ONLY by cancellation, so without
+    // the cancellable wrap the test would either hang or fail with an
+    // unfinished-effect issue. The `firstReachedFinish` flag is a
+    // belt-and-braces cross-check: `try` in the closure propagates the
+    // cancel, so the line after the sleep is unreachable on cancel.
+    var state = SettingsFeature.State()
+    state.agentIntegrationStates[.claude] = .ready(.notInstalled)
+
+    let secondInstallStarted = LockIsolated(false)
+    let firstReachedFinish = LockIsolated(false)
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[AgentIntegrationClient.self].install = { _ in
+        if secondInstallStarted.value { return }
+        try await Task.sleep(nanoseconds: 5_000_000_000)
+        firstReachedFinish.setValue(true)
+      }
+      $0[AgentIntegrationClient.self].state = { _ in .installed }
+    }
+
+    await store.send(.agentIntegrationInstallTapped(.claude)) {
+      $0.agentIntegrationStates[.claude] = .installing
+    }
+    secondInstallStarted.setValue(true)
+    await store.send(.agentIntegrationInstallTapped(.claude))
+    await store.receive(\.agentIntegrationCompleted) {
+      $0.agentIntegrationStates[.claude] = .ready(.installed)
+    }
+
+    #expect(!firstReachedFinish.value)
+  }
 }
 
 private enum IntegrationTestError: LocalizedError {

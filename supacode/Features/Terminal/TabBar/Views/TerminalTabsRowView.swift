@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabsRowView: View {
@@ -14,6 +15,7 @@ struct TerminalTabsRowView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
+  let runningAgents: (TerminalTabID) -> [SkillAgent]
   let scrollReader: ScrollViewProxy
 
   @State private var dropTargetIndex: Int?
@@ -31,6 +33,7 @@ struct TerminalTabsRowView: View {
               tabIndex: index,
               fixedWidth: fixedTabWidth,
               hasNotification: hasNotification(id),
+              runningAgents: runningAgents(id),
               onSelect: {
                 manager.selectTab(id)
               },

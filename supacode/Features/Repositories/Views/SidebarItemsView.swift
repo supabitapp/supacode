@@ -176,6 +176,8 @@ private struct SidebarItemContainer: View {
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       showsPullRequestInfo: !draggingWorktreeIDs.contains(row.id),
       runningScriptColors: store.state.runningScriptColors(for: row.id),
+      runningAgents: AgentPresenceManager.shared.agents(
+        across: terminalManager.surfaceIDs(forWorktreeID: row.id)),
       isTaskRunning: terminalManager.stateIfExists(for: row.id)?.taskStatus == .running,
       showsNotificationIndicator: terminalManager.hasUnseenNotifications(for: row.id),
       notifications: terminalManager.stateIfExists(for: row.id)?.notifications ?? [],

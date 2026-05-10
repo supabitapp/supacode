@@ -16,8 +16,9 @@ nonisolated struct CLISkillInstaller {
 
   // MARK: - Check.
 
-  func isInstalled(_ agent: SkillAgent) -> Bool {
+  func installState(_ agent: SkillAgent) -> ComponentInstallState {
     FileManager.default.fileExists(atPath: Self.skillFile(for: agent).path(percentEncoded: false))
+      ? .installed : .notInstalled
   }
 
   // MARK: - Install.

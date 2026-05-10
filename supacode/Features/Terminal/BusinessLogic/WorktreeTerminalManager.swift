@@ -12,6 +12,8 @@ final class WorktreeTerminalManager {
   private let runtime: GhosttyRuntime
   private(set) var socketServer: AgentHookSocketServer?
   private var states: [Worktree.ID: WorktreeTerminalState] = [:]
+  @ObservationIgnored
+  @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var notificationsEnabled = true
   private var lastNotificationIndicatorCount: Int?
   private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
@@ -50,8 +52,10 @@ final class WorktreeTerminalManager {
       )
     }
     server.onNotification = { [weak self] worktreeID, _, surfaceID, notification in
+      guard let self else { return }
+      guard self.settingsFile.global.richAgentNotificationsEnabled else { return }
       let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      guard let state = self?.states[decoded] else {
+      guard let state = self.states[decoded] else {
         terminalLogger.debug("Dropped hook notification for unknown worktree \(decoded)")
         return
       }
@@ -73,11 +77,13 @@ final class WorktreeTerminalManager {
       }
       handler(resource, params, clientFD)
     }
+    // Always record; the badges toggle gates DISPLAY in
+    // `AgentPresenceManager.agents(forSurface:)` / `agents(across:)`.
+    // Gating recording too would drop session_start events fired while
+    // the toggle was off, so flipping it back on later wouldn't restore
+    // badges for already-running agents.
     server.onEvent = { event in
-      let pid = event.pid.map(String.init) ?? "-"
-      terminalLogger.debug(
-        "hook event: agent=\(event.agent) event=\(event.event) surface=\(event.surfaceID) pid=\(pid)"
-      )
+      AgentPresenceManager.shared.record(event: event)
     }
   }
 
@@ -396,6 +402,20 @@ final class WorktreeTerminalManager {
   /// Checks whether a surface UUID exists anywhere in the worktree (across all tabs).
   func surfaceExistsInWorktree(worktreeID: Worktree.ID, surfaceID: UUID) -> Bool {
     states[worktreeID]?.hasSurfaceAnywhere(surfaceID) ?? false
+  }
+
+  /// Surface IDs that live in this tab.
+  func surfaceIDs(forTabID tabID: TerminalTabID) -> [UUID] {
+    for state in states.values {
+      let ids = state.surfaceIDs(inTab: tabID)
+      if !ids.isEmpty { return ids }
+    }
+    return []
+  }
+
+  /// Surface IDs across every tab in this worktree.
+  func surfaceIDs(forWorktreeID worktreeID: Worktree.ID) -> [UUID] {
+    states[worktreeID]?.allSurfaceIDs ?? []
   }
 
   func stateIfExists(for worktreeID: Worktree.ID) -> WorktreeTerminalState? {

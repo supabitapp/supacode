@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabsView: View {
@@ -8,6 +9,7 @@ struct TerminalTabsView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
+  let runningAgents: (TerminalTabID) -> [SkillAgent]
 
   @State private var draggingTabId: TerminalTabID?
   @State private var draggingStartLocation: CGFloat?
@@ -37,6 +39,7 @@ struct TerminalTabsView: View {
             closeAll: closeAll,
             renameTab: renameTab,
             hasNotification: hasNotification,
+            runningAgents: runningAgents,
             scrollReader: scrollReader
           )
           .padding(.horizontal, TerminalTabBarMetrics.barPadding)

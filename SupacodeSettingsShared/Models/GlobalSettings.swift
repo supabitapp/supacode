@@ -56,6 +56,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
   /// Scripts shared across every repository. Always `.custom` kind.
   public var globalScripts: [ScriptDefinition]
+  public var richAgentNotificationsEnabled: Bool
+  public var agentPresenceBadgesEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -85,7 +87,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     defaultWorktreeBaseDirectoryPath: nil,
     autoDeleteArchivedWorktreesAfterDays: nil,
     shortcutOverrides: [:],
-    globalScripts: []
+    globalScripts: [],
+    richAgentNotificationsEnabled: true,
+    agentPresenceBadgesEnabled: true
   )
 
   public init(
@@ -116,7 +120,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     defaultWorktreeBaseDirectoryPath: String? = nil,
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
     shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:],
-    globalScripts: [ScriptDefinition] = []
+    globalScripts: [ScriptDefinition] = [],
+    richAgentNotificationsEnabled: Bool = true,
+    agentPresenceBadgesEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -146,6 +152,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
     self.shortcutOverrides = shortcutOverrides
     self.globalScripts = globalScripts
+    self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
+    self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -270,5 +278,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       if script.name.isEmpty { script.name = ScriptKind.custom.defaultName }
       return script
     }
+    richAgentNotificationsEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .richAgentNotificationsEnabled)
+      ?? Self.default.richAgentNotificationsEnabled
+    agentPresenceBadgesEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .agentPresenceBadgesEnabled)
+      ?? Self.default.agentPresenceBadgesEnabled
   }
 }

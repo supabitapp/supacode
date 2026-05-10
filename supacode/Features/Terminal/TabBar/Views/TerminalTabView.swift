@@ -1,4 +1,5 @@
 import AppKit
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabView: View {
@@ -8,6 +9,7 @@ struct TerminalTabView: View {
   let tabIndex: Int
   let fixedWidth: CGFloat?
   let hasNotification: Bool
+  let runningAgents: [SkillAgent]
   let onSelect: () -> Void
   let onClose: () -> Void
   let onRename: (String) -> Void
@@ -35,7 +37,8 @@ struct TerminalTabView: View {
           isHoveringTab: isHovering,
           isHoveringClose: isHoveringClose,
           shortcutHint: shortcutHint,
-          showsShortcutHint: showsShortcutHint
+          showsShortcutHint: showsShortcutHint,
+          runningAgents: runningAgents
         )
       }
       .buttonStyle(TerminalTabButtonStyle(isPressing: $isPressing))

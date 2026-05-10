@@ -352,6 +352,17 @@ final class WorktreeTerminalState {
     tabManager.tabs.contains(where: { $0.id == tabId })
   }
 
+  /// Surface IDs in a single tab (one entry per leaf of the tab's split tree).
+  /// Empty if the tab does not exist.
+  func surfaceIDs(inTab tabId: TerminalTabID) -> [UUID] {
+    trees[tabId]?.leaves().map(\.id) ?? []
+  }
+
+  /// All surface IDs across every tab in this worktree state.
+  var allSurfaceIDs: [UUID] {
+    trees.values.flatMap { $0.leaves().map(\.id) }
+  }
+
   func hasSurface(_ surfaceId: UUID, in tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
     return tree.find(id: surfaceId) != nil
@@ -715,6 +726,7 @@ final class WorktreeTerminalState {
   }
 
   func closeAllSurfaces() {
+    let closingSurfaceIDs = Array(surfaces.keys)
     for surface in surfaces.values {
       surface.closeSurface()
     }
@@ -723,6 +735,7 @@ final class WorktreeTerminalState {
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
+    AgentPresenceManager.shared.surfacesClosed(closingSurfaceIDs)
     // Agent busy state lives on GhosttySurfaceState and is cleaned up
     // when surfaces are removed.
     let pendingKinds = Set(blockingScripts.values)
@@ -1360,6 +1373,7 @@ final class WorktreeTerminalState {
   private func cleanupSurfaceState(for surfaceID: UUID) {
     recentHookBySurfaceID.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
+    AgentPresenceManager.shared.surfaceClosed(surfaceID)
   }
 
   private func removeTree(for tabId: TerminalTabID) {

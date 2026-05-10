@@ -35,6 +35,8 @@ public struct SettingsFeature {
     public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
     public var globalScripts: [ScriptDefinition]
+    public var richAgentNotificationsEnabled: Bool
+    public var agentPresenceBadgesEnabled: Bool
     public var cliInstallState = AgentHooksInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
@@ -73,6 +75,8 @@ public struct SettingsFeature {
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
       shortcutOverrides = settings.shortcutOverrides
       globalScripts = settings.globalScripts
+      richAgentNotificationsEnabled = settings.richAgentNotificationsEnabled
+      agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -108,7 +112,9 @@ public struct SettingsFeature {
         ),
         autoDeleteArchivedWorktreesAfterDays: autoDeleteArchivedWorktreesAfterDays,
         shortcutOverrides: shortcutOverrides,
-        globalScripts: globalScripts
+        globalScripts: globalScripts,
+        richAgentNotificationsEnabled: richAgentNotificationsEnabled,
+        agentPresenceBadgesEnabled: agentPresenceBadgesEnabled
       )
     }
   }
@@ -233,6 +239,8 @@ public struct SettingsFeature {
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
         state.shortcutOverrides = normalizedSettings.shortcutOverrides
         state.globalScripts = normalizedSettings.globalScripts
+        state.richAgentNotificationsEnabled = normalizedSettings.richAgentNotificationsEnabled
+        state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)
@@ -332,6 +340,10 @@ public struct SettingsFeature {
             await send(.agentIntegrationCompleted(agent, .failure(error)))
           }
         }
+        // Cancel an in-flight install for the same agent if Settings
+        // is closed/reopened mid-flight — otherwise two effects could
+        // race the same `~/.codex/hooks.json` read-modify-write.
+        .cancellable(id: AgentIntegrationCancelID(agent: agent), cancelInFlight: true)
 
       case .agentIntegrationUninstallTapped(let agent):
         state.agentIntegrationStates[agent] = .uninstalling
@@ -344,6 +356,7 @@ public struct SettingsFeature {
             await send(.agentIntegrationCompleted(agent, .failure(error)))
           }
         }
+        .cancellable(id: AgentIntegrationCancelID(agent: agent), cancelInFlight: true)
 
       case .agentIntegrationCompleted(let agent, .success(let integrationState)):
         state.agentIntegrationStates[agent] = .ready(integrationState)
@@ -545,6 +558,12 @@ public struct SettingsFeature {
     }
     state.syncGlobalDefaults(from: state.globalSettings)
   }
+}
+
+/// Cancellation key for in-flight integration install/uninstall effects so
+/// the next tap (or a fresh Settings open) supersedes the prior one.
+private nonisolated struct AgentIntegrationCancelID: Hashable, Sendable {
+  let agent: SkillAgent
 }
 
 extension SettingsFeature.State {

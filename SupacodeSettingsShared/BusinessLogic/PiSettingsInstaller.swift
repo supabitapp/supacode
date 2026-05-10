@@ -16,21 +16,26 @@ nonisolated struct PiSettingsInstaller {
 
   // MARK: - Check.
 
-  func isInstalled() -> Bool {
+  func installState() -> ComponentInstallState {
     let indexURL = extensionIndexURL
     guard fileManager.fileExists(atPath: indexURL.path(percentEncoded: false)) else {
-      return false
+      return .notInstalled
     }
     // Surface read failures (permissions, non-UTF8 contents) instead of
     // conflating them with "not installed" — the UI would otherwise offer
     // Install and fail only on the next write.
     do {
       let contents = try String(contentsOf: indexURL, encoding: .utf8)
-      return contents.contains(PiExtensionContent.ownershipMarker)
+      guard contents.contains(PiExtensionContent.ownershipMarker) else {
+        return .notInstalled
+      }
+      // Marker present but content drift = older Supacode wrote this file;
+      // surface as outdated so the user gets an Update affordance.
+      return contents == PiExtensionContent.indexTs ? .installed : .outdated
     } catch {
       piInstallerLogger.warning(
         "Pi extension at \(indexURL.path(percentEncoded: false)) is unreadable: \(error)")
-      return false
+      return .notInstalled
     }
   }
 
