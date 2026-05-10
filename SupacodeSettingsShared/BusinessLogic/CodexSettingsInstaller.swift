@@ -41,7 +41,7 @@ nonisolated struct CodexSettingsInstaller {
     do {
       groups = try CodexHookSettings.allHookGroupsByEvent()
     } catch {
-      Self.reportInvalidHookConfiguration(error, progress: nil)
+      Self.reportInvalidHookConfiguration(error)
       return .notInstalled
     }
     let hooksState = fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
@@ -71,33 +71,6 @@ nonisolated struct CodexSettingsInstaller {
     // `[features].hooks = true` stranded on disk so `installState` reports
     // `.outdated` forever with no path back to `.notInstalled`.
     disableHooksFeatureFlag()
-  }
-
-  func installState(progress: Bool) -> ComponentInstallState {
-    let groups: [String: [JSONValue]]
-    do {
-      groups =
-        try progress
-        ? CodexHookSettings.progressHookGroupsByEvent()
-        : CodexHookSettings.notificationHookGroupsByEvent()
-    } catch {
-      Self.reportInvalidHookConfiguration(error, progress: progress)
-      return .notInstalled
-    }
-    let hooksState = fileInstaller.installState(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: groups
-    )
-    // Hooks won't actually fire unless the `[features].hooks` flag is set in
-    // `~/.codex/config.toml`. The legacy `[features].codex_hooks` flag
-    // continues to work but is deprecated; treat its presence as outdated so
-    // re-running install can strip it.
-    let featuresState = featuresConfigState()
-    switch (hooksState, featuresState) {
-    case (.installed, .upToDate): return .installed
-    case (.notInstalled, .absent): return .notInstalled
-    default: return .outdated
-    }
   }
 
   private enum FeaturesConfigState {
@@ -311,10 +284,9 @@ nonisolated struct CodexSettingsInstaller {
     return path
   }
 
-  private static func reportInvalidHookConfiguration(_ error: Error, progress: Bool?) {
+  private static func reportInvalidHookConfiguration(_ error: Error) {
     #if DEBUG
-      let label = progress.map { $0 ? "progress" : "notification" } ?? "combined"
-      assertionFailure("Codex \(label) hook configuration is invalid: \(error)")
+      assertionFailure("Codex hook configuration is invalid: \(error)")
     #endif
   }
 

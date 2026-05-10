@@ -3,11 +3,11 @@ import Foundation
 nonisolated enum ClaudeHookSettings {
   fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
   fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
-  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: "claude")
+  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .claude)
   fileprivate static let sessionStart = AgentHookSettingsCommand.sessionEventCommand(
-    event: "session_start", agent: "claude")
+    event: .sessionStart, agent: .claude)
   fileprivate static let sessionEnd = AgentHookSettingsCommand.sessionEventCommand(
-    event: "session_end", agent: "claude")
+    event: .sessionEnd, agent: .claude)
 
   static func progressHookGroupsByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(

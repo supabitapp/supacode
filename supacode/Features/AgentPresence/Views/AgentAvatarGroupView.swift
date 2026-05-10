@@ -3,7 +3,9 @@ import SwiftUI
 
 /// Avatar-group rendering of running agents. Shows up to `maxVisible` circular
 /// badges with a slight overlap; any remaining agents collapse into a plain
-/// `+N` label trailing the group.
+/// `+N` label trailing the group. Pass `maxVisible: .max` to render every
+/// agent without an overflow chip (used by the sidebar setup card, which has
+/// the horizontal room for the full lineup).
 struct AgentAvatarGroupView: View {
   /// Producer-sorted; duplicates kept (e.g. two Claude surfaces in the same
   /// tab show two Claude badges).
@@ -28,7 +30,8 @@ struct AgentAvatarGroupView: View {
         HStack(spacing: -size * 0.35) {
           ForEach(Array(visible.enumerated()), id: \.offset) { index, agent in
             AgentBadgeView(agent: agent, size: size)
-              .zIndex(Double(maxVisible - index))
+              // Leftmost badge on top — stable regardless of `maxVisible`.
+              .zIndex(Double(visible.count - index))
           }
         }
         if overflow > 0 {

@@ -11,43 +11,38 @@ struct AgentPresenceManagerTests {
     let manager = AgentPresenceManager()
     let surfaceID = UUID()
 
-    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
 
     #expect(manager.agents(forSurface: surfaceID) == Set([.claude]))
+  }
+
+  @Test func sessionStartWithoutPidIsIgnored() {
+    // Every bridge today (Claude/Codex/Kiro hooks, Pi extension) sends a
+    // pid in the envelope. A pid-less event is treated as malformed —
+    // accepting it would create a record the liveness sweep can't reap.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID))
+
+    #expect(manager.agents(forSurface: surfaceID).isEmpty)
   }
 
   @Test func sessionEndRemovesAgentForSurface() {
     let manager = AgentPresenceManager()
     let surfaceID = UUID()
+    let pid = getpid()
 
-    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID))
-    manager.record(event: makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID))
-
-    #expect(manager.agents(forSurface: surfaceID).isEmpty)
-  }
-
-  @Test func multipleSessionStartsRequireMatchingSessionEndsToClear() {
-    let manager = AgentPresenceManager()
-    let surfaceID = UUID()
-
-    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID))
-    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID))
-    manager.record(event: makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID))
-
-    // One session ended, one still active — badge stays.
-    #expect(manager.agents(forSurface: surfaceID) == Set([.claude]))
-
-    manager.record(event: makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
+    manager.record(event: makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid))
 
     #expect(manager.agents(forSurface: surfaceID).isEmpty)
   }
 
-  @Test func sessionEndClearsRecordWhenLastTrackedPidExitsEvenIfCountStillPositive() {
+  @Test func sessionStartIsIdempotentForSameProcessPid() {
     // Reproduces the Claude `/resume` flow: SessionStart fires on startup
-    // AND on resume (one process, two events, same pid), but SessionEnd
-    // fires once at exit. With count-only bookkeeping, count would settle
-    // at 1 with an empty pid set — and the liveness sweep ignores records
-    // with empty pids, so the badge would stick until the surface closes.
+    // AND on resume (one process, two events, same pid). One SessionEnd
+    // clears the record — there's only one process to liveness-track.
     let manager = AgentPresenceManager()
     let surfaceID = UUID()
     let agentPid: pid_t = getpid()
@@ -63,7 +58,7 @@ struct AgentPresenceManagerTests {
     let manager = AgentPresenceManager()
     let surfaceID = UUID()
 
-    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
     #expect(manager.agents(forSurface: surfaceID) == Set([.claude]))
 
     manager.surfaceClosed(surfaceID)
@@ -125,11 +120,12 @@ struct AgentPresenceManagerTests {
     let surfaceA = UUID()
     let surfaceB = UUID()
     let surfaceC = UUID()
+    let pid = getpid()
 
     // Two surfaces both running Claude — the tab badge should show both.
-    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceA))
-    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceB))
-    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceB))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceA, pid: pid))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceB, pid: pid))
+    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceB, pid: pid))
     // surfaceC has no agent.
 
     let combined = manager.agents(across: [surfaceA, surfaceB, surfaceC])

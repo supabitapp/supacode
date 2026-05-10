@@ -159,6 +159,10 @@ struct AppFeature {
           analyticsClient.capture("app_activated", nil)
           return .merge(
             .send(.repositories(.refreshWorktrees)),
+            // Re-probe agent integrations on activation so the sidebar
+            // card reflects external installs (e.g. `claude install`)
+            // for users who keep the app open across days.
+            .send(.settings(.refreshAgentIntegrationStates)),
             .run { send in
               while !Task.isCancelled {
                 try? await ContinuousClock().sleep(for: .seconds(30))

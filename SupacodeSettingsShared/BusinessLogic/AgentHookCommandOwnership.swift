@@ -21,16 +21,8 @@ nonisolated enum AgentHookCommandOwnership {
     {
       return true
     }
-    // Pre-sentinel socket-era commands always carry the env-var guard
-    // AND one of two payload shapes: the canonical pipe to
-    // `/usr/bin/nc -U` (current) or the now-removed
-    // `supacode integration event` CLI shim (transitional). The
-    // conjunction is much harder to false-positive than the env-var
-    // name alone — both legacy payload shapes need to be enumerated
-    // here so a fresh install over a prior version actually prunes
-    // them instead of stacking duplicate hooks.
+    // Match the legacy CLI shim so a fresh install prunes it instead of stacking duplicates.
     return command.contains(AgentHookSettingsCommand.socketPathEnvVar)
-      && (command.contains(#"/usr/bin/nc -U"#)
-        || command.contains(#"supacode integration event"#))
+      && command.contains(#"supacode integration event"#)
   }
 }

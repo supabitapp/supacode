@@ -3,9 +3,9 @@ import Foundation
 nonisolated enum CodexHookSettings {
   fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
   fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
-  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: "codex")
+  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .codex)
   fileprivate static let sessionStart = AgentHookSettingsCommand.sessionEventCommand(
-    event: "session_start", agent: "codex")
+    event: .sessionStart, agent: .codex)
 
   static func progressHookGroupsByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(

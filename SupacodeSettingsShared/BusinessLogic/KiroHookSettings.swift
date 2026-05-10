@@ -3,9 +3,9 @@ import Foundation
 nonisolated enum KiroHookSettings {
   fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
   fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
-  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: "kiro")
+  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .kiro)
   fileprivate static let sessionStart = AgentHookSettingsCommand.sessionEventCommand(
-    event: "session_start", agent: "kiro")
+    event: .sessionStart, agent: .kiro)
   fileprivate static let defaultTimeoutMs = 10_000
 
   static func progressHookEntriesByEvent() throws -> [String: [JSONValue]] {

@@ -102,14 +102,8 @@ struct SettingsFeatureAgentIntegrationTests {
   }
 
   @Test(.dependencies) func tappingInstallTwiceCancelsTheFirstEffect() async {
-    // Verifies `.cancellable(cancelInFlight:)`. The proof mechanism is
-    // TCA's TestStore: at end-of-test, an unfinished effect would
-    // record an "in-flight effect" issue. The first install suspends
-    // on a 5s sleep that completes ONLY by cancellation, so without
-    // the cancellable wrap the test would either hang or fail with an
-    // unfinished-effect issue. The `firstReachedFinish` flag is a
-    // belt-and-braces cross-check: `try` in the closure propagates the
-    // cancel, so the line after the sleep is unreachable on cancel.
+    // Suspend until cancelled — proves `.cancellable(cancelInFlight:)`
+    // without a wall-clock wait that would slow CI by 5s on success.
     var state = SettingsFeature.State()
     state.agentIntegrationStates[.claude] = .ready(.notInstalled)
 
@@ -120,7 +114,23 @@ struct SettingsFeatureAgentIntegrationTests {
     } withDependencies: {
       $0[AgentIntegrationClient.self].install = { _ in
         if secondInstallStarted.value { return }
-        try await Task.sleep(nanoseconds: 5_000_000_000)
+        let stored = LockIsolated<CheckedContinuation<Void, Error>?>(nil)
+        try await withTaskCancellationHandler {
+          try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            stored.withValue { slot in
+              if Task.isCancelled {
+                c.resume(throwing: CancellationError())
+              } else {
+                slot = c
+              }
+            }
+          }
+        } onCancel: {
+          stored.withValue { slot in
+            slot?.resume(throwing: CancellationError())
+            slot = nil
+          }
+        }
         firstReachedFinish.setValue(true)
       }
       $0[AgentIntegrationClient.self].state = { _ in .installed }

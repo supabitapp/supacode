@@ -136,6 +136,7 @@ public struct SettingsFeature {
     case cliInstallTapped
     case cliUninstallTapped
     case cliInstallCompleted(Result<Bool, Error>)
+    case refreshAgentIntegrationStates
     case agentIntegrationChecked(SkillAgent, AgentIntegrationState)
     case agentIntegrationInstallTapped(SkillAgent)
     case agentIntegrationUninstallTapped(SkillAgent)
@@ -182,18 +183,21 @@ public struct SettingsFeature {
               let installed = await cliInstallerClient.checkInstalled()
               await send(.cliInstallChecked(installed: installed))
             },
-            .run { [agentIntegrationClient] send in
-              await withTaskGroup(of: (SkillAgent, AgentIntegrationState).self) { group in
-                for agent in SkillAgent.allCases {
-                  group.addTask { (agent, await agentIntegrationClient.state(agent)) }
-                }
-                for await (agent, integrationState) in group {
-                  await send(.agentIntegrationChecked(agent, integrationState))
-                }
-              }
-            }
+            .send(.refreshAgentIntegrationStates)
           )
         )
+
+      case .refreshAgentIntegrationStates:
+        return .run { [agentIntegrationClient] send in
+          await withTaskGroup(of: (SkillAgent, AgentIntegrationState).self) { group in
+            for agent in SkillAgent.allCases {
+              group.addTask { (agent, await agentIntegrationClient.state(agent)) }
+            }
+            for await (agent, integrationState) in group {
+              await send(.agentIntegrationChecked(agent, integrationState))
+            }
+          }
+        }
 
       case .settingsLoaded(let settings):
         let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)

@@ -1,3 +1,12 @@
+/// Session-lifecycle event names emitted by `sessionEventCommand`. Mirrors
+/// the wire-side `AgentHookEvent.EventName.sessionStart/sessionEnd` cases —
+/// duplicated here because that type lives in the main app target and this
+/// command builder needs to compile in `SupacodeSettingsShared`.
+nonisolated enum SessionEvent: String {
+  case sessionStart = "session_start"
+  case sessionEnd = "session_end"
+}
+
 nonisolated enum AgentHookSettingsCommand {
   /// Sentinel comment appended to every Supacode-installed hook command.
   /// `AgentHookCommandOwnership` uses this — and ONLY this — to identify
@@ -7,8 +16,9 @@ nonisolated enum AgentHookSettingsCommand {
   /// hooks that legitimately reference it.
   static let ownershipMarker = "# supacode-managed-hook"
 
-  /// Marker present in older Supacode hook commands. Kept as a fallback
-  /// so a fresh install over an existing one still recognises them.
+  /// Documented public env var. Used as ONE half of the legacy CLI-shim
+  /// fingerprint (paired with `supacode integration event`); never matched
+  /// alone — user-authored hooks reference it legitimately.
   static let socketPathEnvVar = "SUPACODE_SOCKET_PATH"
 
   /// Markers present in legacy Supacode hook commands (pre-socket).
@@ -24,12 +34,7 @@ nonisolated enum AgentHookSettingsCommand {
   private static let ids =
     "$SUPACODE_WORKTREE_ID $SUPACODE_TAB_ID $SUPACODE_SURFACE_ID"
 
-  /// Wraps a shell pipeline with the env-var guard, IO swallowing, and
-  /// the ownership sentinel. Both stdout AND stderr go to `/dev/null`:
-  /// Codex parses SessionStart hook stdout as structured JSON and would
-  /// fail the run on the `{"ok":true}` ack the socket server writes back
-  /// through `nc`. The sentinel is a trailing shell comment, so it does
-  /// not affect execution.
+  /// Both stdout AND stderr must be redirected — Codex parses hook stdout as structured JSON and would reject the socket ack.
   private static func managed(_ pipeline: String) -> String {
     "\(envCheck) && \(pipeline) >/dev/null 2>&1 || true \(ownershipMarker)"
   }
@@ -45,9 +50,9 @@ nonisolated enum AgentHookSettingsCommand {
 
   /// Forwards the raw hook event JSON (from stdin) to the socket.
   /// Header: `worktreeID tabID surfaceID agent`.
-  static func notificationCommand(agent: String) -> String {
+  static func notificationCommand(agent: SkillAgent) -> String {
     let send =
-      #"{ printf '%s \#(agent)\n' "\#(ids)"; cat; }"#
+      #"{ printf '%s \#(agent.rawValue)\n' "\#(ids)"; cat; }"#
       + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
     return managed(send)
   }
@@ -57,9 +62,9 @@ nonisolated enum AgentHookSettingsCommand {
   /// because hook subshells (especially Codex's) often don't inherit a PATH
   /// containing it, and `2>/dev/null || true` would swallow the failure.
   /// `$PPID` is the agent process — the hook script is a direct child.
-  static func sessionEventCommand(event: String, agent: String) -> String {
+  static func sessionEventCommand(event: SessionEvent, agent: SkillAgent) -> String {
     let envelope =
-      #"{\"event\":\"\#(event)\",\"v\":1,\"agent\":\"\#(agent)\",\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID}"#
+      #"{\"event\":\"\#(event.rawValue)\",\"v\":1,\"agent\":\"\#(agent.rawValue)\",\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID}"#
     let send =
       #"printf '%s' "\#(envelope)""#
       + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#

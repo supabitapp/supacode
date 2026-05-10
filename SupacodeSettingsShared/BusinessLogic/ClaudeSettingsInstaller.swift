@@ -12,23 +12,6 @@ nonisolated struct ClaudeSettingsInstaller {
     self.fileManager = fileManager
   }
 
-  func installState(progress: Bool) -> ComponentInstallState {
-    let groups: [String: [JSONValue]]
-    do {
-      groups =
-        try progress
-        ? ClaudeHookSettings.progressHookGroupsByEvent()
-        : ClaudeHookSettings.notificationHookGroupsByEvent()
-    } catch {
-      Self.reportInvalidHookConfiguration(error, progress: progress)
-      return .notInstalled
-    }
-    return fileInstaller.installState(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: groups
-    )
-  }
-
   /// Combined progress + notification install state. Used by the unified
   /// integration so the file installer's prune step covers every event the
   /// integration writes — eliminating stale duplicates left by older
@@ -100,12 +83,6 @@ nonisolated struct ClaudeSettingsInstaller {
     homeDirectoryURL
       .appendingPathComponent(".claude", isDirectory: true)
       .appendingPathComponent("settings.json", isDirectory: false)
-  }
-
-  private static func reportInvalidHookConfiguration(_ error: Error, progress: Bool) {
-    #if DEBUG
-      assertionFailure("Claude \(progress ? "progress" : "notification") hook configuration is invalid: \(error)")
-    #endif
   }
 
   private var fileInstaller: AgentHookSettingsFileInstaller {

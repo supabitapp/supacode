@@ -25,9 +25,9 @@ final class AgentPresenceManager {
   /// callers sort for display so avatar ordering stays stable across renders.
   private(set) var bySurface: [UUID: Set<SkillAgent>] = [:]
 
-  /// Per-(surface, agent) record. `count` increments on each session_start
-  /// (so /resume etc. balance out before the badge clears); `pids` is the
-  /// set of agent pids the bridge has reported, used by the liveness sweep.
+  /// Per-(surface, agent) record. Pids drive both the liveness sweep
+  /// and record disposal — every bridge today (Claude/Codex/Kiro hooks,
+  /// Pi extension) sends a pid in the envelope.
   private var records: [PresenceKey: PresenceRecord] = [:]
   private var sweepTask: Task<Void, Never>?
 
@@ -42,7 +42,6 @@ final class AgentPresenceManager {
   }
 
   private struct PresenceRecord: Equatable {
-    var count: Int
     var pids: Set<pid_t>
   }
 
@@ -93,21 +92,15 @@ final class AgentPresenceManager {
     let key = PresenceKey(surfaceID: event.surfaceID, agent: agent)
     switch event.eventName {
     case .sessionStart:
-      var record = records[key] ?? PresenceRecord(count: 0, pids: [])
-      record.count += 1
-      if let pid = event.pid { record.pids.insert(pid) }
+      guard let pid = event.pid else { return }
+      var record = records[key] ?? PresenceRecord(pids: [])
+      record.pids.insert(pid)
       records[key] = record
       ensureLivenessSweepRunning()
     case .sessionEnd:
-      guard var record = records[key] else { return }
-      record.count -= 1
-      if let pid = event.pid { record.pids.remove(pid) }
-      // Pid set is the source of truth — Claude fires SessionStart on
-      // /resume, /clear, /compact (one process, multiple events) but
-      // SessionEnd only at exit, so a count-only check would leak a
-      // record with `count > 0, pids = []` that the liveness sweep
-      // (which filters `!pids.isEmpty`) never collects.
-      if record.count <= 0 || (event.pid != nil && record.pids.isEmpty) {
+      guard let pid = event.pid, var record = records[key] else { return }
+      record.pids.remove(pid)
+      if record.pids.isEmpty {
         records.removeValue(forKey: key)
       } else {
         records[key] = record
@@ -150,7 +143,7 @@ final class AgentPresenceManager {
       if alive.isEmpty {
         records.removeValue(forKey: key)
       } else {
-        records[key] = PresenceRecord(count: record.count, pids: alive)
+        records[key] = PresenceRecord(pids: alive)
       }
       dirtySurfaces.insert(key.surfaceID)
     }

@@ -32,12 +32,12 @@ struct AgentHookCommandTests {
   }
 
   @Test func notificationCommandIncludesAgent() {
-    let command = AgentHookSettingsCommand.notificationCommand(agent: "claude")
+    let command = AgentHookSettingsCommand.notificationCommand(agent: .claude)
     #expect(command.contains("claude"))
   }
 
   @Test func notificationCommandIncludesAllThreeIDs() {
-    let command = AgentHookSettingsCommand.notificationCommand(agent: "codex")
+    let command = AgentHookSettingsCommand.notificationCommand(agent: .codex)
     #expect(command.contains("$SUPACODE_WORKTREE_ID"))
     #expect(command.contains("$SUPACODE_TAB_ID"))
     #expect(command.contains("$SUPACODE_SURFACE_ID"))
@@ -51,7 +51,7 @@ struct AgentHookCommandTests {
   }
 
   @Test func notificationCommandIsRecognized() {
-    let command = AgentHookSettingsCommand.notificationCommand(agent: "claude")
+    let command = AgentHookSettingsCommand.notificationCommand(agent: .claude)
     #expect(AgentHookCommandOwnership.isSupacodeManagedCommand(command))
   }
 
@@ -85,6 +85,18 @@ struct AgentHookCommandTests {
     #expect(!AgentHookCommandOwnership.isLegacyCommand(userHook))
   }
 
+  @Test func userAuthoredHookFollowingDocumentedSocketPatternIsNotOwned() {
+    // The CLI skill env table and Pi extension docs tell users to write
+    // hooks against `SUPACODE_SOCKET_PATH` via `/usr/bin/nc -U`. A
+    // user-authored hook following that exact pattern but lacking the
+    // sentinel marker must NOT be classified as legacy — otherwise
+    // install would silently strip it on the next run.
+    let userHook =
+      #"[ -n "$SUPACODE_SOCKET_PATH" ] && echo "x" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH" || true"#
+    #expect(!AgentHookCommandOwnership.isSupacodeManagedCommand(userHook))
+    #expect(!AgentHookCommandOwnership.isLegacyCommand(userHook))
+  }
+
   @Test func legacyCLIShimSessionEventCommandIsRecognized() {
     // The transitional shape (between the agent-hook CLI era and the
     // direct-nc era) shelled out to `supacode integration event`.
@@ -104,7 +116,7 @@ struct AgentHookCommandTests {
     // `nc` would fail the run. Hook commands must redirect both
     // streams to /dev/null.
     let busy = AgentHookSettingsCommand.busyCommand(active: true)
-    let session = AgentHookSettingsCommand.sessionEventCommand(event: "session_start", agent: "claude")
+    let session = AgentHookSettingsCommand.sessionEventCommand(event: .sessionStart, agent: .claude)
     #expect(busy.contains(">/dev/null 2>&1"))
     #expect(session.contains(">/dev/null 2>&1"))
   }
@@ -113,7 +125,7 @@ struct AgentHookCommandTests {
 
   @Test func socketPathEnvVarPresentInGeneratedCommands() {
     let busy = AgentHookSettingsCommand.busyCommand(active: true)
-    let notify = AgentHookSettingsCommand.notificationCommand(agent: "test")
+    let notify = AgentHookSettingsCommand.notificationCommand(agent: .claude)
     #expect(busy.contains(AgentHookSettingsCommand.socketPathEnvVar))
     #expect(notify.contains(AgentHookSettingsCommand.socketPathEnvVar))
   }
@@ -129,7 +141,7 @@ struct AgentHookCommandTests {
     let surfaceID = UUID()
     let agentPid: pid_t = getpid()
     let captured = try runHookCommandCapturingStdin(
-      AgentHookSettingsCommand.sessionEventCommand(event: "session_start", agent: "claude"),
+      AgentHookSettingsCommand.sessionEventCommand(event: .sessionStart, agent: .claude),
       env: [
         "SUPACODE_SOCKET_PATH": "/tmp/supacode-roundtrip-\(UUID().uuidString)",
         "SUPACODE_WORKTREE_ID": "/some/worktree",
