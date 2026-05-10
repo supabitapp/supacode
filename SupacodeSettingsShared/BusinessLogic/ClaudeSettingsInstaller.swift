@@ -19,7 +19,7 @@ nonisolated struct ClaudeSettingsInstaller {
   func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
-      groups = try ClaudeHookSettings.allHookGroupsByEvent()
+      groups = try ClaudeHookSettings.allHooksByEvent()
     } catch {
       Self.reportInvalidAllHookConfiguration(error)
       return .notInstalled
@@ -30,14 +30,14 @@ nonisolated struct ClaudeSettingsInstaller {
   func installAllHooks() throws {
     try fileInstaller.install(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.allHookGroupsByEvent()
+      hookGroupsByEvent: try ClaudeHookSettings.allHooksByEvent()
     )
   }
 
   func uninstallAllHooks() throws {
     try fileInstaller.uninstall(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.allHookGroupsByEvent()
+      hookGroupsByEvent: try ClaudeHookSettings.allHooksByEvent()
     )
   }
 
@@ -45,34 +45,6 @@ nonisolated struct ClaudeSettingsInstaller {
     #if DEBUG
       assertionFailure("Claude hook configuration is invalid: \(error)")
     #endif
-  }
-
-  func installProgressHooks() throws {
-    try fileInstaller.install(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.progressHookGroupsByEvent()
-    )
-  }
-
-  func installNotificationHooks() throws {
-    try fileInstaller.install(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.notificationHookGroupsByEvent()
-    )
-  }
-
-  func uninstallProgressHooks() throws {
-    try fileInstaller.uninstall(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.progressHookGroupsByEvent()
-    )
-  }
-
-  func uninstallNotificationHooks() throws {
-    try fileInstaller.uninstall(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.notificationHookGroupsByEvent()
-    )
   }
 
   private var settingsURL: URL {

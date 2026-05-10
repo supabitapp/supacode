@@ -15,7 +15,7 @@ struct TerminalTabsRowView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
-  let runningAgents: (TerminalTabID) -> [SkillAgent]
+  let runningAgents: (TerminalTabID) -> [AgentPresenceManager.AgentInstance]
   let scrollReader: ScrollViewProxy
 
   @State private var dropTargetIndex: Int?

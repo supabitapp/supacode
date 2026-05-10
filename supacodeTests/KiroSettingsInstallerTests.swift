@@ -28,12 +28,12 @@ struct KiroSettingsInstallerTests {
     )
   }
 
-  @Test func installProgressHooksCreatesDefaultConfigWhenMissing() async throws {
+  @Test func installAllHooksCreatesDefaultConfigWhenMissing() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = makeInstaller(homeURL: homeURL)
-    try await installer.installProgressHooks()
+    try await installer.installAllHooks()
 
     let settingsURL = KiroSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     let data = try Data(contentsOf: settingsURL)
@@ -50,32 +50,17 @@ struct KiroSettingsInstallerTests {
     #expect(root["hooks"]?.objectValue != nil)
   }
 
-  @Test func installNotificationHooksCreatesDefaultConfigWhenMissing() async throws {
+  @Test func installAllHooksDoesNotOverwriteExistingConfig() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = makeInstaller(homeURL: homeURL)
-    try await installer.installNotificationHooks()
-
-    let settingsURL = KiroSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
-    let data = try Data(contentsOf: settingsURL)
-    let json = try JSONDecoder().decode(JSONValue.self, from: data)
-    let root = try #require(json.objectValue)
-    #expect(root["name"] == .string("kiro_default"))
-    #expect(root["tools"] == .array([.string("*")]))
-  }
-
-  @Test func installProgressHooksDoesNotOverwriteExistingConfig() async throws {
-    let homeURL = makeTempHomeURL()
-    defer { try? fileManager.removeItem(at: homeURL) }
-
-    let installer = makeInstaller(homeURL: homeURL)
-    try await installer.installProgressHooks()
+    try await installer.installAllHooks()
 
     let settingsURL = KiroSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     let firstWrite = try Data(contentsOf: settingsURL)
 
-    try await installer.installProgressHooks()
+    try await installer.installAllHooks()
     let secondWrite = try Data(contentsOf: settingsURL)
 
     #expect(firstWrite == secondWrite)
@@ -103,7 +88,7 @@ struct KiroSettingsInstallerTests {
     try encoder.encode(JSONValue.object(userConfig)).write(to: settingsURL)
 
     let installer = makeInstaller(homeURL: homeURL)
-    try await installer.installProgressHooks()
+    try await installer.installAllHooks()
 
     let data = try Data(contentsOf: settingsURL)
     let root = try #require(
@@ -113,58 +98,39 @@ struct KiroSettingsInstallerTests {
     #expect(root["hooks"]?.objectValue != nil)
   }
 
-  @Test func uninstallProgressHooksIsNoOpWhenFileMissing() throws {
+  @Test func uninstallAllHooksIsNoOpWhenFileMissing() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = makeInstaller(homeURL: homeURL)
     #expect(throws: Never.self) {
-      try installer.uninstallProgressHooks()
+      try installer.uninstallAllHooks()
     }
   }
 
-  @Test func uninstallNotificationHooksIsNoOpWhenFileMissing() throws {
+  @Test func installStateReturnsNotInstalledBeforeInstall() {
+    let homeURL = makeTempHomeURL()
+    let installer = makeInstaller(homeURL: homeURL)
+    #expect(installer.installState() == .notInstalled)
+  }
+
+  @Test func installStateReturnsInstalledAfterInstall() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = makeInstaller(homeURL: homeURL)
-    #expect(throws: Never.self) {
-      try installer.uninstallNotificationHooks()
-    }
+    try await installer.installAllHooks()
+    #expect(installer.installState() == .installed)
   }
 
-  @Test func isInstalledProgressReturnsFalseBeforeInstall() {
-    let homeURL = makeTempHomeURL()
-    let installer = makeInstaller(homeURL: homeURL)
-    #expect(installer.installState(progress: true) == .notInstalled)
-  }
-
-  @Test func isInstalledProgressReturnsTrueAfterInstall() async throws {
+  @Test func installStateReturnsNotInstalledAfterUninstall() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = makeInstaller(homeURL: homeURL)
-    try await installer.installProgressHooks()
-    #expect(installer.installState(progress: true) == .installed)
-  }
-
-  @Test func isInstalledNotificationsReturnsTrueAfterInstall() async throws {
-    let homeURL = makeTempHomeURL()
-    defer { try? fileManager.removeItem(at: homeURL) }
-
-    let installer = makeInstaller(homeURL: homeURL)
-    try await installer.installNotificationHooks()
-    #expect(installer.installState(progress: false) == .installed)
-  }
-
-  @Test func isInstalledProgressReturnsFalseAfterUninstall() async throws {
-    let homeURL = makeTempHomeURL()
-    defer { try? fileManager.removeItem(at: homeURL) }
-
-    let installer = makeInstaller(homeURL: homeURL)
-    try await installer.installProgressHooks()
-    try installer.uninstallProgressHooks()
-    #expect(installer.installState(progress: true) == .notInstalled)
+    try await installer.installAllHooks()
+    try installer.uninstallAllHooks()
+    #expect(installer.installState() == .notInstalled)
   }
 
   @Test func settingsURLPointsToExpectedPath() {
@@ -181,7 +147,7 @@ struct KiroSettingsInstallerTests {
 
     let installer = makeInstaller(homeURL: homeURL, versionStatus: 127)
     await #expect(throws: KiroSettingsInstallerError.kiroUnavailable) {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
     }
     let settingsURL = KiroSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     #expect(fileManager.fileExists(atPath: settingsURL.path) == false)
@@ -194,7 +160,7 @@ struct KiroSettingsInstallerTests {
 
     let installer = makeInstaller(homeURL: homeURL, versionError: Boom())
     await #expect(throws: KiroSettingsInstallerError.kiroUnavailable) {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
     }
   }
 
@@ -204,7 +170,7 @@ struct KiroSettingsInstallerTests {
 
     let installer = makeInstaller(homeURL: homeURL, versionOutput: "kiro 2.0.0")
     await #expect(throws: KiroSettingsInstallerError.unsupportedKiroVersion("2.0.0")) {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
     }
   }
 
@@ -216,7 +182,7 @@ struct KiroSettingsInstallerTests {
     await #expect(
       throws: KiroSettingsInstallerError.unsupportedKiroVersion("nothing to see here")
     ) {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
     }
   }
 
@@ -232,7 +198,7 @@ struct KiroSettingsInstallerTests {
     await #expect(
       throws: KiroSettingsInstallerError.unsupportedKiroVersion("exit status 1")
     ) {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
     }
   }
 
@@ -244,7 +210,7 @@ struct KiroSettingsInstallerTests {
     await #expect(
       throws: KiroSettingsInstallerError.unsupportedKiroVersion("10.0.0")
     ) {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
     }
   }
 
@@ -265,7 +231,7 @@ struct KiroSettingsInstallerTests {
         )
       },
     )
-    try await installer.installProgressHooks()
+    try await installer.installAllHooks()
     let settingsURL = KiroSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     #expect(fileManager.fileExists(atPath: settingsURL.path))
   }
@@ -285,7 +251,7 @@ struct KiroSettingsInstallerTests {
 
     // Version command would fail if invoked — test that install still succeeds.
     let installer = makeInstaller(homeURL: homeURL, versionStatus: 127)
-    try await installer.installProgressHooks()
+    try await installer.installAllHooks()
     #expect(fileManager.fileExists(atPath: settingsURL.path))
   }
 

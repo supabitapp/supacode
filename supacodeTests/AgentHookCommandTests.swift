@@ -7,26 +7,26 @@ import Testing
 struct AgentHookCommandTests {
   // MARK: - Command generation.
 
-  @Test func busyActiveCommandContainsFlag1() {
-    let command = AgentHookSettingsCommand.busyCommand(active: true)
-    #expect(command.contains("$SUPACODE_SURFACE_ID 1"))
+  @Test func eventCommandEnvelopeContainsEventName() {
+    let command = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
+    #expect(command.contains(#"\"event\":\"busy\""#))
   }
 
-  @Test func busyInactiveCommandContainsFlag0() {
-    let command = AgentHookSettingsCommand.busyCommand(active: false)
-    #expect(command.contains("$SUPACODE_SURFACE_ID 0"))
+  @Test func idleEventCommandEnvelopeContainsIdle() {
+    let command = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .claude)
+    #expect(command.contains(#"\"event\":\"idle\""#))
   }
 
-  @Test func busyCommandChecksAllFourEnvVars() {
-    let command = AgentHookSettingsCommand.busyCommand(active: true)
+  @Test func eventCommandChecksAllFourEnvVars() {
+    let command = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
     #expect(command.contains("SUPACODE_SOCKET_PATH"))
     #expect(command.contains("SUPACODE_WORKTREE_ID"))
     #expect(command.contains("SUPACODE_TAB_ID"))
     #expect(command.contains("SUPACODE_SURFACE_ID"))
   }
 
-  @Test func busyCommandSuppressesErrorsAndCarriesSentinel() {
-    let command = AgentHookSettingsCommand.busyCommand(active: true)
+  @Test func eventCommandSuppressesErrorsAndCarriesSentinel() {
+    let command = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
     #expect(command.contains(">/dev/null 2>&1 || true"))
     #expect(command.hasSuffix(AgentHookSettingsCommand.ownershipMarker))
   }
@@ -46,7 +46,7 @@ struct AgentHookCommandTests {
   // MARK: - Command ownership.
 
   @Test func currentCommandIsRecognized() {
-    let command = AgentHookSettingsCommand.busyCommand(active: true)
+    let command = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
     #expect(AgentHookCommandOwnership.isSupacodeManagedCommand(command))
   }
 
@@ -72,7 +72,7 @@ struct AgentHookCommandTests {
   }
 
   @Test func currentCommandIsNotLegacy() {
-    let command = AgentHookSettingsCommand.busyCommand(active: true)
+    let command = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
     #expect(!AgentHookCommandOwnership.isLegacyCommand(command))
   }
 
@@ -115,8 +115,8 @@ struct AgentHookCommandTests {
     // so the `{"ok":true}` ack the socket server writes back through
     // `nc` would fail the run. Hook commands must redirect both
     // streams to /dev/null.
-    let busy = AgentHookSettingsCommand.busyCommand(active: true)
-    let session = AgentHookSettingsCommand.sessionEventCommand(event: .sessionStart, agent: .claude)
+    let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
+    let session = AgentHookSettingsCommand.eventCommand(event: .sessionStart, agent: .claude)
     #expect(busy.contains(">/dev/null 2>&1"))
     #expect(session.contains(">/dev/null 2>&1"))
   }
@@ -124,7 +124,7 @@ struct AgentHookCommandTests {
   // MARK: - Shared constants consistency.
 
   @Test func socketPathEnvVarPresentInGeneratedCommands() {
-    let busy = AgentHookSettingsCommand.busyCommand(active: true)
+    let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
     let notify = AgentHookSettingsCommand.notificationCommand(agent: .claude)
     #expect(busy.contains(AgentHookSettingsCommand.socketPathEnvVar))
     #expect(notify.contains(AgentHookSettingsCommand.socketPathEnvVar))
@@ -137,11 +137,11 @@ struct AgentHookCommandTests {
   /// JSON the hook produced is parseable by the same code that consumes
   /// it on the socket — a regression guard against future Swift changes
   /// that subtly break the envelope template.
-  @Test func sessionEventCommandProducesParseableJSON() async throws {
+  @Test func eventCommandProducesParseableJSON() async throws {
     let surfaceID = UUID()
     let agentPid: pid_t = getpid()
     let captured = try runHookCommandCapturingStdin(
-      AgentHookSettingsCommand.sessionEventCommand(event: .sessionStart, agent: .claude),
+      AgentHookSettingsCommand.eventCommand(event: .sessionStart, agent: .claude),
       env: [
         "SUPACODE_SOCKET_PATH": "/tmp/supacode-roundtrip-\(UUID().uuidString)",
         "SUPACODE_WORKTREE_ID": "/some/worktree",

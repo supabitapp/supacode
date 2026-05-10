@@ -101,7 +101,7 @@ struct WorktreeTerminalManagerTests {
     #expect(state.socketPath == nil)
   }
 
-  @Test func socketBusyRoutesToDecodedWorktreeState() {
+  @Test func socketActivityEventRoutesToDecodedWorktreeState() {
     let server = AgentHookSocketServer()
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
     let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
@@ -110,14 +110,15 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf(),
-      let encodedID = worktree.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
     else {
       Issue.record("Expected blocking script tab and socket server")
       return
     }
+    defer { AgentPresenceManager.shared.surfaceClosed(surface.id) }
 
-    server.onBusy?(encodedID, tabId.rawValue, surface.id, true)
+    server.onEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
+    server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
 
     #expect(manager.taskStatus(for: worktree.id) == .running)
   }
@@ -208,19 +209,32 @@ struct WorktreeTerminalManagerTests {
       Issue.record("Expected tabs and surfaces")
       return
     }
+    defer {
+      AgentPresenceManager.shared.surfaceClosed(surface1.id)
+      AgentPresenceManager.shared.surfaceClosed(surface2.id)
+    }
+
+    let presence = AgentPresenceManager.shared
+    func emit(_ event: AgentHookEvent.EventName, surfaceID: UUID, pid: pid_t? = nil) {
+      let event = makeHookEvent(event, surfaceID: surfaceID, pid: pid)
+      presence.record(event: event)
+      _ = state.surfaceActivityChanged(surfaceID: surfaceID)
+    }
 
     #expect(manager.taskStatus(for: worktree.id) == .idle)
 
-    surface2.bridge.state.agentBusy = true
+    emit(.sessionStart, surfaceID: surface2.id, pid: getpid())
+    emit(.busy, surfaceID: surface2.id)
     #expect(manager.taskStatus(for: worktree.id) == .running)
 
-    surface1.bridge.state.agentBusy = true
+    emit(.sessionStart, surfaceID: surface1.id, pid: getpid())
+    emit(.busy, surfaceID: surface1.id)
     #expect(manager.taskStatus(for: worktree.id) == .running)
 
-    surface2.bridge.state.agentBusy = false
+    emit(.idle, surfaceID: surface2.id)
     #expect(manager.taskStatus(for: worktree.id) == .running)
 
-    surface1.bridge.state.agentBusy = false
+    emit(.idle, surfaceID: surface1.id)
     #expect(manager.taskStatus(for: worktree.id) == .idle)
   }
 
@@ -944,6 +958,26 @@ struct WorktreeTerminalManagerTests {
 
     #expect(state.notifications.first(where: { $0.id == first.id })?.isRead == true)
     #expect(state.notifications.first(where: { $0.id == second.id })?.isRead == false)
+  }
+
+  private func makeHookEvent(
+    _ name: AgentHookEvent.EventName,
+    agent: SkillAgent = .claude,
+    surfaceID: UUID,
+    pid: pid_t? = nil
+  ) -> AgentHookEvent {
+    let pidLine = pid.map { ",\n        \"pid\": \($0)" } ?? ""
+    let json = """
+      {
+        "event": "\(name.rawValue)",
+        "agent": "\(agent.rawValue)",
+        "surface_id": "\(surfaceID.uuidString)"\(pidLine)
+      }
+      """
+    guard case .event(let event) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
+      preconditionFailure("Failed to parse test event")
+    }
+    return event
   }
 
   private func makeWorktree(id: String = "/tmp/repo/wt-1") -> Worktree {

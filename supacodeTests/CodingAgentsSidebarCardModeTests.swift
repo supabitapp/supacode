@@ -38,7 +38,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .none)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
   }
 
   @Test func dismissedSuppressesPromptInstall() {
@@ -48,7 +48,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: true) == .none)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: true) == .hidden)
   }
 
   @Test func nothingInstalledAndNotDismissedShowsPromptInstall() {
@@ -68,7 +68,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .none)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
   }
 
   @Test func installingAgentSuppressesPromptInstallToAvoidMidFlightFlap() {
@@ -80,7 +80,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .none)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
   }
 
   @Test func uninstallingAgentSuppressesPromptInstallToAvoidMidFlightFlap() {
@@ -92,7 +92,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .none)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
   }
 
   @Test func failedAgentCountsAsResolvedAndDoesNotBlockPrompt() {

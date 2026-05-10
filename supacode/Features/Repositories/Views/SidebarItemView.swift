@@ -16,7 +16,7 @@ struct SidebarItemView: View {
   let pullRequestBadgeText: String?
   let showsPullRequestInfo: Bool
   let runningScriptColors: [RepositoryColor]
-  let runningAgents: [SkillAgent]
+  let runningAgents: [AgentPresenceManager.AgentInstance]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
   let shortcutHint: String?
@@ -65,7 +65,7 @@ struct SidebarItemView: View {
     hideSubtitleOnMatch: Bool,
     showsPullRequestInfo: Bool,
     runningScriptColors: [RepositoryColor],
-    runningAgents: [SkillAgent],
+    runningAgents: [AgentPresenceManager.AgentInstance],
     isTaskRunning: Bool,
     showsNotificationIndicator: Bool,
     notifications: [WorktreeTerminalNotification],
@@ -349,7 +349,7 @@ private struct TrailingView: View {
   let showsPullRequestInfo: Bool
   let pullRequestBadgeText: String?
   let runningScriptColors: [RepositoryColor]
-  let runningAgents: [SkillAgent]
+  let runningAgents: [AgentPresenceManager.AgentInstance]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
 
@@ -368,7 +368,7 @@ private struct TrailingView: View {
             .transition(.blurReplace)
         }
         if !runningAgents.isEmpty {
-          AgentAvatarGroupView(agents: runningAgents, size: 16)
+          AgentAvatarGroupView(instances: runningAgents, size: 16)
         }
         StatusIndicator(
           runningScriptColors: runningScriptColors,

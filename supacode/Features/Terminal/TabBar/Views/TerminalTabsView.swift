@@ -9,7 +9,7 @@ struct TerminalTabsView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
-  let runningAgents: (TerminalTabID) -> [SkillAgent]
+  let runningAgents: (TerminalTabID) -> [AgentPresenceManager.AgentInstance]
 
   @State private var draggingTabId: TerminalTabID?
   @State private var draggingStartLocation: CGFloat?

@@ -1,31 +1,31 @@
 import Foundation
 
 nonisolated enum KiroHookSettings {
-  fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
-  fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
+  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .kiro)
+  fileprivate static let idle = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .kiro)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .kiro)
-  fileprivate static let sessionStart = AgentHookSettingsCommand.sessionEventCommand(
+  fileprivate static let sessionStart = AgentHookSettingsCommand.eventCommand(
     event: .sessionStart, agent: .kiro)
   fileprivate static let defaultTimeoutMs = 10_000
 
-  static func progressHookEntriesByEvent() throws -> [String: [JSONValue]] {
+  static func progressHooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(
       from: KiroProgressPayload(),
       invalidConfiguration: KiroHookSettingsError.invalidConfiguration
     )
   }
 
-  static func notificationHookEntriesByEvent() throws -> [String: [JSONValue]] {
+  static func notificationHooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(
       from: KiroNotificationPayload(),
       invalidConfiguration: KiroHookSettingsError.invalidConfiguration
     )
   }
 
-  /// See `ClaudeHookSettings.allHookGroupsByEvent` for the rationale.
-  static func allHookEntriesByEvent() throws -> [String: [JSONValue]] {
-    var merged = try progressHookEntriesByEvent()
-    for (event, entries) in try notificationHookEntriesByEvent() {
+  /// See `ClaudeHookSettings.allHooksByEvent` for the rationale.
+  static func allHooksByEvent() throws -> [String: [JSONValue]] {
+    var merged = try progressHooksByEvent()
+    for (event, entries) in try notificationHooksByEvent() {
       merged[event, default: []].append(contentsOf: entries)
     }
     return merged
@@ -73,10 +73,10 @@ private nonisolated struct KiroProgressPayload: Encodable {
       KiroHookEntry(command: KiroHookSettings.sessionStart, timeoutMs: 5_000)
     ],
     "userPromptSubmit": [
-      KiroHookEntry(command: KiroHookSettings.busyOn, timeoutMs: KiroHookSettings.defaultTimeoutMs)
+      KiroHookEntry(command: KiroHookSettings.busy, timeoutMs: KiroHookSettings.defaultTimeoutMs)
     ],
     "stop": [
-      KiroHookEntry(command: KiroHookSettings.busyOff, timeoutMs: KiroHookSettings.defaultTimeoutMs)
+      KiroHookEntry(command: KiroHookSettings.idle, timeoutMs: KiroHookSettings.defaultTimeoutMs)
     ],
   ]
 }

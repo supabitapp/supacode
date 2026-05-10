@@ -6,49 +6,14 @@ import Testing
 
 @MainActor
 struct AgentHookSocketServerTests {
-  // MARK: - Busy message parsing.
+  // MARK: - Legacy single-line text payload (no longer parsed).
 
-  @Test func parsesValidBusyActiveMessage() {
-    let worktreeID = "/tmp/repo/wt-1"
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "\(worktreeID) \(tabID.uuidString) \(surfaceID.uuidString) 1"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy(let wID, let tID, let sID, let active) = message else {
-      Issue.record("Expected busy message, got \(String(describing: message))")
-      return
-    }
-    #expect(wID == worktreeID)
-    #expect(tID == tabID)
-    #expect(sID == surfaceID)
-    #expect(active == true)
-  }
-
-  @Test func parsesValidBusyInactiveMessage() {
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) 0"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy(_, _, _, let active) = message else {
-      Issue.record("Expected busy message")
-      return
-    }
-    #expect(active == false)
-  }
-
-  @Test func nonZeroBusyFlagTreatedAsActive() {
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) anything"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy(_, _, _, let active) = message else {
-      Issue.record("Expected busy message")
-      return
-    }
-    #expect(active == true)
+  @Test func singleLineTextPayloadIsRejected() {
+    // The text-protocol busy message (`worktreeID tabID surfaceID 0|1`)
+    // was retired in favor of the JSON envelope. Any single-line text
+    // header now returns nil — exercises the new guard in `parse`.
+    let raw = "wt \(UUID().uuidString) \(UUID().uuidString) 1"
+    #expect(AgentHookSocketServer.parse(data: Data(raw.utf8)) == nil)
   }
 
   // MARK: - Notification message parsing.
@@ -198,14 +163,14 @@ struct AgentHookSocketServerTests {
 
   @Test func invalidTabIDReturnsNil() {
     let surfaceID = UUID()
-    let raw = "wt not-a-uuid \(surfaceID.uuidString) 1"
+    let raw = "wt not-a-uuid \(surfaceID.uuidString) claude\n{\"hook_event_name\":\"Stop\"}"
     let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
     #expect(message == nil)
   }
 
   @Test func invalidSurfaceIDReturnsNil() {
     let tabID = UUID()
-    let raw = "wt \(tabID.uuidString) not-a-uuid 1"
+    let raw = "wt \(tabID.uuidString) not-a-uuid claude\n{\"hook_event_name\":\"Stop\"}"
     let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
     #expect(message == nil)
   }
@@ -260,18 +225,6 @@ struct AgentHookSocketServerTests {
     let json = #"{"not_deeplink":"supacode://test"}"#
     let message = AgentHookSocketServer.parse(data: Data(json.utf8))
     #expect(message == nil)
-  }
-
-  @Test func commandDoesNotInterfereWithBusyMessages() {
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "/tmp/repo \(tabID.uuidString) \(surfaceID.uuidString) 1"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy = message else {
-      Issue.record("Expected busy message, got \(String(describing: message))")
-      return
-    }
   }
 
   // MARK: - Query message parsing.

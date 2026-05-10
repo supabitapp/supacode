@@ -113,10 +113,11 @@ final class WorktreeTerminalState {
 
   private func isTabBusy(_ tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
-    return tree.leaves().contains { surface in
-      isRunningProgressState(surface.bridge.state.progressState)
-        || surface.bridge.state.agentBusy
+    let leaves = tree.leaves()
+    if leaves.contains(where: { isRunningProgressState($0.bridge.state.progressState) }) {
+      return true
     }
+    return AgentPresenceManager.shared.hasActivity(in: leaves.map(\.id))
   }
 
   func isBlockingScriptRunning(kind: BlockingScriptKind) -> Bool {
@@ -383,15 +384,16 @@ final class WorktreeTerminalState {
     emitTaskStatusIfChanged()
   }
 
-  /// Sets or clears the agent busy flag on a specific surface.
-  func setAgentBusy(surfaceID: UUID, tabID: TerminalTabID, active: Bool) {
-    guard let surface = surfaces[surfaceID] else {
-      terminalStateLogger.debug("Dropped busy update for unknown surface \(surfaceID) in worktree \(worktree.id)")
-      return
+  /// Re-evaluate task status and tab dirty flags for a surface whose
+  /// presence-side activity just changed. Returns true when this state
+  /// owns the surface so the caller can stop walking.
+  func surfaceActivityChanged(surfaceID: UUID) -> Bool {
+    guard surfaces[surfaceID] != nil else { return false }
+    for (tabID, _) in trees {
+      tabManager.updateDirty(tabID, isDirty: isTabBusy(tabID))
     }
-    surface.bridge.state.agentBusy = active
-    tabManager.updateDirty(tabID, isDirty: isTabBusy(tabID))
     emitTaskStatusIfChanged()
+    return true
   }
 
   func focusSelectedTab() {

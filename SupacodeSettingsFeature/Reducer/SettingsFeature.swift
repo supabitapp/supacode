@@ -5,6 +5,40 @@ import SupacodeSettingsShared
 
 @Reducer
 public struct SettingsFeature {
+  /// Lifecycle of the bundled `supacode` CLI install. Lives on the
+  /// SettingsFeature state because that's the only owner; nesting keeps
+  /// it out of the shared models package.
+  public enum CLIInstallState: Equatable, Sendable {
+    case checking
+    case installed
+    case notInstalled
+    case installing
+    case uninstalling
+    case failed(String)
+
+    public var isLoading: Bool {
+      switch self {
+      case .checking, .installing, .uninstalling: true
+      default: false
+      }
+    }
+
+    public var isInstalled: Bool {
+      if case .installed = self { return true }
+      return false
+    }
+
+    public var isFailure: Bool {
+      if case .failed = self { return true }
+      return false
+    }
+
+    public var errorMessage: String? {
+      guard case .failed(let message) = self else { return nil }
+      return message
+    }
+  }
+
   @ObservableState
   public struct State: Equatable {
     public var appearanceMode: AppearanceMode
@@ -37,7 +71,7 @@ public struct SettingsFeature {
     public var globalScripts: [ScriptDefinition]
     public var richAgentNotificationsEnabled: Bool
     public var agentPresenceBadgesEnabled: Bool
-    public var cliInstallState = AgentHooksInstallState.checking
+    public var cliInstallState = CLIInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
     /// `nil` when the settings window is closed; non-nil selects the visible section.

@@ -1,5 +1,7 @@
 import Darwin
+import Dependencies
 import Foundation
+import Sharing
 import SupacodeSettingsShared
 import Testing
 
@@ -66,6 +68,23 @@ struct AgentPresenceManagerTests {
     #expect(manager.agents(forSurface: surfaceID).isEmpty)
   }
 
+  @Test func surfaceClosedClearsAwaitingState() {
+    // C10(d): closing a surface mid-awaiting-input clears the record so
+    // the sidebar / tab badges drop to idle without waiting on the agent
+    // to fire idle (which it can't — the user closed the tab).
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID))
+    #expect(manager.hasActivity(in: [surfaceID]))
+
+    manager.surfaceClosed(surfaceID)
+
+    #expect(manager.hasActivity(in: [surfaceID]) == false)
+    #expect(manager.agents(forSurface: surfaceID).isEmpty)
+  }
+
   @Test func unknownAgentNameIsIgnored() {
     let manager = AgentPresenceManager()
     let surfaceID = UUID()
@@ -96,6 +115,8 @@ struct AgentPresenceManagerTests {
     #expect(manager.agents(forSurface: surfaceID).isEmpty)
   }
 
+  // MARK: - Liveness.
+
   @Test func livenessSweepEvictsRecordsForDeadPid() {
     let manager = AgentPresenceManager()
     let surfaceID = UUID()
@@ -115,6 +136,50 @@ struct AgentPresenceManagerTests {
     #expect(manager.agents(forSurface: surfaceID) == Set([.claude]))
   }
 
+  @Test func livenessSweepEvictingAwaitingRecordClearsBadgeImmediately() {
+    // C10(c): a Claude process that crashes mid-awaiting-input would leave
+    // a sticky orange badge until the user closed the surface. The pid
+    // sweep must drop the awaiting record entirely, not just downgrade it.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID))
+    #expect(manager.hasActivity(in: [surfaceID]))
+
+    manager.livenessSweep()
+
+    #expect(manager.agents(forSurface: surfaceID).isEmpty)
+    #expect(manager.hasActivity(in: [surfaceID]) == false)
+  }
+
+  @Test func livenessSweepPartialPidEvictionPreservesActivity() {
+    // C1: when only some of a multi-pid record's pids die (e.g. Claude
+    // crash + reopen in the same surface, where SessionStart for the new
+    // pid union-inserts), the surviving record's activity must NOT be
+    // wiped to .idle.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let alivePid: pid_t = getpid()
+    let deadPid = makeDeadPid()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: alivePid))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID))
+
+    let beforeSweep = manager.agents(across: [surfaceID]).first { $0.agent == .claude }
+    #expect(beforeSweep?.activity == .awaitingInput)
+
+    manager.livenessSweep()
+
+    // Dead pid pruned, alive pid + awaiting flag preserved.
+    let afterSweep = manager.agents(across: [surfaceID]).first { $0.agent == .claude }
+    #expect(afterSweep?.activity == .awaitingInput)
+  }
+
+  // MARK: - Aggregation.
+
   @Test func agentsAcrossPreservesPerSurfaceDuplicates() {
     let manager = AgentPresenceManager()
     let surfaceA = UUID()
@@ -129,11 +194,211 @@ struct AgentPresenceManagerTests {
     // surfaceC has no agent.
 
     let combined = manager.agents(across: [surfaceA, surfaceB, surfaceC])
-    // Sorted by rawValue: claude, claude, codex.
-    #expect(combined == [.claude, .claude, .codex])
+    // Sorted by rawValue: claude, claude, codex. None awaiting.
+    #expect(
+      combined == [
+        .init(agent: .claude, activity: .idle),
+        .init(agent: .claude, activity: .idle),
+        .init(agent: .codex, activity: .idle),
+      ]
+    )
+  }
+
+  @Test func agentsAcrossSortsAwaitingInstancesFirst() {
+    let manager = AgentPresenceManager()
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let pid = getpid()
+
+    // Two Claude surfaces; only B awaiting. The awaiting instance must lead
+    // the row regardless of surface order so the contrast-flipped badge
+    // is visible at the front of the avatar group.
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceA, pid: pid))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceB, pid: pid))
+    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceA, pid: pid))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceB))
+
+    let combined = manager.agents(across: [surfaceA, surfaceB])
+    #expect(
+      combined == [
+        .init(agent: .claude, activity: .awaitingInput),
+        .init(agent: .claude, activity: .idle),
+        .init(agent: .codex, activity: .idle),
+      ]
+    )
+  }
+
+  // MARK: - Atomic activity.
+
+  @Test func busyWithoutPresenceIsDropped() {
+    // A bridge that emits busy events without a matching session_start
+    // (or after session_end) must not auto-create a record — the pid
+    // tracking would have nothing to liveness-check.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+
+    #expect(manager.agents(forSurface: surfaceID).isEmpty)
+    #expect(manager.hasActivity(in: [surfaceID]) == false)
+  }
+
+  @Test func busyAfterSessionStartFlipsActivityToBusy() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+
+    let claude = manager.agents(across: [surfaceID]).first { $0.agent == .claude }
+    #expect(claude?.activity == .busy)
+  }
+
+  @Test func repeatedBusyEventsAreIdempotentAndDoNotChurnObservation() {
+    // Repeated `busy` must not re-write `records`, or every `agents(across:)` consumer re-renders per tool call.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+
+    let observationFired = ObservationFlag()
+    withObservationTracking {
+      _ = manager.agents(across: [surfaceID])
+    } onChange: {
+      observationFired.value = true
+    }
+
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+
+    let claude = manager.agents(across: [surfaceID]).first { $0.agent == .claude }
+    #expect(claude?.activity == .busy)
+    #expect(observationFired.value == false)
+  }
+
+  @Test func awaitingInputFlipsActivityWhilePresenceExists() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID))
+
+    let claude = manager.agents(across: [surfaceID]).first { $0.agent == .claude }
+    #expect(claude?.activity == .awaitingInput)
+  }
+
+  @Test func nextBusyOverwritesAwaitingInput() {
+    // When the user resumes after a permission prompt, Claude's next
+    // PreToolUse fires `busy` — atomic overwrite, awaiting flag clears.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+
+    let claude = manager.agents(across: [surfaceID]).first { $0.agent == .claude }
+    #expect(claude?.activity == .busy)
+  }
+
+  @Test func idleResetsAwaitingFlag() {
+    // The Stop hook (Claude/Codex/Kiro) and Pi's agent_end emit `idle`.
+    // Covers the "user denied a plan-commit, conversation ended" path
+    // where awaitingInput is set but no further `busy` arrives — Stop
+    // owns the turn-boundary reset.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.idle, agent: .claude, surfaceID: surfaceID))
+
+    let claude = manager.agents(across: [surfaceID]).first { $0.agent == .claude }
+    #expect(claude?.activity == .idle)
+  }
+
+  @Test func sessionEndClearsActivityForThatAgentOnly() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let claudePid = getpid()
+    // Distinct pid for Codex; we never run the sweep, but using a verifiably
+    // dead pid keeps the test honest if a future change adds an implicit one.
+    let codexPid = makeDeadPid()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: claudePid))
+    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: codexPid))
+    manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+    manager.record(event: makeEvent(.busy, agent: .codex, surfaceID: surfaceID))
+
+    manager.record(event: makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: claudePid))
+
+    #expect(manager.agents(forSurface: surfaceID) == Set([.codex]))
+    let codex = manager.agents(across: [surfaceID]).first { $0.agent == .codex }
+    #expect(codex?.activity == .busy)
+  }
+
+  // MARK: - hasActivity.
+
+  @Test func hasActivityReportsBusyAcrossSurfaces() {
+    let manager = AgentPresenceManager()
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let surfaceC = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceA, pid: getpid()))
+    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceB, pid: getpid()))
+    manager.record(event: makeEvent(.busy, agent: .codex, surfaceID: surfaceB))
+
+    #expect(manager.hasActivity(in: [surfaceA]) == false)
+    #expect(manager.hasActivity(in: [surfaceB]) == true)
+    #expect(manager.hasActivity(in: [surfaceA, surfaceC]) == false)
+    #expect(manager.hasActivity(in: [surfaceA, surfaceB]) == true)
+  }
+
+  @Test func hasActivityIsTrueForAwaitingOnlyRecord() {
+    // C10(b): the shimmer is gated on hasActivity, which must light up
+    // for awaiting-input even when no tool is currently running (e.g.
+    // permission prompt without a paired busy event).
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+    manager.record(event: makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID))
+
+    #expect(manager.hasActivity(in: [surfaceID]) == true)
+  }
+
+  // MARK: - Settings gate.
+
+  @Test func badgesGateSuppressesPerSurfaceAndAcrossAccessors() {
+    // C10(a): the user-facing toggle gates the avatar accessors. The
+    // shimmer gate (`hasActivity`) is intentionally NOT gated — see the
+    // doc comment on the manager.
+    try? withDependencies {
+      $0.defaultFileStorage = .inMemory
+    } operation: {
+      $settingsFile.withLock {
+        $0.global.agentPresenceBadgesEnabled = false
+      }
+      let manager = AgentPresenceManager()
+      let surfaceID = UUID()
+
+      manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+      manager.record(event: makeEvent(.busy, agent: .claude, surfaceID: surfaceID))
+
+      #expect(manager.agents(forSurface: surfaceID).isEmpty)
+      #expect(manager.agents(across: [surfaceID]).isEmpty)
+      // hasActivity stays true — generic worktree-doing-work signal
+      // independent of avatar visibility.
+      #expect(manager.hasActivity(in: [surfaceID]) == true)
+    }
   }
 
   // MARK: - Helpers.
+
+  @Shared(.settingsFile) private var settingsFile: SettingsFile
 
   private func makeEvent(
     _ name: AgentHookEvent.EventName, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil
@@ -171,4 +436,9 @@ struct AgentPresenceManagerTests {
     }
     return candidate
   }
+}
+
+/// `withObservationTracking`'s `onChange` is `@Sendable`; `nonisolated(unsafe)` lets the MainActor test mutate the flag without tripping isolation.
+private final class ObservationFlag: @unchecked Sendable {
+  nonisolated(unsafe) var value = false
 }

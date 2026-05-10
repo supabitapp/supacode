@@ -13,7 +13,7 @@ struct CodexSettingsInstallerTests {
       .appendingPathComponent("supacode-codex-installer-\(UUID().uuidString)", isDirectory: true)
   }
 
-  @Test func installProgressHooksRunsEnableHooksCommand() async throws {
+  @Test func installAllHooksRunsEnableHooksCommand() async throws {
     let homeURL = makeTempHomeURL()
     let runCount = LockIsolated(0)
     defer { try? fileManager.removeItem(at: homeURL) }
@@ -27,13 +27,13 @@ struct CodexSettingsInstallerTests {
       }
     )
 
-    try await installer.installProgressHooks()
+    try await installer.installAllHooks()
 
     #expect(runCount.value == 1)
     #expect(fileManager.fileExists(atPath: CodexSettingsInstaller.settingsURL(homeDirectoryURL: homeURL).path))
   }
 
-  @Test func installProgressHooksThrowsCodexUnavailable() async {
+  @Test func installAllHooksThrowsCodexUnavailable() async {
     let homeURL = makeTempHomeURL()
     let installer = CodexSettingsInstaller(
       homeDirectoryURL: homeURL,
@@ -44,7 +44,7 @@ struct CodexSettingsInstallerTests {
     )
 
     do {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
       Issue.record("Expected codexUnavailable error")
     } catch let error as CodexSettingsInstallerError {
       #expect(error == .codexUnavailable)
@@ -53,7 +53,7 @@ struct CodexSettingsInstallerTests {
     }
   }
 
-  @Test func installProgressHooksThrowsEnableHooksFailedForNonZeroExit() async {
+  @Test func installAllHooksThrowsEnableHooksFailedForNonZeroExit() async {
     let homeURL = makeTempHomeURL()
     let installer = CodexSettingsInstaller(
       homeDirectoryURL: homeURL,
@@ -64,7 +64,7 @@ struct CodexSettingsInstallerTests {
     )
 
     do {
-      try await installer.installProgressHooks()
+      try await installer.installAllHooks()
       Issue.record("Expected enableHooksFailed error")
     } catch let error as CodexSettingsInstallerError {
       #expect(error == .enableHooksFailed("boom"))

@@ -7,22 +7,21 @@ private nonisolated let socketLogger = SupaLogger("AgentHookSocket")
 /// Lightweight Unix domain socket server that receives messages from
 /// agent hooks (via `nc -U`) and the Supacode CLI tool.
 ///
-/// Five message formats are supported:
-/// - **Busy flag** (legacy): `<worktreeID> <tabID> <surfaceID> <0|1>\n`
-/// - **Notification** (legacy): `<worktreeID> <tabID> <surfaceID> <agent>\n<JSON payload>\n`.
-///   The agent field defaults to `"unknown"` when absent.
+/// Four message formats are supported:
+/// - **Notification** (legacy text proto): `<worktreeID> <tabID> <surfaceID> <agent>\n<JSON payload>\n`.
+///   The agent field defaults to `"unknown"` when absent. Kept until rich
+///   notifications migrate to the JSON envelope.
 /// - **Command**: JSON object with a `"deeplink"` key wrapping a `supacode://` URL.
 /// - **Query**: JSON object with a `"query"` key and optional parameters.
-/// - **Hook event** (preferred): JSON object with a top-level `"event"` string,
-///   designed to be extended without changing the wire format. See
-///   `AgentHookEvent` for the field shape and `EventName` for known events.
+/// - **Hook event**: JSON object with a top-level `"event"` string, designed to
+///   be extended without changing the wire format. Drives presence and
+///   activity. See `AgentHookEvent` for the field shape and `EventName` for
+///   known events.
 @MainActor
 final class AgentHookSocketServer {
   private(set) var socketPath: String?
 
   private var listenTask: Task<Void, Never>?
-  /// (worktreeID, tabID, surfaceID, active).
-  var onBusy: ((String, UUID, UUID, Bool) -> Void)?
   /// (worktreeID, tabID, surfaceID, notification).
   var onNotification: ((String, UUID, UUID, AgentHookNotification) -> Void)?
   /// Deeplink URL received from the CLI. Second parameter is the client FD for response.
@@ -119,8 +118,6 @@ final class AgentHookSocketServer {
 
         await MainActor.run { [weak self] in
           switch message {
-          case .busy(let worktreeID, let tabID, let surfaceID, let active):
-            self?.onBusy?(worktreeID, tabID, surfaceID, active)
           case .notification(let worktreeID, let tabID, let surfaceID, let notification):
             self?.onNotification?(worktreeID, tabID, surfaceID, notification)
           case .command(let deeplinkURL, let clientFD):
@@ -216,7 +213,6 @@ final class AgentHookSocketServer {
   private nonisolated static let maxPayloadSize = 65_536
 
   nonisolated enum Message: Sendable {
-    case busy(worktreeID: String, tabID: UUID, surfaceID: UUID, active: Bool)
     case notification(
       worktreeID: String, tabID: UUID, surfaceID: UUID, notification: AgentHookNotification)
     /// CLI command with the client FD kept open for writing a response.
@@ -359,9 +355,8 @@ final class AgentHookSocketServer {
       return parseJSONMessage(data: data)
     }
 
-    // Format: worktreeID tabID surfaceID <flag|agent>.
-    // Single line with 4 fields → busy flag.
-    // Multiple lines → notification (4th field is agent, rest is JSON).
+    // Notification (legacy text proto): `worktreeID tabID surfaceID agent\n<JSON payload>`.
+    // Activity events flow through the JSON envelope path above.
     let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
     let headerParts = lines[0].split(separator: " ", maxSplits: 3)
     guard
@@ -375,14 +370,13 @@ final class AgentHookSocketServer {
 
     let worktreeID = String(headerParts[0])
 
-    if lines.count == 1, headerParts.count == 4 {
-      let active = String(headerParts[3]) != "0"
-      return .busy(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, active: active)
+    // Notification: 4th header field is the agent name; remaining lines are JSON.
+    // Agent is a raw string intentionally — left open for custom agents since
+    // the socket is already listening and anyone can send messages.
+    guard lines.count > 1 else {
+      socketLogger.warning("Single-line text payload no longer supported: \(lines[0])")
+      return nil
     }
-
-    // Multiple lines → notification. Fourth header field is the agent name.
-    // Agent is a raw string intentionally — left open for custom agents
-    // since the socket is already listening and anyone can send messages.
     let agent = headerParts.count >= 4 ? String(headerParts[3]) : "unknown"
     let jsonPayload = lines.dropFirst().joined(separator: "\n")
 
@@ -497,8 +491,7 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
   enum EventName: String, Sendable {
     case sessionStart = "session_start"
     case sessionEnd = "session_end"
-    case busyOn = "busy_on"
-    case busyOff = "busy_off"
+    case busy
     case awaitingInput = "awaiting_input"
     case idle
     case notification

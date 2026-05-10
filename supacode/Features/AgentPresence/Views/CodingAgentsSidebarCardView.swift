@@ -46,7 +46,7 @@ struct CodingAgentsSidebarCardView: View {
         body: "Install hooks and skills to enable rich notifications and presence badges.",
         showsDismiss: true
       )
-    case .none:
+    case .hidden:
       EmptyView()
     }
   }
@@ -105,17 +105,23 @@ struct CodingAgentsSidebarCardView: View {
   // MARK: - Mode resolution.
 
   enum Mode: Equatable {
-    case none
+    /// No card to show. Named `.hidden` (not `.none`) so an `Optional<Mode>`
+    /// caller can't silently match the wrong branch.
+    case hidden
     case updatesAvailable([SkillAgent])
     case promptInstall
   }
 
   /// Pure resolver: chooses which card (if any) to show given the current
   /// integration states and dismissal flag. Tested separately so the view
-  /// stays a thin renderer.
+  /// stays a thin renderer. Always waits for every agent to resolve before
+  /// committing to a card — avoids the avatar group regrowing mid-launch
+  /// as per-agent probes return staggered.
   static func mode(
     for states: [SkillAgent: AgentIntegrationRowState], dismissed: Bool
   ) -> Mode {
+    let stillChecking = SkillAgent.allCases.contains { states[$0]?.isResolved != true }
+    if stillChecking { return .hidden }
     let outdated = SkillAgent.allCases.filter {
       states[$0]?.integrationState == .outdated
     }
@@ -123,10 +129,7 @@ struct CodingAgentsSidebarCardView: View {
     let anyInstalled = SkillAgent.allCases.contains {
       states[$0]?.integrationState == .installed
     }
-    if anyInstalled || dismissed { return .none }
-    // Don't prompt while still resolving — avoids a one-frame flash on launch.
-    let stillChecking = SkillAgent.allCases.contains { states[$0]?.isResolved != true }
-    if stillChecking { return .none }
+    if anyInstalled || dismissed { return .hidden }
     return .promptInstall
   }
 }

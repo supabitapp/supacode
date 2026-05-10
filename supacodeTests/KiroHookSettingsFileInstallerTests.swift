@@ -30,7 +30,7 @@ struct KiroHookSettingsFileInstallerTests {
     [
       "stop": [
         .object([
-          "command": .string(AgentHookSettingsCommand.busyCommand(active: false)),
+          "command": .string(AgentHookSettingsCommand.eventCommand(event: .idle, agent: .kiro)),
           "timeout_ms": 10_000,
         ])
       ]

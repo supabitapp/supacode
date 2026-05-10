@@ -1,10 +1,20 @@
-/// Session-lifecycle event names emitted by `sessionEventCommand`. Mirrors
-/// the wire-side `AgentHookEvent.EventName.sessionStart/sessionEnd` cases —
-/// duplicated here because that type lives in the main app target and this
-/// command builder needs to compile in `SupacodeSettingsShared`.
-nonisolated enum SessionEvent: String {
+/// Hook events emitted via the JSON envelope path. Mirrors the wire-side
+/// `AgentHookEvent.EventName` cases — duplicated here because that type
+/// lives in the main app target and this command builder needs to compile
+/// in `SupacodeSettingsShared`. `notification` is excluded; it has its own
+/// command shape (`notificationCommand`) because it forwards the agent's
+/// raw hook payload from stdin.
+///
+/// Activity events (`busy`, `awaitingInput`, `idle`) are atomic state-set:
+/// each one assigns the (surface, agent) activity to that exact value. No
+/// counters, no on/off pairs — repeated events are idempotent. The agent's
+/// Stop equivalent is the natural reset point that fires `idle`.
+nonisolated enum HookEvent: String {
   case sessionStart = "session_start"
   case sessionEnd = "session_end"
+  case busy
+  case awaitingInput = "awaiting_input"
+  case idle
 }
 
 nonisolated enum AgentHookSettingsCommand {
@@ -39,15 +49,6 @@ nonisolated enum AgentHookSettingsCommand {
     "\(envCheck) && \(pipeline) >/dev/null 2>&1 || true \(ownershipMarker)"
   }
 
-  /// Sends `worktreeID tabID surfaceID 1|0` over a Unix socket.
-  static func busyCommand(active: Bool) -> String {
-    let flag = active ? "1" : "0"
-    let send =
-      #"echo "\#(ids) \#(flag)""#
-      + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
-    return managed(send)
-  }
-
   /// Forwards the raw hook event JSON (from stdin) to the socket.
   /// Header: `worktreeID tabID surfaceID agent`.
   static func notificationCommand(agent: SkillAgent) -> String {
@@ -57,12 +58,14 @@ nonisolated enum AgentHookSettingsCommand {
     return managed(send)
   }
 
-  /// Fires a session lifecycle event by writing the JSON envelope directly
-  /// to the socket via `nc`. We don't go through the bundled `supacode` CLI
-  /// because hook subshells (especially Codex's) often don't inherit a PATH
-  /// containing it, and `2>/dev/null || true` would swallow the failure.
-  /// `$PPID` is the agent process — the hook script is a direct child.
-  static func sessionEventCommand(event: SessionEvent, agent: SkillAgent) -> String {
+  /// Fires a hook event by writing the JSON envelope directly to the socket
+  /// via `nc`. Covers session lifecycle (start/end) and per-turn activity
+  /// (`busy`/`awaiting_input`/`idle` — atomic state-set). We don't go
+  /// through the bundled `supacode` CLI because hook subshells (especially
+  /// Codex's) often don't inherit a PATH containing it, and `2>/dev/null
+  /// || true` would swallow the failure. `$PPID` is the agent process —
+  /// the hook script is a direct child.
+  static func eventCommand(event: HookEvent, agent: SkillAgent) -> String {
     let envelope =
       #"{\"event\":\"\#(event.rawValue)\",\"v\":1,\"agent\":\"\#(agent.rawValue)\",\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID}"#
     let send =

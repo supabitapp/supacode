@@ -1,30 +1,30 @@
 import Foundation
 
 nonisolated enum CodexHookSettings {
-  fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
-  fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
+  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .codex)
+  fileprivate static let idle = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .codex)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .codex)
-  fileprivate static let sessionStart = AgentHookSettingsCommand.sessionEventCommand(
+  fileprivate static let sessionStart = AgentHookSettingsCommand.eventCommand(
     event: .sessionStart, agent: .codex)
 
-  static func progressHookGroupsByEvent() throws -> [String: [JSONValue]] {
+  static func progressHooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(
       from: CodexProgressPayload(),
       invalidConfiguration: CodexHookSettingsError.invalidConfiguration
     )
   }
 
-  static func notificationHookGroupsByEvent() throws -> [String: [JSONValue]] {
+  static func notificationHooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(
       from: CodexNotificationPayload(),
       invalidConfiguration: CodexHookSettingsError.invalidConfiguration
     )
   }
 
-  /// See `ClaudeHookSettings.allHookGroupsByEvent` for the rationale.
-  static func allHookGroupsByEvent() throws -> [String: [JSONValue]] {
-    var merged = try progressHookGroupsByEvent()
-    for (event, groups) in try notificationHookGroupsByEvent() {
+  /// See `ClaudeHookSettings.allHooksByEvent` for the rationale.
+  static func allHooksByEvent() throws -> [String: [JSONValue]] {
+    var merged = try progressHooksByEvent()
+    for (event, groups) in try notificationHooksByEvent() {
       merged[event, default: []].append(contentsOf: groups)
     }
     return merged
@@ -37,24 +37,22 @@ nonisolated enum CodexHookSettingsError: Error {
 
 // MARK: - Progress hooks.
 
-// Codex fires UserPromptSubmit, Stop, PreToolUse (Bash), and SessionStart.
-// Submit/Stop drive busy tracking; SessionStart feeds the agent presence
-// badge — Codex fires it on the first turn rather than on session open
-// (see openai/codex#15266), so the badge appears once the user submits a
-// prompt. Codex has no SessionEnd, so the badge clears via the pid
-// liveness sweep when Codex exits.
+// Turn-level activity only — Codex doesn't expose PreToolUse/PostToolUse
+// at a useful granularity (Bash-only), so a single `busy` at submit and
+// a single `idle` at stop is the cleanest model. SessionStart fires on
+// the first turn rather than on session open (openai/codex#15266) — the
+// badge appears once the user submits a prompt. Codex has no SessionEnd,
+// so the badge clears via the pid liveness sweep when Codex exits.
 private nonisolated struct CodexProgressPayload: Encodable {
   let hooks: [String: [AgentHookGroup]] = [
     "SessionStart": [
       .init(hooks: [.init(command: CodexHookSettings.sessionStart, timeout: 5)])
     ],
     "UserPromptSubmit": [
-      .init(hooks: [
-        .init(command: CodexHookSettings.busyOn, timeout: 10)
-      ])
+      .init(hooks: [.init(command: CodexHookSettings.busy, timeout: 10)])
     ],
     "Stop": [
-      .init(hooks: [.init(command: CodexHookSettings.busyOff, timeout: 10)])
+      .init(hooks: [.init(command: CodexHookSettings.idle, timeout: 10)])
     ],
   ]
 }

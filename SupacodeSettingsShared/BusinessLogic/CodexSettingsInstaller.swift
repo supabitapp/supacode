@@ -39,7 +39,7 @@ nonisolated struct CodexSettingsInstaller {
   func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
-      groups = try CodexHookSettings.allHookGroupsByEvent()
+      groups = try CodexHookSettings.allHooksByEvent()
     } catch {
       Self.reportInvalidHookConfiguration(error)
       return .notInstalled
@@ -57,14 +57,14 @@ nonisolated struct CodexSettingsInstaller {
     try await enableHooksFeature()
     try fileInstaller.install(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.allHookGroupsByEvent()
+      hookGroupsByEvent: try CodexHookSettings.allHooksByEvent()
     )
   }
 
   func uninstallAllHooks() throws {
     try fileInstaller.uninstall(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.allHookGroupsByEvent()
+      hookGroupsByEvent: try CodexHookSettings.allHooksByEvent()
     )
     // Symmetric with `enableHooksFeature` in install — without this, a
     // partial-install rollback (or a plain uninstall) leaves
@@ -102,9 +102,8 @@ nonisolated struct CodexSettingsInstaller {
     var modern = false
     var inFeaturesSection = false
     for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
-      let trimmed = line.trimmingCharacters(in: .whitespaces)
-      if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
-        inFeaturesSection = (trimmed == "[features]")
+      if let header = tomlSectionName(in: line) {
+        inFeaturesSection = (header == "features")
         continue
       }
       guard inFeaturesSection else { continue }
@@ -117,34 +116,17 @@ nonisolated struct CodexSettingsInstaller {
     return (legacy, modern)
   }
 
-  func installProgressHooks() async throws {
-    try await enableHooksFeature()
-    try fileInstaller.install(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.progressHookGroupsByEvent()
-    )
-  }
-
-  func installNotificationHooks() async throws {
-    try await enableHooksFeature()
-    try fileInstaller.install(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.notificationHookGroupsByEvent()
-    )
-  }
-
-  func uninstallProgressHooks() throws {
-    try fileInstaller.uninstall(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.progressHookGroupsByEvent()
-    )
-  }
-
-  func uninstallNotificationHooks() throws {
-    try fileInstaller.uninstall(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.notificationHookGroupsByEvent()
-    )
+  /// Returns the section name when `line` is a TOML section header
+  /// (e.g. `[features]`, `[ features ]`, `[features] # comment`).
+  /// Trailing `#`-comments are stripped before the bracket check; missing
+  /// either bracket → not a header. The bracketed inner text is trimmed so
+  /// `[ features ]` matches `features`.
+  static func tomlSectionName(in line: Substring) -> String? {
+    let withoutComment = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+    let trimmed = withoutComment.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("["), trimmed.hasSuffix("]"), trimmed.count >= 2 else { return nil }
+    let inner = trimmed.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
+    return inner.isEmpty ? nil : inner
   }
 
   private func enableHooksFeature() async throws {
@@ -206,9 +188,8 @@ nonisolated struct CodexSettingsInstaller {
     var output: [Substring] = []
     var inFeaturesSection = false
     for line in original.split(separator: "\n", omittingEmptySubsequences: false) {
-      let trimmed = line.trimmingCharacters(in: .whitespaces)
-      if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
-        inFeaturesSection = (trimmed == "[features]")
+      if let header = Self.tomlSectionName(in: line) {
+        inFeaturesSection = (header == "features")
         output.append(line)
         continue
       }

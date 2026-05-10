@@ -34,7 +34,7 @@ struct AgentHookSettingsFileInstallerTests {
           "hooks": .array([
             .object([
               "type": "command",
-              "command": .string(AgentHookSettingsCommand.busyCommand(active: false)),
+              "command": .string(AgentHookSettingsCommand.eventCommand(event: .idle, agent: .claude)),
               "timeout": 10,
             ])
           ])

@@ -9,7 +9,7 @@ struct TerminalTabView: View {
   let tabIndex: Int
   let fixedWidth: CGFloat?
   let hasNotification: Bool
-  let runningAgents: [SkillAgent]
+  let runningAgents: [AgentPresenceManager.AgentInstance]
   let onSelect: () -> Void
   let onClose: () -> Void
   let onRename: (String) -> Void

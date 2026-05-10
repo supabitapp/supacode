@@ -39,18 +39,6 @@ final class WorktreeTerminalManager {
   }
 
   private func configureSocketServer(_ server: AgentHookSocketServer) {
-    server.onBusy = { [weak self] worktreeID, tabID, surfaceID, active in
-      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      guard let state = self?.states[decoded] else {
-        terminalLogger.debug("Dropped busy update for unknown worktree \(decoded)")
-        return
-      }
-      state.setAgentBusy(
-        surfaceID: surfaceID,
-        tabID: TerminalTabID(rawValue: tabID),
-        active: active
-      )
-    }
     server.onNotification = { [weak self] worktreeID, _, surfaceID, notification in
       guard let self else { return }
       guard self.settingsFile.global.richAgentNotificationsEnabled else { return }
@@ -82,8 +70,15 @@ final class WorktreeTerminalManager {
     // Gating recording too would drop session_start events fired while
     // the toggle was off, so flipping it back on later wouldn't restore
     // badges for already-running agents.
-    server.onEvent = { event in
+    server.onEvent = { [weak self] event in
       AgentPresenceManager.shared.record(event: event)
+      // Push the activity change into the owning worktree state so
+      // task-status consumers (sidebar shimmer, dock indicator) see
+      // it without polling the presence manager.
+      guard let states = self?.states.values else { return }
+      for state in states where state.surfaceActivityChanged(surfaceID: event.surfaceID) {
+        break
+      }
     }
   }
 
