@@ -17,11 +17,6 @@ nonisolated struct AgentIntegration: @unchecked Sendable {
   /// Codex's `enable hooks` flag) unwinds last.
   let components: [Component]
 
-  init(agent: SkillAgent, components: [Component]) {
-    self.agent = agent
-    self.components = components
-  }
-
   struct Component {
     let kind: Kind
     let state: () -> ComponentInstallState

@@ -438,7 +438,8 @@ struct AgentPresenceManagerTests {
   }
 }
 
-/// `withObservationTracking`'s `onChange` is `@Sendable`; `nonisolated(unsafe)` lets the MainActor test mutate the flag without tripping isolation.
+/// `withObservationTracking`'s `onChange` is `@Sendable`; `nonisolated(unsafe)`
+/// lets the MainActor test mutate the flag without tripping isolation.
 private final class ObservationFlag: @unchecked Sendable {
   nonisolated(unsafe) var value = false
 }

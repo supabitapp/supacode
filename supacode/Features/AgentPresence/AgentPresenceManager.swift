@@ -92,7 +92,8 @@ final class AgentPresenceManager {
   /// rawValue so iteration is stable across renders.
   func agents(across surfaceIDs: some Sequence<UUID>) -> [AgentInstance] {
     guard settingsFile.global.agentPresenceBadgesEnabled else { return [] }
-    return surfaceIDs
+    return
+      surfaceIDs
       .flatMap { surfaceID -> [AgentInstance] in
         (bySurface[surfaceID] ?? []).map { agent in
           let activity = records[PresenceKey(surfaceID: surfaceID, agent: agent)]?.activity ?? .idle

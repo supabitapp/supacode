@@ -104,7 +104,8 @@ struct AgentHookCommandTests {
     // otherwise the canonical hook is appended on top instead of
     // replacing it — producing duplicate SessionStart hooks.
     let legacy =
-      #"[ -n "${SUPACODE_SOCKET_PATH:-}" ] && supacode integration event session_start --agent claude --pid "$PPID" 2>/dev/null || true"#
+      #"[ -n "${SUPACODE_SOCKET_PATH:-}" ] && supacode integration event session_start"#
+      + #" --agent claude --pid "$PPID" 2>/dev/null || true"#
     #expect(AgentHookCommandOwnership.isSupacodeManagedCommand(legacy))
     #expect(AgentHookCommandOwnership.isLegacyCommand(legacy))
   }
@@ -137,7 +138,7 @@ struct AgentHookCommandTests {
   /// JSON the hook produced is parseable by the same code that consumes
   /// it on the socket — a regression guard against future Swift changes
   /// that subtly break the envelope template.
-  @Test func eventCommandProducesParseableJSON() async throws {
+  @Test func eventCommandProducesParseableJSON() throws {
     let surfaceID = UUID()
     let agentPid: pid_t = getpid()
     let captured = try runHookCommandCapturingStdin(

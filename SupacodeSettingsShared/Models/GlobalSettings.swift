@@ -165,6 +165,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     init?(intValue: Int) { nil }
   }
 
+  // swiftlint:disable:next function_body_length
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let legacy = try decoder.container(keyedBy: LegacyCodingKey.self)

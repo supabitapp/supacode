@@ -116,12 +116,12 @@ struct SettingsFeatureAgentIntegrationTests {
         if secondInstallStarted.value { return }
         let stored = LockIsolated<CheckedContinuation<Void, Error>?>(nil)
         try await withTaskCancellationHandler {
-          try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+          try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             stored.withValue { slot in
               if Task.isCancelled {
-                c.resume(throwing: CancellationError())
+                cont.resume(throwing: CancellationError())
               } else {
-                slot = c
+                slot = cont
               }
             }
           }

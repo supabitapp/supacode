@@ -39,7 +39,8 @@ struct AgentAvatarGroupView: View {
   private var visible: [AgentPresenceManager.AgentInstance] { Array(instances.prefix(maxVisible)) }
   private var overflow: Int { max(0, instances.count - maxVisible) }
 
-  /// Per-(agent, occurrence) identity stays stable when the awaiting-first sort moves agents between slots; `zIndex` baked into the same pass.
+  /// Per-(agent, occurrence) identity stays stable when the awaiting-first
+  /// sort moves agents between slots; `zIndex` baked into the same pass.
   private var visibleSlots: [Slot] {
     var counts: [SkillAgent: Int] = [:]
     let total = visible.count

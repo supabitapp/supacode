@@ -20,12 +20,14 @@ struct AgentBadgeView: View {
 
   var body: some View {
     // Read `awaitingInput` at body top so SwiftUI's diffing picks up the flag the moment it flips.
-    let resolvedScheme: ColorScheme = awaitingInput
+    let resolvedScheme: ColorScheme =
+      awaitingInput
       ? (colorScheme == .dark ? .light : .dark)
       : colorScheme
     Image(agent.assetName)
       .resizable()
       .aspectRatio(contentMode: .fit)
+      .accessibilityLabel(agent.displayName)
       .padding(size * 0.18)
       .frame(width: size, height: size)
       .foregroundStyle(.primary)
@@ -33,7 +35,6 @@ struct AgentBadgeView: View {
       .overlay(Circle().strokeBorder(.separator, lineWidth: pixelLength))
       .environment(\.colorScheme, resolvedScheme)
       .animation(.smooth, value: awaitingInput)
-      .accessibilityLabel(agent.displayName)
   }
 
   private static let dropShadow: ShadowStyle = .drop(

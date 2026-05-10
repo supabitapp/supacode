@@ -44,7 +44,8 @@ nonisolated enum AgentHookSettingsCommand {
   private static let ids =
     "$SUPACODE_WORKTREE_ID $SUPACODE_TAB_ID $SUPACODE_SURFACE_ID"
 
-  /// Both stdout AND stderr must be redirected — Codex parses hook stdout as structured JSON and would reject the socket ack.
+  /// Both stdout AND stderr go to /dev/null — Codex parses hook stdout as
+  /// structured JSON and would reject the socket ack otherwise.
   private static func managed(_ pipeline: String) -> String {
     "\(envCheck) && \(pipeline) >/dev/null 2>&1 || true \(ownershipMarker)"
   }
@@ -67,7 +68,9 @@ nonisolated enum AgentHookSettingsCommand {
   /// the hook script is a direct child.
   static func eventCommand(event: HookEvent, agent: SkillAgent) -> String {
     let envelope =
-      #"{\"event\":\"\#(event.rawValue)\",\"v\":1,\"agent\":\"\#(agent.rawValue)\",\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID}"#
+      #"{\"event\":\"\#(event.rawValue)\","#
+      + #"\"v\":1,\"agent\":\"\#(agent.rawValue)\","#
+      + #"\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID}"#
     let send =
       #"printf '%s' "\#(envelope)""#
       + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
