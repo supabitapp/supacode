@@ -396,6 +396,148 @@ struct AgentPresenceManagerTests {
     }
   }
 
+  // MARK: - onSessionStarted / onSessionEnded callbacks.
+
+  @Test func sessionStartWithSessionIDFiresOnSessionStarted() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let box = CallbackBox()
+    manager.onSessionStarted = { surface, agent, sid in
+      box.started.append((surface, agent, sid))
+    }
+
+    manager.record(
+      event: makeEvent(
+        .sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid(),
+        data: #"{"session_id":"abc-123"}"#
+      )
+    )
+
+    #expect(box.started.count == 1)
+    #expect(box.started.first?.0 == surfaceID)
+    #expect(box.started.first?.1 == .claude)
+    #expect(box.started.first?.2 == "abc-123")
+  }
+
+  @Test func sessionStartWithoutSessionIDDoesNotFireCallback() {
+    // Older bridges without stdin forwarding send no `data` — the callback
+    // must silently skip so only sessions with a real resume ID get recorded.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let box = CallbackBox()
+    manager.onSessionStarted = { surface, agent, sid in
+      box.started.append((surface, agent, sid))
+    }
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
+
+    #expect(box.started.isEmpty)
+  }
+
+  @Test func sessionStartWithEmptySessionIDIsSkipped() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let box = CallbackBox()
+    manager.onSessionStarted = { surface, agent, sid in
+      box.started.append((surface, agent, sid))
+    }
+
+    manager.record(
+      event: makeEvent(
+        .sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid(),
+        data: #"{"session_id":""}"#
+      )
+    )
+
+    #expect(box.started.isEmpty)
+  }
+
+  @Test func sessionEndFiresCallbackWithSessionIDWhenRecordEmpties() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let pid = getpid()
+    let box = CallbackBox()
+    manager.onSessionEnded = { surface, agent, sid in
+      box.ended.append((surface, agent, sid))
+    }
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
+    manager.record(
+      event: makeEvent(
+        .sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid,
+        data: #"{"session_id":"sid-1"}"#
+      )
+    )
+
+    #expect(box.ended.count == 1)
+    #expect(box.ended.first?.2 == "sid-1")
+  }
+
+  @Test func sessionEndDoesNotFireWhenRecordStillHasOtherPids() {
+    // Late-SessionEnd race: a second SessionStart for the same (surface, agent)
+    // adds a pid before the first agent's SessionEnd arrives. Firing the
+    // callback here would wipe the newer session's restore intent.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let pid1 = getpid()
+    let pid2: pid_t = pid1 + 1
+    let box = CallbackBox()
+    manager.onSessionEnded = { surface, agent, sid in
+      box.ended.append((surface, agent, sid))
+    }
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid1))
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid2))
+    manager.record(
+      event: makeEvent(
+        .sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid1,
+        data: #"{"session_id":"sid-old"}"#
+      )
+    )
+
+    // Record still holds pid2 → callback must not fire; the newer session is alive.
+    #expect(box.ended.isEmpty)
+  }
+
+  @Test func livenessSweepFiresOnSessionEndedWithNilSessionID() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+    let box = CallbackBox()
+    manager.onSessionEnded = { surface, agent, sid in
+      box.ended.append((surface, agent, sid))
+    }
+
+    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: deadPid))
+    manager.livenessSweep()
+
+    #expect(box.ended.count == 1)
+    #expect(box.ended.first?.0 == surfaceID)
+    #expect(box.ended.first?.1 == .codex)
+    // Sweep has no session_id to cite — the clear is unconditional.
+    #expect(box.ended.first?.2 == nil)
+  }
+
+  @Test func surfaceClosedFiresOnSessionEndedForAllRecords() {
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let pid = getpid()
+    let box = CallbackBox()
+    manager.onSessionEnded = { surface, agent, sid in
+      box.ended.append((surface, agent, sid))
+    }
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
+    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: pid))
+
+    manager.surfaceClosed(surfaceID)
+
+    #expect(box.ended.count == 2)
+    // Surface close has no session_id — unconditional clear.
+    #expect(box.ended.allSatisfy { $0.2 == nil })
+    #expect(Set(box.ended.map { $0.1 }) == Set([.claude, .codex]))
+  }
+
   // MARK: - Helpers.
 
   @Shared(.settingsFile) private var settingsFile: SettingsFile
@@ -407,14 +549,23 @@ struct AgentPresenceManagerTests {
   }
 
   private func makeEvent(
-    rawEventName: String, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil
+    _ name: AgentHookEvent.EventName, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil,
+    data: String
+  ) -> AgentHookEvent {
+    makeEvent(rawEventName: name.rawValue, agent: agent, surfaceID: surfaceID, pid: pid, data: data)
+  }
+
+  private func makeEvent(
+    rawEventName: String, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil,
+    data: String? = nil
   ) -> AgentHookEvent {
     let pidLine = pid.map { ",\n        \"pid\": \($0)" } ?? ""
+    let dataLine = data.map { ",\n        \"data\": \($0)" } ?? ""
     let json = """
       {
         "event": "\(rawEventName)",
         "agent": "\(agent.rawValue)",
-        "surface_id": "\(surfaceID.uuidString)"\(pidLine)
+        "surface_id": "\(surfaceID.uuidString)"\(pidLine)\(dataLine)
       }
       """
     guard case .event(let event) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
@@ -442,4 +593,13 @@ struct AgentPresenceManagerTests {
 /// lets the MainActor test mutate the flag without tripping isolation.
 private final class ObservationFlag: @unchecked Sendable {
   nonisolated(unsafe) var value = false
+}
+
+/// Captures `onSessionStarted` / `onSessionEnded` fires so tests can assert on
+/// the order and content of lifecycle callbacks without setting up a full
+/// terminal state observer.
+@MainActor
+private final class CallbackBox {
+  var started: [(UUID, SkillAgent, String)] = []
+  var ended: [(UUID, SkillAgent, String?)] = []
 }

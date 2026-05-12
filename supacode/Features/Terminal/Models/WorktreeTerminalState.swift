@@ -45,6 +45,14 @@ final class WorktreeTerminalState {
   var notificationsEnabled = true
   @ObservationIgnored @Dependency(\.date.now) private var now
   private var recentHookBySurfaceID: [UUID: (text: String, recordedAt: Date)] = [:]
+  /// Per-surface resume intent, written by hook lifecycle events and consumed
+  /// once during the next layout restore. Keyed by surface id so multiple
+  /// agents in the same worktree stay independent. See
+  /// `TerminalLayoutSnapshot.RestorableAgent`.
+  private var restorableAgentBySurfaceID: [UUID: TerminalLayoutSnapshot.RestorableAgent] = [:]
+  /// Callback fired after any mutation to `restorableAgentBySurfaceID` so the
+  /// owning manager can persist the updated layout snapshot eagerly.
+  var onRestorableAgentChanged: (() -> Void)?
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
   }
@@ -836,13 +844,57 @@ final class WorktreeTerminalState {
     return TerminalLayoutSnapshot(tabs: tabSnapshots, selectedTabIndex: selectedIndex)
   }
 
+  /// Records a resume intent for `surfaceID`. A newer `session_start` on the
+  /// same surface atomically replaces any prior value. The change is fired
+  /// through `onRestorableAgentChanged` so the owning manager can persist the
+  /// updated layout snapshot eagerly.
+  func setRestorableAgent(surfaceID: UUID, agent: SkillAgent, sessionID: String) {
+    guard surfaces[surfaceID] != nil else { return }
+    let next = TerminalLayoutSnapshot.RestorableAgent(agent: agent, sessionID: sessionID)
+    guard restorableAgentBySurfaceID[surfaceID] != next else { return }
+    restorableAgentBySurfaceID[surfaceID] = next
+    onRestorableAgentChanged?()
+  }
+
+  /// Clears the resume intent for `surfaceID`. When `ifMatching` is non-nil
+  /// (explicit `session_end`), only clears if the stored sid matches — this
+  /// guards the late-SessionEnd race where a new session already overwrote the
+  /// field. When nil (presence sweep eviction), clears unconditionally because
+  /// the sweep only fires after every pid for that (surface, agent) died.
+  func clearRestorableAgent(surfaceID: UUID, ifMatching sessionID: String? = nil) {
+    guard let current = restorableAgentBySurfaceID[surfaceID] else { return }
+    if let sessionID, current.sessionID != sessionID { return }
+    restorableAgentBySurfaceID.removeValue(forKey: surfaceID)
+    onRestorableAgentChanged?()
+  }
+
+  /// Shell command that resumes the given agent session, typed into the
+  /// surface's initial input so the agent attaches to the prior conversation
+  /// as the first interactive action. Returns nil for agents without resume
+  /// semantics (Kiro, Pi). `claude --resume <sid>` / `codex resume <sid>` both
+  /// fail cleanly on a deleted/unknown session id (verified: prints "No
+  /// conversation/saved session found" and exits 0 without mutating state), so
+  /// a stale id combined with consume-once never produces a zombie loop.
+  static func resumeCommand(for intent: TerminalLayoutSnapshot.RestorableAgent?) -> String? {
+    guard let intent else { return nil }
+    switch intent.agent {
+    case .claude: return "claude --resume \(intent.sessionID)"
+    case .codex: return "codex resume \(intent.sessionID)"
+    case .kiro, .pi: return nil
+    }
+  }
+
   private func captureLayoutNode(
     _ node: SplitTree<GhosttySurfaceView>.Node
   ) -> TerminalLayoutSnapshot.LayoutNode {
     switch node {
     case .leaf(let view):
       return .leaf(
-        TerminalLayoutSnapshot.SurfaceSnapshot(id: view.id, workingDirectory: view.bridge.state.pwd)
+        TerminalLayoutSnapshot.SurfaceSnapshot(
+          id: view.id,
+          workingDirectory: view.bridge.state.pwd,
+          restorableAgent: restorableAgentBySurfaceID[view.id]
+        )
       )
     case .split(let split):
       let direction: SplitDirection =
@@ -870,9 +922,18 @@ final class WorktreeTerminalState {
     // Skip setup script when restoring a saved layout.
     pendingSetupScript = false
 
+    // Consume-once semantics: we deliberately do NOT hydrate
+    // `restorableAgentBySurfaceID` from the snapshot leaves. A later capture
+    // will see an empty dict and persist `restorableAgent = nil`, so a failed
+    // resume does not perpetually re-run on every restart. A new `session_start`
+    // hook on the restored surface repopulates the field.
     for (index, tabSnapshot) in snapshot.tabs.enumerated() {
-      let firstLeafPwd = tabSnapshot.layout.firstLeaf.workingDirectory
-      let workingDir = firstLeafPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
+      let firstLeaf = tabSnapshot.layout.firstLeaf
+      let workingDir = firstLeaf.workingDirectory.flatMap {
+        URL(filePath: $0, directoryHint: .isDirectory)
+      }
+      let firstLeafInitialInput = Self.resumeCommand(for: firstLeaf.restorableAgent)
+        .flatMap { formatCommandInput($0) }
       let context: ghostty_surface_context_e =
         index == 0 ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB
       let tabId = tabManager.createTab(
@@ -887,11 +948,11 @@ final class WorktreeTerminalState {
       }
       let surface = createSurface(
         tabId: tabId,
-        initialInput: nil,
+        initialInput: firstLeafInitialInput,
         workingDirectoryOverride: workingDir,
         inheritingFromSurfaceId: nil,
         context: context,
-        surfaceID: tabSnapshot.layout.firstLeaf.id,
+        surfaceID: firstLeaf.id,
       )
       let tree = SplitTree(view: surface)
       trees[tabId] = tree
@@ -938,8 +999,12 @@ final class WorktreeTerminalState {
     guard case .split(let split) = node else { return }
 
     // Create the right child by splitting the anchor.
-    let rightPwd = split.right.firstLeaf.workingDirectory
-    let rightWorkingDir = rightPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
+    let rightLeaf = split.right.firstLeaf
+    let rightWorkingDir = rightLeaf.workingDirectory.flatMap {
+      URL(filePath: $0, directoryHint: .isDirectory)
+    }
+    let rightInitialInput = Self.resumeCommand(for: rightLeaf.restorableAgent)
+      .flatMap { formatCommandInput($0) }
     let direction: SplitTree<GhosttySurfaceView>.NewDirection =
       split.direction == .horizontal ? .right : .down
 
@@ -949,8 +1014,9 @@ final class WorktreeTerminalState {
         direction: direction,
         ratio: split.ratio,
         workingDirectory: rightWorkingDir,
+        initialInput: rightInitialInput,
         tabId: tabId,
-        surfaceID: split.right.firstLeaf.id,
+        surfaceID: rightLeaf.id,
       )
     else {
       layoutLogger.warning("Skipping subtree restoration for tab \(tabId.rawValue)")
@@ -967,13 +1033,14 @@ final class WorktreeTerminalState {
     direction: SplitTree<GhosttySurfaceView>.NewDirection,
     ratio: Double,
     workingDirectory: URL?,
+    initialInput: String?,
     tabId: TerminalTabID,
     surfaceID: UUID? = nil
   ) -> GhosttySurfaceView? {
     guard var tree = trees[tabId] else { return nil }
     let newSurface = createSurface(
       tabId: tabId,
-      initialInput: nil,
+      initialInput: initialInput,
       workingDirectoryOverride: workingDirectory,
       inheritingFromSurfaceId: anchor.id,
       context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
@@ -1375,7 +1442,41 @@ final class WorktreeTerminalState {
   private func cleanupSurfaceState(for surfaceID: UUID) {
     recentHookBySurfaceID.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
+    let hadRestorable = restorableAgentBySurfaceID.removeValue(forKey: surfaceID) != nil
     AgentPresenceManager.shared.surfaceClosed(surfaceID)
+    if hadRestorable {
+      onRestorableAgentChanged?()
+    }
+  }
+
+  // MARK: - Restorable agent intent
+
+  /// True when this worktree currently hosts `surfaceID` in any tab. Used by
+  /// the manager to route hook lifecycle events to the correct state.
+  func hasSurfaceAnywhere(_ surfaceID: UUID) -> Bool {
+    surfaces[surfaceID] != nil
+  }
+
+  /// Record a resume target for the given surface. Idempotent on identical
+  /// input; overwrites atomically on a different session_id (the user started
+  /// a new session in the same surface).
+  func setRestorableAgent(surfaceID: UUID, agent: SkillAgent, sessionID: String) {
+    guard surfaces[surfaceID] != nil else { return }
+    let next = TerminalLayoutSnapshot.RestorableAgent(agent: agent, sessionID: sessionID)
+    if restorableAgentBySurfaceID[surfaceID] == next { return }
+    restorableAgentBySurfaceID[surfaceID] = next
+    onRestorableAgentChanged?()
+  }
+
+  /// Clear the resume target iff it still matches `sessionID`. Guards against
+  /// a late `session_end` for a superseded session wiping the newer intent.
+  /// Pass `sessionID: nil` to clear unconditionally (e.g. liveness sweep
+  /// eviction where no specific id is known).
+  func clearRestorableAgent(surfaceID: UUID, ifSessionIDMatches sessionID: String?) {
+    guard let current = restorableAgentBySurfaceID[surfaceID] else { return }
+    if let sessionID, current.sessionID != sessionID { return }
+    restorableAgentBySurfaceID.removeValue(forKey: surfaceID)
+    onRestorableAgentChanged?()
   }
 
   private func removeTree(for tabId: TerminalTabID) {

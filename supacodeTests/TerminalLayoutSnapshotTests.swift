@@ -154,6 +154,91 @@ struct TerminalLayoutSnapshotTests {
     #expect(snapshot.tabs.first?.customTitle == nil)
   }
 
+  @Test func restorableAgentRoundTrips() throws {
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
+          title: "tab",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(
+            TerminalLayoutSnapshot.SurfaceSnapshot(
+              id: nil,
+              workingDirectory: "/tmp",
+              restorableAgent: TerminalLayoutSnapshot.RestorableAgent(
+                agent: .claude,
+                sessionID: "abc-123"
+              )
+            )
+          ),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let data = try JSONEncoder().encode(snapshot)
+    let decoded = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: data)
+    #expect(decoded.tabs.first?.layout.firstLeaf.restorableAgent?.agent == .claude)
+    #expect(decoded.tabs.first?.layout.firstLeaf.restorableAgent?.sessionID == "abc-123")
+  }
+
+  @Test func restorableAgentMissingDecodesAsNil() throws {
+    // Forward-compat: older snapshots without the field load cleanly.
+    let json = #"""
+      {
+        "tabs": [
+          {
+            "id": null,
+            "title": "tab",
+            "customTitle": null,
+            "icon": null,
+            "tintColor": null,
+            "layout": {"leaf": {"_0": {"id": null, "workingDirectory": "/tmp"}}},
+            "focusedLeafIndex": 0
+          }
+        ],
+        "selectedTabIndex": 0
+      }
+      """#
+    let snapshot = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: Data(json.utf8))
+    #expect(snapshot.tabs.first?.layout.firstLeaf.restorableAgent == nil)
+  }
+
+  @Test func restorableAgentUnknownAgentIsDroppedNotRejected() throws {
+    // Lossy: an agent rawValue the running build doesn't recognize (e.g. a
+    // new agent type shipped by a newer build) must not fail the whole leaf
+    // decode — restorableAgent drops to nil, the surface stays intact.
+    let json = #"""
+      {
+        "tabs": [
+          {
+            "id": null,
+            "title": "tab",
+            "customTitle": null,
+            "icon": null,
+            "tintColor": null,
+            "layout": {
+              "leaf": {
+                "_0": {
+                  "id": null,
+                  "workingDirectory": "/tmp",
+                  "restorableAgent": {"agent": "futuristic", "sessionID": "x"}
+                }
+              }
+            },
+            "focusedLeafIndex": 0
+          }
+        ],
+        "selectedTabIndex": 0
+      }
+      """#
+    let snapshot = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: Data(json.utf8))
+    #expect(snapshot.tabs.first?.layout.firstLeaf.workingDirectory == "/tmp")
+    #expect(snapshot.tabs.first?.layout.firstLeaf.restorableAgent == nil)
+  }
+
   @Test func singleLeafLayout() throws {
     let snapshot = TerminalLayoutSnapshot(
       tabs: [

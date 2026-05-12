@@ -56,6 +56,21 @@ final class AgentPresenceManager {
   private var records: [PresenceKey: PresenceRecord] = [:]
   private var sweepTask: Task<Void, Never>?
 
+  /// Fired when a `session_start` hook lands with a non-empty `session_id`
+  /// in its stdin payload. The owning terminal manager mirrors this into
+  /// `WorktreeTerminalState.setRestorableAgent` so the intent survives an
+  /// app relaunch. Presence itself does not retain the sessionID — it only
+  /// forwards the value, keeping the persistence authority on the layout
+  /// snapshot rather than this UI-state observer.
+  var onSessionStarted: ((_ surfaceID: UUID, _ agent: SkillAgent, _ sessionID: String) -> Void)?
+
+  /// Fired when the `(surface, agent)` record empties. `sessionID` is non-nil
+  /// only for the explicit `session_end` path (receiver narrows the clear to
+  /// a matching sid to avoid wiping a newer session that raced a late end
+  /// event). For liveness sweep eviction and surface-close, sessionID is nil
+  /// — no pids remain, so the clear is unconditional.
+  var onSessionEnded: ((_ surfaceID: UUID, _ agent: SkillAgent, _ sessionID: String?) -> Void)?
+
   /// User toggle that gates badge display. Read inside the accessors so the
   /// observed views re-render when it flips.
   @ObservationIgnored
@@ -127,8 +142,16 @@ final class AgentPresenceManager {
   /// Bulk variant for tab-close / worktree-close paths.
   func surfacesClosed(_ surfaceIDs: some Sequence<UUID>) {
     let closing = Set(surfaceIDs)
+    // Collect ended (surface, agent) pairs before mutating so the callback
+    // fires exactly once per evicted record.
+    let ended = records.compactMap { entry -> (UUID, SkillAgent)? in
+      closing.contains(entry.key.surfaceID) ? (entry.key.surfaceID, entry.key.agent) : nil
+    }
     for id in closing { bySurface.removeValue(forKey: id) }
     records = records.filter { !closing.contains($0.key.surfaceID) }
+    for (surfaceID, agent) in ended {
+      onSessionEnded?(surfaceID, agent, nil)
+    }
   }
 
   /// Record a hook event from the agent bridge. Handles session lifecycle
@@ -147,11 +170,21 @@ final class AgentPresenceManager {
       records[key] = record
       ensureLivenessSweepRunning()
       rebuildPresenceForSurface(event.surfaceID)
+      // Forward the sessionID so the terminal manager can persist a resume
+      // intent on the owning surface leaf. Missing / empty sid is normal for
+      // older bridges that ship before stdin forwarding — silently skip.
+      if let sessionID = event.decodeData(HookSessionPayload.self)?.sessionID,
+        !sessionID.isEmpty
+      {
+        onSessionStarted?(event.surfaceID, agent, sessionID)
+      }
     case .sessionEnd:
       guard let pid = event.pid, var record = records[key] else { return }
       record.pids.remove(pid)
+      let endedSessionID = event.decodeData(HookSessionPayload.self)?.sessionID
       if record.pids.isEmpty {
         records.removeValue(forKey: key)
+        onSessionEnded?(event.surfaceID, agent, endedSessionID)
       } else {
         records[key] = record
       }
@@ -199,6 +232,11 @@ final class AgentPresenceManager {
   /// in-flight state.
   func livenessSweep() {
     var dirtySurfaces: Set<UUID> = []
+    // Collected during the sweep, fired after the mutation completes so the
+    // callback sees a consistent state. `onSessionEnded(sid: nil)` is the
+    // "unconditional clear" signal — the sweep only evicts when every pid is
+    // dead, so no newer session can still be live on that (surface, agent).
+    var ended: [(UUID, SkillAgent)] = []
     for (key, record) in records where !record.pids.isEmpty {
       // Defensive `pid > 0` guard: `kill(0, 0)` and `kill(-N, 0)` both
       // succeed against the caller's process group, so a non-positive
@@ -207,6 +245,7 @@ final class AgentPresenceManager {
       guard alive != record.pids else { continue }
       if alive.isEmpty {
         records.removeValue(forKey: key)
+        ended.append((key.surfaceID, key.agent))
       } else {
         var updated = record
         updated.pids = alive
@@ -215,6 +254,9 @@ final class AgentPresenceManager {
       dirtySurfaces.insert(key.surfaceID)
     }
     for surfaceID in dirtySurfaces { rebuildPresenceForSurface(surfaceID) }
+    for (surfaceID, agent) in ended {
+      onSessionEnded?(surfaceID, agent, nil)
+    }
   }
 
   private func rebuildPresenceForSurface(_ surfaceID: UUID) {
@@ -228,5 +270,17 @@ final class AgentPresenceManager {
     } else {
       bySurface[surfaceID] = agents
     }
+  }
+}
+
+/// Minimal shape decoded from the hook's forwarded stdin JSON. Both Claude and
+/// Codex put the resume-able session UUID at top-level `session_id`; anything
+/// else in the payload is ignored so a schema change on the agent side doesn't
+/// break decoding.
+nonisolated struct HookSessionPayload: Decodable {
+  let sessionID: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case sessionID = "session_id"
   }
 }

@@ -66,7 +66,31 @@ nonisolated enum AgentHookSettingsCommand {
   /// Codex's) often don't inherit a PATH containing it, and `2>/dev/null
   /// || true` would swallow the failure. `$PPID` is the agent process —
   /// the hook script is a direct child.
-  static func eventCommand(event: HookEvent, agent: SkillAgent) -> String {
+  ///
+  /// When `forwardStdin` is true, the agent's stdin payload (Claude/Codex
+  /// hooks pass a JSON object on stdin for `SessionStart` / `SessionEnd` /
+  /// `UserPromptSubmit` / etc.) is embedded into the envelope's `data`
+  /// field. Restore uses the `session_id` inside to build `agent resume
+  /// <sid>` on next launch. Empty stdin falls back to `null` so the
+  /// envelope stays valid JSON.
+  static func eventCommand(
+    event: HookEvent,
+    agent: SkillAgent,
+    forwardStdin: Bool = false
+  ) -> String {
+    if forwardStdin {
+      let envelopePrefix =
+        #"{\"event\":\"\#(event.rawValue)\","#
+        + #"\"v\":1,\"agent\":\"\#(agent.rawValue)\","#
+        + #"\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID,\"data\":"#
+      // `DATA=$(cat)` drains stdin, `${DATA:-null}` preserves valid JSON on empty,
+      // trailing `}` closes the envelope after `"data":<payload>`.
+      let send =
+        #"DATA=$(cat); "#
+        + #"printf '%s%s}' "\#(envelopePrefix)" "${DATA:-null}""#
+        + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
+      return managed(send)
+    }
     let envelope =
       #"{\"event\":\"\#(event.rawValue)\","#
       + #"\"v\":1,\"agent\":\"\#(agent.rawValue)\","#

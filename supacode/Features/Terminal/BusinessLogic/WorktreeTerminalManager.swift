@@ -65,21 +65,53 @@ final class WorktreeTerminalManager {
       }
       handler(resource, params, clientFD)
     }
+    // Presence lifecycle → per-surface resume intent. Same event stream writes
+    // to two observers (presence + restorable-agent); neither owns the other.
+    // Invariant: "badge visible ⟺ restore intent present" — every path that
+    // clears presence (session_end, sweep eviction, surface close) fires
+    // `onSessionEnded`, and every `session_start` that carries a sessionID
+    // fires `onSessionStarted`.
+    AgentPresenceManager.shared.onSessionStarted = { [weak self] surfaceID, agent, sessionID in
+      guard let self, let state = self.ownerState(forSurface: surfaceID) else { return }
+      state.setRestorableAgent(surfaceID: surfaceID, agent: agent, sessionID: sessionID)
+    }
+    AgentPresenceManager.shared.onSessionEnded = { [weak self] surfaceID, _, endedSessionID in
+      guard let self, let state = self.ownerState(forSurface: surfaceID) else { return }
+      state.clearRestorableAgent(surfaceID: surfaceID, ifMatching: endedSessionID)
+    }
     // Always record; the badges toggle gates DISPLAY in
     // `AgentPresenceManager.agents(forSurface:)` / `agents(across:)`.
     // Gating recording too would drop session_start events fired while
     // the toggle was off, so flipping it back on later wouldn't restore
     // badges for already-running agents.
     server.onEvent = { [weak self] event in
+      guard let self else { return }
+      // Reject events whose surface is unknown to any live state: a hook from
+      // a closed tab or a racing split can still reach us, and silently
+      // letting it through would create restore intent for a surface the app
+      // will never reconstruct.
+      guard self.ownerState(forSurface: event.surfaceID) != nil else {
+        terminalLogger.debug("Dropped hook event for unknown surface \(event.surfaceID)")
+        return
+      }
       AgentPresenceManager.shared.record(event: event)
       // Push the activity change into the owning worktree state so
       // task-status consumers (sidebar shimmer, dock indicator) see
       // it without polling the presence manager.
-      guard let states = self?.states.values else { return }
-      for state in states where state.surfaceActivityChanged(surfaceID: event.surfaceID) {
+      for state in self.states.values where state.surfaceActivityChanged(surfaceID: event.surfaceID) {
         break
       }
     }
+  }
+
+  /// Resolve which terminal state currently owns `surfaceID`. Returns nil for
+  /// surfaces that no longer exist (closed / never-created) so callers can
+  /// treat them as out-of-scope events.
+  private func ownerState(forSurface surfaceID: UUID) -> WorktreeTerminalState? {
+    for state in states.values where state.hasSurfaceAnywhere(surfaceID) {
+      return state
+    }
+    return nil
   }
 
   // MARK: - CLI queries.
@@ -334,6 +366,13 @@ final class WorktreeTerminalManager {
     }
     state.onSetupScriptConsumed = { [weak self] in
       self?.emit(.setupScriptConsumed(worktreeID: worktree.id))
+    }
+    // Persist per-worktree immediately when resume intent changes so a
+    // crash/SIGKILL between hook arrival and the next natural save (worktree
+    // switch, prune) cannot lose the `session_id` needed for restore.
+    state.onRestorableAgentChanged = { [weak self, weak state] in
+      guard let self, let state, let snapshot = state.captureLayoutSnapshot() else { return }
+      self.saveLayoutSnapshot?(worktree.id, snapshot)
     }
     states[worktree.id] = state
     terminalLogger.info("Created terminal state for worktree \(worktree.id)")

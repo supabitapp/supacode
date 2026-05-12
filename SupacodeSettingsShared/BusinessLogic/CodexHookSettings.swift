@@ -4,8 +4,12 @@ nonisolated enum CodexHookSettings {
   fileprivate static let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .codex)
   fileprivate static let idle = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .codex)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .codex)
+  // `forwardStdin: true` so the hook's stdin JSON (which carries Codex's
+  // `session_id`) travels with the envelope for restore to consume after a
+  // relaunch. Codex has no `SessionEnd` hook, so there is no matching end
+  // command — the presence liveness sweep is what clears the intent.
   fileprivate static let sessionStart = AgentHookSettingsCommand.eventCommand(
-    event: .sessionStart, agent: .codex)
+    event: .sessionStart, agent: .codex, forwardStdin: true)
 
   static func progressHooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(

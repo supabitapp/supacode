@@ -6,10 +6,13 @@ nonisolated enum ClaudeHookSettings {
   fileprivate static let awaitingInput = AgentHookSettingsCommand.eventCommand(
     event: .awaitingInput, agent: .claude)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .claude)
+  // `forwardStdin: true` so the envelope carries the hook's stdin JSON under
+  // `data`. The `session_id` inside is what restore feeds to
+  // `claude --resume <sid>` after an app relaunch.
   fileprivate static let sessionStart = AgentHookSettingsCommand.eventCommand(
-    event: .sessionStart, agent: .claude)
+    event: .sessionStart, agent: .claude, forwardStdin: true)
   fileprivate static let sessionEnd = AgentHookSettingsCommand.eventCommand(
-    event: .sessionEnd, agent: .claude)
+    event: .sessionEnd, agent: .claude, forwardStdin: true)
 
   static func progressHooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(

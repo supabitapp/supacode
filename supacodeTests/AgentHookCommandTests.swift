@@ -138,6 +138,56 @@ struct AgentHookCommandTests {
   /// JSON the hook produced is parseable by the same code that consumes
   /// it on the socket — a regression guard against future Swift changes
   /// that subtly break the envelope template.
+  /// Same harness, but feeds a JSON payload on stdin with `session_id`. Verifies
+  /// that `forwardStdin: true` embeds the payload under `data` and the server
+  /// parser exposes it via `decodeData(HookSessionPayload.self)`.
+  @Test func eventCommandWithForwardStdinEmbedsSessionID() throws {
+    let surfaceID = UUID()
+    let sessionID = "abc-123-session"
+    let stdinJSON = #"{"session_id":"\#(sessionID)","other":1}"#
+    let captured = try runHookCommandCapturingStdin(
+      AgentHookSettingsCommand.eventCommand(
+        event: .sessionStart, agent: .claude, forwardStdin: true),
+      env: [
+        "SUPACODE_SOCKET_PATH": "/tmp/supacode-fwd-\(UUID().uuidString)",
+        "SUPACODE_WORKTREE_ID": "/some/worktree",
+        "SUPACODE_TAB_ID": UUID().uuidString,
+        "SUPACODE_SURFACE_ID": surfaceID.uuidString,
+      ],
+      stdin: stdinJSON
+    )
+    guard case .event(let parsed) = AgentHookSocketServer.parse(data: captured) else {
+      Issue.record("Expected parser to recognise envelope; got nil/non-event from \(captured.count) bytes")
+      return
+    }
+    #expect(parsed.eventName == .sessionStart)
+    #expect(parsed.decodeData(HookSessionPayload.self)?.sessionID == sessionID)
+  }
+
+  /// Empty stdin must produce a valid envelope — `"data": null` is the agreed
+  /// fallback so the envelope is still parseable JSON when the agent bridge
+  /// ships a hook that doesn't write anything to stdin.
+  @Test func eventCommandWithForwardStdinHandlesEmptyStdin() throws {
+    let surfaceID = UUID()
+    let captured = try runHookCommandCapturingStdin(
+      AgentHookSettingsCommand.eventCommand(
+        event: .sessionEnd, agent: .claude, forwardStdin: true),
+      env: [
+        "SUPACODE_SOCKET_PATH": "/tmp/supacode-fwd-\(UUID().uuidString)",
+        "SUPACODE_WORKTREE_ID": "/some/worktree",
+        "SUPACODE_TAB_ID": UUID().uuidString,
+        "SUPACODE_SURFACE_ID": surfaceID.uuidString,
+      ],
+      stdin: ""
+    )
+    guard case .event(let parsed) = AgentHookSocketServer.parse(data: captured) else {
+      Issue.record("Expected parser to recognise envelope; got nil from \(captured.count) bytes")
+      return
+    }
+    #expect(parsed.eventName == .sessionEnd)
+    #expect(parsed.decodeData(HookSessionPayload.self) == nil)
+  }
+
   @Test func eventCommandProducesParseableJSON() throws {
     let surfaceID = UUID()
     let agentPid: pid_t = getpid()
@@ -165,7 +215,7 @@ struct AgentHookCommandTests {
   /// Run `command` via `/bin/zsh -c`, with a stub `nc` on PATH that
   /// dumps its stdin to a temp file. Returns the captured stdin bytes.
   private func runHookCommandCapturingStdin(
-    _ command: String, env: [String: String]
+    _ command: String, env: [String: String], stdin: String? = nil
   ) throws -> Data {
     let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("supacode-hook-rt-\(UUID().uuidString)", isDirectory: true)
@@ -192,7 +242,15 @@ struct AgentHookCommandTests {
     var environment = ProcessInfo.processInfo.environment
     for (key, value) in env { environment[key] = value }
     process.environment = environment
-    try process.run()
+    if let stdin {
+      let pipe = Pipe()
+      process.standardInput = pipe
+      try process.run()
+      pipe.fileHandleForWriting.write(Data(stdin.utf8))
+      try? pipe.fileHandleForWriting.close()
+    } else {
+      try process.run()
+    }
     process.waitUntilExit()
 
     return (try? Data(contentsOf: captureFile)) ?? Data()

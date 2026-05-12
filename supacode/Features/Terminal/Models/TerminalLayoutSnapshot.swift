@@ -65,6 +65,36 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
   struct SurfaceSnapshot: Codable, Equatable, Sendable {
     let id: UUID?
     let workingDirectory: String?
+    let restorableAgent: RestorableAgent?
+
+    init(id: UUID?, workingDirectory: String?, restorableAgent: RestorableAgent? = nil) {
+      self.id = id
+      self.workingDirectory = workingDirectory
+      self.restorableAgent = restorableAgent
+    }
+
+    private enum CodingKeys: String, CodingKey {
+      case id, workingDirectory, restorableAgent
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      id = try container.decodeIfPresent(UUID.self, forKey: .id)
+      workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
+      // `try?` so a malformed or unrecognized restorableAgent (e.g. an agent
+      // rawValue a newer build introduced) drops the field instead of the
+      // whole surface leaf.
+      restorableAgent =
+        (try? container.decodeIfPresent(RestorableAgent.self, forKey: .restorableAgent)) ?? nil
+    }
+  }
+
+  /// Per-surface intent to resume a coding agent session on next app launch.
+  /// Written by hook lifecycle events (`session_start` set, `session_end` /
+  /// presence eviction clear) and consumed once during layout restore.
+  struct RestorableAgent: Codable, Equatable, Sendable {
+    let agent: SkillAgent
+    let sessionID: String
   }
 
 }
