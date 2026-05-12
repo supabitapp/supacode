@@ -75,15 +75,29 @@ final class WorktreeTerminalManager {
       guard let self, let state = self.ownerState(forSurface: surfaceID) else { return }
       state.setRestorableAgent(surfaceID: surfaceID, agent: agent, sessionID: sessionID)
     }
-    AgentPresenceManager.shared.onSessionEnded = { [weak self] surfaceID, _, endedSessionID in
+    // `reason` decides the clear policy:
+    // - explicit(sid): late-end race guard — clear only when the stored intent's
+    //   sid still matches (a newer session_start has not already overwritten).
+    //   explicit(nil) is conservative: older bridges / malformed payloads must
+    //   not wipe newer intent, so we gate on agent+sid presence.
+    // - sweep / surfaceClosed: every pid for that (surface, agent) is gone, so
+    //   clearing by agent is safe regardless of sid.
+    AgentPresenceManager.shared.onSessionEnded = { [weak self] surfaceID, agent, reason in
       guard let self, let state = self.ownerState(forSurface: surfaceID) else { return }
-      state.clearRestorableAgent(surfaceID: surfaceID, ifMatching: endedSessionID)
+      switch reason {
+      case .explicit(let sessionID):
+        guard let sessionID else { return }
+        state.clearRestorableAgent(
+          surfaceID: surfaceID, agent: agent, ifMatchingSessionID: sessionID)
+      case .sweep, .surfaceClosed, .badgeToggleDisabled:
+        state.clearRestorableAgent(surfaceID: surfaceID, agent: agent)
+      }
     }
-    // Always record; the badges toggle gates DISPLAY in
-    // `AgentPresenceManager.agents(forSurface:)` / `agents(across:)`.
-    // Gating recording too would drop session_start events fired while
-    // the toggle was off, so flipping it back on later wouldn't restore
-    // badges for already-running agents.
+    // Always record the activity/pid half; the badges toggle gates DISPLAY
+    // in `AgentPresenceManager.agents(forSurface:)` / `agents(across:)` and
+    // gates the `onSessionStarted` callback that drives restore intent. That
+    // way flipping the toggle back on later re-shows badges for already-
+    // running agents, while "badges off" still suppresses new restore intent.
     server.onEvent = { [weak self] event in
       guard let self else { return }
       // Reject events whose surface is unknown to any live state: a hook from

@@ -745,7 +745,16 @@ final class WorktreeTerminalState {
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
+    // Keep restorable intent symmetric with `cleanupSurfaceState`: worktree
+    // teardown tears every surface down at once, so any intent tied to those
+    // surfaces is stale and must go. Callers that save the layout snapshot
+    // beforehand (e.g. `prune`) still get the pre-teardown intent persisted.
+    let hadRestorable = !restorableAgentBySurfaceID.isEmpty
+    restorableAgentBySurfaceID.removeAll()
     AgentPresenceManager.shared.surfacesClosed(closingSurfaceIDs)
+    if hadRestorable {
+      onRestorableAgentChanged?()
+    }
     // Agent busy state lives on GhosttySurfaceState and is cleaned up
     // when surfaces are removed.
     let pendingKinds = Set(blockingScripts.values)
@@ -845,9 +854,10 @@ final class WorktreeTerminalState {
   }
 
   /// Records a resume intent for `surfaceID`. A newer `session_start` on the
-  /// same surface atomically replaces any prior value. The change is fired
-  /// through `onRestorableAgentChanged` so the owning manager can persist the
-  /// updated layout snapshot eagerly.
+  /// same surface atomically replaces any prior value (agent switch is allowed
+  /// — there's only one initial-input slot per surface, and the user's most
+  /// recent explicit choice wins). Fires `onRestorableAgentChanged` so the
+  /// owning manager can persist the updated layout snapshot eagerly.
   func setRestorableAgent(surfaceID: UUID, agent: SkillAgent, sessionID: String) {
     guard surfaces[surfaceID] != nil else { return }
     let next = TerminalLayoutSnapshot.RestorableAgent(agent: agent, sessionID: sessionID)
@@ -856,15 +866,33 @@ final class WorktreeTerminalState {
     onRestorableAgentChanged?()
   }
 
-  /// Clears the resume intent for `surfaceID`. When `ifMatching` is non-nil
-  /// (explicit `session_end`), only clears if the stored sid matches — this
-  /// guards the late-SessionEnd race where a new session already overwrote the
-  /// field. When nil (presence sweep eviction), clears unconditionally because
-  /// the sweep only fires after every pid for that (surface, agent) died.
-  func clearRestorableAgent(surfaceID: UUID, ifMatching sessionID: String? = nil) {
+  /// Clears the resume intent for `(surfaceID, agent)` when the stored entry
+  /// matches the given agent — and, if supplied, the session id too.
+  ///
+  /// - `agent`: the ended agent. Clear is a no-op if the surface's current
+  ///   restorable intent points at a *different* agent (e.g. Claude ended but
+  ///   Codex is the stored restorable → Codex must survive).
+  /// - `sessionID`: guards the late-`session_end` race where a newer session
+  ///   for the same (surface, agent) has already overwritten the field. nil
+  ///   means "matched-agent unconditional clear" (used by presence sweep
+  ///   eviction and surface close, where every pid for that record is dead).
+  func clearRestorableAgent(
+    surfaceID: UUID, agent: SkillAgent, ifMatchingSessionID sessionID: String? = nil
+  ) {
     guard let current = restorableAgentBySurfaceID[surfaceID] else { return }
+    guard current.agent == agent else { return }
     if let sessionID, current.sessionID != sessionID { return }
     restorableAgentBySurfaceID.removeValue(forKey: surfaceID)
+    onRestorableAgentChanged?()
+  }
+
+  /// Drops every restorable intent (across all surfaces) unconditionally —
+  /// used when the user disables the agent-presence toggle so the "badge
+  /// visible ⟺ restore intent present" invariant holds at the moment of
+  /// disable. Fires `onRestorableAgentChanged` once if anything changed.
+  func clearAllRestorableAgents() {
+    guard !restorableAgentBySurfaceID.isEmpty else { return }
+    restorableAgentBySurfaceID.removeAll()
     onRestorableAgentChanged?()
   }
 
@@ -1456,36 +1484,6 @@ final class WorktreeTerminalState {
     if hadRestorable {
       onRestorableAgentChanged?()
     }
-  }
-
-  // MARK: - Restorable agent intent
-
-  /// True when this worktree currently hosts `surfaceID` in any tab. Used by
-  /// the manager to route hook lifecycle events to the correct state.
-  func hasSurfaceAnywhere(_ surfaceID: UUID) -> Bool {
-    surfaces[surfaceID] != nil
-  }
-
-  /// Record a resume target for the given surface. Idempotent on identical
-  /// input; overwrites atomically on a different session_id (the user started
-  /// a new session in the same surface).
-  func setRestorableAgent(surfaceID: UUID, agent: SkillAgent, sessionID: String) {
-    guard surfaces[surfaceID] != nil else { return }
-    let next = TerminalLayoutSnapshot.RestorableAgent(agent: agent, sessionID: sessionID)
-    if restorableAgentBySurfaceID[surfaceID] == next { return }
-    restorableAgentBySurfaceID[surfaceID] = next
-    onRestorableAgentChanged?()
-  }
-
-  /// Clear the resume target iff it still matches `sessionID`. Guards against
-  /// a late `session_end` for a superseded session wiping the newer intent.
-  /// Pass `sessionID: nil` to clear unconditionally (e.g. liveness sweep
-  /// eviction where no specific id is known).
-  func clearRestorableAgent(surfaceID: UUID, ifSessionIDMatches sessionID: String?) {
-    guard let current = restorableAgentBySurfaceID[surfaceID] else { return }
-    if let sessionID, current.sessionID != sessionID { return }
-    restorableAgentBySurfaceID.removeValue(forKey: surfaceID)
-    onRestorableAgentChanged?()
   }
 
   private func removeTree(for tabId: TerminalTabID) {

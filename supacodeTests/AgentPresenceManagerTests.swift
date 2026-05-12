@@ -457,8 +457,8 @@ struct AgentPresenceManagerTests {
     let surfaceID = UUID()
     let pid = getpid()
     let box = CallbackBox()
-    manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
+    manager.onSessionEnded = { surface, agent, reason in
+      box.ended.append(.init(surfaceID: surface, agent: agent, reason: reason))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
@@ -470,7 +470,7 @@ struct AgentPresenceManagerTests {
     )
 
     #expect(box.ended.count == 1)
-    #expect(box.ended.first?.sessionID == "sid-1")
+    #expect(box.ended.first?.reason == .explicit(sessionID: "sid-1"))
   }
 
   @Test func sessionEndDoesNotFireWhenRecordStillHasOtherPids() {
@@ -482,8 +482,8 @@ struct AgentPresenceManagerTests {
     let pid1 = getpid()
     let pid2: pid_t = pid1 + 1
     let box = CallbackBox()
-    manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
+    manager.onSessionEnded = { surface, agent, reason in
+      box.ended.append(.init(surfaceID: surface, agent: agent, reason: reason))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid1))
@@ -499,13 +499,13 @@ struct AgentPresenceManagerTests {
     #expect(box.ended.isEmpty)
   }
 
-  @Test func livenessSweepFiresOnSessionEndedWithNilSessionID() {
+  @Test func livenessSweepFiresOnSessionEndedWithSweepReason() {
     let manager = AgentPresenceManager()
     let surfaceID = UUID()
     let deadPid = makeDeadPid()
     let box = CallbackBox()
-    manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
+    manager.onSessionEnded = { surface, agent, reason in
+      box.ended.append(.init(surfaceID: surface, agent: agent, reason: reason))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: deadPid))
@@ -515,7 +515,7 @@ struct AgentPresenceManagerTests {
     #expect(box.ended.first?.surfaceID == surfaceID)
     #expect(box.ended.first?.agent == .codex)
     // Sweep has no session_id to cite — the clear is unconditional.
-    #expect(box.ended.first?.sessionID == nil)
+    #expect(box.ended.first?.reason == .sweep)
   }
 
   @Test func surfaceClosedFiresOnSessionEndedForAllRecords() {
@@ -523,8 +523,8 @@ struct AgentPresenceManagerTests {
     let surfaceID = UUID()
     let pid = getpid()
     let box = CallbackBox()
-    manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
+    manager.onSessionEnded = { surface, agent, reason in
+      box.ended.append(.init(surfaceID: surface, agent: agent, reason: reason))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
@@ -533,9 +533,90 @@ struct AgentPresenceManagerTests {
     manager.surfaceClosed(surfaceID)
 
     #expect(box.ended.count == 2)
-    // Surface close has no session_id — unconditional clear.
-    #expect(box.ended.allSatisfy { $0.sessionID == nil })
+    // Surface close is always `.surfaceClosed` regardless of agent.
+    #expect(box.ended.allSatisfy { $0.reason == .surfaceClosed })
     #expect(Set(box.ended.map(\.agent)) == Set([.claude, .codex]))
+  }
+
+  // MARK: - A1 invariant: badge toggle gates restore intent.
+
+  @Test func sessionStartWhileBadgesDisabledDoesNotFireCallback() {
+    // A1: the user's literal invariant is "badge invisible → no restore." When
+    // the badges toggle is off, a fresh session_start must not produce any
+    // restore-intent callback — otherwise a relaunch would revive a session
+    // the user had no visible evidence of.
+    try? withDependencies {
+      $0.defaultFileStorage = .inMemory
+    } operation: {
+      $settingsFile.withLock {
+        $0.global.agentPresenceBadgesEnabled = false
+      }
+      let manager = AgentPresenceManager()
+      let surfaceID = UUID()
+      let box = CallbackBox()
+      manager.onSessionStarted = { surface, agent, sid in
+        box.started.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
+      }
+
+      manager.record(
+        event: makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid(),
+          data: #"{"session_id":"abc-123"}"#
+        )
+      )
+
+      #expect(box.started.isEmpty)
+    }
+  }
+
+  @Test func sameSurfaceMultiAgentCallbacksCarryDistinctAgents() {
+    // B2: a surface can host claude + codex simultaneously. When one ends, the
+    // callback must carry the specific agent so the receiver clears only its
+    // own restore intent — wiping by surface alone would kill the surviving
+    // agent's intent too.
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let pid = getpid()
+    let box = CallbackBox()
+    manager.onSessionEnded = { surface, agent, reason in
+      box.ended.append(.init(surfaceID: surface, agent: agent, reason: reason))
+    }
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
+    manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: pid))
+    manager.record(
+      event: makeEvent(
+        .sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid,
+        data: #"{"session_id":"claude-sid"}"#
+      )
+    )
+
+    // Only claude's callback fired; codex record is still live.
+    #expect(box.ended.count == 1)
+    #expect(box.ended.first?.agent == .claude)
+    #expect(manager.agents(forSurface: surfaceID) == Set([.codex]))
+  }
+
+  @Test func explicitSessionEndWithMissingSessionIDStillCarriesExplicitReason() {
+    // #4 from deep review: explicit session_end with nil sessionID must NOT be
+    // conflated with sweep/surfaceClosed "unconditional" semantics. Receivers
+    // need to see it is explicit(nil) so they can apply the conservative
+    // clear rule (do nothing unless the stored sid matches — which nil never
+    // does).
+    let manager = AgentPresenceManager()
+    let surfaceID = UUID()
+    let pid = getpid()
+    let box = CallbackBox()
+    manager.onSessionEnded = { surface, agent, reason in
+      box.ended.append(.init(surfaceID: surface, agent: agent, reason: reason))
+    }
+
+    manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
+    // session_end without `data` — simulates an older bridge / malformed payload.
+    manager.record(event: makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid))
+
+    #expect(box.ended.count == 1)
+    #expect(box.ended.first?.reason == .explicit(sessionID: nil))
   }
 
   // MARK: - Helpers.
@@ -608,7 +689,7 @@ private final class CallbackBox {
   struct Ended: Equatable {
     let surfaceID: UUID
     let agent: SkillAgent
-    let sessionID: String?
+    let reason: AgentPresenceManager.SessionEndReason
   }
   var started: [Started] = []
   var ended: [Ended] = []

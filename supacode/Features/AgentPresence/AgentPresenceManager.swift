@@ -64,12 +64,30 @@ final class AgentPresenceManager {
   /// snapshot rather than this UI-state observer.
   var onSessionStarted: ((_ surfaceID: UUID, _ agent: SkillAgent, _ sessionID: String) -> Void)?
 
-  /// Fired when the `(surface, agent)` record empties. `sessionID` is non-nil
-  /// only for the explicit `session_end` path (receiver narrows the clear to
-  /// a matching sid to avoid wiping a newer session that raced a late end
-  /// event). For liveness sweep eviction and surface-close, sessionID is nil
-  /// — no pids remain, so the clear is unconditional.
-  var onSessionEnded: ((_ surfaceID: UUID, _ agent: SkillAgent, _ sessionID: String?) -> Void)?
+  /// Discriminates why a `(surface, agent)` presence record ended. Receivers
+  /// that mirror presence into persistent restore intent use this to decide
+  /// whether to clear unconditionally or only when a session id matches.
+  enum SessionEndReason: Sendable, Equatable {
+    /// Explicit `session_end` hook event. `sessionID` is non-nil when the
+    /// hook forwards its stdin payload carrying `session_id`. Receivers must
+    /// NOT clear restore intent unconditionally in the nil case — an older
+    /// bridge / malformed payload must not wipe a newer session's intent.
+    case explicit(sessionID: String?)
+    /// Liveness sweep evicted the last pid for this record. Every pid is
+    /// dead, so clearing restore intent matching the agent is safe.
+    case sweep
+    /// The surface was closed (tab/worktree teardown). Every record for the
+    /// surface is being dropped; matching-agent clear is safe.
+    case surfaceClosed
+    /// User disabled the agent-presence badge toggle. Enforces the "badge
+    /// visible ⟺ restore intent present" invariant at the instant of toggle.
+    case badgeToggleDisabled
+  }
+
+  /// Fired when the `(surface, agent)` record empties. `reason` describes the
+  /// cause so the receiver can pick the right clear policy (explicit requires
+  /// sid-match; sweep / surfaceClosed / badgeToggleDisabled clear by agent).
+  var onSessionEnded: ((_ surfaceID: UUID, _ agent: SkillAgent, _ reason: SessionEndReason) -> Void)?
 
   /// User toggle that gates badge display. Read inside the accessors so the
   /// observed views re-render when it flips.
@@ -86,13 +104,49 @@ final class AgentPresenceManager {
     var activity: Activity = .idle
   }
 
-  init() {}
+  private var toggleObservationTask: Task<Void, Never>?
+  private var lastObservedBadgesEnabled: Bool?
+
+  init() {
+    startObservingBadgeToggle()
+  }
 
   isolated deinit {
     // Stops the 2s liveness sweep so test-created managers (and any
     // future short-lived owner) don't leak the tick task. Isolated
     // because `sweepTask` is MainActor state.
     sweepTask?.cancel()
+    toggleObservationTask?.cancel()
+  }
+
+  /// Watches `agentPresenceBadgesEnabled` and fires `.badgeToggleDisabled`
+  /// `onSessionEnded` events for every live record the moment the user turns
+  /// badges off. This enforces the A1 invariant ("if the user disabled badges,
+  /// existing restore intent must also vanish") without scanning per-surface
+  /// state elsewhere. On re-enable we do nothing: new `session_start` events
+  /// re-populate restore intent naturally.
+  private func startObservingBadgeToggle() {
+    lastObservedBadgesEnabled = settingsFile.global.agentPresenceBadgesEnabled
+    toggleObservationTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(1))
+        await MainActor.run { self?.checkBadgeToggle() }
+      }
+    }
+  }
+
+  private func checkBadgeToggle() {
+    let current = settingsFile.global.agentPresenceBadgesEnabled
+    guard current != lastObservedBadgesEnabled else { return }
+    lastObservedBadgesEnabled = current
+    guard current == false else { return }
+    // Toggle just flipped to OFF: fire cleanup for every live (surface, agent)
+    // so mirrored restore intent is cleared in lockstep. Records stay — the
+    // pid tracking is still valid in case the user flips the toggle back on.
+    let pairs = records.keys.map { ($0.surfaceID, $0.agent) }
+    for (surfaceID, agent) in pairs {
+      onSessionEnded?(surfaceID, agent, .badgeToggleDisabled)
+    }
   }
 
   func agents(forSurface id: UUID) -> Set<SkillAgent> {
@@ -150,7 +204,7 @@ final class AgentPresenceManager {
     for id in closing { bySurface.removeValue(forKey: id) }
     records = records.filter { !closing.contains($0.key.surfaceID) }
     for (surfaceID, agent) in ended {
-      onSessionEnded?(surfaceID, agent, nil)
+      onSessionEnded?(surfaceID, agent, .surfaceClosed)
     }
   }
 
@@ -170,6 +224,12 @@ final class AgentPresenceManager {
       records[key] = record
       ensureLivenessSweepRunning()
       rebuildPresenceForSurface(event.surfaceID)
+      // A1 invariant: "badge visible ⟺ restore intent present". When the user
+      // has disabled agent-presence badges, the UI will not show this session,
+      // so we must not persist a resume target that would revive an invisible
+      // session on next launch. Recording the pid above is still required so
+      // that flipping the toggle back on later re-shows the badge.
+      guard settingsFile.global.agentPresenceBadgesEnabled else { return }
       // Forward the sessionID so the terminal manager can persist a resume
       // intent on the owning surface leaf. Missing / empty sid is normal for
       // older bridges that ship before stdin forwarding — silently skip.
@@ -184,7 +244,7 @@ final class AgentPresenceManager {
       let endedSessionID = event.decodeData(HookSessionPayload.self)?.sessionID
       if record.pids.isEmpty {
         records.removeValue(forKey: key)
-        onSessionEnded?(event.surfaceID, agent, endedSessionID)
+        onSessionEnded?(event.surfaceID, agent, .explicit(sessionID: endedSessionID))
       } else {
         records[key] = record
       }
@@ -255,7 +315,7 @@ final class AgentPresenceManager {
     }
     for surfaceID in dirtySurfaces { rebuildPresenceForSurface(surfaceID) }
     for (surfaceID, agent) in ended {
-      onSessionEnded?(surfaceID, agent, nil)
+      onSessionEnded?(surfaceID, agent, .sweep)
     }
   }
 
