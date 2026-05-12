@@ -403,7 +403,7 @@ struct AgentPresenceManagerTests {
     let surfaceID = UUID()
     let box = CallbackBox()
     manager.onSessionStarted = { surface, agent, sid in
-      box.started.append((surface, agent, sid))
+      box.started.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
     }
 
     manager.record(
@@ -414,9 +414,9 @@ struct AgentPresenceManagerTests {
     )
 
     #expect(box.started.count == 1)
-    #expect(box.started.first?.0 == surfaceID)
-    #expect(box.started.first?.1 == .claude)
-    #expect(box.started.first?.2 == "abc-123")
+    #expect(box.started.first?.surfaceID == surfaceID)
+    #expect(box.started.first?.agent == .claude)
+    #expect(box.started.first?.sessionID == "abc-123")
   }
 
   @Test func sessionStartWithoutSessionIDDoesNotFireCallback() {
@@ -426,7 +426,7 @@ struct AgentPresenceManagerTests {
     let surfaceID = UUID()
     let box = CallbackBox()
     manager.onSessionStarted = { surface, agent, sid in
-      box.started.append((surface, agent, sid))
+      box.started.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid()))
@@ -439,7 +439,7 @@ struct AgentPresenceManagerTests {
     let surfaceID = UUID()
     let box = CallbackBox()
     manager.onSessionStarted = { surface, agent, sid in
-      box.started.append((surface, agent, sid))
+      box.started.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
     }
 
     manager.record(
@@ -458,7 +458,7 @@ struct AgentPresenceManagerTests {
     let pid = getpid()
     let box = CallbackBox()
     manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append((surface, agent, sid))
+      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
@@ -470,7 +470,7 @@ struct AgentPresenceManagerTests {
     )
 
     #expect(box.ended.count == 1)
-    #expect(box.ended.first?.2 == "sid-1")
+    #expect(box.ended.first?.sessionID == "sid-1")
   }
 
   @Test func sessionEndDoesNotFireWhenRecordStillHasOtherPids() {
@@ -483,7 +483,7 @@ struct AgentPresenceManagerTests {
     let pid2: pid_t = pid1 + 1
     let box = CallbackBox()
     manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append((surface, agent, sid))
+      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid1))
@@ -505,17 +505,17 @@ struct AgentPresenceManagerTests {
     let deadPid = makeDeadPid()
     let box = CallbackBox()
     manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append((surface, agent, sid))
+      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: deadPid))
     manager.livenessSweep()
 
     #expect(box.ended.count == 1)
-    #expect(box.ended.first?.0 == surfaceID)
-    #expect(box.ended.first?.1 == .codex)
+    #expect(box.ended.first?.surfaceID == surfaceID)
+    #expect(box.ended.first?.agent == .codex)
     // Sweep has no session_id to cite — the clear is unconditional.
-    #expect(box.ended.first?.2 == nil)
+    #expect(box.ended.first?.sessionID == nil)
   }
 
   @Test func surfaceClosedFiresOnSessionEndedForAllRecords() {
@@ -524,7 +524,7 @@ struct AgentPresenceManagerTests {
     let pid = getpid()
     let box = CallbackBox()
     manager.onSessionEnded = { surface, agent, sid in
-      box.ended.append((surface, agent, sid))
+      box.ended.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
     }
 
     manager.record(event: makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid))
@@ -534,8 +534,8 @@ struct AgentPresenceManagerTests {
 
     #expect(box.ended.count == 2)
     // Surface close has no session_id — unconditional clear.
-    #expect(box.ended.allSatisfy { $0.2 == nil })
-    #expect(Set(box.ended.map { $0.1 }) == Set([.claude, .codex]))
+    #expect(box.ended.allSatisfy { $0.sessionID == nil })
+    #expect(Set(box.ended.map(\.agent)) == Set([.claude, .codex]))
   }
 
   // MARK: - Helpers.
@@ -600,6 +600,16 @@ private final class ObservationFlag: @unchecked Sendable {
 /// terminal state observer.
 @MainActor
 private final class CallbackBox {
-  var started: [(UUID, SkillAgent, String)] = []
-  var ended: [(UUID, SkillAgent, String?)] = []
+  struct Started: Equatable {
+    let surfaceID: UUID
+    let agent: SkillAgent
+    let sessionID: String
+  }
+  struct Ended: Equatable {
+    let surfaceID: UUID
+    let agent: SkillAgent
+    let sessionID: String?
+  }
+  var started: [Started] = []
+  var ended: [Ended] = []
 }

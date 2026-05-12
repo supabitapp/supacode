@@ -1012,11 +1012,13 @@ final class WorktreeTerminalState {
       let newSurface = createRestorationSplit(
         at: anchor,
         direction: direction,
-        ratio: split.ratio,
-        workingDirectory: rightWorkingDir,
-        initialInput: rightInitialInput,
         tabId: tabId,
-        surfaceID: rightLeaf.id,
+        options: RestorationSplitOptions(
+          ratio: split.ratio,
+          workingDirectory: rightWorkingDir,
+          initialInput: rightInitialInput,
+          surfaceID: rightLeaf.id,
+        )
       )
     else {
       layoutLogger.warning("Skipping subtree restoration for tab \(tabId.rawValue)")
@@ -1028,26 +1030,33 @@ final class WorktreeTerminalState {
     restoreLayoutNode(split.right, anchor: newSurface, tabId: tabId)
   }
 
+  /// Bundles the non-topology inputs to `createRestorationSplit`. Keeps the
+  /// function under SwiftLint's parameter-count cap while the call site stays
+  /// readable (named arguments at the creation site).
+  private struct RestorationSplitOptions {
+    let ratio: Double
+    let workingDirectory: URL?
+    let initialInput: String?
+    let surfaceID: UUID?
+  }
+
   private func createRestorationSplit(
     at anchor: GhosttySurfaceView,
     direction: SplitTree<GhosttySurfaceView>.NewDirection,
-    ratio: Double,
-    workingDirectory: URL?,
-    initialInput: String?,
     tabId: TerminalTabID,
-    surfaceID: UUID? = nil
+    options: RestorationSplitOptions
   ) -> GhosttySurfaceView? {
     guard var tree = trees[tabId] else { return nil }
     let newSurface = createSurface(
       tabId: tabId,
-      initialInput: initialInput,
-      workingDirectoryOverride: workingDirectory,
+      initialInput: options.initialInput,
+      workingDirectoryOverride: options.workingDirectory,
       inheritingFromSurfaceId: anchor.id,
       context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
-      surfaceID: surfaceID,
+      surfaceID: options.surfaceID,
     )
     do {
-      tree = try tree.inserting(view: newSurface, at: anchor, direction: direction, ratio: ratio)
+      tree = try tree.inserting(view: newSurface, at: anchor, direction: direction, ratio: options.ratio)
       trees[tabId] = tree
       return newSurface
     } catch {
