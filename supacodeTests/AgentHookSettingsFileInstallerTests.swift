@@ -34,7 +34,9 @@ struct AgentHookSettingsFileInstallerTests {
           "hooks": .array([
             .object([
               "type": "command",
-              "command": .string(AgentHookSettingsCommand.eventCommand(event: .idle, agent: .claude)),
+              "command": .string(
+                AgentHookSettingsCommand.compositeCommand(
+                  events: [.idle], forwardStdinAsNotification: false, agent: .claude)),
               "timeout": 10,
             ])
           ])
@@ -185,11 +187,144 @@ struct AgentHookSettingsFileInstallerTests {
     #expect(cmd == "echo third-party")
   }
 
+  @Test func uninstallThrowsOnCorruptHooksValueInsteadOfSilentlyDestroyingIt() throws {
+    // A non-object `hooks` value (string, number, array) means we're
+    // looking at a hand-edited or unfamiliar settings file. Uninstall
+    // must throw rather than coerce to `{}` and overwrite user data —
+    // install already throws on the same shape.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    let corrupt: JSONValue = .object(["hooks": "not an object"])
+    try JSONEncoder().encode(corrupt).write(to: url)
+
+    #expect(throws: TestInstallerError.self) {
+      try makeInstaller().uninstall(settingsURL: url, hookGroupsByEvent: sampleHookGroups())
+    }
+  }
+
   @Test func uninstallOnMissingFileIsNoOp() throws {
     let url = makeTempURL()
     let installer = makeInstaller()
     // Should not throw — file doesn't exist.
     try installer.uninstall(settingsURL: url, hookGroupsByEvent: sampleHookGroups())
+  }
+
+  @Test func uninstallRemovesEveryPreCollapseSentinelGroup() throws {
+    // Regression guard: a settings file produced by the pre-collapse build
+    // (before progress + notification hooks were merged into one composite
+    // entry per event) has TWO sentinel-tagged groups under both
+    // `Notification` and `Stop`. The earlier uninstall path mutated the
+    // hooks dict while iterating its keys, which on certain key sets left
+    // entries behind. Every sentinel-tagged group must be stripped on
+    // uninstall — the user-authored hook (preserved here under
+    // `PreToolUse / Bash`) survives.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+
+    let sentinel = AgentHookSettingsCommand.ownershipMarker
+    func sentinelCommand(_ body: String) -> JSONValue {
+      .object([
+        "type": "command",
+        "command": .string("\(body) \(sentinel)"),
+        "timeout": 10,
+      ])
+    }
+    let userBashHook: JSONValue = .object([
+      "type": "command",
+      "command": "/Users/me/.claude/hooks/confirm-risky-bash.sh",
+      "timeout": 5,
+    ])
+    let preCollapse: JSONValue = .object([
+      "hooks": .object([
+        "Notification": .array([
+          .object(["hooks": .array([sentinelCommand("supacode awaiting_input")]), "matcher": ""]),
+          .object(["hooks": .array([sentinelCommand("supacode notify")]), "matcher": ""]),
+        ]),
+        "Stop": .array([
+          .object(["hooks": .array([sentinelCommand("supacode idle")])]),
+          .object(["hooks": .array([sentinelCommand("supacode notify")])]),
+        ]),
+        "PreToolUse": .array([
+          .object(["hooks": .array([userBashHook]), "matcher": "Bash"]),
+          .object(["hooks": .array([sentinelCommand("supacode busy")]), "matcher": ""]),
+        ]),
+      ])
+    ])
+    try JSONEncoder().encode(preCollapse).write(to: url)
+
+    try makeInstaller().uninstall(settingsURL: url, hookGroupsByEvent: sampleHookGroups())
+
+    let data = try Data(contentsOf: url)
+    let root = try JSONDecoder().decode(JSONValue.self, from: data)
+    let hooks = root.objectValue?["hooks"]?.objectValue ?? [:]
+    #expect(hooks["Notification"] == nil)
+    #expect(hooks["Stop"] == nil)
+    // PreToolUse keeps the user-authored Bash hook, drops the Supacode one.
+    let preToolUseGroups = hooks["PreToolUse"]?.arrayValue ?? []
+    #expect(preToolUseGroups.count == 1)
+    let surviving = preToolUseGroups.first?.objectValue?["hooks"]?.arrayValue?.first?.objectValue
+    #expect(surviving?["command"]?.stringValue == "/Users/me/.claude/hooks/confirm-risky-bash.sh")
+  }
+
+  @Test func installPrunesStaleSupacodeEntries() throws {
+    // Starting from a pre-collapse settings file with stale sentinel-
+    // tagged duplicates, install must leave the file in the same shape
+    // as a clean install (one group per event with exactly the
+    // canonical commands).
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+
+    let sentinel = AgentHookSettingsCommand.ownershipMarker
+    let stale: JSONValue = .object([
+      "hooks": .object([
+        "Stop": .array([
+          .object([
+            "hooks": .array([
+              .object([
+                "type": "command",
+                "command": .string("supacode old-idle \(sentinel)"),
+                "timeout": 5,
+              ])
+            ])
+          ]),
+          .object([
+            "hooks": .array([
+              .object([
+                "type": "command",
+                "command": .string("supacode old-notify \(sentinel)"),
+                "timeout": 10,
+              ])
+            ])
+          ]),
+        ])
+      ])
+    ])
+    try JSONEncoder().encode(stale).write(to: url)
+
+    let installer = makeInstaller()
+    try installer.install(settingsURL: url, hookGroupsByEvent: sampleHookGroups())
+
+    let data = try Data(contentsOf: url)
+    let root = try JSONDecoder().decode(JSONValue.self, from: data)
+    let stopGroups = root.objectValue?["hooks"]?.objectValue?["Stop"]?.arrayValue ?? []
+    #expect(stopGroups.count == 1)
+    let commands = stopGroups.flatMap { $0.objectValue?["hooks"]?.arrayValue ?? [] }
+      .compactMap { $0.objectValue?["command"]?.stringValue }
+    #expect(commands.count == 1)
+    #expect(!(commands[0].contains("old-idle") || commands[0].contains("old-notify")))
+    #expect(commands[0].contains(sentinel))
   }
 
   // MARK: - containsMatchingHooks.

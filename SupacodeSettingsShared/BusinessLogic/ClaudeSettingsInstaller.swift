@@ -12,16 +12,15 @@ nonisolated struct ClaudeSettingsInstaller {
     self.fileManager = fileManager
   }
 
-  /// Combined progress + notification install state. Used by the unified
-  /// integration so the file installer's prune step covers every event the
-  /// integration writes — eliminating stale duplicates left by older
-  /// Supacode versions.
+  /// Install state for the unified hook map. The file installer's prune
+  /// step covers every event the integration writes — eliminating stale
+  /// duplicates left by older Supacode versions.
   func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
-      groups = try ClaudeHookSettings.allHooksByEvent()
+      groups = try ClaudeHookSettings.hooksByEvent()
     } catch {
-      Self.reportInvalidAllHookConfiguration(error)
+      Self.reportInvalidHookConfiguration(error)
       return .notInstalled
     }
     return fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
@@ -30,18 +29,18 @@ nonisolated struct ClaudeSettingsInstaller {
   func installAllHooks() throws {
     try fileInstaller.install(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.allHooksByEvent()
+      hookGroupsByEvent: try ClaudeHookSettings.hooksByEvent()
     )
   }
 
   func uninstallAllHooks() throws {
     try fileInstaller.uninstall(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try ClaudeHookSettings.allHooksByEvent()
+      hookGroupsByEvent: try ClaudeHookSettings.hooksByEvent()
     )
   }
 
-  private static func reportInvalidAllHookConfiguration(_ error: Error) {
+  private static func reportInvalidHookConfiguration(_ error: Error) {
     #if DEBUG
       assertionFailure("Claude hook configuration is invalid: \(error)")
     #endif

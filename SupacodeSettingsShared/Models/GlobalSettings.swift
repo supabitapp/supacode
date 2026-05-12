@@ -58,6 +58,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var globalScripts: [ScriptDefinition]
   public var richAgentNotificationsEnabled: Bool
   public var agentPresenceBadgesEnabled: Bool
+  /// When true, an agent integration that reports `.outdated` at launch /
+  /// scene activation is silently re-installed so a Supacode update never
+  /// strands stale hooks (e.g. legacy `Notification` / `PostToolUseFailure`
+  /// entries from earlier wire-protocol revisions).
+  public var autoUpdateAgentIntegrationsEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -89,7 +94,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     shortcutOverrides: [:],
     globalScripts: [],
     richAgentNotificationsEnabled: true,
-    agentPresenceBadgesEnabled: true
+    agentPresenceBadgesEnabled: true,
+    autoUpdateAgentIntegrationsEnabled: true
   )
 
   public init(
@@ -122,7 +128,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:],
     globalScripts: [ScriptDefinition] = [],
     richAgentNotificationsEnabled: Bool = true,
-    agentPresenceBadgesEnabled: Bool = true
+    agentPresenceBadgesEnabled: Bool = true,
+    autoUpdateAgentIntegrationsEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -154,6 +161,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.globalScripts = globalScripts
     self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
+    self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -285,5 +293,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .agentPresenceBadgesEnabled)
       ?? Self.default.agentPresenceBadgesEnabled
+    autoUpdateAgentIntegrationsEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .autoUpdateAgentIntegrationsEnabled)
+      ?? Self.default.autoUpdateAgentIntegrationsEnabled
   }
 }

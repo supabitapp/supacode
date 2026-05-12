@@ -34,12 +34,12 @@ nonisolated struct CodexSettingsInstaller {
     self.runEnableHooksCommand = runEnableHooksCommand
   }
 
-  /// Combined progress + notification install state — see
+  /// Install state for the unified hook map — see
   /// `ClaudeSettingsInstaller.installState()` for rationale.
   func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
-      groups = try CodexHookSettings.allHooksByEvent()
+      groups = try CodexHookSettings.hooksByEvent()
     } catch {
       Self.reportInvalidHookConfiguration(error)
       return .notInstalled
@@ -57,14 +57,14 @@ nonisolated struct CodexSettingsInstaller {
     try await enableHooksFeature()
     try fileInstaller.install(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.allHooksByEvent()
+      hookGroupsByEvent: try CodexHookSettings.hooksByEvent()
     )
   }
 
   func uninstallAllHooks() throws {
     try fileInstaller.uninstall(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.allHooksByEvent()
+      hookGroupsByEvent: try CodexHookSettings.hooksByEvent()
     )
     // Symmetric with `enableHooksFeature` in install — without this, a
     // partial-install rollback (or a plain uninstall) leaves

@@ -66,33 +66,23 @@ nonisolated struct KiroHookSettingsFileInstaller {
 
   // MARK: - Install.
 
+  /// `install = uninstall + append`: strip every Supacode-managed entry,
+  /// then append the canonical entries 1:1. See
+  /// `AgentHookSettingsFileInstaller.install` for the rationale.
   func install(
     settingsURL: URL,
     hookEntriesByEvent: @autoclosure () throws -> [String: [JSONValue]]
   ) throws {
-    let settingsObject = try loadSettingsObject(at: settingsURL)
-    let hookEntries = try hookEntriesByEvent()
-    var mergedObject = settingsObject
-    var hooksObject = try existingHooksObject(in: mergedObject)
-
-    // Remove existing managed commands before re-adding.
-    for event in hooksObject.keys {
-      let existing = try existingEntries(for: event, hooksObject: hooksObject)
-      let filtered = existing.filter { !Self.isManaged($0) }
-      if filtered.isEmpty {
-        hooksObject.removeValue(forKey: event)
-      } else {
-        hooksObject[event] = .array(filtered)
-      }
+    let canonicalEntries = try hookEntriesByEvent()
+    var settingsObject = try loadSettingsObject(at: settingsURL)
+    let existing = try existingHooksObject(in: settingsObject)
+    var pruned = try pruneAllSupacodeEntries(from: existing)
+    for (event, entries) in canonicalEntries {
+      let existingEntries = pruned[event]?.arrayValue ?? []
+      pruned[event] = .array(existingEntries + entries)
     }
-
-    for (event, newEntries) in hookEntries {
-      let existing = hooksObject[event]?.arrayValue ?? []
-      hooksObject[event] = .array(existing + newEntries)
-    }
-
-    mergedObject["hooks"] = .object(hooksObject)
-    try writeSettings(mergedObject, to: settingsURL)
+    settingsObject["hooks"] = .object(pruned)
+    try writeSettings(settingsObject, to: settingsURL)
   }
 
   // MARK: - Uninstall.
@@ -102,22 +92,11 @@ nonisolated struct KiroHookSettingsFileInstaller {
     hookEntriesByEvent: @autoclosure () throws -> [String: [JSONValue]]
   ) throws {
     _ = try hookEntriesByEvent()  // Eval for parity with `install` errors.
-    let settingsObject = try loadSettingsObject(at: settingsURL)
-    var mergedObject = settingsObject
-    var hooksObject = try existingHooksObject(in: mergedObject)
-
-    for event in hooksObject.keys {
-      let existing = try existingEntries(for: event, hooksObject: hooksObject)
-      let filtered = existing.filter { !Self.isManaged($0) }
-      if filtered.isEmpty {
-        hooksObject.removeValue(forKey: event)
-      } else {
-        hooksObject[event] = .array(filtered)
-      }
-    }
-
-    mergedObject["hooks"] = .object(hooksObject)
-    try writeSettings(mergedObject, to: settingsURL)
+    var settingsObject = try loadSettingsObject(at: settingsURL)
+    let existing = try existingHooksObject(in: settingsObject)
+    let pruned = try pruneAllSupacodeEntries(from: existing)
+    settingsObject["hooks"] = .object(pruned)
+    try writeSettings(settingsObject, to: settingsURL)
   }
 
   // MARK: - Helpers.
@@ -142,6 +121,25 @@ nonisolated struct KiroHookSettingsFileInstaller {
     return AgentHookCommandOwnership.isSupacodeManagedCommand(command)
   }
 
+  /// Builds a fresh hooks map with every Supacode-managed entry stripped.
+  /// Iterates the source dict (never mutates while iterating) so the prune
+  /// can't silently skip an event.
+  private func pruneAllSupacodeEntries(
+    from hooksObject: [String: JSONValue]
+  ) throws -> [String: JSONValue] {
+    var result: [String: JSONValue] = [:]
+    for (event, value) in hooksObject {
+      guard let entries = value.arrayValue else {
+        throw errors.invalidEventHooks(event)
+      }
+      let filtered = entries.filter { !Self.isManaged($0) }
+      if !filtered.isEmpty {
+        result[event] = .array(filtered)
+      }
+    }
+    return result
+  }
+
   private func existingHooksObject(
     in settingsObject: [String: JSONValue]
   ) throws -> [String: JSONValue] {
@@ -150,17 +148,6 @@ nonisolated struct KiroHookSettingsFileInstaller {
       throw errors.invalidHooksObject()
     }
     return hooksObject
-  }
-
-  private func existingEntries(
-    for event: String,
-    hooksObject: [String: JSONValue]
-  ) throws -> [JSONValue] {
-    guard let existingValue = hooksObject[event] else { return [] }
-    guard let entries = existingValue.arrayValue else {
-      throw errors.invalidEventHooks(event)
-    }
-    return entries
   }
 
   private func loadSettingsObject(at url: URL) throws -> [String: JSONValue] {

@@ -1,14 +1,8 @@
-/// Hook events emitted via the JSON envelope path. Mirrors the wire-side
-/// `AgentHookEvent.EventName` cases — duplicated here because that type
-/// lives in the main app target and this command builder needs to compile
-/// in `SupacodeSettingsShared`. `notification` is excluded; it has its own
-/// command shape (`notificationCommand`) because it forwards the agent's
-/// raw hook payload from stdin.
-///
-/// Activity events (`busy`, `awaitingInput`, `idle`) are atomic state-set:
-/// each one assigns the (surface, agent) activity to that exact value. No
-/// counters, no on/off pairs — repeated events are idempotent. The agent's
-/// Stop equivalent is the natural reset point that fires `idle`.
+/// Hook events emitted via the JSON envelope path. Activity events
+/// (`busy`, `awaitingInput`, `idle`) are atomic state-set — each fires
+/// the corresponding (surface, agent) activity directly; repeated events
+/// are idempotent. The notification leg is composed in alongside an
+/// envelope by `compositeCommand(forwardStdinAsNotification:)`.
 nonisolated enum HookEvent: String {
   case sessionStart = "session_start"
   case sessionEnd = "session_end"
@@ -35,7 +29,15 @@ nonisolated enum AgentHookSettingsCommand {
   static let legacyCLIPathEnvVar = "SUPACODE_CLI_PATH"
   static let legacyAgentHookMarker = "agent-hook"
 
-  private static let envCheck =
+  /// Verbatim 4-var presence-guard at the head of every Supacode-installed
+  /// hook. Carried forward unchanged across every command-shape revision,
+  /// so it doubles as the pre-sentinel legacy fingerprint. A user-authored
+  /// hook following the documented `SUPACODE_SOCKET_PATH`-only pattern
+  /// (single-var check) does not match. A user who copied this guard
+  /// verbatim AND removed the trailing sentinel intentionally would be
+  /// treated as legacy — that's the deliberate trade for catching every
+  /// pre-envelope shape of older Supacode hook.
+  static let envCheck =
     #"[ -n "${SUPACODE_SOCKET_PATH:-}" ]"#
     + #" && [ -n "${SUPACODE_WORKTREE_ID:-}" ]"#
     + #" && [ -n "${SUPACODE_TAB_ID:-}" ]"#
@@ -50,30 +52,59 @@ nonisolated enum AgentHookSettingsCommand {
     "\(envCheck) && \(pipeline) >/dev/null 2>&1 || true \(ownershipMarker)"
   }
 
-  /// Forwards the raw hook event JSON (from stdin) to the socket.
-  /// Header: `worktreeID tabID surfaceID agent`.
-  static func notificationCommand(agent: SkillAgent) -> String {
-    let send =
-      #"{ printf '%s \#(agent.rawValue)\n' "\#(ids)"; cat; }"#
-      + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
-    return managed(send)
+  /// Builds a single shell command that fires every `event` envelope and
+  /// optionally forwards stdin as a notification — all under one envCheck
+  /// guard with one sentinel. Stdin is consumed once via `payload=$(cat)`
+  /// so the same payload can be relayed after the fixed envelopes. The
+  /// precondition rejects a no-op invocation because the empty-empty
+  /// fallthrough would otherwise emit `{ ; }` (shell syntax error masked
+  /// by `|| true`).
+  static func compositeCommand(
+    events: [HookEvent],
+    forwardStdinAsNotification: Bool,
+    agent: SkillAgent
+  ) -> String {
+    precondition(
+      !events.isEmpty || forwardStdinAsNotification,
+      "compositeCommand needs at least one side-effect (events or stdin forward).",
+    )
+    if events.count == 1, !forwardStdinAsNotification {
+      return managed(envelopePipeline(event: events[0], agent: agent))
+    }
+    if events.isEmpty, forwardStdinAsNotification {
+      return managed(notifyPipeline(agent: agent, payloadExpr: nil))
+    }
+    var steps: [String] = []
+    if forwardStdinAsNotification { steps.append("payload=$(cat)") }
+    for event in events {
+      steps.append(envelopePipeline(event: event, agent: agent))
+    }
+    if forwardStdinAsNotification {
+      steps.append(notifyPipeline(agent: agent, payloadExpr: #""$payload""#))
+    }
+    return managed("{ \(steps.joined(separator: "; ")); }")
   }
 
-  /// Fires a hook event by writing the JSON envelope directly to the socket
-  /// via `nc`. Covers session lifecycle (start/end) and per-turn activity
-  /// (`busy`/`awaiting_input`/`idle` — atomic state-set). We don't go
-  /// through the bundled `supacode` CLI because hook subshells (especially
-  /// Codex's) often don't inherit a PATH containing it, and `2>/dev/null
-  /// || true` would swallow the failure. `$PPID` is the agent process —
-  /// the hook script is a direct child.
-  static func eventCommand(event: HookEvent, agent: SkillAgent) -> String {
+  private static func envelopePipeline(event: HookEvent, agent: SkillAgent) -> String {
     let envelope =
       #"{\"event\":\"\#(event.rawValue)\","#
       + #"\"v\":1,\"agent\":\"\#(agent.rawValue)\","#
       + #"\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID}"#
-    let send =
-      #"printf '%s' "\#(envelope)""#
+    return #"printf '%s' "\#(envelope)" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
+  }
+
+  /// `payloadExpr == nil` → forward stdin live via `cat`. Non-nil → relay
+  /// a previously-stashed shell expression (so the composite path can
+  /// consume stdin once and reuse it after event envelopes).
+  private static func notifyPipeline(agent: SkillAgent, payloadExpr: String?) -> String {
+    let body: String
+    if let payloadExpr {
+      body = #"printf '%s' \#(payloadExpr)"#
+    } else {
+      body = "cat"
+    }
+    return
+      #"{ printf '%s \#(agent.rawValue)\n' "\#(ids)"; \#(body); }"#
       + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
-    return managed(send)
   }
 }

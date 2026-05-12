@@ -30,7 +30,11 @@ struct CodingAgentsSidebarCardView: View {
 
   var body: some View {
     let states = store.settings.agentIntegrationStates
-    let mode = Self.mode(for: states, dismissed: Self.isDismissed(at: dismissedAt))
+    let mode = Self.mode(
+      for: states,
+      dismissed: Self.isDismissed(at: dismissedAt),
+      autoUpdateEnabled: store.settings.autoUpdateAgentIntegrationsEnabled
+    )
     switch mode {
     case .updatesAvailable(let agents):
       card(
@@ -116,16 +120,22 @@ struct CodingAgentsSidebarCardView: View {
   /// integration states and dismissal flag. Tested separately so the view
   /// stays a thin renderer. Always waits for every agent to resolve before
   /// committing to a card — avoids the avatar group regrowing mid-launch
-  /// as per-agent probes return staggered.
+  /// as per-agent probes return staggered. When `autoUpdateEnabled` is
+  /// true, `.updatesAvailable` is suppressed because auto-update has
+  /// already (or is about to) handle it.
   static func mode(
-    for states: [SkillAgent: AgentIntegrationRowState], dismissed: Bool
+    for states: [SkillAgent: AgentIntegrationRowState],
+    dismissed: Bool,
+    autoUpdateEnabled: Bool
   ) -> Mode {
     let stillChecking = SkillAgent.allCases.contains { states[$0]?.isResolved != true }
     if stillChecking { return .hidden }
-    let outdated = SkillAgent.allCases.filter {
-      states[$0]?.integrationState == .outdated
+    if !autoUpdateEnabled {
+      let outdated = SkillAgent.allCases.filter {
+        states[$0]?.integrationState == .outdated
+      }
+      if !outdated.isEmpty { return .updatesAvailable(outdated) }
     }
-    if !outdated.isEmpty { return .updatesAvailable(outdated) }
     let anyInstalled = SkillAgent.allCases.contains {
       states[$0]?.integrationState == .installed
     }

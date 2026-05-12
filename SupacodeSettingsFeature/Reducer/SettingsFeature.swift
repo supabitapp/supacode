@@ -71,6 +71,7 @@ public struct SettingsFeature {
     public var globalScripts: [ScriptDefinition]
     public var richAgentNotificationsEnabled: Bool
     public var agentPresenceBadgesEnabled: Bool
+    public var autoUpdateAgentIntegrationsEnabled: Bool
     public var cliInstallState = CLIInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
@@ -111,6 +112,7 @@ public struct SettingsFeature {
       globalScripts = settings.globalScripts
       richAgentNotificationsEnabled = settings.richAgentNotificationsEnabled
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
+      autoUpdateAgentIntegrationsEnabled = settings.autoUpdateAgentIntegrationsEnabled
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -148,7 +150,8 @@ public struct SettingsFeature {
         shortcutOverrides: shortcutOverrides,
         globalScripts: globalScripts,
         richAgentNotificationsEnabled: richAgentNotificationsEnabled,
-        agentPresenceBadgesEnabled: agentPresenceBadgesEnabled
+        agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
+        autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled
       )
     }
   }
@@ -222,6 +225,11 @@ public struct SettingsFeature {
         )
 
       case .refreshAgentIntegrationStates:
+        // Cancellable so a stacked scene activation can't run two task
+        // groups concurrently — without this, two `.outdated` arrivals
+        // can both dispatch `.agentIntegrationInstallTapped`, which
+        // shares `AgentIntegrationCancelID` with the install effect and
+        // would kill the first install mid-write.
         return .run { [agentIntegrationClient] send in
           await withTaskGroup(of: (SkillAgent, AgentIntegrationState).self) { group in
             for agent in SkillAgent.allCases {
@@ -232,6 +240,7 @@ public struct SettingsFeature {
             }
           }
         }
+        .cancellable(id: RefreshAgentIntegrationStatesID(), cancelInFlight: true)
 
       case .settingsLoaded(let settings):
         let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
@@ -279,6 +288,7 @@ public struct SettingsFeature {
         state.globalScripts = normalizedSettings.globalScripts
         state.richAgentNotificationsEnabled = normalizedSettings.richAgentNotificationsEnabled
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
+        state.autoUpdateAgentIntegrationsEnabled = normalizedSettings.autoUpdateAgentIntegrationsEnabled
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)
@@ -364,8 +374,20 @@ public struct SettingsFeature {
         return .none
 
       case .agentIntegrationChecked(let agent, let integrationState):
+        // Don't clobber in-flight or failed states. `.installing` /
+        // `.uninstalling` settle via `.agentIntegrationCompleted` —
+        // overwriting them races the shared `AgentIntegrationCancelID`
+        // (the auto-update branch below would otherwise cancel a
+        // manual uninstall). `.failed` must survive so the error stays
+        // visible and auto-update can't loop on a persistent failure.
+        switch state.agentIntegrationStates[agent] {
+        case .installing, .uninstalling, .failed: return .none
+        default: break
+        }
         state.agentIntegrationStates[agent] = .ready(integrationState)
-        return .none
+        guard state.autoUpdateAgentIntegrationsEnabled, integrationState == .outdated
+        else { return .none }
+        return .send(.agentIntegrationInstallTapped(agent))
 
       case .agentIntegrationInstallTapped(let agent):
         state.agentIntegrationStates[agent] = .installing
@@ -603,6 +625,10 @@ public struct SettingsFeature {
 private nonisolated struct AgentIntegrationCancelID: Hashable, Sendable {
   let agent: SkillAgent
 }
+
+/// Cancellation key for the agent-state refresh effect so stacked scene
+/// activations supersede the prior one — see `.refreshAgentIntegrationStates`.
+private nonisolated struct RefreshAgentIntegrationStatesID: Hashable, Sendable {}
 
 extension SettingsFeature.State {
   mutating func syncGlobalDefaults(from settings: GlobalSettings) {

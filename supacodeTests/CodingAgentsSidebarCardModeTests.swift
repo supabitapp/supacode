@@ -12,7 +12,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.outdated),
       .pi: .ready(.notInstalled),
     ]
-    let mode = CodingAgentsSidebarCardView.mode(for: states, dismissed: false)
+    let mode = CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false)
     guard case .updatesAvailable(let agents) = mode else {
       Issue.record("Expected .updatesAvailable, got \(mode)")
       return
@@ -27,7 +27,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.installed),
       .pi: .ready(.installed),
     ]
-    let mode = CodingAgentsSidebarCardView.mode(for: states, dismissed: true)
+    let mode = CodingAgentsSidebarCardView.mode(for: states, dismissed: true, autoUpdateEnabled: false)
     #expect(mode == .updatesAvailable([.claude]))
   }
 
@@ -38,7 +38,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
   }
 
   @Test func dismissedSuppressesPromptInstall() {
@@ -48,7 +48,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: true) == .hidden)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: true, autoUpdateEnabled: false) == .hidden)
   }
 
   @Test func nothingInstalledAndNotDismissedShowsPromptInstall() {
@@ -58,7 +58,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .promptInstall)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .promptInstall)
   }
 
   @Test func stillCheckingSuppressesPromptInstallToAvoidLaunchFlash() {
@@ -68,7 +68,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
   }
 
   @Test func installingAgentSuppressesPromptInstallToAvoidMidFlightFlap() {
@@ -80,7 +80,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
   }
 
   @Test func uninstallingAgentSuppressesPromptInstallToAvoidMidFlightFlap() {
@@ -92,7 +92,7 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
   }
 
   @Test func failedAgentCountsAsResolvedAndDoesNotBlockPrompt() {
@@ -105,7 +105,32 @@ struct CodingAgentsSidebarCardModeTests {
       .kiro: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
-    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .promptInstall)
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .promptInstall)
+  }
+
+  @Test func autoUpdateEnabledSuppressesUpdatesAvailableCard() {
+    // The card is dead UI when auto-update is on — the system already
+    // re-installs outdated agents on every refresh. The prompt-install
+    // card still surfaces for the never-installed case.
+    let outdated: [SkillAgent: AgentIntegrationRowState] = [
+      .claude: .ready(.outdated),
+      .codex: .ready(.installed),
+      .kiro: .ready(.installed),
+      .pi: .ready(.installed),
+    ]
+    #expect(
+      CodingAgentsSidebarCardView.mode(for: outdated, dismissed: false, autoUpdateEnabled: true) == .hidden
+    )
+
+    let untouched: [SkillAgent: AgentIntegrationRowState] = [
+      .claude: .ready(.notInstalled),
+      .codex: .ready(.notInstalled),
+      .kiro: .ready(.notInstalled),
+      .pi: .ready(.notInstalled),
+    ]
+    #expect(
+      CodingAgentsSidebarCardView.mode(for: untouched, dismissed: false, autoUpdateEnabled: true) == .promptInstall
+    )
   }
 
   @Test func dismissedAtBeforeCutoffReEngages() {

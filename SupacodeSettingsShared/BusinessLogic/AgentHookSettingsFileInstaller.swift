@@ -103,32 +103,58 @@ nonisolated struct AgentHookSettingsFileInstaller {
     hookGroupsByEvent: @autoclosure () throws -> [String: [JSONValue]]
   ) throws {
     _ = try hookGroupsByEvent()  // Eval for parity with `install` errors; we don't use the value.
-    let settingsObject = try loadSettingsObject(at: settingsURL)
-    var mergedObject = settingsObject
-    var hooksObject = (mergedObject["hooks"]?.objectValue) ?? [:]
-    for event in hooksObject.keys {
-      let existing = try existingGroups(for: event, hooksObject: hooksObject)
-      let filtered = existing.compactMap { stripAllSupacodeCommands(from: $0) }
-      if filtered.isEmpty {
-        hooksObject.removeValue(forKey: event)
-      } else {
-        hooksObject[event] = .array(filtered)
-      }
+    var settingsObject = try loadSettingsObject(at: settingsURL)
+    // Symmetric with `install`: refuse to overwrite a non-object `hooks`
+    // value (would silently destroy user data we don't own).
+    if let hooksValue = settingsObject["hooks"], hooksValue.objectValue == nil {
+      throw errors.invalidHooksObject()
     }
-    mergedObject["hooks"] = .object(hooksObject)
-    try writeSettings(mergedObject, to: settingsURL)
+    let hooksObject = settingsObject["hooks"]?.objectValue ?? [:]
+    let pruned = try pruneAllSupacodeCommands(from: hooksObject)
+    settingsObject["hooks"] = .object(pruned)
+    try writeSettings(settingsObject, to: settingsURL)
   }
 
+  /// `install = uninstall + append`: strip every Supacode-managed entry from
+  /// the existing hook map (current + legacy + pre-collapse splits), then
+  /// append the canonical groups 1:1. Done in a single read-modify-write so
+  /// a crash mid-update can't leave the file half-pruned.
   func install(
     settingsURL: URL,
     hookGroupsByEvent: @autoclosure () throws -> [String: [JSONValue]]
   ) throws {
-    let settingsObject = try loadSettingsObject(at: settingsURL)
-    let mergedObject = try mergedSettingsObject(
-      from: settingsObject,
-      hookGroupsByEvent: try hookGroupsByEvent()
-    )
-    try writeSettings(mergedObject, to: settingsURL)
+    let canonicalGroups = try hookGroupsByEvent()
+    var settingsObject = try loadSettingsObject(at: settingsURL)
+    if let hooksValue = settingsObject["hooks"], hooksValue.objectValue == nil {
+      throw errors.invalidHooksObject()
+    }
+    let existing = settingsObject["hooks"]?.objectValue ?? [:]
+    var pruned = try pruneAllSupacodeCommands(from: existing)
+    for (event, groups) in canonicalGroups {
+      let existingGroups = pruned[event]?.arrayValue ?? []
+      pruned[event] = .array(existingGroups + groups)
+    }
+    settingsObject["hooks"] = .object(pruned)
+    try writeSettings(settingsObject, to: settingsURL)
+  }
+
+  /// Builds a fresh hooks map with every Supacode-managed command
+  /// stripped. Builds a new dict instead of mutating while iterating —
+  /// guarantees no event is silently skipped during the prune.
+  private func pruneAllSupacodeCommands(
+    from hooksObject: [String: JSONValue]
+  ) throws -> [String: JSONValue] {
+    var result: [String: JSONValue] = [:]
+    for (event, value) in hooksObject {
+      guard let groups = value.arrayValue else {
+        throw errors.invalidEventHooks(event)
+      }
+      let filtered = groups.compactMap { stripAllSupacodeCommands(from: $0) }
+      if !filtered.isEmpty {
+        result[event] = .array(filtered)
+      }
+    }
+    return result
   }
 
   private func writeSettings(_ object: [String: JSONValue], to url: URL) throws {
@@ -141,56 +167,6 @@ nonisolated struct AgentHookSettingsFileInstaller {
 
   private static func isFileNotFound(_ error: Error) -> Bool {
     JSONHookSettingsFile.isFileNotFound(error)
-  }
-
-  private func mergedSettingsObject(
-    from settingsObject: [String: JSONValue],
-    hookGroupsByEvent: [String: [JSONValue]]
-  ) throws -> [String: JSONValue] {
-    var mergedObject = settingsObject
-    var hooksObject: [String: JSONValue]
-    if let hooksValue = mergedObject["hooks"] {
-      guard let existingHooksObject = hooksValue.objectValue else {
-        throw errors.invalidHooksObject()
-      }
-      hooksObject = existingHooksObject
-    } else {
-      hooksObject = [:]
-    }
-
-    // Strip every Supacode-managed command across every event. The caller
-    // passes the canonical (combined) hook set for the agent, so anything
-    // Supacode-marked still in the file after this prune is a stale variant
-    // from an older version that shouldn't survive the upgrade.
-    for event in hooksObject.keys {
-      let existing = try existingGroups(for: event, hooksObject: hooksObject)
-      let filtered = existing.compactMap { stripAllSupacodeCommands(from: $0) }
-      if filtered.isEmpty {
-        hooksObject.removeValue(forKey: event)
-      } else {
-        hooksObject[event] = .array(filtered)
-      }
-    }
-
-    // Add the canonical hooks 1:1.
-    for (event, canonicalGroups) in hookGroupsByEvent {
-      let existing = hooksObject[event]?.arrayValue ?? []
-      hooksObject[event] = .array(existing + canonicalGroups)
-    }
-
-    mergedObject["hooks"] = .object(hooksObject)
-    return mergedObject
-  }
-
-  private func existingGroups(
-    for event: String,
-    hooksObject: [String: JSONValue]
-  ) throws -> [JSONValue] {
-    guard let existingValue = hooksObject[event] else { return [] }
-    guard let groups = existingValue.arrayValue else {
-      throw errors.invalidEventHooks(event)
-    }
-    return groups
   }
 
   /// Strip every Supacode-managed command from the group. User-authored
