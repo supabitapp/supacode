@@ -58,21 +58,21 @@ struct ContentView: View {
         )
       }
     }
-    .alert(store: repositoriesStore.scope(state: \.$alert, action: \.alert))
-    .alert(store: store.scope(state: \.$alert, action: \.alert))
+    .alert($repositoriesStore.scope(state: \.alert, action: \.alert))
+    .alert($store.scope(state: \.alert, action: \.alert))
     .sheet(
-      store: store.scope(state: \.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation)
+      item: $store.scope(state: \.deeplinkInputConfirmation, action: \.deeplinkInputConfirmation)
     ) { confirmationStore in
       DeeplinkInputConfirmationView(store: confirmationStore)
     }
     .sheet(
-      store: repositoriesStore.scope(state: \.$worktreeCreationPrompt, action: \.worktreeCreationPrompt)
+      item: $repositoriesStore.scope(state: \.worktreeCreationPrompt, action: \.worktreeCreationPrompt)
     ) { promptStore in
       WorktreeCreationPromptView(store: promptStore)
     }
     .sheet(
-      store: repositoriesStore.scope(
-        state: \.$repositoryCustomization,
+      item: $repositoriesStore.scope(
+        state: \.repositoryCustomization,
         action: \.repositoryCustomization
       )
     ) { customizationStore in

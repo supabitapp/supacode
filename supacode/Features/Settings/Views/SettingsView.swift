@@ -178,10 +178,17 @@ private struct SettingsDetailView: View {
         .navigationTitle("Global Scripts")
     case .repository:
       if let repository = selectedRepositorySummary {
-        IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
-          repositorySettingsStore in
+        if let repositorySettingsStore = settingsStore.scope(
+          state: \.repositorySettings,
+          action: \.repositorySettings
+        ) {
           RepositorySettingsView(store: repositorySettingsStore)
             .id(repository.id)
+            .navigationTitle(repository.name)
+        } else {
+          ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle(repository.name)
         }
       } else {
@@ -192,10 +199,17 @@ private struct SettingsDetailView: View {
       }
     case .repositoryScripts:
       if let repository = selectedRepositorySummary {
-        IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
-          repositorySettingsStore in
+        if let repositorySettingsStore = settingsStore.scope(
+          state: \.repositorySettings,
+          action: \.repositorySettings
+        ) {
           RepositoryScriptsSettingsView(store: repositorySettingsStore)
             .id("\(repository.id)-scripts")
+            .navigationTitle("\(repository.name) — Scripts")
+        } else {
+          ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("\(repository.name) — Scripts")
         }
       } else {
@@ -254,7 +268,7 @@ struct SettingsView: View {
       }
     }
     .navigationSplitViewStyle(.balanced)
-    .alert(store: settingsStore.scope(state: \.$alert, action: \.alert))
+    .alert($settingsStore.scope(state: \.alert, action: \.alert))
     .frame(minWidth: 750, minHeight: 500)
     .onAppear {
       guard settingsStore.selection == nil else { return }
