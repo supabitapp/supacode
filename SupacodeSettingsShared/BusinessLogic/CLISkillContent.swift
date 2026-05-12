@@ -4,7 +4,7 @@ nonisolated enum CLISkillContent {
 
   static let description =
     "Control Supacode from the terminal."
-    + " Use when running supacode CLI commands, managing worktrees, tabs, and surfaces programmatically,"
+    + " Use when running Supacode CLI commands, managing worktrees, tabs, and surfaces programmatically,"
     + " or when inside a Supacode terminal session."
 
   // MARK: - Claude Code.
