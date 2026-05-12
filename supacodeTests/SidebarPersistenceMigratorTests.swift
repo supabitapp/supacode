@@ -27,7 +27,7 @@ struct SidebarPersistenceMigratorTests {
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: "\(#function).\(UUID().uuidString)")!
+      $0.defaultAppStorage = .inMemory
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
     } operation: {
       @Shared(.appStorage("repositoryOrderIDs")) var legacyOrder: [String] = []
@@ -49,14 +49,13 @@ struct SidebarPersistenceMigratorTests {
   @Test(.dependencies) func migratesCollapsePinOrderArchiveFocus() throws {
     let storage = InMemorySettingsFileStorage()
     let archivedAt = Date(timeIntervalSince1970: 1_000_000)
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -125,14 +124,13 @@ struct SidebarPersistenceMigratorTests {
 
   @Test(.dependencies) func rescuesOrphanPinnedViaPathPrefixMatch() throws {
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -231,14 +229,13 @@ struct SidebarPersistenceMigratorTests {
 
   @Test(.dependencies) func migrationStampsSchemaVersion1OnWriteSuccess() throws {
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -269,14 +266,13 @@ struct SidebarPersistenceMigratorTests {
     let encoder = JSONEncoder()
     let priorBytes = try encoder.encode(SidebarState())
     try storage.save(priorBytes, SupacodePaths.sidebarURL)
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -311,14 +307,13 @@ struct SidebarPersistenceMigratorTests {
     let encoder = JSONEncoder()
     let seededBytes = try encoder.encode(seeded)
     try storage.save(seededBytes, SupacodePaths.sidebarURL)
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -347,14 +342,13 @@ struct SidebarPersistenceMigratorTests {
     // migrator would silently drop curation and this test would
     // catch it.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -398,7 +392,6 @@ struct SidebarPersistenceMigratorTests {
     // in `.archived` stamped with the injected `date.now`, and
     // the legacy ID list cleared post-write.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
     let injectedNow = Date(timeIntervalSince1970: 1_700_000_000)
 
     try withDependencies {
@@ -406,7 +399,7 @@ struct SidebarPersistenceMigratorTests {
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       $0.date.now = injectedNow
     } operation: {
       @Shared(.appStorage("archivedWorktreeIDs")) var legacyArchivedIDs: [String] = []
@@ -449,14 +442,13 @@ struct SidebarPersistenceMigratorTests {
     // settings order, so repos with only a main worktree stay
     // visible after migration.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -494,14 +486,13 @@ struct SidebarPersistenceMigratorTests {
     // missing from `legacyOrder` append in settings order after
     // the curated prefix; duplicates in `legacyOrder` stay unique.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -547,7 +538,6 @@ struct SidebarPersistenceMigratorTests {
     // downstream `Repository.ID` string comparisons line up
     // regardless of which shape the user originally typed.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
     let nonCanonicalRoot = "/tmp/./repo-a"
     let nonCanonicalWorktree = "/tmp/./repo-a/feature"
     let canonicalRoot = RepositoryPathNormalizer.normalize(nonCanonicalRoot)!
@@ -564,7 +554,7 @@ struct SidebarPersistenceMigratorTests {
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
@@ -612,7 +602,6 @@ struct SidebarPersistenceMigratorTests {
     // emit the convention base as a candidate paired with the
     // owning root so prefix-matching places the pin correctly.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
     let owningRootID = RepositoryPathNormalizer.normalize(
       rootURL.path(percentEncoded: false)
@@ -637,7 +626,7 @@ struct SidebarPersistenceMigratorTests {
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
     } operation: {
       @Shared(.settingsFile) var settings
@@ -666,7 +655,6 @@ struct SidebarPersistenceMigratorTests {
     // include the global-override base paired with the owning
     // root.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
     let owningRootID = RepositoryPathNormalizer.normalize(
       rootURL.path(percentEncoded: false)
@@ -688,7 +676,7 @@ struct SidebarPersistenceMigratorTests {
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
     } operation: {
       @Shared(.settingsFile) var settings
@@ -719,7 +707,6 @@ struct SidebarPersistenceMigratorTests {
     // migrator doesn't race the SharedKey hydration pipeline.
     let storage = InMemorySettingsFileStorage()
     let localSettingsStorage = RepositoryLocalSettingsTestStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
     let owningRootID = RepositoryPathNormalizer.normalize(
       rootURL.path(percentEncoded: false)
@@ -746,7 +733,7 @@ struct SidebarPersistenceMigratorTests {
         save: { try storage.save($0, $1) }
       )
       $0.repositoryLocalSettingsStorage = localSettingsStorage.storage
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
     } operation: {
       @Shared(.settingsFile) var settings
@@ -774,7 +761,6 @@ struct SidebarPersistenceMigratorTests {
     // `~/.supacode/repos/<name>/` with a timestamp should land in
     // `.archived` on the settings root it belongs to.
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
     let owningRootID = RepositoryPathNormalizer.normalize(
       rootURL.path(percentEncoded: false)
@@ -797,7 +783,7 @@ struct SidebarPersistenceMigratorTests {
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
     } operation: {
       @Shared(.settingsFile) var settings
@@ -823,14 +809,13 @@ struct SidebarPersistenceMigratorTests {
 
   @Test(.dependencies) func writesEmptySidebarOnFreshInstall() throws {
     let storage = InMemorySettingsFileStorage()
-    let suiteName = "\(#function).\(UUID().uuidString)"
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
         load: { try storage.load($0) },
         save: { try storage.save($0, $1) }
       )
-      $0.defaultAppStorage = UserDefaults(suiteName: suiteName)!
+      $0.defaultAppStorage = .inMemory
       // Migrator now stamps `Date.now` onto pre-#214 archived
       // straggler entries via `@Dependency(\.date.now)`; pin a
       // fixed instant here so the migration path doesn't trip the
