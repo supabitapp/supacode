@@ -102,13 +102,19 @@ final class AgentPresenceManager {
   private struct PresenceRecord: Equatable {
     var pids: Set<pid_t>
     var activity: Activity = .idle
+    /// Last non-empty `session_id` observed for this `(surface, agent)` pair.
+    /// Kept in memory so an OFF→ON toggle transition can retroactively fire
+    /// `onSessionStarted` for sessions that were recorded while disabled
+    /// (pid tracking always runs; only the restore-intent callback was gated).
+    /// Not persisted — the layout snapshot is the authority on disk.
+    var sessionID: String?
   }
 
-  private var toggleObservationTask: Task<Void, Never>?
   private var lastObservedBadgesEnabled: Bool?
 
   init() {
-    startObservingBadgeToggle()
+    lastObservedBadgesEnabled = settingsFile.global.agentPresenceBadgesEnabled
+    observeBadgesToggle()
   }
 
   isolated deinit {
@@ -116,36 +122,58 @@ final class AgentPresenceManager {
     // future short-lived owner) don't leak the tick task. Isolated
     // because `sweepTask` is MainActor state.
     sweepTask?.cancel()
-    toggleObservationTask?.cancel()
   }
 
-  /// Watches `agentPresenceBadgesEnabled` and fires `.badgeToggleDisabled`
-  /// `onSessionEnded` events for every live record the moment the user turns
-  /// badges off. This enforces the A1 invariant ("if the user disabled badges,
-  /// existing restore intent must also vanish") without scanning per-surface
-  /// state elsewhere. On re-enable we do nothing: new `session_start` events
-  /// re-populate restore intent naturally.
-  private func startObservingBadgeToggle() {
-    lastObservedBadgesEnabled = settingsFile.global.agentPresenceBadgesEnabled
-    toggleObservationTask = Task { [weak self] in
-      while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(1))
-        await MainActor.run { self?.checkBadgeToggle() }
+  /// Observes `agentPresenceBadgesEnabled` via the Observation framework (the
+  /// `@Shared` settings file publishes changes through it), so transitions are
+  /// applied synchronously in the same MainActor tick the user flipped the
+  /// toggle — no polling window where a quit-between-flip-and-tick could leak
+  /// stale restore intent to disk.
+  ///
+  /// Two transitions carry work:
+  /// - ON → OFF: fire `.badgeToggleDisabled` for every live record so mirrored
+  ///   restore intent is wiped in lockstep. Records stay (pid tracking is
+  ///   still valid in case the user re-enables).
+  /// - OFF → ON: replay `onSessionStarted` for every record that already knows
+  ///   its `session_id`, so sessions that started while badges were disabled
+  ///   become restorable immediately instead of waiting for the next
+  ///   `session_start` hook (which only fires at agent process start).
+  ///
+  /// `withObservationTracking`'s `onChange` fires once per mutation, so we
+  /// re-subscribe inside the callback.
+  private func observeBadgesToggle() {
+    withObservationTracking {
+      _ = settingsFile.global.agentPresenceBadgesEnabled
+    } onChange: { [weak self] in
+      Task { @MainActor [weak self] in
+        self?.handleBadgesToggleChange()
+        self?.observeBadgesToggle()
       }
     }
   }
 
-  private func checkBadgeToggle() {
+  private func handleBadgesToggleChange() {
     let current = settingsFile.global.agentPresenceBadgesEnabled
-    guard current != lastObservedBadgesEnabled else { return }
+    let previous = lastObservedBadgesEnabled
+    guard current != previous else { return }
     lastObservedBadgesEnabled = current
-    guard current == false else { return }
-    // Toggle just flipped to OFF: fire cleanup for every live (surface, agent)
-    // so mirrored restore intent is cleared in lockstep. Records stay — the
-    // pid tracking is still valid in case the user flips the toggle back on.
-    let pairs = records.keys.map { ($0.surfaceID, $0.agent) }
-    for (surfaceID, agent) in pairs {
-      onSessionEnded?(surfaceID, agent, .badgeToggleDisabled)
+
+    if current == false {
+      // ON → OFF: wipe mirrored restore intent. Records survive so pid
+      // tracking stays valid for a re-enable.
+      let pairs = records.keys.map { ($0.surfaceID, $0.agent) }
+      for (surfaceID, agent) in pairs {
+        onSessionEnded?(surfaceID, agent, .badgeToggleDisabled)
+      }
+    } else if previous == false {
+      // OFF → ON: replay `onSessionStarted` for every record that captured a
+      // session_id while disabled. Sessions spawned during the OFF window
+      // become restorable from this moment forward.
+      for (key, record) in records {
+        if let sessionID = record.sessionID, !sessionID.isEmpty {
+          onSessionStarted?(key.surfaceID, key.agent, sessionID)
+        }
+      }
     }
   }
 
@@ -221,21 +249,24 @@ final class AgentPresenceManager {
       guard let pid = event.pid else { return }
       var record = records[key] ?? PresenceRecord(pids: [])
       record.pids.insert(pid)
+      // Always capture the session_id into the record, even when badges are
+      // disabled. The OFF→ON transition replays `onSessionStarted` for every
+      // record with a stored sid, so sessions spawned during an OFF window
+      // become restorable the moment the user re-enables badges — no need to
+      // wait for a future `session_start` hook.
+      let incomingSessionID = event.decodeData(HookSessionPayload.self)?.sessionID
+      if let incomingSessionID, !incomingSessionID.isEmpty {
+        record.sessionID = incomingSessionID
+      }
       records[key] = record
       ensureLivenessSweepRunning()
       rebuildPresenceForSurface(event.surfaceID)
-      // A1 invariant: "badge visible ⟺ restore intent present". When the user
-      // has disabled agent-presence badges, the UI will not show this session,
-      // so we must not persist a resume target that would revive an invisible
-      // session on next launch. Recording the pid above is still required so
-      // that flipping the toggle back on later re-shows the badge.
+      // A1 invariant: "badge visible ⟺ restore intent present". When badges
+      // are disabled, the UI does not show this session, so we must not
+      // persist a resume target that would revive an invisible session on
+      // next launch. The sid captured above is held in memory only.
       guard settingsFile.global.agentPresenceBadgesEnabled else { return }
-      // Forward the sessionID so the terminal manager can persist a resume
-      // intent on the owning surface leaf. Missing / empty sid is normal for
-      // older bridges that ship before stdin forwarding — silently skip.
-      if let sessionID = event.decodeData(HookSessionPayload.self)?.sessionID,
-        !sessionID.isEmpty
-      {
+      if let sessionID = incomingSessionID, !sessionID.isEmpty {
         onSessionStarted?(event.surfaceID, agent, sessionID)
       }
     case .sessionEnd:

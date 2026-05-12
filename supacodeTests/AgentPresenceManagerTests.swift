@@ -597,6 +597,83 @@ struct AgentPresenceManagerTests {
     #expect(manager.agents(forSurface: surfaceID) == Set([.codex]))
   }
 
+  @Test func badgeToggleOffToOnReplaysSessionStartedForCapturedSessionID() async {
+    // OFF→ON transition must replay `onSessionStarted` for records that
+    // captured their `session_id` while the toggle was OFF. The user expects
+    // sessions started during the disabled window to become restorable the
+    // instant they turn the toggle back on, not after a full agent relaunch.
+    await withDependencies {
+      $0.defaultFileStorage = .inMemory
+    } operation: {
+      $settingsFile.withLock {
+        $0.global.agentPresenceBadgesEnabled = false
+      }
+      let manager = AgentPresenceManager()
+      let surfaceID = UUID()
+      let box = CallbackBox()
+      manager.onSessionStarted = { surface, agent, sid in
+        box.started.append(.init(surfaceID: surface, agent: agent, sessionID: sid))
+      }
+
+      // Session starts while badges are OFF — no restore callback fires yet.
+      manager.record(
+        event: makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid(),
+          data: #"{"session_id":"captured-sid"}"#
+        )
+      )
+      #expect(box.started.isEmpty)
+
+      // Toggle flips ON — the observer should replay the captured sid. The
+      // observation callback hops through a MainActor Task, so let the
+      // runloop drain a few ticks before asserting.
+      $settingsFile.withLock {
+        $0.global.agentPresenceBadgesEnabled = true
+      }
+      for _ in 0..<50 where box.started.isEmpty { await Task.yield() }
+
+      #expect(box.started.count == 1)
+      #expect(box.started.first?.sessionID == "captured-sid")
+    }
+  }
+
+  @Test func badgeToggleOnToOffFiresBadgeToggleDisabledForLiveRecords() async {
+    // ON→OFF transition must fire `.badgeToggleDisabled` for every live
+    // record so the terminal manager can wipe mirrored restore intent in
+    // the same MainActor tick as the toggle mutation — no polling window.
+    await withDependencies {
+      $0.defaultFileStorage = .inMemory
+    } operation: {
+      $settingsFile.withLock {
+        $0.global.agentPresenceBadgesEnabled = true
+      }
+      let manager = AgentPresenceManager()
+      let surfaceID = UUID()
+      let box = CallbackBox()
+      manager.onSessionEnded = { surface, agent, reason in
+        box.ended.append(.init(surfaceID: surface, agent: agent, reason: reason))
+      }
+
+      manager.record(
+        event: makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid(),
+          data: #"{"session_id":"sid-1"}"#
+        )
+      )
+
+      $settingsFile.withLock {
+        $0.global.agentPresenceBadgesEnabled = false
+      }
+      for _ in 0..<50 where box.ended.isEmpty { await Task.yield() }
+
+      #expect(box.ended.count == 1)
+      #expect(box.ended.first?.reason == .badgeToggleDisabled)
+      // Accessor is gated by the toggle; the underlying record survives so a
+      // re-enable can replay `onSessionStarted`.
+      #expect(manager.agents(forSurface: surfaceID).isEmpty)
+    }
+  }
+
   @Test func explicitSessionEndWithMissingSessionIDStillCarriesExplicitReason() {
     // #4 from deep review: explicit session_end with nil sessionID must NOT be
     // conflated with sweep/surfaceClosed "unconditional" semantics. Receivers
