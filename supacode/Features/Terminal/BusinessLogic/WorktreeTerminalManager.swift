@@ -67,9 +67,13 @@ final class WorktreeTerminalManager {
     }
     // Presence lifecycle → per-surface resume intent. Same event stream writes
     // to two observers (presence + restorable-agent); neither owns the other.
-    // Invariant: "badge visible ⟺ restore intent present" — every path that
-    // clears presence (session_end, sweep eviction, surface close) fires
-    // `onSessionEnded`, and every `session_start` that carries a sessionID
+    // Invariant (one-way): "badge disabled ⇒ no persisted or restored intent".
+    // We always record intent in memory on `session_start` so an OFF→ON
+    // transition becomes restorable on the next natural capture without
+    // replay. The disable side is enforced at the disk-write / restore
+    // boundary in `WorktreeTerminalState` (capture-site gate), not here.
+    // Every path that clears presence (session_end, sweep eviction, surface
+    // close) fires `onSessionEnded`; every `session_start` with a sessionID
     // fires `onSessionStarted`.
     AgentPresenceManager.shared.onSessionStarted = { [weak self] surfaceID, agent, sessionID in
       guard let self, let state = self.ownerState(forSurface: surfaceID) else { return }

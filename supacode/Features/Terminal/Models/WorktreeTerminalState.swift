@@ -994,7 +994,8 @@ final class WorktreeTerminalState {
       tabIsRunningById[tabId] = false
 
       // Recursively restore splits.
-      restoreLayoutNode(tabSnapshot.layout, anchor: surface, tabId: tabId)
+      restoreLayoutNode(
+        tabSnapshot.layout, anchor: surface, tabId: tabId, resumeIntentAllowed: resumeIntentAllowed)
 
       // Log if partial restoration produced fewer panes than expected.
       let leaves = trees[tabId]?.root?.leaves() ?? []
@@ -1028,7 +1029,8 @@ final class WorktreeTerminalState {
   private func restoreLayoutNode(
     _ node: TerminalLayoutSnapshot.LayoutNode,
     anchor: GhosttySurfaceView,
-    tabId: TerminalTabID
+    tabId: TerminalTabID,
+    resumeIntentAllowed: Bool
   ) {
     guard case .split(let split) = node else { return }
 
@@ -1037,8 +1039,7 @@ final class WorktreeTerminalState {
     let rightWorkingDir = rightLeaf.workingDirectory.flatMap {
       URL(filePath: $0, directoryHint: .isDirectory)
     }
-    @Shared(.settingsFile) var settingsFile
-    let rightInitialInput: String? = settingsFile.global.agentPresenceBadgesEnabled
+    let rightInitialInput: String? = resumeIntentAllowed
       ? Self.resumeCommand(for: rightLeaf.restorableAgent).flatMap { formatCommandInput($0) }
       : nil
     let direction: SplitTree<GhosttySurfaceView>.NewDirection =
@@ -1062,8 +1063,10 @@ final class WorktreeTerminalState {
     }
 
     // Recurse into left and right subtrees.
-    restoreLayoutNode(split.left, anchor: anchor, tabId: tabId)
-    restoreLayoutNode(split.right, anchor: newSurface, tabId: tabId)
+    restoreLayoutNode(
+      split.left, anchor: anchor, tabId: tabId, resumeIntentAllowed: resumeIntentAllowed)
+    restoreLayoutNode(
+      split.right, anchor: newSurface, tabId: tabId, resumeIntentAllowed: resumeIntentAllowed)
   }
 
   /// Bundles the non-topology inputs to `createRestorationSplit`. Keeps the
