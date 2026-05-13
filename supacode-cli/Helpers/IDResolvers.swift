@@ -31,14 +31,24 @@ nonisolated func resolveSurfaceID(_ explicit: String?) throws -> String {
   return id
 }
 
-/// Resolves a repo ID from an explicit flag or `$SUPACODE_REPO_ID`.
+/// Resolves a repo ID from an explicit flag or `$SUPACODE_REPO_ID`, percent-encoded.
 nonisolated func resolveRepoID(_ explicit: String?) throws -> String {
-  guard let id = nonEmpty(explicit) ?? EnvironmentDefaults.repoID else {
+  if let explicit = nonEmpty(explicit) {
+    return normalizeRepoID(explicit)
+  }
+  guard let id = EnvironmentDefaults.repoID else {
     throw ValidationError(
       "Missing repo ID. Pass -r <id> or run inside a Supacode terminal ($SUPACODE_REPO_ID)."
     )
   }
   return id
+}
+
+private nonisolated func normalizeRepoID(_ value: String) -> String {
+  var decoded = value.removingPercentEncoding ?? value
+  if !decoded.hasSuffix("/") { decoded += "/" }
+  let allowed = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
+  return decoded.addingPercentEncoding(withAllowedCharacters: allowed) ?? decoded
 }
 
 /// Validates that a `--script` argument is a well-formed UUID and returns

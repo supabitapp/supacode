@@ -271,9 +271,9 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .settings(section: .developer))
   }
 
-  @Test func settingsCodingAgentsBackwardCompat() {
+  @Test func settingsCodingAgentsRedirectsToDeveloper() {
     let url = URL(string: "supacode://settings/codingAgents")!
-    #expect(parse(url) == .settings(section: .codingAgents))
+    #expect(parse(url) == .settings(section: .developer))
   }
 
   @Test func settingsScriptsSection() {
@@ -288,6 +288,16 @@ struct DeeplinkClientTests {
 
   @Test func settingsRepoWithMissingIDReturnsNil() {
     let url = URL(string: "supacode://settings/repo")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func settingsRepoScriptsWithValidID() {
+    let url = URL(string: "supacode://settings/repo/%2Ftmp%2Frepo/scripts")!
+    #expect(parse(url) == .settingsRepoScripts(repositoryID: "/tmp/repo"))
+  }
+
+  @Test func settingsRepoUnknownSubsectionReturnsNil() {
+    let url = URL(string: "supacode://settings/repo/%2Ftmp%2Frepo/unknown")!
     #expect(parse(url) == nil)
   }
 

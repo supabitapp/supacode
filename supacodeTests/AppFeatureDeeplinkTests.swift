@@ -921,6 +921,57 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.alert != nil)
   }
 
+  @Test(.dependencies) func settingsRepoScriptsDeeplinkOpensScriptsPane() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.settingsRepoScripts(repositoryID: "/tmp/repo")))
+    await store.receive(\.settings.setSelection)
+  }
+
+  @Test(.dependencies) func settingsRepoScriptsDeeplinkWithUnknownRepoShowsAlert() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.settingsRepoScripts(repositoryID: "/nonexistent")))
+    #expect(store.state.alert != nil)
+  }
+
+  @Test(.dependencies) func settingsRepoScriptsDeeplinkOpensScriptsPaneForFolderRepo() async {
+    let folderRoot = "/tmp/folder-scripts-\(UUID().uuidString)"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot,
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: [folderWorktree],
+      isGitRepository: false
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [folderRepo]
+    repositoriesState.repositoryRoots = [folderURL]
+    repositoriesState.isInitialLoadComplete = true
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.settingsRepoScripts(repositoryID: folderRoot)))
+    await store.receive(\.settings.setSelection)
+  }
+
   @Test(.dependencies) func repoOpenDeeplink() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)

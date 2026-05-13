@@ -50,7 +50,7 @@ private nonisolated enum DeeplinkParser {
     case "help":
       return .help
     case "settings":
-      // settings/repo/<encoded-repo-id> → open repository settings.
+      // settings/repo/<encoded-repo-id>[/scripts] → open repository settings.
       if pathSegments.first == "repo" {
         guard pathSegments.count >= 2,
           let repositoryID = pathSegments[1].removingPercentEncoding, !repositoryID.isEmpty
@@ -58,9 +58,18 @@ private nonisolated enum DeeplinkParser {
           logger.warning("Settings repo deeplink missing or invalid repository ID.")
           return nil
         }
+        if pathSegments.count >= 3 {
+          guard pathSegments[2] == "scripts" else {
+            logger.warning("Unrecognized settings repo subsection: \(pathSegments[2]).")
+            return nil
+          }
+          return .settingsRepoScripts(repositoryID: repositoryID)
+        }
         return .settingsRepo(repositoryID: repositoryID)
       }
       let section: Deeplink.DeeplinkSettingsSection? = pathSegments.first.flatMap { raw in
+        // Legacy `codingAgents` URLs still route to the developer pane.
+        if raw == "codingAgents" { return .developer }
         guard let parsed = Deeplink.DeeplinkSettingsSection(rawValue: raw) else {
           logger.warning("Unrecognized settings section: \(raw).")
           return nil

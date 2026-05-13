@@ -985,15 +985,7 @@ struct AppFeature {
     case .repoWorktreeNew(let repositoryID, let branch, let baseRef, let fetchOrigin):
       guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found: \(repositoryID)")
-        state.alert = AlertState {
-          TextState("Repository not found")
-        } actions: {
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("OK")
-          }
-        } message: {
-          TextState("No repository matching the deeplink could be found.")
-        }
+        state.alert = repositoryNotFoundAlert()
         return .none
       }
       // Worktree creation is git-only. Reject the deeplink with a
@@ -1032,15 +1024,7 @@ struct AppFeature {
     case .settingsRepo(let repositoryID):
       guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found for settings deeplink: \(repositoryID)")
-        state.alert = AlertState {
-          TextState("Repository not found")
-        } actions: {
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("OK")
-          }
-        } message: {
-          TextState("No repository matching the deeplink could be found.")
-        }
+        state.alert = repositoryNotFoundAlert()
         return .none
       }
       // Folders have no general settings pane — send them to the
@@ -1048,6 +1032,13 @@ struct AppFeature {
       let section: SettingsSection =
         repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
       return .send(.settings(.setSelection(section)))
+    case .settingsRepoScripts(let repositoryID):
+      guard state.repositories.repositories[id: repositoryID] != nil else {
+        deeplinkLogger.warning("Repository not found for settings repo scripts deeplink: \(repositoryID)")
+        state.alert = repositoryNotFoundAlert()
+        return .none
+      }
+      return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
     }
   }
 
@@ -1395,6 +1386,18 @@ struct AppFeature {
     }
   }
 
+  private func repositoryNotFoundAlert() -> AlertState<Alert> {
+    AlertState {
+      TextState("Repository not found")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("No repository matching the deeplink could be found.")
+    }
+  }
+
   private func deeplinkDeleteWorktreeEffect(
     worktreeID: Worktree.ID,
     action: Deeplink.WorktreeAction,
@@ -1629,7 +1632,7 @@ struct AppFeature {
       case .general: .general
       case .notifications: .notifications
       case .worktrees: .worktree
-      case .developer, .codingAgents: .developer
+      case .developer: .developer
       case .shortcuts: .shortcuts
       case .scripts: .scripts
       case .updates: .updates

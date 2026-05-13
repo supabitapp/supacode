@@ -110,6 +110,10 @@ struct DeeplinkReferenceView: View {
       params: "general|notifications|worktrees|developer|shortcuts|scripts|updates|github"
     ),
     .init(url: "supacode://settings/repo/<repo_id>", description: "Open repository settings."),
+    .init(
+      url: "supacode://settings/repo/<repo_id>/scripts",
+      description: "Open repository Scripts settings."
+    ),
   ]
 }
 

@@ -107,6 +107,10 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://settings/repo/\(repoID)"
   }
 
+  static func settingsRepoScripts(repoID: String) -> String {
+    "supacode://settings/repo/\(repoID)/scripts"
+  }
+
   // MARK: - Helpers.
 
   private static func percentEncodeQueryValue(_ value: String) -> String {

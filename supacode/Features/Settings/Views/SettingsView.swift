@@ -247,8 +247,7 @@ struct SettingsView: View {
         settingsStore: settingsStore,
         expandedRepositories: $expandedRepositories
       )
-      .onChange(of: selection) { _, newSelection in
-        // Auto-expand the repository disclosure group when navigating to it.
+      .onChange(of: selection, initial: true) { _, newSelection in
         guard let repositoryID = newSelection.repositoryID else { return }
         expandedRepositories.insert(repositoryID)
       }
