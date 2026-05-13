@@ -42,6 +42,7 @@ nesting:
 identifier_name:
   excluded:
     - id
+    - up
 
 redundant_discardable_let:
   ignore_swiftui_view_bodies: true

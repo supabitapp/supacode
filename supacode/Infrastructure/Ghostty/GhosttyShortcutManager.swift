@@ -43,6 +43,7 @@ final class GhosttyShortcutManager {
 
   private static let terminalActions = [
     "new_tab", "close_surface", "close_tab",
-    "start_search", "search:next", "search:previous", "end_search", "search_selection",
+    "new_split:right", "new_split:left", "new_split:down", "new_split:up",
+    "start_search", "navigate_search:next", "navigate_search:previous", "end_search", "search_selection",
   ]
 }

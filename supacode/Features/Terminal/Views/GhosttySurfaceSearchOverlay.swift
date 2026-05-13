@@ -51,7 +51,7 @@ struct GhosttySurfaceSearchOverlay: View {
           } label: {
             SearchButtonLabel(
               title: "Next",
-              shortcut: ghosttyShortcuts.display(for: "search:next"),
+              shortcut: ghosttyShortcuts.display(for: "navigate_search:next"),
               systemImage: "chevron.up"
             )
           }
@@ -62,7 +62,7 @@ struct GhosttySurfaceSearchOverlay: View {
           } label: {
             SearchButtonLabel(
               title: "Previous",
-              shortcut: ghosttyShortcuts.display(for: "search:previous"),
+              shortcut: ghosttyShortcuts.display(for: "navigate_search:previous"),
               systemImage: "chevron.down"
             )
           }

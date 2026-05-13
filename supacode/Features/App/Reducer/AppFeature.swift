@@ -93,6 +93,7 @@ struct AppFeature {
     case openWorktreeFailed(OpenActionError)
     case requestQuit
     case newTerminal
+    case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
     case runScript
     case runNamedScript(ScriptDefinition)
@@ -443,6 +444,14 @@ struct AppFeature {
         let shouldRunSetupScript = state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+        }
+
+      case .splitTerminal(let direction):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.performBindingAction(worktree, action: direction.ghosttyBinding))
         }
 
       case .jumpToLatestUnread:

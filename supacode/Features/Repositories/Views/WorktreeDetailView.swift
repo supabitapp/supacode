@@ -230,6 +230,7 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.revealInFinderAction, actions.revealInFinder)
       .focusedSceneValue(\.openActionSelection, resolvedSelection)
       .focusedSceneValue(\.newTerminalAction, actions.newTerminal)
+      .focusedValue(\.splitTerminalAction, actions.splitTerminal)
       .focusedValue(\.closeTabAction, actions.closeTab)
       .focusedValue(\.closeSurfaceAction, actions.closeSurface)
       .focusedSceneValue(\.startSearchAction, actions.startSearch)
@@ -248,10 +249,13 @@ struct WorktreeDetailView: View {
     func action(_ appAction: AppFeature.Action) -> (() -> Void)? {
       hasActiveWorktree ? { store.send(appAction) } : nil
     }
+    let splitTerminal: ((TerminalSplitMenuDirection) -> Void)? =
+      hasActiveWorktree ? { direction in store.send(.splitTerminal(direction)) } : nil
     return FocusedActions(
       openSelectedWorktree: action(.openSelectedWorktree),
       revealInFinder: action(.revealInFinder),
       newTerminal: action(.newTerminal),
+      splitTerminal: splitTerminal,
       closeTab: action(.closeTab),
       closeSurface: action(.closeSurface),
       startSearch: action(.startSearch),
@@ -286,6 +290,7 @@ struct WorktreeDetailView: View {
     let openSelectedWorktree: (() -> Void)?
     let revealInFinder: (() -> Void)?
     let newTerminal: (() -> Void)?
+    let splitTerminal: ((TerminalSplitMenuDirection) -> Void)?
     let closeTab: (() -> Void)?
     let closeSurface: (() -> Void)?
     let startSearch: (() -> Void)?

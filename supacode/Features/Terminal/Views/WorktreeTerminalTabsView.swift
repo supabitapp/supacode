@@ -22,13 +22,10 @@ struct WorktreeTerminalTabsView: View {
         TerminalTabBarView(
           manager: state.tabManager,
           createTab: createTab,
-          splitHorizontally: {
-            _ = state.performBindingActionOnFocusedSurface("new_split:down")
+          split: { direction in
+            _ = state.performBindingActionOnFocusedSurface(direction.ghosttyBinding)
           },
-          splitVertically: {
-            _ = state.performBindingActionOnFocusedSurface("new_split:right")
-          },
-          canSplit: state.tabManager.selectedTabId != nil,
+          canSplit: state.tabManager.selectedTabId.flatMap { state.activeSurfaceID(for: $0) } != nil,
           closeTab: { tabId in
             state.closeTab(tabId)
           },

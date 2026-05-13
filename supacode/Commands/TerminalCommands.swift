@@ -3,8 +3,7 @@ import SwiftUI
 struct TerminalCommands: Commands {
   let ghosttyShortcuts: GhosttyShortcutManager
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
-  @FocusedValue(\.closeSurfaceAction) private var closeSurfaceAction
-  @FocusedValue(\.closeTabAction) private var closeTabAction
+  @FocusedValue(\.splitTerminalAction) private var splitTerminalAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
   @FocusedValue(\.navigateSearchNextAction) private var navigateSearchNextAction
@@ -14,51 +13,39 @@ struct TerminalCommands: Commands {
   var body: some Commands {
     CommandGroup(after: .newItem) {
       Divider()
-      Button("New Terminal", systemImage: "apple.terminal") {
+      Button("New Terminal Tab", systemImage: "macwindow") {
         newTerminalAction?()
       }
-      .modifier(KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "new_tab")))
+      .ghosttyKeyboardShortcut("new_tab", in: ghosttyShortcuts)
       .disabled(newTerminalAction == nil)
-      Button("Close Terminal") {
-        closeSurfaceAction?()
+
+      Divider()
+
+      ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
+        Button(direction.menuBarTitle, systemImage: direction.systemImage) {
+          splitTerminalAction?(direction)
+        }
+        .ghosttyKeyboardShortcut(direction.ghosttyBinding, in: ghosttyShortcuts)
+        .disabled(splitTerminalAction == nil)
       }
-      .modifier(
-        KeyboardShortcutModifier(
-          shortcut: closeSurfaceAction == nil ? nil : ghosttyShortcuts.keyboardShortcut(for: "close_surface")
-        )
-      )
-      .disabled(closeSurfaceAction == nil)
-      Button("Close Terminal Tab") {
-        closeTabAction?()
-      }
-      .modifier(
-        KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "close_tab"))
-      )
-      .disabled(closeTabAction == nil)
     }
     CommandGroup(after: .textEditing) {
       Button("Find...") {
         startSearchAction?()
       }
-      .modifier(
-        KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "start_search"))
-      )
+      .ghosttyKeyboardShortcut("start_search", in: ghosttyShortcuts)
       .disabled(startSearchAction == nil)
 
       Button("Find Next") {
         navigateSearchNextAction?()
       }
-      .modifier(
-        KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "search:next"))
-      )
+      .ghosttyKeyboardShortcut("navigate_search:next", in: ghosttyShortcuts)
       .disabled(navigateSearchNextAction == nil)
 
       Button("Find Previous") {
         navigateSearchPreviousAction?()
       }
-      .modifier(
-        KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "search:previous"))
-      )
+      .ghosttyKeyboardShortcut("navigate_search:previous", in: ghosttyShortcuts)
       .disabled(navigateSearchPreviousAction == nil)
 
       Divider()
@@ -66,9 +53,7 @@ struct TerminalCommands: Commands {
       Button("Hide Find Bar") {
         endSearchAction?()
       }
-      .modifier(
-        KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "end_search"))
-      )
+      .ghosttyKeyboardShortcut("end_search", in: ghosttyShortcuts)
       .disabled(endSearchAction == nil)
 
       Divider()
@@ -76,9 +61,7 @@ struct TerminalCommands: Commands {
       Button("Use Selection for Find") {
         searchSelectionAction?()
       }
-      .modifier(
-        KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "search_selection"))
-      )
+      .ghosttyKeyboardShortcut("search_selection", in: ghosttyShortcuts)
       .disabled(searchSelectionAction == nil)
     }
   }
@@ -92,6 +75,17 @@ extension FocusedValues {
   var newTerminalAction: (() -> Void)? {
     get { self[NewTerminalActionKey.self] }
     set { self[NewTerminalActionKey.self] = newValue }
+  }
+}
+
+private struct SplitTerminalActionKey: FocusedValueKey {
+  typealias Value = (TerminalSplitMenuDirection) -> Void
+}
+
+extension FocusedValues {
+  var splitTerminalAction: ((TerminalSplitMenuDirection) -> Void)? {
+    get { self[SplitTerminalActionKey.self] }
+    set { self[SplitTerminalActionKey.self] = newValue }
   }
 }
 

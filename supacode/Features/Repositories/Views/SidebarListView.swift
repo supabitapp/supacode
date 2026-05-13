@@ -244,10 +244,7 @@ private struct SidebarSectionActionsView: View {
         .frame(maxHeight: .infinity)
         .contentShape(Rectangle())
     }
-    .menuStyle(.button)
-    .menuIndicator(.hidden)
-    .buttonStyle(.plain)
-    .foregroundStyle(.secondary)
+    .menuStyle(.secondaryToolbar)
 
     Button {
       store.send(.createRandomWorktreeInRepository(repositoryID))
