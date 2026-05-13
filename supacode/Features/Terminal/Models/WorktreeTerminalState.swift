@@ -819,13 +819,19 @@ final class WorktreeTerminalState {
 
   func captureLayoutSnapshot() -> TerminalLayoutSnapshot? {
     guard !tabManager.tabs.isEmpty else { return nil }
+    // Capture-time invariant boundary: "badge visible ⟺ restore intent on disk".
+    // Reading the toggle here (rather than via an async observer) means every
+    // snapshot that reaches disk is consistent with the toggle state at that
+    // exact moment — no quit-race, no lost-transition, no replay machinery.
+    @Shared(.settingsFile) var settingsFile
+    let badgesEnabled = settingsFile.global.agentPresenceBadgesEnabled
     var tabSnapshots: [TerminalLayoutSnapshot.TabSnapshot] = []
     for tab in tabManager.tabs {
       guard let tree = trees[tab.id], let root = tree.root else {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
       }
-      let layout = captureLayoutNode(root)
+      let layout = captureLayoutNode(root, includeRestorableAgent: badgesEnabled)
       let leaves = root.leaves()
       let focusedId = focusedSurfaceIdByTab[tab.id]
       let focusedLeafIndex =
@@ -886,16 +892,6 @@ final class WorktreeTerminalState {
     onRestorableAgentChanged?()
   }
 
-  /// Drops every restorable intent (across all surfaces) unconditionally —
-  /// used when the user disables the agent-presence toggle so the "badge
-  /// visible ⟺ restore intent present" invariant holds at the moment of
-  /// disable. Fires `onRestorableAgentChanged` once if anything changed.
-  func clearAllRestorableAgents() {
-    guard !restorableAgentBySurfaceID.isEmpty else { return }
-    restorableAgentBySurfaceID.removeAll()
-    onRestorableAgentChanged?()
-  }
-
   /// Shell command that resumes the given agent session, typed into the
   /// surface's initial input so the agent attaches to the prior conversation
   /// as the first interactive action. Returns nil for agents without resume
@@ -913,7 +909,8 @@ final class WorktreeTerminalState {
   }
 
   private func captureLayoutNode(
-    _ node: SplitTree<GhosttySurfaceView>.Node
+    _ node: SplitTree<GhosttySurfaceView>.Node,
+    includeRestorableAgent: Bool
   ) -> TerminalLayoutSnapshot.LayoutNode {
     switch node {
     case .leaf(let view):
@@ -921,7 +918,7 @@ final class WorktreeTerminalState {
         TerminalLayoutSnapshot.SurfaceSnapshot(
           id: view.id,
           workingDirectory: view.bridge.state.pwd,
-          restorableAgent: restorableAgentBySurfaceID[view.id]
+          restorableAgent: includeRestorableAgent ? restorableAgentBySurfaceID[view.id] : nil
         )
       )
     case .split(let split):
@@ -934,8 +931,8 @@ final class WorktreeTerminalState {
         TerminalLayoutSnapshot.SplitSnapshot(
           direction: direction,
           ratio: split.ratio,
-          left: captureLayoutNode(split.left),
-          right: captureLayoutNode(split.right)
+          left: captureLayoutNode(split.left, includeRestorableAgent: includeRestorableAgent),
+          right: captureLayoutNode(split.right, includeRestorableAgent: includeRestorableAgent)
         )
       )
     }
@@ -950,6 +947,14 @@ final class WorktreeTerminalState {
     // Skip setup script when restoring a saved layout.
     pendingSetupScript = false
 
+    // Second half of the capture-site gate: if the user has badges disabled at
+    // launch, ignore any `restorableAgent` that slipped into the snapshot
+    // (e.g. the toggle flipped OFF between the last capture and quit). The
+    // capture path also nils these out while disabled, so this is belt-and-
+    // suspenders against the ON→OFF→quit race.
+    @Shared(.settingsFile) var settingsFile
+    let resumeIntentAllowed = settingsFile.global.agentPresenceBadgesEnabled
+
     // Consume-once semantics: we deliberately do NOT hydrate
     // `restorableAgentBySurfaceID` from the snapshot leaves. A later capture
     // will see an empty dict and persist `restorableAgent = nil`, so a failed
@@ -960,8 +965,9 @@ final class WorktreeTerminalState {
       let workingDir = firstLeaf.workingDirectory.flatMap {
         URL(filePath: $0, directoryHint: .isDirectory)
       }
-      let firstLeafInitialInput = Self.resumeCommand(for: firstLeaf.restorableAgent)
-        .flatMap { formatCommandInput($0) }
+      let firstLeafInitialInput: String? = resumeIntentAllowed
+        ? Self.resumeCommand(for: firstLeaf.restorableAgent).flatMap { formatCommandInput($0) }
+        : nil
       let context: ghostty_surface_context_e =
         index == 0 ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB
       let tabId = tabManager.createTab(
@@ -1031,8 +1037,10 @@ final class WorktreeTerminalState {
     let rightWorkingDir = rightLeaf.workingDirectory.flatMap {
       URL(filePath: $0, directoryHint: .isDirectory)
     }
-    let rightInitialInput = Self.resumeCommand(for: rightLeaf.restorableAgent)
-      .flatMap { formatCommandInput($0) }
+    @Shared(.settingsFile) var settingsFile
+    let rightInitialInput: String? = settingsFile.global.agentPresenceBadgesEnabled
+      ? Self.resumeCommand(for: rightLeaf.restorableAgent).flatMap { formatCommandInput($0) }
+      : nil
     let direction: SplitTree<GhosttySurfaceView>.NewDirection =
       split.direction == .horizontal ? .right : .down
 

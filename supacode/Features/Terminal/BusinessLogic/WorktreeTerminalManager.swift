@@ -89,15 +89,17 @@ final class WorktreeTerminalManager {
         guard let sessionID else { return }
         state.clearRestorableAgent(
           surfaceID: surfaceID, agent: agent, ifMatchingSessionID: sessionID)
-      case .sweep, .surfaceClosed, .badgeToggleDisabled:
+      case .sweep, .surfaceClosed:
         state.clearRestorableAgent(surfaceID: surfaceID, agent: agent)
       }
     }
     // Always record the activity/pid half; the badges toggle gates DISPLAY
-    // in `AgentPresenceManager.agents(forSurface:)` / `agents(across:)` and
-    // gates the `onSessionStarted` callback that drives restore intent. That
-    // way flipping the toggle back on later re-shows badges for already-
-    // running agents, while "badges off" still suppresses new restore intent.
+    // in `AgentPresenceManager.agents(forSurface:)` / `agents(across:)`, and
+    // is enforced at layout-capture time in `WorktreeTerminalState` rather
+    // than at recording time. That way OFF→ON transitions become restorable
+    // on the next natural layout save with no replay machinery, and the
+    // invariant ("badge invisible → no resume") is structurally guaranteed
+    // at the disk-write boundary rather than raced between observers.
     server.onEvent = { [weak self] event in
       guard let self else { return }
       // Reject events whose surface is unknown to any live state: a hook from
