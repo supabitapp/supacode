@@ -13,6 +13,7 @@ private struct RepositoryLabel: View {
   let isGitRepository: Bool
 
   @State private var avatarURL: URL?
+  @Dependency(GitClientDependency.self) private var gitClient
 
   var body: some View {
     Label {
@@ -39,15 +40,8 @@ private struct RepositoryLabel: View {
         avatarURL = nil
         return
       }
-      avatarURL = await Self.ownerAvatarURL(for: rootURL)
+      avatarURL = await GitHubOwnerAvatar.url(for: rootURL, gitClient: gitClient)
     }
-  }
-
-  private static func ownerAvatarURL(for rootURL: URL) async -> URL? {
-    guard let info = await GitClient().remoteInfo(for: rootURL) else {
-      return nil
-    }
-    return URL(string: "https://github.com/\(info.owner).png?size=64")
   }
 }
 

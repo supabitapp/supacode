@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct SidebarItemModel: Identifiable, Hashable {
   enum Kind: Hashable {
@@ -29,4 +30,45 @@ struct SidebarItemModel: Identifiable, Hashable {
   var isDeleting: Bool { if case .deleting = status { true } else { false } }
   var isLoading: Bool { status != .idle }
   var isRemovable: Bool { status == .idle }
+
+  /// Sidebar-style display name derived from the worktree directory's last path
+  /// component (from `id` or `detail`), falling back to `name`. Returns `nil` for
+  /// the main worktree so view sites can resolve to localized copy.
+  var sidebarDisplayName: String? {
+    guard !isMainWorktree else { return nil }
+    if id.contains("/") {
+      let pathName = URL(fileURLWithPath: id).lastPathComponent
+      guard pathName.isEmpty else { return pathName }
+    }
+    if !detail.isEmpty, detail != "." {
+      let detailName = URL(fileURLWithPath: detail).lastPathComponent
+      guard detailName.isEmpty || detailName == "." else { return detailName }
+    }
+    return name
+  }
+
+  /// Shared accent for the worktree name across surfaces (sidebar subtitle, toolbar caption).
+  /// View sites resolve to a concrete `ShapeStyle`.
+  var accent: WorktreeAccent {
+    if isMainWorktree { return .main }
+    if isPinned { return .pinned }
+    return .default
+  }
+}
+
+enum WorktreeAccent: Hashable, Sendable {
+  case `default`
+  case main
+  case pinned
+
+  /// Sidebar/toolbar tint for the worktree name. Falls back to `.secondary` when emphasized
+  /// (list selection) so foreground text stays readable.
+  func shapeStyle(emphasized: Bool) -> AnyShapeStyle {
+    guard !emphasized else { return AnyShapeStyle(.secondary) }
+    return switch self {
+    case .main: AnyShapeStyle(.yellow)
+    case .pinned: AnyShapeStyle(.orange)
+    case .default: AnyShapeStyle(.tertiary)
+    }
+  }
 }

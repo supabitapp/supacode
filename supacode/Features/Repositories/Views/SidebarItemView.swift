@@ -5,7 +5,7 @@ struct SidebarItemView: View {
   let kind: SidebarItemModel.Kind
   let name: String
   let subtitle: String?
-  let worktreeColor: WorktreeColor
+  let accent: WorktreeAccent
   let isBusy: Bool
   let gitIconName: String
   let gitIconColor: AnyShapeStyle
@@ -21,12 +21,6 @@ struct SidebarItemView: View {
   let notifications: [WorktreeTerminalNotification]
   let shortcutHint: String?
   let checkBadgeState: CheckBadgeState?
-
-  enum WorktreeColor {
-    case `default`
-    case main
-    case pinned
-  }
 
   enum CheckBadgeState {
     case passing
@@ -84,9 +78,7 @@ struct SidebarItemView: View {
     self.shortcutHint = shortcutHint
     self.isBusy = row.isArchiving || row.isDeleting || row.isPending || isTaskRunning
 
-    // Worktree color.
-    self.worktreeColor =
-      if row.isMainWorktree { .main } else if row.isPinned { .pinned } else { .default }
+    self.accent = row.accent
 
     // Folders have no branch / no PR — show the folder name alone,
     // ignore display-mode and PR computation entirely.
@@ -102,7 +94,8 @@ struct SidebarItemView: View {
 
     // Title and subtitle based on display mode.
     let branchName = row.name
-    let worktreeName = Self.worktreeName(for: row)
+    // Main worktree resolves to localized "Default" view-side; other worktrees fall back to branch.
+    let worktreeName = row.sidebarDisplayName ?? "Default"
     let effectiveWorktreeName = worktreeName.isEmpty ? branchName : worktreeName
     switch displayMode {
     case .branchFirst:
@@ -167,26 +160,13 @@ struct SidebarItemView: View {
     }
   }
 
-  private static func worktreeName(for row: SidebarItemModel) -> String {
-    guard !row.isMainWorktree else { return "Default" }
-    if row.id.contains("/") {
-      let pathName = URL(fileURLWithPath: row.id).lastPathComponent
-      guard pathName.isEmpty else { return pathName }
-    }
-    if !row.detail.isEmpty, row.detail != "." {
-      let detailName = URL(fileURLWithPath: row.detail).lastPathComponent
-      guard detailName.isEmpty || detailName == "." else { return detailName }
-    }
-    return row.name
-  }
-
   var body: some View {
     Label {
       HStack(spacing: 8) {
         TitleView(
           name: name,
           subtitle: subtitle,
-          worktreeColor: worktreeColor,
+          accent: accent,
           isBusy: isBusy
         )
         Spacer(minLength: 0)
@@ -223,18 +203,9 @@ struct SidebarItemView: View {
 private struct TitleView: View {
   let name: String
   let subtitle: String?
-  let worktreeColor: SidebarItemView.WorktreeColor
+  let accent: WorktreeAccent
   let isBusy: Bool
   @Environment(\.backgroundProminence) private var backgroundProminence
-
-  private var resolvedWorktreeColor: AnyShapeStyle {
-    guard backgroundProminence != .increased else { return AnyShapeStyle(.secondary) }
-    return switch worktreeColor {
-    case .main: AnyShapeStyle(.yellow)
-    case .pinned: AnyShapeStyle(.orange)
-    case .default: AnyShapeStyle(.tertiary)
-    }
-  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -245,7 +216,7 @@ private struct TitleView: View {
       if let subtitle {
         Text(subtitle)
           .font(.footnote)
-          .foregroundStyle(resolvedWorktreeColor)
+          .foregroundStyle(accent.shapeStyle(emphasized: backgroundProminence == .increased))
           .lineLimit(1)
       }
     }

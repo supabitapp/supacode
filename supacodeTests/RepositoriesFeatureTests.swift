@@ -2840,50 +2840,6 @@ struct RepositoriesFeatureTests {
     #expect(store.state.alert != nil)
   }
 
-  @Test func requestRenameBranchWithEmptyNameShowsAlert() async {
-    let worktree = makeWorktree(id: "/tmp/wt", name: "eagle")
-    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
-      RepositoriesFeature()
-    }
-
-    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("Branch name required")
-    } actions: {
-      ButtonState(role: .cancel) {
-        TextState("OK")
-      }
-    } message: {
-      TextState("Enter a branch name to rename.")
-    }
-
-    await store.send(.requestRenameBranch(worktree.id, " ")) {
-      $0.alert = expectedAlert
-    }
-  }
-
-  @Test func requestRenameBranchWithWhitespaceShowsAlert() async {
-    let worktree = makeWorktree(id: "/tmp/wt", name: "eagle")
-    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
-      RepositoriesFeature()
-    }
-
-    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("Branch name invalid")
-    } actions: {
-      ButtonState(role: .cancel) {
-        TextState("OK")
-      }
-    } message: {
-      TextState("Branch names can't contain spaces.")
-    }
-
-    await store.send(.requestRenameBranch(worktree.id, "feature branch")) {
-      $0.alert = expectedAlert
-    }
-  }
-
   @Test func worktreeNotificationReceivedDoesNotShowStatusToast() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
@@ -5374,6 +5330,200 @@ struct RepositoriesFeatureTests {
     state.repositories = IdentifiedArray(uniqueElements: repositories)
     state.repositoryRoots = repositories.map(\.rootURL)
     return state
+  }
+
+  private func makeSidebarItem(
+    id: String,
+    name: String,
+    repositoryID: Repository.ID = "/tmp/repo",
+    kind: SidebarItemModel.Kind = .git,
+    detail: String = "detail",
+    isPinned: Bool = false,
+    isMainWorktree: Bool = false
+  ) -> SidebarItemModel {
+    SidebarItemModel(
+      id: id,
+      repositoryID: repositoryID,
+      kind: kind,
+      name: name,
+      detail: detail,
+      info: nil,
+      isPinned: isPinned,
+      isMainWorktree: isMainWorktree,
+      status: .idle
+    )
+  }
+
+  @Test func sidebarDisplayNameReturnsNilForMainWorktree() {
+    let row = makeSidebarItem(id: "/tmp/repo/main", name: "main", isMainWorktree: true)
+    #expect(row.sidebarDisplayName == nil)
+  }
+
+  @Test func sidebarDisplayNameUsesIdLastPathComponent() {
+    let row = makeSidebarItem(id: "/tmp/repo/feature-branch", name: "feature/branch")
+    #expect(row.sidebarDisplayName == "feature-branch")
+  }
+
+  @Test func sidebarDisplayNameFallsBackToDetailWhenIdLacksSlash() {
+    let row = makeSidebarItem(id: "wt-id", name: "feature/branch", detail: "/tmp/repo/wt-folder")
+    #expect(row.sidebarDisplayName == "wt-folder")
+  }
+
+  @Test func sidebarDisplayNameFallsBackToNameWhenNoPathInfo() {
+    let row = makeSidebarItem(id: "wt-id", name: "feature/branch", detail: ".")
+    #expect(row.sidebarDisplayName == "feature/branch")
+  }
+
+  @Test func accentMapsMainPinnedAndDefault() {
+    let main = makeSidebarItem(id: "/tmp/repo/main", name: "main", isMainWorktree: true)
+    let pinned = makeSidebarItem(id: "/tmp/repo/p", name: "p", isPinned: true)
+    let regular = makeSidebarItem(id: "/tmp/repo/r", name: "r")
+    #expect(main.accent == .main)
+    #expect(pinned.accent == .pinned)
+    #expect(regular.accent == .default)
+  }
+
+  @Test func makeToolbarTitleContentForFolderUsesFolderName() {
+    let folderID = "folder:/tmp/Documents"
+    let folderRow = makeSidebarItem(
+      id: folderID,
+      name: "Documents",
+      repositoryID: "/tmp/Documents",
+      kind: .folder,
+      isMainWorktree: true
+    )
+    let worktree = makeWorktree(id: folderID, name: "Documents", repoRoot: "/tmp/Documents")
+    let repository = makeRepository(id: "/tmp/Documents", name: "Documents", worktrees: [worktree])
+    let state = makeState(repositories: [repository])
+
+    let content = WorktreeDetailView.makeToolbarTitleContent(
+      selectedWorktree: worktree,
+      selectedRow: folderRow,
+      repositories: state,
+      hideSubtitleOnMatch: true
+    )
+
+    guard case .folder(let name) = content else {
+      Issue.record("Expected .folder content, got \(content)")
+      return
+    }
+    #expect(name == "Documents")
+  }
+
+  @Test func makeToolbarTitleContentSuppressesSubtitleForSoleDefaultWorktree() {
+    let mainID = "/tmp/repo/main"
+    let mainRow = makeSidebarItem(id: mainID, name: "main", isMainWorktree: true)
+    let worktree = makeWorktree(id: mainID, name: "main")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let state = makeState(repositories: [repository])
+
+    let content = WorktreeDetailView.makeToolbarTitleContent(
+      selectedWorktree: worktree,
+      selectedRow: mainRow,
+      repositories: state,
+      hideSubtitleOnMatch: true
+    )
+
+    guard case .git(let payload) = content else {
+      Issue.record("Expected .git content, got \(content)")
+      return
+    }
+    #expect(payload.worktreeSubtitle == nil)
+    #expect(payload.accent == .main)
+  }
+
+  @Test func makeToolbarTitleContentKeepsSubtitleWhenSiblingWorktreeExists() {
+    let mainID = "/tmp/repo/main"
+    let featureID = "/tmp/repo/feature"
+    let mainRow = makeSidebarItem(id: mainID, name: "main", isMainWorktree: true)
+    let main = makeWorktree(id: mainID, name: "main")
+    let feature = makeWorktree(id: featureID, name: "feature")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [main, feature])
+    let state = makeState(repositories: [repository])
+
+    let content = WorktreeDetailView.makeToolbarTitleContent(
+      selectedWorktree: main,
+      selectedRow: mainRow,
+      repositories: state,
+      hideSubtitleOnMatch: true
+    )
+
+    guard case .git(let payload) = content else {
+      Issue.record("Expected .git content, got \(content)")
+      return
+    }
+    // "Default" view-side fallback for main when a sibling exists.
+    #expect(payload.worktreeSubtitle == "Default")
+  }
+
+  @Test func makeToolbarTitleContentHidesMatchingSubtitleWhenFlagOn() {
+    let featureID = "/tmp/repo/foo"
+    let mainID = "/tmp/repo/main"
+    let main = makeWorktree(id: mainID, name: "main")
+    let feature = makeWorktree(id: featureID, name: "feature/foo")
+    let featureRow = makeSidebarItem(id: featureID, name: "feature/foo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [main, feature])
+    let state = makeState(repositories: [repository])
+
+    let content = WorktreeDetailView.makeToolbarTitleContent(
+      selectedWorktree: feature,
+      selectedRow: featureRow,
+      repositories: state,
+      hideSubtitleOnMatch: true
+    )
+
+    guard case .git(let payload) = content else {
+      Issue.record("Expected .git content, got \(content)")
+      return
+    }
+    #expect(payload.worktreeSubtitle == nil)
+  }
+
+  @Test func makeToolbarTitleContentKeepsMatchingSubtitleWhenFlagOff() {
+    let featureID = "/tmp/repo/foo"
+    let mainID = "/tmp/repo/main"
+    let main = makeWorktree(id: mainID, name: "main")
+    let feature = makeWorktree(id: featureID, name: "feature/foo")
+    let featureRow = makeSidebarItem(id: featureID, name: "feature/foo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [main, feature])
+    let state = makeState(repositories: [repository])
+
+    let content = WorktreeDetailView.makeToolbarTitleContent(
+      selectedWorktree: feature,
+      selectedRow: featureRow,
+      repositories: state,
+      hideSubtitleOnMatch: false
+    )
+
+    guard case .git(let payload) = content else {
+      Issue.record("Expected .git content, got \(content)")
+      return
+    }
+    #expect(payload.worktreeSubtitle == "foo")
+  }
+
+  @Test func makeToolbarTitleContentUsesSidebarCustomTitleOverride() {
+    let mainID = "/tmp/repo/main"
+    let worktree = makeWorktree(id: mainID, name: "main")
+    let repository = makeRepository(id: "/tmp/repo", name: "repo", worktrees: [worktree])
+    let mainRow = makeSidebarItem(id: mainID, name: "main", isMainWorktree: true)
+    var state = makeState(repositories: [repository])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(title: "My Pretty Name")
+    }
+
+    let content = WorktreeDetailView.makeToolbarTitleContent(
+      selectedWorktree: worktree,
+      selectedRow: mainRow,
+      repositories: state,
+      hideSubtitleOnMatch: true
+    )
+
+    guard case .git(let payload) = content else {
+      Issue.record("Expected .git content, got \(content)")
+      return
+    }
+    #expect(payload.repositoryName == "My Pretty Name")
   }
 
   @Test func loadPersistedRepositoriesStartsFetchesConcurrentlyAndPreservesRootOrder() async {

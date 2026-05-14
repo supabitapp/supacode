@@ -230,7 +230,6 @@ struct RepositoriesFeature {
     case worktreeHistoryForward
     case revealSelectedWorktreeInSidebar
     case consumePendingSidebarReveal(Int)
-    case requestRenameBranch(Worktree.ID, String)
     case createRandomWorktree
     case createRandomWorktreeInRepository(Repository.ID)
     case createWorktreeInRepository(
@@ -676,41 +675,6 @@ struct RepositoriesFeature {
         guard state.pendingSidebarReveal?.id == pendingSidebarRevealID else { return .none }
         state.pendingSidebarReveal = nil
         return .none
-
-      case .requestRenameBranch(let worktreeID, let branchName):
-        guard let worktree = state.worktree(for: worktreeID) else { return .none }
-        let trimmed = branchName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-          state.alert = messageAlert(
-            title: "Branch name required",
-            message: "Enter a branch name to rename."
-          )
-          return .none
-        }
-        guard !trimmed.contains(where: \.isWhitespace) else {
-          state.alert = messageAlert(
-            title: "Branch name invalid",
-            message: "Branch names can't contain spaces."
-          )
-          return .none
-        }
-        if trimmed == worktree.name {
-          return .none
-        }
-        analyticsClient.capture("branch_renamed", nil)
-        return .run { send in
-          do {
-            try await gitClient.renameBranch(worktree.workingDirectory, trimmed)
-            await send(.reloadRepositories(animated: true))
-          } catch {
-            await send(
-              .presentAlert(
-                title: "Unable to rename branch",
-                message: error.localizedDescription
-              )
-            )
-          }
-        }
 
       case .createRandomWorktree:
         guard let repository = repositoryForWorktreeCreation(state) else {

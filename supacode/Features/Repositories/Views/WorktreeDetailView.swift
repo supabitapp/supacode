@@ -1,5 +1,6 @@
 import AppKit
 import ComposableArchitecture
+import OrderedCollections
 import Sharing
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
@@ -9,6 +10,7 @@ struct WorktreeDetailView: View {
   @Bindable var store: StoreOf<AppFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
 
   var body: some View {
     detailBody(state: store.state)
@@ -58,8 +60,14 @@ struct WorktreeDetailView: View {
       if showsToolbarPlaceholder {
         ToolbarPlaceholderContent()
       } else if hasActiveWorktree, let selectedWorktree {
+        let titleContent = Self.makeToolbarTitleContent(
+          selectedWorktree: selectedWorktree,
+          selectedRow: selectedRow,
+          repositories: repositories,
+          hideSubtitleOnMatch: hideSubtitleOnMatch
+        )
         let toolbarState = WorktreeToolbarState(
-          title: selectedWorktree.name,
+          titleContent: titleContent,
           rootURL: selectedWorktree.repositoryRootURL,
           kind: toolbarKind(for: selectedWorktree, repositories: repositories),
           statusToast: repositories.statusToast,
@@ -73,9 +81,6 @@ struct WorktreeDetailView: View {
         )
         WorktreeToolbarContent(
           toolbarState: toolbarState,
-          onRenameBranch: { newBranch in
-            store.send(.repositories(.requestRenameBranch(selectedWorktree.id, newBranch)))
-          },
           onOpenWorktree: { action in
             store.send(.openWorktree(action))
           },
@@ -332,7 +337,7 @@ struct WorktreeDetailView: View {
       case folder
     }
 
-    let title: String
+    let titleContent: WorktreeToolbarTitleContent
     let rootURL: URL
     let kind: Kind
     let statusToast: RepositoriesFeature.StatusToast?
@@ -399,7 +404,6 @@ struct WorktreeDetailView: View {
 
   fileprivate struct WorktreeToolbarContent: ToolbarContent {
     let toolbarState: WorktreeToolbarState
-    let onRenameBranch: (String) -> Void
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
     let onRevealInFinder: () -> Void
@@ -413,14 +417,10 @@ struct WorktreeDetailView: View {
     let onManageGlobalScripts: () -> Void
 
     var body: some ToolbarContent {
-      ToolbarItem {
-        WorktreeDetailTitleView(
-          title: toolbarState.title,
-          rootURL: toolbarState.rootURL,
-          isFolder: toolbarState.isFolder,
-          onRenameBranch: onRenameBranch
-        )
+      ToolbarItem(placement: .navigation) {
+        WorktreeToolbarTitleView(content: toolbarState.titleContent)
       }
+      .sharedBackgroundVisibility(.hidden)
 
       ToolbarSpacer(.flexible)
 
@@ -507,6 +507,53 @@ struct WorktreeDetailView: View {
       guard isDefault else { return action.title }
       return "\(action.title) (\(resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
     }
+  }
+
+  static func makeToolbarTitleContent(
+    selectedWorktree: Worktree,
+    selectedRow: SidebarItemModel?,
+    repositories: RepositoriesFeature.State,
+    hideSubtitleOnMatch: Bool
+  ) -> WorktreeToolbarTitleContent {
+    let repositoryID = selectedRow?.repositoryID
+    let repository = repositoryID.flatMap { repositories.repositories[id: $0] }
+    let section = repositoryID.flatMap { repositories.sidebar.sections[$0] }
+    let customTitle = section?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let defaultName = repository?.name ?? selectedWorktree.repositoryRootURL.lastPathComponent
+    let repositoryName = customTitle.flatMap { $0.isEmpty ? nil : $0 } ?? defaultName
+
+    if selectedRow?.isFolder == true {
+      return .folder(name: repositoryName)
+    }
+
+    let worktreeSubtitle: String? = {
+      guard let selectedRow else { return nil }
+      // Mirror the sidebar: a sole default worktree (no siblings, no pending creates) carries no distinguishing name.
+      if selectedRow.isMainWorktree,
+        let repository,
+        repository.worktrees.count == 1,
+        !repositories.pendingWorktrees.contains(where: { $0.repositoryID == repository.id })
+      {
+        return nil
+      }
+      // View-side localized fallback for the main worktree.
+      let worktreeName = selectedRow.sidebarDisplayName ?? "Default"
+      let branchName = selectedWorktree.name
+      let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
+      if hideSubtitleOnMatch, worktreeName == branchLastComponent { return nil }
+      return worktreeName
+    }()
+
+    return .git(
+      .init(
+        branchName: selectedWorktree.name,
+        repositoryName: repositoryName,
+        repositoryColor: section?.color,
+        worktreeSubtitle: worktreeSubtitle,
+        accent: selectedRow?.accent ?? .default,
+        rootURL: selectedWorktree.repositoryRootURL
+      )
+    )
   }
 
   private func toolbarKind(
@@ -634,7 +681,7 @@ private struct DetailPlaceholderView: View {
 
 private struct ToolbarPlaceholderContent: ToolbarContent {
   var body: some ToolbarContent {
-    ToolbarItem {
+    ToolbarItem(placement: .navigation) {
       Button {
       } label: {
         HStack(spacing: 6) {
@@ -647,6 +694,7 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
       .redacted(reason: .placeholder)
       .shimmer(isActive: true)
     }
+    .sharedBackgroundVisibility(.hidden)
 
     ToolbarSpacer(.flexible)
 
@@ -948,7 +996,16 @@ private struct WorktreeToolbarPreview: View {
 
   init() {
     toolbarState = WorktreeDetailView.WorktreeToolbarState(
-      title: "feature/toolbar-preview",
+      titleContent: .git(
+        .init(
+          branchName: "feature/toolbar-preview",
+          repositoryName: "supacode",
+          repositoryColor: .blue,
+          worktreeSubtitle: "toolbar-preview",
+          accent: .pinned,
+          rootURL: URL(fileURLWithPath: "/tmp/preview")
+        )
+      ),
       rootURL: URL(fileURLWithPath: "/tmp/preview"),
       kind: .git(pullRequest: nil),
       statusToast: nil,
@@ -973,7 +1030,6 @@ private struct WorktreeToolbarPreview: View {
     .toolbar {
       WorktreeDetailView.WorktreeToolbarContent(
         toolbarState: toolbarState,
-        onRenameBranch: { _ in },
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onRevealInFinder: {},

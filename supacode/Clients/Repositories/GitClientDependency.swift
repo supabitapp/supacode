@@ -45,7 +45,6 @@ struct GitClientDependency: Sendable {
   var isBareRepository: @Sendable (_ repoRoot: URL) async throws -> Bool
   var branchName: @Sendable (URL) async -> String?
   var lineChanges: @Sendable (URL) async -> (added: Int, removed: Int)?
-  var renameBranch: @Sendable (_ worktreeURL: URL, _ branchName: String) async throws -> Void
   var remoteNames: @Sendable (_ repoRoot: URL) async throws -> [String]
   var fetchRemote: @Sendable (_ remote: String, _ repoRoot: URL) async throws -> Void
   var remoteInfo: @Sendable (_ repositoryRoot: URL) async -> GithubRemoteInfo?
@@ -100,9 +99,6 @@ extension GitClientDependency: DependencyKey {
     },
     branchName: { await GitClient().branchName(for: $0) },
     lineChanges: { await GitClient().lineChanges(at: $0) },
-    renameBranch: { worktreeURL, branchName in
-      try await GitClient().renameBranch(in: worktreeURL, to: branchName)
-    },
     remoteNames: { try await GitClient().remoteNames(for: $0) },
     fetchRemote: { remote, repoRoot in try await GitClient().fetchRemote(remote, for: repoRoot) },
     remoteInfo: { repositoryRoot in
