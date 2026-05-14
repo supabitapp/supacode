@@ -521,8 +521,9 @@ final class GhosttyRuntime {
     } else {
       userOpacity = 1
     }
-    loadBundledOverrides(into: config)
+    // Last-write-wins: overrides must follow theme to keep `background-opacity = 0` on the surface.
     loadBundledTheme(into: config, enabled: themeSyncEnabled)
+    loadBundledOverrides(into: config)
     ghostty_config_finalize(config)
     return (config, userOpacity)
   }
@@ -555,8 +556,7 @@ final class GhosttyRuntime {
     tempURL.path.withCString { ghostty_config_load_file(config, $0) }
   }
 
-  /// When terminal theme sync is enabled, loads the bundled Supacode
-  /// light/dark theme, overriding any user-configured theme. When disabled, the user's Ghostty theme is preserved.
+  /// Loads the bundled Supacode light/dark theme plus its opacity and blur. No-op when sync is disabled.
   private static func loadBundledTheme(into config: ghostty_config_t, enabled: Bool) {
     guard enabled else { return }
     guard
@@ -567,10 +567,14 @@ final class GhosttyRuntime {
       logger.warning("Bundled Supacode themes missing from app bundle.")
       return
     }
-    let line = "theme = light:\(lightPath),dark:\(darkPath)\n"
+    let contents = """
+      theme = light:\(lightPath),dark:\(darkPath)
+      background-opacity = 0.9
+      background-blur = macos-glass-regular
+      """
     let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-theme.conf")
     do {
-      try line.write(to: tempURL, atomically: true, encoding: .utf8)
+      try contents.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {
       logger.warning("Failed to write bundled theme config: \(error.localizedDescription)")
       return

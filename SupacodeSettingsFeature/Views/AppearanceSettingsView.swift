@@ -27,17 +27,8 @@ public struct AppearanceSettingsView: View {
           }
         }
         Toggle(isOn: $store.terminalThemeSyncEnabled) {
-          Text("Sync with Terminal")
-          Text("Applies the appearance-aware Supacode color palette.")
-        }
-        if !store.terminalThemeSyncEnabled {
-          VStack(alignment: .leading, spacing: 4) {
-            Text("Add a theme to `~/.config/ghostty/config`")
-            Text("e.g. `theme = light:Monokai Pro Light Sun,dark:Dimmed Monokai`")
-          }
-          .font(.footnote)
-          .foregroundStyle(.secondary)
-          .textSelection(.enabled)
+          Text("Supacode Terminal Theme")
+          Text("When off, honors your Ghostty config theme. Run `ghostty +list-themes` to list available ones.")
         }
       }
       Section {
