@@ -136,9 +136,11 @@ private struct SidebarItemGroupView: View {
   @Shared(.settingsFile) private var settingsFile
 
   private func shortcutHint(for index: Int?) -> String? {
-    guard let index, AppShortcuts.worktreeSelection.indices.contains(index) else { return nil }
-    let overrides = settingsFile.global.shortcutOverrides
-    return AppShortcuts.worktreeSelection[index].effective(from: overrides)?.display
+    guard let index else { return nil }
+    return AppShortcuts.worktreeSelectionShortcutDisplay(
+      atSlot: index,
+      overrides: settingsFile.global.shortcutOverrides
+    )
   }
 
   private func moveRows(_ offsets: IndexSet, _ destination: Int) {
@@ -236,16 +238,19 @@ private struct SidebarItemContainer: View {
 
 /// Folder repositories render exactly one row (the synthesized main
 /// item) and must sit as a *direct* child of the outer
-/// `ForEach(sidebarRootRows)` in `SidebarListView` — otherwise the
+/// `ForEach(sidebarRootRows)` in `SidebarListView`, otherwise the
 /// enclosing `.onMove` can't route repo-level drags to the folder.
 /// Bypassing `SidebarItemsView`'s nested ForEach-of-groups keeps the
 /// folder row flat, matching the `SidebarFailedRepositoryRow`
 /// pattern that already reorders correctly.
 struct SidebarFolderRow: View {
   let repository: Repository
+  let hotkeyRows: [SidebarItemModel]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @Shared(.settingsFile) private var settingsFile
   @State private var draggingWorktreeIDs: Set<Worktree.ID> = []
 
   var body: some View {
@@ -261,9 +266,19 @@ struct SidebarFolderRow: View {
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: true,
         moveDisabled: false,
-        shortcutHint: nil
+        shortcutHint: shortcutHint(for: row.id)
       )
     }
+  }
+
+  private func shortcutHint(for rowID: Worktree.ID) -> String? {
+    guard commandKeyObserver.isPressed,
+      let index = hotkeyRows.firstIndex(where: { $0.id == rowID })
+    else { return nil }
+    return AppShortcuts.worktreeSelectionShortcutDisplay(
+      atSlot: index,
+      overrides: settingsFile.global.shortcutOverrides
+    )
   }
 }
 
@@ -285,7 +300,7 @@ private struct SidebarItemContextMenu: View {
   }
 
   /// A bulk context menu only makes sense for selections whose rows
-  /// are all of the same kind — the per-kind actions (archive, pin,
+  /// are all of the same kind: the per-kind actions (archive, pin,
   /// branch-name copy, folder disk deletion) don't compose. Mixed
   /// selections surface no menu at all; the user-facing affordances
   /// for that state live in the multi-selection detail view.

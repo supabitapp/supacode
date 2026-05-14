@@ -150,6 +150,58 @@ struct AppShortcutsTests {
     #expect(result == nil)
   }
 
+  // MARK: - Active worktree selection slots.
+
+  @Test func activeSlotsIncludeAllWhenNoOverrideAndRowsMatch() {
+    let slots = AppShortcuts.activeWorktreeSelectionSlots(overrides: [:], orderedRowsCount: 10)
+    #expect(slots.map(\.index) == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expectNoDifference(slots.map(\.shortcut.display), AppShortcuts.worktreeSelection.map(\.display))
+  }
+
+  @Test func activeSlotsDropDisabledOverridePreservingOtherIndices() {
+    let slots = AppShortcuts.activeWorktreeSelectionSlots(
+      overrides: [.selectWorktree(6): .disabled],
+      orderedRowsCount: 10
+    )
+    #expect(slots.map(\.index) == [0, 1, 2, 3, 4, 6, 7, 8, 9])
+    #expect(slots.allSatisfy { $0.index != 5 })
+  }
+
+  @Test func activeSlotsDropOutOfRangeOrderedRows() {
+    let slots = AppShortcuts.activeWorktreeSelectionSlots(overrides: [:], orderedRowsCount: 3)
+    #expect(slots.map(\.index) == [0, 1, 2])
+  }
+
+  @Test func activeSlotsDropBothDisabledAndOutOfRangeSlots() {
+    let slots = AppShortcuts.activeWorktreeSelectionSlots(
+      overrides: [.selectWorktree(3): .disabled],
+      orderedRowsCount: 5
+    )
+    #expect(slots.map(\.index) == [0, 1, 3, 4])
+  }
+
+  // MARK: - Worktree selection shortcut display.
+
+  @Test func worktreeSelectionShortcutDisplayReturnsNilForOutOfRange() {
+    #expect(AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: -1, overrides: [:]) == nil)
+    #expect(AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: 10, overrides: [:]) == nil)
+  }
+
+  @Test func worktreeSelectionShortcutDisplayReturnsNilForDisabledSlot() {
+    #expect(
+      AppShortcuts.worktreeSelectionShortcutDisplay(
+        atSlot: 2,
+        overrides: [.selectWorktree(3): .disabled]
+      ) == nil
+    )
+  }
+
+  @Test func worktreeSelectionShortcutDisplayReturnsEffectiveDisplay() {
+    #expect(
+      AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: 6, overrides: [:]) == "⌃7"
+    )
+  }
+
   // MARK: - Ghostty unbind argument format.
 
   @Test func ghosttyUnbindArgument() {

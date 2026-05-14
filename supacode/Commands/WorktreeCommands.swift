@@ -150,16 +150,15 @@ struct WorktreeCommands: Commands {
       .appKeyboardShortcut(historyForward)
       .help("Forward in Worktree History (\(historyForward?.display ?? "none"))")
       .disabled(!canGoForward)
-      // Direct worktree shortcuts.
-      let worktreeShortcutsList = worktreeShortcuts(from: overrides)
+      // Skip inactive slots so SwiftUI never emits a Button whose stale keyEquivalent misroutes keys.
+      let slots = AppShortcuts.activeWorktreeSelectionSlots(
+        overrides: overrides,
+        orderedRowsCount: orderedRows.count
+      )
+      .map { WorktreeSelectionSlot(shortcut: $0.shortcut, row: orderedRows[$0.index]) }
       Menu("Select Worktree") {
-        ForEach(worktreeShortcutsList.indices, id: \.self) { index in
-          WorktreeShortcutButton(
-            index: index,
-            shortcut: worktreeShortcutsList[index],
-            orderedRows: orderedRows,
-            store: store
-          )
+        ForEach(slots, id: \.shortcut.id) { slot in
+          WorktreeShortcutButton(slot: slot, store: store)
         }
       }
     }
@@ -178,10 +177,6 @@ struct WorktreeCommands: Commands {
     }
   }
 
-  private func worktreeShortcuts(from overrides: [AppShortcutID: AppShortcutOverride]) -> [AppShortcut?] {
-    AppShortcuts.worktreeSelection.map { $0.effective(from: overrides) }
-  }
-
   private var selectedPullRequestURL: URL? {
     let repositories = store.repositories
     guard let selectedWorktreeID = repositories.selectedWorktreeID else { return nil }
@@ -191,30 +186,26 @@ struct WorktreeCommands: Commands {
 
 }
 
+private struct WorktreeSelectionSlot {
+  let shortcut: AppShortcut
+  let row: SidebarItemModel
+}
+
 private struct WorktreeShortcutButton: View {
-  let index: Int
-  let shortcut: AppShortcut?
-  let orderedRows: [SidebarItemModel]
+  let slot: WorktreeSelectionSlot
   let store: StoreOf<AppFeature>
 
-  private var row: SidebarItemModel? {
-    orderedRows.indices.contains(index) ? orderedRows[index] : nil
-  }
-
   private var title: String {
-    guard let row else { return "Worktree \(index + 1)" }
-    let repositoryName = store.repositories.repositoryName(for: row.repositoryID) ?? "Repository"
-    return "\(repositoryName) — \(row.name)"
+    let repositoryName = store.repositories.repositoryName(for: slot.row.repositoryID) ?? "Repository"
+    return "\(repositoryName) · \(slot.row.name)"
   }
 
   var body: some View {
     Button(title) {
-      guard let row else { return }
-      store.send(.repositories(.selectWorktree(row.id)))
+      store.send(.repositories(.selectWorktree(slot.row.id)))
     }
-    .appKeyboardShortcut(shortcut)
-    .help("Switch to \(title) (\(shortcut?.display ?? "none"))")
-    .disabled(row == nil)
+    .appKeyboardShortcut(slot.shortcut)
+    .help("Switch to \(title) (\(slot.shortcut.display))")
   }
 }
 

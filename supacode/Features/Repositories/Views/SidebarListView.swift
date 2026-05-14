@@ -161,6 +161,7 @@ private struct SidebarRootView: View {
       Section {
         SidebarFolderRow(
           repository: repository,
+          hotkeyRows: hotkeyRows,
           selectedWorktreeIDs: selectedWorktreeIDs,
           store: store,
           terminalManager: terminalManager
