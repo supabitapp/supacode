@@ -63,6 +63,7 @@ public struct SettingsFeature {
     public var pullRequestMergeStrategy: PullRequestMergeStrategy
     public var terminalThemeSyncEnabled: Bool
     public var restoreTerminalLayoutEnabled: Bool
+    public var restoreAgentSessionsEnabled: Bool
     public var hideSingleTabBar: Bool
     public var automatedActionPolicy: AutomatedActionPolicy
     public var defaultWorktreeBaseDirectoryPath: String
@@ -104,6 +105,7 @@ public struct SettingsFeature {
       pullRequestMergeStrategy = settings.pullRequestMergeStrategy
       terminalThemeSyncEnabled = settings.terminalThemeSyncEnabled
       restoreTerminalLayoutEnabled = settings.restoreTerminalLayoutEnabled
+      restoreAgentSessionsEnabled = settings.restoreAgentSessionsEnabled
       hideSingleTabBar = settings.hideSingleTabBar
       automatedActionPolicy = settings.automatedActionPolicy
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
@@ -139,6 +141,7 @@ public struct SettingsFeature {
         pullRequestMergeStrategy: pullRequestMergeStrategy,
         terminalThemeSyncEnabled: terminalThemeSyncEnabled,
         restoreTerminalLayoutEnabled: restoreTerminalLayoutEnabled,
+        restoreAgentSessionsEnabled: restoreAgentSessionsEnabled,
         hideSingleTabBar: hideSingleTabBar,
         automatedActionPolicy: automatedActionPolicy,
         defaultWorktreeBaseDirectoryPath: SupacodePaths.normalizedWorktreeBaseDirectoryPath(
@@ -272,6 +275,7 @@ public struct SettingsFeature {
         state.pullRequestMergeStrategy = normalizedSettings.pullRequestMergeStrategy
         state.terminalThemeSyncEnabled = normalizedSettings.terminalThemeSyncEnabled
         state.restoreTerminalLayoutEnabled = normalizedSettings.restoreTerminalLayoutEnabled
+        state.restoreAgentSessionsEnabled = normalizedSettings.restoreAgentSessionsEnabled
         state.hideSingleTabBar = normalizedSettings.hideSingleTabBar
         state.automatedActionPolicy = normalizedSettings.automatedActionPolicy
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays

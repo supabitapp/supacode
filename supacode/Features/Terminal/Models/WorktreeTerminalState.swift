@@ -819,19 +819,19 @@ final class WorktreeTerminalState {
 
   func captureLayoutSnapshot() -> TerminalLayoutSnapshot? {
     guard !tabManager.tabs.isEmpty else { return nil }
-    // Capture-time invariant boundary: "badge visible ⟺ restore intent on disk".
-    // Reading the toggle here (rather than via an async observer) means every
-    // snapshot that reaches disk is consistent with the toggle state at that
-    // exact moment — no quit-race, no lost-transition, no replay machinery.
+    // Capture-time gate for the per-surface resume intent. Reading the toggle
+    // here (rather than via an async observer) means every snapshot that
+    // reaches disk is consistent with the toggle state at that exact moment —
+    // no quit-race, no lost-transition, no replay machinery.
     @Shared(.settingsFile) var settingsFile
-    let badgesEnabled = settingsFile.global.agentPresenceBadgesEnabled
+    let resumeIntentAllowed = settingsFile.global.restoreAgentSessionsEnabled
     var tabSnapshots: [TerminalLayoutSnapshot.TabSnapshot] = []
     for tab in tabManager.tabs {
       guard let tree = trees[tab.id], let root = tree.root else {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
       }
-      let layout = captureLayoutNode(root, includeRestorableAgent: badgesEnabled)
+      let layout = captureLayoutNode(root, includeRestorableAgent: resumeIntentAllowed)
       let leaves = root.leaves()
       let focusedId = focusedSurfaceIdByTab[tab.id]
       let focusedLeafIndex =
@@ -947,13 +947,13 @@ final class WorktreeTerminalState {
     // Skip setup script when restoring a saved layout.
     pendingSetupScript = false
 
-    // Second half of the capture-site gate: if the user has badges disabled at
+    // Second half of the capture-site gate: if the user has the toggle off at
     // launch, ignore any `restorableAgent` that slipped into the snapshot
     // (e.g. the toggle flipped OFF between the last capture and quit). The
     // capture path also nils these out while disabled, so this is belt-and-
     // suspenders against the ON→OFF→quit race.
     @Shared(.settingsFile) var settingsFile
-    let resumeIntentAllowed = settingsFile.global.agentPresenceBadgesEnabled
+    let resumeIntentAllowed = settingsFile.global.restoreAgentSessionsEnabled
 
     // Consume-once semantics: we deliberately do NOT hydrate
     // `restorableAgentBySurfaceID` from the snapshot leaves. A later capture

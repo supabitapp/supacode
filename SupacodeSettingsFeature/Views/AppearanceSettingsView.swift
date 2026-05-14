@@ -51,6 +51,12 @@ public struct AppearanceSettingsView: View {
           Text("Reopen tabs, splits, and working directories from your last session.")
         }
         .help("Restore tabs and splits when reopening a worktree")
+        Toggle(isOn: $store.restoreAgentSessionsEnabled) {
+          Text("Restore Agent Sessions")
+          Text("Resume Claude or Codex sessions in restored surfaces via `--resume` / `resume`.")
+        }
+        .disabled(!store.restoreTerminalLayoutEnabled)
+        .help("Requires Restore Terminal Layout")
       }
       Section("Editor") {
         Picker(

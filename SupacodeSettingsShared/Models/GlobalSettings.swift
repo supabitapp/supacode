@@ -50,6 +50,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var pullRequestMergeStrategy: PullRequestMergeStrategy
   public var terminalThemeSyncEnabled: Bool
   public var restoreTerminalLayoutEnabled: Bool
+  public var restoreAgentSessionsEnabled: Bool
   public var hideSingleTabBar: Bool
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
@@ -82,6 +83,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     pullRequestMergeStrategy: .merge,
     terminalThemeSyncEnabled: false,
     restoreTerminalLayoutEnabled: false,
+    restoreAgentSessionsEnabled: true,
     hideSingleTabBar: false,
     automatedActionPolicy: .cliOnly,
     defaultWorktreeBaseDirectoryPath: nil,
@@ -115,6 +117,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     pullRequestMergeStrategy: PullRequestMergeStrategy = .merge,
     terminalThemeSyncEnabled: Bool = false,
     restoreTerminalLayoutEnabled: Bool = false,
+    restoreAgentSessionsEnabled: Bool = true,
     hideSingleTabBar: Bool = false,
     automatedActionPolicy: AutomatedActionPolicy = .cliOnly,
     defaultWorktreeBaseDirectoryPath: String? = nil,
@@ -146,6 +149,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
     self.terminalThemeSyncEnabled = terminalThemeSyncEnabled
     self.restoreTerminalLayoutEnabled = restoreTerminalLayoutEnabled
+    self.restoreAgentSessionsEnabled = restoreAgentSessionsEnabled
     self.hideSingleTabBar = hideSingleTabBar
     self.automatedActionPolicy = automatedActionPolicy
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
@@ -242,6 +246,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     restoreTerminalLayoutEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .restoreTerminalLayoutEnabled)
       ?? Self.default.restoreTerminalLayoutEnabled
+    restoreAgentSessionsEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .restoreAgentSessionsEnabled)
+      ?? Self.default.restoreAgentSessionsEnabled
     hideSingleTabBar =
       try container.decodeIfPresent(Bool.self, forKey: .hideSingleTabBar)
       ?? Self.default.hideSingleTabBar

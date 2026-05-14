@@ -67,10 +67,10 @@ final class WorktreeTerminalManager {
     }
     // Presence lifecycle → per-surface resume intent. Same event stream writes
     // to two observers (presence + restorable-agent); neither owns the other.
-    // Invariant (one-way): "badge disabled ⇒ no persisted or restored intent".
-    // We always record intent in memory on `session_start` so an OFF→ON
-    // transition becomes restorable on the next natural capture without
-    // replay. The disable side is enforced at the disk-write / restore
+    // Invariant (one-way): "restoreAgentSessions disabled ⇒ no persisted or
+    // restored intent". We always record intent in memory on `session_start`
+    // so an OFF→ON transition becomes restorable on the next natural capture
+    // without replay. The disable side is enforced at the disk-write / restore
     // boundary in `WorktreeTerminalState` (capture-site gate), not here.
     // Every path that clears presence (session_end, sweep eviction, surface
     // close) fires `onSessionEnded`; every `session_start` with a sessionID
@@ -97,13 +97,15 @@ final class WorktreeTerminalManager {
         state.clearRestorableAgent(surfaceID: surfaceID, agent: agent)
       }
     }
-    // Always record the activity/pid half; the badges toggle gates DISPLAY
-    // in `AgentPresenceManager.agents(forSurface:)` / `agents(across:)`, and
-    // is enforced at layout-capture time in `WorktreeTerminalState` rather
-    // than at recording time. That way OFF→ON transitions become restorable
-    // on the next natural layout save with no replay machinery, and the
-    // invariant ("badge invisible → no resume") is structurally guaranteed
-    // at the disk-write boundary rather than raced between observers.
+    // Always record the activity/pid half. Two separate user toggles gate the
+    // downstream effects: `agentPresenceBadgesEnabled` gates DISPLAY in
+    // `AgentPresenceManager.agents(forSurface:)` / `agents(across:)`, and
+    // `restoreAgentSessionsEnabled` gates the RESTORE intent at layout-capture
+    // time in `WorktreeTerminalState`. Both are enforced at the boundary
+    // (display / disk-write) rather than at recording time, so OFF→ON
+    // transitions become live on the next natural capture without replay
+    // machinery — the invariant ("toggle off → no resume") is structurally
+    // guaranteed at the disk-write boundary rather than raced between observers.
     server.onEvent = { [weak self] event in
       guard let self else { return }
       // Reject events whose surface is unknown to any live state: a hook from
