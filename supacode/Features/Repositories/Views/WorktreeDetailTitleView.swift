@@ -3,8 +3,6 @@ import Kingfisher
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Title block in the worktree detail toolbar. The `.git` case carries the avatar plus
-/// branch / repo / worktree composition; `.folder` is the simpler single-line label.
 enum WorktreeToolbarTitleContent: Hashable, Sendable {
   case git(GitPayload)
   case folder(name: String)
@@ -19,9 +17,6 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
   }
 }
 
-/// Toolbar title block: repo avatar (or folder glyph) + branch name (main focus) above
-/// a "repo · worktree" caption whose worktree segment uses the same main / pinned tint
-/// as the sidebar.
 struct WorktreeToolbarTitleView: View {
   let content: WorktreeToolbarTitleContent
 
@@ -85,9 +80,6 @@ struct WorktreeToolbarTitleView: View {
   }
 }
 
-/// Falls back to a branch glyph while loading or when the remote doesn't resolve to a
-/// GitHub owner. Routes through `GitClientDependency` so previews / tests can mock the
-/// avatar lookup.
 private struct RepositoryOwnerAvatar: View {
   let rootURL: URL
   @State private var avatarURL: URL?
@@ -114,8 +106,6 @@ private struct RepositoryOwnerAvatar: View {
   }
 }
 
-/// Shared resolver for GitHub owner avatars, used by both the toolbar title and the
-/// settings sidebar's repository label.
 enum GitHubOwnerAvatar {
   static func url(for rootURL: URL, gitClient: GitClientDependency) async -> URL? {
     guard let info = await gitClient.remoteInfo(rootURL) else { return nil }

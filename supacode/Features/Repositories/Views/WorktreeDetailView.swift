@@ -528,7 +528,7 @@ struct WorktreeDetailView: View {
 
     let worktreeSubtitle: String? = {
       guard let selectedRow else { return nil }
-      // Mirror the sidebar: a sole default worktree (no siblings, no pending creates) carries no distinguishing name.
+      // Sole default worktree: nothing to disambiguate.
       if selectedRow.isMainWorktree,
         let repository,
         repository.worktrees.count == 1,
@@ -536,7 +536,6 @@ struct WorktreeDetailView: View {
       {
         return nil
       }
-      // View-side localized fallback for the main worktree.
       let worktreeName = selectedRow.sidebarDisplayName ?? "Default"
       let branchName = selectedWorktree.name
       let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName

@@ -94,7 +94,6 @@ struct SidebarItemView: View {
 
     // Title and subtitle based on display mode.
     let branchName = row.name
-    // Main worktree resolves to localized "Default" view-side; other worktrees fall back to branch.
     let worktreeName = row.sidebarDisplayName ?? "Default"
     let effectiveWorktreeName = worktreeName.isEmpty ? branchName : worktreeName
     switch displayMode {
