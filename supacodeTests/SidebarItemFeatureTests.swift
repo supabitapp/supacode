@@ -165,8 +165,10 @@ struct SidebarItemFeatureTests {
   // MARK: - Stale-PR guard.
 
   @Test func pullRequestChangedDropsResultWhenBranchHasFlipped() async {
-    var state = makeState(name: "feature/x")
-    state.branchName = "feature/x"
+    // Post-flip state: row's branch is already "feature/y", a live PR is in place,
+    // and a late result from the prior "feature/x" query is about to arrive.
+    var state = makeState(name: "feature/y")
+    state.branchName = "feature/y"
     let livePR = GithubPullRequest(
       number: 12,
       title: "Live",
@@ -179,7 +181,7 @@ struct SidebarItemFeatureTests {
       mergeStateStatus: nil,
       updatedAt: nil,
       url: "https://example.com/pull/12",
-      headRefName: "feature/x",
+      headRefName: "feature/y",
       baseRefName: "main",
       commitsCount: 1,
       authorLogin: "tester",
@@ -188,14 +190,6 @@ struct SidebarItemFeatureTests {
     state.pullRequest = livePR
     let store = TestStore(initialState: state) {
       SidebarItemFeature()
-    }
-    await store.send(.pullRequestQueryStarted(branch: "feature/x")) {
-      $0.pullRequestBranchAtQueryTime = "feature/x"
-    }
-    // Branch flip must clear the watermark so a future query for "feature/y" can re-arm cleanly.
-    await store.send(.rosterChanged(.init(branchName: "feature/y"))) {
-      $0.branchName = "feature/y"
-      $0.pullRequestBranchAtQueryTime = nil
     }
     let stalePR = GithubPullRequest(
       number: 99,
@@ -274,46 +268,6 @@ struct SidebarItemFeatureTests {
     }
   }
 
-  // MARK: - Roster delta (partial update + tri-state).
-
-  @Test func rosterChangeUpdatesOnlyProvidedFields() async {
-    let store = TestStore(initialState: makeState(name: "feature")) {
-      SidebarItemFeature()
-    }
-    await store.send(.rosterChanged(.init(name: "renamed", isPinned: true))) {
-      $0.name = "renamed"
-      $0.isPinned = true
-    }
-  }
-
-  @Test func rosterAccentTriStateClearsAndSets() async {
-    var state = makeState(name: "feature")
-    state.repositoryAccent = .blue
-    let store = TestStore(initialState: state) {
-      SidebarItemFeature()
-    }
-    await store.send(.rosterChanged(.init(accent: .some(nil)))) {
-      $0.repositoryAccent = nil
-    }
-    await store.send(.rosterChanged(.init(accent: .some(.green)))) {
-      $0.repositoryAccent = .green
-    }
-  }
-
-  @Test func rosterSubtitleTriStateClearsAndSets() async {
-    var state = makeState(name: "feature")
-    state.subtitle = "old"
-    let store = TestStore(initialState: state) {
-      SidebarItemFeature()
-    }
-    await store.send(.rosterChanged(.init(subtitle: .some(nil)))) {
-      $0.subtitle = nil
-    }
-    await store.send(.rosterChanged(.init(subtitle: .some("new")))) {
-      $0.subtitle = "new"
-    }
-  }
-
   // MARK: - UI-scalar guards.
 
   @Test func shortcutHintAndDragSessionGuardsSkipNoOps() async {
@@ -330,39 +284,6 @@ struct SidebarItemFeatureTests {
     }
     // Same drag state: no-op.
     await store.send(.dragSessionChanged(isDragging: true))
-  }
-
-  // MARK: - User-intent lifts.
-
-  @Test func copyBranchTappedLiftsCopyToPasteboardDelegate() async {
-    var state = makeState(name: "feature")
-    state.branchName = "feature/sidebar"
-    let store = TestStore(initialState: state) {
-      SidebarItemFeature()
-    }
-    await store.send(.copyBranchTapped)
-    await store.receive(.delegate(.copyToPasteboard("feature/sidebar")))
-  }
-
-  @Test func copyPathTappedLiftsPercentDecodedPath() async {
-    var state = makeState(name: "spaced")
-    state.workingDirectory = URL(fileURLWithPath: "/tmp/repo/path with space")
-    let store = TestStore(initialState: state) {
-      SidebarItemFeature()
-    }
-    await store.send(.copyPathTapped)
-    await store.receive(.delegate(.copyToPasteboard("/tmp/repo/path with space")))
-  }
-
-  @Test func focusNotificationRequestedDispatchesFocusAndMarkReadDelegates() async {
-    let store = TestStore(initialState: makeState(name: "feature")) {
-      SidebarItemFeature()
-    }
-    let notificationID = UUID()
-    let surfaceID = UUID()
-    await store.send(.focusNotificationRequested(notificationID: notificationID, surfaceID: surfaceID))
-    await store.receive(.delegate(.focusSurface(store.state.id, surfaceID: surfaceID)))
-    await store.receive(.delegate(.markNotificationRead(store.state.id, notificationID: notificationID)))
   }
 
   // MARK: - Helpers.

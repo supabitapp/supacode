@@ -50,6 +50,14 @@ extension RepositoriesFeature {
         if let existing, existing.branchName != worktree.name {
           item.pullRequestBranchAtQueryTime = nil
         }
+        // Archived rows keep running scripts only while the delete script is
+        // active; any leftover scripts are stale and would render as misleading
+        // running-state dots in the archived bucket.
+        if state.isWorktreeArchived(id), item.lifecycle != .deletingScript,
+          !item.runningScripts.isEmpty
+        {
+          item.runningScripts.removeAll()
+        }
         rebuilt.append(item)
       }
       for pending in state.pendingWorktrees where pending.repositoryID == repository.id {
@@ -82,26 +90,19 @@ extension RepositoriesFeature {
     }
     // Carry forward in-flight rows whose worktree dropped out of the roster
     // mid-archive / mid-delete so the per-target completion handlers can drain
-    // them. Orphans stay alive until their lifecycle returns to `.idle`.
+    // them. Rows whose repository is gone from both the roster and the
+    // removing-batch set are dropped immediately to prevent orphan leaks
+    // (e.g. when `removeFailedRepository` evicts a repo mid-flight).
     let rebuiltIDs = Set(rebuilt.ids)
     for existing in previousByID
-    where !rebuiltIDs.contains(existing.id) && existing.lifecycle != .idle {
+    where !rebuiltIDs.contains(existing.id)
+      && existing.lifecycle != .idle
+      && (state.repositories[id: existing.repositoryID] != nil
+        || state.removingRepositoryIDs[existing.repositoryID] != nil)
+    {
       rebuilt.append(existing)
     }
     state.sidebarItems = rebuilt
-    rebuildSurfaceToItemIDIndex(&state)
-  }
-
-  /// Rebuilds `surfaceToItemID` from the live rows so the AppFeature reverse
-  /// lookup never points at a gone row.
-  private static func rebuildSurfaceToItemIDIndex(_ state: inout State) {
-    var index: [UUID: SidebarItemID] = [:]
-    for row in state.sidebarItems {
-      for surfaceID in row.surfaceIDs {
-        index[surfaceID] = row.id
-      }
-    }
-    state.surfaceToItemID = index
   }
 
   /// Pair with `reconcileSidebarItems`; recomputes `state.sidebarGrouping`.
@@ -165,5 +166,18 @@ extension RepositoriesFeature.State {
       ordered.append(worktree)
     }
     return ordered
+  }
+
+  /// Resets row lifecycles to `.idle` synchronously so the same-tick reconcile
+  /// drops the rows instead of carrying them forward as in-flight. A row action
+  /// would target an element removed in the same tick.
+  mutating func resetRowLifecycleSyncBeforeReconcile(itemID: SidebarItemFeature.State.ID) {
+    sidebarItems[id: itemID]?.lifecycle = .idle
+  }
+
+  mutating func resetRowLifecycleSyncBeforeReconcile(inRepositories repositoryIDs: Set<Repository.ID>) {
+    for item in sidebarItems where repositoryIDs.contains(item.repositoryID) {
+      sidebarItems[id: item.id]?.lifecycle = .idle
+    }
   }
 }

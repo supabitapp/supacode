@@ -190,8 +190,8 @@ struct AgentHookSettingsFileInstallerTests {
   @Test func uninstallThrowsOnCorruptHooksValueInsteadOfSilentlyDestroyingIt() throws {
     // A non-object `hooks` value (string, number, array) means we're
     // looking at a hand-edited or unfamiliar settings file. Uninstall
-    // must throw rather than coerce to `{}` and overwrite user data —
-    // install already throws on the same shape.
+    // must throw rather than coerce to `{}` and overwrite user data.
+    // Install already throws on the same shape.
     let url = makeTempURL()
     defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
     try fileManager.createDirectory(
@@ -220,7 +220,7 @@ struct AgentHookSettingsFileInstallerTests {
     // `Notification` and `Stop`. The earlier uninstall path mutated the
     // hooks dict while iterating its keys, which on certain key sets left
     // entries behind. Every sentinel-tagged group must be stripped on
-    // uninstall — the user-authored hook (preserved here under
+    // uninstall, while the user-authored hook (preserved here under
     // `PreToolUse / Bash`) survives.
     let url = makeTempURL()
     defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }

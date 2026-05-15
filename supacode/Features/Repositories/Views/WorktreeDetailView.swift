@@ -599,7 +599,7 @@ struct WorktreeDetailView: View {
     case .pending:
       break
     }
-    if selectedRow.isPending {
+    if selectedRow.lifecycle.isPending {
       let pending = repositories.pendingWorktree(for: selectedWorktreeID)
       let progress = pending?.progress
       let displayName = progress?.worktreeName ?? selectedRow.name

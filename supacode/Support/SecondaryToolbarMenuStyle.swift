@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Borderless icon-button menu chrome for toolbars and tab bars — no chevron, plain background,
+/// Borderless icon-button menu chrome for toolbars and tab bars: no chevron, plain background,
 /// secondary tint.
 struct SecondaryToolbarMenuStyle: MenuStyle {
   func makeBody(configuration: Configuration) -> some View {

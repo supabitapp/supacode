@@ -225,7 +225,7 @@ struct AgentHookCommandTests {
   }
 
   @Test func compositeByteSnapshot_claudeSessionEndAndIdle() {
-    // Multi-event branch with no stdin forward — covers the brace-grouped
+    // Multi-event branch with no stdin forward. Covers the brace-grouped
     // shape used by Claude `SessionEnd`. Without this, a refactor of the
     // multi-event template silently flips every existing install to
     // `.outdated` and auto-update rewrites every settings.json.
@@ -245,7 +245,7 @@ struct AgentHookCommandTests {
   }
 
   @Test func compositeByteSnapshot_codexStopIdleAndNotify() {
-    // Per-agent templating parity — a refactor of `\(agent.rawValue)` in
+    // Per-agent templating parity. A refactor of `\(agent.rawValue)` in
     // the envelope or notify pipeline could regress Codex/Kiro without
     // tripping the Claude snapshots.
     let composite = AgentHookSettingsCommand.compositeCommand(
@@ -349,7 +349,7 @@ struct AgentHookCommandTests {
     }
     #expect(notification.agent == "claude")
     #expect(notifSurfaceID == surfaceID)
-    // The notification body decodes from `last_assistant_message` — confirms
+    // The notification body decodes from `last_assistant_message`, confirming
     // `$(cat)` preserved the payload across the brace-grouped pipeline.
     #expect(notification.body == "Done.")
   }

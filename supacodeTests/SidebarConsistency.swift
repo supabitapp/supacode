@@ -75,10 +75,13 @@ func XCTAssertSidebarConsistent(
     }
   }
 
+  let bucketOrderMismatches = sidebarBucketOrderMismatches(state)
+
   let allFine =
     orphanedItems.isEmpty && orphanedGrouping.isEmpty && duplicates.isEmpty
     && crossRepoLeaks.isEmpty && unknownSurfaceTargets.isEmpty
     && surfaceForwardMismatches.isEmpty && surfaceReverseMismatches.isEmpty
+    && bucketOrderMismatches.isEmpty
   guard !allFine else { return }
 
   let drift = SidebarConsistencyDrift(
@@ -88,7 +91,8 @@ func XCTAssertSidebarConsistent(
     crossRepositoryLeaks: crossRepoLeaks.sorted(),
     surfaceTargetsMissingFromItems: unknownSurfaceTargets.sorted(),
     surfaceForwardMismatches: surfaceForwardMismatches.sorted(),
-    surfaceReverseMismatches: surfaceReverseMismatches.sorted()
+    surfaceReverseMismatches: surfaceReverseMismatches.sorted(),
+    bucketOrderMismatches: bucketOrderMismatches
   )
   var rendered = ""
   customDump(drift, to: &rendered)
@@ -111,6 +115,7 @@ private struct SidebarConsistencyDrift: Equatable, CustomDumpReflectable {
   var surfaceTargetsMissingFromItems: [SidebarItemID]
   var surfaceForwardMismatches: [String]
   var surfaceReverseMismatches: [String]
+  var bucketOrderMismatches: [String]
 
   var customDumpMirror: Mirror {
     Mirror(
@@ -123,8 +128,58 @@ private struct SidebarConsistencyDrift: Equatable, CustomDumpReflectable {
         "surfaceTargetsMissingFromItems": surfaceTargetsMissingFromItems,
         "surfaceForwardMismatches": surfaceForwardMismatches,
         "surfaceReverseMismatches": surfaceReverseMismatches,
+        "bucketOrderMismatches": bucketOrderMismatches,
       ],
       displayStyle: .struct
     )
   }
+}
+
+/// Compares `state.sidebarGrouping` per-repo bucket orders against the canonical
+/// `state.$sidebar.withLock` snapshot, accounting for the projection adjustments
+/// `rebuildSidebarGrouping` applies: the repo's main worktree leads `.pinned`
+/// (when not archived), and pending worktrees tail `.unpinned`.
+@MainActor
+private func sidebarBucketOrderMismatches(_ state: RepositoriesFeature.State) -> [String] {
+  var mismatches: [String] = []
+  let archivedIDs = state.archivedWorktreeIDSet
+  for (repositoryID, grouping) in state.sidebarGrouping.bucketsByRepository {
+    guard let repository = state.repositories[id: repositoryID] else { continue }
+
+    var expectedPinned: [SidebarItemID] = []
+    if let mainWorktree = repository.worktrees.first(where: { state.isMainWorktree($0) }),
+      !archivedIDs.contains(mainWorktree.id)
+    {
+      expectedPinned.append(mainWorktree.id)
+    }
+    expectedPinned.append(contentsOf: state.orderedPinnedWorktreeIDs(in: repository))
+    if grouping.items[.pinned] != expectedPinned {
+      mismatches.append(
+        "[\(repositoryID)/.pinned] expected \(expectedPinned) got \(grouping.items[.pinned] ?? [])"
+      )
+    }
+
+    var expectedUnpinned = state.orderedUnpinnedWorktreeIDs(in: repository)
+    for pending in state.pendingWorktrees where pending.repositoryID == repositoryID {
+      expectedUnpinned.append(pending.id)
+    }
+    if grouping.items[.unpinned] != expectedUnpinned {
+      mismatches.append(
+        "[\(repositoryID)/.unpinned] expected \(expectedUnpinned) got \(grouping.items[.unpinned] ?? [])"
+      )
+    }
+
+    let expectedArchived = repository.worktrees
+      .filter { worktree in
+        archivedIDs.contains(worktree.id)
+          && state.sidebarItems[id: worktree.id]?.lifecycle == .deletingScript
+      }
+      .map(\.id)
+    if grouping.items[.archived] != expectedArchived {
+      mismatches.append(
+        "[\(repositoryID)/.archived] expected \(expectedArchived) got \(grouping.items[.archived] ?? [])"
+      )
+    }
+  }
+  return mismatches.sorted()
 }

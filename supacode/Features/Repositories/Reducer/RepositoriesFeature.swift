@@ -91,35 +91,15 @@ struct RepositoriesFeature {
     var isOpenPanelPresented = false
     var isInitialLoadComplete = false
     var pendingWorktrees: [PendingWorktree] = []
-    /// Repositories with an in-flight removal. The value records
-    /// the removal intent confirmed for this repo.
-    /// `.deleteScriptCompleted` routes by the stored intent rather
-    /// than by live kind classification (which a `git init`
-    /// mid-delete could flip). An empty key means no removal;
-    /// presence also drives the sidebar's "removing" indicator.
-    /// In-flight repo-level removals keyed by repository id. Each
-    /// record carries the disposition (which only ever holds
-    /// `.gitRepositoryUnlink` / `.folderUnlink` / `.folderTrash` —
-    /// the per-worktree `.gitWorktreeDelete` flow uses
-    /// `deletingWorktreeIDs` instead) and the id of the batch
-    /// aggregator responsible for draining its per-target
-    /// completion. Folding disposition + batch id into one record
-    /// keeps them in lockstep: a repo can't be "being removed"
-    /// without an owning batch, and a batch always knows the
-    /// disposition of each of its targets.
+    /// In-flight repo-level removals keyed by repository id. Each record
+    /// carries the disposition (only `.gitRepositoryUnlink` / `.folderUnlink`
+    /// / `.folderTrash`) and the id of the owning batch aggregator that
+    /// drains its per-target completion. Presence also drives the sidebar's
+    /// "removing" indicator.
     var removingRepositoryIDs: [Repository.ID: RepositoryRemovalRecord] = [:]
-    /// Bulk-removal aggregators keyed by batch id. Populated by the
-    /// confirm handler for repo-level deletes (folder rows + git-repo
-    /// section removals). As each per-target completion arrives via
-    /// `.repositoryRemovalCompleted`, its id is drained from
-    /// `pending` and (if succeeded) appended to `succeeded`. The
-    /// batch fires a single `.repositoriesRemoved([ids], ...)` when
-    /// `pending` is empty, replacing the per-target reloads that
-    /// previously raced through `CancelID.persistRoots`. The dict
-    /// (rather than a single optional) lets overlapping removals —
-    /// e.g. a folder bulk trash in-flight while the user confirms a
-    /// git-repo section remove — each complete independently
-    /// without clobbering each other's pending set.
+    /// Bulk-removal aggregators keyed by batch id, fired as `.repositoriesRemoved`
+    /// once `pending` is drained. Dict (not optional) so overlapping batches don't
+    /// clobber each other's pending set.
     var activeRemovalBatches: [BatchID: ActiveRemovalBatch] = [:]
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var mergedWorktreeAction: MergedWorktreeAction?
@@ -171,9 +151,17 @@ struct RepositoriesFeature {
     // MARK: - Sidebar items (per-row TCA collection).
     var sidebarItems: IdentifiedArrayOf<SidebarItemFeature.State> = []
     var sidebarGrouping: SidebarGrouping = .empty
-    /// Reverse index from surface UUID to row id.
-    var surfaceToItemID: [UUID: SidebarItemID] = [:]
-    var dragSession: DragSession?
+    /// Reverse index from surface UUID to row id, derived from `sidebarItems` so
+    /// it cannot drift out of sync.
+    var surfaceToItemID: [UUID: SidebarItemID] {
+      var index: [UUID: SidebarItemID] = [:]
+      for row in sidebarItems {
+        for surfaceID in row.surfaceIDs {
+          index[surfaceID] = row.id
+        }
+      }
+      return index
+    }
   }
 
   // Removal pipeline types + helpers live in
@@ -1767,15 +1755,8 @@ struct RepositoriesFeature {
           )
           return .none
         }
-        // `deletingWorktreeIDs` / `deleteScriptWorktreeIDs` guard
-        // against re-entry for both git worktrees and folders —
-        // the empty-script folder branch below populates
-        // `deletingWorktreeIDs` so a rapid repeat lands here as a
-        // no-op. The first in-flight tap's
-        // `.repositoryRemovalCompleted` is the one that drains
-        // the aggregator batch; draining here as well would
-        // double-drain `batch.pending` and orphan the first tap's
-        // completion into the `reportIssue` path.
+        // Lifecycle re-entry guard: only the first tap proceeds; rapid repeats no-op
+        // so the aggregator batch isn't double-drained.
         let confirmedLifecycle = state.sidebarItems[id: worktree.id]?.lifecycle ?? .idle
         if confirmedLifecycle == .archiving
           || confirmedLifecycle == .deleting
@@ -1989,11 +1970,7 @@ struct RepositoriesFeature {
         let previousSelectedWorktree = state.worktree(for: previousSelection)
         withAnimation(.easeOut(duration: 0.2)) {
           state.pendingWorktrees.removeAll { $0.id == worktreeID }
-          // Reset row lifecycle so the next reconcile drops the orphan instead
-          // of carrying it forward as in-flight. Mutated directly because the row
-          // is removed by reconcile in the same tick; a row action would target a
-          // missing element.
-          state.sidebarItems[id: worktreeID]?.lifecycle = .idle
+          state.resetRowLifecycleSyncBeforeReconcile(itemID: worktreeID)
           // Drop the worktree from every bucket in its section. The worktree is
           // going away entirely so its current bucket doesn't matter.
           state.$sidebar.withLock { sidebar in
@@ -2064,6 +2041,7 @@ struct RepositoriesFeature {
           state.$sidebar.withLock { sidebar in
             sidebar.reorder(bucket: .pinned, in: repositoryID, to: reordered)
           }
+          RepositoriesFeature.syncSidebar(&state)
         }
         return .none
 
@@ -2077,6 +2055,7 @@ struct RepositoriesFeature {
           state.$sidebar.withLock { sidebar in
             sidebar.reorder(bucket: .unpinned, in: repositoryID, to: reordered)
           }
+          RepositoriesFeature.syncSidebar(&state)
         }
         return .none
 
@@ -2167,15 +2146,8 @@ struct RepositoriesFeature {
             """
           )
           state.removingRepositoryIDs[repositoryID] = nil
-          // Shared cleanup for the two failure-under-orphan paths:
-          // clear per-worktree trackers for this repo's folder-synthetic
-          // worktree id so `deletingWorktreeIDs` /
-          // `deleteScriptWorktreeIDs` entries can't leak beyond the
-          // failed attempt. Only the folder-synthetic id is ever
-          // populated by the folder removal pipeline; narrow the
-          // cleanup to it so a future caller passing a git repo id
-          // here can't accidentally clobber in-flight worktree-delete
-          // trackers for sibling git worktrees.
+          // Narrow the cleanup to the folder-synthetic worktree id so a future
+          // caller passing a git repo id here can't disturb sibling-worktree state.
           let orphanFolderWorktreeID = Repository.folderWorktreeID(
             for: URL(fileURLWithPath: repositoryID)
           )
@@ -2195,18 +2167,8 @@ struct RepositoriesFeature {
         let batchID = record.batchID
         batch.pending.remove(repositoryID)
         batch.selectionWasRemoved = batch.selectionWasRemoved || selectionWasRemoved
-        // Shared failure cleanup — drain the target from the batch
-        // without removing the repo from state. Clears the record
-        // AND the folder-synthetic per-worktree trackers —
-        // `deletingWorktreeIDs` / `deleteScriptWorktreeIDs`
-        // entries seeded by the empty-script folder branch (or the
-        // blocking-script run) would otherwise leave the row stuck
-        // in `.deleting` forever. Scoped to the synthetic folder
-        // worktree id because only folder dispositions ever reach
-        // a failure completion (`.gitRepositoryUnlink` hardcodes
-        // `.success` at confirm time); clearing every worktree of
-        // the repo would reach too far if a future caller extends
-        // this path to git repos.
+        // Failure cleanup is scoped to the folder-synthetic worktree id because only
+        // folder dispositions reach a failure completion. Git repo unlink hardcodes success.
         let folderWorktreeIDForFailure: Worktree.ID? =
           record.disposition.isFolder
           ? Repository.folderWorktreeID(for: URL(fileURLWithPath: repositoryID))
@@ -2301,13 +2263,7 @@ struct RepositoriesFeature {
           analyticsClient.capture("repository_removed", ["kind": kind])
           state.removingRepositoryIDs[id] = nil
         }
-        // Reset row lifecycles for worktrees in removed repos so the next
-        // reconcile drops them instead of carrying them forward as in-flight.
-        // Direct mutation; rows are removed in the same tick so dispatching
-        // `lifecycleChanged` would be routed to a missing element.
-        for item in state.sidebarItems where idSet.contains(item.repositoryID) {
-          state.sidebarItems[id: item.id]?.lifecycle = .idle
-        }
+        state.resetRowLifecycleSyncBeforeReconcile(inRepositories: idSet)
         if selectionWasRemoved {
           state.selection = nil
           state.shouldSelectFirstAfterReload = true
@@ -2394,6 +2350,7 @@ struct RepositoriesFeature {
             position: 0
           )
         }
+        RepositoriesFeature.syncSidebar(&state)
         return .none
 
       case .unpinWorktree(let worktreeID):
@@ -2416,6 +2373,7 @@ struct RepositoriesFeature {
             position: 0
           )
         }
+        RepositoriesFeature.syncSidebar(&state)
         return .none
 
       case .presentAlert(let title, let message):
@@ -2707,11 +2665,9 @@ struct RepositoriesFeature {
           }
           let pullRequest = pullRequestsByWorktreeID[worktreeID] ?? nil
           let previousPullRequest = state.sidebarItems[id: worktreeID]?.pullRequest
-          guard previousPullRequest != pullRequest else {
-            continue
-          }
           let previousMerged = previousPullRequest?.state == "MERGED"
           let nextMerged = pullRequest?.state == "MERGED"
+          // Dispatch unconditionally so an identical-PR result still clears the row's watermark.
           rowEffects.append(
             state.updateWorktreePullRequestEffect(
               worktreeID: worktreeID,
@@ -3815,13 +3771,8 @@ extension RepositoriesFeature.State {
     return nil
   }
 
-  // Cheap "is this id selectable right now" check. Mirrors
-  // `selectedRow(for:)` semantics — archived worktrees are NOT
-  // selectable, pending worktrees ARE — but skips the
-  // `SidebarItemModel` construction in `makeSidebarItem`. Used by
-  // the worktree-history navigator and its menu-enablement filter,
-  // both of which only need a yes / no answer over potentially-many
-  // ids per evaluation.
+  /// Selectability check (archived = no, pending = yes) used by the worktree-history
+  /// navigator and its menu-enablement filter when only a yes / no is needed.
   func worktreeExists(_ worktreeID: Worktree.ID) -> Bool {
     if isWorktreeArchived(worktreeID) { return false }
     if pendingWorktree(for: worktreeID) != nil { return true }
@@ -4174,17 +4125,15 @@ extension RepositoriesFeature.State {
     )
   }
 
-  /// Row action dispatch for PR with the branch-at-query-time guard so late
-  /// results for a renamed branch drop in the row reducer. `branchAtQueryTime`
-  /// is the row's `branchName` captured when the query armed; falls back to
-  /// the row's current `branchName` when no snapshot is available.
+  /// Always dispatches `pullRequestChanged` so the row reducer can clear
+  /// `pullRequestBranchAtQueryTime` even when the PR value is unchanged.
+  /// The row's own equality guard short-circuits the PR-value mutation.
   func updateWorktreePullRequestEffect(
     worktreeID: Worktree.ID,
     pullRequest: GithubPullRequest?,
     branchAtQueryTime: String? = nil,
   ) -> Effect<RepositoriesFeature.Action> {
     guard let row = sidebarItems[id: worktreeID] else { return .none }
-    guard row.pullRequest != pullRequest else { return .none }
     let branch = branchAtQueryTime ?? row.branchName
     return .send(
       .sidebarItems(

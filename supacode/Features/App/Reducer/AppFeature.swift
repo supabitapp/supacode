@@ -29,6 +29,7 @@ struct AppFeature {
     var globalScripts: [ScriptDefinition] = []
     var notificationIndicatorCount: Int = 0
     var lastKnownSystemNotificationsEnabled: Bool
+    var lastKnownAgentPresenceBadgesEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
     var isDeeplinkReferenceRequested = false
     @Presents var alert: AlertState<Alert>?
@@ -41,6 +42,7 @@ struct AppFeature {
       self.repositories = repositories
       self.settings = settings
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
+      lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       // Seed from settings so `state.allScripts` doesn't start empty before the
       // first `settingsChanged` delegate fires. Globals aren't worktree-scoped,
       // so deselection (line below in `selectedWorktreeChanged(nil)`)
@@ -240,6 +242,7 @@ struct AppFeature {
         }
 
       case .repositories(.delegate(.repositoriesChanged(let repositories))):
+        RepositoriesFeature.syncSidebar(&state.repositories)
         let archivedIDs = state.repositories.archivedWorktreeIDSet
         let allowed = Set(
           state.repositories.sidebarItems
@@ -248,19 +251,12 @@ struct AppFeature {
             }
             .map(\.id)
         )
-        var effects: [Effect<Action>] = []
-        for item in state.repositories.sidebarItems
-        where !allowed.contains(item.id) && !item.runningScripts.isEmpty {
-          effects.append(
-            .send(.repositories(.sidebarItems(.element(id: item.id, action: .runningScriptsCleared))))
-          )
-        }
-        RepositoriesFeature.syncSidebar(&state.repositories)
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
           from: repositories,
           scripts: state.allScripts
         )
         let worktrees = state.repositories.worktreesForInfoWatcher()
+        var effects: [Effect<Action>] = []
         effects.append(contentsOf: [
           .send(
             .settings(
@@ -326,6 +322,9 @@ struct AppFeature {
         let shouldCheckSystemNotificationPermission =
           settings.systemNotificationsEnabled && !state.lastKnownSystemNotificationsEnabled
         state.lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
+        let agentBadgesFlipped =
+          settings.agentPresenceBadgesEnabled != state.lastKnownAgentPresenceBadgesEnabled
+        state.lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
         // Compare IDs as a set — name/command edits and pure reorders should not re-prune recency.
         let globalScriptIDsChanged = Set(state.globalScripts.map(\.id)) != Set(settings.globalScripts.map(\.id))
         state.globalScripts = settings.globalScripts
@@ -384,6 +383,14 @@ struct AppFeature {
         ]
         if globalScriptIDsChanged {
           effects.append(pruneScriptRecencyEffect(state: state))
+        }
+        if agentBadgesFlipped {
+          effects.append(
+            agentPresenceBadgesToggledEffect(
+              badgesEnabled: settings.agentPresenceBadgesEnabled,
+              state: state
+            )
+          )
         }
         return .merge(effects)
 
@@ -943,14 +950,6 @@ struct AppFeature {
 
       case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
         guard state.repositories.sidebarItems[id: worktreeID] != nil else { return .none }
-        // Maintain the surface → row reverse index synchronously with the row dispatch.
-        let previousSurfaces = state.repositories.sidebarItems[id: worktreeID]?.surfaceIDs ?? []
-        for surfaceID in previousSurfaces where state.repositories.surfaceToItemID[surfaceID] == worktreeID {
-          state.repositories.surfaceToItemID.removeValue(forKey: surfaceID)
-        }
-        for surfaceID in projection.surfaceIDs {
-          state.repositories.surfaceToItemID[surfaceID] = worktreeID
-        }
         return .send(
           .repositories(
             .sidebarItems(
@@ -1006,13 +1005,37 @@ struct AppFeature {
   ) -> Effect<Action> {
     @Shared(.settingsFile) var settingsFile: SettingsFile
     let badgesEnabled = settingsFile.global.agentPresenceBadgesEnabled
-    let presence = state.agentPresence
+    // Hoisted: `surfaceToItemID` is a computed property that rebuilds the dict
+    // per access; reading it once keeps this loop O(surfaces) not O(rows × surfaces).
+    let surfaceToItemID = state.repositories.surfaceToItemID
     var affectedRowIDs: Set<SidebarItemID> = []
     for surfaceID in surfaces {
-      guard let rowID = state.repositories.surfaceToItemID[surfaceID] else { continue }
+      guard let rowID = surfaceToItemID[surfaceID] else { continue }
       affectedRowIDs.insert(rowID)
     }
-    let effects: [Effect<Action>] = affectedRowIDs.compactMap { rowID in
+    return agentSnapshotEffects(for: affectedRowIDs, state: state, badgesEnabled: badgesEnabled)
+  }
+
+  /// Re-broadcasts every row's agent snapshot under the supplied badge gate.
+  /// Used when the user flips `agentPresenceBadgesEnabled`, so cached row
+  /// state immediately drains or repopulates without waiting for a hook event.
+  private func agentPresenceBadgesToggledEffect(
+    badgesEnabled: Bool,
+    state: State
+  ) -> Effect<Action> {
+    let rowIDs = state.repositories.sidebarItems
+      .filter { !$0.surfaceIDs.isEmpty }
+      .map(\.id)
+    return agentSnapshotEffects(for: Set(rowIDs), state: state, badgesEnabled: badgesEnabled)
+  }
+
+  private func agentSnapshotEffects(
+    for rowIDs: Set<SidebarItemID>,
+    state: State,
+    badgesEnabled: Bool
+  ) -> Effect<Action> {
+    let presence = state.agentPresence
+    let effects: [Effect<Action>] = rowIDs.compactMap { rowID in
       guard let row = state.repositories.sidebarItems[id: rowID] else { return nil }
       let agents = presence.agents(across: row.surfaceIDs, badgesEnabled: badgesEnabled)
       let hasActivity = presence.hasActivity(in: row.surfaceIDs)

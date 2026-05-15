@@ -199,11 +199,13 @@ private struct SettingsDetailView: View {
         ) {
           RepositoryScriptsSettingsView(store: repositorySettingsStore)
             .id("\(repository.id)-scripts")
+            // Em dash is the deliberate visual separator for the settings nav title.
             .navigationTitle("\(repository.name) — Scripts")
         } else {
           ProgressView()
             .controlSize(.small)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Em dash is the deliberate visual separator for the settings nav title.
             .navigationTitle("\(repository.name) — Scripts")
         }
       } else {

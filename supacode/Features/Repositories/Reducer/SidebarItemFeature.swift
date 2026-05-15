@@ -58,13 +58,8 @@ struct SidebarItemFeature {
     var removedLines: Int?
     var pullRequest: GithubPullRequest?
     /// Branch name at PR-query start; on result land, mismatched results are dropped.
-    /// Invariant: non-nil iff a PR query is in flight; reset when `branchName` flips via `rosterChanged`.
+    /// Invariant: non-nil iff a PR query is in flight; cleared by reconcile on branch rename.
     var pullRequestBranchAtQueryTime: String?
-
-    /// Computed so `State` stays `Equatable` without conforming `WorktreePullRequestDisplay`.
-    var pullRequestDisplay: WorktreePullRequestDisplay {
-      WorktreePullRequestDisplay(worktreeName: branchName, pullRequest: pullRequest)
-    }
 
     var runningScripts: IdentifiedArrayOf<RunningScript> = []
 
@@ -92,59 +87,23 @@ struct SidebarItemFeature {
   }
 
   enum Action: Equatable, Sendable {
-    // MARK: - Data deltas.
-    case rosterChanged(RosterDelta)
     case lifecycleChanged(State.Lifecycle)
     case diffStatsChanged(added: Int?, removed: Int?)
     case pullRequestQueryStarted(branch: String)
     case pullRequestChanged(GithubPullRequest?, branchAtQueryTime: String)
     case runningScriptStarted(id: UUID, tint: RepositoryColor)
     case runningScriptStopped(id: UUID)
-    case runningScriptsCleared
     case agentSnapshotChanged([AgentPresenceFeature.AgentInstance], hasActivity: Bool)
     case terminalProjectionChanged(WorktreeRowProjection)
     case shortcutHintChanged(String?)
     case dragSessionChanged(isDragging: Bool)
     case focusTerminalRequested
     case focusTerminalConsumed
-
-    // MARK: - User intents.
-    case openRequested(OpenWorktreeAction)
-    case pinToggled
-    case archiveRequested
-    case unarchiveRequested
-    case deleteRequested
-    case copyPathTapped
-    case copyBranchTapped
-    case openInEditorRequested
-    case openInFinderRequested
-    case focusNotificationRequested(notificationID: UUID, surfaceID: UUID)
-    case markNotificationsReadRequested(surfaceID: UUID)
-    case selected
-
-    case delegate(Delegate)
-
-    enum Delegate: Equatable, Sendable {
-      case open(SidebarItemID, OpenWorktreeAction)
-      case togglePin(SidebarItemID)
-      case archive(SidebarItemID)
-      case unarchive(SidebarItemID)
-      case delete(SidebarItemID)
-      case selected(SidebarItemID)
-      case focusSurface(SidebarItemID, surfaceID: UUID)
-      case markNotificationRead(SidebarItemID, notificationID: UUID)
-      case markNotificationsRead(SidebarItemID, surfaceID: UUID)
-      case copyToPasteboard(String)
-    }
   }
 
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
-      case .rosterChanged(let delta):
-        Self.apply(delta, to: &state)
-        return .none
-
       case .lifecycleChanged(let next):
         guard state.lifecycle != next else { return .none }
         state.lifecycle = next
@@ -187,11 +146,6 @@ struct SidebarItemFeature {
         state.runningScripts.remove(id: id)
         return .none
 
-      case .runningScriptsCleared:
-        guard !state.runningScripts.isEmpty else { return .none }
-        state.runningScripts.removeAll()
-        return .none
-
       case .agentSnapshotChanged(let agents, let hasActivity):
         guard state.agents != agents || state.hasAgentActivity != hasActivity else { return .none }
         state.agents = agents
@@ -228,84 +182,26 @@ struct SidebarItemFeature {
         guard state.shouldFocusTerminal else { return .none }
         state.shouldFocusTerminal = false
         return .none
-
-      case .openRequested(let action):
-        return .send(.delegate(.open(state.id, action)))
-
-      case .pinToggled:
-        return .send(.delegate(.togglePin(state.id)))
-
-      case .archiveRequested:
-        return .send(.delegate(.archive(state.id)))
-
-      case .unarchiveRequested:
-        return .send(.delegate(.unarchive(state.id)))
-
-      case .deleteRequested:
-        return .send(.delegate(.delete(state.id)))
-
-      case .selected:
-        return .send(.delegate(.selected(state.id)))
-
-      case .copyPathTapped:
-        return .send(.delegate(.copyToPasteboard(state.workingDirectory.path(percentEncoded: false))))
-
-      case .copyBranchTapped:
-        return .send(.delegate(.copyToPasteboard(state.branchName)))
-
-      case .openInEditorRequested:
-        return .send(.delegate(.open(state.id, .editor)))
-
-      case .openInFinderRequested:
-        return .send(.delegate(.open(state.id, .finder)))
-
-      case .focusNotificationRequested(let notificationID, let surfaceID):
-        return .merge(
-          .send(.delegate(.focusSurface(state.id, surfaceID: surfaceID))),
-          .send(.delegate(.markNotificationRead(state.id, notificationID: notificationID)))
-        )
-
-      case .markNotificationsReadRequested(let surfaceID):
-        return .send(.delegate(.markNotificationsRead(state.id, surfaceID: surfaceID)))
-
-      case .delegate:
-        return .none
       }
-    }
-  }
-
-  private static func apply(_ delta: RosterDelta, to state: inout State) {
-    if let name = delta.name, state.name != name { state.name = name }
-    if let branchName = delta.branchName, state.branchName != branchName {
-      state.branchName = branchName
-      // Watermark is bound to the prior branch; clear so a future query can re-arm cleanly.
-      state.pullRequestBranchAtQueryTime = nil
-    }
-    if let subtitle = delta.subtitle, state.subtitle != subtitle { state.subtitle = subtitle }
-    if let workingDirectory = delta.workingDirectory, state.workingDirectory != workingDirectory {
-      state.workingDirectory = workingDirectory
-    }
-    if let accent = delta.accent, state.repositoryAccent != accent { state.repositoryAccent = accent }
-    if let isMainWorktree = delta.isMainWorktree, state.isMainWorktree != isMainWorktree {
-      state.isMainWorktree = isMainWorktree
-    }
-    if let isPinned = delta.isPinned, state.isPinned != isPinned { state.isPinned = isPinned }
-    if let hasMergedBadge = delta.hasMergedBadge, state.hasMergedBadge != hasMergedBadge {
-      state.hasMergedBadge = hasMergedBadge
     }
   }
 }
 
 extension SidebarItemFeature.State {
   var isFolder: Bool { kind == .folder }
-  var isPending: Bool { lifecycle == .pending }
-  var isArchiving: Bool { lifecycle == .archiving }
-  var isDeleting: Bool { lifecycle == .deleting || lifecycle == .deletingScript }
-  var isLifecycleBusy: Bool { lifecycle != .idle }
+  /// Cascade: nil for main worktrees, then the row id's last path component,
+  /// then the subtitle's last path component, then `branchName`.
   var sidebarDisplayName: String? {
     guard !isMainWorktree else { return nil }
-    let last = workingDirectory.lastPathComponent
-    return last.isEmpty ? nil : last
+    if id.contains("/") {
+      let pathName = URL(fileURLWithPath: id).lastPathComponent
+      if !pathName.isEmpty { return pathName }
+    }
+    if let subtitle, !subtitle.isEmpty, subtitle != "." {
+      let detailName = URL(fileURLWithPath: subtitle).lastPathComponent
+      if !detailName.isEmpty, detailName != "." { return detailName }
+    }
+    return branchName
   }
   var accent: WorktreeAccent {
     if isMainWorktree { return .main }
@@ -314,18 +210,11 @@ extension SidebarItemFeature.State {
   }
 }
 
-/// Partial-update payload; `nil` field means "no update".
-struct RosterDelta: Equatable, Sendable {
-  var name: String?
-  var branchName: String?
-  /// Tri-state: outer `nil` = no update, `.some(nil)` = clear, `.some(.some(s))` = set.
-  var subtitle: String??
-  var workingDirectory: URL?
-  /// Tri-state: outer `nil` = no update, `.some(nil)` = clear, `.some(.some(c))` = set.
-  var accent: RepositoryColor??
-  var isMainWorktree: Bool?
-  var isPinned: Bool?
-  var hasMergedBadge: Bool?
+extension SidebarItemFeature.State.Lifecycle {
+  var isBusy: Bool { self != .idle }
+  var isPending: Bool { self == .pending }
+  var isArchiving: Bool { self == .archiving }
+  var isDeleting: Bool { self == .deleting || self == .deletingScript }
 }
 
 /// Per-row terminal snapshot emitted by `WorktreeTerminalManager`'s 400 ms debounce.

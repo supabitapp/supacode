@@ -226,7 +226,7 @@ public struct SettingsFeature {
 
       case .refreshAgentIntegrationStates:
         // Cancellable so a stacked scene activation can't run two task
-        // groups concurrently — without this, two `.outdated` arrivals
+        // groups concurrently. Without this, two `.outdated` arrivals
         // can both dispatch `.agentIntegrationInstallTapped`, which
         // shares `AgentIntegrationCancelID` with the install effect and
         // would kill the first install mid-write.
@@ -375,7 +375,7 @@ public struct SettingsFeature {
 
       case .agentIntegrationChecked(let agent, let integrationState):
         // Don't clobber in-flight or failed states. `.installing` /
-        // `.uninstalling` settle via `.agentIntegrationCompleted` —
+        // `.uninstalling` settle via `.agentIntegrationCompleted`;
         // overwriting them races the shared `AgentIntegrationCancelID`
         // (the auto-update branch below would otherwise cancel a
         // manual uninstall). `.failed` must survive so the error stays
@@ -627,7 +627,7 @@ private nonisolated struct AgentIntegrationCancelID: Hashable, Sendable {
 }
 
 /// Cancellation key for the agent-state refresh effect so stacked scene
-/// activations supersede the prior one — see `.refreshAgentIntegrationStates`.
+/// activations supersede the prior one. See `.refreshAgentIntegrationStates`.
 private nonisolated struct RefreshAgentIntegrationStatesID: Hashable, Sendable {}
 
 extension SettingsFeature.State {

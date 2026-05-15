@@ -139,8 +139,8 @@ nonisolated struct AgentHookSettingsFileInstaller {
   }
 
   /// Builds a fresh hooks map with every Supacode-managed command
-  /// stripped. Builds a new dict instead of mutating while iterating —
-  /// guarantees no event is silently skipped during the prune.
+  /// stripped. Builds a new dict instead of mutating while iterating, to
+  /// guarantee no event is silently skipped during the prune.
   private func pruneAllSupacodeCommands(
     from hooksObject: [String: JSONValue]
   ) throws -> [String: JSONValue] {

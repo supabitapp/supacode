@@ -13,9 +13,8 @@ struct SidebarItemView: View {
   var body: some View {
     let resolved = ResolvedRowDisplay(
       kind: store.kind,
-      rowID: store.state.id,
       branchName: store.branchName,
-      detail: store.subtitle,
+      worktreeName: store.sidebarDisplayName,
       isMainWorktree: store.isMainWorktree,
       isPinned: store.isPinned,
       displayMode: displayMode,
@@ -62,9 +61,8 @@ struct ResolvedRowDisplay: Equatable {
 
   init(
     kind: SidebarItemFeature.State.Kind,
-    rowID: SidebarItemID,
     branchName: String,
-    detail: String?,
+    worktreeName: String?,
     isMainWorktree: Bool,
     isPinned: Bool,
     displayMode: WorktreeRowDisplayMode,
@@ -80,14 +78,8 @@ struct ResolvedRowDisplay: Equatable {
       return
     }
 
-    let worktreeName =
-      Self.sidebarDisplayName(
-        rowID: rowID,
-        detail: detail,
-        branchName: branchName,
-        isMainWorktree: isMainWorktree
-      ) ?? "Default"
-    let effectiveWorktreeName = worktreeName.isEmpty ? branchName : worktreeName
+    let resolvedWorktreeName = worktreeName ?? "Default"
+    let effectiveWorktreeName = resolvedWorktreeName.isEmpty ? branchName : resolvedWorktreeName
     switch displayMode {
     case .branchFirst: self.name = branchName
     case .worktreeFirst: self.name = effectiveWorktreeName
@@ -102,30 +94,6 @@ struct ResolvedRowDisplay: Equatable {
       self.subtitle = rawSubtitle
     }
   }
-
-  /// Cascade: nil for main worktrees, then last path component of `rowID`,
-  /// then of `detail`, then `branchName`.
-  private static func sidebarDisplayName(
-    rowID: SidebarItemID,
-    detail: String?,
-    branchName: String,
-    isMainWorktree: Bool
-  ) -> String? {
-    guard !isMainWorktree else { return nil }
-    if rowID.contains("/") {
-      let pathName = URL(fileURLWithPath: rowID).lastPathComponent
-      if !pathName.isEmpty { return pathName }
-    }
-    if let detail, !detail.isEmpty, detail != "." {
-      let detailName = URL(fileURLWithPath: detail).lastPathComponent
-      if !detailName.isEmpty, detailName != "." { return detailName }
-    }
-    return branchName
-  }
-}
-
-extension SidebarItemFeature.State.Lifecycle {
-  var isBusy: Bool { self != .idle }
 }
 
 enum SidebarCheckBadgeState: Equatable {

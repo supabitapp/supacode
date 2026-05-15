@@ -3222,6 +3222,7 @@ struct RepositoriesFeatureTests {
           to: [worktree2.id, worktree3.id, worktree1.id]
         )
       }
+      RepositoriesFeature.syncSidebar(&$0)
     }
   }
 
@@ -3253,6 +3254,7 @@ struct RepositoriesFeatureTests {
       $0.$sidebar.withLock { sidebar in
         sidebar.reorder(bucket: .pinned, in: repoA, to: [worktreeA2.id, worktreeA1.id])
       }
+      RepositoriesFeature.syncSidebar(&$0)
     }
   }
 
@@ -4340,7 +4342,7 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
-  @Test func repositoryPullRequestsLoadedSkipsNoopPayload() async {
+  @Test func repositoryPullRequestsLoadedDispatchesUnchangedPullRequestToClearWatermark() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -4354,6 +4356,9 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.setWorktreeInfoForTesting(
       id: featureWorktree.id, addedLines: nil, removedLines: nil, pullRequest: pullRequest)
+    // Watermark armed by a prior `pullRequestQueryStarted`; the identical-PR
+    // completion must clear it so the row can re-arm a future query.
+    state.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
@@ -4364,6 +4369,9 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [featureWorktree.id: pullRequest]
       )
     )
+    await store.receive(\.sidebarItems[id: featureWorktree.id].pullRequestChanged) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = nil
+    }
     await store.finish()
   }
 
@@ -4439,7 +4447,12 @@ struct RepositoriesFeatureTests {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
     }
     await store.receive(\.repositoryPullRequestsLoaded)
-    await store.receive(\.sidebarItems) {
+    // Main carries `pullRequest == nil` and the completion result is `nil`; the row reducer
+    // skips the PR-value mutation but still clears the watermark armed above.
+    await store.receive(\.sidebarItems[id: mainWorktree.id].pullRequestChanged) {
+      $0.sidebarItems[id: mainWorktree.id]?.pullRequestBranchAtQueryTime = nil
+    }
+    await store.receive(\.sidebarItems[id: featureWorktree.id].pullRequestChanged) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = pullRequest
       $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = nil
     }
@@ -5570,9 +5583,14 @@ struct RepositoriesFeatureTests {
     #expect(row.sidebarDisplayName == "feature-branch")
   }
 
-  @Test func sidebarDisplayNameUsesWorkingDirectoryLastComponent() {
-    let row = makeSidebarItem(id: "/tmp/repo/wt-folder", name: "feature/branch")
+  @Test func sidebarDisplayNameFallsBackToSubtitleLastComponentWhenIdHasNoSlash() {
+    let row = makeSidebarItem(id: "row-no-slash", name: "feature/branch", detail: "/tmp/repo/wt-folder")
     #expect(row.sidebarDisplayName == "wt-folder")
+  }
+
+  @Test func sidebarDisplayNameFallsBackToBranchNameWhenIdAndSubtitleEmpty() {
+    let row = makeSidebarItem(id: "row-no-slash", name: "feature/branch", detail: "")
+    #expect(row.sidebarDisplayName == "feature/branch")
   }
 
   @Test func accentMapsMainPinnedAndDefault() {

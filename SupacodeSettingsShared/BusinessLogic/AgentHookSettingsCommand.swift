@@ -1,5 +1,5 @@
 /// Hook events emitted via the JSON envelope path. Activity events
-/// (`busy`, `awaitingInput`, `idle`) are atomic state-set — each fires
+/// (`busy`, `awaitingInput`, `idle`) are atomic state-set. Each fires
 /// the corresponding (surface, agent) activity directly; repeated events
 /// are idempotent. The notification leg is composed in alongside an
 /// envelope by `compositeCommand(forwardStdinAsNotification:)`.
@@ -35,7 +35,7 @@ nonisolated enum AgentHookSettingsCommand {
   /// hook following the documented `SUPACODE_SOCKET_PATH`-only pattern
   /// (single-var check) does not match. A user who copied this guard
   /// verbatim AND removed the trailing sentinel intentionally would be
-  /// treated as legacy — that's the deliberate trade for catching every
+  /// treated as legacy. That's the deliberate trade for catching every
   /// pre-envelope shape of older Supacode hook.
   static let envCheck =
     #"[ -n "${SUPACODE_SOCKET_PATH:-}" ]"#
@@ -53,7 +53,7 @@ nonisolated enum AgentHookSettingsCommand {
   }
 
   /// Builds a single shell command that fires every `event` envelope and
-  /// optionally forwards stdin as a notification — all under one envCheck
+  /// optionally forwards stdin as a notification, all under one envCheck
   /// guard with one sentinel. Stdin is consumed once via `payload=$(cat)`
   /// so the same payload can be relayed after the fixed envelopes. The
   /// precondition rejects a no-op invocation because the empty-empty

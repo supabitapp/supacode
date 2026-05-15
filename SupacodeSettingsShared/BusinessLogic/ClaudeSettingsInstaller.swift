@@ -13,7 +13,7 @@ nonisolated struct ClaudeSettingsInstaller {
   }
 
   /// Install state for the unified hook map. The file installer's prune
-  /// step covers every event the integration writes — eliminating stale
+  /// step covers every event the integration writes, eliminating stale
   /// duplicates left by older Supacode versions.
   func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]

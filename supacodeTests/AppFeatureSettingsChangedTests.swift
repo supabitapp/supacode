@@ -1,5 +1,7 @@
 import ComposableArchitecture
 import DependenciesTestSupport
+import Foundation
+import IdentifiedCollections
 import Testing
 
 @testable import SupacodeSettingsFeature
@@ -32,5 +34,64 @@ struct AppFeatureSettingsChangedTests {
       $0.updates.didConfigureUpdates = true
     }
     await store.finish()
+  }
+
+  @Test(.dependencies) func togglingAgentPresenceBadgesFansOutClearedSnapshots() async {
+    let rootURL = URL(fileURLWithPath: "/tmp/repo")
+    let worktree = Worktree(
+      id: "/tmp/repo/wt-feature",
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-feature"),
+      repositoryRootURL: rootURL
+    )
+    let repository = Repository(
+      id: rootURL.path(percentEncoded: false),
+      rootURL: rootURL,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [worktree])
+    )
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    let surfaceID = UUID()
+    let agent = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+    repositoriesState.sidebarItems[id: worktree.id]?.surfaceIDs = [surfaceID]
+    repositoriesState.sidebarItems[id: worktree.id]?.agents = [agent]
+    repositoriesState.sidebarItems[id: worktree.id]?.hasAgentActivity = true
+    var appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    appState.agentPresence.bySurface[surfaceID] = [.claude]
+    appState.agentPresence.records[
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    var settings = GlobalSettings.default
+    settings.agentPresenceBadgesEnabled = false
+
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.receive(
+      \.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged
+    ) {
+      $0.repositories.sidebarItems[id: worktree.id]?.agents = []
+      $0.repositories.sidebarItems[id: worktree.id]?.hasAgentActivity = true
+    }
+    await store.finish()
+    #expect(store.state.lastKnownAgentPresenceBadgesEnabled == false)
+
+    settings.agentPresenceBadgesEnabled = true
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.receive(
+      \.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged
+    ) {
+      $0.repositories.sidebarItems[id: worktree.id]?.agents = [agent]
+    }
+    await store.finish()
+    #expect(store.state.lastKnownAgentPresenceBadgesEnabled == true)
   }
 }

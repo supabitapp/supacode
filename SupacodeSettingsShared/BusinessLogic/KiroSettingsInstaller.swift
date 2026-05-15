@@ -47,7 +47,7 @@ nonisolated struct KiroSettingsInstaller {
     self.runKiroVersionCommand = runKiroVersionCommand
   }
 
-  /// Install state for the unified hook map — see
+  /// Install state for the unified hook map. See
   /// `ClaudeSettingsInstaller.installState()` for rationale.
   func installState() -> ComponentInstallState {
     let entries: [String: [JSONValue]]

@@ -34,7 +34,7 @@ nonisolated struct CodexSettingsInstaller {
     self.runEnableHooksCommand = runEnableHooksCommand
   }
 
-  /// Install state for the unified hook map — see
+  /// Install state for the unified hook map. See
   /// `ClaudeSettingsInstaller.installState()` for rationale.
   func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]

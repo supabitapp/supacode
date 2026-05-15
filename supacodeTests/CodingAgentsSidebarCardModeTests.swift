@@ -109,7 +109,7 @@ struct CodingAgentsSidebarCardModeTests {
   }
 
   @Test func autoUpdateEnabledSuppressesUpdatesAvailableCard() {
-    // The card is dead UI when auto-update is on — the system already
+    // The card is dead UI when auto-update is on; the system already
     // re-installs outdated agents on every refresh. The prompt-install
     // card still surfaces for the never-installed case.
     let outdated: [SkillAgent: AgentIntegrationRowState] = [

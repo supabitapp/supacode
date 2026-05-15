@@ -133,6 +133,62 @@ struct RepositoriesFeatureSidebarTests {
     XCTAssertSidebarConsistent(state)
   }
 
+  @Test func pullRequestsLoadedClearsWatermarkOnIdenticalPullRequest() async {
+    let repoID = "/tmp/repo"
+    let worktreeID = "/tmp/repo/wt-feature"
+    let worktree = Worktree(
+      id: worktreeID,
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: worktreeID),
+      repositoryRootURL: URL(fileURLWithPath: repoID)
+    )
+    let repository = Repository(
+      id: repoID,
+      rootURL: URL(fileURLWithPath: repoID),
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [worktree])
+    )
+    let pullRequest = GithubPullRequest(
+      number: 7,
+      title: "Live",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      url: "https://example.com/pull/7",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "tester",
+      statusCheckRollup: nil
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.sidebarItems[id: worktreeID]?.pullRequest = pullRequest
+    state.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime = "feature"
+    state.inFlightPullRequestBranchSnapshotsByRepositoryID[repoID] = [worktreeID: "feature"]
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repoID,
+        pullRequestsByWorktreeID: [worktreeID: pullRequest]
+      )
+    )
+    await store.receive(\.sidebarItems[id: worktreeID].pullRequestChanged) {
+      $0.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime = nil
+    }
+    await store.finish()
+    #expect(store.state.sidebarItems[id: worktreeID]?.pullRequest == pullRequest)
+  }
+
   private func makeState(repository: Repository) -> RepositoriesFeature.State {
     var state = RepositoriesFeature.State()
     state.repositories = IdentifiedArray(uniqueElements: [repository])

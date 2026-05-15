@@ -5,7 +5,7 @@ extension View {
   /// `"new_split:right"`). Returns the view unchanged if Ghostty has no binding for the action.
   ///
   /// Uses SwiftUI's nilable `keyboardShortcut(_:)` so the wrapped view keeps a stable type when
-  /// the binding hydrates from disk — the conditional `if let { content.keyboardShortcut(_:) }`
+  /// the binding hydrates from disk. The conditional `if let { content.keyboardShortcut(_:) }`
   /// form flips between view types via `_ConditionalContent` and strips menu arrangement items
   /// on Tahoe. Mirrors `appKeyboardShortcut` for Supacode-owned shortcuts.
   ///

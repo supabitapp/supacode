@@ -21,8 +21,8 @@ nonisolated enum CodexHookSettingsError: Error {
 // Turn-level activity only — Codex doesn't expose PreToolUse/PostToolUse
 // at a useful granularity (Bash-only), so a single `busy` at submit and
 // a single `idle` + notify at stop is the cleanest model. SessionStart
-// fires on the first turn rather than on session open (openai/codex#15266)
-// — the badge appears once the user submits a prompt. Codex has no
+// fires on the first turn rather than on session open (openai/codex#15266),
+// so the badge appears once the user submits a prompt. Codex has no
 // SessionEnd, so the badge clears via the pid liveness sweep when Codex
 // exits.
 private nonisolated struct CodexHooksPayload: Encodable {
