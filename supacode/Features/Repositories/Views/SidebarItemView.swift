@@ -3,55 +3,94 @@ import SupacodeSettingsShared
 import SwiftUI
 
 struct SidebarItemView: View {
-  let kind: SidebarItemModel.Kind
-  let worktreeID: Worktree.ID
-  let worktreeName: String
-  let terminalManager: WorktreeTerminalManager
-  let store: StoreOf<RepositoriesFeature>
-  let name: String
-  let subtitle: String?
-  let accent: WorktreeAccent
-  let isLifecycleBusy: Bool
-  let status: SidebarItemModel.Status
+  let store: StoreOf<SidebarItemFeature>
+  let displayMode: WorktreeRowDisplayMode
+  let hideSubtitle: Bool
+  let hideSubtitleOnMatch: Bool
   let showsPullRequestInfo: Bool
   let shortcutHint: String?
 
+  var body: some View {
+    let resolved = ResolvedRowDisplay(
+      kind: store.kind,
+      rowID: store.state.id,
+      branchName: store.branchName,
+      detail: store.subtitle,
+      isMainWorktree: store.isMainWorktree,
+      isPinned: store.isPinned,
+      displayMode: displayMode,
+      hideSubtitle: hideSubtitle,
+      hideSubtitleOnMatch: hideSubtitleOnMatch
+    )
+
+    Label {
+      HStack(spacing: 8) {
+        TitleView(
+          name: resolved.name,
+          subtitle: resolved.subtitle,
+          accent: resolved.accent,
+          isLifecycleBusy: store.lifecycle.isBusy,
+          isTaskRunning: store.isTaskRunning
+        )
+        .equatable()
+        Spacer(minLength: 0)
+        TrailingView(
+          store: store,
+          shortcutHint: shortcutHint,
+          showsPullRequestInfo: showsPullRequestInfo
+        )
+      }
+    } icon: {
+      IconView(
+        isFolder: store.kind == .folder,
+        branchName: store.branchName,
+        pullRequest: store.pullRequest,
+        showsPullRequestInfo: showsPullRequestInfo,
+        lifecycle: store.lifecycle
+      )
+    }
+    .labelStyle(.verticallyCentered)
+    .listRowInsets(.trailing, 4)
+    .listRowInsets(.vertical, 6)
+  }
+}
+
+struct ResolvedRowDisplay: Equatable {
+  let name: String
+  let subtitle: String?
+  let accent: WorktreeAccent
+
   init(
-    row: SidebarItemModel,
-    terminalManager: WorktreeTerminalManager,
-    store: StoreOf<RepositoriesFeature>,
+    kind: SidebarItemFeature.State.Kind,
+    rowID: SidebarItemID,
+    branchName: String,
+    detail: String?,
+    isMainWorktree: Bool,
+    isPinned: Bool,
     displayMode: WorktreeRowDisplayMode,
     hideSubtitle: Bool,
-    hideSubtitleOnMatch: Bool,
-    showsPullRequestInfo: Bool,
-    shortcutHint: String?
+    hideSubtitleOnMatch: Bool
   ) {
-    self.kind = row.kind
-    self.worktreeID = row.id
-    self.worktreeName = row.name
-    self.terminalManager = terminalManager
-    self.store = store
-    self.status = row.status
-    self.showsPullRequestInfo = showsPullRequestInfo
-    self.shortcutHint = shortcutHint
-    self.isLifecycleBusy = row.isArchiving || row.isDeleting || row.isPending
+    self.accent =
+      if isMainWorktree { .main } else if isPinned { .pinned } else { .default }
 
-    self.accent = row.accent
-
-    if row.kind == .folder {
-      self.name = row.name
+    if kind == .folder {
+      self.name = branchName
       self.subtitle = nil
       return
     }
 
-    let branchName = row.name
-    let worktreeName = row.sidebarDisplayName ?? "Default"
+    let worktreeName =
+      Self.sidebarDisplayName(
+        rowID: rowID,
+        detail: detail,
+        branchName: branchName,
+        isMainWorktree: isMainWorktree
+      ) ?? "Default"
     let effectiveWorktreeName = worktreeName.isEmpty ? branchName : worktreeName
     switch displayMode {
-    case .branchFirst:
-      self.name = branchName
-    case .worktreeFirst:
-      self.name = effectiveWorktreeName
+    case .branchFirst: self.name = branchName
+    case .worktreeFirst: self.name = effectiveWorktreeName
     }
 
     let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
@@ -64,41 +103,29 @@ struct SidebarItemView: View {
     }
   }
 
-  var body: some View {
-    Label {
-      HStack(spacing: 8) {
-        TitleView(
-          worktreeID: worktreeID,
-          terminalManager: terminalManager,
-          name: name,
-          subtitle: subtitle,
-          accent: accent,
-          isLifecycleBusy: isLifecycleBusy
-        )
-        Spacer(minLength: 0)
-        TrailingView(
-          worktreeID: worktreeID,
-          worktreeName: worktreeName,
-          terminalManager: terminalManager,
-          store: store,
-          shortcutHint: shortcutHint,
-          showsPullRequestInfo: showsPullRequestInfo
-        )
-      }
-    } icon: {
-      IconView(
-        kind: kind,
-        worktreeID: worktreeID,
-        worktreeName: worktreeName,
-        store: store,
-        showsPullRequestInfo: showsPullRequestInfo,
-        status: status
-      )
+  /// Cascade: nil for main worktrees, then last path component of `rowID`,
+  /// then of `detail`, then `branchName`.
+  private static func sidebarDisplayName(
+    rowID: SidebarItemID,
+    detail: String?,
+    branchName: String,
+    isMainWorktree: Bool
+  ) -> String? {
+    guard !isMainWorktree else { return nil }
+    if rowID.contains("/") {
+      let pathName = URL(fileURLWithPath: rowID).lastPathComponent
+      if !pathName.isEmpty { return pathName }
     }
-    .labelStyle(.verticallyCentered)
-    .listRowInsets(.trailing, 4)
-    .listRowInsets(.vertical, 6)
+    if let detail, !detail.isEmpty, detail != "." {
+      let detailName = URL(fileURLWithPath: detail).lastPathComponent
+      if !detailName.isEmpty, detailName != "." { return detailName }
+    }
+    return branchName
   }
+}
+
+extension SidebarItemFeature.State.Lifecycle {
+  var isBusy: Bool { self != .idle }
 }
 
 enum SidebarCheckBadgeState: Equatable {
@@ -178,20 +205,24 @@ private func resolveCheckBadgeState(_ pullRequest: GithubPullRequest?) -> Sideba
   return .passing
 }
 
-// MARK: - Title.
-
-private struct TitleView: View {
-  let worktreeID: Worktree.ID
-  let terminalManager: WorktreeTerminalManager
+private struct TitleView: View, Equatable {
   let name: String
   let subtitle: String?
   let accent: WorktreeAccent
   let isLifecycleBusy: Bool
+  let isTaskRunning: Bool
+  // `==` ignores @Environment; SwiftUI tracks env changes separately.
   @Environment(\.backgroundProminence) private var backgroundProminence
 
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.name == rhs.name
+      && lhs.subtitle == rhs.subtitle
+      && lhs.accent == rhs.accent
+      && lhs.isLifecycleBusy == rhs.isLifecycleBusy
+      && lhs.isTaskRunning == rhs.isTaskRunning
+  }
+
   var body: some View {
-    // Scoped here so taskStatus's agent-presence read doesn't invalidate the whole row.
-    let isTaskRunning = terminalManager.stateIfExists(for: worktreeID)?.taskStatus == .running
     let isBusy = isLifecycleBusy || isTaskRunning
     VStack(alignment: .leading, spacing: 0) {
       Text(name)
@@ -208,69 +239,54 @@ private struct TitleView: View {
   }
 }
 
-// MARK: - Icon.
-
-/// Owns the `worktreeInfo` PR read for its row. `IconContent` is `Equatable`
-/// so rows whose PR state didn't change skip body work even when the
-/// observable dict invalidates every leaf.
 private struct IconView: View {
-  let kind: SidebarItemModel.Kind
-  let worktreeID: Worktree.ID
-  let worktreeName: String
-  let store: StoreOf<RepositoriesFeature>
+  let isFolder: Bool
+  let branchName: String
+  let pullRequest: GithubPullRequest?
   let showsPullRequestInfo: Bool
-  let status: SidebarItemModel.Status
+  let lifecycle: SidebarItemFeature.State.Lifecycle
 
   var body: some View {
-    let rawPullRequest = store.state.worktreeInfo(for: worktreeID)?.pullRequest
-    // Route through WorktreePullRequestDisplay so the icon respects the
-    // same `matchesWorktree` filter the badge uses; otherwise renamed
-    // branches can render the icon for a PR the badge text suppresses.
     let display = WorktreePullRequestDisplay(
-      worktreeName: worktreeName,
-      pullRequest: showsPullRequestInfo ? rawPullRequest : nil,
+      worktreeName: branchName,
+      pullRequest: showsPullRequestInfo ? pullRequest : nil,
     )
     IconContent(
-      kind: kind,
+      isFolder: isFolder,
       icon: SidebarPullRequestIcon.resolve(display.pullRequest),
       checkBadgeState: resolveCheckBadgeState(display.pullRequest),
-      rowState: IconRowState(status),
+      rowState: IconRowState(lifecycle),
     )
     .equatable()
   }
 }
 
-/// Coarser-than-`Status` enum that strips the `.deleting(inTerminal:)` associated
-/// value the icon doesn't render. Lets `IconContent.==` ignore in-terminal flips
-/// since the trash glyph is identical either way.
 enum IconRowState: Equatable {
   case idle
   case pending
   case archiving
   case deleting
 
-  init(_ status: SidebarItemModel.Status) {
-    switch status {
+  init(_ lifecycle: SidebarItemFeature.State.Lifecycle) {
+    switch lifecycle {
     case .idle: self = .idle
     case .pending: self = .pending
     case .archiving: self = .archiving
-    case .deleting: self = .deleting
+    case .deleting, .deletingScript: self = .deleting
     }
   }
 }
 
 private struct IconContent: View, Equatable {
-  let kind: SidebarItemModel.Kind
+  let isFolder: Bool
   let icon: SidebarPullRequestIcon
   let checkBadgeState: SidebarCheckBadgeState?
   let rowState: IconRowState
-  // The `==` below deliberately ignores the @Environment property; SwiftUI
-  // tracks environment separately and re-runs body on env changes even when
-  // the Equatable comparison returns true. Don't add it to ==.
+  // `==` ignores @Environment; SwiftUI tracks env changes separately.
   @Environment(\.backgroundProminence) private var backgroundProminence
 
   static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.kind == rhs.kind
+    lhs.isFolder == rhs.isFolder
       && lhs.icon == rhs.icon
       && lhs.checkBadgeState == rhs.checkBadgeState
       && lhs.rowState == rhs.rowState
@@ -281,7 +297,7 @@ private struct IconContent: View, Equatable {
   }
 
   private var isSystemImage: Bool {
-    rowState != .idle || kind == .folder
+    rowState != .idle || isFolder
   }
 
   private var folderIconName: String {
@@ -354,18 +370,8 @@ private struct IconContent: View, Equatable {
   }
 }
 
-// MARK: - Trailing.
-
-/// Reads every row-scoped observable up front (diff stats, PR, agents, scripts,
-/// notifications) and conditionally includes each child. Keeps `HStack(spacing:)`
-/// from reserving trailing space when a child would resolve to an empty body.
-/// Each rendered leaf is value-only and `Equatable` so the actual draw work is
-/// still skipped when the underlying values haven't changed.
 private struct TrailingView: View {
-  let worktreeID: Worktree.ID
-  let worktreeName: String
-  let terminalManager: WorktreeTerminalManager
-  let store: StoreOf<RepositoriesFeature>
+  let store: StoreOf<SidebarItemFeature>
   let shortcutHint: String?
   let showsPullRequestInfo: Bool
 
@@ -375,20 +381,17 @@ private struct TrailingView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     } else {
-      let info = store.state.worktreeInfo(for: worktreeID)
       let display = WorktreePullRequestDisplay(
-        worktreeName: worktreeName,
-        pullRequest: showsPullRequestInfo ? info?.pullRequest : nil,
+        worktreeName: store.branchName,
+        pullRequest: showsPullRequestInfo ? store.pullRequest : nil,
       )
       let prText = display.pullRequestBadgeStyle?.text
-      let agents = terminalManager.agentsForSurfaces(
-        terminalManager.surfaceIDs(forWorktreeID: worktreeID),
-      )
-      let scriptColors = store.state.runningScriptColors(for: worktreeID)
-      let showsNotificationIndicator = terminalManager.hasUnseenNotifications(for: worktreeID)
-      let notifications = terminalManager.stateIfExists(for: worktreeID)?.notifications ?? []
-      let added = info?.addedLines ?? 0
-      let removed = info?.removedLines ?? 0
+      let agents = store.agents
+      let scriptColors = store.runningScripts.map(\.tint)
+      let showsNotificationIndicator = store.hasUnseenNotifications
+      let notifications = Array(store.notifications)
+      let added = store.addedLines ?? 0
+      let removed = store.removedLines ?? 0
       let hasStats = added + removed > 0
       let hasStatus = !scriptColors.isEmpty || showsNotificationIndicator
 
@@ -440,8 +443,7 @@ private struct RunningAgentsBadgeContent: View, Equatable {
 private struct DiffStatsContent: View, Equatable {
   let addedLines: Int
   let removedLines: Int
-  // `==` ignores the @Environment property; SwiftUI tracks environment separately
-  // and re-runs body on env changes even when Equatable returns true.
+  // `==` ignores @Environment; SwiftUI tracks env changes separately.
   @Environment(\.backgroundProminence) private var backgroundProminence
 
   static func == (lhs: Self, rhs: Self) -> Bool {
@@ -462,13 +464,11 @@ private struct DiffStatsContent: View, Equatable {
   }
 }
 
-// MARK: - Status indicator.
-
 private struct StatusIndicator: View, Equatable {
   let runningScriptColors: [RepositoryColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
-  // `==` ignores @Environment values; SwiftUI handles env invalidation separately.
+  // `==` ignores @Environment; SwiftUI tracks env changes separately.
   @Environment(\.backgroundProminence) private var backgroundProminence
   @Environment(\.focusNotificationAction) private var focusNotificationAction: (WorktreeTerminalNotification) -> Void
 
@@ -506,11 +506,6 @@ private struct StatusIndicator: View, Equatable {
   }
 }
 
-// MARK: - Multi-color ping dot.
-
-/// Displays a pulsing dot that cycles through multiple script tint
-/// colors when more than one script is running. Falls back to the
-/// single-color pulsing behavior when only one color is present.
 private struct MultiColorPingDot: View {
   let colors: [RepositoryColor]
   let isEmphasized: Bool
@@ -518,7 +513,6 @@ private struct MultiColorPingDot: View {
   let showsSolidCenter: Bool
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-  /// Unique, ordered colors derived from the input.
   private var uniqueColors: [Color] {
     guard !isEmphasized else { return [.primary] }
     var seen = Set<RepositoryColor>()
@@ -537,7 +531,6 @@ private struct MultiColorPingDot: View {
         showsSolidCenter: showsSolidCenter
       )
     } else if reduceMotion {
-      // Show a static dot with the first color when motion is reduced.
       StaticDot(color: resolved[0], size: size, showsSolidCenter: showsSolidCenter)
     } else {
       CyclingDot(colors: resolved, size: size, showsSolidCenter: showsSolidCenter)
@@ -545,7 +538,6 @@ private struct MultiColorPingDot: View {
   }
 }
 
-/// Static dot used when accessibility reduce-motion is enabled.
 private struct StaticDot: View {
   let color: Color
   let size: CGFloat
@@ -567,7 +559,6 @@ private struct StaticDot: View {
   }
 }
 
-/// Animated dot that smoothly cycles through the provided colors.
 private struct CyclingDot: View {
   let colors: [Color]
   let size: CGFloat
@@ -597,8 +588,6 @@ private struct CyclingDot: View {
   }
 }
 
-// MARK: - Pulsing dot.
-
 private struct PingDot: View {
   let color: Color
   let size: CGFloat
@@ -617,9 +606,6 @@ private struct PingDot: View {
   }
 }
 
-/// Expanding, fading ring driven by `phaseAnimator` rather than
-/// `.repeatForever` so SwiftUI can pause the timeline when the view
-/// is occluded and so parent re-evaluations don't restart the cycle.
 private struct PingRing: View {
   let color: Color
   let size: CGFloat
@@ -633,15 +619,10 @@ private struct PingRing: View {
           .scaleEffect(expanded ? 2 : 1)
           .opacity(expanded ? 0 : 0.6)
       } animation: { expanded in
-        // Snap back to the seed phase instantly, then ease out the
-        // expansion: yields a non-autoreversing ping without the
-        // always-on `.repeatForever` animation driver.
         expanded ? .easeOut(duration: 1) : .linear(duration: 0.001)
       }
   }
 }
-
-// MARK: - Focus notification environment.
 
 private nonisolated let notificationEnvironmentLogger = SupaLogger("Notifications")
 
