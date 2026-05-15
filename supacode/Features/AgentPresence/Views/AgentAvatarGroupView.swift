@@ -1,3 +1,4 @@
+import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
@@ -7,17 +8,17 @@ import SwiftUI
 /// agent without an overflow chip (used by the sidebar setup card, which has
 /// the horizontal room for the full lineup). Each badge contrast-flips its
 /// colorScheme when its `awaitingInput` flag is set; the producer
-/// (`AgentPresenceManager`) sorts those to the front so they always appear
-/// first in the row.
+/// (`AgentPresenceFeature.State.agents(across:)`) sorts those to the front so
+/// they always appear first in the row.
 struct AgentAvatarGroupView: View {
   /// Producer-sorted (awaiting-input first); duplicates kept (e.g. two
   /// Claude surfaces in the same tab show two Claude badges).
-  let instances: [AgentPresenceManager.AgentInstance]
+  let instances: [AgentPresenceFeature.AgentInstance]
   let size: CGFloat
   let maxVisible: Int
 
   init(
-    instances: [AgentPresenceManager.AgentInstance],
+    instances: [AgentPresenceFeature.AgentInstance],
     size: CGFloat = 14,
     maxVisible: Int = 3
   ) {
@@ -36,7 +37,7 @@ struct AgentAvatarGroupView: View {
     )
   }
 
-  private var visible: [AgentPresenceManager.AgentInstance] { Array(instances.prefix(maxVisible)) }
+  private var visible: [AgentPresenceFeature.AgentInstance] { Array(instances.prefix(maxVisible)) }
   private var overflow: Int { max(0, instances.count - maxVisible) }
 
   /// Per-(agent, occurrence) identity stays stable when the awaiting-first

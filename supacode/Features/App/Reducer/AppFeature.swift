@@ -19,6 +19,7 @@ private enum CancelID {
 struct AppFeature {
   @ObservableState
   struct State: Equatable {
+    var agentPresence = AgentPresenceFeature.State()
     var repositories: RepositoriesFeature.State
     var settings: SettingsFeature.State
     var updates = UpdatesFeature.State()
@@ -79,6 +80,7 @@ struct AppFeature {
   }
 
   enum Action {
+    case agentPresence(AgentPresenceFeature.Action)
     case appLaunched
     case scenePhaseChanged(ScenePhase)
     case repositories(RepositoriesFeature.Action)
@@ -153,6 +155,9 @@ struct AppFeature {
             }
           }
         )
+
+      case .agentPresence:
+        return .none
 
       case .scenePhaseChanged(let phase):
         switch phase {
@@ -917,6 +922,9 @@ struct AppFeature {
       }
     }
     core
+    Scope(state: \.agentPresence, action: \.agentPresence) {
+      AgentPresenceFeature()
+    }
     Scope(state: \.repositories, action: \.repositories) {
       RepositoriesFeature()
     }

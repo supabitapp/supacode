@@ -75,7 +75,9 @@ final class TerminalTabManager {
   }
 
   func updateDirty(_ id: TerminalTabID, isDirty: Bool) {
-    guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+    guard let index = tabs.firstIndex(where: { $0.id == id }),
+      tabs[index].isDirty != isDirty
+    else { return }
     tabs[index].isDirty = isDirty
   }
 

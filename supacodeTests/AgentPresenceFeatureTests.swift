@@ -1,0 +1,444 @@
+import ComposableArchitecture
+import Darwin
+import Dependencies
+import Foundation
+import Sharing
+import SupacodeSettingsShared
+import Testing
+
+@testable import supacode
+
+/// Tests cover the state-mutation behaviour of `AgentPresenceFeature` (hook
+/// event handling, surface lifecycle, the liveness sweep). The liveness sweep
+/// timer effect is intentionally not exercised here; the sweep helper is
+/// invoked directly through `livenessSweepTick`.
+@MainActor
+struct AgentPresenceFeatureTests {
+  // MARK: - Session lifecycle.
+
+  @Test func sessionStartRegistersAgentForSurface() {
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+  }
+
+  @Test func sessionStartWithoutPidIsIgnored() {
+    // Every bridge today (Claude/Codex/Kiro hooks, Pi extension) sends a
+    // pid in the envelope. A pid-less event is treated as malformed:
+    // accepting it would create a record the liveness sweep can't reap.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func sessionEndRemovesAgentForSurface() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func sessionStartIsIdempotentForSameProcessPid() {
+    // Reproduces Claude `/resume`: SessionStart fires on startup AND on
+    // resume (one process, two events, same pid). One SessionEnd clears
+    // the record. There's only one process to liveness-track.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let agentPid: pid_t = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: agentPid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: agentPid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: agentPid)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func surfaceClosedClearsEntriesEvenWithoutSessionEnd() {
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+
+    harness.send(.surfaceClosed(surfaceID))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func surfaceClosedClearsAwaitingState() {
+    // C10(d): closing a surface mid-awaiting-input clears the record so
+    // the sidebar / tab badges drop to idle without waiting on the agent
+    // to fire idle (which it can't: the user closed the tab).
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+    #expect(harness.state.hasActivity(in: [surfaceID]))
+
+    harness.send(.surfaceClosed(surfaceID))
+
+    #expect(harness.state.hasActivity(in: [surfaceID]) == false)
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func unknownAgentNameIsIgnored() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "imaginary-agent",
+        "surface_id": "\(surfaceID.uuidString)"
+      }
+      """
+    guard case .event(let parsed) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
+      Issue.record("Expected event")
+      return
+    }
+    harness.send(.hookEventReceived(parsed))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func unknownEventNameIsIgnored() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(
+      .hookEventReceived(
+        makeEvent(
+          rawEventName: "future_event_we_dont_know",
+          agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  // MARK: - Liveness.
+
+  @Test func livenessSweepEvictsRecordsForDeadPid() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    // Use the test process's own pid: guaranteed alive, and unlike pid 1
+    // (launchd) it isn't signal-protected so `kill(pid, 0)` returns 0.
+    let alivePid: pid_t = getpid()
+    let deadPid = makeDeadPid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: alivePid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: deadPid)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude, .codex]))
+
+    harness.send(.livenessSweepTick)
+
+    // Codex's pid is dead → record evicted. Claude's pid is alive → kept.
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+  }
+
+  @Test func livenessSweepEvictingAwaitingRecordClearsBadgeImmediately() {
+    // C10(c): a Claude process that crashes mid-awaiting-input would leave
+    // a sticky orange badge until the user closed the surface. The pid
+    // sweep must drop the awaiting record entirely, not just downgrade it.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid)))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+    #expect(harness.state.hasActivity(in: [surfaceID]))
+
+    harness.send(.livenessSweepTick)
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+    #expect(harness.state.hasActivity(in: [surfaceID]) == false)
+  }
+
+  @Test func livenessSweepPartialPidEvictionPreservesActivity() {
+    // C1: when only some of a multi-pid record's pids die (e.g. Claude
+    // crash + reopen in the same surface, where SessionStart for the new
+    // pid union-inserts), the surviving record's activity must NOT be
+    // wiped to .idle.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let alivePid: pid_t = getpid()
+    let deadPid = makeDeadPid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: alivePid)))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+
+    let beforeSweep = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
+    #expect(beforeSweep?.activity == .awaitingInput)
+
+    harness.send(.livenessSweepTick)
+
+    // Dead pid pruned, alive pid + awaiting flag preserved.
+    let afterSweep = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
+    #expect(afterSweep?.activity == .awaitingInput)
+  }
+
+  // MARK: - Aggregation.
+
+  @Test func agentsAcrossPreservesPerSurfaceDuplicates() {
+    var harness = Harness()
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let surfaceC = UUID()
+    let pid = getpid()
+
+    // Two surfaces both running Claude: the tab badge should show both.
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceA, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceB, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceB, pid: pid)))
+    // surfaceC has no agent.
+
+    let combined = harness.state.agents(across: [surfaceA, surfaceB, surfaceC], badgesEnabled: true)
+    // Sorted by rawValue: claude, claude, codex. None awaiting.
+    #expect(
+      combined == [
+        .init(agent: .claude, activity: .idle),
+        .init(agent: .claude, activity: .idle),
+        .init(agent: .codex, activity: .idle),
+      ]
+    )
+  }
+
+  @Test func agentsAcrossSortsAwaitingInstancesFirst() {
+    var harness = Harness()
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let pid = getpid()
+
+    // Two Claude surfaces; only B awaiting. The awaiting instance must lead
+    // the row regardless of surface order so the contrast-flipped badge
+    // is visible at the front of the avatar group.
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceA, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceB, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceA, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceB)))
+
+    let combined = harness.state.agents(across: [surfaceA, surfaceB], badgesEnabled: true)
+    #expect(
+      combined == [
+        .init(agent: .claude, activity: .awaitingInput),
+        .init(agent: .claude, activity: .idle),
+        .init(agent: .codex, activity: .idle),
+      ]
+    )
+  }
+
+  // MARK: - Atomic activity.
+
+  @Test func busyWithoutPresenceIsDropped() {
+    // A bridge that emits busy events without a matching session_start
+    // (or after session_end) must not auto-create a record: pid tracking
+    // would have nothing to liveness-check.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+    #expect(harness.state.hasActivity(in: [surfaceID]) == false)
+  }
+
+  @Test func busyAfterSessionStartFlipsActivityToBusy() {
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+
+    let claude = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
+    #expect(claude?.activity == .busy)
+  }
+
+  @Test func repeatedBusyEventsDoNotMutateRecords() {
+    // Repeated `busy` must not re-write `records`, or every dict-observation
+    // consumer re-renders per tool call. The reducer's no-op-on-identical
+    // activity guard keeps the underlying dict byte-equal.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    let snapshot = harness.state.records
+
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.records == snapshot)
+  }
+
+  @Test func awaitingInputFlipsActivityWhilePresenceExists() {
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+
+    let claude = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
+    #expect(claude?.activity == .awaitingInput)
+  }
+
+  @Test func nextBusyOverwritesAwaitingInput() {
+    // When the user resumes after a permission prompt, Claude's next
+    // PreToolUse fires `busy`: atomic overwrite, awaiting flag clears.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+
+    let claude = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
+    #expect(claude?.activity == .busy)
+  }
+
+  @Test func idleResetsAwaitingFlag() {
+    // The Stop hook (Claude/Codex/Kiro) and Pi's agent_end emit `idle`.
+    // Covers the "user denied a plan-commit, conversation ended" path
+    // where awaitingInput is set but no further `busy` arrives: Stop
+    // owns the turn-boundary reset.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.idle, agent: .claude, surfaceID: surfaceID)))
+
+    let claude = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
+    #expect(claude?.activity == .idle)
+  }
+
+  @Test func sessionEndClearsActivityForThatAgentOnly() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let claudePid = getpid()
+    // Distinct pid for Codex; we never run the sweep, but using a verifiably
+    // dead pid keeps the test honest if a future change adds an implicit one.
+    let codexPid = makeDeadPid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: claudePid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: codexPid)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .codex, surfaceID: surfaceID)))
+
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: claudePid)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.codex]))
+    let codex = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .codex }
+    #expect(codex?.activity == .busy)
+  }
+
+  // MARK: - hasActivity.
+
+  @Test func hasActivityReportsBusyAcrossSurfaces() {
+    var harness = Harness()
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let surfaceC = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceA, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceB, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .codex, surfaceID: surfaceB)))
+
+    #expect(harness.state.hasActivity(in: [surfaceA]) == false)
+    #expect(harness.state.hasActivity(in: [surfaceB]) == true)
+    #expect(harness.state.hasActivity(in: [surfaceA, surfaceC]) == false)
+    #expect(harness.state.hasActivity(in: [surfaceA, surfaceB]) == true)
+  }
+
+  @Test func hasActivityIsTrueForAwaitingOnlyRecord() {
+    // C10(b): the shimmer is gated on hasActivity, which must light up
+    // for awaiting-input even when no tool is currently running (e.g.
+    // permission prompt without a paired busy event).
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.hasActivity(in: [surfaceID]) == true)
+  }
+
+  // MARK: - Settings gate.
+
+  @Test func badgesGateSuppressesPerSurfaceAndAcrossAccessors() {
+    // C10(a): the user-facing toggle gates the avatar accessors. The
+    // shimmer gate (`hasActivity`) is intentionally NOT gated; that's a
+    // generic worktree-doing-work signal independent of avatar visibility.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: false).isEmpty)
+    #expect(harness.state.agents(across: [surfaceID], badgesEnabled: false).isEmpty)
+    // hasActivity isn't badge-gated.
+    #expect(harness.state.hasActivity(in: [surfaceID]) == true)
+  }
+
+  // MARK: - Helpers.
+
+  /// Direct-reducer harness. Mirrors the singleton's sync API for tests
+  /// asserting state mutations from individual actions. The liveness-sweep
+  /// timer effect from `.start` is intentionally not exercised here; the
+  /// sweep helper runs via `livenessSweepTick`.
+  private struct Harness {
+    var state = AgentPresenceFeature.State()
+    private let reducer = AgentPresenceFeature()
+
+    @MainActor mutating func send(_ action: AgentPresenceFeature.Action) {
+      _ = reducer.reduce(into: &state, action: action)
+    }
+  }
+
+  private func makeEvent(
+    _ name: AgentHookEvent.EventName, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil
+  ) -> AgentHookEvent {
+    makeEvent(rawEventName: name.rawValue, agent: agent, surfaceID: surfaceID, pid: pid)
+  }
+
+  private func makeEvent(
+    rawEventName: String, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil
+  ) -> AgentHookEvent {
+    let pidLine = pid.map { ",\n        \"pid\": \($0)" } ?? ""
+    let json = """
+      {
+        "event": "\(rawEventName)",
+        "agent": "\(agent.rawValue)",
+        "surface_id": "\(surfaceID.uuidString)"\(pidLine)
+      }
+      """
+    guard case .event(let event) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
+      preconditionFailure("Failed to parse test event")
+    }
+    return event
+  }
+
+  /// A pid that does not exist on this machine. Walks up from a high value
+  /// until `kill(pid, 0)` reports no such process, so the test is independent
+  /// of which test runners happen to be live in the host's process table.
+  private func makeDeadPid() -> pid_t {
+    var candidate: pid_t = 99_999
+    while kill(candidate, 0) == 0 {
+      candidate -= 1
+      if candidate <= 1 {
+        preconditionFailure("Could not find a dead pid for the test")
+      }
+    }
+    return candidate
+  }
+}

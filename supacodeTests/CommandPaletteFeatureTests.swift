@@ -468,7 +468,8 @@ struct CommandPaletteFeatureTests {
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     var state = RepositoriesFeature.State(repositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+      id: worktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(isDraft: true)
@@ -491,7 +492,8 @@ struct CommandPaletteFeatureTests {
       conclusion: "FAILURE",
       state: nil
     )
-    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+      id: worktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(checks: [failingCheck])
@@ -513,7 +515,8 @@ struct CommandPaletteFeatureTests {
       conclusion: "FAILURE",
       state: nil
     )
-    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+      id: worktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(checks: [failingCheck])
@@ -530,7 +533,8 @@ struct CommandPaletteFeatureTests {
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     var state = RepositoriesFeature.State(repositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+      id: worktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(
@@ -550,7 +554,8 @@ struct CommandPaletteFeatureTests {
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     var state = RepositoriesFeature.State(repositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+      id: worktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(state: "OPEN")
@@ -573,7 +578,8 @@ struct CommandPaletteFeatureTests {
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     var state = RepositoriesFeature.State(repositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+      id: worktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(state: "MERGED")
@@ -589,7 +595,8 @@ struct CommandPaletteFeatureTests {
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     var state = RepositoriesFeature.State(repositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+      id: worktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(

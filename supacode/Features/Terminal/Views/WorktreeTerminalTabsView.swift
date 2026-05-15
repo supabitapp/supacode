@@ -44,9 +44,10 @@ struct WorktreeTerminalTabsView: View {
           hasNotification: { tabId in
             state.hasUnseenNotification(forTabID: tabId)
           },
-          runningAgents: { tabId in
-            AgentPresenceManager.shared.agents(across: state.surfaceIDs(inTab: tabId))
-          }
+          surfaceIDsForTab: { tabId in
+            state.surfaceIDs(inTab: tabId)
+          },
+          terminalManager: manager,
         )
         .transition(.move(edge: .top).combined(with: .opacity))
       }

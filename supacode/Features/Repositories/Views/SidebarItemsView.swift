@@ -171,16 +171,12 @@ private struct SidebarItemContainer: View {
   var body: some View {
     SidebarItemView(
       row: row,
+      terminalManager: terminalManager,
+      store: store,
       displayMode: displayMode,
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       showsPullRequestInfo: !draggingWorktreeIDs.contains(row.id),
-      runningScriptColors: store.state.runningScriptColors(for: row.id),
-      runningAgents: AgentPresenceManager.shared.agents(
-        across: terminalManager.surfaceIDs(forWorktreeID: row.id)),
-      isTaskRunning: terminalManager.stateIfExists(for: row.id)?.taskStatus == .running,
-      showsNotificationIndicator: terminalManager.hasUnseenNotifications(for: row.id),
-      notifications: terminalManager.stateIfExists(for: row.id)?.notifications ?? [],
       shortcutHint: shortcutHint
     )
     .environment(\.focusNotificationAction) { notification in

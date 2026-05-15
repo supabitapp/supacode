@@ -88,7 +88,7 @@ struct RepositoriesFeature {
     var repositoryRoots: [URL] = []
     var loadFailuresByID: [Repository.ID: String] = [:]
     var selection: SidebarSelection?
-    var worktreeInfoByID: [Worktree.ID: WorktreeInfoEntry] = [:]
+    var worktreeInfos: IdentifiedArrayOf<WorktreeInfoEntry> = []
     var isOpenPanelPresented = false
     var isInitialLoadComplete = false
     var pendingWorktrees: [PendingWorktree] = []
@@ -1977,7 +1977,7 @@ struct RepositoriesFeature {
           state.pendingWorktrees.removeAll { $0.id == worktreeID }
           state.pendingSetupScriptWorktreeIDs.remove(worktreeID)
           state.pendingTerminalFocusWorktreeIDs.remove(worktreeID)
-          state.worktreeInfoByID.removeValue(forKey: worktreeID)
+          state.worktreeInfos.remove(id: worktreeID)
           // Drop the worktree from every bucket in its section —
           // the worktree is going away entirely so the bucket it
           // currently lives in doesn't matter.
@@ -2668,7 +2668,7 @@ struct RepositoriesFeature {
             continue
           }
           let pullRequest = pullRequestsByWorktreeID[worktreeID] ?? nil
-          let previousPullRequest = state.worktreeInfoByID[worktreeID]?.pullRequest
+          let previousPullRequest = state.worktreeInfos[id: worktreeID]?.pullRequest
           guard previousPullRequest != pullRequest else {
             continue
           }
@@ -3032,7 +3032,7 @@ struct RepositoriesFeature {
         state.pendingPullRequestRefreshByRepositoryID.removeAll()
         state.queuedPullRequestRefreshByRepositoryID.removeAll()
         state.inFlightPullRequestRefreshRepositoryIDs.removeAll()
-        let worktreeIDs = Array(state.worktreeInfoByID.keys)
+        let worktreeIDs = state.worktreeInfos.ids.elements
         for worktreeID in worktreeIDs {
           updateWorktreePullRequest(
             worktreeID: worktreeID,
@@ -3431,8 +3431,8 @@ struct RepositoriesFeature {
       availableWorktreeIDs.contains($0.key)
     }
     let filteredArchivingIDs = state.archivingWorktreeIDs
-    let filteredWorktreeInfo = state.worktreeInfoByID.filter {
-      availableWorktreeIDs.contains($0.key)
+    let filteredWorktreeInfos = state.worktreeInfos.filter {
+      availableWorktreeIDs.contains($0.id)
     }
     let (filteredRemovingRepositoryIDs, filteredActiveRemovalBatches) =
       prunedRemovalTrackers(state: state, availableRepoIDs: repositoryIDs)
@@ -3448,7 +3448,7 @@ struct RepositoriesFeature {
         state.runningScriptsByWorktreeID = filteredRunningScripts
 
         state.archivingWorktreeIDs = filteredArchivingIDs
-        state.worktreeInfoByID = filteredWorktreeInfo
+        state.worktreeInfos = filteredWorktreeInfos
         state.removingRepositoryIDs = filteredRemovingRepositoryIDs
         state.activeRemovalBatches = filteredActiveRemovalBatches
       }
@@ -3461,7 +3461,7 @@ struct RepositoriesFeature {
       state.pendingTerminalFocusWorktreeIDs = filteredFocusIDs
       state.runningScriptsByWorktreeID = filteredRunningScripts
       state.archivingWorktreeIDs = filteredArchivingIDs
-      state.worktreeInfoByID = filteredWorktreeInfo
+      state.worktreeInfos = filteredWorktreeInfos
       state.removingRepositoryIDs = filteredRemovingRepositoryIDs
       state.activeRemovalBatches = filteredActiveRemovalBatches
     }
@@ -3681,7 +3681,7 @@ extension RepositoriesFeature.State {
   }
 
   func worktreeInfo(for worktreeID: Worktree.ID) -> WorktreeInfoEntry? {
-    worktreeInfoByID[worktreeID]
+    worktreeInfos[id: worktreeID]
   }
 
   func worktreesForInfoWatcher() -> [Worktree] {
@@ -3762,7 +3762,6 @@ extension RepositoriesFeature.State {
       kind: .git,
       name: pending.progress.worktreeName ?? "Creating…",
       detail: pending.progress.worktreeName ?? "",
-      info: worktreeInfo(for: pending.id),
       isPinned: false,
       isMainWorktree: false,
       status: status
@@ -3800,7 +3799,6 @@ extension RepositoriesFeature.State {
       kind: kind,
       name: worktree.name,
       detail: worktree.detail,
-      info: worktreeInfo(for: worktree.id),
       isPinned: isPinned,
       isMainWorktree: isMainWorktree,
       status: status
@@ -3891,7 +3889,7 @@ extension RepositoriesFeature.State {
   }
 
   func isWorktreeMerged(_ worktree: Worktree) -> Bool {
-    worktreeInfoByID[worktree.id]?.pullRequest?.state == "MERGED"
+    worktreeInfos[id: worktree.id]?.pullRequest?.state == "MERGED"
   }
 
   func orderedPinnedWorktreeIDs(in repository: Repository) -> [Worktree.ID] {
@@ -4223,7 +4221,7 @@ private func cleanupWorktreeState(
   state.archivingWorktreeIDs.remove(worktreeID)
   state.deleteScriptWorktreeIDs.remove(worktreeID)
   state.deletingWorktreeIDs.remove(worktreeID)
-  state.worktreeInfoByID.removeValue(forKey: worktreeID)
+  state.worktreeInfos.remove(id: worktreeID)
   // Drop the worktree from every bucket in its section — a failed
   // worktree creation is going away entirely so the bucket it
   // currently lives in doesn't matter.
@@ -4319,7 +4317,8 @@ private func updateWorktreeLineChanges(
   removed: Int,
   state: inout RepositoriesFeature.State
 ) {
-  var entry = state.worktreeInfoByID[worktreeID] ?? WorktreeInfoEntry()
+  let previous = state.worktreeInfos[id: worktreeID]
+  var entry = previous ?? WorktreeInfoEntry(id: worktreeID)
   if added == 0 && removed == 0 {
     entry.addedLines = nil
     entry.removedLines = nil
@@ -4327,10 +4326,14 @@ private func updateWorktreeLineChanges(
     entry.addedLines = added
     entry.removedLines = removed
   }
+  // 30/60s polling re-emits the same line counts on every tick; skip the
+  // assignment so per-element Observation doesn't fire when nothing changed.
   if entry.isEmpty {
-    state.worktreeInfoByID.removeValue(forKey: worktreeID)
-  } else {
-    state.worktreeInfoByID[worktreeID] = entry
+    if previous != nil {
+      state.worktreeInfos.remove(id: worktreeID)
+    }
+  } else if previous != entry {
+    state.worktreeInfos[id: worktreeID] = entry
   }
 }
 
@@ -4339,12 +4342,12 @@ private func updateWorktreePullRequest(
   pullRequest: GithubPullRequest?,
   state: inout RepositoriesFeature.State
 ) {
-  var entry = state.worktreeInfoByID[worktreeID] ?? WorktreeInfoEntry()
+  var entry = state.worktreeInfos[id: worktreeID] ?? WorktreeInfoEntry(id: worktreeID)
   entry.pullRequest = pullRequest
   if entry.isEmpty {
-    state.worktreeInfoByID.removeValue(forKey: worktreeID)
+    state.worktreeInfos.remove(id: worktreeID)
   } else {
-    state.worktreeInfoByID[worktreeID] = entry
+    state.worktreeInfos[id: worktreeID] = entry
   }
 }
 

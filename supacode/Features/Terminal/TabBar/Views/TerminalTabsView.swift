@@ -9,7 +9,8 @@ struct TerminalTabsView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
-  let runningAgents: (TerminalTabID) -> [AgentPresenceManager.AgentInstance]
+  let surfaceIDsForTab: (TerminalTabID) -> [UUID]
+  let terminalManager: WorktreeTerminalManager
 
   @State private var draggingTabId: TerminalTabID?
   @State private var draggingStartLocation: CGFloat?
@@ -39,7 +40,8 @@ struct TerminalTabsView: View {
             closeAll: closeAll,
             renameTab: renameTab,
             hasNotification: hasNotification,
-            runningAgents: runningAgents,
+            surfaceIDsForTab: surfaceIDsForTab,
+            terminalManager: terminalManager,
             scrollReader: scrollReader
           )
           .padding(.horizontal, TerminalTabBarMetrics.barPadding)

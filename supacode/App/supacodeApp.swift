@@ -249,6 +249,12 @@ struct SupacodeApp: App {
           return sidebar.archivedWorktrees.map(\.archivedAt)
         }
       )
+      // Force the live continuous clock so the agent-presence liveness
+      // sweep (`AgentPresenceFeature.start`) doesn't trip the unimplemented
+      // test clock when the app shell happens to launch inside an XCTest
+      // process. Tests that take a TestStore for AppFeature inject their
+      // own clock and still override this.
+      values.continuousClock = ContinuousClock()
     }
   }
 
@@ -269,6 +275,24 @@ struct SupacodeApp: App {
         store: store
       )
     }
+    terminalManager.sendPresenceAction = { action in
+      store.send(.agentPresence(action))
+    }
+    terminalManager.hasAgentActivity = { surfaceIDs in
+      store.state.agentPresence.hasActivity(in: surfaceIDs)
+    }
+    terminalManager.agentsForSurfaces = { surfaceIDs in
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      return store.state.agentPresence.agents(
+        across: surfaceIDs,
+        badgesEnabled: settingsFile.global.agentPresenceBadgesEnabled,
+      )
+    }
+    // Kicked off here rather than from `.appLaunched` so unit tests that
+    // never construct a real AppFeature store (or that boot the app shell
+    // under XCTest) don't spin the 2s liveness timer against the
+    // dependency-test clock.
+    store.send(.agentPresence(.start))
   }
 
   @MainActor

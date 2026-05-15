@@ -1936,8 +1936,9 @@ struct RepositoriesFeatureTests {
         buckets: [.pinned: .init(items: [featureWorktree.id: .init()])]
       )
     }
-    state.worktreeInfoByID = [
-      featureWorktree.id: WorktreeInfoEntry(
+    state.worktreeInfos = [
+      WorktreeInfoEntry(
+        id: featureWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: makePullRequest(state: "MERGED")
@@ -3315,8 +3316,8 @@ struct RepositoriesFeatureTests {
         buckets: [.pinned: .init(items: [removedWorktree.id: .init()])]
       )
     }
-    initialState.worktreeInfoByID = [
-      removedWorktree.id: WorktreeInfoEntry(addedLines: 1, removedLines: 2, pullRequest: nil)
+    initialState.worktreeInfos = [
+      WorktreeInfoEntry(id: removedWorktree.id, addedLines: 1, removedLines: 2, pullRequest: nil)
     ]
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
@@ -3336,7 +3337,7 @@ struct RepositoriesFeatureTests {
       $0.pendingSetupScriptWorktreeIDs = []
       $0.pendingTerminalFocusWorktreeIDs = []
       $0.pendingWorktrees = []
-      $0.worktreeInfoByID = [:]
+      $0.worktreeInfos = []
       $0.repositories = [updatedRepository]
       $0.$sidebar.withLock { sidebar in
         sidebar.removeAnywhere(worktree: removedWorktree.id, in: repository.id)
@@ -3465,7 +3466,7 @@ struct RepositoriesFeatureTests {
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
     )
     #expect(
-      store.state.worktreeInfoByID[featureWorktree.id]?.pullRequest == mergedPullRequest
+      store.state.worktreeInfos[id: featureWorktree.id]?.pullRequest == mergedPullRequest
     )
   }
 
@@ -3486,7 +3487,8 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [mainWorktree.id: mergedPullRequest]
       )
     ) {
-      $0.worktreeInfoByID[mainWorktree.id] = WorktreeInfoEntry(
+      $0.worktreeInfos[id: mainWorktree.id] = WorktreeInfoEntry(
+        id: mainWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: mergedPullRequest
@@ -3520,7 +3522,8 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
     ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      $0.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+        id: featureWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: mergedPullRequest
@@ -3551,7 +3554,8 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
     ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      $0.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+        id: featureWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: mergedPullRequest
@@ -3590,7 +3594,8 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
     ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      $0.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+        id: featureWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: mergedPullRequest
@@ -3622,7 +3627,8 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
     ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      $0.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+        id: featureWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: mergedPullRequest
@@ -3654,7 +3660,8 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
     ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      $0.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+        id: featureWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: mergedPullRequest
@@ -3675,7 +3682,8 @@ struct RepositoriesFeatureTests {
     let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
     var state = makeState(repositories: [repository])
     state.mergedWorktreeAction = .delete
-    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+      id: featureWorktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: mergedPullRequest
@@ -3711,7 +3719,8 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: [featureWorktree.id: refreshedPullRequest]
       )
     ) {
-      $0.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+      $0.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+        id: featureWorktree.id,
         addedLines: nil,
         removedLines: nil,
         pullRequest: refreshedPullRequest
@@ -3733,7 +3742,8 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
     state.mergedWorktreeAction = .archive
-    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+      id: featureWorktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: openPullRequest
@@ -3757,7 +3767,7 @@ struct RepositoriesFeatureTests {
       $0.statusToast = .success("Pull request merged")
     }
     await store.receive(\.worktreeInfoEvent)
-    #expect(store.state.worktreeInfoByID[featureWorktree.id]?.pullRequest?.state == "OPEN")
+    #expect(store.state.worktreeInfos[id: featureWorktree.id]?.pullRequest?.state == "OPEN")
     #expect(store.state.archivedWorktreeIDs.isEmpty)
     #expect(mergedNumbers.value == [12])
     await store.finish()
@@ -3775,7 +3785,8 @@ struct RepositoriesFeatureTests {
     let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 12)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
-    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+      id: featureWorktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: openPullRequest
@@ -3898,7 +3909,8 @@ struct RepositoriesFeatureTests {
     let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 88)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
-    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+      id: featureWorktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: openPullRequest
@@ -3938,7 +3950,8 @@ struct RepositoriesFeatureTests {
     let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 88)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
-    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+      id: featureWorktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: openPullRequest
@@ -4236,7 +4249,8 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
     var state = makeState(repositories: [repository])
-    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+      id: featureWorktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: pullRequest
@@ -4264,7 +4278,8 @@ struct RepositoriesFeatureTests {
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
-    state.worktreeInfoByID[featureWorktree.id] = WorktreeInfoEntry(
+    state.worktreeInfos[id: featureWorktree.id] = WorktreeInfoEntry(
+      id: featureWorktree.id,
       addedLines: nil,
       removedLines: nil,
       pullRequest: makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
@@ -4280,7 +4295,7 @@ struct RepositoriesFeatureTests {
         pullRequestsByWorktreeID: pullRequestsByWorktreeID
       )
     ) {
-      $0.worktreeInfoByID.removeValue(forKey: featureWorktree.id)
+      $0.worktreeInfos.remove(id: featureWorktree.id)
     }
   }
 
@@ -5347,7 +5362,6 @@ struct RepositoriesFeatureTests {
       kind: kind,
       name: name,
       detail: detail,
-      info: nil,
       isPinned: isPinned,
       isMainWorktree: isMainWorktree,
       status: .idle

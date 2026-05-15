@@ -84,6 +84,13 @@ final class WorktreeTerminalState {
   var onBlockingScriptCompleted: ((BlockingScriptKind, Int?, TerminalTabID?) -> Void)?
   var onCommandPaletteToggle: (() -> Void)?
   var onSetupScriptConsumed: (() -> Void)?
+  /// Reads agent presence for the listed surfaces. Defaults to "no activity"
+  /// so a state constructed outside the manager (tests, previews) works
+  /// without wiring. Replaced by the manager with a TCA-state-backed closure.
+  var hasAgentActivity: (Set<UUID>) -> Bool = { _ in false }
+  /// Dispatches agent-presence writes (surface lifecycle) to the TCA store.
+  /// `nil` when running outside the manager (tests, previews).
+  var sendPresenceAction: ((AgentPresenceFeature.Action) -> Void)?
 
   init(
     runtime: GhosttyRuntime,
@@ -117,7 +124,7 @@ final class WorktreeTerminalState {
     if leaves.contains(where: { isRunningProgressState($0.bridge.state.progressState) }) {
       return true
     }
-    return AgentPresenceManager.shared.hasActivity(in: leaves.map(\.id))
+    return hasAgentActivity(Set(leaves.map(\.id)))
   }
 
   func isBlockingScriptRunning(kind: BlockingScriptKind) -> Bool {
@@ -737,7 +744,7 @@ final class WorktreeTerminalState {
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
-    AgentPresenceManager.shared.surfacesClosed(closingSurfaceIDs)
+    sendPresenceAction?(.surfacesClosed(Set(closingSurfaceIDs)))
     // Agent busy state lives on GhosttySurfaceState and is cleaned up
     // when surfaces are removed.
     let pendingKinds = Set(blockingScripts.values)
@@ -1375,7 +1382,7 @@ final class WorktreeTerminalState {
   private func cleanupSurfaceState(for surfaceID: UUID) {
     recentHookBySurfaceID.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
-    AgentPresenceManager.shared.surfaceClosed(surfaceID)
+    sendPresenceAction?(.surfaceClosed(surfaceID))
   }
 
   private func removeTree(for tabId: TerminalTabID) {

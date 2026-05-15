@@ -19,7 +19,6 @@ struct SidebarItemModel: Identifiable, Hashable {
   let kind: Kind
   let name: String
   let detail: String
-  let info: WorktreeInfoEntry?
   let isPinned: Bool
   let isMainWorktree: Bool
   let status: Status

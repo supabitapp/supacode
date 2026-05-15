@@ -14,7 +14,6 @@ struct AgentBusyStateTests {
   @Test func busyEventMakesTaskStatusRunning() {
     let worktree = makeWorktree()
     let fixture = makeStateWithSurface(worktree: worktree)
-    defer { AgentPresenceManager.shared.surfaceClosed(fixture.surface.id) }
     #expect(fixture.manager.taskStatus(for: worktree.id) == .idle)
 
     fixture.startSession()
@@ -26,7 +25,6 @@ struct AgentBusyStateTests {
   @Test func clearBusyReturnsToIdle() {
     let worktree = makeWorktree()
     let fixture = makeStateWithSurface(worktree: worktree)
-    defer { AgentPresenceManager.shared.surfaceClosed(fixture.surface.id) }
 
     fixture.startSession()
     fixture.emit(.busy)
@@ -38,7 +36,6 @@ struct AgentBusyStateTests {
 
   @Test func busyEventMarksTabDirty() {
     let fixture = makeStateWithSurface()
-    defer { AgentPresenceManager.shared.surfaceClosed(fixture.surface.id) }
 
     // Complete the blocking script to clear initial dirty state.
     fixture.surface.bridge.onCommandFinished?(0)
@@ -54,7 +51,6 @@ struct AgentBusyStateTests {
 
   @Test func clearBusyClearsTabDirty() {
     let fixture = makeStateWithSurface()
-    defer { AgentPresenceManager.shared.surfaceClosed(fixture.surface.id) }
 
     fixture.surface.bridge.onCommandFinished?(0)
     fixture.startSession()
@@ -68,15 +64,13 @@ struct AgentBusyStateTests {
   @Test func activityEventForUnknownSurfaceIsNoOp() {
     let worktree = makeWorktree()
     let fixture = makeStateWithSurface(worktree: worktree)
-    defer { AgentPresenceManager.shared.surfaceClosed(fixture.surface.id) }
 
     let strangerSurface = UUID()
-    AgentPresenceManager.shared.record(
-      event: makeHookEvent(.sessionStart, surfaceID: strangerSurface, pid: getpid())
-    )
-    AgentPresenceManager.shared.record(event: makeHookEvent(.busy, surfaceID: strangerSurface))
+    fixture.presence.send(
+      .hookEventReceived(makeHookEvent(.sessionStart, surfaceID: strangerSurface, pid: getpid())))
+    fixture.presence.send(.hookEventReceived(makeHookEvent(.busy, surfaceID: strangerSurface)))
     _ = fixture.state.surfaceActivityChanged(surfaceID: strangerSurface)
-    AgentPresenceManager.shared.surfaceClosed(strangerSurface)
+    fixture.presence.send(.surfaceClosed(strangerSurface))
 
     #expect(fixture.manager.taskStatus(for: worktree.id) == .idle)
   }
@@ -84,19 +78,18 @@ struct AgentBusyStateTests {
   @Test func closingBusySurfaceClearsTaskStatus() {
     let worktree = makeWorktree()
     let fixture = makeStateWithSurface(worktree: worktree)
-    defer { AgentPresenceManager.shared.surfaceClosed(fixture.surface.id) }
 
     fixture.startSession()
     fixture.emit(.busy)
     #expect(fixture.manager.taskStatus(for: worktree.id) == .running)
 
     fixture.state.closeTab(fixture.tabId)
-    AgentPresenceManager.shared.surfaceClosed(fixture.surface.id)
+    fixture.presence.send(.surfaceClosed(fixture.surface.id))
     #expect(fixture.manager.taskStatus(for: worktree.id) == .idle)
   }
 
   @Test func multipleSurfacesBusyInDifferentTabs() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
     let worktree = makeWorktree()
 
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo a"))
@@ -119,14 +112,9 @@ struct AgentBusyStateTests {
       Issue.record("Expected surfaces in both tabs")
       return
     }
-    defer {
-      AgentPresenceManager.shared.surfaceClosed(surfaceA.id)
-      AgentPresenceManager.shared.surfaceClosed(surfaceB.id)
-    }
 
-    let presence = AgentPresenceManager.shared
     func emit(_ name: AgentHookEvent.EventName, surfaceID: UUID, pid: pid_t? = nil) {
-      presence.record(event: makeHookEvent(name, surfaceID: surfaceID, pid: pid))
+      presence.send(.hookEventReceived(makeHookEvent(name, surfaceID: surfaceID, pid: pid)))
       _ = state.surfaceActivityChanged(surfaceID: surfaceID)
     }
 
@@ -146,7 +134,7 @@ struct AgentBusyStateTests {
   }
 
   @Test func taskStatusChangedEmittedOnBusyToggle() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -159,12 +147,9 @@ struct AgentBusyStateTests {
       Issue.record("Expected blocking script tab and surface")
       return
     }
-    defer { AgentPresenceManager.shared.surfaceClosed(surface.id) }
 
-    AgentPresenceManager.shared.record(
-      event: makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid())
-    )
-    AgentPresenceManager.shared.record(event: makeHookEvent(.busy, surfaceID: surface.id))
+    presence.send(.hookEventReceived(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid())))
+    presence.send(.hookEventReceived(makeHookEvent(.busy, surfaceID: surface.id)))
     _ = state.surfaceActivityChanged(surfaceID: surface.id)
     _ = tabId  // silence unused warning
 
@@ -340,20 +325,23 @@ struct AgentBusyStateTests {
   @MainActor
   private struct SurfaceFixture {
     let manager: WorktreeTerminalManager
+    let presence: PresenceTestHarness
     let state: WorktreeTerminalState
     let tabId: TerminalTabID
     let surface: GhosttySurfaceView
 
     func startSession(agent: SkillAgent = .claude, pid: pid_t = getpid()) {
-      AgentPresenceManager.shared.record(
-        event: AgentBusyStateTests.makeHookEvent(.sessionStart, agent: agent, surfaceID: surface.id, pid: pid)
+      presence.send(
+        .hookEventReceived(
+          AgentBusyStateTests.makeHookEvent(.sessionStart, agent: agent, surfaceID: surface.id, pid: pid)),
       )
       _ = state.surfaceActivityChanged(surfaceID: surface.id)
     }
 
     func emit(_ name: AgentHookEvent.EventName, agent: SkillAgent = .claude) {
-      AgentPresenceManager.shared.record(
-        event: AgentBusyStateTests.makeHookEvent(name, agent: agent, surfaceID: surface.id)
+      presence.send(
+        .hookEventReceived(
+          AgentBusyStateTests.makeHookEvent(name, agent: agent, surfaceID: surface.id)),
       )
       _ = state.surfaceActivityChanged(surfaceID: surface.id)
     }
@@ -389,7 +377,7 @@ struct AgentBusyStateTests {
   }
 
   private func makeStateWithSurface(worktree: Worktree? = nil) -> SurfaceFixture {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
     let resolvedWorktree = worktree ?? makeWorktree()
 
     manager.handleCommand(.runBlockingScript(resolvedWorktree, kind: .archive, script: "echo ok"))
@@ -397,7 +385,7 @@ struct AgentBusyStateTests {
     let state = manager.stateIfExists(for: resolvedWorktree.id)!
     let tabId = state.tabManager.selectedTabId!
     let surface = state.splitTree(for: tabId).root!.leftmostLeaf()
-    return SurfaceFixture(manager: manager, state: state, tabId: tabId, surface: surface)
+    return SurfaceFixture(manager: manager, presence: presence, state: state, tabId: tabId, surface: surface)
   }
 
   private func nextEvent(
