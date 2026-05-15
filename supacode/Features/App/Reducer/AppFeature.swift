@@ -996,9 +996,10 @@ struct AppFeature {
 
   // MARK: - Agent presence fan-out.
 
-  /// Routes `agentPresence.delegate.surfacesChanged` into per-row deltas and pushes
-  /// the authoritative busy-surface set into the terminal manager so its `isTabBusy`
-  /// resolves locally.
+  /// Routes `agentPresence.delegate.surfacesChanged` into per-row deltas. Each
+  /// affected row gets `agentSnapshotChanged` with the badge list + activity
+  /// flag; the row's `isTaskRunning` derives from `hasAgentActivity` so flipping
+  /// the latter shimmers the sidebar without a separate projection dispatch.
   private func agentPresenceFanOutEffect(
     surfaces: Set<UUID>,
     state: State
@@ -1011,7 +1012,7 @@ struct AppFeature {
       guard let rowID = state.repositories.surfaceToItemID[surfaceID] else { continue }
       affectedRowIDs.insert(rowID)
     }
-    var effects: [Effect<Action>] = affectedRowIDs.compactMap { rowID in
+    let effects: [Effect<Action>] = affectedRowIDs.compactMap { rowID in
       guard let row = state.repositories.sidebarItems[id: rowID] else { return nil }
       let agents = presence.agents(across: row.surfaceIDs, badgesEnabled: badgesEnabled)
       let hasActivity = presence.hasActivity(in: row.surfaceIDs)
@@ -1023,19 +1024,6 @@ struct AppFeature {
         )
       )
     }
-    let busySurfaceIDs = Set(
-      presence.records
-        .filter { $0.value.activity != .idle }
-        .map(\.key.surfaceID)
-    )
-    let terminalClient = terminalClient
-    effects.append(
-      .run { _ in
-        await terminalClient.send(
-          .agentActivityChanged(busySurfaceIDs: busySurfaceIDs, dirtySurfaceIDs: surfaces)
-        )
-      }
-    )
     return .merge(effects)
   }
 

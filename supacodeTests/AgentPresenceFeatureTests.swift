@@ -76,9 +76,9 @@ struct AgentPresenceFeatureTests {
   }
 
   @Test func surfaceClosedClearsAwaitingState() {
-    // C10(d): closing a surface mid-awaiting-input clears the record so
-    // the sidebar / tab badges drop to idle without waiting on the agent
-    // to fire idle (which it can't: the user closed the tab).
+    // Closing a surface mid-awaiting-input clears the record so the sidebar /
+    // tab badges drop to idle without waiting on the agent to fire idle
+    // (which it can't: the user closed the tab).
     var harness = Harness()
     let surfaceID = UUID()
 
@@ -145,9 +145,9 @@ struct AgentPresenceFeatureTests {
   }
 
   @Test func livenessSweepEvictingAwaitingRecordClearsBadgeImmediately() {
-    // C10(c): a Claude process that crashes mid-awaiting-input would leave
-    // a sticky orange badge until the user closed the surface. The pid
-    // sweep must drop the awaiting record entirely, not just downgrade it.
+    // A Claude process that crashes mid-awaiting-input would leave a sticky
+    // orange badge until the user closed the surface. The pid sweep must drop
+    // the awaiting record entirely, not just downgrade it.
     var harness = Harness()
     let surfaceID = UUID()
     let deadPid = makeDeadPid()
@@ -163,10 +163,9 @@ struct AgentPresenceFeatureTests {
   }
 
   @Test func livenessSweepPartialPidEvictionPreservesActivity() {
-    // C1: when only some of a multi-pid record's pids die (e.g. Claude
-    // crash + reopen in the same surface, where SessionStart for the new
-    // pid union-inserts), the surviving record's activity must NOT be
-    // wiped to .idle.
+    // When only some of a multi-pid record's pids die (e.g. Claude crash +
+    // reopen in the same surface, where SessionStart for the new pid
+    // union-inserts), the surviving record's activity must NOT be wiped to .idle.
     var harness = Harness()
     let surfaceID = UUID()
     let alivePid: pid_t = getpid()
@@ -360,9 +359,9 @@ struct AgentPresenceFeatureTests {
   }
 
   @Test func hasActivityIsTrueForAwaitingOnlyRecord() {
-    // C10(b): the shimmer is gated on hasActivity, which must light up
-    // for awaiting-input even when no tool is currently running (e.g.
-    // permission prompt without a paired busy event).
+    // The shimmer is gated on hasActivity, which must light up for
+    // awaiting-input even when no tool is currently running (e.g. a permission
+    // prompt without a paired busy event).
     var harness = Harness()
     let surfaceID = UUID()
 
@@ -375,9 +374,9 @@ struct AgentPresenceFeatureTests {
   // MARK: - Settings gate.
 
   @Test func badgesGateSuppressesPerSurfaceAndAcrossAccessors() {
-    // C10(a): the user-facing toggle gates the avatar accessors. The
-    // shimmer gate (`hasActivity`) is intentionally NOT gated; that's a
-    // generic worktree-doing-work signal independent of avatar visibility.
+    // The user-facing toggle gates the avatar accessors. The shimmer gate
+    // (`hasActivity`) is intentionally NOT gated; that's a generic
+    // worktree-doing-work signal independent of avatar visibility.
     var harness = Harness()
     let surfaceID = UUID()
 

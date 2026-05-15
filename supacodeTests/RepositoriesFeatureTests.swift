@@ -4095,9 +4095,11 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [:]
     }
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
     }
     await store.finish()
   }
@@ -4217,9 +4219,11 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.worktreeInfoEvent) {
       $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [:]
     }
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
     }
     await store.finish()
   }
@@ -4318,9 +4322,20 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.worktreeInfoEvent) {
       $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [
+        mainWorktree.id: mainWorktree.name,
+        featureWorktree.id: featureWorktree.name,
+      ]
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: mainWorktree.id]?.pullRequestBranchAtQueryTime = mainWorktree.name
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
     }
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
     }
     await store.finish()
   }
@@ -4380,6 +4395,59 @@ struct RepositoriesFeatureTests {
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = nil
     }
+  }
+
+  @Test func worktreeInfoEventRepositoryPullRequestRefreshArmsAndClearsWatermark() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .available
+    state.reconcileSidebarForTesting()
+    let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
+    let featureName = featureWorktree.name
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.remoteInfo = { _ in GithubRemoteInfo(host: "github.com", owner: "o", repo: "r") }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in [featureName: pullRequest] }
+    }
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        )
+      )
+    ) {
+      $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [
+        mainWorktree.id: mainWorktree.name,
+        featureWorktree.id: featureWorktree.name,
+      ]
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: mainWorktree.id]?.pullRequestBranchAtQueryTime = mainWorktree.name
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
+    }
+    await store.receive(\.repositoryPullRequestsLoaded)
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = pullRequest
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = nil
+    }
+    await store.receive(\.repositoryPullRequestRefreshCompleted) {
+      $0.inFlightPullRequestRefreshRepositoryIDs = []
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
+    }
+    await store.finish()
   }
 
   @Test func unarchiveWorktreeNoopsWhenNotArchived() async {

@@ -87,10 +87,6 @@ final class WorktreeTerminalState {
   var onSetupScriptConsumed: (() -> Void)?
   /// Forwarded to the manager so it can emit a `surfacesClosed` event into TCA.
   var onSurfacesClosed: ((Set<UUID>) -> Void)?
-  /// Surface IDs the manager knows are currently busy with an agent. Mutated
-  /// by the manager when AppFeature pushes presence deltas; defaults to empty
-  /// for states constructed outside the manager (tests, previews).
-  var agentBusySurfaceIDs: Set<UUID> = []
 
   init(
     runtime: GhosttyRuntime,
@@ -120,21 +116,18 @@ final class WorktreeTerminalState {
 
   private func isTabBusy(_ tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
-    let leaves = tree.leaves()
-    if leaves.contains(where: { isRunningProgressState($0.bridge.state.progressState) }) {
-      return true
-    }
-    return leaves.contains { agentBusySurfaceIDs.contains($0.id) }
+    return tree.leaves().contains { isRunningProgressState($0.bridge.state.progressState) }
   }
 
   /// Per-row projection consumed by `SidebarItemFeature.terminalProjectionChanged`.
-  /// Folded into a struct so equality short-circuits in the row reducer.
+  /// `isProgressBusy` reflects Ghostty progress state only; AppFeature merges
+  /// agent activity downstream of this event.
   func currentProjection() -> WorktreeRowProjection {
     WorktreeRowProjection(
       surfaceIDs: allSurfaceIDs,
-      isTaskRunning: taskStatus == .running,
+      isProgressBusy: taskStatus == .running,
       hasUnseenNotifications: hasUnseenNotification,
-      notifications: IdentifiedArray(uniqueElements: notifications)
+      notifications: IdentifiedArray(uniqueElements: notifications),
     )
   }
 
@@ -400,18 +393,6 @@ final class WorktreeTerminalState {
     tabManager.selectTab(tabId)
     focusSurface(in: tabId)
     emitTaskStatusIfChanged()
-  }
-
-  /// Re-evaluate task status and tab dirty flags for a surface whose
-  /// presence-side activity just changed. Returns true when this state
-  /// owns the surface so the caller can stop walking.
-  func surfaceActivityChanged(surfaceID: UUID) -> Bool {
-    guard surfaces[surfaceID] != nil else { return false }
-    for (tabID, _) in trees {
-      tabManager.updateDirty(tabID, isDirty: isTabBusy(tabID))
-    }
-    emitTaskStatusIfChanged()
-    return true
   }
 
   func focusSelectedTab() {

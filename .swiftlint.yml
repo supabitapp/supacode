@@ -40,6 +40,9 @@ nesting:
   type_level: 2
 
 identifier_name:
+  max_length:
+    warning: 50
+    error: 60
   excluded:
     - id
     - up

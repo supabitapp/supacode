@@ -3,70 +3,56 @@ import Foundation
 
 @testable import supacode
 
-/// Test-only harness that runs a private `AgentPresenceFeature.State` and pumps
-/// presence deltas (`surfaceClosed`, `surfacesClosed`, `hookEventReceived`,
-/// `livenessSweepTick`) back into the `WorktreeTerminalManager` the same way
-/// `AppFeature` does in production: drain the manager's event stream and
-/// translate `surfacesClosed` / `agentHookEventReceived` events into reducer
-/// dispatches. After each dispatch the harness pushes the authoritative busy
-/// surface set into the manager via `.agentActivityChanged`.
+/// Test-only harness around an `AgentPresenceFeature.State`. Drains the
+/// manager's event stream and routes `agentHookEventReceived` /
+/// `surfacesClosed` events into the reducer so callers can drive the manager
+/// via `server.onEvent(...)` and then await `harness.drain()` to settle
+/// presence on the same loop tick.
 @MainActor
 final class PresenceTestHarness {
   var state = AgentPresenceFeature.State()
   private let reducer = AgentPresenceFeature()
-  private weak var manager: WorktreeTerminalManager?
-  private var eventTask: Task<Void, Never>?
+  private var continuation: AsyncStream<TerminalClient.Event>.Continuation?
+  private var stream: AsyncStream<TerminalClient.Event>?
+  private var consumeTask: Task<Void, Never>?
 
   func send(_ action: AgentPresenceFeature.Action) {
-    let dirtyBefore = busySurfaceIDs()
     _ = reducer.reduce(into: &state, action: action)
-    let dirtyAfter = busySurfaceIDs()
-    let dirty = dirtyBefore.symmetricDifference(dirtyAfter)
-    manager?.handleAgentActivityChanged(busySurfaceIDs: dirtyAfter, dirtySurfaceIDs: dirty)
+  }
+
+  /// Pumps any events buffered on the manager's stream into the reducer and
+  /// returns. Tests call this after `server.onEvent(...)` so presence state
+  /// settles before assertions.
+  func drain() async {
+    // Yield repeatedly so the consume task drains every buffered event before
+    // returning to the test thread.
+    for _ in 0..<16 { await Task.yield() }
   }
 
   func attach(to manager: WorktreeTerminalManager) {
-    self.manager = manager
-    // Strong captures: tests routinely discard the harness with `_`, which
-    // would nil out a weak capture before the first hook event arrived.
-    manager.syncPresenceBridge = { event in
-      _ = self.reducer.reduce(into: &self.state, action: .hookEventReceived(event))
-      return self.busySurfaceIDs()
-    }
     let stream = manager.eventStream()
-    eventTask?.cancel()
-    eventTask = Task {
+    self.stream = stream
+    consumeTask?.cancel()
+    consumeTask = Task {
       for await event in stream {
-        if case .surfacesClosed(let ids) = event {
+        switch event {
+        case .agentHookEventReceived(let payload):
+          self.send(.hookEventReceived(payload))
+        case .surfacesClosed(let ids):
           if ids.count == 1, let id = ids.first {
             self.send(.surfaceClosed(id))
           } else {
             self.send(.surfacesClosed(ids))
           }
+        default:
+          continue
         }
       }
     }
   }
-
-  func detach() {
-    eventTask?.cancel()
-    eventTask = nil
-    manager = nil
-  }
-
-  private func busySurfaceIDs() -> Set<UUID> {
-    Set(
-      state.records
-        .filter { $0.value.activity != .idle }
-        .map(\.key.surfaceID),
-    )
-  }
 }
 
 extension WorktreeTerminalManager {
-  /// Spins up a fresh `PresenceTestHarness` bound to a new manager. Tests get
-  /// both pieces back so they can drive presence directly (`harness.send(...)`)
-  /// or assert on `harness.state` without owning a TCA store.
   @MainActor static func withPresenceHarness(
     runtime: GhosttyRuntime = GhosttyRuntime(),
     socketServer: AgentHookSocketServer? = nil,

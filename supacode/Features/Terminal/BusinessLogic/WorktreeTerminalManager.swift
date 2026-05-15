@@ -42,11 +42,6 @@ final class WorktreeTerminalManager {
   var onDeeplinkCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI via socket. Parameters: resource name, params, client FD.
   var onQuery: ((String, [String: String], Int32) -> Void)?
-  /// Synchronous bridge for the agent-presence test harness. Production reads
-  /// hook events off the `eventStream()` and dispatches `.agentPresence(...)`
-  /// from a Task; tests pump synchronously through this hook so
-  /// `manager.taskStatus(for:)` resolves on the same tick as `server.onEvent`.
-  var syncPresenceBridge: ((AgentHookEvent) -> Set<UUID>)?
 
   init<C: Clock<Duration>>(
     runtime: GhosttyRuntime,
@@ -106,9 +101,8 @@ final class WorktreeTerminalManager {
     }
   }
 
-  /// Holds `.idle` for a debounce window so PostToolUse/PreToolUse storms don't flap downstream UI.
-  /// Lives at the socket boundary, not inside AgentPresenceFeature, so the presence write and the
-  /// imperative side-effects on `surfaceActivityChanged` (tab dirty, task status) stay in lockstep.
+  /// Holds `.idle` for a debounce window so PostToolUse / PreToolUse storms don't flap downstream UI.
+  /// Lives at the socket boundary so the debounce applies before the event lands in TCA.
   private func dispatchHookEvent(_ event: AgentHookEvent) {
     guard let agent = SkillAgent(rawValue: event.agent) else {
       applyHookEvent(event)
@@ -141,18 +135,6 @@ final class WorktreeTerminalManager {
 
   private func applyHookEvent(_ event: AgentHookEvent) {
     emit(.agentHookEventReceived(event))
-    if let bridge = syncPresenceBridge {
-      let busy = bridge(event)
-      for state in states.values {
-        let scoped = busy.intersection(state.allSurfaceIDs)
-        if state.agentBusySurfaceIDs != scoped {
-          state.agentBusySurfaceIDs = scoped
-        }
-      }
-    }
-    for state in states.values where state.surfaceActivityChanged(surfaceID: event.surfaceID) {
-      break
-    }
   }
 
   // MARK: - CLI queries.
@@ -277,8 +259,7 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .selectTab, .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune,
-      .setNotificationsEnabled, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename,
-      .agentActivityChanged:
+      .setNotificationsEnabled, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
       return false
     }
     return true
@@ -292,7 +273,7 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .focusSurface,
       .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
-      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename, .agentActivityChanged:
+      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
       return false
     }
     return true
@@ -316,8 +297,6 @@ final class WorktreeTerminalManager {
       }
       selectedWorktreeID = id
       terminalLogger.info("Selected worktree \(id ?? "nil")")
-    case .agentActivityChanged(let busySurfaceIDs, let dirtySurfaceIDs):
-      handleAgentActivityChanged(busySurfaceIDs: busySurfaceIDs, dirtySurfaceIDs: dirtySurfaceIDs)
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .startSearch, .searchSelection, .navigateSearchNext, .navigateSearchPrevious, .endSearch,
@@ -510,10 +489,6 @@ final class WorktreeTerminalManager {
     states[worktreeID]
   }
 
-  func taskStatus(for worktreeID: Worktree.ID) -> WorktreeTaskStatus? {
-    states[worktreeID]?.taskStatus
-  }
-
   func isBlockingScriptRunning(kind: BlockingScriptKind, for worktreeID: Worktree.ID) -> Bool {
     states[worktreeID]?.isBlockingScriptRunning(kind: kind) == true
   }
@@ -572,23 +547,6 @@ final class WorktreeTerminalManager {
   func markNotificationRead(worktreeID: Worktree.ID, notificationID: UUID) {
     states[worktreeID]?.markNotificationRead(id: notificationID)
     emitProjection(for: worktreeID)
-  }
-
-  /// Bulk-driven update from TCA after `agentPresence(.delegate(.surfacesChanged))`.
-  /// Replaces each state's authoritative busy set then re-emits per-worktree projections
-  /// for any state owning a dirty surface.
-  func handleAgentActivityChanged(busySurfaceIDs: Set<UUID>, dirtySurfaceIDs: Set<UUID>) {
-    var affectedWorktrees: Set<Worktree.ID> = []
-    for (id, state) in states {
-      let scoped = busySurfaceIDs.intersection(state.allSurfaceIDs)
-      if state.agentBusySurfaceIDs != scoped {
-        state.agentBusySurfaceIDs = scoped
-      }
-      for surfaceID in dirtySurfaceIDs where state.surfaceActivityChanged(surfaceID: surfaceID) {
-        affectedWorktrees.insert(id)
-      }
-    }
-    for id in affectedWorktrees { emitProjection(for: id) }
   }
 
   func saveAllLayoutSnapshots() {

@@ -17,8 +17,7 @@ struct AgentPresenceFeature {
     case idle
   }
 
-  /// One badge worth of state. Surface ID isn't carried since callers filter
-  /// by the surface set.
+  /// One badge worth of state. Surface ID is redundant; callers scope by surface set.
   struct AgentInstance: Hashable, Sendable {
     let agent: SkillAgent
     let activity: Activity
@@ -61,11 +60,10 @@ struct AgentPresenceFeature {
   @ObservableState
   struct State: Equatable {
     /// Per-(surface, agent) record. Pids drive the liveness sweep and record
-    /// disposal. Every bridge today sends a pid in the envelope.
+    /// disposal. All bridges require a pid in the envelope.
     var records: [PresenceKey: PresenceRecord] = [:]
     /// Per-surface agent presence. A surface can host multiple agents (rare,
-    /// but possible if e.g. Claude spawns Codex). Order isn't significant;
-    /// callers sort for display so avatar ordering stays stable across renders.
+    /// but possible if e.g. Claude spawns Codex). Order not guaranteed; sort before display.
     var bySurface: [UUID: Set<SkillAgent>] = [:]
   }
 
@@ -213,8 +211,8 @@ extension AgentPresenceFeature.State {
     return bySurface[id] ?? []
   }
 
-  /// One `AgentInstance` per (surface, agent) pair across the caller-resolved
-  /// surface list. Duplicates preserved (a tab hosting two surfaces both
+  /// One `AgentInstance` per (surface, agent) pair across the given surface list.
+  /// Duplicates preserved (a tab hosting two surfaces both
   /// running Claude shows two Claude badges). Sorted with awaiting-input
   /// instances first (contrast-flipped badges lead the row) then by agent
   /// rawValue so iteration is stable across renders.

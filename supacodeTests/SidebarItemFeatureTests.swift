@@ -99,7 +99,7 @@ struct SidebarItemFeatureTests {
     )
     let baseline = WorktreeRowProjection(
       surfaceIDs: [surface1],
-      isTaskRunning: false,
+      isProgressBusy: false,
       hasUnseenNotifications: false,
       notifications: []
     )
@@ -113,7 +113,7 @@ struct SidebarItemFeatureTests {
       .terminalProjectionChanged(
         WorktreeRowProjection(
           surfaceIDs: [surface1, surface2],
-          isTaskRunning: false,
+          isProgressBusy: false,
           hasUnseenNotifications: false,
           notifications: []
         )
@@ -121,25 +121,25 @@ struct SidebarItemFeatureTests {
     ) {
       $0.surfaceIDs = [surface1, surface2]
     }
-    // isTaskRunning alone changes.
+    // isProgressBusy alone changes (and `isTaskRunning` derives from it).
     await store.send(
       .terminalProjectionChanged(
         WorktreeRowProjection(
           surfaceIDs: [surface1, surface2],
-          isTaskRunning: true,
+          isProgressBusy: true,
           hasUnseenNotifications: false,
           notifications: []
         )
       )
     ) {
-      $0.isTaskRunning = true
+      $0.isProgressBusy = true
     }
     // hasUnseenNotifications flips alone (independent of `notifications`).
     await store.send(
       .terminalProjectionChanged(
         WorktreeRowProjection(
           surfaceIDs: [surface1, surface2],
-          isTaskRunning: true,
+          isProgressBusy: true,
           hasUnseenNotifications: true,
           notifications: []
         )
@@ -152,7 +152,7 @@ struct SidebarItemFeatureTests {
       .terminalProjectionChanged(
         WorktreeRowProjection(
           surfaceIDs: [surface1, surface2],
-          isTaskRunning: true,
+          isProgressBusy: true,
           hasUnseenNotifications: true,
           notifications: [notif]
         )

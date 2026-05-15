@@ -78,15 +78,16 @@ struct SidebarItemFeature {
     var hasAgentActivity: Bool = false
 
     var surfaceIDs: [UUID] = []
-    /// Precomputed by the projection emitter; rows never poll the terminal manager.
-    var isTaskRunning: Bool = false
+    /// Ghostty progress busy on any surface. Combined with `hasAgentActivity` for shimmer.
+    var isProgressBusy: Bool = false
     var hasUnseenNotifications: Bool = false
     var notifications: IdentifiedArrayOf<WorktreeTerminalNotification> = []
+    /// True when either Ghostty progress is busy or an agent is busy on a surface.
+    var isTaskRunning: Bool { isProgressBusy || hasAgentActivity }
 
     var isDragging: Bool = false
     var shortcutHint: String?
-    /// One-shot focus token: set when a selection arrives with `focusTerminal: true`,
-    /// consumed by the view after it routes focus to the worktree's terminal.
+    /// One-shot focus token: set when a selection arrives with `focusTerminal: true`.
     var shouldFocusTerminal: Bool = false
   }
 
@@ -199,7 +200,9 @@ struct SidebarItemFeature {
 
       case .terminalProjectionChanged(let projection):
         if state.surfaceIDs != projection.surfaceIDs { state.surfaceIDs = projection.surfaceIDs }
-        if state.isTaskRunning != projection.isTaskRunning { state.isTaskRunning = projection.isTaskRunning }
+        if state.isProgressBusy != projection.isProgressBusy {
+          state.isProgressBusy = projection.isProgressBusy
+        }
         if state.hasUnseenNotifications != projection.hasUnseenNotifications {
           state.hasUnseenNotifications = projection.hasUnseenNotifications
         }
@@ -326,9 +329,11 @@ struct RosterDelta: Equatable, Sendable {
 }
 
 /// Per-row terminal snapshot emitted by `WorktreeTerminalManager`'s 400 ms debounce.
+/// `isProgressBusy` reflects Ghostty progress state only; the parent overlays
+/// agent activity downstream of this event.
 struct WorktreeRowProjection: Equatable, Sendable {
   let surfaceIDs: [UUID]
-  let isTaskRunning: Bool
+  let isProgressBusy: Bool
   let hasUnseenNotifications: Bool
   let notifications: IdentifiedArrayOf<WorktreeTerminalNotification>
 }

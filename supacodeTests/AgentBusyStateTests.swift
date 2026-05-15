@@ -11,81 +11,49 @@ import Testing
 struct AgentBusyStateTests {
   // MARK: - Surface → tab → worktree bubbling.
 
-  @Test func busyEventMakesTaskStatusRunning() {
-    let worktree = makeWorktree()
-    let fixture = makeStateWithSurface(worktree: worktree)
-    #expect(fixture.manager.taskStatus(for: worktree.id) == .idle)
+  @Test func busyEventMakesActivityTrue() {
+    let fixture = makeStateWithSurface()
+    #expect(!fixture.isBusy)
 
     fixture.startSession()
     fixture.emit(.busy)
 
-    #expect(fixture.manager.taskStatus(for: worktree.id) == .running)
+    #expect(fixture.isBusy)
   }
 
   @Test func clearBusyReturnsToIdle() {
-    let worktree = makeWorktree()
-    let fixture = makeStateWithSurface(worktree: worktree)
-
-    fixture.startSession()
-    fixture.emit(.busy)
-    #expect(fixture.manager.taskStatus(for: worktree.id) == .running)
-
-    fixture.emit(.idle)
-    #expect(fixture.manager.taskStatus(for: worktree.id) == .idle)
-  }
-
-  @Test func busyEventMarksTabDirty() {
     let fixture = makeStateWithSurface()
 
-    // Complete the blocking script to clear initial dirty state.
-    fixture.surface.bridge.onCommandFinished?(0)
-    let tabBefore = fixture.state.tabManager.tabs.first { $0.id == fixture.tabId }
-    #expect(tabBefore?.isDirty == false)
-
     fixture.startSession()
     fixture.emit(.busy)
+    #expect(fixture.isBusy)
 
-    let tabAfter = fixture.state.tabManager.tabs.first { $0.id == fixture.tabId }
-    #expect(tabAfter?.isDirty == true)
-  }
-
-  @Test func clearBusyClearsTabDirty() {
-    let fixture = makeStateWithSurface()
-
-    fixture.surface.bridge.onCommandFinished?(0)
-    fixture.startSession()
-    fixture.emit(.busy)
     fixture.emit(.idle)
-
-    let tab = fixture.state.tabManager.tabs.first { $0.id == fixture.tabId }
-    #expect(tab?.isDirty == false)
+    #expect(!fixture.isBusy)
   }
 
   @Test func activityEventForUnknownSurfaceIsNoOp() {
-    let worktree = makeWorktree()
-    let fixture = makeStateWithSurface(worktree: worktree)
+    let fixture = makeStateWithSurface()
 
     let strangerSurface = UUID()
     fixture.presence.send(
       .hookEventReceived(makeHookEvent(.sessionStart, surfaceID: strangerSurface, pid: getpid())))
     fixture.presence.send(.hookEventReceived(makeHookEvent(.busy, surfaceID: strangerSurface)))
-    _ = fixture.state.surfaceActivityChanged(surfaceID: strangerSurface)
     fixture.presence.send(.surfaceClosed(strangerSurface))
 
-    #expect(fixture.manager.taskStatus(for: worktree.id) == .idle)
+    #expect(!fixture.isBusy)
   }
 
-  @Test func closingBusySurfaceClearsTaskStatus() {
-    let worktree = makeWorktree()
-    let fixture = makeStateWithSurface(worktree: worktree)
+  @Test func closingBusySurfaceClearsActivity() {
+    let fixture = makeStateWithSurface()
 
     fixture.startSession()
     fixture.emit(.busy)
-    #expect(fixture.manager.taskStatus(for: worktree.id) == .running)
+    #expect(fixture.isBusy)
 
     fixture.state.closeTab(fixture.tabId)
     fixture.presence.send(.surfaceClosed(fixture.surface.id))
-    #expect(fixture.manager.taskStatus(for: worktree.id) == .idle)
+    #expect(!fixture.isBusy)
   }
 
   @Test func multipleSurfacesBusyInDifferentTabs() {
@@ -112,54 +80,25 @@ struct AgentBusyStateTests {
       Issue.record("Expected surfaces in both tabs")
       return
     }
+    let surfaces = [surfaceA.id, surfaceB.id]
 
     func emit(_ name: AgentHookEvent.EventName, surfaceID: UUID, pid: pid_t? = nil) {
       presence.send(.hookEventReceived(makeHookEvent(name, surfaceID: surfaceID, pid: pid)))
-      _ = state.surfaceActivityChanged(surfaceID: surfaceID)
     }
 
     emit(.sessionStart, surfaceID: surfaceA.id, pid: getpid())
     emit(.sessionStart, surfaceID: surfaceB.id, pid: getpid())
     emit(.busy, surfaceID: surfaceA.id)
     emit(.busy, surfaceID: surfaceB.id)
-    #expect(manager.taskStatus(for: worktree.id) == .running)
+    #expect(presence.state.hasActivity(in: surfaces))
 
-    // Clear one — still running because the other is busy.
+    // Clear one: still busy because the other is busy.
     emit(.idle, surfaceID: surfaceA.id)
-    #expect(manager.taskStatus(for: worktree.id) == .running)
+    #expect(presence.state.hasActivity(in: surfaces))
 
-    // Clear the other — now idle.
+    // Clear the other: now idle.
     emit(.idle, surfaceID: surfaceB.id)
-    #expect(manager.taskStatus(for: worktree.id) == .idle)
-  }
-
-  @Test func taskStatusChangedEmittedOnBusyToggle() async {
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
-    let worktree = makeWorktree()
-    let stream = manager.eventStream()
-
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
-
-    guard let state = manager.stateIfExists(for: worktree.id),
-      let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
-    else {
-      Issue.record("Expected blocking script tab and surface")
-      return
-    }
-
-    presence.send(.hookEventReceived(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid())))
-    presence.send(.hookEventReceived(makeHookEvent(.busy, surfaceID: surface.id)))
-    _ = state.surfaceActivityChanged(surfaceID: surface.id)
-    _ = tabId  // silence unused warning
-
-    let event = await nextEvent(stream) { event in
-      if case .taskStatusChanged(_, let status) = event, status == .running {
-        return true
-      }
-      return false
-    }
-    #expect(event != nil)
+    #expect(!presence.state.hasActivity(in: surfaces))
   }
 
   // MARK: - Notification deduplication.
@@ -335,7 +274,6 @@ struct AgentBusyStateTests {
         .hookEventReceived(
           AgentBusyStateTests.makeHookEvent(.sessionStart, agent: agent, surfaceID: surface.id, pid: pid)),
       )
-      _ = state.surfaceActivityChanged(surfaceID: surface.id)
     }
 
     func emit(_ name: AgentHookEvent.EventName, agent: SkillAgent = .claude) {
@@ -343,8 +281,9 @@ struct AgentBusyStateTests {
         .hookEventReceived(
           AgentBusyStateTests.makeHookEvent(name, agent: agent, surfaceID: surface.id)),
       )
-      _ = state.surfaceActivityChanged(surfaceID: surface.id)
     }
+
+    var isBusy: Bool { presence.state.hasActivity(in: [surface.id]) }
   }
 
   private static func makeHookEvent(

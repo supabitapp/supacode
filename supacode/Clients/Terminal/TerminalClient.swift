@@ -39,10 +39,6 @@ struct TerminalClient {
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
     case refreshTabBarVisibility
-    /// Authoritative set of agent-busy surfaces pushed by `AppFeature` after
-    /// `agentPresence(.delegate(.surfacesChanged))`. The manager caches the set so
-    /// `isTabBusy` resolves locally without pulling back into TCA.
-    case agentActivityChanged(busySurfaceIDs: Set<UUID>, dirtySurfaceIDs: Set<UUID>)
   }
 
   enum Event: Equatable {

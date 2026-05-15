@@ -82,9 +82,7 @@ extension RepositoriesFeature {
     }
     // Carry forward in-flight rows whose worktree dropped out of the roster
     // mid-archive / mid-delete so the per-target completion handlers can drain
-    // them. Previous behavior preserved aggregate sets across reloads; the
-    // per-row equivalent keeps these orphan rows alive until their lifecycle
-    // returns to `.idle`.
+    // them. Orphans stay alive until their lifecycle returns to `.idle`.
     let rebuiltIDs = Set(rebuilt.ids)
     for existing in previousByID
     where !rebuiltIDs.contains(existing.id) && existing.lifecycle != .idle {
@@ -95,7 +93,7 @@ extension RepositoriesFeature {
   }
 
   /// Rebuilds `surfaceToItemID` from the live rows so the AppFeature reverse
-  /// lookup (used by the agent-presence fan-out) never points at a gone row.
+  /// lookup never points at a gone row.
   private static func rebuildSurfaceToItemIDIndex(_ state: inout State) {
     var index: [UUID: SidebarItemID] = [:]
     for row in state.sidebarItems {
