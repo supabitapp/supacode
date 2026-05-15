@@ -189,6 +189,43 @@ struct RepositoriesFeatureSidebarTests {
     #expect(store.state.sidebarItems[id: worktreeID]?.pullRequest == pullRequest)
   }
 
+  @Test func pullRequestsLoadedClearsWatermarkForQueriedButMissingWorktree() async {
+    // Worktree was included in the request snapshot but absent from the response
+    // (e.g. branch deleted upstream); the row must still receive
+    // `pullRequestChanged` so its watermark clears and the next refresh is eligible.
+    let repoID = "/tmp/repo"
+    let worktreeID = "/tmp/repo/wt-feature"
+    let worktree = Worktree(
+      id: worktreeID,
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: worktreeID),
+      repositoryRootURL: URL(fileURLWithPath: repoID)
+    )
+    let repository = Repository(
+      id: repoID,
+      rootURL: URL(fileURLWithPath: repoID),
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [worktree])
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime = "feature"
+    state.inFlightPullRequestBranchSnapshotsByRepositoryID[repoID] = [worktreeID: "feature"]
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .repositoryPullRequestsLoaded(repositoryID: repoID, pullRequestsByWorktreeID: [:])
+    )
+    await store.receive(\.sidebarItems[id: worktreeID].pullRequestChanged) {
+      $0.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime = nil
+    }
+    await store.finish()
+    #expect(store.state.sidebarItems[id: worktreeID]?.pullRequest == nil)
+  }
+
   private func makeState(repository: Repository) -> RepositoriesFeature.State {
     var state = RepositoriesFeature.State()
     state.repositories = IdentifiedArray(uniqueElements: [repository])

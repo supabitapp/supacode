@@ -2659,7 +2659,9 @@ struct RepositoriesFeature {
         var archiveWorktreeIDs: [Worktree.ID] = []
         var deleteWorktreeIDs: [Worktree.ID] = []
         var rowEffects: [Effect<Action>] = []
-        for worktreeID in pullRequestsByWorktreeID.keys.sorted() {
+        // Queried-but-missing worktrees must still clear their row watermark.
+        let dispatchIDs = Set(branchSnapshot.keys).union(pullRequestsByWorktreeID.keys)
+        for worktreeID in dispatchIDs.sorted() {
           guard let worktree = repository.worktrees[id: worktreeID] else {
             continue
           }
