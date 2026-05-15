@@ -42,6 +42,8 @@ final class GithubSettingsViewModel {
         state = .outdated
       case .unavailable:
         state = .unavailable
+      case .gatewayTimeout:
+        state = .error(error.localizedDescription ?? "GitHub returned a gateway timeout.")
       case .commandFailed(let message):
         state = .error(message)
       }

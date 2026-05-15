@@ -1,4 +1,5 @@
 import ConcurrencyExtras
+import Dependencies
 import Foundation
 import Testing
 
@@ -85,10 +86,10 @@ struct GithubCLIClientTests {
     _ = try await client.batchPullRequests("github.com", "khoi", "repo", branches)
 
     let snapshot = await probe.snapshot()
-    #expect(snapshot.ghCallCount == 4)
+    #expect(snapshot.ghCallCount == 20)
     #expect(snapshot.maxInFlight == 3)
     #expect(snapshot.whichCallCount == 1)
-    #expect(snapshot.loginCallCount == 4)
+    #expect(snapshot.loginCallCount == 20)
   }
 
   @Test func batchPullRequestsThrowsWhenAnyChunkFails() async {
@@ -138,12 +139,98 @@ struct GithubCLIClientTests {
       switch error {
       case .commandFailed:
         break
-      case .outdated, .unavailable:
+      case .outdated, .unavailable, .gatewayTimeout:
         Issue.record("Unexpected GithubCLIError: \(error.localizedDescription)")
       }
     } catch {
       Issue.record("Unexpected error type: \(error.localizedDescription)")
     }
+  }
+
+  @Test func batchPullRequestsRetriesOnGatewayTimeoutOnce() async throws {
+    let probe = GithubBatchShellProbe()
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          await probe.recordWhichCall()
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        await probe.recordLoginCall()
+        let callIndex = await probe.beginGhCall()
+        if callIndex == 1 {
+          await probe.endGhCall()
+          throw ShellClientError(
+            command: "gh api graphql",
+            stdout: "",
+            stderr: "gh: HTTP 504",
+            exitCode: 1
+          )
+        }
+        let stdout = graphQLResponse(for: arguments)
+        await probe.endGhCall()
+        return ShellOutput(stdout: stdout, stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+    let branches = (0..<5).map { "feature-\($0)" }
+
+    let result = try await withDependencies {
+      $0.continuousClock = ImmediateClock()
+    } operation: {
+      try await client.batchPullRequests("github.com", "khoi", "repo", branches)
+    }
+
+    #expect(result.isEmpty)
+    let snapshot = await probe.snapshot()
+    #expect(snapshot.loginCallCount == 2)
+  }
+
+  @Test func batchPullRequestsPropagatesGatewayTimeoutAfterOneRetry() async {
+    // The retry-once contract: a second consecutive 504 must surface as a
+    // `.gatewayTimeout` error rather than spinning forever.
+    let probe = GithubBatchShellProbe()
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          await probe.recordWhichCall()
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, _, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        await probe.recordLoginCall()
+        _ = await probe.beginGhCall()
+        await probe.endGhCall()
+        throw ShellClientError(command: "gh api graphql", stdout: "", stderr: "gh: HTTP 504", exitCode: 1)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+    let branches = (0..<5).map { "feature-\($0)" }
+
+    do {
+      _ = try await withDependencies {
+        $0.continuousClock = ImmediateClock()
+      } operation: {
+        try await client.batchPullRequests("github.com", "khoi", "repo", branches)
+      }
+      Issue.record("Expected batchPullRequests to throw after two 504s")
+    } catch GithubCLIError.gatewayTimeout {
+      // Expected.
+    } catch {
+      Issue.record("Unexpected error type: \(error.localizedDescription)")
+    }
+
+    let snapshot = await probe.snapshot()
+    #expect(snapshot.loginCallCount == 2)
   }
 
   @Test func batchPullRequestsDeduplicatesBeforeChunking() async throws {
@@ -176,9 +263,9 @@ struct GithubCLIClientTests {
 
     #expect(result.isEmpty)
     let snapshot = await probe.snapshot()
-    #expect(snapshot.ghCallCount == 2)
+    #expect(snapshot.ghCallCount == 6)
     #expect(snapshot.whichCallCount == 1)
-    #expect(snapshot.loginCallCount == 2)
+    #expect(snapshot.loginCallCount == 6)
   }
 
   @Test func resolveRemoteInfoUsesGhRepoViewAndParsesHost() async {

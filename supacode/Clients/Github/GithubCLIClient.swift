@@ -476,8 +476,15 @@ nonisolated private func deduplicatedBranches(_ branches: [String]) -> [String] 
   return branches.filter { !$0.isEmpty && seen.insert($0).inserted }
 }
 
-nonisolated private let batchPullRequestsChunkSize = 25
+// Small chunks keep the GraphQL `statusCheckRollup` payload under the gateway's 504 threshold on busy repos.
+nonisolated private let batchPullRequestsChunkSize = 5
 nonisolated private let batchPullRequestsMaxConcurrentRequests = 3
+nonisolated private let batchPullRequestsGatewayRetryBackoff: Duration = .seconds(1)
+
+// Matches `HTTP 504`, `HTTP/1.1 504`, `HTTP/2 504`, etc. on any stderr line.
+nonisolated private func isGatewayTimeoutStderr(_ stderr: String) -> Bool {
+  stderr.contains(#/\bHTTP(?:/[0-9.]+)?\s+504\b/#)
+}
 
 nonisolated private func makeBranchChunks(
   _ branches: [String],
@@ -569,23 +576,27 @@ nonisolated private func fetchPullRequestsChunk(
   chunkIndex: Int
 ) async throws -> (Int, [String: GithubPullRequest]) {
   let (query, aliasMap) = makeBatchPullRequestsQuery(branches: chunk)
-  let output = try await runGh(
-    shell: shell,
-    resolver: resolver,
-    arguments: [
-      "api",
-      "graphql",
-      "--hostname",
-      request.host,
-      "-f",
-      "query=\(query)",
-      "-f",
-      "owner=\(request.owner)",
-      "-f",
-      "repo=\(request.repo)",
-    ],
-    repoRoot: nil
-  )
+  let arguments = [
+    "api",
+    "graphql",
+    "--hostname",
+    request.host,
+    "-f",
+    "query=\(query)",
+    "-f",
+    "owner=\(request.owner)",
+    "-f",
+    "repo=\(request.repo)",
+  ]
+  @Dependency(\.continuousClock) var clock
+  let output: String
+  do {
+    output = try await runGh(shell: shell, resolver: resolver, arguments: arguments, repoRoot: nil)
+  } catch GithubCLIError.gatewayTimeout {
+    // One retry covers the intermittent cold-start 504 before the next periodic refresh.
+    try await clock.sleep(for: batchPullRequestsGatewayRetryBackoff)
+    output = try await runGh(shell: shell, resolver: resolver, arguments: arguments, repoRoot: nil)
+  }
   guard !output.isEmpty else {
     return (chunkIndex, [:])
   }
@@ -719,6 +730,9 @@ nonisolated private func runGh(
     if let shellError = error as? ShellClientError {
       if isOutdatedGitHubCLI(shellError) {
         throw GithubCLIError.outdated
+      }
+      if isGatewayTimeoutStderr(shellError.stderr) {
+        throw GithubCLIError.gatewayTimeout
       }
       let message = shellError.errorDescription ?? "Command failed: \(command)"
       throw GithubCLIError.commandFailed(message)
