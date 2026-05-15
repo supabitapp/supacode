@@ -1,7 +1,13 @@
 import Foundation
 
 nonisolated enum CodexHookSettings {
-  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .codex)
+  // `forwardStdin: true` on `busy` so every UserPromptSubmit refreshes the
+  // surface's restore intent with the live sessionId — Codex's SessionStart
+  // hook only fires once on first-turn (`openai/codex#15266`), so without
+  // this we miss session-id changes that happen after the badge has already
+  // appeared (e.g. `/new` or `/clear` followed by more work).
+  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(
+    event: .busy, agent: .codex, forwardStdin: true)
   fileprivate static let idle = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .codex)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .codex)
   // `forwardStdin: true` so the hook's stdin JSON (which carries Codex's

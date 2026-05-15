@@ -1,7 +1,14 @@
 import Foundation
 
 nonisolated enum ClaudeHookSettings {
-  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .claude)
+  // `forwardStdin: true` on `busy` so every turn refreshes the surface's
+  // restore intent with the *current* sessionId. Claude rewrites the
+  // session id when `--resume` forks into a new conversation, and that
+  // new id is only ever visible to the bridge through `UserPromptSubmit`
+  // stdin — without this, a user working in a forked session loses their
+  // restore lineage as soon as a stale SessionStart sid wins the capture.
+  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(
+    event: .busy, agent: .claude, forwardStdin: true)
   fileprivate static let idle = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .claude)
   fileprivate static let awaitingInput = AgentHookSettingsCommand.eventCommand(
     event: .awaitingInput, agent: .claude)

@@ -166,8 +166,12 @@ nonisolated enum PiExtensionContent {
         await sendEvent(env, "session_start", readSessionId(ctx));
       });
 
-      pi.on("agent_start", async (_event, _ctx) => {
-        await sendEvent(env, "busy");
+      pi.on("agent_start", async (_event, ctx) => {
+        // Refresh restore intent with the *current* sessionId every turn —
+        // Pi can rewrite session ids mid-conversation (resume / fork / new),
+        // and `agent_start` is our most reliable post-load hook to catch
+        // those changes before they're lost.
+        await sendEvent(env, "busy", readSessionId(ctx));
       });
 
       pi.on("agent_end", async (_event, ctx) => {

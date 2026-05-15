@@ -208,13 +208,31 @@ final class AgentPresenceManager {
       rebuildPresenceForSurface(event.surfaceID)
     case .busy:
       setActivity(.busy, for: key)
+      forwardLiveSessionID(from: event, agent: agent)
     case .awaitingInput:
       setActivity(.awaitingInput, for: key)
+      forwardLiveSessionID(from: event, agent: agent)
     case .idle:
       setActivity(.idle, for: key)
     default:
       return
     }
+  }
+
+  /// Refresh the surface's restore intent with the sessionId stitched into a
+  /// turn-level event (busy / awaitingInput). The first `session_start` captures
+  /// the id at attach time, but Claude/Codex/Pi/Kiro all rewrite the session
+  /// id when the user `--resume`s into a forked conversation — without this
+  /// late refresh, a long working session can end with a stale id captured to
+  /// disk while the conversation the user actually built up lives under a
+  /// different id. Re-uses `onSessionStarted` because the downstream consumer
+  /// only needs "(surface, agent, new sid)"; the duplicated semantic event-name
+  /// doesn't matter to it.
+  private func forwardLiveSessionID(from event: AgentHookEvent, agent: SkillAgent) {
+    guard let sessionID = event.decodeData(HookSessionPayload.self)?.sessionID,
+      !sessionID.isEmpty
+    else { return }
+    onSessionStarted?(event.surfaceID, agent, sessionID)
   }
 
   private func setActivity(_ activity: Activity, for key: PresenceKey) {

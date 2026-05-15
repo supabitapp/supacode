@@ -1,7 +1,12 @@
 import Foundation
 
 nonisolated enum KiroHookSettings {
-  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .kiro)
+  // `busy` forwards stdin so every `userPromptSubmit` carries the live
+  // sessionId — keeps the restore-intent capture aligned with the
+  // conversation the user is actually working in, even if Kiro changes
+  // its session-id mid-flight.
+  fileprivate static let busy = AgentHookSettingsCommand.eventCommand(
+    event: .busy, agent: .kiro, forwardStdin: true)
   fileprivate static let idle = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .kiro)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .kiro)
   // `forwardStdin: true` so the envelope carries Kiro's stdin payload — every
