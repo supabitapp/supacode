@@ -68,9 +68,9 @@ struct AppFeature {
     var runningScriptIDs: Set<UUID> {
       guard
         let worktreeID = repositories.selectedWorktreeID,
-        let tints = repositories.runningScriptsByWorktreeID[worktreeID]
+        let scripts = repositories.sidebarItems[id: worktreeID]?.runningScripts
       else { return [] }
-      return Set(tints.keys)
+      return Set(scripts.ids)
     }
 
     /// Whether any `.run`-kind script is currently running in the selected worktree.
@@ -225,7 +225,7 @@ struct AppFeature {
 
       case .repositories(.delegate(.worktreeCreated(let worktree))):
         let shouldRunSetupScript =
-          state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
+          state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
           await terminalClient.send(
             .ensureInitialTab(
@@ -245,6 +245,7 @@ struct AppFeature {
         )
         state.repositories.runningScriptsByWorktreeID = state.repositories.runningScriptsByWorktreeID
           .filter { ids.contains($0.key) }
+        RepositoriesFeature.syncSidebar(&state.repositories)
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
           from: repositories,
           scripts: state.allScripts
@@ -446,7 +447,8 @@ struct AppFeature {
           return .none
         }
         analyticsClient.capture("terminal_tab_created", nil)
-        let shouldRunSetupScript = state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
+        let shouldRunSetupScript =
+          state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
         }
@@ -524,6 +526,7 @@ struct AppFeature {
         var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
         ids[definition.id] = definition.resolvedTintColor
         state.repositories.runningScriptsByWorktreeID[worktree.id] = ids
+        RepositoriesFeature.syncSidebar(&state.repositories)
         return .run { _ in
           await terminalClient.send(
             .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
@@ -965,7 +968,7 @@ struct AppFeature {
       }
     }
     let shouldRunSetupScript =
-      state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
+      state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
     return .run { _ in
       await terminalClient.send(
         .createTabWithInput(
@@ -1320,6 +1323,7 @@ struct AppFeature {
     var updated = runningIDs
     updated[scriptID] = definition.resolvedTintColor
     state.repositories.runningScriptsByWorktreeID[worktreeID] = updated
+    RepositoriesFeature.syncSidebar(&state.repositories)
     let terminalClient = terminalClient
     return .run { _ in
       await terminalClient.send(
@@ -1345,8 +1349,8 @@ struct AppFeature {
       )
       return .none
     }
-    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? [:]
-    guard runningIDs[scriptID] != nil else {
+    let runningScripts = state.repositories.sidebarItems[id: worktreeID]?.runningScripts ?? []
+    guard runningScripts[id: scriptID] != nil else {
       state.alert = scriptAlert(
         title: "Script not running",
         message: "\"\(definition.displayName)\" is not currently running in this worktree."

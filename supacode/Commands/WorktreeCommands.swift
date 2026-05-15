@@ -185,7 +185,7 @@ struct WorktreeCommands: Commands {
   private var selectedPullRequestURL: URL? {
     let repositories = store.repositories
     guard let selectedWorktreeID = repositories.selectedWorktreeID else { return nil }
-    let pullRequest = repositories.worktreeInfos[id: selectedWorktreeID]?.pullRequest
+    let pullRequest = repositories.sidebarItems[id: selectedWorktreeID]?.pullRequest
     return pullRequest.flatMap { URL(string: $0.url) }
   }
 

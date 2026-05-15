@@ -24,7 +24,9 @@ struct AppFeatureSettingsSelectionTests {
       AppFeature()
     }
 
-    await store.send(.repositories(.delegate(.repositoriesChanged([repository]))))
+    await store.send(.repositories(.delegate(.repositoriesChanged([repository])))) {
+      $0.repositories.reconcileSidebarForTesting()
+    }
     await store.receive(\.settings.repositoriesChanged) {
       $0.settings.repositorySummaries = [
         SettingsRepositorySummary(id: repository.id, name: repository.name)

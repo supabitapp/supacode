@@ -29,6 +29,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.repositoriesLoaded) {
       $0.isRefreshingWorktrees = false
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -64,6 +65,7 @@ struct RepositoriesFeatureTests {
     ) {
       $0.isRefreshingWorktrees = false
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -123,6 +125,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     #expect(
       store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] != nil
@@ -144,6 +147,7 @@ struct RepositoriesFeatureTests {
       $0.$sidebar.withLock { sidebar in
         sidebar.sections[repoRoot] = .init(buckets: [.pinned: .init(items: [:])])
       }
+      $0.reconcileSidebarForTesting()
     }
     #expect(
       store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] == nil
@@ -388,6 +392,7 @@ struct RepositoriesFeatureTests {
         sidebar.sections = rebuilt
       }
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
   }
@@ -495,6 +500,7 @@ struct RepositoriesFeatureTests {
     ) {
       $0.repositories = [updatedRepository]
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
@@ -989,6 +995,7 @@ struct RepositoriesFeatureTests {
       ]
       $0.selection = SidebarSelection.worktree(pendingID)
       $0.sidebarSelectedWorktreeIDs = [pendingID]
+      $0.reconcileSidebarForTesting()
     }
 
     await store.receive(\.pendingWorktreeProgressUpdated)
@@ -1006,6 +1013,7 @@ struct RepositoriesFeatureTests {
       $0.selection = nil
       $0.sidebarSelectedWorktreeIDs = []
       $0.alert = expectedAlert
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -1626,6 +1634,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.pendingWorktrees[0].progress = nextProgress
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -1673,6 +1682,7 @@ struct RepositoriesFeatureTests {
       $0.pendingWorktrees = []
       $0.selection = nil
       $0.alert = expectedAlert
+      $0.reconcileSidebarForTesting()
     }
 
     await store.send(
@@ -1989,6 +1999,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id)) {
       $0.archivingWorktreeIDs = [featureWorktree.id]
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.runBlockingScript)
   }
@@ -2015,7 +2026,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
-
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",
@@ -2048,7 +2059,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
-
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
   }
@@ -2075,7 +2086,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
-
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
   }
@@ -2147,6 +2158,7 @@ struct RepositoriesFeatureTests {
       $0.runningScriptsByWorktreeID = [
         worktree.id: [surviving.id: surviving.resolvedTintColor]
       ]
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
   }
@@ -2177,7 +2189,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.runningScriptsByWorktreeID = [:]
-
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",
@@ -2213,6 +2225,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: tabId)) {
       $0.archivingWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: "Script failed (exit code 1).",
@@ -2242,6 +2255,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: tabId)) {
       $0.deleteScriptWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .delete,
         exitMessage: "Script failed (exit code 1).",
@@ -2301,6 +2315,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 7, tabId: nil)) {
       $0.archivingWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: "Script exited with code 7.",
@@ -2329,6 +2344,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil)) {
       $0.archivingWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
     #expect(store.state.archivedWorktreeIDs.isEmpty)
@@ -2442,6 +2458,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: exitCode, tabId: nil)) {
       $0.archivingWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: expectedMessage,
@@ -2502,6 +2519,7 @@ struct RepositoriesFeatureTests {
     // Exit code 1 must NOT trigger archiveWorktreeApply.
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: nil)) {
       $0.archivingWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: "Script failed (exit code 1).",
@@ -2531,6 +2549,7 @@ struct RepositoriesFeatureTests {
     // Nil exit code (Ctrl+D, tab close) must NOT trigger archiveWorktreeApply.
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil)) {
       $0.archivingWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.archivedWorktreeIDs.isEmpty)
     #expect(store.state.alert == nil)
@@ -2590,6 +2609,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id)) {
       $0.deleteScriptWorktreeIDs = [featureWorktree.id]
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.runBlockingScript)
   }
@@ -2615,18 +2635,22 @@ struct RepositoriesFeatureTests {
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil)) {
       $0.deleteScriptWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.deleteWorktreeApply) {
       $0.deletingWorktreeIDs = [featureWorktree.id]
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.worktreeDeleted) {
       $0.deletingWorktreeIDs = []
       $0.repositories = [makeRepository(id: repoRoot, worktrees: [mainWorktree])]
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -2647,6 +2671,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 7, tabId: nil)) {
       $0.deleteScriptWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedScriptFailureAlert(
         kind: .delete,
         exitMessage: "Script exited with code 7.",
@@ -2674,6 +2699,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil)) {
       $0.deleteScriptWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
   }
@@ -2719,15 +2745,18 @@ struct RepositoriesFeatureTests {
     await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id))
     await store.receive(\.deleteWorktreeApply) {
       $0.deletingWorktreeIDs = [featureWorktree.id]
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.worktreeDeleted) {
       $0.deletingWorktreeIDs = []
       $0.repositories = [makeRepository(id: repoRoot, worktrees: [mainWorktree])]
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -2756,6 +2785,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.deleteScriptCompleted(worktreeID: "/tmp/repo/gone", exitCode: 0, tabId: nil)) {
       $0.deleteScriptWorktreeIDs = []
+      $0.reconcileSidebarForTesting()
       $0.alert = expectedAlert
     }
   }
@@ -2950,6 +2980,7 @@ struct RepositoriesFeatureTests {
         worktrees: worktrees
       )
       $0.repositories[id: repository.id] = repository
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.name == "falcon")
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.createdAt == createdAt)
@@ -3260,6 +3291,7 @@ struct RepositoriesFeatureTests {
     ) {
       $0.repositories = [updatedRepository]
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.finish()
@@ -3288,6 +3320,7 @@ struct RepositoriesFeatureTests {
       $0.repositories = [updatedRepository]
       $0.selection = nil
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
@@ -3342,11 +3375,13 @@ struct RepositoriesFeatureTests {
       $0.$sidebar.withLock { sidebar in
         sidebar.removeAnywhere(worktree: removedWorktree.id, in: repository.id)
       }
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -3376,12 +3411,14 @@ struct RepositoriesFeatureTests {
       $0.deletingWorktreeIDs = []
       $0.repositories = [updatedRepository]
       $0.selection = .worktree(mainWorktree.id)
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.reloadRepositories)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -3421,6 +3458,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
+      $0.reconcileSidebarForTesting()
     }
 
     await store.receive(\.reloadRepositories)
@@ -3429,6 +3467,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.worktreeCreated)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -3493,6 +3532,7 @@ struct RepositoriesFeatureTests {
         removedLines: nil,
         pullRequest: mergedPullRequest
       )
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3528,6 +3568,7 @@ struct RepositoriesFeatureTests {
         removedLines: nil,
         pullRequest: mergedPullRequest
       )
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.deleteSidebarItemConfirmed)
   }
@@ -3560,6 +3601,7 @@ struct RepositoriesFeatureTests {
         removedLines: nil,
         pullRequest: mergedPullRequest
       )
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3600,6 +3642,7 @@ struct RepositoriesFeatureTests {
         removedLines: nil,
         pullRequest: mergedPullRequest
       )
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3633,6 +3676,7 @@ struct RepositoriesFeatureTests {
         removedLines: nil,
         pullRequest: mergedPullRequest
       )
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3666,6 +3710,7 @@ struct RepositoriesFeatureTests {
         removedLines: nil,
         pullRequest: mergedPullRequest
       )
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3725,6 +3770,7 @@ struct RepositoriesFeatureTests {
         removedLines: nil,
         pullRequest: refreshedPullRequest
       )
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -4296,6 +4342,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.worktreeInfos.remove(id: featureWorktree.id)
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -5071,6 +5118,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.reloadRepositories)
     await store.receive(\.delegate.repositoriesChanged)
@@ -5078,6 +5126,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.worktreeCreated)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.worktreeHistoryBackStack == [mainWorktree.id])
     #expect(store.state.worktreeHistoryForwardStack.isEmpty)
@@ -5596,6 +5645,7 @@ struct RepositoriesFeatureTests {
       $0.repositories = [repoA, repoB]
       $0.repositoryRoots = [repoRootA, repoRootB].map { URL(fileURLWithPath: $0) }
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.finish()
@@ -5646,6 +5696,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(worktreeB.id)
       $0.shouldRestoreLastFocusedWorktree = false
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
@@ -5819,6 +5870,7 @@ struct RepositoriesFeatureTests {
       $0.repositories = [folderRepo]
       $0.repositoryRoots = [rootURL]
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.finish()
@@ -5906,6 +5958,7 @@ struct RepositoriesFeatureTests {
       ]
       $0.repositoryRoots = [gitRoot, folderRoot].map { URL(fileURLWithPath: $0) }
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.finish()
@@ -5959,6 +6012,7 @@ struct RepositoriesFeatureTests {
       $0.repositories = [folderRepo]
       $0.repositoryRoots = [standardizedURL]
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.finish()

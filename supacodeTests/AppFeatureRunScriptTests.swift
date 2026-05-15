@@ -54,7 +54,7 @@ struct AppFeatureRunScriptTests {
     await store.send(.runScript)
     await store.receive(\.runNamedScript) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
-
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
 
@@ -90,6 +90,7 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runNamedScript(definition)) {
       $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -105,6 +106,7 @@ struct AppFeatureRunScriptTests {
     initialState.repoScripts = [definition]
     // Pre-populate running state to simulate an already-running script.
     initialState.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
+    initialState.repositories.reconcileSidebarForTesting()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: initialState) {
       AppFeature()
@@ -147,7 +149,7 @@ struct AppFeatureRunScriptTests {
       )
     ) {
       $0.repositories.runningScriptsByWorktreeID = [:]
-
+      $0.repositories.reconcileSidebarForTesting()
     }
   }
 
@@ -261,7 +263,7 @@ struct AppFeatureRunScriptTests {
       )
     ) {
       $0.repositories.runningScriptsByWorktreeID = [:]
-
+      $0.repositories.reconcileSidebarForTesting()
     }
   }
 
@@ -303,6 +305,7 @@ struct AppFeatureRunScriptTests {
       $0.repositories.runningScriptsByWorktreeID = [
         worktree.id: [globalScript.id: globalScript.resolvedTintColor]
       ]
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
 

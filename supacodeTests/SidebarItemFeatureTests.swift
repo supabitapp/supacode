@@ -1,0 +1,385 @@
+import ComposableArchitecture
+import Foundation
+import SupacodeSettingsShared
+import Testing
+
+@testable import supacode
+
+@MainActor
+struct SidebarItemFeatureTests {
+  // MARK: - Equality-guarded data deltas.
+
+  @Test func diffStatsChangeMutatesOnceThenNoOps() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    await store.send(.diffStatsChanged(added: 3, removed: 1)) {
+      $0.addedLines = 3
+      $0.removedLines = 1
+    }
+    // Same payload: no-op.
+    await store.send(.diffStatsChanged(added: 3, removed: 1))
+  }
+
+  @Test func lifecycleEqualityGuardSkipsNoOps() async {
+    var state = makeState(name: "feature")
+    state.lifecycle = .archiving
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(.lifecycleChanged(.archiving))
+    await store.send(.lifecycleChanged(.idle)) {
+      $0.lifecycle = .idle
+    }
+  }
+
+  @Test func runningScriptStartedIsIdempotentForSameTint() async {
+    let scriptID = UUID()
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    await store.send(.runningScriptStarted(id: scriptID, tint: .orange)) {
+      $0.runningScripts = [.init(id: scriptID, tint: .orange)]
+    }
+    // Same tint: no-op.
+    await store.send(.runningScriptStarted(id: scriptID, tint: .orange))
+    await store.send(.runningScriptStarted(id: scriptID, tint: .blue)) {
+      $0.runningScripts[id: scriptID]?.tint = .blue
+    }
+  }
+
+  @Test func runningScriptStopRemovesAndIsIdempotent() async {
+    let scriptID = UUID()
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    await store.send(.runningScriptStarted(id: scriptID, tint: .orange)) {
+      $0.runningScripts = [.init(id: scriptID, tint: .orange)]
+    }
+    await store.send(.runningScriptStopped(id: scriptID)) {
+      $0.runningScripts = []
+    }
+    // Stopping an unknown id is a no-op.
+    await store.send(.runningScriptStopped(id: UUID()))
+  }
+
+  @Test func agentSnapshotEqualityGuardSkipsNoOps() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let instance = AgentPresenceFeature.AgentInstance(
+      agent: .claude,
+      activity: .busy
+    )
+    await store.send(.agentSnapshotChanged([instance], hasActivity: true)) {
+      $0.agents = [instance]
+      $0.hasAgentActivity = true
+    }
+    // Same payload: no-op.
+    await store.send(.agentSnapshotChanged([instance], hasActivity: true))
+    // hasActivity flip only.
+    await store.send(.agentSnapshotChanged([instance], hasActivity: false)) {
+      $0.hasAgentActivity = false
+    }
+  }
+
+  // MARK: - Terminal projection per-field guards.
+
+  @Test func terminalProjectionEachFieldGuardedIndependently() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let surface1 = UUID()
+    let surface2 = UUID()
+    let notif = WorktreeTerminalNotification(
+      surfaceId: surface1,
+      title: "Notification",
+      body: "hi",
+      createdAt: Date(timeIntervalSince1970: 0)
+    )
+    let baseline = WorktreeRowProjection(
+      surfaceIDs: [surface1],
+      isTaskRunning: false,
+      hasUnseenNotifications: false,
+      notifications: []
+    )
+    await store.send(.terminalProjectionChanged(baseline)) {
+      $0.surfaceIDs = [surface1]
+    }
+    // Identical projection: no mutation.
+    await store.send(.terminalProjectionChanged(baseline))
+    // surfaceIDs alone changes.
+    await store.send(
+      .terminalProjectionChanged(
+        WorktreeRowProjection(
+          surfaceIDs: [surface1, surface2],
+          isTaskRunning: false,
+          hasUnseenNotifications: false,
+          notifications: []
+        )
+      )
+    ) {
+      $0.surfaceIDs = [surface1, surface2]
+    }
+    // isTaskRunning alone changes.
+    await store.send(
+      .terminalProjectionChanged(
+        WorktreeRowProjection(
+          surfaceIDs: [surface1, surface2],
+          isTaskRunning: true,
+          hasUnseenNotifications: false,
+          notifications: []
+        )
+      )
+    ) {
+      $0.isTaskRunning = true
+    }
+    // hasUnseenNotifications flips alone (independent of `notifications`).
+    await store.send(
+      .terminalProjectionChanged(
+        WorktreeRowProjection(
+          surfaceIDs: [surface1, surface2],
+          isTaskRunning: true,
+          hasUnseenNotifications: true,
+          notifications: []
+        )
+      )
+    ) {
+      $0.hasUnseenNotifications = true
+    }
+    // notifications flip alone.
+    await store.send(
+      .terminalProjectionChanged(
+        WorktreeRowProjection(
+          surfaceIDs: [surface1, surface2],
+          isTaskRunning: true,
+          hasUnseenNotifications: true,
+          notifications: [notif]
+        )
+      )
+    ) {
+      $0.notifications = [notif]
+    }
+  }
+
+  // MARK: - Stale-PR guard.
+
+  @Test func pullRequestChangedDropsResultWhenBranchHasFlipped() async {
+    var state = makeState(name: "feature/x")
+    state.branchName = "feature/x"
+    let livePR = GithubPullRequest(
+      number: 12,
+      title: "Live",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      url: "https://example.com/pull/12",
+      headRefName: "feature/x",
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "tester",
+      statusCheckRollup: nil
+    )
+    state.pullRequest = livePR
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(.pullRequestQueryStarted(branch: "feature/x")) {
+      $0.pullRequestBranchAtQueryTime = "feature/x"
+    }
+    // Branch flip must clear the watermark so a future query for "feature/y" can re-arm cleanly.
+    await store.send(.rosterChanged(.init(branchName: "feature/y"))) {
+      $0.branchName = "feature/y"
+      $0.pullRequestBranchAtQueryTime = nil
+    }
+    let stalePR = GithubPullRequest(
+      number: 99,
+      title: "Stale",
+      state: "OPEN",
+      additions: 0,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      url: "https://example.com/pull/99",
+      headRefName: "feature/x",
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "tester",
+      statusCheckRollup: nil
+    )
+    // Late stale result must not replace the live PR.
+    await store.send(.pullRequestChanged(stalePR, branchAtQueryTime: "feature/x"))
+    #expect(store.state.pullRequest == livePR)
+  }
+
+  @Test func pullRequestChangedClearsWatermarkOnSuccessAndOnIdenticalReissue() async {
+    var state = makeState(name: "feature")
+    state.branchName = "feature"
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    let pullRequest = GithubPullRequest(
+      number: 1,
+      title: "First",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      url: "https://example.com/pull/1",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "tester",
+      statusCheckRollup: nil
+    )
+    await store.send(.pullRequestQueryStarted(branch: "feature")) {
+      $0.pullRequestBranchAtQueryTime = "feature"
+    }
+    // Success path: PR is written and watermark cleared.
+    await store.send(.pullRequestChanged(pullRequest, branchAtQueryTime: "feature")) {
+      $0.pullRequest = pullRequest
+      $0.pullRequestBranchAtQueryTime = nil
+    }
+    // Identical-payload reissue with a re-armed watermark: PR unchanged, watermark still cleared.
+    await store.send(.pullRequestQueryStarted(branch: "feature")) {
+      $0.pullRequestBranchAtQueryTime = "feature"
+    }
+    await store.send(.pullRequestChanged(pullRequest, branchAtQueryTime: "feature")) {
+      $0.pullRequestBranchAtQueryTime = nil
+    }
+  }
+
+  @Test func pullRequestQueryStartedEqualityGuardSkipsNoOps() async {
+    var state = makeState(name: "feature")
+    state.pullRequestBranchAtQueryTime = "feature"
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    // Same branch: no-op.
+    await store.send(.pullRequestQueryStarted(branch: "feature"))
+    await store.send(.pullRequestQueryStarted(branch: "other")) {
+      $0.pullRequestBranchAtQueryTime = "other"
+    }
+  }
+
+  // MARK: - Roster delta (partial update + tri-state).
+
+  @Test func rosterChangeUpdatesOnlyProvidedFields() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    await store.send(.rosterChanged(.init(name: "renamed", isPinned: true))) {
+      $0.name = "renamed"
+      $0.isPinned = true
+    }
+  }
+
+  @Test func rosterAccentTriStateClearsAndSets() async {
+    var state = makeState(name: "feature")
+    state.accent = .blue
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(.rosterChanged(.init(accent: .some(nil)))) {
+      $0.accent = nil
+    }
+    await store.send(.rosterChanged(.init(accent: .some(.green)))) {
+      $0.accent = .green
+    }
+  }
+
+  @Test func rosterSubtitleTriStateClearsAndSets() async {
+    var state = makeState(name: "feature")
+    state.subtitle = "old"
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(.rosterChanged(.init(subtitle: .some(nil)))) {
+      $0.subtitle = nil
+    }
+    await store.send(.rosterChanged(.init(subtitle: .some("new")))) {
+      $0.subtitle = "new"
+    }
+  }
+
+  // MARK: - UI-scalar guards.
+
+  @Test func shortcutHintAndDragSessionGuardsSkipNoOps() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    await store.send(.shortcutHintChanged("⌘1")) {
+      $0.shortcutHint = "⌘1"
+    }
+    // Same hint: no-op.
+    await store.send(.shortcutHintChanged("⌘1"))
+    await store.send(.dragSessionChanged(isDragging: true)) {
+      $0.isDragging = true
+    }
+    // Same drag state: no-op.
+    await store.send(.dragSessionChanged(isDragging: true))
+  }
+
+  // MARK: - User-intent lifts.
+
+  @Test func copyBranchTappedLiftsCopyToPasteboardDelegate() async {
+    var state = makeState(name: "feature")
+    state.branchName = "feature/sidebar"
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(.copyBranchTapped)
+    await store.receive(.delegate(.copyToPasteboard("feature/sidebar")))
+  }
+
+  @Test func copyPathTappedLiftsPercentDecodedPath() async {
+    var state = makeState(name: "spaced")
+    state.workingDirectory = URL(fileURLWithPath: "/tmp/repo/path with space")
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(.copyPathTapped)
+    await store.receive(.delegate(.copyToPasteboard("/tmp/repo/path with space")))
+  }
+
+  @Test func focusNotificationRequestedDispatchesFocusAndMarkReadDelegates() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let notificationID = UUID()
+    let surfaceID = UUID()
+    await store.send(.focusNotificationRequested(notificationID: notificationID, surfaceID: surfaceID))
+    await store.receive(.delegate(.focusSurface(store.state.id, surfaceID: surfaceID)))
+    await store.receive(.delegate(.markNotificationRead(store.state.id, notificationID: notificationID)))
+  }
+
+  // MARK: - Helpers.
+
+  private func makeState(name: String) -> SidebarItemFeature.State {
+    SidebarItemFeature.State(
+      id: "/tmp/repo/wt-\(name)",
+      repositoryID: "/tmp/repo",
+      kind: .gitWorktree,
+      name: name,
+      branchName: name,
+      subtitle: nil,
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-\(name)"),
+      accent: nil,
+      isMainWorktree: false,
+      isPinned: false,
+      hasMergedBadge: false
+    )
+  }
+}

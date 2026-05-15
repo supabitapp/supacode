@@ -372,7 +372,9 @@ struct SupacodeApp: App {
       }
       @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var settings
       @SharedReader(.settingsFile) var settingsFile
-      let runningIDs = store.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
+      let runningIDs: Set<UUID> =
+        store.repositories.sidebarItems[id: worktree.id]
+        .map { Set($0.runningScripts.ids) } ?? []
       let scripts: [ScriptDefinition] = .merged(
         repo: settings.scripts,
         global: settingsFile.global.globalScripts,
@@ -383,7 +385,7 @@ struct SupacodeApp: App {
           "kind": script.kind.rawValue,
           "name": script.name,
           "displayName": script.displayName,
-          "running": runningIDs[script.id] != nil ? "1" : "",
+          "running": runningIDs.contains(script.id) ? "1" : "",
         ]
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)

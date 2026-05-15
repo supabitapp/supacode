@@ -297,6 +297,7 @@ struct AppFeatureDeeplinkTests {
     defer { $persisted.withLock { $0.scripts = [] } }
     var repositories = makeRepositoriesState(worktree: worktree)
     repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
+    repositories.reconcileSidebarForTesting()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
@@ -372,6 +373,7 @@ struct AppFeatureDeeplinkTests {
     defer { $settingsFile.withLock { $0.global.globalScripts = [] } }
     var repositories = makeRepositoriesState(worktree: worktree)
     repositories.runningScriptsByWorktreeID = [worktree.id: [globalScript.id: globalScript.resolvedTintColor]]
+    repositories.reconcileSidebarForTesting()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())

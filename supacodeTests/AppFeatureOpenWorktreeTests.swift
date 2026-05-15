@@ -129,6 +129,7 @@ struct AppFeatureOpenWorktreeTests {
     let worktree = makeWorktree()
     var repositoriesState = makeRepositoriesState(worktree: worktree)
     mutate(&repositoriesState, worktree)
+    repositoriesState.reconcileSidebarForTesting()
     let openedActions = LockIsolated<[OpenWorktreeAction]>([])
     let terminalCommands = LockIsolated<[TerminalClient.Command]>([])
     let capturedEvents = LockIsolated<[CapturedEvent]>([])

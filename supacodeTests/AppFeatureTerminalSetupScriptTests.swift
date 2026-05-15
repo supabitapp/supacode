@@ -34,6 +34,7 @@ struct AppFeatureTerminalSetupScriptTests {
     await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
     await store.receive(\.repositories.consumeSetupScript) {
       $0.repositories.pendingSetupScriptWorktreeIDs.remove(worktree.id)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
     #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true, id: nil)])
@@ -105,6 +106,7 @@ struct AppFeatureTerminalSetupScriptTests {
     await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
     await store.receive(\.repositories.consumeSetupScript) {
       $0.repositories.pendingSetupScriptWorktreeIDs.remove(worktree.id)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -198,6 +200,7 @@ struct AppFeatureTerminalSetupScriptTests {
     if pendingSetupScript {
       repositoriesState.pendingSetupScriptWorktreeIDs = [worktree.id]
     }
+    repositoriesState.reconcileSidebarForTesting()
     return repositoriesState
   }
 }
