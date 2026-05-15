@@ -13,7 +13,7 @@ struct SidebarListView: View {
   var body: some View {
     let state = store.state
     let expandedRepoIDs = state.expandedRepositoryIDs
-    let hotkeyRows = state.orderedSidebarItems(includingRepositoryIDs: expandedRepoIDs)
+    let hotkeyIDs = state.orderedSidebarItemIDs(includingRepositoryIDs: expandedRepoIDs)
     let orderedRoots = state.orderedRepositoryRoots()
     let selectedWorktreeIDs = state.sidebarSelectedWorktreeIDs
     let currentSelections = state.sidebarSelections
@@ -35,7 +35,7 @@ struct SidebarListView: View {
           ForEach(store.repositories) { repository in
             SidebarRootView(
               repository: repository,
-              hotkeyRows: hotkeyRows,
+              hotkeyIDs: hotkeyIDs,
               selectedWorktreeIDs: selectedWorktreeIDs,
               store: store,
               terminalManager: terminalManager
@@ -52,7 +52,7 @@ struct SidebarListView: View {
             } else if let repository = repositoriesByID[row.repositoryID] {
               SidebarRootView(
                 repository: repository,
-                hotkeyRows: hotkeyRows,
+                hotkeyIDs: hotkeyIDs,
                 selectedWorktreeIDs: selectedWorktreeIDs,
                 store: store,
                 terminalManager: terminalManager
@@ -138,7 +138,7 @@ struct SidebarListView: View {
 
 private struct SidebarRootView: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemFeature.State]
+  let hotkeyIDs: [Worktree.ID]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -147,7 +147,7 @@ private struct SidebarRootView: View {
     if repository.isGitRepository {
       SidebarSectionView(
         repository: repository,
-        hotkeyRows: hotkeyRows,
+        hotkeyIDs: hotkeyIDs,
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
         terminalManager: terminalManager
@@ -161,7 +161,7 @@ private struct SidebarRootView: View {
       Section {
         SidebarFolderRow(
           repository: repository,
-          hotkeyRows: hotkeyRows,
+          hotkeyIDs: hotkeyIDs,
           selectedWorktreeIDs: selectedWorktreeIDs,
           store: store,
           terminalManager: terminalManager
@@ -175,7 +175,7 @@ private struct SidebarRootView: View {
 
 private struct SidebarSectionView: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemFeature.State]
+  let hotkeyIDs: [Worktree.ID]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -185,7 +185,7 @@ private struct SidebarSectionView: View {
     Section(isExpanded: repositoryExpansionBinding) {
       SidebarItemsView(
         repository: repository,
-        hotkeyRows: hotkeyRows,
+        hotkeyIDs: hotkeyIDs,
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
         terminalManager: terminalManager

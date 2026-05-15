@@ -121,10 +121,14 @@ extension RepositoriesFeature {
       pinned.append(contentsOf: state.orderedPinnedWorktreeIDs(in: repository))
       bucket[.pinned] = pinned
 
-      var unpinned = state.orderedUnpinnedWorktreeIDs(in: repository)
+      // Mirror the visual order from `sidebarItemGroups`: pending rows render before
+      // the non-pending unpinned tail, so the bucket (which drives hotkey ordering)
+      // must too. Otherwise Cmd+N's hint and target diverge while a worktree is creating.
+      var unpinned: [SidebarItemID] = []
       for pending in state.pendingWorktrees where pending.repositoryID == repositoryID {
         unpinned.append(pending.id)
       }
+      unpinned.append(contentsOf: state.orderedUnpinnedWorktreeIDs(in: repository))
       bucket[.unpinned] = unpinned
       // Archived bucket: only worktrees whose delete script is running stay visible.
       let archivedIDs = state.archivedWorktreeIDSet

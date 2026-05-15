@@ -3147,6 +3147,37 @@ struct RepositoriesFeatureTests {
     )
   }
 
+  @Test func orderedSidebarItemIDsMatchHeavyFlavorAndPlacePendingFirst() {
+    let repoRoot = "/tmp/repo"
+    let main = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let feature = makeWorktree(id: "/tmp/repo/feature", name: "feature", repoRoot: repoRoot)
+    let other = makeRepository(id: "/tmp/repo-other", worktrees: [])
+    var state = makeState(repositories: [makeRepository(id: repoRoot, worktrees: [main, feature]), other])
+    state.pendingWorktrees = [
+      PendingWorktree(
+        id: "/tmp/repo/wip",
+        repositoryID: repoRoot,
+        progress: WorktreeCreationProgress(stage: .choosingWorktreeName)
+      )
+    ]
+    state.reconcileSidebarForTesting()
+
+    // Pending row renders before non-pending unpinned, so the bucket must too. Otherwise
+    // Cmd+N hint and target diverge while a worktree is creating.
+    expectNoDifference(
+      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
+      [repoRoot, "/tmp/repo/wip", "/tmp/repo/feature"]
+    )
+
+    // ID flavor and heavy flavor must agree for every filter the render path can pass.
+    for filter: Set<Repository.ID> in [[repoRoot], [other.id], [repoRoot, other.id], []] {
+      expectNoDifference(
+        state.orderedSidebarItemIDs(includingRepositoryIDs: filter),
+        state.orderedSidebarItems(includingRepositoryIDs: filter).map(\.id)
+      )
+    }
+  }
+
   @Test func orderedRepositoryRootsAppendMissing() {
     let repoA = makeRepository(id: "/tmp/repo-a", worktrees: [])
     let repoB = makeRepository(id: "/tmp/repo-b", worktrees: [])

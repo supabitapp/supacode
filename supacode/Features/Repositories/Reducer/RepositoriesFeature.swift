@@ -3891,6 +3891,8 @@ extension RepositoriesFeature.State {
     orderedSidebarItems(includingRepositoryIDs: Set(repositories.map(\.id)))
   }
 
+  /// Reads `sidebarItems[id:]` per row, so callers observation-track every row's properties.
+  /// Use `orderedSidebarItemIDs(includingRepositoryIDs:)` on the sidebar render path.
   func orderedSidebarItems(includingRepositoryIDs: Set<Repository.ID>) -> [SidebarItemFeature.State] {
     var rows: [SidebarItemFeature.State] = []
     for repositoryID in orderedRepositoryIDs() where includingRepositoryIDs.contains(repositoryID) {
@@ -3903,6 +3905,18 @@ extension RepositoriesFeature.State {
       }
     }
     return rows
+  }
+
+  /// ID-only flavor for the sidebar render path: reads `sidebarGrouping` only,
+  /// so this call doesn't observation-track per-row `sidebarItems` state.
+  func orderedSidebarItemIDs(includingRepositoryIDs: Set<Repository.ID>) -> [Worktree.ID] {
+    var ids: [Worktree.ID] = []
+    for repositoryID in orderedRepositoryIDs() where includingRepositoryIDs.contains(repositoryID) {
+      guard let bucket = sidebarGrouping.bucketsByRepository[repositoryID] else { continue }
+      ids.append(contentsOf: bucket[.pinned])
+      ids.append(contentsOf: bucket[.unpinned])
+    }
+    return ids
   }
 }
 

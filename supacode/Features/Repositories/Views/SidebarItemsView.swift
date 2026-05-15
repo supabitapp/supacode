@@ -9,7 +9,7 @@ private nonisolated let notificationLogger = SupaLogger("Notifications")
 
 struct SidebarItemsView: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemFeature.State]
+  let hotkeyIDs: [Worktree.ID]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -20,9 +20,7 @@ struct SidebarItemsView: View {
     let isRepositoryRemoving = store.state.isRemovingRepository(repository)
     let showShortcutHints = commandKeyObserver.isPressed
     let shortcutIndexByID: [Worktree.ID: Int] =
-      showShortcutHints
-      ? Dictionary(uniqueKeysWithValues: hotkeyRows.enumerated().map { ($0.element.id, $0.offset) })
-      : [:]
+      showShortcutHints ? shortcutIndex(for: hotkeyIDs) : [:]
 
     SidebarItemsDragOverlay(
       groups: groups,
@@ -311,7 +309,7 @@ private struct SidebarItemContainer: View {
 /// Folder repos render one row that must be a direct child of the outer `.onMove` to receive repo-level drags.
 struct SidebarFolderRow: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemFeature.State]
+  let hotkeyIDs: [Worktree.ID]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -335,14 +333,25 @@ struct SidebarFolderRow: View {
     }
   }
 
+  // Folder rows show a single hint, so a linear scan beats allocating a dict per render.
   private func shortcutHint(for rowID: Worktree.ID) -> String? {
     guard commandKeyObserver.isPressed,
-      let index = hotkeyRows.firstIndex(where: { $0.id == rowID })
+      let index = hotkeyIDs.firstIndex(of: rowID)
     else { return nil }
     return AppShortcuts.worktreeSelectionShortcutDisplay(
       atSlot: index,
       overrides: settingsFile.global.shortcutOverrides
     )
+  }
+}
+
+/// Defensive against a forged bucket roster: a duplicate `Worktree.ID` would trap
+/// `Dictionary(uniqueKeysWithValues:)` inside the SwiftUI render loop. Keep the first
+/// slot and fire loudly in DEBUG so a real invariant break surfaces in dev, not prod.
+private func shortcutIndex(for hotkeyIDs: [Worktree.ID]) -> [Worktree.ID: Int] {
+  Dictionary(hotkeyIDs.enumerated().map { ($0.element, $0.offset) }) { first, _ in
+    assertionFailure("Duplicate Worktree.ID in sidebar hotkey order.")
+    return first
   }
 }
 
