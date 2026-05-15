@@ -894,17 +894,19 @@ final class WorktreeTerminalState {
 
   /// Shell command that resumes the given agent session, typed into the
   /// surface's initial input so the agent attaches to the prior conversation
-  /// as the first interactive action. Returns nil for agents without resume
-  /// semantics (Kiro, Pi). `claude --resume <sid>` / `codex resume <sid>` both
-  /// fail cleanly on a deleted/unknown session id (verified: prints "No
-  /// conversation/saved session found" and exits 0 without mutating state), so
-  /// a stale id combined with consume-once never produces a zombie loop.
+  /// as the first interactive action. `claude --resume <sid>`, `codex resume
+  /// <sid>`, `pi --session <sid>`, and `kiro chat --resume-id <sid>` all
+  /// fail cleanly on a deleted/unknown session id (verified for claude/codex:
+  /// prints "No conversation/saved session found" and exits 0 without mutating
+  /// state), so a stale id combined with consume-once never produces a zombie
+  /// loop.
   static func resumeCommand(for intent: TerminalLayoutSnapshot.RestorableAgent?) -> String? {
     guard let intent else { return nil }
     switch intent.agent {
     case .claude: return "claude --resume \(intent.sessionID)"
     case .codex: return "codex resume \(intent.sessionID)"
-    case .kiro, .pi: return nil
+    case .pi: return "pi --session \(intent.sessionID)"
+    case .kiro: return "kiro chat --resume-id \(intent.sessionID)"
     }
   }
 

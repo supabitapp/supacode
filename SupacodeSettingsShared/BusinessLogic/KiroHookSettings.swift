@@ -4,8 +4,11 @@ nonisolated enum KiroHookSettings {
   fileprivate static let busy = AgentHookSettingsCommand.eventCommand(event: .busy, agent: .kiro)
   fileprivate static let idle = AgentHookSettingsCommand.eventCommand(event: .idle, agent: .kiro)
   fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: .kiro)
+  // `forwardStdin: true` so the envelope carries Kiro's stdin payload — every
+  // hook (agentSpawn / userPromptSubmit / stop) embeds a `session_id` that
+  // restore feeds back as `kiro-cli chat --resume-id <sid>` after a relaunch.
   fileprivate static let sessionStart = AgentHookSettingsCommand.eventCommand(
-    event: .sessionStart, agent: .kiro)
+    event: .sessionStart, agent: .kiro, forwardStdin: true)
   fileprivate static let defaultTimeoutMs = 10_000
 
   static func progressHooksByEvent() throws -> [String: [JSONValue]] {

@@ -104,18 +104,31 @@ nonisolated enum PiExtensionContent {
 
     /**
      * Sends a hook event (session lifecycle or per-turn activity) using
-     * the same JSON envelope every other agent emits.
+     * the same JSON envelope every other agent emits. `sessionId`, when
+     * provided, lands under `data.session_id` so Supacode's restore path
+     * can feed it back as `pi --session <id>` after a relaunch.
      */
-    function sendEvent(env: SupacodeEnv, eventName: string): Promise<void> {
-      const envelope = {
+    function sendEvent(env: SupacodeEnv, eventName: string, sessionId?: string): Promise<void> {
+      const envelope: Record<string, unknown> = {
         event: eventName,
         v: 1,
         agent: "pi",
         surface_id: env.surfaceId,
         pid: process.pid,
       };
+      if (sessionId) {
+        envelope["data"] = { session_id: sessionId };
+      }
       const body = JSON.stringify(envelope) + "\\n";
       return sendToSocket(env.socketPath, Buffer.from(body, "utf8"));
+    }
+
+    function readSessionId(ctx: { sessionManager?: { getSessionId?: () => string | undefined } }): string | undefined {
+      try {
+        return ctx.sessionManager?.getSessionId?.();
+      } catch {
+        return undefined;
+      }
     }
 
     function lastAssistantText(ctx: { sessionManager: { getEntries(): any[] } }): string | undefined {
@@ -145,9 +158,13 @@ nonisolated enum PiExtensionContent {
       // Not running under Supacode — skip lifecycle hooks.
       if (!env) return;
 
-      // Extension load = agent process running. Pi has no equivalent of
-      // Claude's SessionStart hook, so we fire it ourselves.
-      void sendEvent(env, "session_start");
+      // Pi's own `session_start` event carries the sessionId we need for
+      // restore. It fires shortly after extension load (and again on
+      // `/clear`, `/new`, resume, fork). We listen rather than emit eagerly
+      // so the envelope always carries the right id.
+      pi.on("session_start", async (_event, ctx) => {
+        await sendEvent(env, "session_start", readSessionId(ctx));
+      });
 
       pi.on("agent_start", async (_event, _ctx) => {
         await sendEvent(env, "busy");
@@ -165,8 +182,8 @@ nonisolated enum PiExtensionContent {
         });
       });
 
-      pi.on("session_shutdown", async (_event, _ctx) => {
-        await sendEvent(env, "session_end");
+      pi.on("session_shutdown", async (_event, ctx) => {
+        await sendEvent(env, "session_end", readSessionId(ctx));
         await sendEvent(env, "idle");
       });
     }
