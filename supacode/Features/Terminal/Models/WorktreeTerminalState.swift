@@ -29,7 +29,6 @@ final class WorktreeTerminalState {
   private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
-  private var tabIsRunningById: [TerminalTabID: Bool] = [:]
   var socketPath: String?
   private(set) var shouldHideTabBar = false
   private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:]
@@ -341,7 +340,6 @@ final class WorktreeTerminalState {
       context: creation.context,
       surfaceID: creation.tabID != nil ? tabId.rawValue : nil
     )
-    tabIsRunningById[tabId] = false
     updateShouldHideTabBar()
     if creation.focusing, let surface = tree.root?.leftmostLeaf() {
       focusSurface(surface, in: tabId)
@@ -735,7 +733,6 @@ final class WorktreeTerminalState {
     surfaces.removeAll()
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
-    tabIsRunningById.removeAll()
     onSurfacesClosed?(Set(closingSurfaceIDs))
     // Agent busy state lives on GhosttySurfaceState and is cleaned up
     // when surfaces are removed.
@@ -895,7 +892,6 @@ final class WorktreeTerminalState {
       let tree = SplitTree(view: surface)
       trees[tabId] = tree
       focusedSurfaceIdByTab[tabId] = surface.id
-      tabIsRunningById[tabId] = false
 
       // Recursively restore splits.
       restoreLayoutNode(tabSnapshot.layout, anchor: surface, tabId: tabId)
@@ -1384,7 +1380,6 @@ final class WorktreeTerminalState {
       cleanupSurfaceState(for: surface.id)
     }
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
-    tabIsRunningById.removeValue(forKey: tabId)
   }
 
   func tabID(containing surfaceId: UUID) -> TerminalTabID? {
@@ -1402,11 +1397,7 @@ final class WorktreeTerminalState {
   }
 
   private func updateRunningState(for tabId: TerminalTabID) {
-    guard let tree = trees[tabId] else { return }
-    let isRunningNow = tree.leaves().contains { surface in
-      isRunningProgressState(surface.bridge.state.progressState)
-    }
-    tabIsRunningById[tabId] = isRunningNow
+    guard trees[tabId] != nil else { return }
     tabManager.updateDirty(tabId, isDirty: isTabBusy(tabId))
     emitTaskStatusIfChanged()
   }
@@ -1524,7 +1515,6 @@ final class WorktreeTerminalState {
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
-      tabIsRunningById.removeValue(forKey: tabId)
       cleanupBlockingScriptLaunchDirectory(for: tabId)
       tabManager.closeTab(tabId)
       updateShouldHideTabBar()
