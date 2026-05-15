@@ -182,9 +182,11 @@ private struct SidebarItemGroupView: View {
   @Shared(.settingsFile) private var settingsFile
 
   private func shortcutHint(for index: Int?) -> String? {
-    guard let index, AppShortcuts.worktreeSelection.indices.contains(index) else { return nil }
-    let overrides = settingsFile.global.shortcutOverrides
-    return AppShortcuts.worktreeSelection[index].effective(from: overrides)?.display
+    guard let index else { return nil }
+    return AppShortcuts.worktreeSelectionShortcutDisplay(
+      atSlot: index,
+      overrides: settingsFile.global.shortcutOverrides
+    )
   }
 
   private func moveRows(_ offsets: IndexSet, _ destination: Int) {
@@ -309,9 +311,12 @@ private struct SidebarItemContainer: View {
 /// Folder repos render one row that must be a direct child of the outer `.onMove` to receive repo-level drags.
 struct SidebarFolderRow: View {
   let repository: Repository
+  let hotkeyRows: [SidebarItemFeature.State]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
     let state = store.state
@@ -325,9 +330,19 @@ struct SidebarFolderRow: View {
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: true,
         moveMode: .alwaysEnabled,
-        shortcutHint: nil
+        shortcutHint: shortcutHint(for: rowID)
       )
     }
+  }
+
+  private func shortcutHint(for rowID: Worktree.ID) -> String? {
+    guard commandKeyObserver.isPressed,
+      let index = hotkeyRows.firstIndex(where: { $0.id == rowID })
+    else { return nil }
+    return AppShortcuts.worktreeSelectionShortcutDisplay(
+      atSlot: index,
+      overrides: settingsFile.global.shortcutOverrides
+    )
   }
 }
 
@@ -350,6 +365,7 @@ private struct SidebarItemContextMenu: View {
     return rows
   }
 
+  /// Mixed-kind bulk selections surface no menu; per-kind actions don't compose.
   private var hasMixedKindSelection: Bool {
     contextRows.count > 1 && Set(contextRows.map(\.kind)).count > 1
   }

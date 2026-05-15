@@ -353,6 +353,26 @@ public enum AppShortcuts {
     selectWorktree6, selectWorktree7, selectWorktree8, selectWorktree9, selectWorktree0,
   ]
 
+  public static func worktreeSelectionShortcutDisplay(
+    atSlot index: Int,
+    overrides: [AppShortcutID: AppShortcutOverride]
+  ) -> String? {
+    guard worktreeSelection.indices.contains(index) else { return nil }
+    return worktreeSelection[index].effective(from: overrides)?.display
+  }
+
+  // Drops disabled bindings and out-of-range slots so neither leaves a stale NSMenuItem keyEquivalent.
+  public static func activeWorktreeSelectionSlots(
+    overrides: [AppShortcutID: AppShortcutOverride],
+    orderedRowsCount: Int
+  ) -> [(index: Int, shortcut: AppShortcut)] {
+    worktreeSelection.enumerated().compactMap { index, shortcut in
+      guard index < orderedRowsCount else { return nil }
+      guard let effective = shortcut.effective(from: overrides) else { return nil }
+      return (index, effective)
+    }
+  }
+
   // MARK: - Groups.
 
   public static let groups: [AppShortcutGroup] = [

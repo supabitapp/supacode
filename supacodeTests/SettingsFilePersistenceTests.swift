@@ -183,6 +183,33 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.defaultEditorID == OpenWorktreeAction.automaticSettingsID)
     #expect(settings.repositoryRoots.isEmpty)
     #expect(settings.pinnedWorktreeIDs.isEmpty)
+    // Pre-existing files must not flip the toggle on upgrade.
+    #expect(settings.global.terminalThemeSyncEnabled == false)
+  }
+
+  @Test func freshInstallDefaultsTerminalThemeSyncEnabledToTrue() {
+    #expect(GlobalSettings.default.terminalThemeSyncEnabled == true)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitTerminalThemeSyncEnabled() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.terminalThemeSyncEnabled = true }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    // Explicit `true` must survive the asymmetric missing-key fallback.
+    #expect(reloaded.global.terminalThemeSyncEnabled == true)
   }
 }
 

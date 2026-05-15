@@ -85,7 +85,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyIgnoredOnWorktreeCreate: false,
     copyUntrackedOnWorktreeCreate: false,
     pullRequestMergeStrategy: .merge,
-    terminalThemeSyncEnabled: false,
+    terminalThemeSyncEnabled: true,
     restoreTerminalLayoutEnabled: false,
     hideSingleTabBar: false,
     automatedActionPolicy: .cliOnly,
@@ -119,7 +119,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyIgnoredOnWorktreeCreate: Bool = false,
     copyUntrackedOnWorktreeCreate: Bool = false,
     pullRequestMergeStrategy: PullRequestMergeStrategy = .merge,
-    terminalThemeSyncEnabled: Bool = false,
+    terminalThemeSyncEnabled: Bool = true,
     restoreTerminalLayoutEnabled: Bool = false,
     hideSingleTabBar: Bool = false,
     automatedActionPolicy: AutomatedActionPolicy = .cliOnly,
@@ -244,9 +244,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     pullRequestMergeStrategy =
       try container.decodeIfPresent(PullRequestMergeStrategy.self, forKey: .pullRequestMergeStrategy)
       ?? Self.default.pullRequestMergeStrategy
+    // Existing files predate this key; only fresh installs get `true` via `Self.default`.
     terminalThemeSyncEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalThemeSyncEnabled)
-      ?? Self.default.terminalThemeSyncEnabled
+      ?? false
     restoreTerminalLayoutEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .restoreTerminalLayoutEnabled)
       ?? Self.default.restoreTerminalLayoutEnabled
