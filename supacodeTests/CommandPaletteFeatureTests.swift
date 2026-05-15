@@ -39,8 +39,8 @@ struct CommandPaletteFeatureTests {
       repoRoot: rootPath
     )
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [keep, deleting])
-    var state = RepositoriesFeature.State(repositories: [repository])
-    state.deletingWorktreeIDs = [deleting.id]
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.sidebarItems[id: deleting.id]?.lifecycle = .deleting
     state.pendingWorktrees = [
       PendingWorktree(
         id: "\(rootPath)/wt-pending",
@@ -54,6 +54,7 @@ struct CommandPaletteFeatureTests {
         )
       )
     ]
+    state.reconcileSidebarForTesting()
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
     let ids = items.map(\.id)
@@ -66,7 +67,7 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
 
     let items = CommandPaletteFeature.commandPaletteItems(
@@ -150,7 +151,7 @@ struct CommandPaletteFeatureTests {
     )
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main])
     let items = CommandPaletteFeature.commandPaletteItems(
-      from: RepositoriesFeature.State(repositories: [repository])
+      from: RepositoriesFeature.State(reconciledRepositories: [repository])
     )
 
     #expect(
@@ -196,7 +197,7 @@ struct CommandPaletteFeatureTests {
     )
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main, feature])
     let items = CommandPaletteFeature.commandPaletteItems(
-      from: RepositoriesFeature.State(repositories: [repository])
+      from: RepositoriesFeature.State(reconciledRepositories: [repository])
     )
 
     #expect(
@@ -227,7 +228,7 @@ struct CommandPaletteFeatureTests {
     )
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     let items = CommandPaletteFeature.commandPaletteItems(
-      from: RepositoriesFeature.State(repositories: [repository])
+      from: RepositoriesFeature.State(reconciledRepositories: [repository])
     )
     let selectItem = items.first {
       if case .worktreeSelect(let id) = $0.kind {
@@ -248,7 +249,7 @@ struct CommandPaletteFeatureTests {
     )
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     let items = CommandPaletteFeature.commandPaletteItems(
-      from: RepositoriesFeature.State(repositories: [repository])
+      from: RepositoriesFeature.State(reconciledRepositories: [repository])
     )
     let selectItem = items.first {
       if case .worktreeSelect(let id) = $0.kind {
@@ -287,7 +288,7 @@ struct CommandPaletteFeatureTests {
         pinned,
         unpinned,
       ])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.$sidebar.withLock { sidebar in
       sidebar.sections[repository.id] = .init(
         buckets: [
@@ -326,7 +327,7 @@ struct CommandPaletteFeatureTests {
     )
     let repoA = makeRepository(rootPath: repoAPath, name: "Repo A", worktrees: [mainA])
     let repoB = makeRepository(rootPath: repoBPath, name: "Repo B", worktrees: [mainB])
-    var state = RepositoriesFeature.State(repositories: [repoA, repoB])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB])
     state.repositoryRoots = [repoB.rootURL, repoA.rootURL]
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
@@ -466,14 +467,9 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-draft", name: "draft", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
-      id: worktree.id,
-      addedLines: nil,
-      removedLines: nil,
-      pullRequest: makePullRequest(isDraft: true)
-    )
+    state.setWorktreeInfoForTesting(id: worktree.id, pullRequest: makePullRequest(isDraft: true))
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
     let ordered = CommandPaletteFeature.filterItems(items: items, query: "")
@@ -484,7 +480,7 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-failing", name: "failing", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
     let failingCheck = GithubPullRequestStatusCheck(
       detailsUrl: "https://example.com/check/1",
@@ -492,11 +488,8 @@ struct CommandPaletteFeatureTests {
       conclusion: "FAILURE",
       state: nil
     )
-    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
-      id: worktree.id,
-      addedLines: nil,
-      removedLines: nil,
-      pullRequest: makePullRequest(checks: [failingCheck])
+    state.setWorktreeInfoForTesting(
+      id: worktree.id, pullRequest: makePullRequest(checks: [failingCheck])
     )
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
@@ -508,18 +501,15 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-failing", name: "failing", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
     let failingCheck = GithubPullRequestStatusCheck(
       status: "COMPLETED",
       conclusion: "FAILURE",
       state: nil
     )
-    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
-      id: worktree.id,
-      addedLines: nil,
-      removedLines: nil,
-      pullRequest: makePullRequest(checks: [failingCheck])
+    state.setWorktreeInfoForTesting(
+      id: worktree.id, pullRequest: makePullRequest(checks: [failingCheck])
     )
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
@@ -531,16 +521,11 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-merge", name: "merge", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+    state.setWorktreeInfoForTesting(
       id: worktree.id,
-      addedLines: nil,
-      removedLines: nil,
-      pullRequest: makePullRequest(
-        mergeable: "MERGEABLE",
-        mergeStateStatus: "CLEAN"
-      )
+      pullRequest: makePullRequest(mergeable: "MERGEABLE", mergeStateStatus: "CLEAN")
     )
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
@@ -552,14 +537,9 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-close", name: "close", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
-      id: worktree.id,
-      addedLines: nil,
-      removedLines: nil,
-      pullRequest: makePullRequest(state: "OPEN")
-    )
+    state.setWorktreeInfoForTesting(id: worktree.id, pullRequest: makePullRequest(state: "OPEN"))
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
     let closeItem = items.first(where: { $0.title == "Close PR" })
@@ -576,14 +556,9 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-merged", name: "merged", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
-      id: worktree.id,
-      addedLines: nil,
-      removedLines: nil,
-      pullRequest: makePullRequest(state: "MERGED")
-    )
+    state.setWorktreeInfoForTesting(id: worktree.id, pullRequest: makePullRequest(state: "MERGED"))
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
     #expect(!items.contains(where: { $0.title == "Close PR" }))
@@ -593,16 +568,11 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-blocked", name: "blocked", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
-    state.worktreeInfos[id: worktree.id] = WorktreeInfoEntry(
+    state.setWorktreeInfoForTesting(
       id: worktree.id,
-      addedLines: nil,
-      removedLines: nil,
-      pullRequest: makePullRequest(
-        mergeable: "UNKNOWN",
-        mergeStateStatus: "BLOCKED"
-      )
+      pullRequest: makePullRequest(mergeable: "UNKNOWN", mergeStateStatus: "BLOCKED")
     )
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
@@ -1024,7 +994,7 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
 
     let runDef = ScriptDefinition(kind: .run, command: "npm run dev")
@@ -1045,7 +1015,7 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
 
     let definition = ScriptDefinition(kind: .run, command: "npm run dev")
@@ -1068,7 +1038,7 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: rootPath, name: "repo", repoRoot: rootPath)
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
 
     let emptyDef = ScriptDefinition(kind: .run, command: "  ")

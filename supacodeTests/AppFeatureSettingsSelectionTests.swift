@@ -17,16 +17,14 @@ struct AppFeatureSettingsSelectionTests {
     )
     let store = TestStore(
       initialState: AppFeature.State(
-        repositories: RepositoriesFeature.State(repositories: [repository]),
+        repositories: RepositoriesFeature.State(reconciledRepositories: [repository]),
         settings: SettingsFeature.State()
       )
     ) {
       AppFeature()
     }
 
-    await store.send(.repositories(.delegate(.repositoriesChanged([repository])))) {
-      $0.repositories.reconcileSidebarForTesting()
-    }
+    await store.send(.repositories(.delegate(.repositoriesChanged([repository]))))
     await store.receive(\.settings.repositoriesChanged) {
       $0.settings.repositorySummaries = [
         SettingsRepositorySummary(id: repository.id, name: repository.name)

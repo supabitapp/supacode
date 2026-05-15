@@ -22,7 +22,7 @@ struct ToolbarNotificationGroupingTests {
     let repoA = makeRepository(id: repoAPath, name: "Repo A", worktrees: [repoAMain, repoAOne, repoATwo])
     let repoB = makeRepository(id: repoBPath, name: "Repo B", worktrees: [repoBMain, repoBOne])
 
-    var state = RepositoriesFeature.State(repositories: [repoA, repoB])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB])
     state.repositoryRoots = [repoA.rootURL, repoB.rootURL]
     state.$sidebar.withLock { sidebar in
       sidebar.sections[repoB.id] = .init()
@@ -73,7 +73,7 @@ struct ToolbarNotificationGroupingTests {
     let repoA = makeRepository(id: repoAPath, name: "Repo A", worktrees: [repoAMain, repoAArchived])
     let repoB = makeRepository(id: repoBPath, name: "Repo B", worktrees: [repoBMain, repoBEmpty])
 
-    var state = RepositoriesFeature.State(repositories: [repoA, repoB])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB])
     state.repositoryRoots = [repoA.rootURL, repoB.rootURL]
     state.$sidebar.withLock { sidebar in
       sidebar.insert(
@@ -101,7 +101,7 @@ struct ToolbarNotificationGroupingTests {
     let mixed = makeWorktree(id: "\(repoPath)/mixed", name: "mixed", repoRoot: repoPath)
 
     let repo = makeRepository(id: repoPath, name: "Repo", worktrees: [main, readOnly, mixed])
-    var state = RepositoriesFeature.State(repositories: [repo])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
     state.repositoryRoots = [repo.rootURL]
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
@@ -132,7 +132,7 @@ struct ToolbarNotificationGroupingTests {
     let feature = makeWorktree(id: "\(repoPath)/feature", name: "feature", repoRoot: repoPath)
 
     let repo = makeRepository(id: repoPath, name: "Repo", worktrees: [main, feature])
-    var state = RepositoriesFeature.State(repositories: [repo])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
     state.repositoryRoots = [repo.rootURL]
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())

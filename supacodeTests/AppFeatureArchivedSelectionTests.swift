@@ -27,7 +27,7 @@ struct AppFeatureArchivedSelectionTests {
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])
     )
-    var repositoriesState = RepositoriesFeature.State(repositories: [repository])
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
     repositoriesState.selection = .worktree(worktree.id)
     let priorFocus = repositoriesState.sidebar.focusedWorktreeID
     let store = TestStore(
@@ -75,7 +75,7 @@ struct AppFeatureArchivedSelectionTests {
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [activeWorktree, archivedWorktree])
     )
-    var repositoriesState = RepositoriesFeature.State(repositories: [repository])
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
     repositoriesState.selection = .worktree(activeWorktree.id)
     repositoriesState.$sidebar.withLock { sidebar in
       sidebar.insert(
@@ -94,10 +94,10 @@ struct AppFeatureArchivedSelectionTests {
     // the surviving tint through untouched, not coincidentally match.
     let activeTint: RepositoryColor = .purple
     let archivedTint: RepositoryColor = .orange
-    appState.repositories.runningScriptsByWorktreeID = [
-      activeWorktree.id: [scriptID: activeTint],
-      archivedWorktree.id: [scriptID: archivedTint],
-    ]
+    appState.repositories.sidebarItems[id: activeWorktree.id]?.runningScripts[id: scriptID] =
+      .init(id: scriptID, tint: activeTint)
+    appState.repositories.sidebarItems[id: archivedWorktree.id]?.runningScripts[id: scriptID] =
+      .init(id: scriptID, tint: archivedTint)
     let sentCommands = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: appState) {
       AppFeature()
@@ -110,7 +110,7 @@ struct AppFeatureArchivedSelectionTests {
     store.exhaustivity = .off
 
     await store.send(.repositories(.delegate(.repositoriesChanged([repository])))) {
-      $0.repositories.runningScriptsByWorktreeID = [activeWorktree.id: [scriptID: activeTint]]
+      $0.repositories.sidebarItems[id: archivedWorktree.id]?.runningScripts.removeAll()
     }
     await store.finish()
 

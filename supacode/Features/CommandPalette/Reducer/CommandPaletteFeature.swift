@@ -214,7 +214,7 @@ struct CommandPaletteFeature {
     }
     if let selectedWorktreeID = repositories.selectedWorktreeID,
       let repositoryID = repositories.repositoryID(containing: selectedWorktreeID),
-      let pullRequest = repositories.worktreeInfo(for: selectedWorktreeID)?.pullRequest,
+      let pullRequest = repositories.sidebarItems[id: selectedWorktreeID]?.pullRequest,
       pullRequest.number > 0,
       pullRequest.state.uppercased() != "CLOSED"
     {
@@ -229,7 +229,7 @@ struct CommandPaletteFeature {
       items.append(contentsOf: debugToastItems())
     #endif
     for row in repositories.orderedSidebarItems() {
-      guard row.status == .idle else { continue }
+      guard row.lifecycle == .idle else { continue }
       let repositoryName = repositories.repositoryName(for: row.repositoryID) ?? "Repository"
       // Folder rows only have a synthetic "main" worktree whose name
       // matches the repository, so the usual `repo / worktree`

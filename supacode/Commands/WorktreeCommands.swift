@@ -194,10 +194,10 @@ struct WorktreeCommands: Commands {
 private struct WorktreeShortcutButton: View {
   let index: Int
   let shortcut: AppShortcut?
-  let orderedRows: [SidebarItemModel]
+  let orderedRows: [SidebarItemFeature.State]
   let store: StoreOf<AppFeature>
 
-  private var row: SidebarItemModel? {
+  private var row: SidebarItemFeature.State? {
     orderedRows.indices.contains(index) ? orderedRows[index] : nil
   }
 
@@ -283,7 +283,7 @@ extension FocusedValues {
     set { self[StopRunScriptActionKey.self] = newValue }
   }
 
-  var visibleHotkeyWorktreeRows: [SidebarItemModel]? {
+  var visibleHotkeyWorktreeRows: [SidebarItemFeature.State]? {
     get { self[VisibleHotkeyWorktreeRowsKey.self] }
     set { self[VisibleHotkeyWorktreeRowsKey.self] = newValue }
   }
@@ -298,5 +298,5 @@ private struct StopRunScriptActionKey: FocusedValueKey {
 }
 
 private struct VisibleHotkeyWorktreeRowsKey: FocusedValueKey {
-  typealias Value = [SidebarItemModel]
+  typealias Value = [SidebarItemFeature.State]
 }

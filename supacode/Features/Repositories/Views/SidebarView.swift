@@ -54,11 +54,11 @@ struct SidebarView: View {
   }
 
   private func makeArchiveWorktreeAction(
-    rows: [SidebarItemModel]
+    rows: [SidebarItemFeature.State]
   ) -> (() -> Void)? {
     let targets =
       rows
-      .filter { $0.isRemovable && !$0.isMainWorktree }
+      .filter { $0.lifecycle == .idle && !$0.isMainWorktree }
       .map {
         RepositoriesFeature.ArchiveWorktreeTarget(
           worktreeID: $0.id,
@@ -76,11 +76,11 @@ struct SidebarView: View {
   }
 
   private func makeDeleteWorktreeAction(
-    rows: [SidebarItemModel]
+    rows: [SidebarItemFeature.State]
   ) -> (() -> Void)? {
     let targets =
       rows
-      .filter { $0.isRemovable }
+      .filter { $0.lifecycle == .idle }
       .map {
         RepositoriesFeature.DeleteWorktreeTarget(
           worktreeID: $0.id,

@@ -4,13 +4,14 @@ import OrderedCollections
 import SupacodeSettingsShared
 
 extension RepositoriesFeature {
-  /// Reconciles per-row data after any aggregate mutation.
+  /// Reconciles per-row data after any roster mutation.
   static func syncSidebar(_ state: inout State) {
     reconcileSidebarItems(&state)
     rebuildSidebarGrouping(&state)
   }
 
-  /// Rebuilds `state.sidebarItems` from the canonical roster, preserving per-row data on surviving ids.
+  /// Rebuilds `state.sidebarItems` from the canonical roster, carrying forward
+  /// per-row data (lifecycle, diff stats, PR, running scripts) for surviving ids.
   /// Only path that births or kills a row.
   static func reconcileSidebarItems(_ state: inout State) {
     let previousByID = state.sidebarItems
@@ -23,7 +24,6 @@ extension RepositoriesFeature {
         let existing = previousByID[id: id]
         let isPinned = state.isWorktreePinned(worktree)
         let isMain = state.isMainWorktree(worktree)
-        let lifecycle = state.sidebarItemLifecycle(for: id, repositoryID: repository.id)
 
         var item =
           existing
@@ -35,7 +35,7 @@ extension RepositoriesFeature {
             branchName: worktree.name,
             subtitle: worktree.detail.isEmpty ? nil : worktree.detail,
             workingDirectory: worktree.workingDirectory,
-            accent: nil,
+            repositoryAccent: nil,
             isMainWorktree: isMain,
             isPinned: isPinned,
             hasMergedBadge: false
@@ -46,23 +46,10 @@ extension RepositoriesFeature {
         item.workingDirectory = worktree.workingDirectory
         item.isMainWorktree = isMain
         item.isPinned = isPinned
-        item.lifecycle = lifecycle
         // Clear the PR query branch when the worktree was renamed.
         if let existing, existing.branchName != worktree.name {
           item.pullRequestBranchAtQueryTime = nil
         }
-        let infoEntry = state.worktreeInfos[id: id]
-        item.addedLines = infoEntry?.addedLines
-        item.removedLines = infoEntry?.removedLines
-        item.pullRequest = infoEntry?.pullRequest
-        // Dictionary iteration is hash-seed-dependent; sort by id for deterministic Equatable.
-        let runningTints = state.runningScriptsByWorktreeID[id] ?? [:]
-        item.runningScripts = IdentifiedArrayOf(
-          uniqueElements:
-            runningTints
-            .sorted { $0.key.uuidString < $1.key.uuidString }
-            .map { SidebarItemFeature.State.RunningScript(id: $0.key, tint: $0.value) }
-        )
         rebuilt.append(item)
       }
       for pending in state.pendingWorktrees where pending.repositoryID == repository.id {
@@ -79,7 +66,7 @@ extension RepositoriesFeature {
             branchName: pendingName,
             subtitle: nil,
             workingDirectory: repository.rootURL,
-            accent: nil,
+            repositoryAccent: nil,
             isMainWorktree: false,
             isPinned: false,
             hasMergedBadge: false
@@ -92,6 +79,16 @@ extension RepositoriesFeature {
           : .pending
         rebuilt.append(item)
       }
+    }
+    // Carry forward in-flight rows whose worktree dropped out of the roster
+    // mid-archive / mid-delete so the per-target completion handlers can drain
+    // them. Previous behavior preserved aggregate sets across reloads; the
+    // per-row equivalent keeps these orphan rows alive until their lifecycle
+    // returns to `.idle`.
+    let rebuiltIDs = Set(rebuilt.ids)
+    for existing in previousByID
+    where !rebuiltIDs.contains(existing.id) && existing.lifecycle != .idle {
+      rebuilt.append(existing)
     }
     state.sidebarItems = rebuilt
   }
@@ -120,7 +117,10 @@ extension RepositoriesFeature {
       // Archived bucket: only worktrees whose delete script is running stay visible.
       let archivedIDs = state.archivedWorktreeIDSet
       bucket[.archived] = repository.worktrees
-        .filter { archivedIDs.contains($0.id) && state.deleteScriptWorktreeIDs.contains($0.id) }
+        .filter { worktree in
+          archivedIDs.contains(worktree.id)
+            && state.sidebarItems[id: worktree.id]?.lifecycle == .deletingScript
+        }
         .map(\.id)
       buckets[repositoryID] = bucket
     }
@@ -129,27 +129,9 @@ extension RepositoriesFeature {
 }
 
 extension RepositoriesFeature.State {
-  /// Collapses the aggregated lifecycle sets into the per-row `Lifecycle`.
-  fileprivate func sidebarItemLifecycle(
-    for worktreeID: Worktree.ID,
-    repositoryID: Repository.ID
-  ) -> SidebarItemFeature.State.Lifecycle {
-    if deleteScriptWorktreeIDs.contains(worktreeID) {
-      return .deletingScript
-    }
-    if removingRepositoryIDs[repositoryID] != nil || deletingWorktreeIDs.contains(worktreeID) {
-      return .deleting
-    }
-    if archivingWorktreeIDs.contains(worktreeID) {
-      return .archiving
-    }
-    if pendingSetupScriptWorktreeIDs.contains(worktreeID) {
-      return .pending
-    }
-    return .idle
-  }
-
-  /// Worktrees in sidebar order, including archived rows with a running delete script.
+  /// Worktrees in sidebar order, including archived rows so per-row PR / diff /
+  /// running-script data survives across archive transitions for views and for
+  /// the eventual unarchive.
   fileprivate func orderedWorktreesIncludingArchivedWithRunningDeleteScript(
     in repository: Repository
   ) -> [Worktree] {
@@ -167,12 +149,8 @@ extension RepositoriesFeature.State {
     for worktree in orderedUnpinnedWorktrees(in: repository) where seen.insert(worktree.id).inserted {
       ordered.append(worktree)
     }
-    let archived = archivedWorktreeIDSet
     for worktree in repository.worktrees
-    where archived.contains(worktree.id)
-      && deleteScriptWorktreeIDs.contains(worktree.id)
-      && seen.insert(worktree.id).inserted
-    {
+    where isWorktreeArchived(worktree.id) && seen.insert(worktree.id).inserted {
       ordered.append(worktree)
     }
     return ordered

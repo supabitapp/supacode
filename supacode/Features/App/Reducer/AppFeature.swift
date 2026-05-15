@@ -238,13 +238,16 @@ struct AppFeature {
 
       case .repositories(.delegate(.repositoriesChanged(let repositories))):
         let archivedIDs = state.repositories.archivedWorktreeIDSet
-        let deleteScriptIDs = state.repositories.deleteScriptWorktreeIDs
-        let ids = Set(
-          repositories.flatMap { $0.worktrees.map(\.id) }
-            .filter { !archivedIDs.contains($0) || deleteScriptIDs.contains($0) }
+        let allowed = Set(
+          state.repositories.sidebarItems
+            .filter { item in
+              !archivedIDs.contains(item.id) || item.lifecycle == .deletingScript
+            }
+            .map(\.id)
         )
-        state.repositories.runningScriptsByWorktreeID = state.repositories.runningScriptsByWorktreeID
-          .filter { ids.contains($0.key) }
+        for id in state.repositories.sidebarItems.ids where !allowed.contains(id) {
+          state.repositories.sidebarItems[id: id]?.runningScripts.removeAll()
+        }
         RepositoriesFeature.syncSidebar(&state.repositories)
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
           from: repositories,
@@ -266,8 +269,8 @@ struct AppFeature {
             )
           ),
           .send(.commandPalette(.pruneRecency(recencyIDs))),
-          .run { _ in
-            await terminalClient.send(.prune(ids))
+          .run { [allowed] _ in
+            await terminalClient.send(.prune(allowed))
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
@@ -523,10 +526,8 @@ struct AppFeature {
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-        var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
-        ids[definition.id] = definition.resolvedTintColor
-        state.repositories.runningScriptsByWorktreeID[worktree.id] = ids
-        RepositoriesFeature.syncSidebar(&state.repositories)
+        state.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+          .init(id: definition.id, tint: definition.resolvedTintColor)
         return .run { _ in
           await terminalClient.send(
             .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
@@ -1302,8 +1303,7 @@ struct AppFeature {
       )
       return .none
     }
-    let runningIDs = state.repositories.runningScriptsByWorktreeID[worktreeID] ?? [:]
-    guard runningIDs[scriptID] == nil else {
+    guard state.repositories.sidebarItems[id: worktreeID]?.runningScripts[id: scriptID] == nil else {
       state.alert = scriptAlert(
         title: "Script already running",
         message: "\"\(definition.displayName)\" is already running in this worktree."
@@ -1320,10 +1320,8 @@ struct AppFeature {
       )
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-    var updated = runningIDs
-    updated[scriptID] = definition.resolvedTintColor
-    state.repositories.runningScriptsByWorktreeID[worktreeID] = updated
-    RepositoriesFeature.syncSidebar(&state.repositories)
+    state.repositories.sidebarItems[id: worktreeID]?.runningScripts[id: scriptID] =
+      .init(id: scriptID, tint: definition.resolvedTintColor)
     let terminalClient = terminalClient
     return .run { _ in
       await terminalClient.send(

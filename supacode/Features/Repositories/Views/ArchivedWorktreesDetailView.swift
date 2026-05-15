@@ -53,7 +53,7 @@ struct ArchivedWorktreesDetailView: View {
               ForEach(group.worktrees, id: \.id) { worktree in
                 ArchivedWorktreeRowView(
                   worktree: worktree,
-                  info: store.state.worktreeInfo(for: worktree.id),
+                  pullRequest: store.state.sidebarItems[id: worktree.id]?.pullRequest,
                   onUnarchive: {
                     store.send(.unarchiveWorktree(worktree.id))
                   },

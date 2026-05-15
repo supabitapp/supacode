@@ -43,7 +43,7 @@ struct AppFeatureOpenWorktreeTests {
   }
 
   @Test(.dependencies) func contextMenuEditorActionRunsSetupScriptWhenPending() async {
-    let (store, context) = makeStore { $0.pendingSetupScriptWorktreeIDs = [$1.id] }
+    let (store, context) = makeStore { $0.sidebarItems[id: $1.id]?.lifecycle = .pending }
 
     await store.send(.repositories(.contextMenuOpenWorktree(context.worktree.id, .editor)))
     await store.receive(\.repositories.delegate.openWorktreeInApp)
@@ -128,8 +128,8 @@ struct AppFeatureOpenWorktreeTests {
   ) -> (TestStoreOf<AppFeature>, TestContext) {
     let worktree = makeWorktree()
     var repositoriesState = makeRepositoriesState(worktree: worktree)
-    mutate(&repositoriesState, worktree)
     repositoriesState.reconcileSidebarForTesting()
+    mutate(&repositoriesState, worktree)
     let openedActions = LockIsolated<[OpenWorktreeAction]>([])
     let terminalCommands = LockIsolated<[TerminalClient.Command]>([])
     let capturedEvents = LockIsolated<[CapturedEvent]>([])

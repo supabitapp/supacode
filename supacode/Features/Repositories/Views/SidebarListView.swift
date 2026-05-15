@@ -138,7 +138,7 @@ struct SidebarListView: View {
 
 private struct SidebarRootView: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemModel]
+  let hotkeyRows: [SidebarItemFeature.State]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -174,7 +174,7 @@ private struct SidebarRootView: View {
 
 private struct SidebarSectionView: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemModel]
+  let hotkeyRows: [SidebarItemFeature.State]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager

@@ -511,7 +511,7 @@ struct WorktreeDetailView: View {
 
   static func makeToolbarTitleContent(
     selectedWorktree: Worktree,
-    selectedRow: SidebarItemModel?,
+    selectedRow: SidebarItemFeature.State?,
     repositories: RepositoriesFeature.State,
     hideSubtitleOnMatch: Bool
   ) -> WorktreeToolbarTitleContent {
@@ -561,7 +561,7 @@ struct WorktreeDetailView: View {
   ) -> WorktreeToolbarState.Kind {
     let selectedRow = repositories.selectedRow(for: selectedWorktree.id)
     guard selectedRow?.isFolder != true else { return .folder }
-    guard let pullRequest = repositories.worktreeInfo(for: selectedWorktree.id)?.pullRequest else {
+    guard let pullRequest = repositories.sidebarItems[id: selectedWorktree.id]?.pullRequest else {
       return .git(pullRequest: nil)
     }
     // Only surface the PR when its head branch matches the current
@@ -572,20 +572,20 @@ struct WorktreeDetailView: View {
   }
 
   private func loadingInfo(
-    for selectedRow: SidebarItemModel?,
+    for selectedRow: SidebarItemFeature.State?,
     selectedWorktreeID: Worktree.ID?,
     repositories: RepositoriesFeature.State
   ) -> WorktreeLoadingInfo? {
     guard let selectedRow else { return nil }
     let repositoryName = repositories.repositoryName(for: selectedRow.repositoryID)
-    switch selectedRow.status {
-    case .deleting(inTerminal: false):
+    switch selectedRow.lifecycle {
+    case .deleting:
       return WorktreeLoadingInfo(
         name: selectedRow.name,
         repositoryName: repositoryName,
         kind: .removing(isFolder: selectedRow.isFolder)
       )
-    case .archiving, .deleting(inTerminal: true):
+    case .archiving, .deletingScript:
       // The script runs in a terminal tab, so let the
       // terminal view show through instead of a loading overlay.
       return nil
@@ -604,7 +604,7 @@ struct WorktreeDetailView: View {
         kind: .creating(
           WorktreeLoadingInfo.Progress(
             statusTitle: progress?.titleText ?? selectedRow.name,
-            statusDetail: progress?.detailText ?? selectedRow.detail,
+            statusDetail: progress?.detailText ?? (selectedRow.subtitle ?? ""),
             statusCommand: progress?.commandText,
             statusLines: progress?.liveOutputLines ?? []
           )
@@ -746,7 +746,7 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
 private struct MultiSelectedWorktreeSummary: Identifiable {
   let id: Worktree.ID
   let repositoryID: Repository.ID
-  let kind: SidebarItemModel.Kind
+  let kind: SidebarItemFeature.State.Kind
   let name: String
   let repositoryName: String?
 }
@@ -764,7 +764,7 @@ private struct MultiSelectedWorktreesDetailView: View {
   private let visibleRowsLimit = 8
 
   private var worktreeRows: [MultiSelectedWorktreeSummary] {
-    rows.filter { $0.kind == .git }
+    rows.filter { $0.kind == .gitWorktree }
   }
 
   private var folderRows: [MultiSelectedWorktreeSummary] {
@@ -841,7 +841,7 @@ private struct MultiSelectedWorktreesDetailView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(row.name)
             .lineLimit(1)
-          if let repositoryName = row.repositoryName, row.kind == .git {
+          if let repositoryName = row.repositoryName, row.kind == .gitWorktree {
             Text(repositoryName)
               .foregroundStyle(.secondary)
               .lineLimit(1)

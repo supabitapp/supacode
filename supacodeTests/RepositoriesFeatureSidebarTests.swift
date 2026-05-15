@@ -46,7 +46,7 @@ struct RepositoriesFeatureSidebarTests {
     #expect(state.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime == nil)
   }
 
-  @Test func runningScriptsMirrorAggregateDictAcrossSyncs() {
+  @Test func runningScriptsSurviveReconcile() {
     let worktreeID = "/tmp/repo/wt-feature"
     let repoID = "/tmp/repo/"
     let worktree = Worktree(
@@ -63,23 +63,23 @@ struct RepositoriesFeatureSidebarTests {
         name: "repo",
         worktrees: IdentifiedArray(uniqueElements: [worktree])
       ))
+    RepositoriesFeature.syncSidebar(&state)
     let scriptA = UUID()
     let scriptB = UUID()
-    state.runningScriptsByWorktreeID[worktreeID] = [scriptA: .blue]
+    state.sidebarItems[id: worktreeID]?.runningScripts[id: scriptA] = .init(id: scriptA, tint: .blue)
     RepositoriesFeature.syncSidebar(&state)
     #expect(state.sidebarItems[id: worktreeID]?.runningScripts.map(\.id) == [scriptA])
     #expect(state.sidebarItems[id: worktreeID]?.runningScripts[id: scriptA]?.tint == .blue)
 
-    state.runningScriptsByWorktreeID[worktreeID] = [scriptA: .blue, scriptB: .orange]
+    state.sidebarItems[id: worktreeID]?.runningScripts[id: scriptB] = .init(id: scriptB, tint: .orange)
     RepositoriesFeature.syncSidebar(&state)
-    let expected = [scriptA, scriptB].sorted { $0.uuidString < $1.uuidString }
-    #expect(state.sidebarItems[id: worktreeID]?.runningScripts.map(\.id) == expected)
+    #expect(state.sidebarItems[id: worktreeID]?.runningScripts.map(\.id) == [scriptA, scriptB])
 
-    state.runningScriptsByWorktreeID[worktreeID] = [scriptB: .orange]
+    state.sidebarItems[id: worktreeID]?.runningScripts.remove(id: scriptA)
     RepositoriesFeature.syncSidebar(&state)
     #expect(state.sidebarItems[id: worktreeID]?.runningScripts.map(\.id) == [scriptB])
 
-    state.runningScriptsByWorktreeID.removeValue(forKey: worktreeID)
+    state.sidebarItems[id: worktreeID]?.runningScripts.removeAll()
     RepositoriesFeature.syncSidebar(&state)
     #expect(state.sidebarItems[id: worktreeID]?.runningScripts.isEmpty == true)
   }

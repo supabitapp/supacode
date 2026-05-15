@@ -99,7 +99,7 @@ struct WindowTitleTests {
       name: repoName,
       worktrees: IdentifiedArray(uniqueElements: [worktree])
     )
-    var state = RepositoriesFeature.State(repositories: [repository])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
     if let customTitle {
       state.$sidebar.withLock { sidebar in

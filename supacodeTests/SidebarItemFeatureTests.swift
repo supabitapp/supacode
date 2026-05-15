@@ -288,15 +288,15 @@ struct SidebarItemFeatureTests {
 
   @Test func rosterAccentTriStateClearsAndSets() async {
     var state = makeState(name: "feature")
-    state.accent = .blue
+    state.repositoryAccent = .blue
     let store = TestStore(initialState: state) {
       SidebarItemFeature()
     }
     await store.send(.rosterChanged(.init(accent: .some(nil)))) {
-      $0.accent = nil
+      $0.repositoryAccent = nil
     }
     await store.send(.rosterChanged(.init(accent: .some(.green)))) {
-      $0.accent = .green
+      $0.repositoryAccent = .green
     }
   }
 
@@ -376,7 +376,7 @@ struct SidebarItemFeatureTests {
       branchName: name,
       subtitle: nil,
       workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-\(name)"),
-      accent: nil,
+      repositoryAccent: nil,
       isMainWorktree: false,
       isPinned: false,
       hasMergedBadge: false

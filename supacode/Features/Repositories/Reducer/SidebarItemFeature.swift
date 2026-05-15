@@ -1,6 +1,22 @@
 import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
+import SwiftUI
+
+enum WorktreeAccent: Hashable, Sendable {
+  case `default`
+  case main
+  case pinned
+
+  func shapeStyle(emphasized: Bool) -> AnyShapeStyle {
+    guard !emphasized else { return AnyShapeStyle(.secondary) }
+    return switch self {
+    case .main: AnyShapeStyle(.yellow)
+    case .pinned: AnyShapeStyle(.orange)
+    case .default: AnyShapeStyle(.tertiary)
+    }
+  }
+}
 
 /// Per-row sidebar feature. The view body reads exclusively from this state;
 /// the parent dispatches per-row deltas to keep it in sync.
@@ -21,7 +37,7 @@ struct SidebarItemFeature {
     var branchName: String
     var subtitle: String?
     var workingDirectory: URL
-    var accent: RepositoryColor?
+    var repositoryAccent: RepositoryColor?
     var isMainWorktree: Bool
     /// Mirror of `@Shared(.sidebar)`; written through actions only.
     var isPinned: Bool
@@ -245,7 +261,7 @@ struct SidebarItemFeature {
     if let workingDirectory = delta.workingDirectory, state.workingDirectory != workingDirectory {
       state.workingDirectory = workingDirectory
     }
-    if let accent = delta.accent, state.accent != accent { state.accent = accent }
+    if let accent = delta.accent, state.repositoryAccent != accent { state.repositoryAccent = accent }
     if let isMainWorktree = delta.isMainWorktree, state.isMainWorktree != isMainWorktree {
       state.isMainWorktree = isMainWorktree
     }
@@ -253,6 +269,24 @@ struct SidebarItemFeature {
     if let hasMergedBadge = delta.hasMergedBadge, state.hasMergedBadge != hasMergedBadge {
       state.hasMergedBadge = hasMergedBadge
     }
+  }
+}
+
+extension SidebarItemFeature.State {
+  var isFolder: Bool { kind == .folder }
+  var isPending: Bool { lifecycle == .pending }
+  var isArchiving: Bool { lifecycle == .archiving }
+  var isDeleting: Bool { lifecycle == .deleting || lifecycle == .deletingScript }
+  var isLifecycleBusy: Bool { lifecycle != .idle }
+  var sidebarDisplayName: String? {
+    guard !isMainWorktree else { return nil }
+    let last = workingDirectory.lastPathComponent
+    return last.isEmpty ? nil : last
+  }
+  var accent: WorktreeAccent {
+    if isMainWorktree { return .main }
+    if isPinned { return .pinned }
+    return .default
   }
 }
 

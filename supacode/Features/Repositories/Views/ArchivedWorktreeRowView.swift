@@ -4,14 +4,14 @@ import SwiftUI
 
 struct ArchivedWorktreeRowView: View {
   let worktree: Worktree
-  let info: WorktreeInfoEntry?
+  let pullRequest: GithubPullRequest?
   let onUnarchive: () -> Void
   let onDelete: () -> Void
 
   var body: some View {
     let display = WorktreePullRequestDisplay(
       worktreeName: worktree.name,
-      pullRequest: info?.pullRequest
+      pullRequest: pullRequest
     )
     let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
     let bodyFontAscender = NSFont.preferredFont(forTextStyle: .body).ascender

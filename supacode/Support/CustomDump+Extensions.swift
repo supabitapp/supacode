@@ -28,7 +28,7 @@ extension RepositoriesFeature.State: CustomDumpRepresentable {
       repositories: repositories.count,
       selection: selection,
       pending: pendingWorktrees.count,
-      deleting: deletingWorktreeIDs.count,
+      deleting: sidebarItems.lazy.filter { $0.lifecycle == .deleting }.count,
       hasAlert: alert != nil
     )
   }
@@ -77,15 +77,5 @@ extension GithubPullRequest: CustomDumpRepresentable {
 extension GithubPullRequestStatusCheckRollup: CustomDumpRepresentable {
   var customDumpValue: Any {
     checks.count
-  }
-}
-
-extension WorktreeInfoEntry: CustomDumpRepresentable {
-  var customDumpValue: Any {
-    (
-      added: addedLines,
-      removed: removedLines,
-      hasPR: pullRequest != nil
-    )
   }
 }

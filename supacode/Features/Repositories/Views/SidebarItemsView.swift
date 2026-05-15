@@ -9,7 +9,7 @@ private nonisolated let notificationLogger = SupaLogger("Notifications")
 
 struct SidebarItemsView: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemModel]
+  let hotkeyRows: [SidebarItemFeature.State]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -351,7 +351,7 @@ private struct SidebarItemContextMenu: View {
 
   private var rowIsFolder: Bool { rowKind == .folder }
 
-  private var contextRows: [SidebarItemModel] {
+  private var contextRows: [SidebarItemFeature.State] {
     guard selectedWorktreeIDs.count > 1, selectedWorktreeIDs.contains(rowID) else {
       return store.state.selectedRow(for: rowID).map { [$0] } ?? []
     }
@@ -389,7 +389,7 @@ private struct SidebarItemContextMenu: View {
 
   @ViewBuilder
   private func menuContents(
-    contextRows: [SidebarItemModel],
+    contextRows: [SidebarItemFeature.State],
     isBulkSelection: Bool,
     overrides: [AppShortcutID: AppShortcutOverride]
   ) -> some View {
@@ -447,7 +447,7 @@ private struct SidebarItemContextMenu: View {
 
     let archiveTargets =
       contextRows
-      .filter { !$0.isMainWorktree && !$0.isLoading }
+      .filter { !$0.isMainWorktree && $0.lifecycle == .idle }
       .map {
         RepositoriesFeature.ArchiveWorktreeTarget(
           worktreeID: $0.id,
