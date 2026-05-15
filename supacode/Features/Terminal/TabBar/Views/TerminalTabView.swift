@@ -9,8 +9,7 @@ struct TerminalTabView: View {
   let tabIndex: Int
   let fixedWidth: CGFloat?
   let hasNotification: Bool
-  let surfaceIDs: [UUID]
-  let terminalManager: WorktreeTerminalManager
+  let agents: [AgentPresenceFeature.AgentInstance]
   let onSelect: () -> Void
   let onClose: () -> Void
   let onRename: (String) -> Void
@@ -39,8 +38,7 @@ struct TerminalTabView: View {
           isHoveringClose: isHoveringClose,
           shortcutHint: shortcutHint,
           showsShortcutHint: showsShortcutHint,
-          surfaceIDs: surfaceIDs,
-          terminalManager: terminalManager,
+          agents: agents,
         )
       }
       .buttonStyle(TerminalTabButtonStyle(isPressing: $isPressing))

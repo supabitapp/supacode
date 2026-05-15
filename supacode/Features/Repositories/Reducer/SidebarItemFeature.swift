@@ -85,6 +85,9 @@ struct SidebarItemFeature {
 
     var isDragging: Bool = false
     var shortcutHint: String?
+    /// One-shot focus token: set when a selection arrives with `focusTerminal: true`,
+    /// consumed by the view after it routes focus to the worktree's terminal.
+    var shouldFocusTerminal: Bool = false
   }
 
   enum Action: Equatable, Sendable {
@@ -96,10 +99,13 @@ struct SidebarItemFeature {
     case pullRequestChanged(GithubPullRequest?, branchAtQueryTime: String)
     case runningScriptStarted(id: UUID, tint: RepositoryColor)
     case runningScriptStopped(id: UUID)
+    case runningScriptsCleared
     case agentSnapshotChanged([AgentPresenceFeature.AgentInstance], hasActivity: Bool)
     case terminalProjectionChanged(WorktreeRowProjection)
     case shortcutHintChanged(String?)
     case dragSessionChanged(isDragging: Bool)
+    case focusTerminalRequested
+    case focusTerminalConsumed
 
     // MARK: - User intents.
     case openRequested(OpenWorktreeAction)
@@ -180,6 +186,11 @@ struct SidebarItemFeature {
         state.runningScripts.remove(id: id)
         return .none
 
+      case .runningScriptsCleared:
+        guard !state.runningScripts.isEmpty else { return .none }
+        state.runningScripts.removeAll()
+        return .none
+
       case .agentSnapshotChanged(let agents, let hasActivity):
         guard state.agents != agents || state.hasAgentActivity != hasActivity else { return .none }
         state.agents = agents
@@ -203,6 +214,16 @@ struct SidebarItemFeature {
       case .dragSessionChanged(let isDragging):
         guard state.isDragging != isDragging else { return .none }
         state.isDragging = isDragging
+        return .none
+
+      case .focusTerminalRequested:
+        guard !state.shouldFocusTerminal else { return .none }
+        state.shouldFocusTerminal = true
+        return .none
+
+      case .focusTerminalConsumed:
+        guard state.shouldFocusTerminal else { return .none }
+        state.shouldFocusTerminal = false
         return .none
 
       case .openRequested(let action):

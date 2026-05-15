@@ -8,12 +8,14 @@ struct TerminalTabLabelView: View {
   let isHoveringClose: Bool
   let shortcutHint: String?
   let showsShortcutHint: Bool
-  let surfaceIDs: [UUID]
-  let terminalManager: WorktreeTerminalManager
+  let agents: [AgentPresenceFeature.AgentInstance]
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
-      TabRunningAgentsBadge(surfaceIDs: surfaceIDs, terminalManager: terminalManager)
+      if !agents.isEmpty {
+        AgentAvatarGroupView(instances: agents, size: 14)
+          .padding(.trailing, 2)
+      }
       if let icon = tab.icon {
         Image(systemName: icon)
           .imageScale(.small)
@@ -41,19 +43,5 @@ struct TerminalTabLabelView: View {
     .contentShape(.rect)
     .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
     .padding(.trailing, TerminalTabBarMetrics.closeButtonSize + TerminalTabBarMetrics.contentSpacing)
-  }
-}
-
-/// Owns the agent-presence read so per-agent activity storms re-render only this badge.
-private struct TabRunningAgentsBadge: View {
-  let surfaceIDs: [UUID]
-  let terminalManager: WorktreeTerminalManager
-
-  var body: some View {
-    let agents = terminalManager.agentsForSurfaces(surfaceIDs)
-    if !agents.isEmpty {
-      AgentAvatarGroupView(instances: agents, size: 14)
-        .padding(.trailing, 2)
-    }
   }
 }

@@ -52,7 +52,8 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(.runScript)
-    await store.receive(\.runNamedScript) {
+    await store.receive(\.runNamedScript)
+    await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
         .init(id: definition.id, tint: definition.resolvedTintColor)
     }
@@ -88,7 +89,8 @@ struct AppFeatureRunScriptTests {
       $0.terminalClient.send = { _ in }
     }
 
-    await store.send(.runNamedScript(definition)) {
+    await store.send(.runNamedScript(definition))
+    await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
         .init(id: definition.id, tint: definition.resolvedTintColor)
     }
@@ -148,7 +150,8 @@ struct AppFeatureRunScriptTests {
           tabId: nil
         )
       )
-    ) {
+    )
+    await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
     }
   }
@@ -262,7 +265,8 @@ struct AppFeatureRunScriptTests {
           tabId: nil
         )
       )
-    ) {
+    )
+    await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
     }
   }
@@ -301,7 +305,8 @@ struct AppFeatureRunScriptTests {
       }
     }
 
-    await store.send(.runNamedScript(globalScript)) {
+    await store.send(.runNamedScript(globalScript))
+    await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: globalScript.id] =
         .init(id: globalScript.id, tint: globalScript.resolvedTintColor)
     }

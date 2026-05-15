@@ -43,12 +43,19 @@ struct AgentPresenceFeature {
   nonisolated enum CancelID: Hashable, Sendable { case livenessSweep }
 
   enum Action {
+    case delegate(Delegate)
     case hookEventReceived(AgentHookEvent)
     case livenessSweepTick
     case start
     case stop
     case surfaceClosed(UUID)
     case surfacesClosed(Set<UUID>)
+
+    enum Delegate: Equatable, Sendable {
+      /// Surfaces whose presence record was added, removed, or had its activity flip.
+      /// Parent fans out per-row `agentSnapshotChanged` via the `surfaceToItemID` reverse index.
+      case surfacesChanged(Set<UUID>)
+    }
   }
 
   @ObservableState
@@ -71,13 +78,16 @@ struct AgentPresenceFeature {
     Reduce { state, action in
       @Dependency(\.continuousClock) var clock
       switch action {
-      case .hookEventReceived(let event):
-        Self.apply(event: event, into: &state)
+      case .delegate:
         return .none
 
+      case .hookEventReceived(let event):
+        let changed = Self.apply(event: event, into: &state)
+        return Self.surfacesChangedEffect(changed)
+
       case .livenessSweepTick:
-        Self.sweepLiveness(into: &state)
-        return .none
+        let changed = Self.sweepLiveness(into: &state)
+        return Self.surfacesChangedEffect(changed)
 
       case .start:
         return .run { send in
@@ -92,52 +102,63 @@ struct AgentPresenceFeature {
 
       case .surfaceClosed(let id):
         Self.drop(surfaces: [id], from: &state)
-        return .none
+        return Self.surfacesChangedEffect([id])
 
       case .surfacesClosed(let ids):
         Self.drop(surfaces: ids, from: &state)
-        return .none
+        return Self.surfacesChangedEffect(ids)
       }
     }
   }
 
+  private static func surfacesChangedEffect(_ surfaces: Set<UUID>) -> Effect<Action> {
+    guard !surfaces.isEmpty else { return .none }
+    return .send(.delegate(.surfacesChanged(surfaces)))
+  }
+
   // MARK: - Mutators.
 
-  private static func apply(event: AgentHookEvent, into state: inout State) {
-    guard let agent = SkillAgent(rawValue: event.agent) else { return }
+  /// Returns the surface IDs whose row-visible state changed, so the parent can fan
+  /// out per-row `agentSnapshotChanged` deltas without inspecting `bySurface` itself.
+  private static func apply(event: AgentHookEvent, into state: inout State) -> Set<UUID> {
+    guard let agent = SkillAgent(rawValue: event.agent) else { return [] }
     let key = PresenceKey(agent: agent, surfaceID: event.surfaceID)
     switch event.eventName {
     case .sessionStart:
-      guard let pid = event.pid else { return }
+      guard let pid = event.pid else { return [] }
       var record = state.records[key] ?? PresenceRecord(pids: [])
-      record.pids.insert(pid)
+      let inserted = record.pids.insert(pid).inserted
       state.records[key] = record
       rebuildPresence(forSurface: event.surfaceID, in: &state)
+      return inserted ? [event.surfaceID] : []
     case .sessionEnd:
-      guard let pid = event.pid, var record = state.records[key] else { return }
-      record.pids.remove(pid)
+      guard let pid = event.pid, var record = state.records[key] else { return [] }
+      let removed = record.pids.remove(pid) != nil
       if record.pids.isEmpty {
         state.records.removeValue(forKey: key)
       } else {
         state.records[key] = record
       }
       rebuildPresence(forSurface: event.surfaceID, in: &state)
+      return removed ? [event.surfaceID] : []
     case .busy:
-      setActivity(.busy, for: key, in: &state)
+      return setActivity(.busy, for: key, in: &state) ? [event.surfaceID] : []
     case .awaitingInput:
-      setActivity(.awaitingInput, for: key, in: &state)
+      return setActivity(.awaitingInput, for: key, in: &state) ? [event.surfaceID] : []
     case .idle:
-      setActivity(.idle, for: key, in: &state)
+      return setActivity(.idle, for: key, in: &state) ? [event.surfaceID] : []
     case .notification, .none:
-      return
+      return []
     }
   }
 
   /// No-op on identical activity so PreToolUse/PostToolUse storms don't churn observers.
-  private static func setActivity(_ activity: Activity, for key: PresenceKey, in state: inout State) {
-    guard var record = state.records[key], record.activity != activity else { return }
+  /// Returns true when the record actually flipped.
+  private static func setActivity(_ activity: Activity, for key: PresenceKey, in state: inout State) -> Bool {
+    guard var record = state.records[key], record.activity != activity else { return false }
     record.activity = activity
     state.records[key] = record
+    return true
   }
 
   private static func drop(surfaces: Set<UUID>, from state: inout State) {
@@ -150,7 +171,7 @@ struct AgentPresenceFeature {
   /// crashed, was force-killed, or shipped without a SessionEnd event like
   /// Codex). Surviving records keep their `activity`; partial-pid eviction
   /// must not silently clear in-flight state.
-  private static func sweepLiveness(into state: inout State) {
+  private static func sweepLiveness(into state: inout State) -> Set<UUID> {
     var dirtySurfaces: Set<UUID> = []
     for (key, record) in state.records where !record.pids.isEmpty {
       // Defensive `pid > 0` guard: `kill(0, 0)` and `kill(-N, 0)` both
@@ -168,6 +189,7 @@ struct AgentPresenceFeature {
       dirtySurfaces.insert(key.surfaceID)
     }
     for surfaceID in dirtySurfaces { rebuildPresence(forSurface: surfaceID, in: &state) }
+    return dirtySurfaces
   }
 
   private static func rebuildPresence(forSurface surfaceID: UUID, in state: inout State) {

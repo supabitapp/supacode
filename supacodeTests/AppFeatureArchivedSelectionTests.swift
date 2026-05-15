@@ -109,10 +109,14 @@ struct AppFeatureArchivedSelectionTests {
     }
     store.exhaustivity = .off
 
-    await store.send(.repositories(.delegate(.repositoriesChanged([repository])))) {
+    await store.send(.repositories(.delegate(.repositoriesChanged([repository]))))
+    await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: archivedWorktree.id]?.runningScripts.removeAll()
     }
     await store.finish()
+    #expect(
+      store.state.repositories.sidebarItems[id: archivedWorktree.id]?.runningScripts.isEmpty == true
+    )
 
     #expect(
       sentCommands.value == [

@@ -275,19 +275,6 @@ struct SupacodeApp: App {
         store: store
       )
     }
-    terminalManager.sendPresenceAction = { action in
-      store.send(.agentPresence(action))
-    }
-    terminalManager.hasAgentActivity = { surfaceIDs in
-      store.state.agentPresence.hasActivity(in: surfaceIDs)
-    }
-    terminalManager.agentsForSurfaces = { surfaceIDs in
-      @Shared(.settingsFile) var settingsFile: SettingsFile
-      return store.state.agentPresence.agents(
-        across: surfaceIDs,
-        badgesEnabled: settingsFile.global.agentPresenceBadgesEnabled,
-      )
-    }
     // Kicked off here rather than from `.appLaunched` so unit tests that
     // never construct a real AppFeature store (or that boot the app shell
     // under XCTest) don't spin the 2s liveness timer against the

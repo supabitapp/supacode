@@ -245,7 +245,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id, wt3.id]
       $0.worktreeHistoryBackStack = [wt1.id]
-      $0.pendingTerminalFocusWorktreeIDs = [wt2.id]
+      $0.sidebarItems[id: wt2.id]?.shouldFocusTerminal = true
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -332,7 +332,7 @@ struct RepositoriesFeatureTests {
       $0.worktreeHistoryBackStack = [wt1.id]
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
-    #expect(store.state.pendingTerminalFocusWorktreeIDs.isEmpty)
+    #expect(store.state.sidebarItems.allSatisfy { !$0.shouldFocusTerminal })
   }
 
   @Test func sidebarSelectionChangedKeepsCurrentSelectionDuringMultiSelect() async {
@@ -352,7 +352,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id, wt2.id]
     }
-    #expect(store.state.pendingTerminalFocusWorktreeIDs.isEmpty)
+    #expect(store.state.sidebarItems.allSatisfy { !$0.shouldFocusTerminal })
   }
 
   @Test func repositoriesLoadedPrunesCollapsedRepositoryIDs() async {
@@ -468,7 +468,7 @@ struct RepositoriesFeatureTests {
 
     // Re-selecting the same worktree should not fire delegate or insert pending focus.
     await store.send(.selectionChanged([.worktree(wt1.id)], focusTerminal: true))
-    #expect(store.state.pendingTerminalFocusWorktreeIDs.isEmpty)
+    #expect(store.state.sidebarItems.allSatisfy { !$0.shouldFocusTerminal })
   }
 
   @Test func repositoriesLoadedFiresDelegateWhenWorktreePropertiesChange() async {
@@ -1100,13 +1100,19 @@ struct RepositoriesFeatureTests {
 
     await store.send(.createRandomWorktreeInRepository(repository.id))
     await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: createdWorktree.id]?.lifecycle = .pending
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: createdWorktree.id]?.shouldFocusTerminal = true
+    }
     await store.finish()
 
     #expect(store.state.pendingWorktrees.isEmpty)
     #expect(store.state.selection == .worktree(createdWorktree.id))
     #expect(store.state.sidebarSelectedWorktreeIDs == [createdWorktree.id])
     #expect(store.state.sidebarItems[id: createdWorktree.id]?.lifecycle == .pending)
-    #expect(store.state.pendingTerminalFocusWorktreeIDs.contains(createdWorktree.id))
+    #expect(store.state.sidebarItems[id: createdWorktree.id]?.shouldFocusTerminal == true)
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
     #expect(store.state.alert == nil)
   }
@@ -1999,7 +2005,8 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id)) {
+    await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id))
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .archiving
     }
     await store.receive(\.delegate.runBlockingScript)
@@ -2028,7 +2035,6 @@ struct RepositoriesFeatureTests {
         tabId: nil
       )
     ) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
       $0.alert = expectedScriptFailureAlert(
         kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",
@@ -2036,6 +2042,9 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
     }
   }
 
@@ -2061,7 +2070,8 @@ struct RepositoriesFeatureTests {
         exitCode: 0,
         tabId: nil
       )
-    ) {
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
     }
     #expect(store.state.alert == nil)
@@ -2089,7 +2099,8 @@ struct RepositoriesFeatureTests {
         exitCode: nil,
         tabId: nil
       )
-    ) {
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
     }
     #expect(store.state.alert == nil)
@@ -2155,7 +2166,8 @@ struct RepositoriesFeatureTests {
         exitCode: 0,
         tabId: nil
       )
-    ) {
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: completing.id)
     }
     #expect(store.state.alert == nil)
@@ -2188,7 +2200,6 @@ struct RepositoriesFeatureTests {
         tabId: tabId
       )
     ) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
       $0.alert = expectedScriptFailureAlert(
         kind: .script(definition),
         exitMessage: "Script failed (exit code 1).",
@@ -2224,7 +2235,6 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: tabId)) {
-      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: "Script failed (exit code 1).",
@@ -2233,6 +2243,9 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
   }
 
@@ -2254,7 +2267,6 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: tabId)) {
-      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
       $0.alert = expectedScriptFailureAlert(
         kind: .delete,
         exitMessage: "Script failed (exit code 1).",
@@ -2263,6 +2275,9 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
   }
 
@@ -2315,7 +2330,6 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 7, tabId: nil)) {
-      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: "Script exited with code 7.",
@@ -2323,6 +2337,9 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }
@@ -2343,7 +2360,8 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil)) {
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil))
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
     #expect(store.state.alert == nil)
@@ -2396,6 +2414,10 @@ struct RepositoriesFeatureTests {
     #expect(store.state.sidebarItems[id: featureWorktree.id]?.lifecycle == .archiving)
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
+    }
+    await store.finish()
     #expect((store.state.sidebarItems[id: featureWorktree.id]?.lifecycle ?? .idle) == .idle)
   }
 
@@ -2428,6 +2450,10 @@ struct RepositoriesFeatureTests {
     #expect(store.state.sidebarItems[id: featureWorktree.id]?.lifecycle == .archiving)
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: nil))
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
+    }
+    await store.finish()
     #expect((store.state.sidebarItems[id: featureWorktree.id]?.lifecycle ?? .idle) == .idle)
     #expect(store.state.alert != nil)
   }
@@ -2460,7 +2486,6 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: exitCode, tabId: nil)) {
-      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: expectedMessage,
@@ -2468,6 +2493,9 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature",
       )
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }
@@ -2521,7 +2549,6 @@ struct RepositoriesFeatureTests {
 
     // Exit code 1 must NOT trigger archiveWorktreeApply.
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: nil)) {
-      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
       $0.alert = expectedScriptFailureAlert(
         kind: .archive,
         exitMessage: "Script failed (exit code 1).",
@@ -2529,6 +2556,9 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }
@@ -2550,7 +2580,8 @@ struct RepositoriesFeatureTests {
     }
 
     // Nil exit code (Ctrl+D, tab close) must NOT trigger archiveWorktreeApply.
-    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil)) {
+    await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil))
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
     #expect(store.state.archivedWorktreeIDs.isEmpty)
@@ -2611,7 +2642,8 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id)) {
+    await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id))
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .deletingScript
       $0.reconcileSidebarForTesting()
     }
@@ -2638,10 +2670,12 @@ struct RepositoriesFeatureTests {
       $0.gitClient.worktrees = { _ in [mainWorktree] }
     }
 
-    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil)) {
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
-    await store.receive(\.deleteWorktreeApply) {
+    await store.receive(\.deleteWorktreeApply)
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .deleting
       $0.reconcileSidebarForTesting()
     }
@@ -2675,7 +2709,6 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 7, tabId: nil)) {
-      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
       $0.alert = expectedScriptFailureAlert(
         kind: .delete,
         exitMessage: "Script exited with code 7.",
@@ -2683,6 +2716,9 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
   }
 
@@ -2702,7 +2738,8 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil)) {
+    await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: nil, tabId: nil))
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
     }
     #expect(store.state.alert == nil)
@@ -2748,7 +2785,8 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.deleteSidebarItemConfirmed(featureWorktree.id, repository.id))
-    await store.receive(\.deleteWorktreeApply) {
+    await store.receive(\.deleteWorktreeApply)
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .deleting
       $0.reconcileSidebarForTesting()
     }
@@ -2807,8 +2845,10 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.deleteScriptCompleted(worktreeID: "/tmp/repo/gone", exitCode: 0, tabId: nil)) {
-      $0.sidebarItems[id: "/tmp/repo/gone"]?.lifecycle = .idle
       $0.alert = expectedAlert
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: "/tmp/repo/gone"]?.lifecycle = .idle
     }
   }
 
@@ -2860,6 +2900,10 @@ struct RepositoriesFeatureTests {
     #expect(store.state.sidebarItems[id: featureWorktree.id]?.lifecycle == .deletingScript)
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
+    }
+    await store.finish()
     #expect((store.state.sidebarItems[id: featureWorktree.id]?.lifecycle ?? .idle) == .idle)
   }
 
@@ -2892,6 +2936,10 @@ struct RepositoriesFeatureTests {
     #expect(store.state.sidebarItems[id: featureWorktree.id]?.lifecycle == .deletingScript)
 
     await store.send(.deleteScriptCompleted(worktreeID: featureWorktree.id, exitCode: 1, tabId: nil))
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .idle
+    }
+    await store.finish()
     #expect((store.state.sidebarItems[id: featureWorktree.id]?.lifecycle ?? .idle) == .idle)
     #expect(store.state.alert != nil)
   }
@@ -3372,7 +3420,7 @@ struct RepositoriesFeatureTests {
 
     initialState.sidebarItems[id: removedWorktree.id]?.lifecycle = .deleting
     initialState.sidebarItems[id: removedWorktree.id]?.lifecycle = .pending
-    initialState.pendingTerminalFocusWorktreeIDs = [removedWorktree.id]
+    initialState.sidebarItems[id: removedWorktree.id]?.shouldFocusTerminal = true
     initialState.pendingWorktrees = [
       PendingWorktree(
         id: removedWorktree.id,
@@ -3401,7 +3449,6 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.sidebarItems[id: removedWorktree.id]?.lifecycle = .idle
-      $0.pendingTerminalFocusWorktreeIDs = []
       $0.pendingWorktrees = []
       $0.repositories = [updatedRepository]
       $0.$sidebar.withLock { sidebar in
@@ -3486,13 +3533,17 @@ struct RepositoriesFeatureTests {
         pendingID: pendingID
       )
     ) {
-      $0.pendingTerminalFocusWorktreeIDs.insert(newWorktree.id)
       $0.pendingWorktrees = []
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: newWorktree.id]?.shouldFocusTerminal = true
     }
 
     await store.receive(\.reloadRepositories)
@@ -3561,11 +3612,9 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [mainWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.sidebarItems[id: mainWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: mainWorktree.id]?.removedLines = nil
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: mainWorktree.id]?.pullRequest = mergedPullRequest
-      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3595,12 +3644,7 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.sidebarItems[id: featureWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.removedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
-      $0.reconcileSidebarForTesting()
-    }
+    )
     await store.receive(\.deleteSidebarItemConfirmed)
   }
 
@@ -3626,11 +3670,9 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.sidebarItems[id: featureWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.removedLines = nil
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
-      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3665,11 +3707,9 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.sidebarItems[id: featureWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.removedLines = nil
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
-      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3697,11 +3737,9 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.sidebarItems[id: featureWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.removedLines = nil
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
-      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3729,11 +3767,9 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
       )
-    ) {
-      $0.sidebarItems[id: featureWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.removedLines = nil
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
-      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -3783,11 +3819,9 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: [featureWorktree.id: refreshedPullRequest]
       )
-    ) {
-      $0.sidebarItems[id: featureWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.removedLines = nil
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = refreshedPullRequest
-      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -4342,11 +4376,9 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         pullRequestsByWorktreeID: pullRequestsByWorktreeID
       )
-    ) {
-      $0.sidebarItems[id: featureWorktree.id]?.addedLines = nil
-      $0.sidebarItems[id: featureWorktree.id]?.removedLines = nil
+    )
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequest = nil
-      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -5144,13 +5176,17 @@ struct RepositoriesFeatureTests {
         pendingID: pendingID,
       )
     ) {
-      $0.pendingTerminalFocusWorktreeIDs.insert(newWorktree.id)
       $0.pendingWorktrees = []
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: newWorktree.id]?.shouldFocusTerminal = true
     }
     await store.receive(\.reloadRepositories)
     await store.receive(\.delegate.repositoriesChanged)

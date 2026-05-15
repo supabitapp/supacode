@@ -156,6 +156,9 @@ struct AppFeature {
           }
         )
 
+      case .agentPresence(.delegate(.surfacesChanged(let surfaces))):
+        return agentPresenceFanOutEffect(surfaces: surfaces, state: state)
+
       case .agentPresence:
         return .none
 
@@ -245,8 +248,12 @@ struct AppFeature {
             }
             .map(\.id)
         )
-        for id in state.repositories.sidebarItems.ids where !allowed.contains(id) {
-          state.repositories.sidebarItems[id: id]?.runningScripts.removeAll()
+        var effects: [Effect<Action>] = []
+        for item in state.repositories.sidebarItems
+        where !allowed.contains(item.id) && !item.runningScripts.isEmpty {
+          effects.append(
+            .send(.repositories(.sidebarItems(.element(id: item.id, action: .runningScriptsCleared))))
+          )
         }
         RepositoriesFeature.syncSidebar(&state.repositories)
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
@@ -254,7 +261,7 @@ struct AppFeature {
           scripts: state.allScripts
         )
         let worktrees = state.repositories.worktreesForInfoWatcher()
-        var effects: [Effect<Action>] = [
+        effects.append(contentsOf: [
           .send(
             .settings(
               .repositoriesChanged(
@@ -275,7 +282,7 @@ struct AppFeature {
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
           },
-        ]
+        ])
         if !state.pendingDeeplinks.isEmpty {
           let pending = state.pendingDeeplinks
           state.pendingDeeplinks.removeAll()
@@ -526,13 +533,26 @@ struct AppFeature {
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-        state.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
-          .init(id: definition.id, tint: definition.resolvedTintColor)
-        return .run { _ in
-          await terminalClient.send(
-            .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+        let tint = definition.resolvedTintColor
+        var effects: [Effect<Action>] = [
+          .run { _ in
+            await terminalClient.send(
+              .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+            )
+          }
+        ]
+        if state.repositories.sidebarItems[id: worktree.id] != nil {
+          effects.append(
+            .send(
+              .repositories(
+                .sidebarItems(
+                  .element(id: worktree.id, action: .runningScriptStarted(id: definition.id, tint: tint))
+                )
+              )
+            )
           )
         }
+        return .merge(effects)
 
       case .stopScript(let definition):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -921,6 +941,34 @@ struct AppFeature {
           return .send(.repositories(.deleteScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
         }
 
+      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
+        guard state.repositories.sidebarItems[id: worktreeID] != nil else { return .none }
+        // Maintain the surface → row reverse index synchronously with the row dispatch.
+        let previousSurfaces = state.repositories.sidebarItems[id: worktreeID]?.surfaceIDs ?? []
+        for surfaceID in previousSurfaces where state.repositories.surfaceToItemID[surfaceID] == worktreeID {
+          state.repositories.surfaceToItemID.removeValue(forKey: surfaceID)
+        }
+        for surfaceID in projection.surfaceIDs {
+          state.repositories.surfaceToItemID[surfaceID] = worktreeID
+        }
+        return .send(
+          .repositories(
+            .sidebarItems(
+              .element(id: worktreeID, action: .terminalProjectionChanged(projection))
+            )
+          )
+        )
+
+      case .terminalEvent(.surfacesClosed(let ids)):
+        guard !ids.isEmpty else { return .none }
+        if ids.count == 1, let id = ids.first {
+          return .send(.agentPresence(.surfaceClosed(id)))
+        }
+        return .send(.agentPresence(.surfacesClosed(ids)))
+
+      case .terminalEvent(.agentHookEventReceived(let event)):
+        return .send(.agentPresence(.hookEventReceived(event)))
+
       case .terminalEvent:
         return .none
       }
@@ -944,6 +992,51 @@ struct AppFeature {
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
     }
+  }
+
+  // MARK: - Agent presence fan-out.
+
+  /// Routes `agentPresence.delegate.surfacesChanged` into per-row deltas and pushes
+  /// the authoritative busy-surface set into the terminal manager so its `isTabBusy`
+  /// resolves locally.
+  private func agentPresenceFanOutEffect(
+    surfaces: Set<UUID>,
+    state: State
+  ) -> Effect<Action> {
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    let badgesEnabled = settingsFile.global.agentPresenceBadgesEnabled
+    let presence = state.agentPresence
+    var affectedRowIDs: Set<SidebarItemID> = []
+    for surfaceID in surfaces {
+      guard let rowID = state.repositories.surfaceToItemID[surfaceID] else { continue }
+      affectedRowIDs.insert(rowID)
+    }
+    var effects: [Effect<Action>] = affectedRowIDs.compactMap { rowID in
+      guard let row = state.repositories.sidebarItems[id: rowID] else { return nil }
+      let agents = presence.agents(across: row.surfaceIDs, badgesEnabled: badgesEnabled)
+      let hasActivity = presence.hasActivity(in: row.surfaceIDs)
+      return .send(
+        .repositories(
+          .sidebarItems(
+            .element(id: rowID, action: .agentSnapshotChanged(agents, hasActivity: hasActivity))
+          )
+        )
+      )
+    }
+    let busySurfaceIDs = Set(
+      presence.records
+        .filter { $0.value.activity != .idle }
+        .map(\.key.surfaceID)
+    )
+    let terminalClient = terminalClient
+    effects.append(
+      .run { _ in
+        await terminalClient.send(
+          .agentActivityChanged(busySurfaceIDs: busySurfaceIDs, dirtySurfaceIDs: surfaces)
+        )
+      }
+    )
+    return .merge(effects)
   }
 
   // MARK: - Open worktree.
@@ -1320,14 +1413,27 @@ struct AppFeature {
       )
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-    state.repositories.sidebarItems[id: worktreeID]?.runningScripts[id: scriptID] =
-      .init(id: scriptID, tint: definition.resolvedTintColor)
+    let tint = definition.resolvedTintColor
     let terminalClient = terminalClient
-    return .run { _ in
-      await terminalClient.send(
-        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+    var effects: [Effect<Action>] = [
+      .run { _ in
+        await terminalClient.send(
+          .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+        )
+      }
+    ]
+    if state.repositories.sidebarItems[id: worktreeID] != nil {
+      effects.append(
+        .send(
+          .repositories(
+            .sidebarItems(
+              .element(id: worktreeID, action: .runningScriptStarted(id: scriptID, tint: tint))
+            )
+          )
+        )
       )
     }
+    return .merge(effects)
   }
 
   private func stopScriptDeeplinkEffect(

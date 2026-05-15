@@ -323,9 +323,11 @@ struct WorktreeTerminalManagerTests {
     let stream = manager.eventStream()
     var iterator = stream.makeAsyncIterator()
 
-    let first = await iterator.next()
+    var first = await iterator.next()
+    while case .worktreeProjectionChanged = first { first = await iterator.next() }
     state.onSetupScriptConsumed?()
-    let second = await iterator.next()
+    var second = await iterator.next()
+    while case .worktreeProjectionChanged = second { second = await iterator.next() }
 
     #expect(first == .notificationIndicatorChanged(count: 0))
     #expect(second == .setupScriptConsumed(worktreeID: worktree.id))
@@ -401,9 +403,11 @@ struct WorktreeTerminalManagerTests {
     let stream = manager.eventStream()
     var iterator = stream.makeAsyncIterator()
 
-    let first = await iterator.next()
+    var first = await iterator.next()
+    while case .worktreeProjectionChanged = first { first = await iterator.next() }
     state.markAllNotificationsRead()
-    let second = await iterator.next()
+    var second = await iterator.next()
+    while case .worktreeProjectionChanged = second { second = await iterator.next() }
 
     #expect(first == .notificationIndicatorChanged(count: 1))
     #expect(second == .notificationIndicatorChanged(count: 0))

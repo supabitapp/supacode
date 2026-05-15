@@ -17,6 +17,9 @@ final class WorktreeTerminalManager {
   @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var notificationsEnabled = true
   private var lastNotificationIndicatorCount: Int?
+  /// Per-worktree dedup of `worktreeProjectionChanged`; identical projections
+  /// (common on hook storms) are dropped before they hit the AsyncStream.
+  private var lastEmittedProjections: [Worktree.ID: WorktreeRowProjection] = [:]
   private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
   private var pendingEvents: [TerminalClient.Event] = []
   @ObservationIgnored
@@ -39,32 +42,11 @@ final class WorktreeTerminalManager {
   var onDeeplinkCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI via socket. Parameters: resource name, params, client FD.
   var onQuery: ((String, [String: String], Int32) -> Void)?
-  /// Routes presence writes (hook events, surface lifecycle) into the TCA store.
-  /// Wired in `supacodeApp.configureSocketHandlers`. The default reports an
-  /// issue (XCTFail in tests, DEBUG log in production) so an un-wired manager
-  /// surfaces loudly instead of silently dropping events. Newly created states
-  /// inherit this.
-  var sendPresenceAction = WorktreeTerminalManager.unimplementedSendPresenceAction {
-    didSet {
-      for state in states.values { state.sendPresenceAction = sendPresenceAction }
-    }
-  }
-  /// Reads "is any agent busy on these surfaces" via the TCA store. Wired in
-  /// `supacodeApp.configureSocketHandlers`. Benign default (`{ _ in false }`)
-  /// because reads on the inert manager should return "no activity", which is
-  /// the correct fact about a manager with no presence wired.
-  var hasAgentActivity: (Set<UUID>) -> Bool = { _ in false } {
-    didSet {
-      for state in states.values { state.hasAgentActivity = hasAgentActivity }
-    }
-  }
-  /// Reads the per-surface agent instance list (used by sidebar / tab-bar
-  /// badge views). Wired in `supacodeApp.configureSocketHandlers`. Same
-  /// benign-default rationale as `hasAgentActivity`.
-  var agentsForSurfaces: ([UUID]) -> [AgentPresenceFeature.AgentInstance] = { _ in [] }
-
-  private static let unimplementedSendPresenceAction: (AgentPresenceFeature.Action) -> Void = unimplemented(
-    "WorktreeTerminalManager.sendPresenceAction")
+  /// Synchronous bridge for the agent-presence test harness. Production reads
+  /// hook events off the `eventStream()` and dispatches `.agentPresence(...)`
+  /// from a Task; tests pump synchronously through this hook so
+  /// `manager.taskStatus(for:)` resolves on the same tick as `server.onEvent`.
+  var syncPresenceBridge: ((AgentHookEvent) -> Set<UUID>)?
 
   init<C: Clock<Duration>>(
     runtime: GhosttyRuntime,
@@ -158,7 +140,16 @@ final class WorktreeTerminalManager {
   }
 
   private func applyHookEvent(_ event: AgentHookEvent) {
-    sendPresenceAction(.hookEventReceived(event))
+    emit(.agentHookEventReceived(event))
+    if let bridge = syncPresenceBridge {
+      let busy = bridge(event)
+      for state in states.values {
+        let scoped = busy.intersection(state.allSurfaceIDs)
+        if state.agentBusySurfaceIDs != scoped {
+          state.agentBusySurfaceIDs = scoped
+        }
+      }
+    }
     for state in states.values where state.surfaceActivityChanged(surfaceID: event.surfaceID) {
       break
     }
@@ -286,7 +277,8 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .selectTab, .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune,
-      .setNotificationsEnabled, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
+      .setNotificationsEnabled, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename,
+      .agentActivityChanged:
       return false
     }
     return true
@@ -300,7 +292,7 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .focusSurface,
       .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
-      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
+      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename, .agentActivityChanged:
       return false
     }
     return true
@@ -324,6 +316,8 @@ final class WorktreeTerminalManager {
       }
       selectedWorktreeID = id
       terminalLogger.info("Selected worktree \(id ?? "nil")")
+    case .agentActivityChanged(let busySurfaceIDs, let dirtySurfaceIDs):
+      handleAgentActivityChanged(busySurfaceIDs: busySurfaceIDs, dirtySurfaceIDs: dirtySurfaceIDs)
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .startSearch, .searchSelection, .navigateSearchNext, .navigateSearchPrevious, .endSearch,
@@ -348,6 +342,11 @@ final class WorktreeTerminalManager {
       }
     }
     emitNotificationIndicatorCountIfNeeded()
+    // Seed each worktree's projection so rows attached after the stream start
+    // pick up the current snapshot (otherwise they'd stay default until the
+    // next mutation).
+    lastEmittedProjections.removeAll()
+    for id in states.keys { emitProjection(for: id) }
     return stream
   }
 
@@ -380,10 +379,11 @@ final class WorktreeTerminalManager {
       state.pendingLayoutSnapshot = loadLayoutSnapshot?(worktree.id)
     }
     state.setNotificationsEnabled(notificationsEnabled)
-    state.hasAgentActivity = hasAgentActivity
-    state.sendPresenceAction = sendPresenceAction
     state.isSelected = { [weak self] in
       self?.selectedWorktreeID == worktree.id
+    }
+    state.onSurfacesClosed = { [weak self] ids in
+      self?.emit(.surfacesClosed(ids))
     }
     state.onNotificationReceived = { [weak self] surfaceID, title, body in
       self?.emit(
@@ -394,21 +394,26 @@ final class WorktreeTerminalManager {
           body: body
         )
       )
+      self?.emitProjection(for: worktree.id)
     }
     state.onNotificationIndicatorChanged = { [weak self] in
       self?.emitNotificationIndicatorCountIfNeeded()
+      self?.emitProjection(for: worktree.id)
     }
     state.onTabCreated = { [weak self] in
       self?.emit(.tabCreated(worktreeID: worktree.id))
+      self?.emitProjection(for: worktree.id)
     }
     state.onTabClosed = { [weak self] in
       self?.emit(.tabClosed(worktreeID: worktree.id))
+      self?.emitProjection(for: worktree.id)
     }
     state.onFocusChanged = { [weak self] surfaceID in
       self?.emit(.focusChanged(worktreeID: worktree.id, surfaceID: surfaceID))
     }
     state.onTaskStatusChanged = { [weak self] status in
       self?.emit(.taskStatusChanged(worktreeID: worktree.id, status: status))
+      self?.emitProjection(for: worktree.id)
     }
     state.onBlockingScriptCompleted = { [weak self] kind, exitCode, tabId in
       self?.emit(.blockingScriptCompleted(worktreeID: worktree.id, kind: kind, exitCode: exitCode, tabId: tabId))
@@ -469,6 +474,8 @@ final class WorktreeTerminalManager {
     }
     states = states.filter { worktreeIDs.contains($0.key) }
     cancelPendingIdleHooks(forSurfaceIDs: prunedSurfaceIDs)
+    // Drop projection cache for pruned worktrees so a future re-add starts clean.
+    for (id, _) in removed { lastEmittedProjections.removeValue(forKey: id) }
     emitNotificationIndicatorCountIfNeeded()
   }
 
@@ -564,6 +571,24 @@ final class WorktreeTerminalManager {
 
   func markNotificationRead(worktreeID: Worktree.ID, notificationID: UUID) {
     states[worktreeID]?.markNotificationRead(id: notificationID)
+    emitProjection(for: worktreeID)
+  }
+
+  /// Bulk-driven update from TCA after `agentPresence(.delegate(.surfacesChanged))`.
+  /// Replaces each state's authoritative busy set then re-emits per-worktree projections
+  /// for any state owning a dirty surface.
+  func handleAgentActivityChanged(busySurfaceIDs: Set<UUID>, dirtySurfaceIDs: Set<UUID>) {
+    var affectedWorktrees: Set<Worktree.ID> = []
+    for (id, state) in states {
+      let scoped = busySurfaceIDs.intersection(state.allSurfaceIDs)
+      if state.agentBusySurfaceIDs != scoped {
+        state.agentBusySurfaceIDs = scoped
+      }
+      for surfaceID in dirtySurfaceIDs where state.surfaceActivityChanged(surfaceID: surfaceID) {
+        affectedWorktrees.insert(id)
+      }
+    }
+    for id in affectedWorktrees { emitProjection(for: id) }
   }
 
   func saveAllLayoutSnapshots() {
@@ -602,5 +627,19 @@ final class WorktreeTerminalManager {
       lastNotificationIndicatorCount = count
       emit(.notificationIndicatorChanged(count: count))
     }
+  }
+
+  /// Builds the row projection and emits only when it diverges from the last
+  /// emitted snapshot. Suppresses the no-op storms that PreToolUse / PostToolUse
+  /// hook bursts produce after the per-row equality short-circuit lands.
+  /// Skipped while no subscriber is attached so projections never accumulate in
+  /// `pendingEvents` (the row reads its initial snapshot from the next live emit).
+  private func emitProjection(for worktreeID: Worktree.ID) {
+    guard eventContinuation != nil else { return }
+    guard let state = states[worktreeID] else { return }
+    let projection = state.currentProjection()
+    if lastEmittedProjections[worktreeID] == projection { return }
+    lastEmittedProjections[worktreeID] = projection
+    emit(.worktreeProjectionChanged(worktreeID, projection))
   }
 }

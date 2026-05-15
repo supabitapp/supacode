@@ -1,4 +1,5 @@
 import AppKit
+import ComposableArchitecture
 import SwiftUI
 
 struct WorktreeTerminalTabsView: View {
@@ -7,6 +8,8 @@ struct WorktreeTerminalTabsView: View {
   let shouldRunSetupScript: Bool
   let forceAutoFocus: Bool
   let createTab: () -> Void
+  let agentPresence: AgentPresenceFeature.State
+  let agentBadgesEnabled: Bool
   @State private var windowActivity = WindowActivityState.inactive
   // Reading the chrome appearance env makes SwiftUI invalidate this body when
   // `WindowTintColorScheme` republishes after a Ghostty config reload, so the
@@ -44,10 +47,12 @@ struct WorktreeTerminalTabsView: View {
           hasNotification: { tabId in
             state.hasUnseenNotification(forTabID: tabId)
           },
-          surfaceIDsForTab: { tabId in
-            state.surfaceIDs(inTab: tabId)
+          agentsForTab: { tabId in
+            agentPresence.agents(
+              across: state.surfaceIDs(inTab: tabId),
+              badgesEnabled: agentBadgesEnabled,
+            )
           },
-          terminalManager: manager,
         )
         .transition(.move(edge: .top).combined(with: .opacity))
       }

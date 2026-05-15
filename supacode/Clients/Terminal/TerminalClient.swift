@@ -39,6 +39,10 @@ struct TerminalClient {
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
     case refreshTabBarVisibility
+    /// Authoritative set of agent-busy surfaces pushed by `AppFeature` after
+    /// `agentPresence(.delegate(.surfacesChanged))`. The manager caches the set so
+    /// `isTabBusy` resolves locally without pulling back into TCA.
+    case agentActivityChanged(busySurfaceIDs: Set<UUID>, dirtySurfaceIDs: Set<UUID>)
   }
 
   enum Event: Equatable {
@@ -52,6 +56,15 @@ struct TerminalClient {
       worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
     case commandPaletteToggleRequested(worktreeID: Worktree.ID)
     case setupScriptConsumed(worktreeID: Worktree.ID)
+    /// Per-worktree projection emitted when surfaces / task-running / unseen / notifications drift.
+    /// Routed by the parent into the matching `SidebarItemFeature` via the row's id.
+    case worktreeProjectionChanged(Worktree.ID, WorktreeRowProjection)
+    /// Forwarded from the terminal manager when surfaces close (single or bulk).
+    /// `AppFeature` translates this into `agentPresence(.surfaceClosed/surfacesClosed)`.
+    case surfacesClosed(Set<UUID>)
+    /// Forwarded from the terminal manager for hook events received over the socket.
+    /// `AppFeature` translates this into `agentPresence(.hookEventReceived)`.
+    case agentHookEventReceived(AgentHookEvent)
   }
 }
 

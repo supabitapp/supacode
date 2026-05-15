@@ -11,6 +11,9 @@ struct WorktreeDetailView: View {
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
+  @Shared(.settingsFile) private var settingsFile: SettingsFile
+
+  private var agentBadgesEnabled: Bool { settingsFile.global.agentPresenceBadgesEnabled }
 
   var body: some View {
     detailBody(state: store.state)
@@ -203,7 +206,9 @@ struct WorktreeDetailView: View {
           manager: terminalManager,
           shouldRunSetupScript: shouldRunSetupScript,
           forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) }
+          createTab: { store.send(.newTerminal) },
+          agentPresence: store.state.agentPresence,
+          agentBadgesEnabled: agentBadgesEnabled
         )
         .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

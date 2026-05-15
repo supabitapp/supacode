@@ -3,31 +3,70 @@ import Foundation
 
 @testable import supacode
 
-/// Test-only wiring that connects `WorktreeTerminalManager` to a private
-/// `AgentPresenceFeature.State`. The production wiring lives in
-/// `supacodeApp.configureSocketHandlers`; tests construct the manager
-/// directly, so the presence-closures default to `unimplemented` and would
-/// fail loudly on the first hook event without this helper.
-///
-/// Returns both the manager and the test harness so callers can assert
-/// presence state without owning a TCA store. Liveness sweeps still rely on
-/// real `kill(pid, 0)` and so are driven by sending `.livenessSweepTick`
-/// directly into `harness`.
+/// Test-only harness that runs a private `AgentPresenceFeature.State` and pumps
+/// presence deltas (`surfaceClosed`, `surfacesClosed`, `hookEventReceived`,
+/// `livenessSweepTick`) back into the `WorktreeTerminalManager` the same way
+/// `AppFeature` does in production: drain the manager's event stream and
+/// translate `surfacesClosed` / `agentHookEventReceived` events into reducer
+/// dispatches. After each dispatch the harness pushes the authoritative busy
+/// surface set into the manager via `.agentActivityChanged`.
 @MainActor
 final class PresenceTestHarness {
   var state = AgentPresenceFeature.State()
   private let reducer = AgentPresenceFeature()
+  private weak var manager: WorktreeTerminalManager?
+  private var eventTask: Task<Void, Never>?
 
   func send(_ action: AgentPresenceFeature.Action) {
+    let dirtyBefore = busySurfaceIDs()
     _ = reducer.reduce(into: &state, action: action)
+    let dirtyAfter = busySurfaceIDs()
+    let dirty = dirtyBefore.symmetricDifference(dirtyAfter)
+    manager?.handleAgentActivityChanged(busySurfaceIDs: dirtyAfter, dirtySurfaceIDs: dirty)
+  }
+
+  func attach(to manager: WorktreeTerminalManager) {
+    self.manager = manager
+    // Strong captures: tests routinely discard the harness with `_`, which
+    // would nil out a weak capture before the first hook event arrived.
+    manager.syncPresenceBridge = { event in
+      _ = self.reducer.reduce(into: &self.state, action: .hookEventReceived(event))
+      return self.busySurfaceIDs()
+    }
+    let stream = manager.eventStream()
+    eventTask?.cancel()
+    eventTask = Task {
+      for await event in stream {
+        if case .surfacesClosed(let ids) = event {
+          if ids.count == 1, let id = ids.first {
+            self.send(.surfaceClosed(id))
+          } else {
+            self.send(.surfacesClosed(ids))
+          }
+        }
+      }
+    }
+  }
+
+  func detach() {
+    eventTask?.cancel()
+    eventTask = nil
+    manager = nil
+  }
+
+  private func busySurfaceIDs() -> Set<UUID> {
+    Set(
+      state.records
+        .filter { $0.value.activity != .idle }
+        .map(\.key.surfaceID),
+    )
   }
 }
 
 extension WorktreeTerminalManager {
-  /// Wires a fresh `PresenceTestHarness` into a new manager. Mirrors the
-  /// production wiring in `supacodeApp.configureSocketHandlers`. Badges are
-  /// always enabled in this helper; tests asserting the badges-disabled gate
-  /// should override `agentsForSurfaces` themselves.
+  /// Spins up a fresh `PresenceTestHarness` bound to a new manager. Tests get
+  /// both pieces back so they can drive presence directly (`harness.send(...)`)
+  /// or assert on `harness.state` without owning a TCA store.
   @MainActor static func withPresenceHarness(
     runtime: GhosttyRuntime = GhosttyRuntime(),
     socketServer: AgentHookSocketServer? = nil,
@@ -35,14 +74,7 @@ extension WorktreeTerminalManager {
   ) -> (manager: WorktreeTerminalManager, presence: PresenceTestHarness) {
     let harness = PresenceTestHarness()
     let manager = WorktreeTerminalManager(runtime: runtime, socketServer: socketServer, clock: clock)
-    // Strong captures here are intentional: tests routinely discard the
-    // harness return with `_`, which would nil out a weak capture before the
-    // first hook event arrived.
-    manager.sendPresenceAction = { action in harness.send(action) }
-    manager.hasAgentActivity = { surfaces in harness.state.hasActivity(in: surfaces) }
-    manager.agentsForSurfaces = { surfaces in
-      harness.state.agents(across: surfaces, badgesEnabled: true)
-    }
+    harness.attach(to: manager)
     return (manager, harness)
   }
 }

@@ -35,7 +35,8 @@ struct SidebarItemsView: View {
   }
 }
 
-/// Owns the drag-tracking state so drag flips don't re-run `sidebarItemGroups`.
+/// Drag highlights now live on each `SidebarItemFeature.State.isDragging`; the
+/// overlay struct is kept for code locality but holds no state of its own.
 private struct SidebarItemsDragOverlay: View {
   let groups: [SidebarItemGroup]
   let selectedWorktreeIDs: Set<Worktree.ID>
@@ -43,7 +44,6 @@ private struct SidebarItemsDragOverlay: View {
   let terminalManager: WorktreeTerminalManager
   let isRepositoryRemoving: Bool
   let shortcutIndexByID: [Worktree.ID: Int]
-  @State private var draggingWorktreeIDs: Set<Worktree.ID> = []
 
   var body: some View {
     ForEach(groups) { group in
@@ -52,7 +52,6 @@ private struct SidebarItemsDragOverlay: View {
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
         terminalManager: terminalManager,
-        draggingWorktreeIDs: $draggingWorktreeIDs,
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: group.hideSubtitle,
         moveBehavior: group.moveBehavior,
@@ -142,7 +141,6 @@ private struct SidebarItemGroupView: View {
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @Binding var draggingWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
   let moveBehavior: SidebarItemGroup.MoveBehavior
@@ -158,7 +156,6 @@ private struct SidebarItemGroupView: View {
           store: store,
           terminalManager: terminalManager,
           selectedWorktreeIDs: selectedWorktreeIDs,
-          draggingWorktreeIDs: $draggingWorktreeIDs,
           isRepositoryRemoving: isRepositoryRemoving,
           hideSubtitle: hideSubtitle,
           moveMode: .alwaysDisabled,
@@ -172,7 +169,6 @@ private struct SidebarItemGroupView: View {
           store: store,
           terminalManager: terminalManager,
           selectedWorktreeIDs: selectedWorktreeIDs,
-          draggingWorktreeIDs: $draggingWorktreeIDs,
           isRepositoryRemoving: isRepositoryRemoving,
           hideSubtitle: hideSubtitle,
           moveMode: .conditional,
@@ -213,7 +209,6 @@ private struct SidebarItemRow: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let selectedWorktreeIDs: Set<Worktree.ID>
-  @Binding var draggingWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
   let moveMode: SidebarRowMoveMode
@@ -226,7 +221,6 @@ private struct SidebarItemRow: View {
         parentStore: store,
         terminalManager: terminalManager,
         selectedWorktreeIDs: selectedWorktreeIDs,
-        draggingWorktreeIDs: $draggingWorktreeIDs,
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: hideSubtitle,
         moveMode: moveMode,
@@ -241,7 +235,6 @@ private struct SidebarItemContainer: View {
   @Bindable var parentStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let selectedWorktreeIDs: Set<Worktree.ID>
-  @Binding var draggingWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
   let moveMode: SidebarRowMoveMode
@@ -252,6 +245,7 @@ private struct SidebarItemContainer: View {
   var body: some View {
     let rowID = store.state.id
     let lifecycle = store.lifecycle
+    let isDragging = store.isDragging
     let moveDisabled: Bool =
       switch moveMode {
       case .alwaysDisabled: true
@@ -263,7 +257,7 @@ private struct SidebarItemContainer: View {
       displayMode: displayMode,
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
-      showsPullRequestInfo: !draggingWorktreeIDs.contains(rowID),
+      showsPullRequestInfo: !isDragging,
       shortcutHint: shortcutHint
     )
     .environment(\.focusNotificationAction) { notification in
@@ -298,16 +292,15 @@ private struct SidebarItemContainer: View {
     .contentShape(.interaction, .rect)
     .onDragSessionUpdated { session in
       let draggedIDs = Set(session.draggedItemIDs(for: Worktree.ID.self))
-      if case .ended = session.phase {
-        if !draggingWorktreeIDs.isEmpty { draggingWorktreeIDs = [] }
-        return
+      let active: Bool
+      switch session.phase {
+      case .ended, .dataTransferCompleted:
+        active = false
+      default:
+        active = draggedIDs.contains(rowID)
       }
-      if case .dataTransferCompleted = session.phase {
-        if !draggingWorktreeIDs.isEmpty { draggingWorktreeIDs = [] }
-        return
-      }
-      if draggedIDs != draggingWorktreeIDs {
-        draggingWorktreeIDs = draggedIDs
+      if active != store.isDragging {
+        store.send(.dragSessionChanged(isDragging: active))
       }
     }
   }
@@ -319,7 +312,6 @@ struct SidebarFolderRow: View {
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @State private var draggingWorktreeIDs: Set<Worktree.ID> = []
 
   var body: some View {
     let state = store.state
@@ -330,7 +322,6 @@ struct SidebarFolderRow: View {
         store: store,
         terminalManager: terminalManager,
         selectedWorktreeIDs: selectedWorktreeIDs,
-        draggingWorktreeIDs: $draggingWorktreeIDs,
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: true,
         moveMode: .alwaysEnabled,

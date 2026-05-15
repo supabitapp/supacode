@@ -10,6 +10,15 @@ import Testing
 /// that `surfaceToItemID` round-trips both directions against each row's `surfaceIDs`,
 /// and that every grouped id resolves to a row owned by the bucket's repository.
 /// Failures print a `customDump` diff.
+///
+/// **Invariant relaxed for archived rows**: archived worktrees stay in `sidebarItems`
+/// (so per-row PR / diff data survives across archive transitions) but are intentionally
+/// absent from `sidebarGrouping` unless their delete-script is running. Rows that fall
+/// into that bucket are NOT reported as orphans.
+///
+/// **Invariant relaxed for in-flight rows**: rows whose worktree dropped out of the
+/// roster mid-archive / mid-delete are carried forward by `reconcileSidebarItems`
+/// until lifecycle returns to `.idle`. They're not in `sidebarGrouping` either.
 @MainActor
 func XCTAssertSidebarConsistent(
   _ state: RepositoriesFeature.State,
@@ -33,7 +42,18 @@ func XCTAssertSidebarConsistent(
     }
   }
 
-  let orphanedItems = itemIDs.subtracting(groupedIDs)
+  // Filter out rows that are intentionally retained outside the grouping:
+  // archived rows (per-row PR/diff preservation) and in-flight rows
+  // (carry-forward across roster drops).
+  let archivedIDs = state.archivedWorktreeIDSet
+  let allowedOrphans: Set<SidebarItemID> = Set(
+    state.sidebarItems
+      .filter { row in
+        archivedIDs.contains(row.id) || row.lifecycle != .idle
+      }
+      .map(\.id)
+  )
+  let orphanedItems = itemIDs.subtracting(groupedIDs).subtracting(allowedOrphans)
   let orphanedGrouping = groupedIDs.subtracting(itemIDs)
 
   var unknownSurfaceTargets: [SidebarItemID] = []

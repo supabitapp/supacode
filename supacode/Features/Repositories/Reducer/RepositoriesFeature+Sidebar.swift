@@ -91,6 +91,19 @@ extension RepositoriesFeature {
       rebuilt.append(existing)
     }
     state.sidebarItems = rebuilt
+    rebuildSurfaceToItemIDIndex(&state)
+  }
+
+  /// Rebuilds `surfaceToItemID` from the live rows so the AppFeature reverse
+  /// lookup (used by the agent-presence fan-out) never points at a gone row.
+  private static func rebuildSurfaceToItemIDIndex(_ state: inout State) {
+    var index: [UUID: SidebarItemID] = [:]
+    for row in state.sidebarItems {
+      for surfaceID in row.surfaceIDs {
+        index[surfaceID] = row.id
+      }
+    }
+    state.surfaceToItemID = index
   }
 
   /// Pair with `reconcileSidebarItems`; recomputes `state.sidebarGrouping`.
