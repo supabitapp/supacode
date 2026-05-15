@@ -45,6 +45,7 @@ struct AgentPresenceFeature {
     case delegate(Delegate)
     case hookEventReceived(AgentHookEvent)
     case livenessSweepTick
+    case livenessSweepResult(snapshot: [PresenceKey: Set<pid_t>], alive: [PresenceKey: Set<pid_t>])
     case start
     case stop
     case surfaceClosed(UUID)
@@ -84,7 +85,18 @@ struct AgentPresenceFeature {
         return Self.surfacesChangedEffect(changed)
 
       case .livenessSweepTick:
-        let changed = Self.sweepLiveness(into: &state)
+        // Run `kill(2)` off the main actor; the reducer body is shared with action-burst paths.
+        let snapshot: [PresenceKey: Set<pid_t>] = state.records
+          .compactMapValues { record in record.pids.isEmpty ? nil : record.pids }
+        guard !snapshot.isEmpty else { return .none }
+        return .run { send in
+          let alive = Self.liveness(forSnapshot: snapshot)
+          guard !alive.isEmpty else { return }
+          await send(.livenessSweepResult(snapshot: snapshot, alive: alive))
+        }
+
+      case .livenessSweepResult(let snapshot, let alive):
+        let changed = Self.applyLiveness(delta: alive, snapshot: snapshot, into: &state)
         return Self.surfacesChangedEffect(changed)
 
       case .start:
@@ -164,27 +176,41 @@ struct AgentPresenceFeature {
     state.records = state.records.filter { !surfaces.contains($0.key.surfaceID) }
   }
 
-  /// For each record with tracked pids, prune dead pids. When a record's pid
-  /// set goes empty after pruning, drop the record entirely (the agent
-  /// crashed, was force-killed, or shipped without a SessionEnd event like
-  /// Codex). Surviving records keep their `activity`; partial-pid eviction
-  /// must not silently clear in-flight state.
-  private static func sweepLiveness(into state: inout State) -> Set<UUID> {
-    var dirtySurfaces: Set<UUID> = []
-    for (key, record) in state.records where !record.pids.isEmpty {
-      // Defensive `pid > 0` guard: `kill(0, 0)` and `kill(-N, 0)` both
-      // succeed against the caller's process group, so a non-positive
-      // pid that slipped past the decoder would lie about liveness.
-      let alive = record.pids.filter { $0 > 0 && kill($0, 0) == 0 }
-      guard alive != record.pids else { continue }
-      if alive.isEmpty {
-        state.records.removeValue(forKey: key)
-      } else {
-        var updated = record
-        updated.pids = alive
-        state.records[key] = updated
+  /// Pure liveness check; returns only keys whose alive subset diverges from the snapshot.
+  nonisolated static func liveness(forSnapshot snapshot: [PresenceKey: Set<pid_t>]) -> [PresenceKey: Set<pid_t>] {
+    var result: [PresenceKey: Set<pid_t>] = [:]
+    for (key, pids) in snapshot {
+      // `kill(0, 0)` / `kill(-N, 0)` succeed against the caller's process group; reject non-positive pids.
+      let alive = pids.filter { $0 > 0 && kill($0, 0) == 0 }
+      if alive != pids {
+        result[key] = alive
       }
-      dirtySurfaces.insert(key.surfaceID)
+    }
+    return result
+  }
+
+  /// Apply the liveness delta back to state. Pids added between snapshot capture and apply
+  /// (e.g. a `.sessionStart` that landed during the off-main hop) are preserved.
+  private static func applyLiveness(
+    delta: [PresenceKey: Set<pid_t>],
+    snapshot: [PresenceKey: Set<pid_t>],
+    into state: inout State
+  ) -> Set<UUID> {
+    var dirtySurfaces: Set<UUID> = []
+    for (key, alive) in delta {
+      guard var record = state.records[key] else { continue }
+      let snapshotPids = snapshot[key] ?? []
+      // Subtract only the pids the sweep proved dead; current additions/removals stay authoritative.
+      let deadPids = snapshotPids.subtracting(alive)
+      let next = record.pids.subtracting(deadPids)
+      if next.isEmpty {
+        state.records.removeValue(forKey: key)
+        dirtySurfaces.insert(key.surfaceID)
+      } else if record.pids != next {
+        record.pids = next
+        state.records[key] = record
+        dirtySurfaces.insert(key.surfaceID)
+      }
     }
     for surfaceID in dirtySurfaces { rebuildPresence(forSurface: surfaceID, in: &state) }
     return dirtySurfaces

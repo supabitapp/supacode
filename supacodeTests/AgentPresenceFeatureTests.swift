@@ -8,10 +8,6 @@ import Testing
 
 @testable import supacode
 
-/// Tests cover the state-mutation behaviour of `AgentPresenceFeature` (hook
-/// event handling, surface lifecycle, the liveness sweep). The liveness sweep
-/// timer effect is intentionally not exercised here; the sweep helper is
-/// invoked directly through `livenessSweepTick`.
 @MainActor
 struct AgentPresenceFeatureTests {
   // MARK: - Session lifecycle.
@@ -138,7 +134,7 @@ struct AgentPresenceFeatureTests {
 
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude, .codex]))
 
-    harness.send(.livenessSweepTick)
+    harness.livenessSweep()
 
     // Codex's pid is dead → record evicted. Claude's pid is alive → kept.
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
@@ -156,10 +152,57 @@ struct AgentPresenceFeatureTests {
     harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
     #expect(harness.state.hasActivity(in: [surfaceID]))
 
-    harness.send(.livenessSweepTick)
+    harness.livenessSweep()
 
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
     #expect(harness.state.hasActivity(in: [surfaceID]) == false)
+  }
+
+  @Test func livenessSweepHonorsSessionEndDuringHop() {
+    // A `.sessionEnd` for a pid that was alive at snapshot capture but landed
+    // during the off-main hop must not be resurrected by the apply step.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+    let endingPid: pid_t = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: endingPid)))
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    let snapshot: [AgentPresenceFeature.PresenceKey: Set<pid_t>] = [key: [deadPid, endingPid]]
+    let alive = AgentPresenceFeature.liveness(forSnapshot: snapshot)
+
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: endingPid)))
+
+    harness.send(.livenessSweepResult(snapshot: snapshot, alive: alive))
+
+    #expect(harness.state.records[key] == nil)
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func livenessSweepPreservesPidsAddedAfterSnapshot() {
+    // A `.sessionStart` that lands between the off-main `liveness` snapshot
+    // and the `applyLiveness` hop must not be evicted. Simulated by computing
+    // the alive delta against an older snapshot, then dispatching the result
+    // after a new pid has been inserted.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+    let lateAlivePid: pid_t = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid)))
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    let snapshot: [AgentPresenceFeature.PresenceKey: Set<pid_t>] = [key: [deadPid]]
+    let alive = AgentPresenceFeature.liveness(forSnapshot: snapshot)
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: lateAlivePid)))
+
+    harness.send(.livenessSweepResult(snapshot: snapshot, alive: alive))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+    #expect(harness.state.records[key]?.pids == [lateAlivePid])
   }
 
   @Test func livenessSweepPartialPidEvictionPreservesActivity() {
@@ -178,7 +221,7 @@ struct AgentPresenceFeatureTests {
     let beforeSweep = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
     #expect(beforeSweep?.activity == .awaitingInput)
 
-    harness.send(.livenessSweepTick)
+    harness.livenessSweep()
 
     // Dead pid pruned, alive pid + awaiting flag preserved.
     let afterSweep = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
@@ -391,16 +434,22 @@ struct AgentPresenceFeatureTests {
 
   // MARK: - Helpers.
 
-  /// Direct-reducer harness. Mirrors the singleton's sync API for tests
-  /// asserting state mutations from individual actions. The liveness-sweep
-  /// timer effect from `.start` is intentionally not exercised here; the
-  /// sweep helper runs via `livenessSweepTick`.
+  /// Direct-reducer harness mirroring the singleton's sync API. The sweep timer
+  /// effect from `.start` is not exercised here; tests call `livenessSweep()`.
   private struct Harness {
     var state = AgentPresenceFeature.State()
     private let reducer = AgentPresenceFeature()
 
     @MainActor mutating func send(_ action: AgentPresenceFeature.Action) {
       _ = reducer.reduce(into: &state, action: action)
+    }
+
+    @MainActor mutating func livenessSweep() {
+      let snapshot: [AgentPresenceFeature.PresenceKey: Set<pid_t>] = state.records
+        .compactMapValues { record in record.pids.isEmpty ? nil : record.pids }
+      let alive = AgentPresenceFeature.liveness(forSnapshot: snapshot)
+      guard !alive.isEmpty else { return }
+      send(.livenessSweepResult(snapshot: snapshot, alive: alive))
     }
   }
 

@@ -20,6 +20,15 @@ final class PresenceTestHarness {
     _ = reducer.reduce(into: &state, action: action)
   }
 
+  /// Inlines the off-main liveness check so tests can settle the sweep in one tick.
+  func livenessSweep() {
+    let snapshot: [AgentPresenceFeature.PresenceKey: Set<pid_t>] = state.records
+      .compactMapValues { record in record.pids.isEmpty ? nil : record.pids }
+    let alive = AgentPresenceFeature.liveness(forSnapshot: snapshot)
+    guard !alive.isEmpty else { return }
+    send(.livenessSweepResult(snapshot: snapshot, alive: alive))
+  }
+
   /// Pumps any events buffered on the manager's stream into the reducer and
   /// returns. Tests call this after `server.onEvent(...)` so presence state
   /// settles before assertions.
