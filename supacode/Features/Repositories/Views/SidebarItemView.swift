@@ -385,6 +385,8 @@ private struct TrailingView: View {
           .equatable()
         }
       }
+      // Title takes the squeeze under narrow widths, not the counters.
+      .fixedSize(horizontal: true, vertical: false)
     }
   }
 }
