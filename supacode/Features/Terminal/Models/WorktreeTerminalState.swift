@@ -906,7 +906,13 @@ final class WorktreeTerminalState {
     case .claude: return "claude --resume \(intent.sessionID)"
     case .codex: return "codex resume \(intent.sessionID)"
     case .pi: return "pi --session \(intent.sessionID)"
-    case .kiro: return "kiro chat --resume-id \(intent.sessionID)"
+    // Same dual-binary fallback as `KiroSettingsInstaller.runKiroVersionCommand`
+    // — macOS Kiro CLI.app ships as `kiro-cli`, but Linux / canonical installs
+    // expose `kiro`. `command -v` keeps the chosen name out of the user-visible
+    // history line in favor of the resolved one.
+    case .kiro:
+      return "kiro chat --resume-id \(intent.sessionID) 2>/dev/null"
+        + " || kiro-cli chat --resume-id \(intent.sessionID)"
     }
   }
 

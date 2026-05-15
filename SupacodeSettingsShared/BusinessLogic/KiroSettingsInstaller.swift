@@ -9,12 +9,22 @@ nonisolated struct KiroSettingsInstaller {
     let standardError: String
   }
 
-  /// Version prefix we have validated Kiro's built-in `kiro_default` agent against.
-  /// When the installed Kiro's first version component changes, the hardcoded
-  /// defaults in `ensureDefaultAgentConfig` may no longer match upstream and would
-  /// silently override a legitimately different config — gate on this prefix to
-  /// fail loudly instead.
-  static let supportedVersionPrefix = "1."
+  /// Major-version prefixes we have validated Kiro's built-in `kiro_default`
+  /// agent against. When the installed Kiro's first version component does not
+  /// match any of these, the hardcoded defaults in `ensureDefaultAgentConfig`
+  /// may no longer match upstream and would silently override a legitimately
+  /// different config — gate on this set to fail loudly instead.
+  ///
+  /// Hook/agent format verified compatible across 1.x and 2.x (Kiro 2.x
+  /// keeps the same `~/.kiro/agents/*.json` schema + `agentSpawn` /
+  /// `userPromptSubmit` / `stop` hook payload as 1.x).
+  static let supportedVersionPrefixes: Set<String> = ["1", "2"]
+
+  /// Human-readable rendering of `supportedVersionPrefixes` for error
+  /// messages — `"1.x / 2.x"`. Sorted so the rendering is deterministic.
+  static var supportedVersionDescription: String {
+    supportedVersionPrefixes.sorted().map { "\($0).x" }.joined(separator: " / ")
+  }
 
   /// Maximum time to wait on `kiro --version`. A misconfigured login shell (e.g.
   /// an rc file blocking on stdin) can hang the child indefinitely; when that
@@ -83,7 +93,7 @@ nonisolated struct KiroSettingsInstaller {
 
   /// Creates `kiro_default.json` with the known built-in defaults when the file does not exist.
   /// Creating this file overrides Kiro's built-in agent entirely, so we must include the full
-  /// config (not just hooks) — and we gate on `supportedVersionPrefix` so a future Kiro release
+  /// config (not just hooks) — and we gate on `supportedVersionPrefixes` so a future Kiro release
   /// that ships different defaults fails loudly instead of being silently stomped.
   private func ensureDefaultAgentConfig() async throws {
     guard !fileManager.fileExists(atPath: settingsURL.path) else { return }
@@ -144,12 +154,13 @@ nonisolated struct KiroSettingsInstaller {
   }
 
   /// Returns `true` when `detected`'s first dot-delimited component matches
-  /// `supportedVersionPrefix` (after stripping its trailing dot). `"1."` matches
-  /// `1.2.3` but not `10.0` — `10` is its own component, not "starts-with 1".
+  /// any entry in `supportedVersionPrefixes`. Component-level match (not
+  /// `hasPrefix`) so `"1"` matches `1.2.3` but not `10.0` — `10` is its own
+  /// component, not "starts-with 1".
   static func isSupportedVersion(_ detected: String) -> Bool {
-    let prefix = Self.supportedVersionPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "."))
     let components = detected.split(separator: ".", omittingEmptySubsequences: false)
-    return components.first.map(String.init) == prefix
+    guard let first = components.first.map(String.init) else { return false }
+    return Self.supportedVersionPrefixes.contains(first)
   }
 
   /// Pulls the first dotted-digit token out of a version string such as
@@ -186,7 +197,11 @@ nonisolated struct KiroSettingsInstaller {
   static func runKiroVersionCommand() async throws -> CommandResult {
     let process = Process()
     process.executableURL = CodexSettingsInstaller.loginShellURL()
-    process.arguments = ["-l", "-c", "kiro --version"]
+    // Try the canonical `kiro` first, fall back to `kiro-cli` for the macOS
+    // Kiro CLI.app shipping name. The `||` runs the fallback only when the
+    // primary exits non-zero (typically 127 "command not found"); a real
+    // version mismatch on the first binary still surfaces to the caller.
+    process.arguments = ["-l", "-c", "kiro --version 2>/dev/null || kiro-cli --version"]
     let outputPipe = Pipe()
     let errorPipe = Pipe()
     process.standardOutput = outputPipe
@@ -285,7 +300,7 @@ nonisolated enum KiroSettingsInstallerError: Error, Equatable, LocalizedError {
       "Kiro must be installed and available in your login shell before Supacode can install hooks."
     case .unsupportedKiroVersion(let detected):
       """
-      Supacode only knows Kiro \(KiroSettingsInstaller.supportedVersionPrefix)x defaults \
+      Supacode only knows Kiro \(KiroSettingsInstaller.supportedVersionDescription) defaults \
       (detected \(detected.isEmpty ? "unknown" : detected)). Update Supacode before installing hooks.
       """
     }
