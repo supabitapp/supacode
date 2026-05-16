@@ -14,6 +14,7 @@ struct SidebarItemsView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @Shared(.appStorage("sidebarNestWorktreesByBranch")) private var nestWorktreesByBranch = true
 
   var body: some View {
     let groups = sidebarItemGroups(in: store.state, repositoryID: repository.id)
@@ -23,12 +24,14 @@ struct SidebarItemsView: View {
       showShortcutHints ? shortcutIndex(for: hotkeyIDs) : [:]
 
     SidebarItemsDragOverlay(
+      repository: repository,
       groups: groups,
       selectedWorktreeIDs: selectedWorktreeIDs,
       store: store,
       terminalManager: terminalManager,
       isRepositoryRemoving: isRepositoryRemoving,
-      shortcutIndexByID: shortcutIndexByID
+      shortcutIndexByID: shortcutIndexByID,
+      nestWorktreesByBranch: nestWorktreesByBranch && repository.isGitRepository
     )
   }
 }
@@ -36,16 +39,19 @@ struct SidebarItemsView: View {
 /// Drag highlights now live on each `SidebarItemFeature.State.isDragging`; the
 /// overlay struct is kept for code locality but holds no state of its own.
 private struct SidebarItemsDragOverlay: View {
+  let repository: Repository
   let groups: [SidebarItemGroup]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let isRepositoryRemoving: Bool
   let shortcutIndexByID: [Worktree.ID: Int]
+  let nestWorktreesByBranch: Bool
 
   var body: some View {
     ForEach(groups) { group in
       SidebarItemGroupView(
+        repository: repository,
         rowIDs: group.rowIDs,
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
@@ -53,7 +59,8 @@ private struct SidebarItemsDragOverlay: View {
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: group.hideSubtitle,
         moveBehavior: group.moveBehavior,
-        shortcutIndexByID: shortcutIndexByID
+        shortcutIndexByID: shortcutIndexByID,
+        nestWorktreesByBranch: nestWorktreesByBranch && group.supportsBranchNesting
       )
     }
   }
@@ -88,6 +95,15 @@ struct SidebarItemGroup: Identifiable {
     case .main, .pending: .disabled
     case .pinnedTail: .pinned(repositoryID)
     case .unpinnedTail: .unpinned(repositoryID)
+    }
+  }
+
+  /// Only the pinned and unpinned tails participate in branch nesting.
+  /// The main and pending slots are structural and shouldn't be folded into a tree.
+  var supportsBranchNesting: Bool {
+    switch slot {
+    case .pinnedTail, .unpinnedTail: true
+    case .main, .pending: false
     }
   }
 }
@@ -135,6 +151,7 @@ func sidebarItemGroups(
 }
 
 private struct SidebarItemGroupView: View {
+  let repository: Repository
   let rowIDs: [SidebarItemID]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
@@ -143,38 +160,75 @@ private struct SidebarItemGroupView: View {
   let hideSubtitle: Bool
   let moveBehavior: SidebarItemGroup.MoveBehavior
   let shortcutIndexByID: [Worktree.ID: Int]
+  let nestWorktreesByBranch: Bool
 
   var body: some View {
-    // A no-op `.onMove` still steals the repo-level reorder gesture, so omit it for single-row groups.
+    let bucketID = moveBehavior.bucketID
+    let groupingActive = nestWorktreesByBranch && bucketID != nil
+    let nestedBranchRows: [SidebarNestedBranchRow] =
+      if groupingActive, let bucketID {
+        buildNestedBranchRows(
+          itemIDs: rowIDs,
+          branchNames: branchNames(for: rowIDs),
+          collapsedPrefixes: store.state.sidebar.sections[repository.id]?.buckets[bucketID]?
+            .collapsedBranchPrefixes ?? []
+        )
+      } else {
+        rowIDs.map { .leaf(id: $0, depth: 0, displayName: nil) }
+      }
+
+    // A no-op `.onMove` still steals the repo-level reorder gesture, so omit it
+    // for single-row groups. Grouping suppresses reorder for the entire bucket:
+    // cross-group drags would snap back when the tree re-derives from branch
+    // names, and the alphabetical sort would clobber any in-bucket reorder.
     switch moveBehavior {
     case .disabled:
-      ForEach(rowIDs, id: \.self) { rowID in
-        SidebarItemRow(
-          rowID: rowID,
-          store: store,
-          terminalManager: terminalManager,
-          selectedWorktreeIDs: selectedWorktreeIDs,
-          isRepositoryRemoving: isRepositoryRemoving,
-          hideSubtitle: hideSubtitle,
-          moveMode: .alwaysDisabled,
-          shortcutHint: shortcutHint(for: shortcutIndexByID[rowID])
-        )
+      ForEach(nestedBranchRows) { row in
+        nestedBranchRowView(for: row, moveMode: .alwaysDisabled)
       }
     case .pinned, .unpinned:
-      ForEach(rowIDs, id: \.self) { rowID in
-        SidebarItemRow(
-          rowID: rowID,
-          store: store,
-          terminalManager: terminalManager,
-          selectedWorktreeIDs: selectedWorktreeIDs,
-          isRepositoryRemoving: isRepositoryRemoving,
-          hideSubtitle: hideSubtitle,
-          moveMode: .conditional,
-          shortcutHint: shortcutHint(for: shortcutIndexByID[rowID])
-        )
+      if groupingActive {
+        ForEach(nestedBranchRows) { row in
+          nestedBranchRowView(for: row, moveMode: .alwaysDisabled)
+        }
+      } else {
+        ForEach(nestedBranchRows) { row in
+          nestedBranchRowView(for: row, moveMode: .conditional)
+        }
+        .onMove(perform: moveRows)
       }
-      .onMove(perform: moveRows)
     }
+  }
+
+  @ViewBuilder
+  private func nestedBranchRowView(
+    for row: SidebarNestedBranchRow,
+    moveMode: SidebarRowMoveMode
+  ) -> some View {
+    SidebarNestedBranchRowView(
+      repositoryID: repository.id,
+      bucketID: moveBehavior.bucketID,
+      row: row,
+      store: store,
+      terminalManager: terminalManager,
+      selectedWorktreeIDs: selectedWorktreeIDs,
+      isRepositoryRemoving: isRepositoryRemoving,
+      hideSubtitle: hideSubtitle,
+      moveMode: moveMode,
+      shortcutHint: shortcutHintBuilder
+    )
+  }
+
+  private var shortcutHintBuilder: (SidebarItemID) -> String? {
+    { rowID in shortcutHint(for: shortcutIndexByID[rowID]) }
+  }
+
+  private func branchNames(for ids: [SidebarItemID]) -> [SidebarItemID: String] {
+    Dictionary(
+      uniqueKeysWithValues: ids.compactMap { id in
+        store.state.sidebarItems[id: id].map { (id, $0.branchName) }
+      }
+    )
   }
 
   @Shared(.settingsFile) private var settingsFile
@@ -198,6 +252,173 @@ private struct SidebarItemGroupView: View {
   }
 }
 
+extension SidebarItemGroup.MoveBehavior {
+  var bucketID: SidebarBucket? {
+    switch self {
+    case .disabled: nil
+    case .pinned: .pinned
+    case .unpinned: .unpinned
+    }
+  }
+}
+
+private struct SidebarNestedBranchRowView: View {
+  let repositoryID: Repository.ID
+  let bucketID: SidebarBucket?
+  let row: SidebarNestedBranchRow
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  let isRepositoryRemoving: Bool
+  let hideSubtitle: Bool
+  let moveMode: SidebarRowMoveMode
+  let shortcutHint: (SidebarItemID) -> String?
+
+  var body: some View {
+    switch row {
+    case .leaf(let id, let depth, let displayName):
+      SidebarItemRow(
+        rowID: id,
+        store: store,
+        terminalManager: terminalManager,
+        selectedWorktreeIDs: selectedWorktreeIDs,
+        isRepositoryRemoving: isRepositoryRemoving,
+        hideSubtitle: hideSubtitle,
+        moveMode: moveMode,
+        shortcutHint: shortcutHint(id),
+        displayNameOverride: displayName,
+        nestDepth: depth
+      )
+    case .groupHeader(let prefix, let components, let depth, let isCollapsed, let leafDescendantIDs):
+      if let bucketID {
+        SidebarPathGroupHeaderRow(
+          repositoryID: repositoryID,
+          bucketID: bucketID,
+          prefix: prefix,
+          components: components,
+          depth: depth,
+          isCollapsed: isCollapsed,
+          leafDescendantIDs: leafDescendantIDs,
+          store: store
+        )
+      }
+    }
+  }
+}
+
+private struct SidebarPathGroupHeaderRow: View {
+  let repositoryID: Repository.ID
+  let bucketID: SidebarBucket
+  let prefix: String
+  let components: [String]
+  let depth: Int
+  let isCollapsed: Bool
+  let leafDescendantIDs: [SidebarItemID]
+  @Bindable var store: StoreOf<RepositoriesFeature>
+
+  var body: some View {
+    let label = components.isEmpty ? prefix : components.joined(separator: "/")
+    let indicators =
+      isCollapsed
+      ? aggregatedIndicators(for: leafDescendantIDs, in: store.state.sidebarItems)
+      : .empty
+    Button {
+      _ = withAnimation(.easeOut(duration: 0.2)) {
+        store.send(
+          .branchNestExpansionChanged(
+            repositoryID: repositoryID,
+            bucketID: bucketID,
+            prefix: prefix,
+            isExpanded: isCollapsed
+          )
+        )
+      }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: "chevron.right")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+          .animation(.easeInOut(duration: 0.15), value: isCollapsed)
+          .frame(width: 12)
+          .accessibilityHidden(true)
+        Text(label)
+          .font(.body)
+          .lineLimit(1)
+          .foregroundStyle(.primary)
+        Spacer(minLength: 0)
+        if isCollapsed {
+          SidebarPathGroupIndicatorsView(indicators: indicators)
+        }
+      }
+      .contentShape(.interaction, .rect)
+    }
+    .buttonStyle(.plain)
+    .listRowInsets(.leading, CGFloat(depth) * sidebarNestIndentStep)
+    .listRowInsets(.vertical, 6)
+    .moveDisabled(true)
+    .help(isCollapsed ? "Expand \(label)" : "Collapse \(label)")
+    .accessibilityLabel("\(label) group, \(isCollapsed ? "collapsed" : "expanded")")
+  }
+}
+
+private struct SidebarPathGroupIndicatorsView: View, Equatable {
+  let indicators: SidebarGroupIndicators
+  @Environment(\.backgroundProminence) private var backgroundProminence
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.indicators == rhs.indicators
+  }
+
+  var body: some View {
+    if !indicators.isEmpty {
+      HStack(spacing: 6) {
+        if !indicators.agents.isEmpty {
+          AgentAvatarGroupView(instances: indicators.agents, size: 16)
+        }
+        if !indicators.runningScriptColors.isEmpty || indicators.hasNotification {
+          SidebarPathGroupStatusDotView(
+            runningScriptColors: indicators.runningScriptColors,
+            hasNotification: indicators.hasNotification
+          )
+        }
+      }
+      .transition(.blurReplace)
+    }
+  }
+}
+
+private struct SidebarPathGroupStatusDotView: View, Equatable {
+  let runningScriptColors: [RepositoryColor]
+  let hasNotification: Bool
+  @Environment(\.backgroundProminence) private var backgroundProminence
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.runningScriptColors == rhs.runningScriptColors
+      && lhs.hasNotification == rhs.hasNotification
+  }
+
+  var body: some View {
+    let isRunning = !runningScriptColors.isEmpty
+    ZStack {
+      if isRunning {
+        SidebarPingMultiColorDot(
+          colors: runningScriptColors,
+          isEmphasized: backgroundProminence == .increased,
+          size: 6,
+          showsSolidCenter: !hasNotification
+        )
+      }
+      if hasNotification {
+        Circle()
+          .fill(.orange)
+          .frame(width: 6, height: 6)
+          .accessibilityLabel("Unread notifications in group")
+      }
+    }
+  }
+}
+
 enum SidebarRowMoveMode {
   case alwaysDisabled
   case alwaysEnabled
@@ -213,6 +434,8 @@ private struct SidebarItemRow: View {
   let hideSubtitle: Bool
   let moveMode: SidebarRowMoveMode
   let shortcutHint: String?
+  var displayNameOverride: String?
+  var nestDepth: Int = 0
 
   var body: some View {
     if let itemStore = store.scope(state: \.sidebarItems[id: rowID], action: \.sidebarItems[id: rowID]) {
@@ -224,7 +447,9 @@ private struct SidebarItemRow: View {
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: hideSubtitle,
         moveMode: moveMode,
-        shortcutHint: shortcutHint
+        shortcutHint: shortcutHint,
+        displayNameOverride: displayNameOverride,
+        nestDepth: nestDepth
       )
     }
   }
@@ -239,6 +464,8 @@ private struct SidebarItemContainer: View {
   let hideSubtitle: Bool
   let moveMode: SidebarRowMoveMode
   let shortcutHint: String?
+  var displayNameOverride: String?
+  var nestDepth: Int = 0
   @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
 
@@ -258,7 +485,9 @@ private struct SidebarItemContainer: View {
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       showsPullRequestInfo: !isDragging,
-      shortcutHint: shortcutHint
+      shortcutHint: shortcutHint,
+      displayNameOverride: displayNameOverride,
+      nestDepth: nestDepth
     )
     .environment(\.focusNotificationAction) { notification in
       guard let terminalState = terminalManager.stateIfExists(for: rowID) else {

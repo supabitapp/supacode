@@ -137,6 +137,44 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
 
   nonisolated struct Bucket: Equatable, Sendable, Codable {
     var items: OrderedDictionary<Worktree.ID, Item> = [:]
+    /// Path-component prefixes whose grouped children are currently
+    /// collapsed in the sidebar. Survives the View menu's grouping
+    /// toggle so a user can toggle grouping off and back on without
+    /// losing their collapse layout.
+    var collapsedBranchPrefixes: Set<String> = []
+
+    private enum CodingKeys: String, CodingKey {
+      case items
+      case collapsedBranchPrefixes
+    }
+
+    init(
+      items: OrderedDictionary<Worktree.ID, Item> = [:],
+      collapsedBranchPrefixes: Set<String> = []
+    ) {
+      self.items = items
+      self.collapsedBranchPrefixes = collapsedBranchPrefixes
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      self.items =
+        try container.decodeIfPresent(
+          OrderedDictionary<Worktree.ID, Item>.self,
+          forKey: .items
+        ) ?? [:]
+      self.collapsedBranchPrefixes =
+        try container.decodeIfPresent(Set<String>.self, forKey: .collapsedBranchPrefixes) ?? []
+    }
+
+    func encode(to encoder: any Encoder) throws {
+      var container = encoder.container(keyedBy: CodingKeys.self)
+      try container.encode(items, forKey: .items)
+      // Omit when empty so `sidebar.json` stays clean for users who never collapsed anything.
+      if !collapsedBranchPrefixes.isEmpty {
+        try container.encode(collapsedBranchPrefixes, forKey: .collapsedBranchPrefixes)
+      }
+    }
   }
 
   nonisolated struct Item: Equatable, Sendable, Codable {

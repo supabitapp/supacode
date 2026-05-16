@@ -8,6 +8,7 @@ struct SidebarCommands: Commands {
   @Shared(.settingsFile) private var settingsFile
   @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
+  @Shared(.appStorage("sidebarNestWorktreesByBranch")) private var nestWorktreesByBranch = true
 
   var body: some Commands {
     let overrides = settingsFile.global.shortcutOverrides
@@ -33,6 +34,7 @@ struct SidebarCommands: Commands {
           }
         }
         Toggle("Hide Subtitle on Match", isOn: Binding($hideSubtitleOnMatch))
+        Toggle("Nest Worktrees by Branch", isOn: Binding($nestWorktreesByBranch))
       }
     }
   }

@@ -342,4 +342,36 @@ struct SidebarStateTests {
     #expect(decoded.title == nil)
     #expect(decoded.color == nil)
   }
+
+  // MARK: - collapsedBranchPrefixes round-trip
+
+  @Test func bucketRoundtripPreservesCollapsedBranchPrefixes() throws {
+    let bucket = SidebarState.Bucket(
+      items: ["wt-1": .init(), "wt-2": .init()],
+      collapsedBranchPrefixes: ["feature", "feature/tools"]
+    )
+
+    let encoded = try JSONEncoder().encode(bucket)
+    let decoded = try JSONDecoder().decode(SidebarState.Bucket.self, from: encoded)
+
+    #expect(decoded.collapsedBranchPrefixes == ["feature", "feature/tools"])
+    #expect(decoded.items.count == 2)
+  }
+
+  @Test func bucketOmitsCollapsedPathPrefixesWhenEmpty() throws {
+    let bucket = SidebarState.Bucket(items: ["wt-1": .init()])
+    let encoded = try JSONEncoder().encode(bucket)
+    let payload = try #require(String(data: encoded, encoding: .utf8))
+    #expect(!payload.contains("collapsedBranchPrefixes"))
+  }
+
+  @Test func bucketDecodesLegacyJSONWithoutCollapsedPathPrefixes() throws {
+    let legacyJSON = """
+      { "items": [] }
+      """
+    let data = Data(legacyJSON.utf8)
+    let decoded = try JSONDecoder().decode(SidebarState.Bucket.self, from: data)
+    #expect(decoded.collapsedBranchPrefixes.isEmpty)
+    #expect(decoded.items.isEmpty)
+  }
 }

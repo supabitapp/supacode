@@ -206,6 +206,12 @@ struct RepositoriesFeature {
     case repositoriesLoaded([Repository], failures: [LoadFailure], roots: [URL], animated: Bool)
     case selectionChanged(Set<SidebarSelection>, focusTerminal: Bool = false)
     case repositoryExpansionChanged(Repository.ID, isExpanded: Bool)
+    case branchNestExpansionChanged(
+      repositoryID: Repository.ID,
+      bucketID: SidebarBucket,
+      prefix: String,
+      isExpanded: Bool
+    )
     case selectArchivedWorktrees
     case setSidebarSelectedWorktreeIDs(Set<Worktree.ID>)
     case openRepositories([URL])
@@ -612,6 +618,20 @@ struct RepositoriesFeature {
           // adding/removing from a set lets future default-flip
           // logic distinguish "user expanded" from "never touched".
           sidebar.sections[repositoryID, default: .init()].collapsed = !isExpanded
+        }
+        return .none
+
+      case .branchNestExpansionChanged(let repositoryID, let bucketID, let prefix, let isExpanded):
+        state.$sidebar.withLock { sidebar in
+          var section = sidebar.sections[repositoryID] ?? .init()
+          var bucket = section.buckets[bucketID] ?? .init()
+          if isExpanded {
+            bucket.collapsedBranchPrefixes.remove(prefix)
+          } else {
+            bucket.collapsedBranchPrefixes.insert(prefix)
+          }
+          section.buckets[bucketID] = bucket
+          sidebar.sections[repositoryID] = section
         }
         return .none
 

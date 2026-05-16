@@ -2,6 +2,11 @@ import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
+/// Pixel step a row indents per branch-nesting depth level. Shared so the
+/// leaf row (`SidebarItemView`) and the group header row align across both
+/// view files.
+let sidebarNestIndentStep: CGFloat = 14
+
 struct SidebarItemView: View {
   let store: StoreOf<SidebarItemFeature>
   let displayMode: WorktreeRowDisplayMode
@@ -9,11 +14,18 @@ struct SidebarItemView: View {
   let hideSubtitleOnMatch: Bool
   let showsPullRequestInfo: Bool
   let shortcutHint: String?
+  /// Trailing branch-component label injected by the branch-nesting renderer so
+  /// a row nested under a `feature/tools` header reads as `a` instead of the
+  /// full `feature/tools/a`. `nil` keeps the original branch name.
+  var displayNameOverride: String?
+  /// Number of group-header ancestors above this row, used by the renderer
+  /// to apply a per-level leading indent. `0` keeps the existing baseline.
+  var nestDepth: Int = 0
 
   var body: some View {
     let resolved = ResolvedRowDisplay(
       kind: store.kind,
-      branchName: store.branchName,
+      branchName: displayNameOverride ?? store.branchName,
       worktreeName: store.sidebarDisplayName,
       isMainWorktree: store.isMainWorktree,
       isPinned: store.isPinned,
@@ -49,6 +61,7 @@ struct SidebarItemView: View {
       )
     }
     .labelStyle(.verticallyCentered)
+    .listRowInsets(.leading, CGFloat(nestDepth) * sidebarNestIndentStep)
     .listRowInsets(.trailing, 4)
     .listRowInsets(.vertical, 6)
   }
@@ -454,7 +467,7 @@ private struct StatusIndicator: View, Equatable {
     if isRunning || showsNotificationIndicator {
       ZStack {
         if isRunning {
-          MultiColorPingDot(
+          SidebarPingMultiColorDot(
             colors: runningScriptColors,
             isEmphasized: isEmphasized,
             size: 6,
@@ -473,124 +486,6 @@ private struct StatusIndicator: View, Equatable {
       }
       .transition(.blurReplace)
     }
-  }
-}
-
-private struct MultiColorPingDot: View {
-  let colors: [RepositoryColor]
-  let isEmphasized: Bool
-  let size: CGFloat
-  let showsSolidCenter: Bool
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-  private var uniqueColors: [Color] {
-    guard !isEmphasized else { return [.primary] }
-    var seen = Set<RepositoryColor>()
-    return colors.compactMap { tint in
-      guard seen.insert(tint).inserted else { return nil }
-      return tint.color
-    }
-  }
-
-  var body: some View {
-    let resolved = uniqueColors
-    if resolved.count <= 1 {
-      PingDot(
-        color: resolved.first ?? .green,
-        size: size,
-        showsSolidCenter: showsSolidCenter
-      )
-    } else if reduceMotion {
-      StaticDot(color: resolved[0], size: size, showsSolidCenter: showsSolidCenter)
-    } else {
-      CyclingDot(colors: resolved, size: size, showsSolidCenter: showsSolidCenter)
-    }
-  }
-}
-
-private struct StaticDot: View {
-  let color: Color
-  let size: CGFloat
-  let showsSolidCenter: Bool
-
-  var body: some View {
-    ZStack {
-      Circle()
-        .stroke(color, lineWidth: 1)
-        .frame(width: size, height: size)
-        .opacity(0.6)
-      if showsSolidCenter {
-        Circle()
-          .fill(color)
-          .frame(width: size, height: size)
-      }
-    }
-    .accessibilityLabel("Run script active")
-  }
-}
-
-private struct CyclingDot: View {
-  let colors: [Color]
-  let size: CGFloat
-  let showsSolidCenter: Bool
-
-  var body: some View {
-    TimelineView(.periodic(from: .now, by: 2.0)) { timeline in
-      let index = Self.colorIndex(for: timeline.date, count: colors.count)
-      let color = colors[index]
-      ZStack {
-        PingRing(color: color, size: size)
-        if showsSolidCenter {
-          Circle()
-            .fill(color)
-            .frame(width: size, height: size)
-        }
-      }
-      .animation(.easeInOut(duration: 0.6), value: index)
-    }
-    .accessibilityLabel("Run script active")
-  }
-
-  private static func colorIndex(for date: Date, count: Int) -> Int {
-    guard count > 0 else { return 0 }
-    let seconds = Int(date.timeIntervalSinceReferenceDate)
-    return (seconds / 2) % count
-  }
-}
-
-private struct PingDot: View {
-  let color: Color
-  let size: CGFloat
-  let showsSolidCenter: Bool
-
-  var body: some View {
-    ZStack {
-      PingRing(color: color, size: size)
-      if showsSolidCenter {
-        Circle()
-          .fill(color)
-          .frame(width: size, height: size)
-      }
-    }
-    .accessibilityLabel("Run script active")
-  }
-}
-
-private struct PingRing: View {
-  let color: Color
-  let size: CGFloat
-
-  var body: some View {
-    Circle()
-      .stroke(color, lineWidth: 1)
-      .frame(width: size, height: size)
-      .phaseAnimator([false, true]) { content, expanded in
-        content
-          .scaleEffect(expanded ? 2 : 1)
-          .opacity(expanded ? 0 : 0.6)
-      } animation: { expanded in
-        expanded ? .easeOut(duration: 1) : .linear(duration: 0.001)
-      }
   }
 }
 
