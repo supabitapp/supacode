@@ -144,3 +144,13 @@ nonisolated extension SharedReaderKey where Self == SidebarKey.Default {
     Self[SidebarKey(), default: SidebarState()]
   }
 }
+
+/// Typed AppStorage handle for the View menu's "Nest Worktrees by Branch"
+/// toggle. Centralising the key + default here keeps the four read sites
+/// (reducer State, View menu binding, sidebar view, bottom-card host) from
+/// drifting on either the key string or the default value.
+nonisolated extension SharedReaderKey where Self == AppStorageKey<Bool>.Default {
+  static var sidebarNestWorktreesByBranch: Self {
+    Self[.appStorage("sidebarNestWorktreesByBranch"), default: true]
+  }
+}

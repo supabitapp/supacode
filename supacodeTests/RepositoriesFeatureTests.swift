@@ -3178,7 +3178,7 @@ struct RepositoriesFeatureTests {
     }
   }
 
-  @Test func orderedSidebarItemIDsAlphabetizesAndSkipsCollapsedGroupsWhenNestingIsOn() {
+  private func makeAlphabeticNestingState() -> RepositoriesFeature.State {
     let repoRoot = "/tmp/repo"
     let main = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
@@ -3190,32 +3190,83 @@ struct RepositoriesFeatureTests {
     )
     state.$sidebarNestWorktreesByBranch.withLock { $0 = true }
     state.reconcileSidebarForTesting()
+    return state
+  }
 
-    // With nesting on: main first, then unpinned tail in alphabetical order
-    // (alpha, feature/a, feature/b, zulu). feature/a + feature/b group under
-    // a `feature` header that is currently expanded.
+  @Test func orderedSidebarItemIDsAlphabetizesWhenNestingIsOn() {
+    let state = makeAlphabeticNestingState()
+    // Main first, then unpinned tail in alphabetical order (alpha, feature/a,
+    // feature/b, zulu). feature/a + feature/b group under a `feature` header.
     expectNoDifference(
-      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
-      [repoRoot, "/tmp/repo/alpha", "/tmp/repo/feature-a", "/tmp/repo/feature-b", "/tmp/repo/zulu"]
+      state.orderedSidebarItemIDs(includingRepositoryIDs: ["/tmp/repo"]),
+      [
+        "/tmp/repo", "/tmp/repo/alpha", "/tmp/repo/feature-a", "/tmp/repo/feature-b", "/tmp/repo/zulu",
+      ]
     )
+  }
 
-    // Collapse the `feature` group: its leaves drop out of the hotkey list.
+  @Test func orderedSidebarItemIDsSkipsCollapsedGroupsWhenNestingIsOn() {
+    var state = makeAlphabeticNestingState()
     state.$sidebar.withLock { sidebar in
-      sidebar.sections[repoRoot, default: .init()].buckets[.unpinned, default: .init()]
+      sidebar.sections["/tmp/repo", default: .init()].buckets[.unpinned, default: .init()]
         .collapsedBranchPrefixes = ["feature"]
     }
     expectNoDifference(
-      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
-      [repoRoot, "/tmp/repo/alpha", "/tmp/repo/zulu"]
+      state.orderedSidebarItemIDs(includingRepositoryIDs: ["/tmp/repo"]),
+      ["/tmp/repo", "/tmp/repo/alpha", "/tmp/repo/zulu"]
     )
+  }
 
-    // Turn nesting off: the custom drag order is restored verbatim and every
-    // row is reachable again regardless of saved collapse state.
+  @Test func orderedSidebarItemIDsRestoresCustomOrderWhenNestingIsOff() {
+    var state = makeAlphabeticNestingState()
     state.$sidebarNestWorktreesByBranch.withLock { $0 = false }
     expectNoDifference(
-      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
-      [repoRoot, "/tmp/repo/zulu", "/tmp/repo/feature-b", "/tmp/repo/feature-a", "/tmp/repo/alpha"]
+      state.orderedSidebarItemIDs(includingRepositoryIDs: ["/tmp/repo"]),
+      [
+        "/tmp/repo", "/tmp/repo/zulu", "/tmp/repo/feature-b", "/tmp/repo/feature-a", "/tmp/repo/alpha",
+      ]
     )
+  }
+
+  @Test func orderedSidebarItemIDsKeepsPendingBeforeUnpinnedWithNestingOn() {
+    // Pending worktrees render between pinned-tail and unpinned-tail in the
+    // sidebar, regardless of nesting. The hotkey order must agree.
+    let repoRoot = "/tmp/repo"
+    let main = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureA = makeWorktree(id: "/tmp/repo/feature-a", name: "feature/a", repoRoot: repoRoot)
+    let featureB = makeWorktree(id: "/tmp/repo/feature-b", name: "feature/b", repoRoot: repoRoot)
+    var state = makeState(repositories: [makeRepository(id: repoRoot, worktrees: [main, featureA, featureB])])
+    state.$sidebarNestWorktreesByBranch.withLock { $0 = true }
+    state.pendingWorktrees = [
+      PendingWorktree(
+        id: "/tmp/repo/wip",
+        repositoryID: repoRoot,
+        progress: WorktreeCreationProgress(stage: .choosingWorktreeName)
+      )
+    ]
+    state.reconcileSidebarForTesting()
+
+    expectNoDifference(
+      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
+      ["/tmp/repo", "/tmp/repo/wip", "/tmp/repo/feature-a", "/tmp/repo/feature-b"]
+    )
+  }
+
+  @Test func worktreeIDByOffsetLandsOnNearestVisibleNeighborWhenSelectionIsHidden() {
+    // When the current selection sits inside a collapsed group, arrow nav
+    // should land on the nearest visible neighbor in the direction of travel
+    // rather than jumping to the top or bottom of the list.
+    var state = makeAlphabeticNestingState()
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections["/tmp/repo", default: .init()].buckets[.unpinned, default: .init()]
+        .collapsedBranchPrefixes = ["feature"]
+    }
+    // feature/a is now hidden behind the collapsed `feature` group; visible
+    // hotkey list is [main, alpha, zulu]. Anchor index of feature/a in the
+    // unfiltered list sits between alpha and zulu.
+    state.setSingleWorktreeSelection("/tmp/repo/feature-a")
+    #expect(state.worktreeID(byOffset: 1) == "/tmp/repo/zulu")
+    #expect(state.worktreeID(byOffset: -1) == "/tmp/repo/alpha")
   }
 
   @Test func orderedRepositoryRootsAppendMissing() {

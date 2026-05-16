@@ -14,14 +14,14 @@ struct SidebarItemsView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
-  @Shared(.appStorage("sidebarNestWorktreesByBranch")) private var nestWorktreesByBranch = true
+  @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
 
   var body: some View {
-    let groups = sidebarItemGroups(in: store.state, repositoryID: repository.id)
+    let groups = SidebarItemGroup.slots(in: store.state, repositoryID: repository.id)
     let isRepositoryRemoving = store.state.isRemovingRepository(repository)
     let showShortcutHints = commandKeyObserver.isPressed
     let shortcutIndexByID: [Worktree.ID: Int] =
-      showShortcutHints ? shortcutIndex(for: hotkeyIDs) : [:]
+      showShortcutHints ? SidebarShortcutIndex.build(from: hotkeyIDs) : [:]
 
     SidebarItemsDragOverlay(
       repository: repository,
@@ -108,46 +108,41 @@ struct SidebarItemGroup: Identifiable {
   }
 }
 
-func sidebarItemGroups(
-  in state: RepositoriesFeature.State,
-  repositoryID: Repository.ID
-) -> [SidebarItemGroup] {
-  guard let bucket = state.sidebarGrouping.bucketsByRepository[repositoryID] else { return [] }
-  let pinnedRows = bucket[.pinned]
-  let unpinnedRows = bucket[.unpinned]
-  let pendingIDs = Set(state.pendingWorktrees.filter { $0.repositoryID == repositoryID }.map(\.id))
+extension SidebarItemGroup {
+  /// Split one repo's bucketed item IDs into the four ordered slots the
+  /// sidebar renders (`main`, `pinnedTail`, `pending`, `unpinnedTail`).
+  /// Static rather than top-level per the AGENTS.md "no free functions"
+  /// rule. The reducer's `orderedSidebarItemIDs` mirrors this partition
+  /// so hotkeys / arrow-nav agree with the visible row order.
+  static func slots(
+    in state: RepositoriesFeature.State,
+    repositoryID: Repository.ID
+  ) -> [SidebarItemGroup] {
+    guard let bucket = state.sidebarGrouping.bucketsByRepository[repositoryID] else { return [] }
+    let pinnedRows = bucket[.pinned]
+    let unpinnedRows = bucket[.unpinned]
+    let pendingIDs = Set(state.pendingWorktrees.filter { $0.repositoryID == repositoryID }.map(\.id))
 
-  let mainID: SidebarItemID? = pinnedRows.first.flatMap {
-    state.sidebarItems[id: $0]?.isMainWorktree == true ? $0 : nil
+    let mainID: SidebarItemID? = pinnedRows.first.flatMap {
+      state.sidebarItems[id: $0]?.isMainWorktree == true ? $0 : nil
+    }
+    let pinnedTail = pinnedRows.filter { $0 != mainID }
+    let pendingTail = unpinnedRows.filter { pendingIDs.contains($0) }
+    let unpinnedTail = unpinnedRows.filter { !pendingIDs.contains($0) }
+    let isSoleDefaultWorktree =
+      mainID != nil && pinnedTail.isEmpty && pendingTail.isEmpty && unpinnedTail.isEmpty
+
+    return [
+      SidebarItemGroup(
+        slot: .main(isSole: isSoleDefaultWorktree),
+        repositoryID: repositoryID,
+        rowIDs: mainID.map { [$0] } ?? []
+      ),
+      SidebarItemGroup(slot: .pinnedTail, repositoryID: repositoryID, rowIDs: pinnedTail),
+      SidebarItemGroup(slot: .pending, repositoryID: repositoryID, rowIDs: pendingTail),
+      SidebarItemGroup(slot: .unpinnedTail, repositoryID: repositoryID, rowIDs: unpinnedTail),
+    ]
   }
-  let pinnedTail = pinnedRows.filter { $0 != mainID }
-  let pendingTail = unpinnedRows.filter { pendingIDs.contains($0) }
-  let unpinnedTail = unpinnedRows.filter { !pendingIDs.contains($0) }
-  let isSoleDefaultWorktree =
-    mainID != nil && pinnedTail.isEmpty && pendingTail.isEmpty && unpinnedTail.isEmpty
-
-  return [
-    SidebarItemGroup(
-      slot: .main(isSole: isSoleDefaultWorktree),
-      repositoryID: repositoryID,
-      rowIDs: mainID.map { [$0] } ?? []
-    ),
-    SidebarItemGroup(
-      slot: .pinnedTail,
-      repositoryID: repositoryID,
-      rowIDs: pinnedTail
-    ),
-    SidebarItemGroup(
-      slot: .pending,
-      repositoryID: repositoryID,
-      rowIDs: pendingTail
-    ),
-    SidebarItemGroup(
-      slot: .unpinnedTail,
-      repositoryID: repositoryID,
-      rowIDs: unpinnedTail
-    ),
-  ]
 }
 
 private struct SidebarItemGroupView: View {
@@ -181,46 +176,59 @@ private struct SidebarItemGroupView: View {
     // for single-row groups. Grouping suppresses reorder for the entire bucket:
     // cross-group drags would snap back when the tree re-derives from branch
     // names, and the alphabetical sort would clobber any in-bucket reorder.
+    let shortcutHintBuilder: (SidebarItemID) -> String? = { rowID in
+      shortcutHint(for: shortcutIndexByID[rowID])
+    }
     switch moveBehavior {
     case .disabled:
       ForEach(nestedBranchRows) { row in
-        nestedBranchRowView(for: row, moveMode: .alwaysDisabled)
+        SidebarBranchNestingRowView(
+          repositoryID: repository.id,
+          bucketID: moveBehavior.bucketID,
+          row: row,
+          store: store,
+          terminalManager: terminalManager,
+          selectedWorktreeIDs: selectedWorktreeIDs,
+          isRepositoryRemoving: isRepositoryRemoving,
+          hideSubtitle: hideSubtitle,
+          moveMode: .alwaysDisabled,
+          shortcutHint: shortcutHintBuilder
+        )
       }
     case .pinned, .unpinned:
       if groupingActive {
         ForEach(nestedBranchRows) { row in
-          nestedBranchRowView(for: row, moveMode: .alwaysDisabled)
+          SidebarBranchNestingRowView(
+            repositoryID: repository.id,
+            bucketID: moveBehavior.bucketID,
+            row: row,
+            store: store,
+            terminalManager: terminalManager,
+            selectedWorktreeIDs: selectedWorktreeIDs,
+            isRepositoryRemoving: isRepositoryRemoving,
+            hideSubtitle: hideSubtitle,
+            moveMode: .alwaysDisabled,
+            shortcutHint: shortcutHintBuilder
+          )
         }
       } else {
         ForEach(nestedBranchRows) { row in
-          nestedBranchRowView(for: row, moveMode: .conditional)
+          SidebarBranchNestingRowView(
+            repositoryID: repository.id,
+            bucketID: moveBehavior.bucketID,
+            row: row,
+            store: store,
+            terminalManager: terminalManager,
+            selectedWorktreeIDs: selectedWorktreeIDs,
+            isRepositoryRemoving: isRepositoryRemoving,
+            hideSubtitle: hideSubtitle,
+            moveMode: .conditional,
+            shortcutHint: shortcutHintBuilder
+          )
         }
         .onMove(perform: moveRows)
       }
     }
-  }
-
-  @ViewBuilder
-  private func nestedBranchRowView(
-    for row: SidebarBranchNesting.Row,
-    moveMode: SidebarRowMoveMode
-  ) -> some View {
-    SidebarBranchNestingRowView(
-      repositoryID: repository.id,
-      bucketID: moveBehavior.bucketID,
-      row: row,
-      store: store,
-      terminalManager: terminalManager,
-      selectedWorktreeIDs: selectedWorktreeIDs,
-      isRepositoryRemoving: isRepositoryRemoving,
-      hideSubtitle: hideSubtitle,
-      moveMode: moveMode,
-      shortcutHint: shortcutHintBuilder
-    )
-  }
-
-  private var shortcutHintBuilder: (SidebarItemID) -> String? {
-    { rowID in shortcutHint(for: shortcutIndexByID[rowID]) }
   }
 
   /// Read every row's branchName through a per-leaf scoped child store so
@@ -613,13 +621,15 @@ struct SidebarFolderRow: View {
   }
 }
 
-/// Defensive against a forged bucket roster: a duplicate `Worktree.ID` would trap
-/// `Dictionary(uniqueKeysWithValues:)` inside the SwiftUI render loop. Keep the first
-/// slot and fire loudly in DEBUG so a real invariant break surfaces in dev, not prod.
-private func shortcutIndex(for hotkeyIDs: [Worktree.ID]) -> [Worktree.ID: Int] {
-  Dictionary(hotkeyIDs.enumerated().map { ($0.element, $0.offset) }) { first, _ in
-    assertionFailure("Duplicate Worktree.ID in sidebar hotkey order.")
-    return first
+private enum SidebarShortcutIndex {
+  /// Defensive against a forged bucket roster: a duplicate `Worktree.ID` would trap
+  /// `Dictionary(uniqueKeysWithValues:)` inside the SwiftUI render loop. Keep the first
+  /// slot and fire loudly in DEBUG so a real invariant break surfaces in dev, not prod.
+  static func build(from hotkeyIDs: [Worktree.ID]) -> [Worktree.ID: Int] {
+    Dictionary(hotkeyIDs.enumerated().map { ($0.element, $0.offset) }) { first, _ in
+      assertionFailure("Duplicate Worktree.ID in sidebar hotkey order.")
+      return first
+    }
   }
 }
 

@@ -147,8 +147,7 @@ struct RepositoriesFeature {
     /// Mirrors the View menu's "Nest Worktrees by Branch" toggle. Owned by
     /// State so the reducer's hotkey / arrow navigation walks the same
     /// trie-filtered row list the sidebar actually renders.
-    @Shared(.appStorage("sidebarNestWorktreesByBranch"))
-    var sidebarNestWorktreesByBranch: Bool = true
+    @Shared(.sidebarNestWorktreesByBranch) var sidebarNestWorktreesByBranch: Bool
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
     @Presents var alert: AlertState<Alert>?
@@ -3673,7 +3672,51 @@ extension RepositoriesFeature.State {
     if let currentID = selectedWorktreeID, let currentIndex = ids.firstIndex(of: currentID) {
       return ids[(currentIndex + offset + ids.count) % ids.count]
     }
+    // Selection hidden behind a collapsed group: land on the nearest visible
+    // neighbor in the direction of travel rather than jumping top / bottom.
+    if let currentID = selectedWorktreeID,
+      let anchor = hiddenSelectionAnchor(currentID: currentID, visibleIDs: ids),
+      let neighbor = nearestVisibleNeighbor(
+        from: anchor.index, in: anchor.allIDs, visibleSet: Set(ids), forward: offset > 0
+      )
+    {
+      return neighbor
+    }
     return ids[offset > 0 ? 0 : ids.count - 1]
+  }
+
+  /// Locate `currentID` inside the unfiltered ordered list when it's not in
+  /// `visibleIDs` (i.e. hidden behind a collapsed group). Returns both the
+  /// index and the unfiltered list so the caller doesn't have to recompute
+  /// it on the cold arrow-nav path.
+  private func hiddenSelectionAnchor(
+    currentID: Worktree.ID,
+    visibleIDs: [Worktree.ID]
+  ) -> (index: Int, allIDs: [Worktree.ID])? {
+    guard !visibleIDs.contains(currentID) else { return nil }
+    let allIDs = orderedSidebarItemIDs(
+      includingRepositoryIDs: expandedRepositoryIDs,
+      ignoreCollapsedGroups: true
+    )
+    guard let index = allIDs.firstIndex(of: currentID) else { return nil }
+    return (index, allIDs)
+  }
+
+  private func nearestVisibleNeighbor(
+    from anchor: Int,
+    in allIDs: [Worktree.ID],
+    visibleSet: Set<Worktree.ID>,
+    forward: Bool
+  ) -> Worktree.ID? {
+    let stride = forward ? 1 : -1
+    var index = anchor + stride
+    while index >= 0, index < allIDs.count {
+      if visibleSet.contains(allIDs[index]) { return allIDs[index] }
+      index += stride
+    }
+    // Nothing in the requested direction: wrap to the opposite end of the
+    // visible list so arrow nav still moves.
+    return forward ? allIDs.first(where: visibleSet.contains) : allIDs.last(where: visibleSet.contains)
   }
 
   var isShowingArchivedWorktrees: Bool {
@@ -3937,6 +3980,13 @@ extension RepositoriesFeature.State {
 
   /// Reads `sidebarItems[id:]` per row, so callers observation-track every row's properties.
   /// Use `orderedSidebarItemIDs(includingRepositoryIDs:)` on the sidebar render path.
+  ///
+  /// Walks the raw custom drag order (pinned + unpinned) without applying the
+  /// branch-nesting trie or skipping rows hidden inside collapsed groups.
+  /// `orderedSidebarItemIDs` diverges from this when nesting is on: that one
+  /// matches the visible alphabetical order the sidebar / hotkeys see, this
+  /// one feeds command-palette / multi-select consumers that intentionally
+  /// surface every row in the curated order regardless of UI collapse state.
   func orderedSidebarItems(includingRepositoryIDs: Set<Repository.ID>) -> [SidebarItemFeature.State] {
     var rows: [SidebarItemFeature.State] = []
     for repositoryID in orderedRepositoryIDs() where includingRepositoryIDs.contains(repositoryID) {
@@ -3957,7 +4007,20 @@ extension RepositoriesFeature.State {
   /// branch nesting is on for a git repo, the pinned-tail and unpinned-tail
   /// runs are filtered through `SidebarBranchNesting.buildRows` so the
   /// order is alphabetical and rows inside collapsed groups are skipped.
-  func orderedSidebarItemIDs(includingRepositoryIDs: Set<Repository.ID>) -> [Worktree.ID] {
+  ///
+  /// Pass `ignoreCollapsedGroups: true` to get the same ordering but include
+  /// rows hidden inside collapsed groups. Used by arrow navigation to anchor
+  /// off a currently-hidden selection so the next step lands on the nearest
+  /// visible neighbor instead of jumping to the top / bottom of the list.
+  ///
+  /// Diverges from the heavy `orderedSidebarItems(includingRepositoryIDs:)`
+  /// flavor, which still walks the raw drag order. Heavy flavor feeds
+  /// command-palette / multi-select consumers that have their own ordering
+  /// intent; don't unify the two without auditing those call sites.
+  func orderedSidebarItemIDs(
+    includingRepositoryIDs: Set<Repository.ID>,
+    ignoreCollapsedGroups: Bool = false
+  ) -> [Worktree.ID] {
     var ids: [Worktree.ID] = []
     for repositoryID in orderedRepositoryIDs() where includingRepositoryIDs.contains(repositoryID) {
       guard let bucket = sidebarGrouping.bucketsByRepository[repositoryID] else { continue }
@@ -3975,14 +4038,22 @@ extension RepositoriesFeature.State {
 
       if let mainID { ids.append(mainID) }
       ids.append(
-        contentsOf: visibleBranchNestingRowIDs(
-          rowIDs: pinnedTail, repositoryID: repositoryID, bucket: .pinned, useNesting: useNesting
+        contentsOf: branchNestingRowIDs(
+          rowIDs: pinnedTail,
+          repositoryID: repositoryID,
+          bucket: .pinned,
+          useNesting: useNesting,
+          ignoreCollapsedGroups: ignoreCollapsedGroups
         )
       )
       ids.append(contentsOf: pendingTail)
       ids.append(
-        contentsOf: visibleBranchNestingRowIDs(
-          rowIDs: unpinnedTail, repositoryID: repositoryID, bucket: .unpinned, useNesting: useNesting
+        contentsOf: branchNestingRowIDs(
+          rowIDs: unpinnedTail,
+          repositoryID: repositoryID,
+          bucket: .unpinned,
+          useNesting: useNesting,
+          ignoreCollapsedGroups: ignoreCollapsedGroups
         )
       )
     }
@@ -3990,20 +4061,27 @@ extension RepositoriesFeature.State {
   }
 
   /// Projection through `SidebarBranchNesting.buildRows` that drops headers
-  /// and any leaf hidden inside a collapsed group; falls back to the raw
-  /// custom-drag order when nesting is off.
-  private func visibleBranchNestingRowIDs(
+  /// and (when `ignoreCollapsedGroups == false`) any leaf hidden inside a
+  /// collapsed group; falls back to the raw custom-drag order when nesting
+  /// is off.
+  private func branchNestingRowIDs(
     rowIDs: [SidebarItemID],
     repositoryID: Repository.ID,
     bucket: SidebarBucket,
-    useNesting: Bool
+    useNesting: Bool,
+    ignoreCollapsedGroups: Bool
   ) -> [SidebarItemID] {
     guard useNesting, !rowIDs.isEmpty else { return rowIDs }
-    let collapsedPrefixes = sidebar.sections[repositoryID]?.buckets[bucket]?.collapsedBranchPrefixes ?? []
+    let collapsedPrefixes: Set<String> =
+      ignoreCollapsedGroups
+        ? []
+        : sidebar.sections[repositoryID]?.buckets[bucket]?.collapsedBranchPrefixes ?? []
+    // `uniquingKeysWith` so a transient duplicate row ID can't crash the hotkey path.
     let branchNames = Dictionary(
-      uniqueKeysWithValues: rowIDs.compactMap { id in
+      rowIDs.compactMap { id -> (SidebarItemID, String)? in
         sidebarItems[id: id].map { (id, $0.branchName) }
-      }
+      },
+      uniquingKeysWith: { first, _ in first }
     )
     let rows = SidebarBranchNesting.buildRows(
       itemIDs: rowIDs,
@@ -4552,10 +4630,12 @@ extension RepositoriesFeature.State {
   }
 
   /// Drop persisted `collapsedBranchPrefixes` entries no longer covered by any
-  /// live branch in this repo. Without this, `sidebar.json` grows unbounded as
-  /// users rename / delete worktrees, and a future branch matching a dead
-  /// prefix would appear silently pre-collapsed. `Worktree.name` is the
-  /// branch name (see `RepositoriesFeature+Sidebar.swift`).
+  /// live branch in this repo, so `sidebar.json` doesn't grow unbounded as
+  /// users rename / delete worktrees. Does NOT drop prefixes that still cover
+  /// a single live branch (those won't emit a header today due to chain
+  /// collapse, but will start emitting one again the moment a sibling branch
+  /// is added, and the stored collapse state is the right pre-seed). `Worktree.name`
+  /// is the branch name (see `RepositoriesFeature+Sidebar.swift`).
   static func pruneCollapsedBranchPrefixes(
     in section: inout SidebarState.Section,
     worktrees: IdentifiedArrayOf<Worktree>

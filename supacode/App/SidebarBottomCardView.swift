@@ -21,8 +21,7 @@ struct SidebarBottomCardView: View {
   let store: StoreOf<AppFeature>
   @Shared(.appStorage("codingAgentsSetupCardDismissedAt"))
   private var agentDismissedAt: Date = .distantPast
-  @Shared(.appStorage("sidebarNestWorktreesByBranch"))
-  private var nestWorktreesByBranch = true
+  @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
   @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
   private var onboardingDismissedAt: Date = .distantPast
 
@@ -83,10 +82,11 @@ struct SidebarBottomCardView: View {
         "agent:updates:" + agents.map { String(describing: $0) }.sorted().joined(separator: ",")
       case .agent(.promptInstall): "agent:promptInstall"
       case .agent(.hidden):
-        // Unreachable: `resolve` collapses `.hidden` to `.none`. Fail loud
-        // rather than ship a meaningless token if a future caller bypasses
-        // `resolve`.
-        preconditionFailure("Slot.agent(.hidden) is unreachable; resolve() collapses it to .none.")
+        // `resolve` collapses `.hidden` to `.none` so this is unreachable in
+        // production. Returning a stable string keeps the render path
+        // crash-free if a future caller (e.g. a test or debug surface)
+        // constructs `.agent(.hidden)` directly.
+        "agent:hidden"
       case .nestedWorktreesOnboarding: "nestedWorktrees:visible"
       }
     }

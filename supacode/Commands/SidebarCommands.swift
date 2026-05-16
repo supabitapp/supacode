@@ -8,7 +8,7 @@ struct SidebarCommands: Commands {
   @Shared(.settingsFile) private var settingsFile
   @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
-  @Shared(.appStorage("sidebarNestWorktreesByBranch")) private var nestWorktreesByBranch = true
+  @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
   @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
   private var nestedOnboardingDismissedAt: Date = .distantPast
 
