@@ -10,7 +10,7 @@ struct SidebarView: View {
 
   var body: some View {
     let state = store.state
-    let visibleHotkeyRows = state.orderedSidebarItems(includingRepositoryIDs: state.expandedRepositoryIDs)
+    let visibleHotkeyRows = state.hotkeyWorktreeSlots(includingRepositoryIDs: state.expandedRepositoryIDs)
     let effectiveSelectedRows = state.effectiveSidebarSelectedRows
     let confirmWorktreeAction = makeConfirmWorktreeAction(state: state)
     let archiveWorktreeAction = makeArchiveWorktreeAction(rows: effectiveSelectedRows)

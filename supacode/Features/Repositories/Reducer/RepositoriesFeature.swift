@@ -3918,6 +3918,20 @@ extension RepositoriesFeature.State {
     }
     return ids
   }
+
+  func hotkeyWorktreeSlots() -> [HotkeyWorktreeSlot] {
+    hotkeyWorktreeSlots(includingRepositoryIDs: Set(repositories.map(\.id)))
+  }
+
+  /// Menu-bar projection: reads only `name` and `repositoryID` per row, both stable
+  /// across PR / lifecycle ticks. Lets `focusedSceneValue` dedupe so open submenus
+  /// don't rebuild and drop hover.
+  func hotkeyWorktreeSlots(includingRepositoryIDs: Set<Repository.ID>) -> [HotkeyWorktreeSlot] {
+    orderedSidebarItemIDs(includingRepositoryIDs: includingRepositoryIDs).compactMap { id in
+      guard let item = sidebarItems[id: id] else { return nil }
+      return HotkeyWorktreeSlot(id: item.id, name: item.name, repositoryID: item.repositoryID)
+    }
+  }
 }
 
 // MARK: - Mutation helpers on State.
