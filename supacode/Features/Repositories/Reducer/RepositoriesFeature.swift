@@ -3619,12 +3619,9 @@ extension RepositoriesFeature.State {
   }
 
   func worktreeID(byOffset offset: Int) -> Worktree.ID? {
-    let includingRepositoryIDs = expandedRepositoryIDs
-    var ids: [Worktree.ID] = []
-    for repositoryID in orderedRepositoryIDs() where includingRepositoryIDs.contains(repositoryID) {
-      guard let repository = repositories[id: repositoryID] else { continue }
-      ids.append(contentsOf: repository.worktrees.map(\.id))
-    }
+    // Walk the same ordered list Cmd+1..9 binds to, so arrow navigation and slot
+    // selection agree with what the sidebar shows (pinned, pending, non-pending).
+    let ids = orderedSidebarItemIDs(includingRepositoryIDs: expandedRepositoryIDs)
     guard !ids.isEmpty else { return nil }
     if let currentID = selectedWorktreeID, let currentIndex = ids.firstIndex(of: currentID) {
       return ids[(currentIndex + offset + ids.count) % ids.count]

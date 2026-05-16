@@ -4916,7 +4916,9 @@ struct RepositoriesFeatureTests {
     let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
     let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
@@ -4954,7 +4956,9 @@ struct RepositoriesFeatureTests {
     let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
     let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
@@ -4962,6 +4966,32 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
+    }
+    await store.receive(\.delegate.selectedWorktreeChanged)
+  }
+
+  @Test func selectNextWorktreeFollowsSidebarOrderNotRawWorktreeList() async {
+    let repoRoot = "/tmp/repo"
+    let main = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let feature = makeWorktree(id: "/tmp/repo/feature", name: "feature", repoRoot: repoRoot)
+    let bugfix = makeWorktree(id: "/tmp/repo/bugfix", name: "bugfix", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [main, feature, bugfix])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(main.id)
+    // Pin bugfix so the sidebar order is [main, bugfix, feature], not the raw worktree order.
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoRoot] = .init(buckets: [.pinned: .init(items: [bugfix.id: .init()])])
+    }
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.selectNextWorktree)
+    await store.receive(\.selectWorktree) {
+      $0.selection = .worktree(bugfix.id)
+      $0.sidebarSelectedWorktreeIDs = [bugfix.id]
+      $0.worktreeHistoryBackStack = [main.id]
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
