@@ -374,4 +374,18 @@ struct SidebarStateTests {
     #expect(decoded.collapsedBranchPrefixes.isEmpty)
     #expect(decoded.items.isEmpty)
   }
+
+  @Test func bucketDecodesWithMalformedCollapsedBranchPrefixesField() throws {
+    // A type-mismatched payload on the new field must drop only this one
+    // value, never the surrounding bucket / section / sidebar layout. The
+    // decoder uses `try?` for exactly this so a forged or downgrade-corrupted
+    // `sidebar.json` can't nuke pin / archive state.
+    let malformedJSON = """
+      { "items": [], "collapsedBranchPrefixes": 42 }
+      """
+    let data = Data(malformedJSON.utf8)
+    let decoded = try JSONDecoder().decode(SidebarState.Bucket.self, from: data)
+    #expect(decoded.collapsedBranchPrefixes.isEmpty)
+    #expect(decoded.items.isEmpty)
+  }
 }

@@ -622,8 +622,15 @@ struct RepositoriesFeature {
         return .none
 
       case .branchNestExpansionChanged(let repositoryID, let bucketID, let prefix, let isExpanded):
+        // Only `.pinned` / `.unpinned` render nested rows; `.archived` has no
+        // chevron and would just bloat `sidebar.json` with dead entries. Also
+        // refuse to materialize a phantom section for an unknown repo: the
+        // chevron is unreachable without an existing section, so anything
+        // hitting this path with a missing repository is stale UI / deeplink
+        // noise rather than a legitimate intent.
+        guard bucketID != .archived, state.sidebar.sections[repositoryID] != nil else { return .none }
         state.$sidebar.withLock { sidebar in
-          var section = sidebar.sections[repositoryID] ?? .init()
+          guard var section = sidebar.sections[repositoryID] else { return }
           var bucket = section.buckets[bucketID] ?? .init()
           if isExpanded {
             bucket.collapsedBranchPrefixes.remove(prefix)
@@ -680,8 +687,23 @@ struct RepositoriesFeature {
         guard let worktreeID = state.selectedWorktreeID,
           let repositoryID = state.repositoryID(containing: worktreeID)
         else { return .none }
+        // Resolve outside the lock to keep the critical section short.
+        let branchName = state.sidebarItems[id: worktreeID]?.branchName
+        let containingBucket = state.sidebar.currentBucket(of: worktreeID, in: repositoryID)
         state.$sidebar.withLock { sidebar in
           sidebar.sections[repositoryID, default: .init()].collapsed = false
+          // Uncollapse any ancestor branch prefix so a reveal / deeplink to
+          // `feature/tools/api` doesn't leave the row hidden inside a
+          // collapsed `feature/tools` group header.
+          guard let branchName, let bucketID = containingBucket, bucketID != .archived else { return }
+          let ancestors = Set(SidebarBranchNesting.ancestorPrefixes(of: branchName))
+          guard !ancestors.isEmpty,
+            var bucket = sidebar.sections[repositoryID]?.buckets[bucketID]
+          else { return }
+          let next = bucket.collapsedBranchPrefixes.subtracting(ancestors)
+          guard next != bucket.collapsedBranchPrefixes else { return }
+          bucket.collapsedBranchPrefixes = next
+          sidebar.sections[repositoryID]?.buckets[bucketID] = bucket
         }
         state.nextPendingSidebarRevealID += 1
         state.pendingSidebarReveal = .init(id: state.nextPendingSidebarRevealID, worktreeID: worktreeID)
@@ -4448,6 +4470,7 @@ extension RepositoriesFeature.State {
         unpinned.items[worktree.id] = .init()
         copy.buckets[.unpinned] = unpinned
       }
+      Self.pruneCollapsedBranchPrefixes(in: &copy, worktrees: repository.worktrees)
       rebuilt[repoID] = copy
     }
 
@@ -4468,6 +4491,26 @@ extension RepositoriesFeature.State {
     // `sidebar.json` on every tick.
     guard rebuilt != sidebar.sections else { return }
     $sidebar.withLock { sidebar in sidebar.sections = rebuilt }
+  }
+
+  /// Drop persisted `collapsedBranchPrefixes` entries no longer covered by any
+  /// live branch in this repo. Without this, `sidebar.json` grows unbounded as
+  /// users rename / delete worktrees, and a future branch matching a dead
+  /// prefix would appear silently pre-collapsed. `Worktree.name` is the
+  /// branch name (see `RepositoriesFeature+Sidebar.swift`).
+  static func pruneCollapsedBranchPrefixes(
+    in section: inout SidebarState.Section,
+    worktrees: IdentifiedArrayOf<Worktree>
+  ) {
+    let liveBranchNames = Set(worktrees.map(\.name))
+    let coveredPrefixes = Set(liveBranchNames.flatMap(SidebarBranchNesting.ancestorPrefixes(of:)))
+    for bucketID in [SidebarState.BucketID.pinned, .unpinned] {
+      guard var bucket = section.buckets[bucketID] else { continue }
+      let next = bucket.collapsedBranchPrefixes.intersection(coveredPrefixes)
+      guard next != bucket.collapsedBranchPrefixes else { continue }
+      bucket.collapsedBranchPrefixes = next
+      section.buckets[bucketID] = bucket
+    }
   }
 
   @discardableResult

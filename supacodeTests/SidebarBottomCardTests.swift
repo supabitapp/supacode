@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct SidebarBottomCardTests {
   @Test func agentUpdatesWinOverOnboarding() {
-    let resolved = ResolvedCard.resolve(
+    let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .updatesAvailable([.claude]),
       onboardingMode: .visible
     )
@@ -14,7 +14,7 @@ struct SidebarBottomCardTests {
   }
 
   @Test func agentPromptWinsOverOnboarding() {
-    let resolved = ResolvedCard.resolve(
+    let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .promptInstall,
       onboardingMode: .visible
     )
@@ -22,7 +22,7 @@ struct SidebarBottomCardTests {
   }
 
   @Test func onboardingShowsWhenAgentIsHidden() {
-    let resolved = ResolvedCard.resolve(
+    let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
       onboardingMode: .visible
     )
@@ -30,20 +30,20 @@ struct SidebarBottomCardTests {
   }
 
   @Test func noneWhenBothHidden() {
-    let resolved = ResolvedCard.resolve(
+    let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
       onboardingMode: .hidden
     )
-    #expect(resolved == ResolvedCard.none)
+    #expect(resolved == SidebarBottomCardView.Slot.none)
   }
 
   @Test func agentVariantStableAcrossSkillAgentOrder() {
-    let lhs = ResolvedCard.agent(.updatesAvailable([.claude, .codex])).transitionToken
-    let rhs = ResolvedCard.agent(.updatesAvailable([.codex, .claude])).transitionToken
+    let lhs = SidebarBottomCardView.Slot.agent(.updatesAvailable([.claude, .codex])).transitionToken
+    let rhs = SidebarBottomCardView.Slot.agent(.updatesAvailable([.codex, .claude])).transitionToken
     #expect(lhs == rhs)
   }
 
   @Test func onboardingTransitionTokenUsesNestedWorktreesPrefix() {
-    #expect(ResolvedCard.nestedWorktreesOnboarding.transitionToken == "nestedWorktrees:visible")
+    #expect(SidebarBottomCardView.Slot.nestedWorktreesOnboarding.transitionToken == "nestedWorktrees:visible")
   }
 }

@@ -9,6 +9,27 @@ struct SidebarCommands: Commands {
   @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.appStorage("sidebarNestWorktreesByBranch")) private var nestWorktreesByBranch = true
+  @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
+  private var nestedOnboardingDismissedAt: Date = .distantPast
+
+  /// Binding that pairs the nesting toggle with a permadismiss of the
+  /// onboarding card on transitions to `false`. Lives on the menu command
+  /// (which is always present in the menu bar) so the dismiss fires even
+  /// when the sidebar column is hidden. Moving it onto the card view's
+  /// `.onChange` would silently break for users who toggle while the
+  /// sidebar is collapsed.
+  private var nestWorktreesToggle: Binding<Bool> {
+    Binding(
+      get: { nestWorktreesByBranch },
+      set: { newValue in
+        $nestWorktreesByBranch.withLock { $0 = newValue }
+        guard !newValue,
+          !NestedWorktreesOnboardingCardView.isDismissed(at: nestedOnboardingDismissedAt)
+        else { return }
+        $nestedOnboardingDismissedAt.withLock { $0 = .now }
+      }
+    )
+  }
 
   var body: some Commands {
     let overrides = settingsFile.global.shortcutOverrides
@@ -34,7 +55,7 @@ struct SidebarCommands: Commands {
           }
         }
         Toggle("Hide Subtitle on Match", isOn: Binding($hideSubtitleOnMatch))
-        Toggle("Nest Worktrees by Branch", isOn: Binding($nestWorktreesByBranch))
+        Toggle("Nest Worktrees by Branch", isOn: nestWorktreesToggle)
       }
     }
   }

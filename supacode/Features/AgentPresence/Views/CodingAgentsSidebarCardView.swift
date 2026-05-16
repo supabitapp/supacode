@@ -19,15 +19,11 @@ struct CodingAgentsSidebarCardView: View {
   let mode: Mode
 
   /// Bump to release-day each time the prompt's content materially changes;
-  /// users who dismissed before this date see the prompt again. Independent
-  /// from any other card's relevance cutoff: each card's content has its
-  /// own lifecycle.
+  /// users who dismissed before this date see the prompt again.
   static let cardRelevantSinceDate = Date(timeIntervalSince1970: 1_778_371_200)  // 2026-05-10.
 
-  /// Stamps before `relevantSince` are treated as stale, so re-engagement is
-  /// just `cardRelevantSinceDate += material change`.
   static func isDismissed(at dismissedAt: Date, relevantSince: Date = Self.cardRelevantSinceDate) -> Bool {
-    dismissedAt >= relevantSince
+    SidebarCardRelevance.isDismissed(at: dismissedAt, relevantSince: relevantSince)
   }
 
   /// Resolve the active mode from the current store + the dismissal stamp.
@@ -113,7 +109,7 @@ private struct CodingAgentsCardBody: View {
   @Shared(.appStorage("codingAgentsSetupCardDismissedAt")) private var dismissedAt: Date = .distantPast
 
   var body: some View {
-    SidebarCard(isDismissable: showsDismiss) {
+    SidebarCard(onDismiss: showsDismiss ? { $dismissedAt.withLock { $0 = .now } } : nil) {
       VStack(alignment: .leading, spacing: 2) {
         SidebarCardLabel(title: title, description: description)
         Button("Review in Settings") {
@@ -129,8 +125,6 @@ private struct CodingAgentsCardBody: View {
       }
     } header: {
       AgentAvatarGroupView(agents: agents, size: 22, maxVisible: .max)
-    } onDismiss: {
-      $dismissedAt.withLock { $0 = .now }
     }
   }
 }

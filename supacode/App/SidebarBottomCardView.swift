@@ -10,15 +10,13 @@ import SwiftUI
 ///
 /// Owns the `@Shared(.appStorage)` reads as stored properties so SwiftUI
 /// observes them at this layer and re-renders when the user dismisses a
-/// card or toggles grouping off via the View menu. Each downstream card's
-/// `resolveMode(...)` takes the resolved values as parameters so they stay
-/// pure (no hidden global reads inside a static).
+/// card. Each downstream card's `resolveMode(...)` takes the resolved values
+/// as parameters so they stay pure (no hidden global reads inside a static).
 ///
-/// Toggling grouping off via the View menu also permanently dismisses the
-/// onboarding card, so re-enabling grouping later doesn't bring the prompt
-/// back. Friction is intentional: the menu is the single source of truth
-/// for opting out, and a user who's already opted out has by definition
-/// seen where the option lives.
+/// `nestWorktreesByBranch` is observed here so the visible-card resolver can
+/// react to the toggle, but the permadismiss side-effect on toggle-off lives
+/// in `SidebarCommands` (where the menu toggle actually fires), so it works
+/// regardless of whether the sidebar column is currently visible.
 struct SidebarBottomCardView: View {
   let store: StoreOf<AppFeature>
   @Shared(.appStorage("codingAgentsSetupCardDismissedAt"))
@@ -36,65 +34,61 @@ struct SidebarBottomCardView: View {
       nestWorktreesByBranch: nestWorktreesByBranch,
       dismissedAt: onboardingDismissedAt
     )
-    let resolved = ResolvedCard.resolve(agentMode: agentMode, onboardingMode: onboardingMode)
+    let resolved = Slot.resolve(agentMode: agentMode, onboardingMode: onboardingMode)
     Group {
       switch resolved {
       case .none:
         EmptyView()
       case .agent(let mode):
         CodingAgentsSidebarCardView(store: store, mode: mode)
-          .transition(.move(edge: .bottom).combined(with: .opacity))
+          .transition(Slot.transition)
       case .nestedWorktreesOnboarding:
         NestedWorktreesOnboardingCardView()
-          .transition(.move(edge: .bottom).combined(with: .opacity))
+          .transition(Slot.transition)
       }
     }
     .animation(.spring(response: 0.35, dampingFraction: 0.85), value: resolved.transitionToken)
-    .onChange(of: nestWorktreesByBranch) { _, newValue in
-      // Toggling grouping off counts as permanent dismissal of the onboarding
-      // card, so the card doesn't re-appear when the user later turns grouping
-      // back on. No-op when already past the relevance cutoff.
-      guard !newValue else { return }
-      guard !NestedWorktreesOnboardingCardView.isDismissed(at: onboardingDismissedAt) else { return }
-      $onboardingDismissedAt.withLock { $0 = .now }
-    }
-  }
-}
-
-/// Resolution layer between live state and the rendered branch. Pure so tests
-/// can lock the priority rules and `transitionToken` stability without
-/// exercising the SwiftUI rendering path.
-enum ResolvedCard: Equatable {
-  case none
-  case agent(CodingAgentsSidebarCardView.Mode)
-  case nestedWorktreesOnboarding
-
-  static func resolve(
-    agentMode: CodingAgentsSidebarCardView.Mode,
-    onboardingMode: NestedWorktreesOnboardingCardView.Mode
-  ) -> ResolvedCard {
-    switch agentMode {
-    case .updatesAvailable, .promptInstall:
-      return .agent(agentMode)
-    case .hidden:
-      break
-    }
-    return onboardingMode == .visible ? .nestedWorktreesOnboarding : .none
   }
 
-  /// Hashable identity used by `.animation(_:value:)`. Same-variant state
-  /// changes share a token so the entry transition only fires when the
-  /// rendered branch actually changes. The `agent.hidden` variant is
-  /// unreachable here (`resolve` collapses it to `.none`), so it isn't
-  /// enumerated.
-  var transitionToken: String {
-    switch self {
-    case .none: "none"
-    case .agent(.updatesAvailable(let agents)):
-      "agent:updates:" + agents.map(\.rawValue).sorted().joined(separator: ",")
-    case .agent(.promptInstall): "agent:promptInstall"
-    case .agent(.hidden): "agent:hidden"  // unreachable; present so the switch stays exhaustive.
-    case .nestedWorktreesOnboarding: "nestedWorktrees:visible"
+  /// Resolution layer between live state and the rendered branch. Pure so tests
+  /// can lock the priority rules and `transitionToken` stability without
+  /// exercising the SwiftUI rendering path.
+  enum Slot: Equatable {
+    case none
+    case agent(CodingAgentsSidebarCardView.Mode)
+    case nestedWorktreesOnboarding
+
+    static let transition: AnyTransition = .move(edge: .bottom).combined(with: .opacity)
+
+    static func resolve(
+      agentMode: CodingAgentsSidebarCardView.Mode,
+      onboardingMode: NestedWorktreesOnboardingCardView.Mode
+    ) -> Slot {
+      switch agentMode {
+      case .updatesAvailable, .promptInstall: return .agent(agentMode)
+      case .hidden: break
+      }
+      return onboardingMode == .visible ? .nestedWorktreesOnboarding : .none
+    }
+
+    /// Hashable identity used by `.animation(_:value:)`. Same-variant state
+    /// changes share a token so the entry transition only fires when the
+    /// rendered branch actually changes. Keyed off case names rather than
+    /// `SkillAgent.rawValue` so a future user-facing rename of an agent's
+    /// raw value doesn't silently change transition stability.
+    var transitionToken: String {
+      switch self {
+      case .none: "none"
+      case .agent(.updatesAvailable(let agents)):
+        "agent:updates:" + agents.map { String(describing: $0) }.sorted().joined(separator: ",")
+      case .agent(.promptInstall): "agent:promptInstall"
+      case .agent(.hidden):
+        // Unreachable: `resolve` collapses `.hidden` to `.none`. Fail loud
+        // rather than ship a meaningless token if a future caller bypasses
+        // `resolve`.
+        preconditionFailure("Slot.agent(.hidden) is unreachable; resolve() collapses it to .none.")
+      case .nestedWorktreesOnboarding: "nestedWorktrees:visible"
+      }
     }
   }
 }

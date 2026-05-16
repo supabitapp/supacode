@@ -165,9 +165,9 @@ private struct SidebarItemGroupView: View {
   var body: some View {
     let bucketID = moveBehavior.bucketID
     let groupingActive = nestWorktreesByBranch && bucketID != nil
-    let nestedBranchRows: [SidebarNestedBranchRow] =
+    let nestedBranchRows: [SidebarBranchNesting.Row] =
       if groupingActive, let bucketID {
-        buildNestedBranchRows(
+        SidebarBranchNesting.buildRows(
           itemIDs: rowIDs,
           branchNames: branchNames(for: rowIDs),
           collapsedPrefixes: store.state.sidebar.sections[repository.id]?.buckets[bucketID]?
@@ -202,10 +202,10 @@ private struct SidebarItemGroupView: View {
 
   @ViewBuilder
   private func nestedBranchRowView(
-    for row: SidebarNestedBranchRow,
+    for row: SidebarBranchNesting.Row,
     moveMode: SidebarRowMoveMode
   ) -> some View {
-    SidebarNestedBranchRowView(
+    SidebarBranchNestingRowView(
       repositoryID: repository.id,
       bucketID: moveBehavior.bucketID,
       row: row,
@@ -223,12 +223,22 @@ private struct SidebarItemGroupView: View {
     { rowID in shortcutHint(for: shortcutIndexByID[rowID]) }
   }
 
+  /// Read every row's branchName through a per-leaf scoped child store so
+  /// SwiftUI's observation graph is bounded to the leaf's own branchName
+  /// rather than tracking the full `sidebarItems` IdentifiedArray. Without
+  /// this, every per-row tick (agent storm, notification, running-script
+  /// update) would invalidate the parent. See AGENTS.md "Sidebar performance".
   private func branchNames(for ids: [SidebarItemID]) -> [SidebarItemID: String] {
-    Dictionary(
-      uniqueKeysWithValues: ids.compactMap { id in
-        store.state.sidebarItems[id: id].map { (id, $0.branchName) }
-      }
-    )
+    var result: [SidebarItemID: String] = [:]
+    for id in ids {
+      guard
+        let leafStore = store.scope(
+          state: \.sidebarItems[id: id], action: \.sidebarItems[id: id]
+        )
+      else { continue }
+      result[id] = leafStore.state.branchName
+    }
+    return result
   }
 
   @Shared(.settingsFile) private var settingsFile
@@ -262,10 +272,10 @@ extension SidebarItemGroup.MoveBehavior {
   }
 }
 
-private struct SidebarNestedBranchRowView: View {
+private struct SidebarBranchNestingRowView: View {
   let repositoryID: Repository.ID
   let bucketID: SidebarBucket?
-  let row: SidebarNestedBranchRow
+  let row: SidebarBranchNesting.Row
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let selectedWorktreeIDs: Set<Worktree.ID>
@@ -354,7 +364,7 @@ private struct SidebarPathGroupHeaderRow: View {
       .contentShape(.interaction, .rect)
     }
     .buttonStyle(.plain)
-    .listRowInsets(.leading, CGFloat(depth) * sidebarNestIndentStep)
+    .listRowInsets(.leading, CGFloat(depth) * SidebarNestLayout.indentStep)
     .listRowInsets(.vertical, 6)
     .moveDisabled(true)
     .help(isCollapsed ? "Expand \(label)" : "Collapse \(label)")
@@ -364,54 +374,36 @@ private struct SidebarPathGroupHeaderRow: View {
 
 /// Aggregates per-leaf indicators (notification, running scripts, agents)
 /// by scoping each descendant through `store.scope(state: \.sidebarItems[id:])`.
-/// Per-leaf scoping ensures a tool storm on one row only re-renders THIS
-/// view (and only when one of its own descendants ticks), not every nested
-/// group header sharing the same parent store.
+/// Per-leaf scoping keeps observation bounded to each leaf's own state, so a
+/// tool storm on one row only invalidates this view (not the surrounding row
+/// chrome). Aggregation itself delegates to the tested pure function in
+/// `SidebarBranchNesting` so there is one algorithm and one set of tests.
 private struct SidebarPathGroupAggregatedIndicators: View {
   @Bindable var parentStore: StoreOf<RepositoriesFeature>
   let leafIDs: [SidebarItemID]
 
   var body: some View {
-    var hasNotification = false
-    var seenColors: Set<RepositoryColor> = []
-    var colors: [RepositoryColor] = []
-    var seenAgents: Set<AgentPresenceFeature.AgentInstance> = []
-    var agents: [AgentPresenceFeature.AgentInstance] = []
-    for id in leafIDs {
+    SidebarPathGroupIndicatorsView(indicators: SidebarBranchNesting.aggregateIndicators(from: snapshots))
+  }
+
+  private var snapshots: [SidebarBranchNesting.LeafIndicatorSnapshot] {
+    leafIDs.compactMap { id in
       guard
         let leafStore = parentStore.scope(
           state: \.sidebarItems[id: id], action: \.sidebarItems[id: id]
         )
-      else { continue }
-      if leafStore.state.hasUnseenNotifications {
-        hasNotification = true
-      }
-      for script in leafStore.state.runningScripts {
-        if colors.count >= SidebarGroupIndicators.maxIndicators { break }
-        if seenColors.insert(script.tint).inserted {
-          colors.append(script.tint)
-        }
-      }
-      for agent in leafStore.state.agents {
-        if agents.count >= SidebarGroupIndicators.maxIndicators { break }
-        if seenAgents.insert(agent).inserted {
-          agents.append(agent)
-        }
-      }
-    }
-    return SidebarPathGroupIndicatorsView(
-      indicators: SidebarGroupIndicators(
-        hasNotification: hasNotification,
-        runningScriptColors: colors,
-        agents: agents
+      else { return nil }
+      return SidebarBranchNesting.LeafIndicatorSnapshot(
+        hasUnseenNotifications: leafStore.state.hasUnseenNotifications,
+        runningScriptColors: leafStore.state.runningScripts.map(\.tint),
+        agents: leafStore.state.agents
       )
-    )
+    }
   }
 }
 
 private struct SidebarPathGroupIndicatorsView: View, Equatable {
-  let indicators: SidebarGroupIndicators
-  @Environment(\.backgroundProminence) private var backgroundProminence
+  let indicators: SidebarBranchNesting.GroupIndicators
 
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.indicators == rhs.indicators

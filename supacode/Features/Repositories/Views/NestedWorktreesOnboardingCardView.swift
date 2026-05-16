@@ -12,13 +12,11 @@ import SwiftUI
 /// where the setting lives.
 struct NestedWorktreesOnboardingCardView: View {
   /// Bump to release-day each time the card's content materially changes;
-  /// users who dismissed before this date see the prompt again. Independent
-  /// from any other card's relevance cutoff: each card's content has its
-  /// own lifecycle.
+  /// users who dismissed before this date see the prompt again.
   static let cardRelevantSinceDate = Date(timeIntervalSince1970: 1_778_371_200)  // 2026-05-10.
 
-  static func isDismissed(at dismissedAt: Date, relevantSince: Date = Self.cardRelevantSinceDate) -> Bool {
-    dismissedAt >= relevantSince
+  static func isDismissed(at dismissedAt: Date) -> Bool {
+    SidebarCardRelevance.isDismissed(at: dismissedAt, relevantSince: cardRelevantSinceDate)
   }
 
   /// Pure resolver: visible only while grouping is on and the user hasn't
@@ -44,25 +42,30 @@ private struct NestedWorktreesOnboardingCardBody: View {
   private var dismissedAt: Date = .distantPast
 
   var body: some View {
-    SidebarCard(isDismissable: true) {
-      VStack(alignment: .leading, spacing: 4) {
-        SidebarCardLabel(
-          title: "Worktrees nested by branch",
-          description:
-            "Branches with `/` like `feature/tools/branch` now nest under collapsible groups, sorted alphabetically."
-        )
-        Text("Toggle in View → Nest Worktrees by Branch")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-          .padding(.top, 2)
+    SidebarCard(
+      onDismiss: { $dismissedAt.withLock { $0 = .now } },
+      content: {
+        VStack(alignment: .leading, spacing: 4) {
+          SidebarCardLabel(title: "Worktrees nested by branch", description: description)
+          Text("Toggle in View → Nest Worktrees by Branch")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .padding(.top, 2)
+        }
+      },
+      header: {
+        Image(systemName: "list.bullet.indent")
+          .font(.title2)
+          .foregroundStyle(.tint)
+          .accessibilityHidden(true)
       }
-    } header: {
-      Image(systemName: "list.bullet.indent")
-        .font(.title2)
-        .foregroundStyle(.tint)
-        .accessibilityHidden(true)
-    } onDismiss: {
-      $dismissedAt.withLock { $0 = .now }
-    }
+    )
+  }
+
+  private var description: LocalizedStringKey {
+    """
+    Branches with `/` like `feature/tools/branch` now nest under collapsible groups, \
+    sorted alphabetically. Toggle off to restore custom ordering.
+    """
   }
 }

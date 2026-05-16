@@ -2,10 +2,12 @@ import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Pixel step a row indents per branch-nesting depth level. Shared so the
-/// leaf row (`SidebarItemView`) and the group header row align across both
-/// view files.
-let sidebarNestIndentStep: CGFloat = 14
+/// Layout constants shared by the leaf row (`SidebarItemView`) and the group
+/// header row so indentation stays in lock-step across both view files.
+enum SidebarNestLayout {
+  /// Pixel step a row indents per branch-nesting depth level.
+  static let indentStep: CGFloat = 14
+}
 
 struct SidebarItemView: View {
   let store: StoreOf<SidebarItemFeature>
@@ -61,7 +63,7 @@ struct SidebarItemView: View {
       )
     }
     .labelStyle(.verticallyCentered)
-    .listRowInsets(.leading, CGFloat(nestDepth) * sidebarNestIndentStep)
+    .listRowInsets(.leading, CGFloat(nestDepth) * SidebarNestLayout.indentStep)
     .listRowInsets(.trailing, 4)
     .listRowInsets(.vertical, 6)
   }

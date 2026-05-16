@@ -163,8 +163,10 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
           OrderedDictionary<Worktree.ID, Item>.self,
           forKey: .items
         ) ?? [:]
+      // Use `try?` so a malformed value (number, string, object) drops just
+      // this one field rather than killing the whole sidebar layout decode.
       self.collapsedBranchPrefixes =
-        try container.decodeIfPresent(Set<String>.self, forKey: .collapsedBranchPrefixes) ?? []
+        (try? container.decodeIfPresent(Set<String>.self, forKey: .collapsedBranchPrefixes)) ?? []
     }
 
     func encode(to encoder: any Encoder) throws {

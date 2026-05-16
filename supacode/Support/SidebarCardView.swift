@@ -1,30 +1,23 @@
 import SwiftUI
 
 /// Pinned sidebar card surface (glass background, 10pt radius, leading-aligned).
-/// Three slots: `header` (top row, left of the inline dismiss X), `content`
-/// (title / description / inline composition), and `actions` (primary buttons
-/// rendered below the content). `isDismissable` adds an X button that lives in
-/// the same HStack as `header`, so wide header content (avatars, icons) can't
-/// land underneath the dismiss target.
-struct SidebarCard<Header: View, Content: View, Actions: View>: View {
-  let isDismissable: Bool
+/// Two slots: `header` (top row, left of the inline dismiss X) and `content`
+/// (title / description / inline buttons). Pass a non-nil `onDismiss` to add the
+/// X button; it lives in the same HStack as `header`, so wide header content
+/// (avatars, icons) can't land underneath the dismiss target.
+struct SidebarCard<Header: View, Content: View>: View {
+  let onDismiss: (() -> Void)?
   @ViewBuilder let content: () -> Content
-  @ViewBuilder let actions: () -> Actions
   @ViewBuilder let header: () -> Header
-  let onDismiss: () -> Void
 
   init(
-    isDismissable: Bool = true,
+    onDismiss: (() -> Void)? = nil,
     @ViewBuilder content: @escaping () -> Content,
-    @ViewBuilder actions: @escaping () -> Actions = { EmptyView() },
-    @ViewBuilder header: @escaping () -> Header = { EmptyView() },
-    onDismiss: @escaping () -> Void = {}
+    @ViewBuilder header: @escaping () -> Header = { EmptyView() }
   ) {
-    self.isDismissable = isDismissable
-    self.content = content
-    self.actions = actions
-    self.header = header
     self.onDismiss = onDismiss
+    self.content = content
+    self.header = header
   }
 
   var body: some View {
@@ -32,7 +25,7 @@ struct SidebarCard<Header: View, Content: View, Actions: View>: View {
       HStack(alignment: .top, spacing: 8) {
         header()
         Spacer(minLength: 0)
-        if isDismissable {
+        if let onDismiss {
           Button {
             onDismiss()
           } label: {
@@ -47,10 +40,7 @@ struct SidebarCard<Header: View, Content: View, Actions: View>: View {
           .accessibilityLabel("Dismiss")
         }
       }
-      VStack(alignment: .leading, spacing: 6) {
-        content()
-        actions()
-      }
+      content()
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -82,5 +72,14 @@ struct SidebarCardLabel: View {
           .foregroundStyle(.secondary)
       }
     }
+  }
+}
+
+/// Shared "is this card stamp still considered dismissed?" gate.
+/// Each card declares its own `relevantSince` cutoff; bumping that
+/// date re-shows the card to users who dismissed before it.
+enum SidebarCardRelevance {
+  static func isDismissed(at dismissedAt: Date, relevantSince: Date) -> Bool {
+    dismissedAt >= relevantSince
   }
 }
