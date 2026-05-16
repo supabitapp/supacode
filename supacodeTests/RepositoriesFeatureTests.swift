@@ -3178,6 +3178,46 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func orderedSidebarItemIDsAlphabetizesAndSkipsCollapsedGroupsWhenNestingIsOn() {
+    let repoRoot = "/tmp/repo"
+    let main = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
+    let featureA = makeWorktree(id: "/tmp/repo/feature-a", name: "feature/a", repoRoot: repoRoot)
+    let featureB = makeWorktree(id: "/tmp/repo/feature-b", name: "feature/b", repoRoot: repoRoot)
+    let zulu = makeWorktree(id: "/tmp/repo/zulu", name: "zulu", repoRoot: repoRoot)
+    var state = makeState(
+      repositories: [makeRepository(id: repoRoot, worktrees: [main, zulu, featureB, featureA, alpha])]
+    )
+    state.$sidebarNestWorktreesByBranch.withLock { $0 = true }
+    state.reconcileSidebarForTesting()
+
+    // With nesting on: main first, then unpinned tail in alphabetical order
+    // (alpha, feature/a, feature/b, zulu). feature/a + feature/b group under
+    // a `feature` header that is currently expanded.
+    expectNoDifference(
+      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
+      [repoRoot, "/tmp/repo/alpha", "/tmp/repo/feature-a", "/tmp/repo/feature-b", "/tmp/repo/zulu"]
+    )
+
+    // Collapse the `feature` group: its leaves drop out of the hotkey list.
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoRoot, default: .init()].buckets[.unpinned, default: .init()]
+        .collapsedBranchPrefixes = ["feature"]
+    }
+    expectNoDifference(
+      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
+      [repoRoot, "/tmp/repo/alpha", "/tmp/repo/zulu"]
+    )
+
+    // Turn nesting off: the custom drag order is restored verbatim and every
+    // row is reachable again regardless of saved collapse state.
+    state.$sidebarNestWorktreesByBranch.withLock { $0 = false }
+    expectNoDifference(
+      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
+      [repoRoot, "/tmp/repo/zulu", "/tmp/repo/feature-b", "/tmp/repo/feature-a", "/tmp/repo/alpha"]
+    )
+  }
+
   @Test func orderedRepositoryRootsAppendMissing() {
     let repoA = makeRepository(id: "/tmp/repo-a", worktrees: [])
     let repoB = makeRepository(id: "/tmp/repo-b", worktrees: [])
