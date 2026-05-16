@@ -306,6 +306,10 @@ private struct SidebarNestedBranchRowView: View {
   }
 }
 
+/// Header row for a nested branch group. Holds only value-type inputs so a
+/// per-row state mutation in the bucket (e.g. an agent tool storm on one
+/// leaf) doesn't invalidate this row; the per-leaf indicator aggregation is
+/// scoped to its own subview that observes only its descendants.
 private struct SidebarPathGroupHeaderRow: View {
   let repositoryID: Repository.ID
   let bucketID: SidebarBucket
@@ -318,10 +322,6 @@ private struct SidebarPathGroupHeaderRow: View {
 
   var body: some View {
     let label = components.isEmpty ? prefix : components.joined(separator: "/")
-    let indicators =
-      isCollapsed
-      ? aggregatedIndicators(for: leafDescendantIDs, in: store.state.sidebarItems)
-      : .empty
     Button {
       _ = withAnimation(.easeOut(duration: 0.2)) {
         store.send(
@@ -348,7 +348,7 @@ private struct SidebarPathGroupHeaderRow: View {
           .foregroundStyle(.primary)
         Spacer(minLength: 0)
         if isCollapsed {
-          SidebarPathGroupIndicatorsView(indicators: indicators)
+          SidebarPathGroupAggregatedIndicators(parentStore: store, leafIDs: leafDescendantIDs)
         }
       }
       .contentShape(.interaction, .rect)
@@ -359,6 +359,53 @@ private struct SidebarPathGroupHeaderRow: View {
     .moveDisabled(true)
     .help(isCollapsed ? "Expand \(label)" : "Collapse \(label)")
     .accessibilityLabel("\(label) group, \(isCollapsed ? "collapsed" : "expanded")")
+  }
+}
+
+/// Aggregates per-leaf indicators (notification, running scripts, agents)
+/// by scoping each descendant through `store.scope(state: \.sidebarItems[id:])`.
+/// Per-leaf scoping ensures a tool storm on one row only re-renders THIS
+/// view (and only when one of its own descendants ticks), not every nested
+/// group header sharing the same parent store.
+private struct SidebarPathGroupAggregatedIndicators: View {
+  @Bindable var parentStore: StoreOf<RepositoriesFeature>
+  let leafIDs: [SidebarItemID]
+
+  var body: some View {
+    var hasNotification = false
+    var seenColors: Set<RepositoryColor> = []
+    var colors: [RepositoryColor] = []
+    var seenAgents: Set<AgentPresenceFeature.AgentInstance> = []
+    var agents: [AgentPresenceFeature.AgentInstance] = []
+    for id in leafIDs {
+      guard
+        let leafStore = parentStore.scope(
+          state: \.sidebarItems[id: id], action: \.sidebarItems[id: id]
+        )
+      else { continue }
+      if leafStore.state.hasUnseenNotifications {
+        hasNotification = true
+      }
+      for script in leafStore.state.runningScripts {
+        if colors.count >= SidebarGroupIndicators.maxIndicators { break }
+        if seenColors.insert(script.tint).inserted {
+          colors.append(script.tint)
+        }
+      }
+      for agent in leafStore.state.agents {
+        if agents.count >= SidebarGroupIndicators.maxIndicators { break }
+        if seenAgents.insert(agent).inserted {
+          agents.append(agent)
+        }
+      }
+    }
+    return SidebarPathGroupIndicatorsView(
+      indicators: SidebarGroupIndicators(
+        hasNotification: hasNotification,
+        runningScriptColors: colors,
+        agents: agents
+      )
+    )
   }
 }
 

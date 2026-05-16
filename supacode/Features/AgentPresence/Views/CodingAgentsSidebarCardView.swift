@@ -10,16 +10,18 @@ import SwiftUI
 /// - Otherwise, if no agent is installed and the user has never dismissed
 ///   the prompt → "More functionality" with avatars of every supported
 ///   agent, the same Review link, plus a dismiss button.
-/// - Otherwise → nothing (returns `nil`-shaped empty container).
+/// - Otherwise → nothing.
+///
+/// Rendering goes through `SidebarCard` so the visual chrome stays in sync
+/// with every other pinned sidebar card.
 struct CodingAgentsSidebarCardView: View {
   let store: StoreOf<AppFeature>
-  @Environment(\.openWindow) private var openWindow
-  // `.distantPast` sentinel for "never dismissed". Stamps older than
-  // `cardRelevantSinceDate` are stale and re-engage the user.
-  @Shared(.appStorage("codingAgentsSetupCardDismissedAt")) private var dismissedAt: Date = .distantPast
+  let mode: Mode
 
-  /// Bump to release-day each time the prompt's content materially changes —
-  /// users who dismissed before this date see the prompt again.
+  /// Bump to release-day each time the prompt's content materially changes;
+  /// users who dismissed before this date see the prompt again. Independent
+  /// from any other card's relevance cutoff: each card's content has its
+  /// own lifecycle.
   static let cardRelevantSinceDate = Date(timeIntervalSince1970: 1_778_371_200)  // 2026-05-10.
 
   /// Stamps before `relevantSince` are treated as stale, so re-engagement is
@@ -28,82 +30,39 @@ struct CodingAgentsSidebarCardView: View {
     dismissedAt >= relevantSince
   }
 
-  var body: some View {
-    let states = store.settings.agentIntegrationStates
-    let mode = Self.mode(
-      for: states,
+  /// Resolve the active mode from the current store + the dismissal stamp.
+  /// The caller owns the `@Shared` read so SwiftUI re-renders the priority
+  /// host when the dismissal date changes; passing it in keeps this resolver
+  /// pure and free of hidden global reads.
+  static func resolveMode(for store: StoreOf<AppFeature>, dismissedAt: Date) -> Mode {
+    Self.mode(
+      for: store.settings.agentIntegrationStates,
       dismissed: Self.isDismissed(at: dismissedAt),
       autoUpdateEnabled: store.settings.autoUpdateAgentIntegrationsEnabled
     )
+  }
+
+  var body: some View {
     switch mode {
     case .updatesAvailable(let agents):
-      card(
+      CodingAgentsCardBody(
+        store: store,
         agents: agents,
         title: "Update agent integration",
-        body: "Re-install to pick up the latest hooks for these agents.",
+        description: "Re-install to pick up the latest hooks for these agents.",
         showsDismiss: false
       )
     case .promptInstall:
-      card(
+      CodingAgentsCardBody(
+        store: store,
         agents: SkillAgent.allCases,
         title: "Advanced agent integration",
-        body: "Install hooks and skills to enable rich notifications and presence badges.",
+        description: "Install hooks and skills to enable rich notifications and presence badges.",
         showsDismiss: true
       )
     case .hidden:
       EmptyView()
     }
-  }
-
-  // MARK: - Card.
-
-  @ViewBuilder
-  private func card(
-    agents: [SkillAgent], title: LocalizedStringKey, body: LocalizedStringKey, showsDismiss: Bool
-  ) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .center, spacing: 0) {
-        AgentAvatarGroupView(agents: agents, size: 22, maxVisible: .max)
-        Spacer(minLength: 8)
-        if showsDismiss {
-          Button {
-            $dismissedAt.withLock { $0 = .now }
-          } label: {
-            Image(systemName: "xmark")
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-              .frame(width: 18, height: 18)
-              .contentShape(.rect)
-          }
-          .buttonStyle(.plain)
-          .help("Dismiss")
-          .accessibilityLabel("Dismiss")
-        }
-      }
-      VStack(alignment: .leading, spacing: 2) {
-        Text(title)
-          .font(.subheadline)
-          .fontWeight(.semibold)
-        Text(body)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        Button("Review in Settings") {
-          // Both calls are needed: `setSelection` routes the Settings
-          // view, `openWindow` brings it forward when it's already open
-          // on Developer (selection no-op wouldn't trigger the bridge).
-          store.send(.settings(.setSelection(.developer)))
-          openWindow(id: WindowID.settings)
-        }
-        .buttonStyle(.link)
-        .font(.caption)
-        .padding(.top, 2)
-      }
-    }
-    .padding(12)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .glassEffect(.regular, in: .rect(cornerRadius: 10))
-    .padding(.horizontal, 10)
-    .padding(.bottom, 10)
   }
 
   // MARK: - Mode resolution.
@@ -119,10 +78,10 @@ struct CodingAgentsSidebarCardView: View {
   /// Pure resolver: chooses which card (if any) to show given the current
   /// integration states and dismissal flag. Tested separately so the view
   /// stays a thin renderer. Always waits for every agent to resolve before
-  /// committing to a card — avoids the avatar group regrowing mid-launch
-  /// as per-agent probes return staggered. When `autoUpdateEnabled` is
-  /// true, `.updatesAvailable` is suppressed because auto-update has
-  /// already (or is about to) handle it.
+  /// committing to a card (avoids the avatar group regrowing mid-launch as
+  /// per-agent probes return staggered). When `autoUpdateEnabled` is true,
+  /// `.updatesAvailable` is suppressed because auto-update has already (or
+  /// is about to) handle it.
   static func mode(
     for states: [SkillAgent: AgentIntegrationRowState],
     dismissed: Bool,
@@ -141,6 +100,38 @@ struct CodingAgentsSidebarCardView: View {
     }
     if anyInstalled || dismissed { return .hidden }
     return .promptInstall
+  }
+}
+
+private struct CodingAgentsCardBody: View {
+  let store: StoreOf<AppFeature>
+  let agents: [SkillAgent]
+  let title: LocalizedStringKey
+  let description: LocalizedStringKey
+  let showsDismiss: Bool
+  @Environment(\.openWindow) private var openWindow
+  @Shared(.appStorage("codingAgentsSetupCardDismissedAt")) private var dismissedAt: Date = .distantPast
+
+  var body: some View {
+    SidebarCard(isDismissable: showsDismiss) {
+      VStack(alignment: .leading, spacing: 2) {
+        SidebarCardLabel(title: title, description: description)
+        Button("Review in Settings") {
+          // Both calls are needed: `setSelection` routes the Settings
+          // view, `openWindow` brings it forward when it's already open
+          // on Developer (selection no-op wouldn't trigger the bridge).
+          store.send(.settings(.setSelection(.developer)))
+          openWindow(id: WindowID.settings)
+        }
+        .buttonStyle(.link)
+        .font(.caption)
+        .padding(.top, 2)
+      }
+    } header: {
+      AgentAvatarGroupView(agents: agents, size: 22, maxVisible: .max)
+    } onDismiss: {
+      $dismissedAt.withLock { $0 = .now }
+    }
   }
 }
 

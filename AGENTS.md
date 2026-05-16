@@ -129,6 +129,13 @@ Reducer ← .repositories(.worktreeInfoEvent(Event)) ← AsyncStream<Event>
 - Before you go on your task, check the current git branch name, if it's something generic like an animal name, name it accordingly. Do not do this for main branch
 - After implementing an execplan, always submit a PR if you're not in the main branch
 
+## Sidebar performance
+
+- Per-row `SidebarItemFeature` state lives in `RepositoriesFeature.State.sidebarItems: IdentifiedArrayOf<SidebarItemFeature.State>` (see commit `0a1ed578`, "Improve sidebar performance and refresh reliability"). The whole point is that a per-leaf mutation (notification tick, agent tool storm, running-script update) invalidates only that leaf's view, not every sibling.
+- In a sidebar parent / aggregator view, NEVER read `store.state.sidebarItems[id: x].…` to fan out across rows. That reads through the `IdentifiedArray` on the parent store and observation-tracks the entire collection, so every per-row tick re-renders the parent. The chevron, group label, indent, and unrelated siblings all redraw on every leaf mutation, which produces visible scrolling lag in nested groups and any future aggregator.
+- Do this instead: for each leaf id you need, derive a child store with `store.scope(state: \.sidebarItems[id: id], action: \.sidebarItems[id: id])`, then read `leafStore.state.X` through that scoped binding. Observation is bounded to that leaf, so the aggregator only re-renders when one of its actual descendants changes, and unrelated leaves are isolated.
+- If you need to aggregate across many leaves in a parent row (group header indicators, batch summaries), extract a dedicated subview that takes only `parentStore: StoreOf<RepositoriesFeature>` + `leafIDs: [SidebarItemID]` and does the per-id scope+read inside its own body. That isolates the re-render to the aggregator, not the surrounding row chrome. See `SidebarPathGroupAggregatedIndicators` in `SidebarItemsView.swift` for the canonical pattern.
+
 ## Folder (non-git) repositories
 
 - `Repository.isGitRepository` classifies each root at load time via `Repository.isGitRepository(at:)`, which approximates git's own `is_git_directory()` check: `.bare` / `.git` root-name shortcut, then `rootURL/.git` existence (worktree root, covers primary / linked / submodule / `--separate-git-dir` layouts), then the `HEAD` + `objects` + `refs` trio at the root — with `HEAD` required to be a regular file (git rejects a `HEAD` directory) — so any git dir is recognized regardless of naming, including bare clones whose directory name does not end in `.git`. Classification runs through the injected `GitClientDependency.isGitRepository` closure so tests can override it without touching the filesystem.

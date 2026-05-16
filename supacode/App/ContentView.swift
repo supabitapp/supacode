@@ -29,7 +29,7 @@ struct ContentView: View {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-          CodingAgentsSidebarCardView(store: store)
+          SidebarBottomCardView(store: store)
         }
     } detail: {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
