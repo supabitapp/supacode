@@ -288,28 +288,35 @@ struct RepositoriesFeatureTests {
   @Test func sidebarRepositoryExpansionChangedUpdatesCollapsedRepositoryIDs() async {
     let worktree = makeWorktree(id: "/tmp/repo/wt1", name: "wt1", repoRoot: "/tmp/repo")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = true }
+      $0.recomputeSidebarStructureIfChanged()
     }
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: true)) {
       $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = false }
+      $0.recomputeSidebarStructureIfChanged()
     }
   }
 
   @Test func repositoryExpansionChangedIsIdempotent() async {
     let worktree = makeWorktree(id: "/tmp/repo/wt1", name: "wt1", repoRoot: "/tmp/repo")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = true }
+      $0.recomputeSidebarStructureIfChanged()
     }
 
     // Collapsing again should be a no-op.
@@ -440,7 +447,9 @@ struct RepositoriesFeatureTests {
       id: "/tmp/repo-b",
       worktrees: [makeWorktree(id: "/tmp/repo-b/wt1", name: "wt1", repoRoot: "/tmp/repo-b")],
     )
-    let store = TestStore(initialState: makeState(repositories: [repoA, repoB])) {
+    var initialState = makeState(repositories: [repoA, repoB])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
@@ -450,9 +459,11 @@ struct RepositoriesFeatureTests {
     // bit flips on the targeted section.
     await store.send(.repositoryExpansionChanged(repoB.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repoB.id, default: .init()].collapsed = true }
+      $0.recomputeSidebarStructureIfChanged()
     }
     await store.send(.repositoryExpansionChanged(repoA.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repoA.id, default: .init()].collapsed = true }
+      $0.recomputeSidebarStructureIfChanged()
     }
   }
 
@@ -655,7 +666,9 @@ struct RepositoriesFeatureTests {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
@@ -840,7 +853,9 @@ struct RepositoriesFeatureTests {
       id: repoRootB,
       worktrees: [makeWorktree(id: repoRootB, name: "main", repoRoot: repoRootB)]
     )
-    let store = TestStore(initialState: makeState(repositories: [repoA, repoB])) {
+    var initialState = makeState(repositories: [repoA, repoB])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
       $0.gitClient.automaticWorktreeBaseRef = { root in
@@ -1061,6 +1076,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.alert = expectedAlert
+      $0.recomputeSidebarStructureIfChanged()
     }
     await store.finish()
     #expect(removed.value == false)
@@ -2183,6 +2199,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
+    state.recomputeSidebarStructureIfChanged()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2207,6 +2224,7 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
+      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -2219,6 +2237,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
+    state.recomputeSidebarStructureIfChanged()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2235,6 +2254,7 @@ struct RepositoriesFeatureTests {
     )
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
   }
@@ -2248,6 +2268,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
+    state.recomputeSidebarStructureIfChanged()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2264,6 +2285,7 @@ struct RepositoriesFeatureTests {
     )
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
   }
@@ -2315,6 +2337,7 @@ struct RepositoriesFeatureTests {
       .init(id: completing.id, tint: completing.resolvedTintColor)
     state.sidebarItems[id: worktree.id]?.runningScripts[id: surviving.id] =
       .init(id: surviving.id, tint: surviving.resolvedTintColor)
+    state.recomputeSidebarStructureIfChanged()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2331,6 +2354,7 @@ struct RepositoriesFeatureTests {
     )
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: completing.id)
+      $0.reconcileSidebarForTesting()
     }
     #expect(store.state.alert == nil)
   }
@@ -2539,7 +2563,9 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
@@ -2916,7 +2942,9 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
@@ -3423,12 +3451,46 @@ struct RepositoriesFeatureTests {
       sidebar.sections["/tmp/repo", default: .init()].buckets[.unpinned, default: .init()]
         .collapsedBranchPrefixes = ["feature"]
     }
+    state.reconcileSidebarForTesting()
     // feature/a is now hidden behind the collapsed `feature` group; visible
     // hotkey list is [main, alpha, zulu]. Anchor index of feature/a in the
     // unfiltered list sits between alpha and zulu.
     state.setSingleWorktreeSelection("/tmp/repo/feature-a")
     #expect(state.worktreeID(byOffset: 1) == "/tmp/repo/zulu")
     #expect(state.worktreeID(byOffset: -1) == "/tmp/repo/alpha")
+  }
+
+  @Test func worktreeIDByOffsetWalksHoistedRowsBeforePerRepoRows() {
+    // When a worktree is hoisted into the Pinned section, arrow nav must walk
+    // the hoisted row (visible at the top) before falling into the per-repo
+    // rows — matching what the user actually sees in the sidebar.
+    let repoRoot = "/tmp/repo"
+    let main = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
+    let bravo = makeWorktree(id: "/tmp/repo/bravo", name: "bravo", repoRoot: repoRoot)
+    var state = makeState(repositories: [makeRepository(id: repoRoot, worktrees: [main, alpha, bravo])])
+    // Pin bravo so it hoists to the Pinned section at the top.
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repoRoot] ?? .init()
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[bravo.id] = .init()
+      section.buckets[.pinned] = pinnedBucket
+      var unpinnedBucket = section.buckets[.unpinned] ?? .init()
+      unpinnedBucket.items.removeValue(forKey: bravo.id)
+      section.buckets[.unpinned] = unpinnedBucket
+      sidebar.sections[repoRoot] = section
+    }
+    state.reconcileSidebarForTesting()
+
+    // Visible order: [bravo (Pinned hoist), main, alpha].
+    state.setSingleWorktreeSelection(bravo.id)
+    #expect(state.worktreeID(byOffset: 1) == main.id)
+    state.setSingleWorktreeSelection(main.id)
+    #expect(state.worktreeID(byOffset: -1) == bravo.id)
+    state.setSingleWorktreeSelection(alpha.id)
+    // Wrap-around from last → first lands on the hoisted row, not the
+    // per-repo position bravo would have had in bucket order.
+    #expect(state.worktreeID(byOffset: 1) == bravo.id)
   }
 
   @Test func orderedRepositoryRootsAppendMissing() {
@@ -3544,7 +3606,9 @@ struct RepositoriesFeatureTests {
 
   @Test func loadRepositoriesFailureKeepsPreviousState() async {
     let repository = makeRepository(id: "/tmp/repo", worktrees: [])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
@@ -3559,6 +3623,7 @@ struct RepositoriesFeatureTests {
       $0.loadFailuresByID = [repository.id: "boom"]
       $0.repositories = []
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
 
     await store.receive(\.delegate.repositoriesChanged)
@@ -3577,6 +3642,7 @@ struct RepositoriesFeatureTests {
         ]
       )
     }
+    initialState.reconcileSidebarForTesting()
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
@@ -3592,6 +3658,7 @@ struct RepositoriesFeatureTests {
       $0.loadFailuresByID = [repository.id: "boom"]
       $0.repositories = []
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
 
     await store.receive(\.delegate.repositoriesChanged)
@@ -3616,6 +3683,7 @@ struct RepositoriesFeatureTests {
         item: .init(archivedAt: Date(timeIntervalSince1970: 1_000_000))
       )
     }
+    initialState.reconcileSidebarForTesting()
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
@@ -3631,6 +3699,7 @@ struct RepositoriesFeatureTests {
       $0.loadFailuresByID = [repository.id: "boom"]
       $0.repositories = []
       $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
     }
 
     await store.receive(\.delegate.repositoriesChanged)
@@ -4365,6 +4434,13 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
+      // This test intentionally skips sidebar reconciliation; the PR refresh
+      // bookkeeping under test (`inFlightPullRequestRefreshRepositoryIDs`,
+      // `inFlightPullRequestBranchSnapshotsByRepositoryID`) doesn't read from
+      // `sidebarItems`. Opt out of the structure-cache recompute so the hook
+      // doesn't surface a placeholder → real mutation against the empty
+      // sidebar.
+      $0.sidebarStructureAutoRecompute = false
       $0.gitClient.remoteInfo = { _ in nil }
       $0.githubCLI.batchPullRequests = { _, _, _, _ in
         Issue.record("batchPullRequests should not run when remoteInfo is unavailable")
@@ -4399,7 +4475,9 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
       $0.githubIntegration.isAvailable = { false }
@@ -4454,6 +4532,7 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var initialState = makeState(repositories: [repository])
     initialState.githubIntegrationAvailability = .unavailable
+    initialState.reconcileSidebarForTesting()
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
@@ -4492,6 +4571,10 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
+      // Mirror the sibling worktreeInfoEvent tests: opt out of the structure
+      // cache recompute so the empty-sidebar starting state doesn't surface a
+      // placeholder → real mutation on the replayed refresh.
+      $0.sidebarStructureAutoRecompute = false
       $0.gitClient.remoteInfo = { _ in nil }
       $0.githubCLI.batchPullRequests = { _, _, _, _ in
         Issue.record("batchPullRequests should not run when remoteInfo is unavailable")
@@ -4750,7 +4833,9 @@ struct RepositoriesFeatureTests {
   @Test func unarchiveWorktreeNoopsWhenNotArchived() async {
     let worktree = makeWorktree(id: "/tmp/wt", name: "owl")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
@@ -5231,7 +5316,9 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [main, feature, bugfix])
     var state = makeState(repositories: [repository])
     state.selection = .worktree(main.id)
-    // Pin bugfix so the sidebar order is [main, bugfix, feature], not the raw worktree order.
+    // Pin bugfix so it hoists into the Pinned highlight section; visible order
+    // becomes [bugfix (hoist), main, feature]. Arrow nav from main lands on
+    // feature, not on bugfix's per-repo bucket position.
     state.$sidebar.withLock { sidebar in
       sidebar.sections[repoRoot] = .init(buckets: [.pinned: .init(items: [bugfix.id: .init()])])
     }
@@ -5242,8 +5329,8 @@ struct RepositoriesFeatureTests {
 
     await store.send(.selectNextWorktree)
     await store.receive(\.selectWorktree) {
-      $0.selection = .worktree(bugfix.id)
-      $0.sidebarSelectedWorktreeIDs = [bugfix.id]
+      $0.selection = .worktree(feature.id)
+      $0.sidebarSelectedWorktreeIDs = [feature.id]
       $0.worktreeHistoryBackStack = [main.id]
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
@@ -6379,6 +6466,7 @@ struct RepositoriesFeatureTests {
       $0.loadFailuresByID = [
         repoRoot: "Directory not found at \(repoRoot). It may have been moved or deleted."
       ]
+      $0.reconcileSidebarForTesting()
     }
     await store.finish()
   }

@@ -56,6 +56,7 @@ struct AppFeatureRunScriptTests {
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
         .init(id: definition.id, tint: definition.resolvedTintColor)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
 
@@ -93,6 +94,7 @@ struct AppFeatureRunScriptTests {
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
         .init(id: definition.id, tint: definition.resolvedTintColor)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -130,6 +132,10 @@ struct AppFeatureRunScriptTests {
     var repositoriesState = repositories
     repositoriesState.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
+    // Re-reconcile after the ad-hoc runningScripts seed so the sidebar
+    // structure cache reflects the seeded state. Otherwise the post-reduce
+    // hook would surface a phantom structure mutation on the first dispatch.
+    repositoriesState.reconcileSidebarForTesting()
 
     let store = TestStore(
       initialState: AppFeature.State(
@@ -153,6 +159,7 @@ struct AppFeatureRunScriptTests {
     )
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
+      $0.repositories.reconcileSidebarForTesting()
     }
   }
 
@@ -243,6 +250,7 @@ struct AppFeatureRunScriptTests {
     var repositoriesState = repositories
     repositoriesState.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
+    repositoriesState.reconcileSidebarForTesting()
 
     let store = TestStore(
       initialState: AppFeature.State(
@@ -268,6 +276,7 @@ struct AppFeatureRunScriptTests {
     )
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
+      $0.repositories.reconcileSidebarForTesting()
     }
   }
 
@@ -309,6 +318,7 @@ struct AppFeatureRunScriptTests {
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: globalScript.id] =
         .init(id: globalScript.id, tint: globalScript.resolvedTintColor)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
 

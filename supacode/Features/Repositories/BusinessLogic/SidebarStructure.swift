@@ -4,15 +4,18 @@ import Foundation
 import OrderedCollections
 
 /// Dependency switch that gates the reducer's post-reduce sidebar-structure
-/// recompute. Live + preview default to `true` so production / previews
-/// always see the cached structure; tests default to `false` so the
-/// hundreds of TestStore expectations that don't care about sidebar layout
-/// aren't forced to acknowledge a derived cache mutation. Tests that DO
-/// verify the structure flip it back on via `withDependencies { $0.sidebarStructureAutoRecompute = true }`.
+/// recompute. Defaults `true` everywhere (live, preview, test) so the cached
+/// structure always matches what production sees: arrow nav, hotkeys, and
+/// other readers of `sidebarStructure` get the same fresh value across
+/// contexts. The Equatable diff inside `recomputeSidebarStructureIfChanged`
+/// keeps no-op rebuilds from triggering TestStore exhaustiveness; tests
+/// that mirror a sidebar-affecting action in their expectation closure
+/// should call `$0.reconcileSidebarForTesting()` to keep the expected
+/// structure in lockstep with the actual one.
 public nonisolated enum SidebarStructureAutoRecomputeKey: DependencyKey {
   public static let liveValue: Bool = true
   public static let previewValue: Bool = true
-  public static let testValue: Bool = false
+  public static let testValue: Bool = true
 }
 
 extension DependencyValues {
@@ -280,7 +283,7 @@ extension RepositoriesFeature.Action {
     case .sidebarItems:
       return true
     // Toggles changed — read by the recompute helper.
-    case .sidebarGroupingTogglesChanged:
+    case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged:
       return true
     // Repository roster / failure map changed.
     case .repositoriesLoaded, .openRepositoriesFinished,
@@ -297,6 +300,7 @@ extension RepositoriesFeature.Action {
     // Worktree lifecycle that mutates sidebarItems / pendingWorktrees.
     case .archiveWorktreeApply, .unarchiveWorktree,
       .deleteWorktreeApply, .worktreeDeleted,
+      .createWorktreeInRepository, .createRandomWorktreeInRepository,
       .createRandomWorktreeSucceeded, .createRandomWorktreeFailed,
       .pendingWorktreeProgressUpdated,
       .archiveScriptCompleted, .deleteScriptCompleted, .scriptCompleted,
@@ -435,7 +439,8 @@ extension RepositoriesFeature.State {
         in: self,
         repositoryID: repositoryID,
         pendingIDs: pendingIDsByRepo[repositoryID] ?? [],
-        hoistedRowIDs: hoisted
+        hoistedRowIDs: hoisted,
+        nestWorktreesByBranch: sidebarNestWorktreesByBranch && repository.isGitRepository
       )
       sections.append(.repository(repositoryID: repositoryID, groups: groups))
     }
@@ -553,11 +558,20 @@ extension SidebarItemGroup {
   /// so a row that survived a pre-existing double-bucket pre-state renders
   /// in at most one position (priority order: main > pinnedTail > pending >
   /// unpinnedTail).
+  ///
+  /// `nestWorktreesByBranch` should be the effective per-repo value
+  /// (`@Shared(.sidebarNestWorktreesByBranch)` gated on `isGitRepository`).
+  /// When set, the pinned and unpinned tails are sorted by branch name
+  /// (case-insensitive) to match `SidebarBranchNesting.buildRows`, so the
+  /// hotkey / arrow projection that walks `rowIDs` sees the same top-down
+  /// order the view renders. Main and pending slots stay in bucket order
+  /// (they don't participate in branch nesting).
   static func computeSlots(
     in state: RepositoriesFeature.State,
     repositoryID: Repository.ID,
     pendingIDs: Set<Worktree.ID>,
-    hoistedRowIDs: Set<Worktree.ID>
+    hoistedRowIDs: Set<Worktree.ID>,
+    nestWorktreesByBranch: Bool
   ) -> [SidebarItemGroup] {
     guard let bucket = state.sidebarGrouping.bucketsByRepository[repositoryID] else { return [] }
     let pinnedRows = bucket[.pinned]
@@ -590,9 +604,14 @@ extension SidebarItemGroup {
       seen.insert(id)
     }
 
-    let pinnedTail = rawPinnedTail.filter { !hoistedRowIDs.contains($0) }
+    var pinnedTail = rawPinnedTail.filter { !hoistedRowIDs.contains($0) }
     let pendingTail = rawPendingTail.filter { !hoistedRowIDs.contains($0) }
-    let unpinnedTail = rawUnpinnedTail.filter { !hoistedRowIDs.contains($0) }
+    var unpinnedTail = rawUnpinnedTail.filter { !hoistedRowIDs.contains($0) }
+
+    if nestWorktreesByBranch {
+      pinnedTail = sortedByBranchName(pinnedTail, in: state)
+      unpinnedTail = sortedByBranchName(unpinnedTail, in: state)
+    }
 
     let isSoleDefaultWorktree =
       mainID != nil && pinnedTail.isEmpty && pendingTail.isEmpty && unpinnedTail.isEmpty
@@ -619,6 +638,20 @@ extension SidebarItemGroup {
         rowIDs: unpinnedTail
       ),
     ]
+  }
+
+  /// Case-insensitive sort by `branchName`, matching `SidebarBranchNesting.buildRows`.
+  /// Fallback to the row id keeps a transient missing leaf from breaking sort
+  /// stability rather than crashing.
+  private static func sortedByBranchName(
+    _ ids: [SidebarItemID],
+    in state: RepositoriesFeature.State
+  ) -> [SidebarItemID] {
+    ids.sorted { lhs, rhs in
+      let lhsName = state.sidebarItems[id: lhs]?.branchName ?? lhs
+      let rhsName = state.sidebarItems[id: rhs]?.branchName ?? rhs
+      return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
+    }
   }
 
   /// SwiftUI emits `.onMove` offsets/destination against the *visible* rows

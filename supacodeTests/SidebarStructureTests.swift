@@ -179,10 +179,148 @@ struct SidebarStructureTests {
       in: state,
       repositoryID: repository.id,
       pendingIDs: [],
-      hoistedRowIDs: []
+      hoistedRowIDs: [],
+      nestWorktreesByBranch: false
     )
     let allRowIDs = groups.flatMap { $0.rowIDs }
     #expect(allRowIDs.filter { $0 == duplicate.id }.count == 1)
+  }
+
+  // MARK: - Branch nesting alphabetical sort.
+
+  @Test func nestByBranchSortsPinnedAndUnpinnedTailsAlphabetically() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let charlie = makeWorktree(id: "/tmp/repo/charlie", name: "charlie", repoRoot: repoRoot)
+    let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
+    let bravo = makeWorktree(id: "/tmp/repo/bravo", name: "bravo", repoRoot: repoRoot)
+    let unpinX = makeWorktree(id: "/tmp/repo/x", name: "x-branch", repoRoot: repoRoot)
+    let unpinB = makeWorktree(id: "/tmp/repo/b", name: "b-branch", repoRoot: repoRoot)
+    let repository = Repository(
+      id: repoRoot.path(percentEncoded: false),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, charlie, alpha, bravo, unpinB, unpinX])
+    )
+    var state = makeState(repositories: [repository])
+    // Pin charlie, alpha, bravo in bucket order DIFFERENT from alphabetical.
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repository.id] ?? .init()
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[charlie.id] = .init()
+      pinnedBucket.items[alpha.id] = .init()
+      pinnedBucket.items[bravo.id] = .init()
+      section.buckets[.pinned] = pinnedBucket
+      var unpinnedBucket = section.buckets[.unpinned] ?? .init()
+      unpinnedBucket.items.removeValue(forKey: charlie.id)
+      unpinnedBucket.items.removeValue(forKey: alpha.id)
+      unpinnedBucket.items.removeValue(forKey: bravo.id)
+      section.buckets[.unpinned] = unpinnedBucket
+      sidebar.sections[repository.id] = section
+    }
+    for id in [alpha.id, bravo.id, charlie.id, unpinX.id, unpinB.id] {
+      let name = state.sidebarItems[id: id]?.name ?? id
+      state.sidebarItems[id: id]?.branchName = name
+    }
+    state.reconcileSidebarForTesting()
+
+    let groups = SidebarItemGroup.computeSlots(
+      in: state,
+      repositoryID: repository.id,
+      pendingIDs: [],
+      hoistedRowIDs: [],
+      nestWorktreesByBranch: true
+    )
+
+    let pinnedTail = groups.first { $0.slot == .pinnedTail }?.rowIDs ?? []
+    let unpinnedTail = groups.first { $0.slot == .unpinnedTail }?.rowIDs ?? []
+    #expect(pinnedTail == [alpha.id, bravo.id, charlie.id])
+    #expect(unpinnedTail == [unpinB.id, unpinX.id])
+  }
+
+  @Test func nestByBranchOffPreservesBucketOrder() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let charlie = makeWorktree(id: "/tmp/repo/charlie", name: "charlie", repoRoot: repoRoot)
+    let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
+    let repository = Repository(
+      id: repoRoot.path(percentEncoded: false),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, charlie, alpha])
+    )
+    var state = makeState(repositories: [repository])
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repository.id] ?? .init()
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[charlie.id] = .init()
+      pinnedBucket.items[alpha.id] = .init()
+      section.buckets[.pinned] = pinnedBucket
+      var unpinnedBucket = section.buckets[.unpinned] ?? .init()
+      unpinnedBucket.items.removeValue(forKey: charlie.id)
+      unpinnedBucket.items.removeValue(forKey: alpha.id)
+      section.buckets[.unpinned] = unpinnedBucket
+      sidebar.sections[repository.id] = section
+    }
+    state.reconcileSidebarForTesting()
+
+    let groups = SidebarItemGroup.computeSlots(
+      in: state,
+      repositoryID: repository.id,
+      pendingIDs: [],
+      hoistedRowIDs: [],
+      nestWorktreesByBranch: false
+    )
+    let pinnedTail = groups.first { $0.slot == .pinnedTail }?.rowIDs ?? []
+    #expect(pinnedTail == [charlie.id, alpha.id])
+  }
+
+  @Test func hotkeySlotsFollowAlphabeticalOrderWhenNestByBranchOn() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let charlie = makeWorktree(id: "/tmp/repo/charlie", name: "charlie", repoRoot: repoRoot)
+    let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
+    let bravo = makeWorktree(id: "/tmp/repo/bravo", name: "bravo", repoRoot: repoRoot)
+    let repository = Repository(
+      id: repoRoot.path(percentEncoded: false),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, charlie, alpha, bravo])
+    )
+    var state = makeState(repositories: [repository])
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repository.id] ?? .init()
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[charlie.id] = .init()
+      pinnedBucket.items[alpha.id] = .init()
+      pinnedBucket.items[bravo.id] = .init()
+      section.buckets[.pinned] = pinnedBucket
+      var unpinnedBucket = section.buckets[.unpinned] ?? .init()
+      unpinnedBucket.items.removeValue(forKey: charlie.id)
+      unpinnedBucket.items.removeValue(forKey: alpha.id)
+      unpinnedBucket.items.removeValue(forKey: bravo.id)
+      section.buckets[.unpinned] = unpinnedBucket
+      sidebar.sections[repository.id] = section
+    }
+    for id in [alpha.id, bravo.id, charlie.id] {
+      let name = state.sidebarItems[id: id]?.name ?? id
+      state.sidebarItems[id: id]?.branchName = name
+    }
+    state.$sidebarNestWorktreesByBranch.withLock { $0 = true }
+    state.reconcileSidebarForTesting()
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    let expectedOrderAfterMain = [alpha.id, bravo.id, charlie.id]
+    let mainSlot = structure.slotByID[main.id]
+    let alphaSlot = structure.slotByID[alpha.id]
+    let bravoSlot = structure.slotByID[bravo.id]
+    let charlieSlot = structure.slotByID[charlie.id]
+    #expect(mainSlot == 0)
+    #expect(alphaSlot == 1)
+    #expect(bravoSlot == 2)
+    #expect(charlieSlot == 3)
+    #expect(structure.hotkeySlots.map(\.id) == [main.id] + expectedOrderAfterMain)
   }
 
   // MARK: - Active classification.

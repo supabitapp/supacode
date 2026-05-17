@@ -216,6 +216,11 @@ struct RepositoriesFeature {
     /// path that mutates the toggles (menu, deeplink, defaults edit) gets the
     /// dismiss, not just the menu binding setter.
     case sidebarGroupingTogglesChanged
+    /// Fired by `SidebarListView.onChange` whenever `@Shared(.sidebarNestWorktreesByBranch)`
+    /// mutates. Triggers a structure recompute so the alphabetical per-bucket
+    /// sort that nesting forces shows up in `slotByID` / `hotkeySlots` (which
+    /// the view reads to assign ⌃1..⌃0 hotkeys).
+    case sidebarNestByBranchChanged
     case setOpenPanelPresented(Bool)
     case loadPersistedRepositories
     case refreshWorktrees
@@ -454,6 +459,12 @@ struct RepositoriesFeature {
             $dismissedAt.withLock { $0 = now }
           }
         }
+        return .none
+
+      case .sidebarNestByBranchChanged:
+        // No-op handler: the post-reduce hook reads `sidebarNestWorktreesByBranch`
+        // and rebuilds `sidebarStructure` so the alphabetical per-bucket sort
+        // lands in `slotByID` / `hotkeySlots`.
         return .none
 
       case .setOpenPanelPresented(let isPresented):
@@ -3709,15 +3720,23 @@ extension RepositoriesFeature.State {
   }
 
   func worktreeID(byOffset offset: Int) -> Worktree.ID? {
-    // Walk the same ordered list Cmd+1..9 binds to, so arrow navigation and slot
-    // selection agree with what the sidebar shows (pinned, pending, non-pending).
-    let ids = orderedSidebarItemIDs(includingRepositoryIDs: expandedRepositoryIDs)
+    // Walk the structure's `hotkeySlots`, which already reflects the
+    // visible top-down order (hoisted Pinned + Active first, then per-repo
+    // with hoisted rows filtered out, with the nest-by-branch alphabetical
+    // sort applied). Arrow navigation, ⌃1..⌃0 hotkeys, and the menu-bar
+    // slot picker all bind to the same visual ordering. The post-reduce
+    // hook keeps the cache fresh for every structure-affecting action,
+    // including in tests, so reading the cache here is always live.
+    let ids = sidebarStructure.hotkeySlots.map(\.id)
     guard !ids.isEmpty else { return nil }
     if let currentID = selectedWorktreeID, let currentIndex = ids.firstIndex(of: currentID) {
       return ids[(currentIndex + offset + ids.count) % ids.count]
     }
     // Selection hidden behind a collapsed group: land on the nearest visible
     // neighbor in the direction of travel rather than jumping top / bottom.
+    // The unfiltered anchor list intentionally walks the per-repo bucket
+    // order (collapsed groups expanded) since hoisted rows are always
+    // visible and therefore never fall through to this branch.
     if let currentID = selectedWorktreeID,
       let anchor = hiddenSelectionAnchor(currentID: currentID, visibleIDs: ids),
       let neighbor = nearestVisibleNeighbor(

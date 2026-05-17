@@ -16,6 +16,7 @@ struct SidebarListView: View {
   /// reads the toggles via local `@Shared` inside the reducer.
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
   @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
+  @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
 
   var body: some View {
     let state = store.state
@@ -73,6 +74,9 @@ struct SidebarListView: View {
       }
       .onChange(of: groupActiveRows, initial: false) { _, _ in
         store.send(.sidebarGroupingTogglesChanged)
+      }
+      .onChange(of: nestWorktreesByBranch, initial: false) { _, _ in
+        store.send(.sidebarNestByBranchChanged)
       }
       .dropDestination(for: URL.self) { urls, _ in
         let fileURLs = urls.filter(\.isFileURL)
