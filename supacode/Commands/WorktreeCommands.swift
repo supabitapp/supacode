@@ -71,13 +71,13 @@ private struct WorktreeMainMenu: Commands {
       }
       .appKeyboardShortcut(openWorktree)
       .help("\(openLabel) (\(openWorktree?.display ?? "none"))")
-      .disabled(openSelectedWorktreeAction == nil)
+      .disabled(openSelectedWorktreeAction?.isEnabled != true)
       Button("Reveal in Finder", systemImage: "folder") {
         revealInFinderAction?()
       }
       .appKeyboardShortcut(revealInFinder)
       .help("Reveal in Finder (\(revealInFinder?.display ?? "none"))")
-      .disabled(revealInFinderAction == nil)
+      .disabled(revealInFinderAction?.isEnabled != true)
       Button("Open Pull Request", systemImage: "arrow.up.forward") {
         if let url = snapshot.selectedPullRequestURL {
           NSWorkspace.shared.open(url)
@@ -105,26 +105,26 @@ private struct WorktreeMainMenu: Commands {
       }
       .appKeyboardShortcut(archive)
       .help("Archive Worktree (\(archive?.display ?? "none"))")
-      .disabled(archiveWorktreeAction == nil)
+      .disabled(archiveWorktreeAction?.isEnabled != true)
       Button("Delete Worktree…", systemImage: "trash") {
         deleteWorktreeAction?()
       }
       .appKeyboardShortcut(deleteWt)
       .help("Delete Worktree (\(deleteWt?.display ?? "none"))")
-      .disabled(deleteWorktreeAction == nil)
+      .disabled(deleteWorktreeAction?.isEnabled != true)
       Divider()
       Button("Run Script", systemImage: ScriptKind.run.defaultSystemImage) {
         runScriptAction?()
       }
       .appKeyboardShortcut(run)
       .help("Run Script (\(run?.display ?? "none"))")
-      .disabled(runScriptAction == nil)
+      .disabled(runScriptAction?.isEnabled != true)
       Button("Stop Script", systemImage: "stop") {
         stopRunScriptAction?()
       }
       .appKeyboardShortcut(stop)
       .help("Stop Script (\(stop?.display ?? "none"))")
-      .disabled(stopRunScriptAction == nil)
+      .disabled(stopRunScriptAction?.isEnabled != true)
       Button("Jump to Latest Unread", systemImage: "bell.badge") {
         store.send(.jumpToLatestUnread)
       }
@@ -206,7 +206,7 @@ private struct WorktreeFileMenu: Commands {
       }
       .appKeyboardShortcut(confirm)
       .help("Confirm Action (\(confirm?.display ?? "none"))")
-      .disabled(confirmWorktreeAction == nil)
+      .disabled(confirmWorktreeAction?.isEnabled != true)
     }
   }
 }
@@ -222,15 +222,15 @@ struct HotkeyWorktreeSlot: Equatable, Hashable, Identifiable, Sendable {
 }
 
 private struct ArchiveWorktreeActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 private struct OpenSelectedWorktreeActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 private struct RevealInFinderActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 private struct OpenActionSelectionKey: FocusedValueKey {
@@ -238,20 +238,20 @@ private struct OpenActionSelectionKey: FocusedValueKey {
 }
 
 private struct DeleteWorktreeActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 private struct ConfirmWorktreeActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var openSelectedWorktreeAction: (() -> Void)? {
+  var openSelectedWorktreeAction: FocusedAction<Void>? {
     get { self[OpenSelectedWorktreeActionKey.self] }
     set { self[OpenSelectedWorktreeActionKey.self] = newValue }
   }
 
-  var revealInFinderAction: (() -> Void)? {
+  var revealInFinderAction: FocusedAction<Void>? {
     get { self[RevealInFinderActionKey.self] }
     set { self[RevealInFinderActionKey.self] = newValue }
   }
@@ -261,36 +261,36 @@ extension FocusedValues {
     set { self[OpenActionSelectionKey.self] = newValue }
   }
 
-  var confirmWorktreeAction: (() -> Void)? {
+  var confirmWorktreeAction: FocusedAction<Void>? {
     get { self[ConfirmWorktreeActionKey.self] }
     set { self[ConfirmWorktreeActionKey.self] = newValue }
   }
 
-  var archiveWorktreeAction: (() -> Void)? {
+  var archiveWorktreeAction: FocusedAction<Void>? {
     get { self[ArchiveWorktreeActionKey.self] }
     set { self[ArchiveWorktreeActionKey.self] = newValue }
   }
 
-  var deleteWorktreeAction: (() -> Void)? {
+  var deleteWorktreeAction: FocusedAction<Void>? {
     get { self[DeleteWorktreeActionKey.self] }
     set { self[DeleteWorktreeActionKey.self] = newValue }
   }
 
-  var runScriptAction: (() -> Void)? {
+  var runScriptAction: FocusedAction<Void>? {
     get { self[RunScriptActionKey.self] }
     set { self[RunScriptActionKey.self] = newValue }
   }
 
-  var stopRunScriptAction: (() -> Void)? {
+  var stopRunScriptAction: FocusedAction<Void>? {
     get { self[StopRunScriptActionKey.self] }
     set { self[StopRunScriptActionKey.self] = newValue }
   }
 }
 
 private struct RunScriptActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 private struct StopRunScriptActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }

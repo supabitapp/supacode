@@ -27,7 +27,7 @@ extension RepositoriesFeature {
   /// optionally its branch) and is per-worktree; the other three
   /// are repo-level and drop the whole section from Supacode, with
   /// `.folderTrash` additionally moving the folder to the Trash.
-  enum DeleteDisposition: Equatable, Sendable {
+  enum DeleteDisposition: Hashable, Sendable {
     case gitWorktreeDelete
     case gitRepositoryUnlink
     case folderUnlink

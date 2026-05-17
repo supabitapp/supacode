@@ -388,12 +388,12 @@ struct RepositoriesFeature {
     let message: String
   }
 
-  struct DeleteWorktreeTarget: Equatable {
+  struct DeleteWorktreeTarget: Hashable {
     let worktreeID: Worktree.ID
     let repositoryID: Repository.ID
   }
 
-  struct ArchiveWorktreeTarget: Equatable {
+  struct ArchiveWorktreeTarget: Hashable {
     let worktreeID: Worktree.ID
     let repositoryID: Repository.ID
   }
@@ -407,7 +407,7 @@ struct RepositoriesFeature {
     case success(String)
   }
 
-  enum Alert: Equatable {
+  enum Alert: Hashable {
     case confirmArchiveWorktree(Worktree.ID, Repository.ID)
     case confirmArchiveWorktrees([ArchiveWorktreeTarget])
     case confirmDeleteSidebarItems([DeleteWorktreeTarget], disposition: DeleteDisposition)

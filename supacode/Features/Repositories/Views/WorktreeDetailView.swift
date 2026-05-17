@@ -125,11 +125,14 @@ struct WorktreeDetailView: View {
       }
     }
     let hasRunningRunScript = state.hasRunningRunScript
-    let actions = makeFocusedActions(
+    let resolvedSelection: OpenWorktreeAction? =
+      hasActiveWorktree ? OpenWorktreeAction.availableSelection(store.openActionSelection) : nil
+    return applyFocusedActions(
+      content: content,
       hasActiveWorktree: hasActiveWorktree,
-      hasRunningRunScript: hasRunningRunScript
+      hasRunningRunScript: hasRunningRunScript,
+      resolvedSelection: resolvedSelection
     )
-    return applyFocusedActions(content: content, actions: actions)
   }
 
   private func selectedWorktreeSummaries(
@@ -244,53 +247,51 @@ struct WorktreeDetailView: View {
 
   private func applyFocusedActions<Content: View>(
     content: Content,
-    actions: FocusedActions
-  ) -> some View {
-    let resolvedSelection: OpenWorktreeAction? =
-      actions.openSelectedWorktree != nil
-      ? OpenWorktreeAction.availableSelection(store.openActionSelection) : nil
-    return
-      content
-      .focusedSceneValue(\.openSelectedWorktreeAction, actions.openSelectedWorktree)
-      .focusedSceneValue(\.revealInFinderAction, actions.revealInFinder)
-      .focusedSceneValue(\.openActionSelection, resolvedSelection)
-      .focusedSceneValue(\.newTerminalAction, actions.newTerminal)
-      .focusedValue(\.splitTerminalAction, actions.splitTerminal)
-      .focusedValue(\.closeTabAction, actions.closeTab)
-      .focusedValue(\.closeSurfaceAction, actions.closeSurface)
-      .focusedSceneValue(\.startSearchAction, actions.startSearch)
-      .focusedSceneValue(\.searchSelectionAction, actions.searchSelection)
-      .focusedSceneValue(\.navigateSearchNextAction, actions.navigateSearchNext)
-      .focusedSceneValue(\.navigateSearchPreviousAction, actions.navigateSearchPrevious)
-      .focusedSceneValue(\.endSearchAction, actions.endSearch)
-      .focusedSceneValue(\.runScriptAction, actions.runScript)
-      .focusedSceneValue(\.stopRunScriptAction, actions.stopRunScript)
-  }
-
-  private func makeFocusedActions(
     hasActiveWorktree: Bool,
-    hasRunningRunScript: Bool
-  ) -> FocusedActions {
-    func action(_ appAction: AppFeature.Action) -> (() -> Void)? {
-      hasActiveWorktree ? { store.send(appAction) } : nil
-    }
-    let splitTerminal: ((TerminalSplitMenuDirection) -> Void)? =
-      hasActiveWorktree ? { direction in store.send(.splitTerminal(direction)) } : nil
-    return FocusedActions(
-      openSelectedWorktree: action(.openSelectedWorktree),
-      revealInFinder: action(.revealInFinder),
-      newTerminal: action(.newTerminal),
-      splitTerminal: splitTerminal,
-      closeTab: action(.closeTab),
-      closeSurface: action(.closeSurface),
-      startSearch: action(.startSearch),
-      searchSelection: action(.searchSelection),
-      navigateSearchNext: action(.navigateSearchNext),
-      navigateSearchPrevious: action(.navigateSearchPrevious),
-      endSearch: action(.endSearch),
-      runScript: hasActiveWorktree ? { store.send(.runScript) } : nil,
-      stopRunScript: hasRunningRunScript ? { store.send(.stopRunScripts) } : nil,
-    )
+    hasRunningRunScript: Bool,
+    resolvedSelection: OpenWorktreeAction?
+  ) -> some View {
+    content
+      .focusedSceneAction(\.openSelectedWorktreeAction, enabled: hasActiveWorktree) {
+        store.send(.openSelectedWorktree)
+      }
+      .focusedSceneAction(\.revealInFinderAction, enabled: hasActiveWorktree) {
+        store.send(.revealInFinder)
+      }
+      .focusedSceneValue(\.openActionSelection, resolvedSelection)
+      .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
+        store.send(.newTerminal)
+      }
+      .focusedAction(\.splitTerminalAction, enabled: hasActiveWorktree) { direction in
+        store.send(.splitTerminal(direction))
+      }
+      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree) {
+        store.send(.closeTab)
+      }
+      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree) {
+        store.send(.closeSurface)
+      }
+      .focusedSceneAction(\.startSearchAction, enabled: hasActiveWorktree) {
+        store.send(.startSearch)
+      }
+      .focusedSceneAction(\.searchSelectionAction, enabled: hasActiveWorktree) {
+        store.send(.searchSelection)
+      }
+      .focusedSceneAction(\.navigateSearchNextAction, enabled: hasActiveWorktree) {
+        store.send(.navigateSearchNext)
+      }
+      .focusedSceneAction(\.navigateSearchPreviousAction, enabled: hasActiveWorktree) {
+        store.send(.navigateSearchPrevious)
+      }
+      .focusedSceneAction(\.endSearchAction, enabled: hasActiveWorktree) {
+        store.send(.endSearch)
+      }
+      .focusedSceneAction(\.runScriptAction, enabled: hasActiveWorktree) {
+        store.send(.runScript)
+      }
+      .focusedSceneAction(\.stopRunScriptAction, enabled: hasRunningRunScript) {
+        store.send(.stopRunScripts)
+      }
   }
 
   private func selectToolbarNotification(
@@ -309,22 +310,6 @@ struct WorktreeDetailView: View {
         terminalManager.stateIfExists(for: worktreeGroup.id)?.dismissAllNotifications()
       }
     }
-  }
-
-  private struct FocusedActions {
-    let openSelectedWorktree: (() -> Void)?
-    let revealInFinder: (() -> Void)?
-    let newTerminal: (() -> Void)?
-    let splitTerminal: ((TerminalSplitMenuDirection) -> Void)?
-    let closeTab: (() -> Void)?
-    let closeSurface: (() -> Void)?
-    let startSearch: (() -> Void)?
-    let searchSelection: (() -> Void)?
-    let navigateSearchNext: (() -> Void)?
-    let navigateSearchPrevious: (() -> Void)?
-    let endSearch: (() -> Void)?
-    let runScript: (() -> Void)?
-    let stopRunScript: (() -> Void)?
   }
 
   fileprivate struct ScriptMenuIdentity: Hashable {

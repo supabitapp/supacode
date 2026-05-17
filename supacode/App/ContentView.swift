@@ -42,7 +42,7 @@ struct ContentView: View {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
     }
     .navigationSplitViewStyle(.automatic)
-    .disabled(!store.repositories.isInitialLoadComplete)
+    .disabled(!repositoriesStore.isInitialLoadComplete)
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
     }
@@ -85,45 +85,80 @@ struct ContentView: View {
     ) { customizationStore in
       RepositoryCustomizationView(store: customizationStore)
     }
-    .focusedSceneValue(\.toggleLeftSidebarAction, toggleLeftSidebar)
-    .focusedSceneValue(\.revealInSidebarAction, revealInSidebarAction)
+    .focusedSceneAction(\.toggleLeftSidebarAction, enabled: true) {
+      withAnimation(.easeOut(duration: 0.2)) {
+        leftSidebarVisibility = leftSidebarVisibility == .detailOnly ? .all : .detailOnly
+      }
+    }
+    .focusedSceneAction(
+      \.revealInSidebarAction,
+      enabled: repositoriesStore.selectedWorktreeID != nil
+    ) {
+      withAnimation(.easeOut(duration: 0.2)) {
+        leftSidebarVisibility = .all
+      }
+      store.send(.repositories(.revealSelectedWorktreeInSidebar))
+    }
     .overlay {
-      CommandPaletteOverlayView(
-        store: store.scope(state: \.commandPalette, action: \.commandPalette),
-        items: CommandPaletteFeature.commandPaletteItems(
-          from: store.repositories,
-          ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
-          scripts: store.allScripts,
-          runningScriptIDs: store.runningScriptIDs
-        )
+      CommandPaletteOverlayHost(
+        store: store,
+        repositoriesStore: repositoriesStore,
+        ghosttyShortcuts: ghosttyShortcuts
       )
     }
     .background(WindowTabbingDisabler())
     .background(WindowChromeObserver(runtime: terminalManager.ghosttyRuntime))
-    .navigationTitle(
-      WindowTitle.compute(
-        repositories: store.repositories,
+    .background(
+      WindowTitleHost(
+        repositoriesStore: repositoriesStore,
         terminalManager: terminalManager
       )
     )
   }
+}
 
-  private func toggleLeftSidebar() {
-    withAnimation(.easeOut(duration: 0.2)) {
-      leftSidebarVisibility = leftSidebarVisibility == .detailOnly ? .all : .detailOnly
-    }
+/// Hosts the command palette overlay so the items build runs in this view's
+/// body instead of `ContentView.body`. Per-row sidebar mutations only
+/// invalidate this host, leaving ContentView's focused-value closures stable.
+private struct CommandPaletteOverlayHost: View {
+  let store: StoreOf<AppFeature>
+  let repositoriesStore: StoreOf<RepositoriesFeature>
+  let ghosttyShortcuts: GhosttyShortcutManager
+
+  var body: some View {
+    #if DEBUG
+      let _ = contentRenderLogger.info("CommandPaletteOverlayHost.body re-rendered")
+    #endif
+    return CommandPaletteOverlayView(
+      store: store.scope(state: \.commandPalette, action: \.commandPalette),
+      items: CommandPaletteFeature.commandPaletteItems(
+        from: repositoriesStore.state,
+        ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
+        scripts: store.allScripts,
+        runningScriptIDs: store.runningScriptIDs
+      )
+    )
   }
+}
 
-  private var revealInSidebarAction: (() -> Void)? {
-    guard store.repositories.selectedWorktreeID != nil else { return nil }
-    return { revealInSidebar() }
+/// Hosts the `.navigationTitle` modifier so the title computation runs in
+/// this view's body. `WindowTitle.compute` reads selection / sidebar.sections
+/// fields. Confining the reads here keeps ContentView immune to title-only
+/// invalidations from tab renames or section title edits.
+private struct WindowTitleHost: View {
+  let repositoriesStore: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+
+  var body: some View {
+    #if DEBUG
+      let _ = contentRenderLogger.info("WindowTitleHost.body re-rendered")
+    #endif
+    return Color.clear
+      .navigationTitle(
+        WindowTitle.compute(
+          repositories: repositoriesStore.state,
+          terminalManager: terminalManager
+        )
+      )
   }
-
-  private func revealInSidebar() {
-    withAnimation(.easeOut(duration: 0.2)) {
-      leftSidebarVisibility = .all
-    }
-    store.send(.repositories(.revealSelectedWorktreeInSidebar))
-  }
-
 }

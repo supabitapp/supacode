@@ -11,9 +11,25 @@ struct SidebarView: View {
   var body: some View {
     let state = store.state
     let effectiveSelectedRows = state.effectiveSidebarSelectedRows
-    let confirmWorktreeAction = makeConfirmWorktreeAction(state: state)
-    let archiveWorktreeAction = makeArchiveWorktreeAction(rows: effectiveSelectedRows)
-    let deleteWorktreeAction = makeDeleteWorktreeAction(rows: effectiveSelectedRows)
+    let confirmAlert = state.confirmWorktreeAlert
+    let archiveTargets =
+      effectiveSelectedRows
+      .filter { $0.lifecycle == .idle && !$0.isMainWorktree }
+      .map {
+        RepositoriesFeature.ArchiveWorktreeTarget(
+          worktreeID: $0.id,
+          repositoryID: $0.repositoryID
+        )
+      }
+    let deleteTargets =
+      effectiveSelectedRows
+      .filter { $0.lifecycle == .idle }
+      .map {
+        RepositoriesFeature.DeleteWorktreeTarget(
+          worktreeID: $0.id,
+          repositoryID: $0.repositoryID
+        )
+      }
     let openRepo = AppShortcuts.openRepository.effective(from: settingsFile.global.shortcutOverrides)
 
     return SidebarListView(
@@ -37,57 +53,32 @@ struct SidebarView: View {
         .help("Add Repository or Folder (\(openRepo?.display ?? "none"))")
       }
     }
-    .focusedSceneValue(\.confirmWorktreeAction, confirmWorktreeAction)
-    .focusedValue(\.archiveWorktreeAction, archiveWorktreeAction)
-    .focusedValue(\.deleteWorktreeAction, deleteWorktreeAction)
-  }
-
-  private func makeConfirmWorktreeAction(
-    state: RepositoriesFeature.State
-  ) -> (() -> Void)? {
-    guard let alert = state.confirmWorktreeAlert else { return nil }
-    return {
-      store.send(.alert(.presented(alert)))
-    }
-  }
-
-  private func makeArchiveWorktreeAction(
-    rows: [SidebarItemFeature.State]
-  ) -> (() -> Void)? {
-    let targets =
-      rows
-      .filter { $0.lifecycle == .idle && !$0.isMainWorktree }
-      .map {
-        RepositoriesFeature.ArchiveWorktreeTarget(
-          worktreeID: $0.id,
-          repositoryID: $0.repositoryID
-        )
+    .focusedSceneAction(
+      \.confirmWorktreeAction,
+      enabled: confirmAlert != nil,
+      token: confirmAlert
+    ) {
+      if let alert = confirmAlert {
+        store.send(.alert(.presented(alert)))
       }
-    guard !targets.isEmpty else { return nil }
-    return {
-      if targets.count == 1, let target = targets.first {
+    }
+    .focusedAction(
+      \.archiveWorktreeAction,
+      enabled: !archiveTargets.isEmpty,
+      token: archiveTargets
+    ) {
+      if archiveTargets.count == 1, let target = archiveTargets.first {
         store.send(.requestArchiveWorktree(target.worktreeID, target.repositoryID))
       } else {
-        store.send(.requestArchiveWorktrees(targets))
+        store.send(.requestArchiveWorktrees(archiveTargets))
       }
     }
-  }
-
-  private func makeDeleteWorktreeAction(
-    rows: [SidebarItemFeature.State]
-  ) -> (() -> Void)? {
-    let targets =
-      rows
-      .filter { $0.lifecycle == .idle }
-      .map {
-        RepositoriesFeature.DeleteWorktreeTarget(
-          worktreeID: $0.id,
-          repositoryID: $0.repositoryID
-        )
-      }
-    guard !targets.isEmpty else { return nil }
-    return {
-      store.send(.requestDeleteSidebarItems(targets))
+    .focusedAction(
+      \.deleteWorktreeAction,
+      enabled: !deleteTargets.isEmpty,
+      token: deleteTargets
+    ) {
+      store.send(.requestDeleteSidebarItems(deleteTargets))
     }
   }
 }

@@ -17,7 +17,7 @@ struct TerminalCommands: Commands {
         newTerminalAction?()
       }
       .ghosttyKeyboardShortcut("new_tab", in: ghosttyShortcuts)
-      .disabled(newTerminalAction == nil)
+      .disabled(newTerminalAction?.isEnabled != true)
 
       Divider()
 
@@ -26,7 +26,7 @@ struct TerminalCommands: Commands {
           splitTerminalAction?(direction)
         }
         .ghosttyKeyboardShortcut(direction.ghosttyBinding, in: ghosttyShortcuts)
-        .disabled(splitTerminalAction == nil)
+        .disabled(splitTerminalAction?.isEnabled != true)
       }
     }
     CommandGroup(after: .textEditing) {
@@ -34,19 +34,19 @@ struct TerminalCommands: Commands {
         startSearchAction?()
       }
       .ghosttyKeyboardShortcut("start_search", in: ghosttyShortcuts)
-      .disabled(startSearchAction == nil)
+      .disabled(startSearchAction?.isEnabled != true)
 
       Button("Find Next") {
         navigateSearchNextAction?()
       }
       .ghosttyKeyboardShortcut("navigate_search:next", in: ghosttyShortcuts)
-      .disabled(navigateSearchNextAction == nil)
+      .disabled(navigateSearchNextAction?.isEnabled != true)
 
       Button("Find Previous") {
         navigateSearchPreviousAction?()
       }
       .ghosttyKeyboardShortcut("navigate_search:previous", in: ghosttyShortcuts)
-      .disabled(navigateSearchPreviousAction == nil)
+      .disabled(navigateSearchPreviousAction?.isEnabled != true)
 
       Divider()
 
@@ -54,7 +54,7 @@ struct TerminalCommands: Commands {
         endSearchAction?()
       }
       .ghosttyKeyboardShortcut("end_search", in: ghosttyShortcuts)
-      .disabled(endSearchAction == nil)
+      .disabled(endSearchAction?.isEnabled != true)
 
       Divider()
 
@@ -62,105 +62,105 @@ struct TerminalCommands: Commands {
         searchSelectionAction?()
       }
       .ghosttyKeyboardShortcut("search_selection", in: ghosttyShortcuts)
-      .disabled(searchSelectionAction == nil)
+      .disabled(searchSelectionAction?.isEnabled != true)
     }
   }
 }
 
 private struct NewTerminalActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var newTerminalAction: (() -> Void)? {
+  var newTerminalAction: FocusedAction<Void>? {
     get { self[NewTerminalActionKey.self] }
     set { self[NewTerminalActionKey.self] = newValue }
   }
 }
 
 private struct SplitTerminalActionKey: FocusedValueKey {
-  typealias Value = (TerminalSplitMenuDirection) -> Void
+  typealias Value = FocusedAction<TerminalSplitMenuDirection>
 }
 
 extension FocusedValues {
-  var splitTerminalAction: ((TerminalSplitMenuDirection) -> Void)? {
+  var splitTerminalAction: FocusedAction<TerminalSplitMenuDirection>? {
     get { self[SplitTerminalActionKey.self] }
     set { self[SplitTerminalActionKey.self] = newValue }
   }
 }
 
 private struct CloseSurfaceActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var closeSurfaceAction: (() -> Void)? {
+  var closeSurfaceAction: FocusedAction<Void>? {
     get { self[CloseSurfaceActionKey.self] }
     set { self[CloseSurfaceActionKey.self] = newValue }
   }
 }
 
 private struct CloseTabActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var closeTabAction: (() -> Void)? {
+  var closeTabAction: FocusedAction<Void>? {
     get { self[CloseTabActionKey.self] }
     set { self[CloseTabActionKey.self] = newValue }
   }
 }
 
 private struct StartSearchActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var startSearchAction: (() -> Void)? {
+  var startSearchAction: FocusedAction<Void>? {
     get { self[StartSearchActionKey.self] }
     set { self[StartSearchActionKey.self] = newValue }
   }
 }
 
 private struct SearchSelectionActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var searchSelectionAction: (() -> Void)? {
+  var searchSelectionAction: FocusedAction<Void>? {
     get { self[SearchSelectionActionKey.self] }
     set { self[SearchSelectionActionKey.self] = newValue }
   }
 }
 
 private struct NavigateSearchNextActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var navigateSearchNextAction: (() -> Void)? {
+  var navigateSearchNextAction: FocusedAction<Void>? {
     get { self[NavigateSearchNextActionKey.self] }
     set { self[NavigateSearchNextActionKey.self] = newValue }
   }
 }
 
 private struct NavigateSearchPreviousActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var navigateSearchPreviousAction: (() -> Void)? {
+  var navigateSearchPreviousAction: FocusedAction<Void>? {
     get { self[NavigateSearchPreviousActionKey.self] }
     set { self[NavigateSearchPreviousActionKey.self] = newValue }
   }
 }
 
 private struct EndSearchActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var endSearchAction: (() -> Void)? {
+  var endSearchAction: FocusedAction<Void>? {
     get { self[EndSearchActionKey.self] }
     set { self[EndSearchActionKey.self] = newValue }
   }

@@ -27,18 +27,7 @@ struct ArchivedWorktreesDetailView: View {
           repositoryID: repositoryID
         )
       }
-    let deleteWorktreeAction: (() -> Void)? = {
-      guard !selectedTargets.isEmpty else { return nil }
-      return {
-        store.send(.requestDeleteSidebarItems(selectedTargets))
-      }
-    }()
-    let confirmWorktreeAction: (() -> Void)? = {
-      guard let alert = store.state.confirmWorktreeAlert else { return nil }
-      return {
-        store.send(.alert(.presented(alert)))
-      }
-    }()
+    let confirmAlert = store.state.confirmWorktreeAlert
     if groups.isEmpty {
       ContentUnavailableView(
         "Archived Worktrees",
@@ -94,15 +83,30 @@ struct ArchivedWorktreesDetailView: View {
         selectedArchivedWorktreeIDs = selectedArchivedWorktreeIDs.intersection(newValue)
       }
       .animation(.easeOut(duration: 0.2), value: archivedRowIDs)
-      .focusedValue(\.deleteWorktreeAction, deleteWorktreeAction)
-      .focusedSceneValue(\.confirmWorktreeAction, confirmWorktreeAction)
+      .focusedAction(
+        \.deleteWorktreeAction,
+        enabled: !selectedTargets.isEmpty,
+        token: selectedTargets
+      ) {
+        store.send(.requestDeleteSidebarItems(selectedTargets))
+      }
+      .focusedSceneAction(
+        \.confirmWorktreeAction,
+        enabled: confirmAlert != nil,
+        token: confirmAlert
+      ) {
+        if let alert = confirmAlert {
+          store.send(.alert(.presented(alert)))
+        }
+      }
       .toolbar {
         let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
         Button("Delete Selected", systemImage: "trash", role: .destructive) {
-          deleteWorktreeAction?()
+          guard !selectedTargets.isEmpty else { return }
+          store.send(.requestDeleteSidebarItems(selectedTargets))
         }
         .help("Delete Selected (\(deleteShortcut))")
-        .disabled(deleteWorktreeAction == nil)
+        .disabled(selectedTargets.isEmpty)
       }
     }
   }

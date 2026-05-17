@@ -76,13 +76,13 @@ struct SidebarCommands: Commands {
       }
       .appKeyboardShortcut(toggleLeftSidebar)
       .help("Toggle Left Sidebar (\(toggleLeftSidebar?.display ?? "none"))")
-      .disabled(toggleLeftSidebarAction == nil)
+      .disabled(toggleLeftSidebarAction?.isEnabled != true)
       Button("Reveal in Sidebar") {
         revealInSidebarAction?()
       }
       .appKeyboardShortcut(revealInSidebar)
       .help("Reveal in Sidebar (\(revealInSidebar?.display ?? "none"))")
-      .disabled(revealInSidebarAction == nil)
+      .disabled(revealInSidebarAction?.isEnabled != true)
       Section {
         Menu("Group Relevant Sidebar Rows") {
           Toggle("Group Pinned Rows", isOn: groupPinnedRowsToggle)
@@ -96,20 +96,20 @@ struct SidebarCommands: Commands {
 }
 
 private struct ToggleLeftSidebarActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 private struct RevealInSidebarActionKey: FocusedValueKey {
-  typealias Value = () -> Void
+  typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
-  var toggleLeftSidebarAction: (() -> Void)? {
+  var toggleLeftSidebarAction: FocusedAction<Void>? {
     get { self[ToggleLeftSidebarActionKey.self] }
     set { self[ToggleLeftSidebarActionKey.self] = newValue }
   }
 
-  var revealInSidebarAction: (() -> Void)? {
+  var revealInSidebarAction: FocusedAction<Void>? {
     get { self[RevealInSidebarActionKey.self] }
     set { self[RevealInSidebarActionKey.self] = newValue }
   }
