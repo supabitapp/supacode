@@ -30,8 +30,33 @@ struct SidebarHighlightSection: View {
         )
       }
     } header: {
-      Text(kind.title)
+      HStack(spacing: 4) {
+        Text(kind.title)
+        SidebarHighlightHeaderDot(color: kind.indicatorColor)
+      }
     }
+  }
+}
+
+extension SidebarStructure.HighlightKind {
+  fileprivate var indicatorColor: Color {
+    switch self {
+    case .pinned: .orange
+    case .active: .blue
+    }
+  }
+}
+
+private struct SidebarHighlightHeaderDot: View {
+  let color: Color
+  @Environment(\.pixelLength) private var pixelLength
+
+  var body: some View {
+    Circle()
+      .fill(color.opacity(0.6))
+      .overlay(Circle().stroke(color, lineWidth: pixelLength))
+      .frame(width: 6, height: 6)
+      .accessibilityHidden(true)
   }
 }
 
