@@ -17,7 +17,41 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
   }
 }
 
+/// Wraps `WorktreeToolbarTitleBody` with a chrome-aware `\.colorScheme`
+/// override. The toolbar lives outside the `windowTintColorScheme` modifier
+/// (which wraps `detailContent`'s body only — see
+/// `WorktreeDetailView.detailContent`), so the chrome env doesn't reach here.
+/// This wrapper tracks the same dependencies as `WindowTintColorScheme`
+/// (system scheme + `ghosttyRuntimeConfigDidChange`) and resolves
+/// `\.colorScheme` against the live chrome so the title text stays readable
+/// when the Ghostty theme diverges from the system theme (e.g. light system
+/// + dark terminal background, or the "Supacode Terminal Theme" toggle
+/// flipping between sync-on and sync-off).
 struct WorktreeToolbarTitleView: View {
+  let content: WorktreeToolbarTitleContent
+  let terminalManager: WorktreeTerminalManager
+
+  @Environment(\.colorScheme) private var systemColorScheme
+  @State private var configReloadCounter = 0
+
+  var body: some View {
+    _ = configReloadCounter
+    _ = systemColorScheme
+    let tintScheme = terminalManager.surfaceBackgroundColorScheme()
+    let appearance = SurfaceChromeAppearance(
+      colorScheme: tintScheme,
+      systemColorScheme: systemColorScheme
+    )
+    return WorktreeToolbarTitleBody(content: content)
+      .environment(\.surfaceChromeAppearance, appearance)
+      .environment(\.colorScheme, tintScheme)
+      .onReceive(NotificationCenter.default.publisher(for: .ghosttyRuntimeConfigDidChange)) { _ in
+        configReloadCounter &+= 1
+      }
+  }
+}
+
+private struct WorktreeToolbarTitleBody: View {
   let content: WorktreeToolbarTitleContent
 
   var body: some View {
@@ -123,7 +157,7 @@ enum GitHubOwnerAvatar {
 
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleView(
+      WorktreeToolbarTitleBody(
         content: .git(
           .init(
             branchName: "sbertix/319-toolbar-details",
@@ -142,7 +176,7 @@ enum GitHubOwnerAvatar {
 #Preview("Main worktree") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleView(
+      WorktreeToolbarTitleBody(
         content: .git(
           .init(
             branchName: "main",
@@ -161,7 +195,7 @@ enum GitHubOwnerAvatar {
 #Preview("Folder") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleView(content: .folder(name: "Documents"))
+      WorktreeToolbarTitleBody(content: .folder(name: "Documents"))
     }
   }.frame(width: 600, height: 600)
 }

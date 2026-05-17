@@ -94,6 +94,7 @@ struct WorktreeDetailView: View {
         )
         WorktreeToolbarContent(
           toolbarState: toolbarState,
+          terminalManager: terminalManager,
           onOpenWorktree: { action in
             store.send(.openWorktree(action))
           },
@@ -419,6 +420,7 @@ struct WorktreeDetailView: View {
 
   fileprivate struct WorktreeToolbarContent: ToolbarContent {
     let toolbarState: WorktreeToolbarState
+    let terminalManager: WorktreeTerminalManager
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
     let onRevealInFinder: () -> Void
@@ -433,7 +435,10 @@ struct WorktreeDetailView: View {
 
     var body: some ToolbarContent {
       ToolbarItem(placement: .navigation) {
-        WorktreeToolbarTitleView(content: toolbarState.titleContent)
+        WorktreeToolbarTitleView(
+          content: toolbarState.titleContent,
+          terminalManager: terminalManager
+        )
       }
       .sharedBackgroundVisibility(.hidden)
 
@@ -1043,6 +1048,7 @@ private struct WorktreeToolbarPreview: View {
     .toolbar {
       WorktreeDetailView.WorktreeToolbarContent(
         toolbarState: toolbarState,
+        terminalManager: WorktreeTerminalManager(runtime: GhosttyRuntime()),
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onRevealInFinder: {},

@@ -1,11 +1,14 @@
 import SwiftUI
 
 struct TerminalTabDivider: View {
-  @Environment(\.pixelLength) private var pixelLength
+  @Environment(\.surfaceChromeAppearance)
+  private var chromeAppearance
+  @Environment(\.pixelLength)
+  private var pixelLength
 
   var body: some View {
     Rectangle()
-      .fill(.separator)
+      .fill(chromeAppearance.overlayTint.opacity(chromeAppearance.separatorOpacity))
       .frame(width: pixelLength)
       .frame(height: TerminalTabBarMetrics.tabHeight)
   }

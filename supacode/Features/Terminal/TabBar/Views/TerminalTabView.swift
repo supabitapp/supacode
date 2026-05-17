@@ -60,23 +60,25 @@ struct TerminalTabView: View {
       .opacity(isEditing ? 0 : 1)
 
       // Trailing slot: dot OR hotkey hint OR close button.
-      // Priority: hover → close button; ⌘ pressed → hint; otherwise → dot.
-      // Hint matches sidebar's `Text(shortcutHint).font(.caption).foregroundStyle(.secondary)`
-      // verbatim so the typography stays in lock-step across surfaces.
+      // Priority: hover wins (close button beats ⌘ hint);
+      // ⌘ pressed without hover shows the hint; otherwise the notification dot.
+      // `.fontWeight(.regular)` is explicit because the tab bar lacks the sidebar's
+      // List/vibrancy context, where `.font(.caption)` would otherwise render heavier.
       ZStack {
         TerminalTabNotificationIndicator(
           tabStore: tabStore,
-          suppress: isHovering || isHoveringClose || isDragging || showsShortcutHint
+          suppress: isHovering || isHoveringClose || isDragging || isShowingHint
         )
-        if showsShortcutHint, let shortcutHint, !isHovering, !isDragging {
+        if isShowingHint, let shortcutHint {
           Text(shortcutHint)
             .font(.caption)
+            .fontWeight(.regular)
             .foregroundStyle(.secondary)
         }
         TerminalTabCloseButton(
           isHoveringTab: isHovering,
           isDragging: isDragging,
-          isShowingShortcutHint: showsShortcutHint,
+          isShowingShortcutHint: isShowingHint,
           closeAction: onClose,
           closeButtonGestureActive: $closeButtonGestureActive,
           isHoveringClose: $isHoveringClose
@@ -119,9 +121,7 @@ struct TerminalTabView: View {
         isActive: isActive,
         isHovering: isHovering,
         isPressing: isPressing,
-        isDragging: isDragging,
-        tintColor: tab.tintColor,
-        tabStore: tabStore
+        isDragging: isDragging
       )
     }
     // Below `.background` so the stripe's opacity animates in lockstep with
@@ -139,6 +139,20 @@ struct TerminalTabView: View {
     .padding(.bottom, isActive ? TerminalTabBarMetrics.activeTabBottomPadding : 0)
     .offset(y: isActive ? TerminalTabBarMetrics.activeTabOffset : 0)
     .clipShape(.rect(cornerRadius: TerminalTabBarMetrics.tabCornerRadius))
+    // Stripe overlay sits AFTER `clipShape` and uses `-pixelLength` horizontal
+    // padding so the active tab's tint or progress color paints over the
+    // adjacent dividers — the corner-radius clip would otherwise trap the
+    // stripe inside the tab's frame and leave a 1px gray notch at each side.
+    .overlay(alignment: .top) {
+      TerminalTabProgressStripe(
+        isActive: isActive,
+        isHovering: isHovering,
+        isPressing: isPressing,
+        isDragging: isDragging,
+        tintColor: tab.tintColor,
+        tabStore: tabStore
+      )
+    }
     .contentShape(.rect)
     .onHover { hovering in
       isHovering = hovering
@@ -206,6 +220,13 @@ struct TerminalTabView: View {
 
   private var showsShortcutHint: Bool {
     commandKeyObserver.isPressed && shortcutHint != nil
+  }
+
+  /// True when the cmd-pressed hotkey hint should occupy the trailing slot.
+  /// Hover wins: when the user is over the tab the close button takes the
+  /// slot regardless of whether ⌘ is also pressed.
+  private var isShowingHint: Bool {
+    showsShortcutHint && !isHovering && !isDragging
   }
 
   /// State-aware accessibility value for VoiceOver. Restores the OSC-9 progress

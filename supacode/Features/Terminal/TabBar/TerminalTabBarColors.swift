@@ -32,6 +32,13 @@ struct SurfaceChromeAppearance: Equatable {
   var separatorOpacity: Double {
     colorScheme == .dark ? 0.22 : 0.14
   }
+
+  /// Opacity for the "secondary" stripe paint used on tabs that carry no
+  /// custom tint and no progress state. Tuned so the active tab's top stripe
+  /// stays visible against the chrome without competing with tinted tabs.
+  var secondaryAccentOpacity: Double {
+    colorScheme == .dark ? 0.45 : 0.35
+  }
 }
 
 private struct SurfaceChromeAppearanceKey: EnvironmentKey {
