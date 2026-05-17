@@ -66,12 +66,12 @@ struct SidebarStructureTests {
   @Test func bothTogglesOffProducesNoHighlights() {
     let repoRoot = URL(fileURLWithPath: "/tmp/repo")
     let main = makeMainWorktree(repoRoot: repoRoot)
-    let wt = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: repoRoot)
+    let feature = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: repoRoot)
     let repository = Repository(
       id: repoRoot.path(percentEncoded: false),
       rootURL: repoRoot,
       name: "repo",
-      worktrees: IdentifiedArray(uniqueElements: [main, wt])
+      worktrees: IdentifiedArray(uniqueElements: [main, feature])
     )
     let state = makeState(repositories: [repository])
 
@@ -589,7 +589,7 @@ struct SidebarStructureTests {
             detail: "",
             workingDirectory: folderURL,
             repositoryRootURL: folderURL
-          ),
+          )
         ]
       ),
       isGitRepository: false

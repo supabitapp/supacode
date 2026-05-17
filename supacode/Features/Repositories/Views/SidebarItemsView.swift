@@ -180,14 +180,18 @@ private struct SidebarItemGroupView: View {
     case .pinned(let id): target = (id, .pinned)
     case .unpinned(let id): target = (id, .unpinned)
     }
-    guard let fullKeys = store.state.sidebar.sections[target.repositoryID]?
-      .buckets[target.bucket]?.items.keys else { return }
-    guard let translated = SidebarItemGroup.translateFilteredMove(
-      offsets: offsets,
-      destination: destination,
-      visibleIDs: rowIDs,
-      fullIDs: Array(fullKeys)
-    ) else { return }
+    guard
+      let fullKeys = store.state.sidebar.sections[target.repositoryID]?
+        .buckets[target.bucket]?.items.keys
+    else { return }
+    guard
+      let translated = SidebarItemGroup.translateFilteredMove(
+        offsets: offsets,
+        destination: destination,
+        visibleIDs: rowIDs,
+        fullIDs: Array(fullKeys)
+      )
+    else { return }
     switch moveBehavior {
     case .disabled: return
     case .pinned(let id):

@@ -183,7 +183,7 @@ struct SidebarStructure: Equatable, Sendable {
     case failedRepository(repositoryID: Repository.ID, rootURL: URL, failureMessage: String)
     case placeholder
 
-    var id: ID {
+    var id: SectionID {
       switch self {
       case .highlight(let kind, _): .highlight(kind)
       case .repository(let repositoryID, _): .repository(repositoryID)
@@ -193,7 +193,7 @@ struct SidebarStructure: Equatable, Sendable {
       }
     }
 
-    enum ID: Hashable, Sendable {
+    enum SectionID: Hashable, Sendable {
       case highlight(HighlightKind)
       case repository(Repository.ID)
       case folder(Repository.ID)
@@ -355,8 +355,7 @@ extension RepositoriesFeature.State {
     groupPinned: Bool,
     groupActive: Bool
   ) -> SidebarStructure {
-    let placeholderMode = !isInitialLoadComplete && repositories.isEmpty
-    if placeholderMode {
+    if !isInitialLoadComplete, repositories.isEmpty {
       return SidebarStructure(
         sections: [.placeholder],
         hoistedRowIDs: [],
@@ -367,50 +366,83 @@ extension RepositoriesFeature.State {
       )
     }
 
-    let archived = archivedWorktreeIDSet
+    let hoists = computeHighlightHoists(groupPinned: groupPinned, groupActive: groupActive)
+    let repoSections = buildRepositorySections(hoisted: hoists.hoistedSet)
 
-    let pinnedHoisted: [Worktree.ID]
+    var sections: [SidebarStructure.Section] = []
+    if !hoists.pinned.isEmpty {
+      sections.append(.highlight(kind: .pinned, rowIDs: hoists.pinned))
+    }
+    if !hoists.active.isEmpty {
+      sections.append(.highlight(kind: .active, rowIDs: hoists.active))
+    }
+    sections.append(contentsOf: repoSections.sections)
+
+    let hotkey = computeHotkeyOrdering(
+      pinnedHoisted: hoists.pinned,
+      activeHoisted: hoists.active,
+      hoisted: hoists.hoistedSet,
+      sections: sections
+    )
+
+    return SidebarStructure(
+      sections: sections,
+      hoistedRowIDs: hoists.hoistedSet,
+      hotkeySlots: hotkey.slots,
+      slotByID: hotkey.slotByID,
+      repositoryHighlightByID: computeRepositoryHighlightTags(
+        pinnedHoisted: hoists.pinned,
+        activeHoisted: hoists.active
+      ),
+      reorderableRepositoryIDs: repoSections.reorderableRepositoryIDs
+    )
+  }
+
+  /// Hoisted-row payload for a single structure pass.
+  private struct HighlightHoists {
+    var pinned: [Worktree.ID]
+    var active: [Worktree.ID]
+    var hoistedSet: Set<Worktree.ID>
+  }
+
+  private func computeHighlightHoists(groupPinned: Bool, groupActive: Bool) -> HighlightHoists {
+    let archived = archivedWorktreeIDSet
+    let pinned: [Worktree.ID]
     if groupPinned {
       let pinnedIDs = orderedHighlightPinnedIDs(archived: archived)
-      pinnedHoisted = orderedHighlightCandidates(
-        forPinned: true,
-        candidateIDs: pinnedIDs,
-        excluding: []
-      )
+      pinned = orderedHighlightCandidates(forPinned: true, candidateIDs: pinnedIDs, excluding: [])
     } else {
-      pinnedHoisted = []
+      pinned = []
     }
-    var hoisted: Set<Worktree.ID> = Set(pinnedHoisted)
+    var hoistedSet: Set<Worktree.ID> = Set(pinned)
 
-    let activeHoisted: [Worktree.ID]
+    let active: [Worktree.ID]
     if groupActive {
       let candidateIDs = sidebarItems.ids.filter { id in
         guard !archived.contains(id) else { return false }
-        // Terminating rows already signal their wind-down inline and have
-        // no business surfacing in the Active rail alongside healthy rows.
+        // Terminating rows already signal their wind-down inline.
         return sidebarItems[id: id]?.lifecycle.isTerminating != true
       }
-      activeHoisted = orderedHighlightCandidates(
+      active = orderedHighlightCandidates(
         forPinned: false,
         candidateIDs: Array(candidateIDs),
-        excluding: hoisted
+        excluding: hoistedSet
       )
-      hoisted.formUnion(activeHoisted)
+      hoistedSet.formUnion(active)
     } else {
-      activeHoisted = []
+      active = []
     }
+    return HighlightHoists(pinned: pinned, active: active, hoistedSet: hoistedSet)
+  }
 
-    // Build the ordered sections list. Highlights come first (in fixed
-    // priority order: pinned, then active), then each repo in
-    // `orderedRepositoryRoots()` order, dispatching by failed / folder / git.
+  /// Per-repo dispatch output.
+  private struct RepositorySectionsBuild {
+    var sections: [SidebarStructure.Section]
+    var reorderableRepositoryIDs: [Repository.ID]
+  }
+
+  private func buildRepositorySections(hoisted: Set<Worktree.ID>) -> RepositorySectionsBuild {
     var sections: [SidebarStructure.Section] = []
-    if !pinnedHoisted.isEmpty {
-      sections.append(.highlight(kind: .pinned, rowIDs: pinnedHoisted))
-    }
-    if !activeHoisted.isEmpty {
-      sections.append(.highlight(kind: .active, rowIDs: activeHoisted))
-    }
-
     var reorderableRepositoryIDs: [Repository.ID] = []
     let pendingIDsByRepo: [Repository.ID: Set<Worktree.ID>] = Dictionary(
       grouping: pendingWorktrees,
@@ -448,57 +480,63 @@ extension RepositoriesFeature.State {
       )
       sections.append(.repository(repositoryID: repositoryID, groups: groups))
     }
+    return RepositorySectionsBuild(sections: sections, reorderableRepositoryIDs: reorderableRepositoryIDs)
+  }
 
+  /// Hotkey assignment output for a single structure pass.
+  private struct HotkeyOrdering {
+    var slots: [HotkeyWorktreeSlot]
+    var slotByID: [Worktree.ID: Int]
+  }
+
+  private func computeHotkeyOrdering(
+    pinnedHoisted: [Worktree.ID],
+    activeHoisted: [Worktree.ID],
+    hoisted: Set<Worktree.ID>,
+    sections: [SidebarStructure.Section]
+  ) -> HotkeyOrdering {
     let perRepoVisibleIDs = hotkeyEligibleIDs(in: sections)
-    var hotkeyOrder: [Worktree.ID] = []
-    hotkeyOrder.reserveCapacity(pinnedHoisted.count + activeHoisted.count + perRepoVisibleIDs.count)
-    hotkeyOrder.append(contentsOf: pinnedHoisted)
-    hotkeyOrder.append(contentsOf: activeHoisted)
+    var order: [Worktree.ID] = []
+    order.reserveCapacity(pinnedHoisted.count + activeHoisted.count + perRepoVisibleIDs.count)
+    order.append(contentsOf: pinnedHoisted)
+    order.append(contentsOf: activeHoisted)
     for id in perRepoVisibleIDs where !hoisted.contains(id) {
-      hotkeyOrder.append(id)
+      order.append(id)
     }
-
-    let hotkeySlots = hotkeyWorktreeSlots(for: hotkeyOrder)
     var slotByID: [Worktree.ID: Int] = [:]
-    slotByID.reserveCapacity(hotkeyOrder.count)
-    for (index, id) in hotkeyOrder.enumerated() {
+    slotByID.reserveCapacity(order.count)
+    for (index, id) in order.enumerated() {
       slotByID[id] = index
     }
+    return HotkeyOrdering(slots: hotkeyWorktreeSlots(for: order), slotByID: slotByID)
+  }
 
-    var repositoryHighlightByID: [Repository.ID: SidebarHighlightRepoTag] = [:]
-    if !hoisted.isEmpty {
-      var contributingRepoIDs: Set<Repository.ID> = []
-      for id in pinnedHoisted {
-        if let repoID = sidebarItems[id: id]?.repositoryID {
-          contributingRepoIDs.insert(repoID)
-        }
-      }
-      for id in activeHoisted {
-        if let repoID = sidebarItems[id: id]?.repositoryID {
-          contributingRepoIDs.insert(repoID)
-        }
-      }
-      for repoID in contributingRepoIDs {
-        guard let repository = repositories[id: repoID] else { continue }
-        let section = sidebar.sections[repoID]
-        repositoryHighlightByID[repoID] = SidebarHighlightRepoTag(
-          repoName: Repository.sidebarDisplayName(
-            custom: section?.title,
-            fallback: repository.name
-          ),
-          repoColor: section?.color
-        )
+  private func computeRepositoryHighlightTags(
+    pinnedHoisted: [Worktree.ID],
+    activeHoisted: [Worktree.ID]
+  ) -> [Repository.ID: SidebarHighlightRepoTag] {
+    guard !pinnedHoisted.isEmpty || !activeHoisted.isEmpty else { return [:] }
+    var contributingRepoIDs: Set<Repository.ID> = []
+    for id in pinnedHoisted {
+      if let repoID = sidebarItems[id: id]?.repositoryID {
+        contributingRepoIDs.insert(repoID)
       }
     }
-
-    return SidebarStructure(
-      sections: sections,
-      hoistedRowIDs: hoisted,
-      hotkeySlots: hotkeySlots,
-      slotByID: slotByID,
-      repositoryHighlightByID: repositoryHighlightByID,
-      reorderableRepositoryIDs: reorderableRepositoryIDs
-    )
+    for id in activeHoisted {
+      if let repoID = sidebarItems[id: id]?.repositoryID {
+        contributingRepoIDs.insert(repoID)
+      }
+    }
+    var tags: [Repository.ID: SidebarHighlightRepoTag] = [:]
+    for repoID in contributingRepoIDs {
+      guard let repository = repositories[id: repoID] else { continue }
+      let section = sidebar.sections[repoID]
+      tags[repoID] = SidebarHighlightRepoTag(
+        repoName: Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
+        repoColor: section?.color
+      )
+    }
+    return tags
   }
 
   /// Walk the freshly-built sections to extract visible per-repo row IDs in
