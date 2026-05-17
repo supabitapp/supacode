@@ -208,6 +208,9 @@ extension SidebarItemFeature.State {
     if isPinned { return .pinned }
     return .default
   }
+  /// True iff any tracked agent on this row is awaiting user input.
+  /// Drives the Active section's classification ("agent awaiting input").
+  var hasAgentAwaitingInput: Bool { agents.contains(where: \.awaitingInput) }
 }
 
 extension SidebarItemFeature.State.Lifecycle {

@@ -472,7 +472,7 @@ enum SidebarRowMoveMode {
   case conditional
 }
 
-private struct SidebarItemRow: View {
+struct SidebarItemRow: View {
   let rowID: SidebarItemID
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -483,6 +483,9 @@ private struct SidebarItemRow: View {
   let shortcutHint: String?
   var displayNameOverride: String?
   var nestDepth: Int = 0
+  /// Non-nil while the row is rendered inside the global Pinned / Active
+  /// sections; injected as a `repo · worktree` subtitle disambiguator.
+  var highlightSubtitle: SidebarHighlightRepoTag?
 
   var body: some View {
     if let itemStore = store.scope(state: \.sidebarItems[id: rowID], action: \.sidebarItems[id: rowID]) {
@@ -496,7 +499,8 @@ private struct SidebarItemRow: View {
         moveMode: moveMode,
         shortcutHint: shortcutHint,
         displayNameOverride: displayNameOverride,
-        nestDepth: nestDepth
+        nestDepth: nestDepth,
+        highlightSubtitle: highlightSubtitle
       )
     }
   }
@@ -513,8 +517,59 @@ private struct SidebarItemContainer: View {
   let shortcutHint: String?
   var displayNameOverride: String?
   var nestDepth: Int = 0
-  @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
+  var highlightSubtitle: SidebarHighlightRepoTag?
+  @Environment(\.sidebarHighlightRelevant) private var sidebarHighlightRelevant: Bool
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
+  @Shared(.sidebarHighlightPinnedExpanded) private var pinnedExpanded: Bool
+  @Shared(.sidebarHighlightActiveExpanded) private var activeExpanded: Bool
+
+  var body: some View {
+    // Suppress the per-repo render only when the row is actually visible in
+    // its hoisted destination. If the destination highlight section is
+    // collapsed the row would vanish from the sidebar entirely; falling
+    // through to the per-repo body keeps it reachable.
+    let isPinnedDestination = store.state.isPinned
+    let activeBucket = SidebarActiveClassification.classify(store.state) != nil
+    let destinationExpanded = isPinnedDestination ? pinnedExpanded : activeExpanded
+    let isHoistedDuplicate =
+      sidebarHighlightRelevant
+      && highlightSubtitle == nil
+      && destinationExpanded
+      && (isPinnedDestination || activeBucket)
+    if isHoistedDuplicate {
+      EmptyView()
+    } else {
+      SidebarItemBody(
+        store: store,
+        parentStore: parentStore,
+        terminalManager: terminalManager,
+        selectedWorktreeIDs: selectedWorktreeIDs,
+        isRepositoryRemoving: isRepositoryRemoving,
+        hideSubtitle: hideSubtitle,
+        moveMode: moveMode,
+        shortcutHint: shortcutHint,
+        displayNameOverride: displayNameOverride,
+        nestDepth: nestDepth,
+        highlightSubtitle: highlightSubtitle,
+        hideSubtitleOnMatch: hideSubtitleOnMatch
+      )
+    }
+  }
+}
+
+private struct SidebarItemBody: View {
+  let store: StoreOf<SidebarItemFeature>
+  @Bindable var parentStore: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  let isRepositoryRemoving: Bool
+  let hideSubtitle: Bool
+  let moveMode: SidebarRowMoveMode
+  let shortcutHint: String?
+  let displayNameOverride: String?
+  let nestDepth: Int
+  let highlightSubtitle: SidebarHighlightRepoTag?
+  let hideSubtitleOnMatch: Bool
 
   var body: some View {
     let rowID = store.state.id
@@ -528,13 +583,13 @@ private struct SidebarItemContainer: View {
       }
     SidebarItemView(
       store: store,
-      displayMode: displayMode,
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       showsPullRequestInfo: !isDragging,
       shortcutHint: shortcutHint,
       displayNameOverride: displayNameOverride,
-      nestDepth: nestDepth
+      nestDepth: nestDepth,
+      highlightSubtitle: highlightSubtitle
     )
     .environment(\.focusNotificationAction) { notification in
       guard let terminalState = terminalManager.stateIfExists(for: rowID) else {
@@ -593,24 +648,22 @@ struct SidebarFolderRow: View {
   @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
-    let state = store.state
-    let isRepositoryRemoving = state.isRemovingRepository(repository)
-    // A folder synthetic worktree seeds into `.unpinned` and migrates to
-    // `.pinned` only after an explicit pin. Resolving via the canonical
-    // synthetic worktree id keeps the row visible across both buckets.
+    let isRepositoryRemoving = store.state.isRemovingRepository(repository)
+    // Resolving via the canonical synthetic worktree id keeps the row visible
+    // across `.unpinned` / `.pinned` bucket transitions. `SidebarItemRow`
+    // already per-leaf scopes the leaf store before rendering, so reading
+    // `sidebarItems[id:]` here would only leak observation back to the parent.
     let rowID = Repository.folderWorktreeID(for: repository.rootURL)
-    if state.sidebarItems[id: rowID] != nil {
-      SidebarItemRow(
-        rowID: rowID,
-        store: store,
-        terminalManager: terminalManager,
-        selectedWorktreeIDs: selectedWorktreeIDs,
-        isRepositoryRemoving: isRepositoryRemoving,
-        hideSubtitle: true,
-        moveMode: .alwaysEnabled,
-        shortcutHint: shortcutHint(for: rowID)
-      )
-    }
+    SidebarItemRow(
+      rowID: rowID,
+      store: store,
+      terminalManager: terminalManager,
+      selectedWorktreeIDs: selectedWorktreeIDs,
+      isRepositoryRemoving: isRepositoryRemoving,
+      hideSubtitle: true,
+      moveMode: .alwaysEnabled,
+      shortcutHint: shortcutHint(for: rowID)
+    )
   }
 
   // Folder rows show a single hint, so a linear scan beats allocating a dict per render.

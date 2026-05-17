@@ -6,11 +6,13 @@ struct SidebarCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.revealInSidebarAction) private var revealInSidebarAction
   @Shared(.settingsFile) private var settingsFile
-  @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
   @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
   private var nestedOnboardingDismissedAt: Date = .distantPast
+  @Shared(.sidebarHighlightRelevant) private var highlightRelevant: Bool
+  @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
+  private var highlightOnboardingDismissedAt: Date = .distantPast
 
   /// Binding that pairs the nesting toggle with a permadismiss of the
   /// onboarding card on transitions to `false`. Lives on the menu command
@@ -27,6 +29,21 @@ struct SidebarCommands: Commands {
           !NestedWorktreesOnboardingCardView.isDismissed(at: nestedOnboardingDismissedAt)
         else { return }
         $nestedOnboardingDismissedAt.withLock { $0 = .now }
+      }
+    )
+  }
+
+  /// Same toggle-off permadismiss pattern as `nestWorktreesToggle`, applied
+  /// to the Highlight Relevant onboarding card.
+  private var highlightRelevantToggle: Binding<Bool> {
+    Binding(
+      get: { highlightRelevant },
+      set: { newValue in
+        $highlightRelevant.withLock { $0 = newValue }
+        guard !newValue,
+          !HighlightRelevantOnboardingCardView.isDismissed(at: highlightOnboardingDismissedAt)
+        else { return }
+        $highlightOnboardingDismissedAt.withLock { $0 = .now }
       }
     )
   }
@@ -49,13 +66,9 @@ struct SidebarCommands: Commands {
       .help("Reveal in Sidebar (\(revealInSidebar?.display ?? "none"))")
       .disabled(revealInSidebarAction == nil)
       Section {
-        Picker("Title and Subtitle", systemImage: "textformat", selection: Binding($displayMode)) {
-          ForEach(WorktreeRowDisplayMode.allCases) { mode in
-            Text(mode.label).tag(mode)
-          }
-        }
-        Toggle("Hide Subtitle on Match", isOn: Binding($hideSubtitleOnMatch))
+        Toggle("Highlight Relevant Sidebar Items", isOn: highlightRelevantToggle)
         Toggle("Nest Worktrees by Branch", isOn: nestWorktreesToggle)
+        Toggle("Hide Worktree Name on Match", isOn: Binding($hideSubtitleOnMatch))
       }
     }
   }

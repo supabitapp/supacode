@@ -2014,6 +2014,31 @@ struct RepositoriesFeatureTests {
     #expect(archivedAfterUnpin?.items[worktree.id]?.archivedAt != nil)
   }
 
+  @Test func orderedHighlightPinnedIDsFiltersArchived() {
+    // The Active candidate set already filters `.deletingScript` rows
+    // out; the pinned list does the same so a row in the middle of an
+    // archive delete can't double up across both highlight sections.
+    let pinnedWorktree = makeWorktree(id: "/tmp/filter/wt-pin", name: "pin", repoRoot: "/tmp/filter")
+    let archivedWorktree = makeWorktree(id: "/tmp/filter/wt-arch", name: "arch", repoRoot: "/tmp/filter")
+    let repository = makeRepository(id: "/tmp/filter", worktrees: [pinnedWorktree, archivedWorktree])
+    var state = makeState(repositories: [repository])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [
+          .pinned: .init(items: [pinnedWorktree.id: .init()]),
+          .archived: .init(items: [archivedWorktree.id: .init(archivedAt: .now)]),
+        ]
+      )
+    }
+    // Re-seed the pinned bucket with an archived id so the filter has
+    // something to drop (a hand-edit / migrator pre-state).
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id]?.buckets[.pinned]?.items[archivedWorktree.id] = .init()
+    }
+    let ids = state.orderedHighlightPinnedIDs()
+    #expect(ids == [pinnedWorktree.id])
+  }
+
   @Test func requestArchiveWorktreeForFolderShowsActionNotAvailable() async {
     // Archive still rejects on folders (no archived bucket for them); pin
     // and unpin now flow through the standard bucket machinery so they

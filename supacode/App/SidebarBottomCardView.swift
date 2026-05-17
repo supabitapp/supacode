@@ -5,18 +5,19 @@ import SwiftUI
 /// Mutually-exclusive host for the pinned sidebar bottom card. Priority order:
 /// 1. Coding-agent updates available / initial install prompt
 ///    (`CodingAgentsSidebarCardView`).
-/// 2. Nested-worktrees onboarding prompt (`NestedWorktreesOnboardingCardView`).
-/// 3. Nothing.
+/// 2. Highlight Relevant onboarding prompt (`HighlightRelevantOnboardingCardView`).
+/// 3. Nested-worktrees onboarding prompt (`NestedWorktreesOnboardingCardView`).
+/// 4. Nothing.
 ///
 /// Owns the `@Shared(.appStorage)` reads as stored properties so SwiftUI
 /// observes them at this layer and re-renders when the user dismisses a
 /// card. Each downstream card's `resolveMode(...)` takes the resolved values
 /// as parameters so they stay pure (no hidden global reads inside a static).
 ///
-/// `nestWorktreesByBranch` is observed here so the visible-card resolver can
-/// react to the toggle, but the permadismiss side-effect on toggle-off lives
-/// in `SidebarCommands` (where the menu toggle actually fires), so it works
-/// regardless of whether the sidebar column is currently visible.
+/// Toggles (`nestWorktreesByBranch`, `highlightRelevant`) are observed here so
+/// the resolver can react, but the permadismiss side-effects on toggle-off
+/// live in `SidebarCommands` (where the menu toggles actually fire), so they
+/// work regardless of whether the sidebar column is currently visible.
 struct SidebarBottomCardView: View {
   let store: StoreOf<AppFeature>
   @Shared(.appStorage("codingAgentsSetupCardDismissedAt"))
@@ -24,22 +25,36 @@ struct SidebarBottomCardView: View {
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
   @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
   private var onboardingDismissedAt: Date = .distantPast
+  @Shared(.sidebarHighlightRelevant) private var highlightRelevant: Bool
+  @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
+  private var highlightDismissedAt: Date = .distantPast
 
   var body: some View {
     let agentMode = CodingAgentsSidebarCardView.resolveMode(
       for: store, dismissedAt: agentDismissedAt
     )
+    let highlightMode = HighlightRelevantOnboardingCardView.resolveMode(
+      highlightRelevant: highlightRelevant,
+      dismissedAt: highlightDismissedAt
+    )
     let onboardingMode = NestedWorktreesOnboardingCardView.resolveMode(
       nestWorktreesByBranch: nestWorktreesByBranch,
       dismissedAt: onboardingDismissedAt
     )
-    let resolved = Slot.resolve(agentMode: agentMode, onboardingMode: onboardingMode)
+    let resolved = Slot.resolve(
+      agentMode: agentMode,
+      highlightMode: highlightMode,
+      onboardingMode: onboardingMode
+    )
     Group {
       switch resolved {
       case .none:
         EmptyView()
       case .agent(let mode):
         CodingAgentsSidebarCardView(store: store, mode: mode)
+          .transition(Slot.transition)
+      case .highlightRelevantOnboarding:
+        HighlightRelevantOnboardingCardView()
           .transition(Slot.transition)
       case .nestedWorktreesOnboarding:
         NestedWorktreesOnboardingCardView()
@@ -55,18 +70,21 @@ struct SidebarBottomCardView: View {
   enum Slot: Equatable {
     case none
     case agent(CodingAgentsSidebarCardView.Mode)
+    case highlightRelevantOnboarding
     case nestedWorktreesOnboarding
 
     static let transition: AnyTransition = .move(edge: .bottom).combined(with: .opacity)
 
     static func resolve(
       agentMode: CodingAgentsSidebarCardView.Mode,
+      highlightMode: HighlightRelevantOnboardingCardView.Mode,
       onboardingMode: NestedWorktreesOnboardingCardView.Mode
     ) -> Slot {
       switch agentMode {
       case .updatesAvailable, .promptInstall: return .agent(agentMode)
       case .hidden: break
       }
+      if highlightMode == .visible { return .highlightRelevantOnboarding }
       return onboardingMode == .visible ? .nestedWorktreesOnboarding : .none
     }
 
@@ -87,6 +105,7 @@ struct SidebarBottomCardView: View {
         // crash-free if a future caller (e.g. a test or debug surface)
         // constructs `.agent(.hidden)` directly.
         "agent:hidden"
+      case .highlightRelevantOnboarding: "highlightRelevant:visible"
       case .nestedWorktreesOnboarding: "nestedWorktrees:visible"
       }
     }

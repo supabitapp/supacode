@@ -9,6 +9,7 @@ struct SidebarListView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   @FocusState private var isSidebarFocused: Bool
+  @Shared(.sidebarHighlightRelevant) private var highlightRelevant: Bool
 
   var body: some View {
     let state = store.state
@@ -26,9 +27,40 @@ struct SidebarListView: View {
     )
     let repositoriesByID = Dictionary(uniqueKeysWithValues: store.repositories.map { ($0.id, $0) })
     let pendingSidebarReveal = state.pendingSidebarReveal
+    let inPlaceholderMode = !state.isInitialLoadComplete && store.repositories.isEmpty
+    let showHighlight = highlightRelevant && !inPlaceholderMode
+    // The highlight aggregator reads its own `sidebarItems.ids` to keep
+    // that observation bounded to the subview. `pinnedIDs` come from
+    // `sidebar.sections[...].buckets[.pinned]`, which mutates on pin /
+    // unpin / repo reorder only (no per-row tick), so reading it here
+    // doesn't widen observation past what the existing repo list needs.
+    let pinnedIDs = showHighlight ? state.orderedHighlightPinnedIDs() : []
+    let highlightRepoPayloads: [Repository.ID: SidebarHighlightRepoTag] =
+      showHighlight
+      ? Dictionary(
+        uniqueKeysWithValues: store.repositories.map { repository in
+          (
+            repository.id,
+            SidebarHighlightRepoTag(
+              repoName: repository.name,
+              repoColor: state.sidebar.sections[repository.id]?.color
+            )
+          )
+        }
+      )
+      : [:]
 
     return ScrollViewReader { scrollProxy in
       List(selection: selection) {
+        if showHighlight {
+          SidebarHighlightTopView(
+            store: store,
+            terminalManager: terminalManager,
+            selectedWorktreeIDs: selectedWorktreeIDs,
+            pinnedIDs: pinnedIDs,
+            repositoryHighlightByID: highlightRepoPayloads
+          )
+        }
         if !state.isInitialLoadComplete, store.repositories.isEmpty {
           SidebarPlaceholderView()
         } else if orderedRoots.isEmpty {
@@ -64,6 +96,7 @@ struct SidebarListView: View {
           }
         }
       }
+      .environment(\.sidebarHighlightRelevant, highlightRelevant)
       .listStyle(.sidebar)
       .focused($isSidebarFocused)
       .frame(minWidth: 220)
@@ -155,9 +188,9 @@ private struct SidebarRootView: View {
     } else {
       // Folder repos render a single flat row so the outer
       // `ForEach(sidebarRootRows).onMove` can reorder them alongside
-      // git sections. `SidebarItemsView`'s nested
-      // ForEach-of-groups-of-rows would hide the folder from the
-      // outer `.onMove`, breaking sidebar-wide drag.
+      // git sections. The empty-header trailing closure keeps the
+      // sidebar style's section break visible so two consecutive
+      // folder repos don't visually merge into one section.
       Section {
         SidebarFolderRow(
           repository: repository,

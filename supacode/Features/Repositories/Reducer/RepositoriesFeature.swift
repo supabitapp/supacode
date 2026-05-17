@@ -4075,8 +4075,8 @@ extension RepositoriesFeature.State {
     guard useNesting, !rowIDs.isEmpty else { return rowIDs }
     let collapsedPrefixes: Set<String> =
       ignoreCollapsedGroups
-        ? []
-        : sidebar.sections[repositoryID]?.buckets[bucket]?.collapsedBranchPrefixes ?? []
+      ? []
+      : sidebar.sections[repositoryID]?.buckets[bucket]?.collapsedBranchPrefixes ?? []
     // `uniquingKeysWith` so a transient duplicate row ID can't crash the hotkey path.
     let branchNames = Dictionary(
       rowIDs.compactMap { id -> (SidebarItemID, String)? in

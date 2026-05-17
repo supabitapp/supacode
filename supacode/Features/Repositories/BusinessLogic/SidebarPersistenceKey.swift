@@ -153,4 +153,25 @@ nonisolated extension SharedReaderKey where Self == AppStorageKey<Bool>.Default 
   static var sidebarNestWorktreesByBranch: Self {
     Self[.appStorage("sidebarNestWorktreesByBranch"), default: true]
   }
+
+  /// "Highlight Relevant Sidebar Items" view-menu toggle. Gates the global
+  /// Pinned / Active sections at the top of the sidebar and the matching
+  /// onboarding card. Defaults to on so the feature is discoverable on first
+  /// launch.
+  static var sidebarHighlightRelevant: Self {
+    Self[.appStorage("sidebarHighlightRelevant"), default: true]
+  }
+
+  /// Persisted expansion state for the global Pinned section. Defaults
+  /// expanded; the user can collapse to hide the entire bucket in one click.
+  static var sidebarHighlightPinnedExpanded: Self {
+    Self[.appStorage("sidebarHighlightPinnedExpanded"), default: true]
+  }
+
+  /// Persisted expansion state for the global Active section. Defaults
+  /// expanded; the user can collapse to silence the surfacing UX without
+  /// turning off the whole feature.
+  static var sidebarHighlightActiveExpanded: Self {
+    Self[.appStorage("sidebarHighlightActiveExpanded"), default: true]
+  }
 }

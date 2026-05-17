@@ -10,6 +10,24 @@ import Testing
 
 @MainActor
 struct SidebarPersistenceKeyTests {
+  @Test func highlightRelevantDefaultsOn() {
+    // First-launch discoverability contract for the View-menu toggle: the
+    // Pinned and Active sections must be visible by default so users see
+    // the feature without opening the menu.
+    @Shared(.sidebarHighlightRelevant) var enabled
+    #expect(enabled == true)
+  }
+
+  @Test func highlightSectionsDefaultExpanded() {
+    // Same first-launch contract for the per-section collapse state. A
+    // future flip from `true` to `false` would silently regress the
+    // surfacing UX, so lock both defaults here.
+    @Shared(.sidebarHighlightPinnedExpanded) var pinnedExpanded
+    @Shared(.sidebarHighlightActiveExpanded) var activeExpanded
+    #expect(pinnedExpanded == true)
+    #expect(activeExpanded == true)
+  }
+
   @Test func corruptFileIsRenamedBeforeFallback() async throws {
     // Write the corrupt bytes to an isolated temp directory so the
     // test never touches the user's real `~/.supacode/sidebar.json`.

@@ -9,9 +9,16 @@ enum SidebarNestLayout {
   static let indentStep: CGFloat = 14
 }
 
+/// Repo identity carried alongside a sidebar row so the highlight sections
+/// can render a colored `repo · worktree` subtitle that mirrors the window
+/// toolbar. `nil` on a row keeps the standard per-repo subtitle.
+struct SidebarHighlightRepoTag: Equatable, Hashable, Sendable {
+  let repoName: String
+  let repoColor: RepositoryColor?
+}
+
 struct SidebarItemView: View {
   let store: StoreOf<SidebarItemFeature>
-  let displayMode: WorktreeRowDisplayMode
   let hideSubtitle: Bool
   let hideSubtitleOnMatch: Bool
   let showsPullRequestInfo: Bool
@@ -23,6 +30,8 @@ struct SidebarItemView: View {
   /// Number of group-header ancestors above this row, used by the renderer
   /// to apply a per-level leading indent. `0` keeps the existing baseline.
   var nestDepth: Int = 0
+  /// Non-nil only inside the global Pinned / Active sections.
+  var highlightSubtitle: SidebarHighlightRepoTag?
 
   var body: some View {
     let resolved = ResolvedRowDisplay(
@@ -31,9 +40,9 @@ struct SidebarItemView: View {
       worktreeName: store.sidebarDisplayName,
       isMainWorktree: store.isMainWorktree,
       isPinned: store.isPinned,
-      displayMode: displayMode,
       hideSubtitle: hideSubtitle,
-      hideSubtitleOnMatch: hideSubtitleOnMatch
+      hideSubtitleOnMatch: hideSubtitleOnMatch,
+      highlightSubtitle: highlightSubtitle
     )
 
     Label {
@@ -70,8 +79,18 @@ struct SidebarItemView: View {
 }
 
 struct ResolvedRowDisplay: Equatable {
+  enum Subtitle: Equatable {
+    case none
+    /// Standard per-repo subtitle. Rendered in the row's accent color.
+    case plain(String)
+    /// Highlight-section subtitle: `repo · trail`. `repo` paints with
+    /// `repoColor`, `trail` with the row's accent. `trail == nil` collapses
+    /// to just the repo name.
+    case highlight(repo: String, repoColor: RepositoryColor?, trail: String?)
+  }
+
   let name: String
-  let subtitle: String?
+  let subtitle: Subtitle
   let accent: WorktreeAccent
 
   init(
@@ -80,33 +99,52 @@ struct ResolvedRowDisplay: Equatable {
     worktreeName: String?,
     isMainWorktree: Bool,
     isPinned: Bool,
-    displayMode: WorktreeRowDisplayMode,
     hideSubtitle: Bool,
-    hideSubtitleOnMatch: Bool
+    hideSubtitleOnMatch: Bool,
+    highlightSubtitle: SidebarHighlightRepoTag? = nil
   ) {
     self.accent =
       if isMainWorktree { .main } else if isPinned { .pinned } else { .default }
 
     if kind == .folder {
       self.name = branchName
-      self.subtitle = nil
+      // Folder rows ARE the repo, so a repo prefix would just repeat the title.
+      self.subtitle = .none
       return
     }
 
     let resolvedWorktreeName = worktreeName ?? "Default"
     let effectiveWorktreeName = resolvedWorktreeName.isEmpty ? branchName : resolvedWorktreeName
-    switch displayMode {
-    case .branchFirst: self.name = branchName
-    case .worktreeFirst: self.name = effectiveWorktreeName
-    }
+    self.name = branchName
 
     let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
     let isMatch = effectiveWorktreeName == branchLastComponent
-    let rawSubtitle = displayMode == .branchFirst ? effectiveWorktreeName : branchName
+
+    if let highlightSubtitle {
+      // Hide-on-match drop mirrors the per-repo subtitle path so a row
+      // doesn't change its disambiguation policy across hoisting.
+      let trail: String?
+      if hideSubtitleOnMatch && isMatch {
+        trail = nil
+      } else if isMainWorktree {
+        trail = "Default"
+      } else if let worktreeName, !worktreeName.isEmpty {
+        trail = worktreeName
+      } else {
+        trail = nil
+      }
+      self.subtitle = .highlight(
+        repo: highlightSubtitle.repoName,
+        repoColor: highlightSubtitle.repoColor,
+        trail: trail
+      )
+      return
+    }
+
     if hideSubtitle || (hideSubtitleOnMatch && isMatch) {
-      self.subtitle = nil
+      self.subtitle = .none
     } else {
-      self.subtitle = rawSubtitle
+      self.subtitle = .plain(effectiveWorktreeName)
     }
   }
 }
@@ -190,7 +228,7 @@ private func resolveCheckBadgeState(_ pullRequest: GithubPullRequest?) -> Sideba
 
 private struct TitleView: View, Equatable {
   let name: String
-  let subtitle: String?
+  let subtitle: ResolvedRowDisplay.Subtitle
   let accent: WorktreeAccent
   let isLifecycleBusy: Bool
   let isTaskRunning: Bool
@@ -207,16 +245,45 @@ private struct TitleView: View, Equatable {
 
   var body: some View {
     let isBusy = isLifecycleBusy || isTaskRunning
+    let isEmphasized = backgroundProminence == .increased
+    let accentStyle = accent.shapeStyle(emphasized: isEmphasized)
     VStack(alignment: .leading, spacing: 0) {
       Text(name)
         .font(.body)
         .lineLimit(1)
         .shimmer(isActive: isBusy)
-      if let subtitle {
-        Text(subtitle)
+      switch subtitle {
+      case .none:
+        EmptyView()
+      case .plain(let text):
+        Text(text)
           .font(.footnote)
-          .foregroundStyle(accent.shapeStyle(emphasized: backgroundProminence == .increased))
+          .foregroundStyle(accentStyle)
           .lineLimit(1)
+      case .highlight(let repo, let repoColor, let trail):
+        let repoStyle: AnyShapeStyle =
+          isEmphasized
+          ? AnyShapeStyle(.secondary)
+          : repoColor.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.secondary)
+        // `.layoutPriority(1)` on the trail makes the repo prefix yield first
+        // under a narrow sidebar so the disambiguator survives truncation.
+        HStack(spacing: 0) {
+          Text(repo)
+            .foregroundStyle(repoStyle)
+            .lineLimit(1)
+          if let trail {
+            Text(" · ")
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+            Text(trail)
+              .foregroundStyle(accentStyle)
+              .lineLimit(1)
+              .layoutPriority(1)
+          }
+        }
+        .font(.footnote)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(trail.map { "\(repo), \($0)" } ?? repo)
       }
     }
   }
