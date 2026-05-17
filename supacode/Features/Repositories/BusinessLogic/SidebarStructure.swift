@@ -356,7 +356,7 @@ extension RepositoriesFeature.Action {
 
     // Selection changes only refresh the slice.
     case .selectionChanged, .selectWorktree, .selectArchivedWorktrees,
-      .selectNextWorktree, .selectPreviousWorktree,
+      .selectNextWorktree, .selectPreviousWorktree, .selectWorktreeAtHotkeySlot,
       .worktreeHistoryBack, .worktreeHistoryForward:
       return .selectedWorktreeSlice
 

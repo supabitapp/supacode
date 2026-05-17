@@ -10,6 +10,10 @@ import SupacodeSettingsShared
 import SwiftUI
 import UniformTypeIdentifiers
 
+#if DEBUG
+  private nonisolated let contentRenderLogger = SupaLogger("DetailRender")
+#endif
+
 struct ContentView: View {
   @Bindable var store: StoreOf<AppFeature>
   @Bindable var repositoriesStore: StoreOf<RepositoriesFeature>
@@ -25,7 +29,10 @@ struct ContentView: View {
   }
 
   var body: some View {
-    NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
+    #if DEBUG
+      let _ = contentRenderLogger.info("ContentView.body re-rendered")
+    #endif
+    return NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         .safeAreaInset(edge: .bottom, spacing: 0) {

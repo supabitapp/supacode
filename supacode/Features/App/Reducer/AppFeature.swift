@@ -37,6 +37,12 @@ struct AppFeature {
     var lastKnownAgentPresenceBadgesEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
     var isDeeplinkReferenceRequested = false
+    /// Cached projection of every primitive the menu-bar `WorktreeCommands`
+    /// body reads. The menu observes ONE Equatable field instead of pulling
+    /// `\.repositories` / `\.settings` (whole-substate) observation through
+    /// `_modify`, which previously made every per-row mutation rebuild the
+    /// system menu and drop hover state (#289).
+    var worktreeMenuSnapshot: WorktreeMenuSnapshot = .init()
     @Presents var alert: AlertState<Alert>?
     @Presents var deeplinkInputConfirmation: DeeplinkInputConfirmationFeature.State?
 
@@ -53,6 +59,9 @@ struct AppFeature {
       // so deselection (line below in `selectedWorktreeChanged(nil)`)
       // intentionally does not clear them.
       globalScripts = settings.globalScripts
+      // Warm the cache so the first state mutation doesn't churn the snapshot
+      // and trip every TestStore expectation that omits a state-change closure.
+      worktreeMenuSnapshot = computeWorktreeMenuSnapshot()
     }
 
     /// Repo scripts followed by global scripts; repo wins on ID collisions.
@@ -1011,6 +1020,14 @@ struct AppFeature {
     }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
+    }
+    Reduce { state, _ in
+      // Refresh the menu-bar snapshot after every action. The Equatable diff
+      // in the helper keeps SwiftUI from invalidating `WorktreeCommands` when
+      // the new snapshot equals the cached one, which is the common case
+      // during agent-presence storms (#289).
+      state.recomputeWorktreeMenuSnapshotIfChanged()
+      return .none
     }
   }
 

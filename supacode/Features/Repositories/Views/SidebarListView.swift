@@ -68,7 +68,6 @@ struct SidebarListView: View {
       .listStyle(.sidebar)
       .focused($isSidebarFocused)
       .frame(minWidth: 220)
-      .focusedSceneValue(\.visibleHotkeyWorktreeRows, structure.hotkeySlots)
       .onChange(of: groupPinnedRows, initial: false) { _, _ in
         store.send(.sidebarGroupingTogglesChanged)
       }

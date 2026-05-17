@@ -3,6 +3,10 @@ import Kingfisher
 import SupacodeSettingsShared
 import SwiftUI
 
+#if DEBUG
+  private nonisolated let titleRenderLogger = SupaLogger("DetailRender")
+#endif
+
 enum WorktreeToolbarTitleContent: Hashable, Sendable {
   case git(GitPayload)
   case folder(name: String)
@@ -28,6 +32,10 @@ struct WorktreeToolbarTitleView: View {
   @State private var configReloadCounter = 0
 
   var body: some View {
+    #if DEBUG
+      Self._printChanges()
+      titleRenderLogger.info("WorktreeToolbarTitleView.body re-rendered")
+    #endif
     _ = configReloadCounter
     _ = systemColorScheme
     let tintScheme = terminalManager.surfaceBackgroundColorScheme()
@@ -48,7 +56,11 @@ private struct WorktreeToolbarTitleBody: View {
   let content: WorktreeToolbarTitleContent
 
   var body: some View {
-    HStack(spacing: 8) {
+    #if DEBUG
+      let _ = Self._printChanges()
+      titleRenderLogger.info("WorktreeToolbarTitleBody.body re-rendered")
+    #endif
+    return HStack(spacing: 8) {
       Group {
         switch content {
         case .folder:

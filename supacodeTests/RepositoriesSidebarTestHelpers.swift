@@ -3,6 +3,16 @@ import Foundation
 
 @testable import supacode
 
+extension AppFeature.State {
+  /// Mirrors AppFeature's post-reduce hook for TestStore expectations.
+  /// Equatable diff inside the helper keeps no-op writes from invalidating
+  /// the menu-bar `WorktreeCommands` snapshot.
+  @MainActor
+  mutating func applyPostReduceCacheRecomputes() {
+    recomputeWorktreeMenuSnapshotIfChanged()
+  }
+}
+
 extension RepositoriesFeature.State {
   /// Test mirror of the full sidebar pipeline: `syncSidebar` (matching
   /// reducer-body handlers that explicitly resync) + every cache recompute the
