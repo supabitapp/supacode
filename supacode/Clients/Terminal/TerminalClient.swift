@@ -61,6 +61,10 @@ struct TerminalClient {
     /// A tab was destroyed in the worktree state. Parent removes the matching
     /// `TerminalTabFeature.State` from `terminalTabs`.
     case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    /// The entire `WorktreeTerminalState` was torn down (worktree pruned).
+    /// Parent drops any orphan `terminalTabs` entries and removed-tab FIFO
+    /// records owned by this worktree so a fresh re-attach starts clean.
+    case worktreeStateTornDown(worktreeID: Worktree.ID)
     /// A tab's stripe-progress display flipped. Routed into the matching
     /// `TerminalTabFeature.State.progressDisplay` so the stripe recolors.
     case tabProgressDisplayChanged(

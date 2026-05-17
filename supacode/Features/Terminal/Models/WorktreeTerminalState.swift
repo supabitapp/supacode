@@ -63,7 +63,7 @@ final class WorktreeTerminalState {
   /// Raw notification log. `@ObservationIgnored` so per-tab notification ticks
   /// flow through `TerminalTabState.unseenNotificationCount` projections instead
   /// of invalidating every leaf in the worktree.
-  @ObservationIgnored var notifications: [WorktreeTerminalNotification] = []
+  @ObservationIgnored private(set) var notifications: [WorktreeTerminalNotification] = []
   var notificationsEnabled = true
   @ObservationIgnored @Dependency(\.date.now) private var now
   private var recentHookBySurfaceID: [UUID: (text: String, recordedAt: Date)] = [:]
@@ -774,8 +774,6 @@ final class WorktreeTerminalState {
     trees.removeAll()
     focusedSurfaceIdByTab.removeAll()
     onSurfacesClosed?(Set(closingSurfaceIDs))
-    // Agent busy state lives on GhosttySurfaceState and is cleaned up
-    // when surfaces are removed.
     let pendingKinds = Set(blockingScripts.values)
     blockingScripts.removeAll()
     lastBlockingScriptTabByKind.removeAll()
@@ -784,6 +782,14 @@ final class WorktreeTerminalState {
       onBlockingScriptCompleted?(kind, nil, nil)
     }
     tabManager.closeAll()
+    // Drain per-tab caches and notify so `TerminalsFeature.State.terminalTabs`
+    // entries don't leak for tabs in a torn-down worktree (#289 follow-up).
+    let removedTabIDs = Array(lastTabProjections.keys)
+    lastTabProjections.removeAll()
+    lastTabProgressDisplays.removeAll()
+    for tabID in removedTabIDs {
+      onTabRemoved?(tabID)
+    }
   }
 
   func setNotificationsEnabled(_ enabled: Bool) {
@@ -1590,11 +1596,18 @@ final class WorktreeTerminalState {
     }
   }
 
-  /// Snapshot all current tab projections. Manager replays this when AppFeature
-  /// re-attaches (e.g. on launch / window restore) so `terminalTabs[id:]`
-  /// reconstructs without waiting for the next mutation.
+  /// Snapshot all current tab projections. Manager replays this on every fresh
+  /// event-stream subscriber so `terminalTabs[id:]` reconstructs without
+  /// waiting for the next per-tab mutation.
   func currentTabProjections() -> [WorktreeTabProjection] {
     Array(lastTabProjections.values)
+  }
+
+  /// Snapshot all current per-tab stripe-progress displays. Replayed alongside
+  /// `currentTabProjections()` so the stripe paints the right state on the
+  /// first frame after re-subscribe.
+  func currentTabProgressDisplays() -> [TerminalTabID: TerminalTabProgressDisplay?] {
+    lastTabProgressDisplays
   }
 
   private func isRunningProgressState(_ state: ghostty_action_progress_report_state_e?) -> Bool {
@@ -1760,6 +1773,19 @@ final class WorktreeTerminalState {
     }
     return maxIndex + 1
   }
+
+  #if DEBUG
+    /// Test-only seam for bulk-assigning the notifications log. Fans
+    /// `emitAllTabProjections()` so `lastTabProjections` stays in sync with
+    /// the raw log; production code must go through the per-event helpers
+    /// (`appendNotification`, `markNotificationsRead`, etc.) which already
+    /// emit. Gated `#if DEBUG` so release builds genuinely can't reach the
+    /// projection-bypass path.
+    func setNotificationsForTesting(_ list: [WorktreeTerminalNotification]) {
+      notifications = list
+      emitAllTabProjections()
+    }
+  #endif
 }
 
 nonisolated func makeCommandInput(

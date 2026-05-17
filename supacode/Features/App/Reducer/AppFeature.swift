@@ -974,12 +974,15 @@ struct AppFeature {
       case .terminalEvent(.tabProjectionChanged(let worktreeID, let projection)):
         return .send(.terminals(.tabProjectionChanged(worktreeID: worktreeID, projection: projection)))
 
-      case .terminalEvent(.tabRemoved(_, let tabID)):
-        return .send(.terminals(.tabRemoved(tabID: tabID)))
+      case .terminalEvent(.tabRemoved(let worktreeID, let tabID)):
+        return .send(.terminals(.tabRemoved(worktreeID: worktreeID, tabID: tabID)))
+
+      case .terminalEvent(.worktreeStateTornDown(let worktreeID)):
+        return .send(.terminals(.worktreeStateTornDown(worktreeID: worktreeID)))
 
       case .terminalEvent(.tabProgressDisplayChanged(_, let tabID, let display)):
         return .send(
-          .terminals(.terminalTabs(.element(id: tabID.rawValue, action: .progressDisplayChanged(display))))
+          .terminals(.terminalTabs(.element(id: tabID, action: .progressDisplayChanged(display))))
         )
 
       case .terminals:

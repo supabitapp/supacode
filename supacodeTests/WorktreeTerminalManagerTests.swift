@@ -309,7 +309,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
-    state.notifications = [
+    state.setNotificationsForTesting([
       WorktreeTerminalNotification(
         surfaceID: UUID(),
         title: "Unread",
@@ -317,9 +317,9 @@ struct WorktreeTerminalManagerTests {
         createdAt: .distantPast,
         isRead: false
       )
-    ]
+    ])
     state.onNotificationIndicatorChanged?()
-    state.notifications = [
+    state.setNotificationsForTesting([
       WorktreeTerminalNotification(
         surfaceID: UUID(),
         title: "Read",
@@ -327,7 +327,7 @@ struct WorktreeTerminalManagerTests {
         createdAt: .distantPast,
         isRead: true
       )
-    ]
+    ])
 
     let stream = manager.eventStream()
     var iterator = stream.makeAsyncIterator()
@@ -384,14 +384,14 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
-    state.notifications = [
+    state.setNotificationsForTesting([
       makeNotification(isRead: true),
       makeNotification(isRead: true),
-    ]
+    ])
 
     #expect(manager.hasUnseenNotifications(for: worktree.id) == false)
 
-    state.notifications.append(makeNotification(isRead: false))
+    state.setNotificationsForTesting(state.notifications + [makeNotification(isRead: false)])
 
     #expect(manager.hasUnseenNotifications(for: worktree.id) == true)
   }
@@ -401,10 +401,10 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
-    state.notifications = [
+    state.setNotificationsForTesting([
       makeNotification(isRead: false),
       makeNotification(isRead: true),
-    ]
+    ])
 
     let stream = manager.eventStream()
     var iterator = stream.makeAsyncIterator()
@@ -427,11 +427,11 @@ struct WorktreeTerminalManagerTests {
     let surfaceA = UUID()
     let surfaceB = UUID()
 
-    state.notifications = [
+    state.setNotificationsForTesting([
       makeNotification(surfaceID: surfaceA, isRead: false),
       makeNotification(surfaceID: surfaceB, isRead: false),
       makeNotification(surfaceID: surfaceB, isRead: true),
-    ]
+    ])
 
     state.markNotificationsRead(forSurfaceID: surfaceB)
 
@@ -452,10 +452,10 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
-    state.notifications = [
+    state.setNotificationsForTesting([
       makeNotification(isRead: false),
       makeNotification(isRead: false),
-    ]
+    ])
 
     state.setNotificationsEnabled(false)
 
@@ -468,10 +468,10 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
-    state.notifications = [
+    state.setNotificationsForTesting([
       makeNotification(isRead: false),
       makeNotification(isRead: true),
-    ]
+    ])
 
     state.dismissAllNotifications()
 
@@ -974,8 +974,8 @@ struct WorktreeTerminalManagerTests {
 
     let older = Date(timeIntervalSince1970: 1_000)
     let newer = Date(timeIntervalSince1970: 2_000)
-    stateA.notifications = [makeNotification(surfaceID: surfaceA.id, isRead: false, createdAt: older)]
-    stateB.notifications = [makeNotification(surfaceID: surfaceB.id, isRead: false, createdAt: newer)]
+    stateA.setNotificationsForTesting([makeNotification(surfaceID: surfaceA.id, isRead: false, createdAt: older)])
+    stateB.setNotificationsForTesting([makeNotification(surfaceID: surfaceB.id, isRead: false, createdAt: newer)])
 
     let location = manager.latestUnreadNotificationLocation()
     #expect(location?.worktreeID == worktreeB.id)
@@ -999,7 +999,7 @@ struct WorktreeTerminalManagerTests {
     let orphan = makeNotification(surfaceID: UUID(), isRead: false, createdAt: Date(timeIntervalSince1970: 2_000))
     // The orphan is newer but its surface no longer exists in any tab, so
     // it must be skipped and the alive notification wins.
-    state.notifications = [orphan, alive]
+    state.setNotificationsForTesting([orphan, alive])
 
     let location = manager.latestUnreadNotificationLocation()
     #expect(location?.surfaceID == surface.id)
@@ -1028,13 +1028,13 @@ struct WorktreeTerminalManagerTests {
     }
 
     let orphanSurface = UUID()
-    stateA.notifications = [
+    stateA.setNotificationsForTesting([
       makeNotification(surfaceID: orphanSurface, isRead: false, createdAt: Date(timeIntervalSince1970: 3)),
       makeNotification(surfaceID: surfaceA.id, isRead: false, createdAt: Date(timeIntervalSince1970: 1)),
-    ]
-    stateB.notifications = [
+    ])
+    stateB.setNotificationsForTesting([
       makeNotification(surfaceID: surfaceB.id, isRead: false, createdAt: Date(timeIntervalSince1970: 2))
-    ]
+    ])
 
     let location = manager.latestUnreadNotificationLocation()
     #expect(location?.worktreeID == worktreeB.id)
@@ -1046,9 +1046,9 @@ struct WorktreeTerminalManagerTests {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
-    state.notifications = [
+    state.setNotificationsForTesting([
       makeNotification(surfaceID: UUID(), isRead: false, createdAt: .distantPast)
-    ]
+    ])
     #expect(manager.latestUnreadNotificationLocation() == nil)
   }
 
@@ -1072,12 +1072,14 @@ struct WorktreeTerminalManagerTests {
     #expect(state.hasUnseenNotification(forTabID: tab) == false)
 
     // Notification on the first leaf lights up the tab.
-    state.notifications = [makeNotification(surfaceID: leaves[0].id, isRead: false, createdAt: .distantPast)]
+    state.setNotificationsForTesting([makeNotification(surfaceID: leaves[0].id, isRead: false, createdAt: .distantPast)]
+    )
     #expect(state.hasUnseenNotification(forTabID: tab) == true)
     state.markAllNotificationsRead()
 
     // Notification on the second leaf also lights up the tab.
-    state.notifications = [makeNotification(surfaceID: leaves[1].id, isRead: false, createdAt: .distantPast)]
+    state.setNotificationsForTesting([makeNotification(surfaceID: leaves[1].id, isRead: false, createdAt: .distantPast)]
+    )
     #expect(state.hasUnseenNotification(forTabID: tab) == true)
 
     // Once read, the tab is clean again.
@@ -1085,7 +1087,7 @@ struct WorktreeTerminalManagerTests {
     #expect(state.hasUnseenNotification(forTabID: tab) == false)
 
     // A notification tied to a surface outside this tab does NOT light it up.
-    state.notifications = [makeNotification(surfaceID: UUID(), isRead: false, createdAt: .distantPast)]
+    state.setNotificationsForTesting([makeNotification(surfaceID: UUID(), isRead: false, createdAt: .distantPast)])
     #expect(state.hasUnseenNotification(forTabID: tab) == false)
   }
 
@@ -1095,7 +1097,7 @@ struct WorktreeTerminalManagerTests {
     let state = manager.state(for: worktree)
     let first = makeNotification(surfaceID: UUID(), isRead: false, createdAt: .distantPast)
     let second = makeNotification(surfaceID: UUID(), isRead: false, createdAt: .distantPast)
-    state.notifications = [first, second]
+    state.setNotificationsForTesting([first, second])
 
     manager.markNotificationRead(worktreeID: worktree.id, notificationID: first.id)
 
@@ -1371,7 +1373,9 @@ struct WorktreeTerminalManagerTests {
     #expect(state.hasUnseenNotification(forTabID: tabA) == false)
     #expect(state.hasUnseenNotification(forTabID: tabB) == false)
 
-    state.notifications.append(makeNotification(surfaceID: surfaceB.id, isRead: false))
+    state.setNotificationsForTesting(
+      state.notifications + [makeNotification(surfaceID: surfaceB.id, isRead: false)]
+    )
 
     #expect(state.hasUnseenNotification(forTabID: tabA) == false)
     #expect(state.hasUnseenNotification(forTabID: tabB) == true)

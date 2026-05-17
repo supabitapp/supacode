@@ -9,11 +9,10 @@ import GhosttyKit
 struct TerminalTabFeature {
   @ObservableState
   struct State: Identifiable, Equatable, Sendable {
-    /// `IdentifiedArray` keys by `id`. Using UUID here keeps the Hashable
-    /// witness non-isolated; `TerminalTabID`'s synthesized Hashable picks up
-    /// MainActor isolation in Swift 6 from its uses inside `WorktreeTerminalState`.
-    let id: UUID
-    var tabID: TerminalTabID { TerminalTabID(rawValue: id) }
+    /// Typed `TerminalTabID` so the nominal-type wall against an unrelated
+    /// raw `UUID` reaches every scoping site. `IdentifiedArrayOf` keys by
+    /// this id directly.
+    let id: TerminalTabID
     let worktreeID: Worktree.ID
 
     /// Surface IDs in this tab in split-tree order. Mirrored from

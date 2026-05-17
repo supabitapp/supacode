@@ -326,6 +326,19 @@ final class WorktreeTerminalManager {
     // next mutation).
     lastEmittedProjections.removeAll()
     for id in states.keys { emitProjection(for: id) }
+    // Replay per-tab projections / stripe-progress displays for the same reason:
+    // a new subscriber needs the existing `terminalTabs[id:]` rows seeded so
+    // tab-bar leaves don't render empty until the next per-tab mutation.
+    for (worktreeID, state) in states {
+      for projection in state.currentTabProjections() {
+        continuation.yield(.tabProjectionChanged(worktreeID: worktreeID, projection))
+      }
+      for (tabID, display) in state.currentTabProgressDisplays() {
+        continuation.yield(
+          .tabProgressDisplayChanged(worktreeID: worktreeID, tabID: tabID, display: display)
+        )
+      }
+    }
     return stream
   }
 
@@ -456,13 +469,16 @@ final class WorktreeTerminalManager {
     for (id, state) in removed {
       saveLayoutSnapshot?(id, state.captureLayoutSnapshot())
       state.closeAllSurfaces()
+      // Signals the reducer to drop any orphan `terminalTabs` entries and
+      // recently-removed-tab records for this worktree so a same-session
+      // restore (snapshot reuses persisted tab UUIDs) starts clean.
+      emit(.worktreeStateTornDown(worktreeID: id))
     }
     if !removed.isEmpty {
       terminalLogger.info("Pruned \(removed.count) terminal state(s)")
     }
     states = states.filter { worktreeIDs.contains($0.key) }
     cancelPendingIdleHooks(forSurfaceIDs: prunedSurfaceIDs)
-    // Drop projection cache for pruned worktrees so a future re-add starts clean.
     for (id, _) in removed { lastEmittedProjections.removeValue(forKey: id) }
     emitNotificationIndicatorCountIfNeeded()
   }

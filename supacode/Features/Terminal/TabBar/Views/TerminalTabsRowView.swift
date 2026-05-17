@@ -28,8 +28,8 @@ struct TerminalTabsRowView: View {
         ForEach(Array(openedTabs.enumerated()), id: \.element) { index, id in
           if let item = manager.tabs.first(where: { $0.id == id }),
             let tabStore = terminalsStore.scope(
-              state: \.terminalTabs[id: id.rawValue],
-              action: \.terminalTabs[id: id.rawValue]
+              state: \.terminalTabs[id: id],
+              action: \.terminalTabs[id: id]
             )
           {
             TerminalTabView(

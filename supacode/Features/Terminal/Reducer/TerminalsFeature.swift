@@ -12,15 +12,24 @@ struct TerminalsFeature {
   /// most recent removals lets the reducer drop those stragglers.
   static let recentlyRemovedTabLimit = 128
 
+  /// Removed-tab record keyed by `(worktreeID, tabID)`. Same-session
+  /// snapshot-restore reuses the persisted `tabSnapshot.id`, so scoping the
+  /// dedup by worktree lets the FIFO drain when its owning worktree's state
+  /// is torn down without shadowing a legitimate re-add.
+  struct RecentlyRemovedTab: Equatable, Sendable {
+    let worktreeID: Worktree.ID
+    let tabID: TerminalTabID
+  }
+
   @ObservableState
   struct State: Equatable {
-    /// Per-tab feature instances keyed by `TerminalTabID.rawValue` (UUID).
-    /// Tab-bar leaves scope through `\.terminalTabs[id:]` for per-tab
-    /// observation isolation during agent storms.
+    /// Per-tab feature instances keyed by `TerminalTabID`. Tab-bar leaves
+    /// scope through `\.terminalTabs[id:]` for per-tab observation isolation
+    /// during agent storms.
     var terminalTabs: IdentifiedArrayOf<TerminalTabFeature.State> = []
-    /// FIFO of recently-removed tab UUIDs. Insert order = removal order;
-    /// oldest entry is dropped when the cap is hit.
-    var recentlyRemovedTabIDs: [UUID] = []
+    /// FIFO of recently-removed tabs scoped by `(worktreeID, tabID)`. Insert
+    /// order = removal order; oldest entry is dropped when the cap is hit.
+    var recentlyRemovedTabIDs: [RecentlyRemovedTab] = []
   }
 
   enum Action {
@@ -29,7 +38,11 @@ struct TerminalsFeature {
     /// per-tab state if missing, then forwards to the tab's reducer.
     case tabProjectionChanged(worktreeID: Worktree.ID, projection: WorktreeTabProjection)
     /// Tab destroyed in the worktree state. Drops the matching feature state.
-    case tabRemoved(tabID: TerminalTabID)
+    case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    /// Worktree's entire terminal state was torn down (prune path). Drops any
+    /// orphan `terminalTabs` rows and removed-tab FIFO records for this
+    /// worktree so a same-session re-attach starts clean.
+    case worktreeStateTornDown(worktreeID: Worktree.ID)
   }
 
   var body: some Reducer<State, Action> {
@@ -39,25 +52,38 @@ struct TerminalsFeature {
         return .none
 
       case .tabProjectionChanged(let worktreeID, let projection):
-        let elementID = projection.tabID.rawValue
-        if state.terminalTabs[id: elementID] == nil {
-          // Drop stale projections arriving after the tab was removed.
-          guard !state.recentlyRemovedTabIDs.contains(elementID) else { return .none }
+        let tabID = projection.tabID
+        if state.terminalTabs[id: tabID] == nil {
+          // Drop stale projections arriving after the tab was removed in this
+          // worktree. Matching by (worktreeID, tabID) so a snapshot-restore
+          // under a different worktree wouldn't be shadowed; the per-worktree
+          // drain on teardown covers the same-worktree restore case.
+          guard
+            !state.recentlyRemovedTabIDs.contains(where: {
+              $0.worktreeID == worktreeID && $0.tabID == tabID
+            })
+          else { return .none }
           state.terminalTabs.append(
-            TerminalTabFeature.State(id: elementID, worktreeID: worktreeID)
+            TerminalTabFeature.State(id: tabID, worktreeID: worktreeID)
           )
         }
-        return .send(.terminalTabs(.element(id: elementID, action: .projectionChanged(projection))))
+        return .send(.terminalTabs(.element(id: tabID, action: .projectionChanged(projection))))
 
-      case .tabRemoved(let tabID):
-        let elementID = tabID.rawValue
-        state.terminalTabs.remove(id: elementID)
-        state.recentlyRemovedTabIDs.append(elementID)
+      case .tabRemoved(let worktreeID, let tabID):
+        state.terminalTabs.remove(id: tabID)
+        state.recentlyRemovedTabIDs.append(
+          RecentlyRemovedTab(worktreeID: worktreeID, tabID: tabID)
+        )
         if state.recentlyRemovedTabIDs.count > Self.recentlyRemovedTabLimit {
           state.recentlyRemovedTabIDs.removeFirst(
             state.recentlyRemovedTabIDs.count - Self.recentlyRemovedTabLimit
           )
         }
+        return .none
+
+      case .worktreeStateTornDown(let worktreeID):
+        state.recentlyRemovedTabIDs.removeAll { $0.worktreeID == worktreeID }
+        state.terminalTabs.removeAll { $0.worktreeID == worktreeID }
         return .none
       }
     }

@@ -8,7 +8,7 @@ import Testing
 @MainActor
 struct TerminalTabFeatureTests {
   @Test func projectionChangedShortCircuitsOnEqualPayload() async {
-    let tabID = UUID()
+    let tabID = TerminalTabID(rawValue: UUID())
     let initial = TerminalTabFeature.State(
       id: tabID,
       worktreeID: "/tmp/repo",
@@ -22,7 +22,7 @@ struct TerminalTabFeatureTests {
     await store.send(
       .projectionChanged(
         WorktreeTabProjection(
-          tabID: TerminalTabID(rawValue: tabID),
+          tabID: tabID,
           surfaceIDs: initial.surfaceIDs,
           activeSurfaceID: initial.activeSurfaceID,
           unseenNotificationCount: 0
@@ -31,7 +31,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func projectionChangedAppliesEachFieldIndependently() async {
-    let tabID = UUID()
+    let tabID = TerminalTabID(rawValue: UUID())
     let store = TestStore(
       initialState: TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
     ) { TerminalTabFeature() }
@@ -40,7 +40,7 @@ struct TerminalTabFeatureTests {
     await store.send(
       .projectionChanged(
         WorktreeTabProjection(
-          tabID: TerminalTabID(rawValue: tabID),
+          tabID: tabID,
           surfaceIDs: [surface],
           activeSurfaceID: surface,
           unseenNotificationCount: 3
@@ -54,7 +54,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func agentSnapshotChangedShortCircuitsOnEqualArray() async {
-    let tabID = UUID()
+    let tabID = TerminalTabID(rawValue: UUID())
     let agents = [
       AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
     ]
@@ -66,7 +66,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func agentSnapshotChangedReplacesArrayOnDiff() async {
-    let tabID = UUID()
+    let tabID = TerminalTabID(rawValue: UUID())
     let store = TestStore(
       initialState: TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
     ) { TerminalTabFeature() }
@@ -80,7 +80,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func progressDisplayChangedShortCircuitsOnEqualDisplay() async {
-    let tabID = UUID()
+    let tabID = TerminalTabID(rawValue: UUID())
     let display = TerminalTabProgressDisplay(style: .indeterminate)
     let store = TestStore(
       initialState: TerminalTabFeature.State(
@@ -92,7 +92,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func progressDisplayChangedClearsToNil() async {
-    let tabID = UUID()
+    let tabID = TerminalTabID(rawValue: UUID())
     let store = TestStore(
       initialState: TerminalTabFeature.State(
         id: tabID, worktreeID: "/tmp/repo",
