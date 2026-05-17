@@ -340,8 +340,21 @@ extension RepositoriesFeature.Action {
       .archiveWorktreeApply, .unarchiveWorktree,
       .deleteWorktreeApply, .worktreeDeleted,
       .createWorktreeInRepository, .createRandomWorktreeInRepository,
-      .worktreeInfoEvent,
       .autoDeleteExpiredArchivedWorktrees:
+      return .all
+
+    // `worktreeInfoEvent` is a pure effect-launcher (HEAD watcher tick): the
+    // arm only spawns `.run { ... await send(.branchNameLoaded(...)) }` etc.
+    // and never mutates `state`. The downstream `.worktreeBranchNameLoaded` /
+    // `.repositoryPullRequestsLoaded` arms declare their own invalidations.
+    case .worktreeInfoEvent:
+      return []
+
+    // `worktreeBranchNameLoaded` mutates `worktree.name` via `updateWorktreeName`,
+    // which feeds `computeToolbarNotificationGroups()` (notification group title).
+    // Without `.toolbarNotificationGroups` the popover would show the old name
+    // until an unrelated bulk action recomputed the cache.
+    case .worktreeBranchNameLoaded:
       return .all
 
     // Layout + slice but not the notification snapshot (no notification touch).
@@ -350,7 +363,6 @@ extension RepositoriesFeature.Action {
       .archiveScriptCompleted, .deleteScriptCompleted, .scriptCompleted,
       .consumeSetupScript,
       .pinWorktree, .unpinWorktree,
-      .worktreeBranchNameLoaded,
       .repositoryPullRequestsLoaded:
       return [.sidebarStructure, .selectedWorktreeSlice]
 
@@ -403,6 +415,23 @@ extension RepositoriesFeature.Action {
 }
 
 extension RepositoriesFeature.State {
+  /// Single source of truth for the post-reduce cache recompute. The
+  /// production hook in `RepositoriesFeature.body` and the test mirror in
+  /// `RepositoriesSidebarTestHelpers` both call this so a fourth cache lands
+  /// in one place instead of needing two coordinated updates.
+  @MainActor
+  mutating func applyCacheRecomputes(_ invalidations: CacheInvalidations) {
+    if invalidations.contains(.sidebarStructure) {
+      recomputeSidebarStructureIfChanged()
+    }
+    if invalidations.contains(.selectedWorktreeSlice) {
+      recomputeSelectedWorktreeSliceIfChanged()
+    }
+    if invalidations.contains(.toolbarNotificationGroups) {
+      recomputeToolbarNotificationGroupsIfChanged()
+    }
+  }
+
   /// Pinned worktree IDs across every repository in the user's repo order.
   /// Git main worktrees are excluded (they belong to the per-repo main slot,
   /// not the user-curated pinned list). Folders seed into `.unpinned` by

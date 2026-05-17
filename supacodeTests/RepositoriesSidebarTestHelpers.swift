@@ -28,15 +28,7 @@ extension RepositoriesFeature.State {
   /// expected state mutates exactly what the live reducer does, no more.
   @MainActor
   mutating func applyPostReduceCacheRecomputes(_ invalidations: CacheInvalidations = .all) {
-    if invalidations.contains(.sidebarStructure) {
-      recomputeSidebarStructureIfChanged()
-    }
-    if invalidations.contains(.selectedWorktreeSlice) {
-      recomputeSelectedWorktreeSliceIfChanged()
-    }
-    if invalidations.contains(.toolbarNotificationGroups) {
-      recomputeToolbarNotificationGroupsIfChanged()
-    }
+    applyCacheRecomputes(invalidations)
   }
 
   /// Convenience init for tests that need a populated row/grouping store from a roster.

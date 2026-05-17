@@ -3328,16 +3328,7 @@ struct RepositoriesFeature {
     Reduce { state, action in
       @Dependency(\.sidebarStructureAutoRecompute) var autoRecompute
       guard autoRecompute else { return .none }
-      let invalidations = action.cacheInvalidations
-      if invalidations.contains(.sidebarStructure) {
-        state.recomputeSidebarStructureIfChanged()
-      }
-      if invalidations.contains(.selectedWorktreeSlice) {
-        state.recomputeSelectedWorktreeSliceIfChanged()
-      }
-      if invalidations.contains(.toolbarNotificationGroups) {
-        state.recomputeToolbarNotificationGroupsIfChanged()
-      }
+      state.applyCacheRecomputes(action.cacheInvalidations)
       return .none
     }
   }
