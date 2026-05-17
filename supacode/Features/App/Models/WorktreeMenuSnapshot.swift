@@ -76,3 +76,57 @@ extension AppFeature.State {
     }
   #endif
 }
+
+extension AppFeature.Action {
+  /// Exhaustive gate for the `WorktreeMenuSnapshot` post-reduce recompute.
+  /// A `default` arm would silently classify any new action as "no recompute"
+  /// and risk a stale snapshot; the explicit switch forces classification at
+  /// compile time. The Equatable diff inside
+  /// `recomputeWorktreeMenuSnapshotIfChanged` still catches no-op recomputes;
+  /// this gate avoids the recompute itself on the action volumes #289 cares
+  /// about (agent-presence ticks, per-tab projection storms).
+  var affectsWorktreeMenuSnapshot: Bool {
+    switch self {
+    // Repository actions: the existing cache-invalidation map is the source
+    // of truth. Every snapshot input that lives on `repositories` (canCreate,
+    // canNavigate*, isInitialLoadComplete, selectedWorktreeSlice.pullRequest)
+    // changes via an action that already invalidates at least one cache.
+    case .repositories(let inner):
+      return !inner.cacheInvalidations.isEmpty
+    // Settings can change `shortcutOverrides` or `githubIntegrationEnabled`.
+    case .settings:
+      return true
+    // Only `notificationIndicatorChanged` writes the snapshot's count field.
+    case .terminalEvent(let event):
+      switch event {
+      case .notificationIndicatorChanged:
+        return true
+      case .notificationReceived, .tabCreated, .tabClosed, .focusChanged,
+        .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
+        .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
+        .tabRemoved, .worktreeStateTornDown, .tabProgressDisplayChanged,
+        .surfacesClosed, .agentHookEventReceived:
+        return false
+      }
+    // Hot agent-storm paths: per-tab churn never mutates snapshot inputs.
+    // `.terminals` is safe because it owns only per-tab feature state; any
+    // change that DOES affect a snapshot input flows back through a separate
+    // `.terminalEvent.notificationIndicatorChanged` (counted above) or a
+    // `.repositories` cache invalidation (the cacheInvalidations gate above).
+    case .agentPresence, .terminals, .commandPalette, .updates:
+      return false
+    // Lifecycle / UI / effect-dispatch actions never write snapshot inputs
+    // directly; any downstream mutation flows back through a classified arm.
+    case .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
+      .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
+      .openWorktree, .openWorktreeFailed, .requestQuit, .newTerminal,
+      .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
+      .stopScript, .stopRunScripts, .closeTab, .closeSurface,
+      .startSearch, .searchSelection, .navigateSearchNext,
+      .navigateSearchPrevious, .endSearch,
+      .systemNotificationsPermissionFailed, .deeplinkReceived,
+      .deeplink, .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
+      return false
+    }
+  }
+}

@@ -1024,11 +1024,13 @@ struct AppFeature {
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
     }
-    Reduce { state, _ in
-      // Refresh the menu-bar snapshot after every action. The Equatable diff
-      // in the helper keeps SwiftUI from invalidating `WorktreeCommands` when
-      // the new snapshot equals the cached one, which is the common case
-      // during agent-presence storms (#289).
+    Reduce { state, action in
+      // Cold-path gate. Without this, an agent storm fires
+      // `recomputeWorktreeMenuSnapshotIfChanged` hundreds of times per second
+      // (URL flatMap + 8-field Equatable diff each) only for the Equatable
+      // diff to find a no-op. The gate skips the recompute itself for
+      // actions that demonstrably can't change a snapshot input (#289).
+      guard action.affectsWorktreeMenuSnapshot else { return .none }
       state.recomputeWorktreeMenuSnapshotIfChanged()
       return .none
     }
