@@ -28,7 +28,7 @@ public struct AppearanceSettingsView: View {
         }
         Toggle(isOn: $store.terminalThemeSyncEnabled) {
           Text("Supacode Terminal Theme")
-          Text("When off, honors your Ghostty config theme. Run `ghostty +list-themes` to list available ones.")
+          Text("When off, honors your Ghostty config theme.")
         }
       }
       Section {
