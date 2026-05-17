@@ -139,10 +139,9 @@ struct TerminalTabView: View {
     .padding(.bottom, isActive ? TerminalTabBarMetrics.activeTabBottomPadding : 0)
     .offset(y: isActive ? TerminalTabBarMetrics.activeTabOffset : 0)
     .clipShape(.rect(cornerRadius: TerminalTabBarMetrics.tabCornerRadius))
-    // Stripe overlay sits AFTER `clipShape` and uses `-pixelLength` horizontal
-    // padding so the active tab's tint or progress color paints over the
-    // adjacent dividers — the corner-radius clip would otherwise trap the
-    // stripe inside the tab's frame and leave a 1px gray notch at each side.
+    // Stripe overlay sits AFTER `clipShape` with negative horizontal padding
+    // so the tint paints over adjacent dividers; clipping otherwise leaves a
+    // 1px gray notch at each side.
     .overlay(alignment: .top) {
       TerminalTabProgressStripe(
         isActive: isActive,

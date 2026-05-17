@@ -1,10 +1,9 @@
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Background fill + inactive-tab bottom separator. The top stripe is rendered
-/// as an overlay at `TerminalTabView` level so it can paint over the adjacent
-/// `TerminalTabDivider`s — the corner-radius `clipShape` on the tab would
-/// otherwise clip a negative-padded stripe.
+/// Background fill + inactive-tab bottom separator. The top stripe is moved
+/// to a `TerminalTabView` overlay so it can paint over adjacent dividers
+/// without being clipped by the tab's `clipShape`.
 struct TerminalTabBackground: View {
   var isActive: Bool
   var isHovering: Bool

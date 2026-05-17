@@ -17,16 +17,9 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
   }
 }
 
-/// Wraps `WorktreeToolbarTitleBody` with a chrome-aware `\.colorScheme`
-/// override. The toolbar lives outside the `windowTintColorScheme` modifier
-/// (which wraps `detailContent`'s body only — see
-/// `WorktreeDetailView.detailContent`), so the chrome env doesn't reach here.
-/// This wrapper tracks the same dependencies as `WindowTintColorScheme`
-/// (system scheme + `ghosttyRuntimeConfigDidChange`) and resolves
-/// `\.colorScheme` against the live chrome so the title text stays readable
-/// when the Ghostty theme diverges from the system theme (e.g. light system
-/// + dark terminal background, or the "Supacode Terminal Theme" toggle
-/// flipping between sync-on and sync-off).
+/// Chrome-aware wrapper that re-resolves `\.colorScheme` against the
+/// terminal background so the toolbar title stays readable when the Ghostty
+/// theme diverges from the system appearance.
 struct WorktreeToolbarTitleView: View {
   let content: WorktreeToolbarTitleContent
   let terminalManager: WorktreeTerminalManager
