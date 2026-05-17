@@ -67,19 +67,31 @@ struct SidebarBottomCardTests {
     )
   }
 
-  @Test func highlightCardHiddenWhenToggleOff() {
+  @Test func highlightCardHiddenWhenBothTogglesOff() {
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
-        highlightRelevant: false,
+        groupPinnedRows: false,
+        groupActiveRows: false,
         dismissedAt: .distantPast
       ) == .hidden
     )
   }
 
-  @Test func highlightCardVisibleWhenToggleOnAndNotDismissed() {
+  @Test func highlightCardVisibleWhenOnlyPinnedOn() {
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
-        highlightRelevant: true,
+        groupPinnedRows: true,
+        groupActiveRows: false,
+        dismissedAt: .distantPast
+      ) == .visible
+    )
+  }
+
+  @Test func highlightCardVisibleWhenOnlyActiveOn() {
+    #expect(
+      HighlightRelevantOnboardingCardView.resolveMode(
+        groupPinnedRows: false,
+        groupActiveRows: true,
         dismissedAt: .distantPast
       ) == .visible
     )
@@ -89,7 +101,8 @@ struct SidebarBottomCardTests {
     let afterRelevance = HighlightRelevantOnboardingCardView.cardRelevantSinceDate.addingTimeInterval(1)
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
-        highlightRelevant: true,
+        groupPinnedRows: true,
+        groupActiveRows: true,
         dismissedAt: afterRelevance
       ) == .hidden
     )
@@ -102,7 +115,8 @@ struct SidebarBottomCardTests {
     let atBoundary = HighlightRelevantOnboardingCardView.cardRelevantSinceDate
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
-        highlightRelevant: true,
+        groupPinnedRows: true,
+        groupActiveRows: true,
         dismissedAt: atBoundary
       ) == .hidden
     )

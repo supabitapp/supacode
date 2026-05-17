@@ -17,6 +17,11 @@ extension RepositoriesFeature.State {
     self.repositories = IdentifiedArray(uniqueElements: repositories)
     self.repositoryRoots = repositories.map(\.rootURL)
     reconcileSidebarForTesting()
+    // The post-reduce hook is gated off in tests (it would otherwise mutate
+    // `sidebarStructure` on every action and break exhaustive TestStore
+    // expectations). Seed the cache once here so tests that inspect the
+    // structure see meaningful data without needing to flip the dependency.
+    recomputeSidebarStructureIfChanged()
   }
 
   /// Seed per-row pull-request data for tests directly on the row store.

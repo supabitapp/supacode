@@ -10,7 +10,8 @@ struct SidebarCommands: Commands {
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
   @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
   private var nestedOnboardingDismissedAt: Date = .distantPast
-  @Shared(.sidebarHighlightRelevant) private var highlightRelevant: Bool
+  @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
+  @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
   @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
   private var highlightOnboardingDismissedAt: Date = .distantPast
 
@@ -33,19 +34,43 @@ struct SidebarCommands: Commands {
     )
   }
 
-  /// Same toggle-off permadismiss pattern as `nestWorktreesToggle`, applied
-  /// to the Highlight Relevant onboarding card.
-  private var highlightRelevantToggle: Binding<Bool> {
+  /// Group Pinned Rows toggle. When the user turns it off and the Active
+  /// toggle is already off, the highlight onboarding card has nothing left
+  /// to advertise — permadismiss it so it doesn't reappear on next launch.
+  private var groupPinnedRowsToggle: Binding<Bool> {
     Binding(
-      get: { highlightRelevant },
+      get: { groupPinnedRows },
       set: { newValue in
-        $highlightRelevant.withLock { $0 = newValue }
-        guard !newValue,
-          !HighlightRelevantOnboardingCardView.isDismissed(at: highlightOnboardingDismissedAt)
-        else { return }
-        $highlightOnboardingDismissedAt.withLock { $0 = .now }
+        $groupPinnedRows.withLock { $0 = newValue }
+        autoDismissHighlightOnboardingIfFullyDisabled(
+          afterPinned: newValue,
+          afterActive: groupActiveRows
+        )
       }
     )
+  }
+
+  private var groupActiveRowsToggle: Binding<Bool> {
+    Binding(
+      get: { groupActiveRows },
+      set: { newValue in
+        $groupActiveRows.withLock { $0 = newValue }
+        autoDismissHighlightOnboardingIfFullyDisabled(
+          afterPinned: groupPinnedRows,
+          afterActive: newValue
+        )
+      }
+    )
+  }
+
+  private func autoDismissHighlightOnboardingIfFullyDisabled(
+    afterPinned: Bool,
+    afterActive: Bool
+  ) {
+    guard !afterPinned, !afterActive,
+      !HighlightRelevantOnboardingCardView.isDismissed(at: highlightOnboardingDismissedAt)
+    else { return }
+    $highlightOnboardingDismissedAt.withLock { $0 = .now }
   }
 
   var body: some Commands {
@@ -66,7 +91,10 @@ struct SidebarCommands: Commands {
       .help("Reveal in Sidebar (\(revealInSidebar?.display ?? "none"))")
       .disabled(revealInSidebarAction == nil)
       Section {
-        Toggle("Highlight Relevant Sidebar Items", isOn: highlightRelevantToggle)
+        Menu("Group Relevant Sidebar Rows") {
+          Toggle("Group Pinned Rows", isOn: groupPinnedRowsToggle)
+          Toggle("Group Active Rows", isOn: groupActiveRowsToggle)
+        }
         Toggle("Nest Worktrees by Branch", isOn: nestWorktreesToggle)
         Toggle("Hide Worktree Name on Match", isOn: Binding($hideSubtitleOnMatch))
       }

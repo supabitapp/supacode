@@ -154,24 +154,17 @@ nonisolated extension SharedReaderKey where Self == AppStorageKey<Bool>.Default 
     Self[.appStorage("sidebarNestWorktreesByBranch"), default: true]
   }
 
-  /// "Highlight Relevant Sidebar Items" view-menu toggle. Gates the global
-  /// Pinned / Active sections at the top of the sidebar and the matching
-  /// onboarding card. Defaults to on so the feature is discoverable on first
-  /// launch.
-  static var sidebarHighlightRelevant: Self {
-    Self[.appStorage("sidebarHighlightRelevant"), default: true]
+  /// "Group Pinned Rows" view-menu toggle. When on, pinned rows from every
+  /// repository are hoisted into a single Pinned section at the top of the
+  /// sidebar. Defaults to on so the feature is discoverable on first launch.
+  static var sidebarGroupPinnedRows: Self {
+    Self[.appStorage("sidebarGroupPinnedRows"), default: true]
   }
 
-  /// Persisted expansion state for the global Pinned section. Defaults
-  /// expanded; the user can collapse to hide the entire bucket in one click.
-  static var sidebarHighlightPinnedExpanded: Self {
-    Self[.appStorage("sidebarHighlightPinnedExpanded"), default: true]
-  }
-
-  /// Persisted expansion state for the global Active section. Defaults
-  /// expanded; the user can collapse to silence the surfacing UX without
-  /// turning off the whole feature.
-  static var sidebarHighlightActiveExpanded: Self {
-    Self[.appStorage("sidebarHighlightActiveExpanded"), default: true]
+  /// "Group Active Rows" view-menu toggle. When on, rows with unread
+  /// notifications / agents / awaiting input / running scripts are hoisted
+  /// into a single Active section at the top of the sidebar.
+  static var sidebarGroupActiveRows: Self {
+    Self[.appStorage("sidebarGroupActiveRows"), default: true]
   }
 }

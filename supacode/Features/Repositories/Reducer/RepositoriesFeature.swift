@@ -148,6 +148,12 @@ struct RepositoriesFeature {
     /// State so the reducer's hotkey / arrow navigation walks the same
     /// trie-filtered row list the sidebar actually renders.
     @Shared(.sidebarNestWorktreesByBranch) var sidebarNestWorktreesByBranch: Bool
+    /// Single source of truth the sidebar view renders against. Recomputed
+    /// inside the reducer (see `recomputeSidebarStructureIfChanged()`) so
+    /// `SidebarListView.body` is a dumb iterator. The Equatable diff guard
+    /// in the recompute helper keeps a no-op rebuild from invalidating
+    /// SwiftUI when the user-visible layout didn't actually change.
+    var sidebarStructure: SidebarStructure = .placeholder
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
     @Presents var alert: AlertState<Alert>?
@@ -203,6 +209,10 @@ struct RepositoriesFeature {
   enum Action {
     case sidebarItems(IdentifiedActionOf<SidebarItemFeature>)
     case task
+    /// Fired by the `.task` long-running observers on `@Shared(.sidebarGroupPinnedRows)`
+    /// and `@Shared(.sidebarGroupActiveRows)`. Pure no-op outside of that path —
+    /// the post-reduce hook handles every other recompute trigger.
+    case sidebarGroupingTogglesChanged
     case setOpenPanelPresented(Bool)
     case loadPersistedRepositories
     case refreshWorktrees
@@ -426,6 +436,12 @@ struct RepositoriesFeature {
         // the focus restore and kicks off the repository load.
         state.shouldRestoreLastFocusedWorktree = state.sidebar.focusedWorktreeID != nil
         return .send(.loadPersistedRepositories)
+
+      case .sidebarGroupingTogglesChanged:
+        // The post-reduce hook below picks up the toggle state and rebuilds.
+        // Fired from `SidebarCommands` menu bindings so the structure
+        // recomputes the moment the user flips a grouping toggle.
+        return .none
 
       case .setOpenPanelPresented(let isPresented):
         state.isOpenPanelPresented = isPresented
@@ -3253,6 +3269,20 @@ struct RepositoriesFeature {
     .ifLet(\.$repositoryCustomization, action: \.repositoryCustomization) {
       RepositoryCustomizationFeature()
     }
+    // Targeted post-reduce hook: only the actions that demonstrably touch
+    // structure inputs trigger a recompute. The Equatable diff inside the
+    // helper suppresses no-op rebuilds at the SwiftUI layer. Gated on
+    // `\.sidebarStructureAutoRecompute` (default `false` in tests) so the
+    // ~100 TestStore expectations that don't care about sidebar layout
+    // aren't forced to acknowledge a derived-cache mutation. Tests that
+    // verify the structure flip it back on via `withDependencies`.
+    Reduce { state, action in
+      @Dependency(\.sidebarStructureAutoRecompute) var autoRecompute
+      if autoRecompute, action.affectsSidebarStructure {
+        state.recomputeSidebarStructureIfChanged()
+      }
+      return .none
+    }
   }
 
   private func refreshRepositoryPullRequests(
@@ -4103,7 +4133,16 @@ extension RepositoriesFeature.State {
   /// across PR / lifecycle ticks. Lets `focusedSceneValue` dedupe so open submenus
   /// don't rebuild and drop hover.
   func hotkeyWorktreeSlots(includingRepositoryIDs: Set<Repository.ID>) -> [HotkeyWorktreeSlot] {
-    orderedSidebarItemIDs(includingRepositoryIDs: includingRepositoryIDs).compactMap { id in
+    hotkeyWorktreeSlots(
+      for: orderedSidebarItemIDs(includingRepositoryIDs: includingRepositoryIDs)
+    )
+  }
+
+  /// Project a caller-provided ID list into menu slots. Used when the sidebar
+  /// has composed an order the reducer can't derive on its own (e.g. highlight
+  /// sections hoisted above per-repo rows).
+  func hotkeyWorktreeSlots(for ids: [Worktree.ID]) -> [HotkeyWorktreeSlot] {
+    ids.compactMap { id in
       guard let item = sidebarItems[id: id] else { return nil }
       return HotkeyWorktreeSlot(id: item.id, name: item.name, repositoryID: item.repositoryID)
     }

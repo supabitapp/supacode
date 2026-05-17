@@ -10,22 +10,14 @@ import Testing
 
 @MainActor
 struct SidebarPersistenceKeyTests {
-  @Test func highlightRelevantDefaultsOn() {
-    // First-launch discoverability contract for the View-menu toggle: the
-    // Pinned and Active sections must be visible by default so users see
-    // the feature without opening the menu.
-    @Shared(.sidebarHighlightRelevant) var enabled
-    #expect(enabled == true)
-  }
-
-  @Test func highlightSectionsDefaultExpanded() {
-    // Same first-launch contract for the per-section collapse state. A
-    // future flip from `true` to `false` would silently regress the
-    // surfacing UX, so lock both defaults here.
-    @Shared(.sidebarHighlightPinnedExpanded) var pinnedExpanded
-    @Shared(.sidebarHighlightActiveExpanded) var activeExpanded
-    #expect(pinnedExpanded == true)
-    #expect(activeExpanded == true)
+  @Test func groupHighlightRowsDefaultsOn() {
+    // First-launch discoverability contract for the View-menu submenu: both
+    // Group Pinned Rows and Group Active Rows must be visible by default so
+    // users see the highlight feature without opening the menu.
+    @Shared(.sidebarGroupPinnedRows) var groupPinned
+    @Shared(.sidebarGroupActiveRows) var groupActive
+    #expect(groupPinned == true)
+    #expect(groupActive == true)
   }
 
   @Test func corruptFileIsRenamedBeforeFallback() async throws {

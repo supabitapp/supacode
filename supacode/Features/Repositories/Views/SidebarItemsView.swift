@@ -9,20 +9,20 @@ private nonisolated let notificationLogger = SupaLogger("Notifications")
 
 struct SidebarItemsView: View {
   let repository: Repository
-  let hotkeyIDs: [Worktree.ID]
+  /// Precomputed per-repo slot layout from `SidebarStructure`. The view does
+  /// no slot derivation — it walks `groups` in order and renders.
+  let groups: [SidebarItemGroup]
+  /// Already-resolved shortcut hint strings from the structure's `slotByID`
+  /// joined with `commandKeyObserver.isPressed` + shortcut overrides at the
+  /// `SidebarListView` level. `nil` here means "no hint to render".
+  let shortcutHintByID: [Worktree.ID: String]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
 
   var body: some View {
-    let groups = SidebarItemGroup.slots(in: store.state, repositoryID: repository.id)
     let isRepositoryRemoving = store.state.isRemovingRepository(repository)
-    let showShortcutHints = commandKeyObserver.isPressed
-    let shortcutIndexByID: [Worktree.ID: Int] =
-      showShortcutHints ? SidebarShortcutIndex.build(from: hotkeyIDs) : [:]
-
     SidebarItemsDragOverlay(
       repository: repository,
       groups: groups,
@@ -30,7 +30,7 @@ struct SidebarItemsView: View {
       store: store,
       terminalManager: terminalManager,
       isRepositoryRemoving: isRepositoryRemoving,
-      shortcutIndexByID: shortcutIndexByID,
+      shortcutHintByID: shortcutHintByID,
       nestWorktreesByBranch: nestWorktreesByBranch && repository.isGitRepository
     )
   }
@@ -45,7 +45,7 @@ private struct SidebarItemsDragOverlay: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let isRepositoryRemoving: Bool
-  let shortcutIndexByID: [Worktree.ID: Int]
+  let shortcutHintByID: [Worktree.ID: String]
   let nestWorktreesByBranch: Bool
 
   var body: some View {
@@ -59,89 +59,10 @@ private struct SidebarItemsDragOverlay: View {
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: group.hideSubtitle,
         moveBehavior: group.moveBehavior,
-        shortcutIndexByID: shortcutIndexByID,
+        shortcutHintByID: shortcutHintByID,
         nestWorktreesByBranch: nestWorktreesByBranch && group.supportsBranchNesting
       )
     }
-  }
-}
-
-struct SidebarItemGroup: Identifiable {
-  enum MoveBehavior: Hashable {
-    case disabled
-    case pinned(Repository.ID)
-    case unpinned(Repository.ID)
-  }
-
-  enum Slot: Hashable {
-    case main(isSole: Bool)
-    case pinnedTail
-    case pending
-    case unpinnedTail
-  }
-
-  let slot: Slot
-  let repositoryID: Repository.ID
-  let rowIDs: [SidebarItemID]
-
-  var id: Slot { slot }
-
-  var hideSubtitle: Bool {
-    if case .main(let isSole) = slot { isSole } else { false }
-  }
-
-  var moveBehavior: MoveBehavior {
-    switch slot {
-    case .main, .pending: .disabled
-    case .pinnedTail: .pinned(repositoryID)
-    case .unpinnedTail: .unpinned(repositoryID)
-    }
-  }
-
-  /// Only the pinned and unpinned tails participate in branch nesting.
-  /// The main and pending slots are structural and shouldn't be folded into a tree.
-  var supportsBranchNesting: Bool {
-    switch slot {
-    case .pinnedTail, .unpinnedTail: true
-    case .main, .pending: false
-    }
-  }
-}
-
-extension SidebarItemGroup {
-  /// Split one repo's bucketed item IDs into the four ordered slots the
-  /// sidebar renders (`main`, `pinnedTail`, `pending`, `unpinnedTail`).
-  /// Static rather than top-level per the AGENTS.md "no free functions"
-  /// rule. The reducer's `orderedSidebarItemIDs` mirrors this partition
-  /// so hotkeys / arrow-nav agree with the visible row order.
-  static func slots(
-    in state: RepositoriesFeature.State,
-    repositoryID: Repository.ID
-  ) -> [SidebarItemGroup] {
-    guard let bucket = state.sidebarGrouping.bucketsByRepository[repositoryID] else { return [] }
-    let pinnedRows = bucket[.pinned]
-    let unpinnedRows = bucket[.unpinned]
-    let pendingIDs = Set(state.pendingWorktrees.filter { $0.repositoryID == repositoryID }.map(\.id))
-
-    let mainID: SidebarItemID? = pinnedRows.first.flatMap {
-      state.sidebarItems[id: $0]?.isMainWorktree == true ? $0 : nil
-    }
-    let pinnedTail = pinnedRows.filter { $0 != mainID }
-    let pendingTail = unpinnedRows.filter { pendingIDs.contains($0) }
-    let unpinnedTail = unpinnedRows.filter { !pendingIDs.contains($0) }
-    let isSoleDefaultWorktree =
-      mainID != nil && pinnedTail.isEmpty && pendingTail.isEmpty && unpinnedTail.isEmpty
-
-    return [
-      SidebarItemGroup(
-        slot: .main(isSole: isSoleDefaultWorktree),
-        repositoryID: repositoryID,
-        rowIDs: mainID.map { [$0] } ?? []
-      ),
-      SidebarItemGroup(slot: .pinnedTail, repositoryID: repositoryID, rowIDs: pinnedTail),
-      SidebarItemGroup(slot: .pending, repositoryID: repositoryID, rowIDs: pendingTail),
-      SidebarItemGroup(slot: .unpinnedTail, repositoryID: repositoryID, rowIDs: unpinnedTail),
-    ]
   }
 }
 
@@ -154,7 +75,7 @@ private struct SidebarItemGroupView: View {
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
   let moveBehavior: SidebarItemGroup.MoveBehavior
-  let shortcutIndexByID: [Worktree.ID: Int]
+  let shortcutHintByID: [Worktree.ID: String]
   let nestWorktreesByBranch: Bool
 
   var body: some View {
@@ -177,7 +98,7 @@ private struct SidebarItemGroupView: View {
     // cross-group drags would snap back when the tree re-derives from branch
     // names, and the alphabetical sort would clobber any in-bucket reorder.
     let shortcutHintBuilder: (SidebarItemID) -> String? = { rowID in
-      shortcutHint(for: shortcutIndexByID[rowID])
+      shortcutHintByID[rowID]
     }
     switch moveBehavior {
     case .disabled:
@@ -247,16 +168,6 @@ private struct SidebarItemGroupView: View {
       result[id] = leafStore.state.branchName
     }
     return result
-  }
-
-  @Shared(.settingsFile) private var settingsFile
-
-  private func shortcutHint(for index: Int?) -> String? {
-    guard let index else { return nil }
-    return AppShortcuts.worktreeSelectionShortcutDisplay(
-      atSlot: index,
-      overrides: settingsFile.global.shortcutOverrides
-    )
   }
 
   private func moveRows(_ offsets: IndexSet, _ destination: Int) {
@@ -518,42 +429,23 @@ private struct SidebarItemContainer: View {
   var displayNameOverride: String?
   var nestDepth: Int = 0
   var highlightSubtitle: SidebarHighlightRepoTag?
-  @Environment(\.sidebarHighlightRelevant) private var sidebarHighlightRelevant: Bool
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
-  @Shared(.sidebarHighlightPinnedExpanded) private var pinnedExpanded: Bool
-  @Shared(.sidebarHighlightActiveExpanded) private var activeExpanded: Bool
 
   var body: some View {
-    // Suppress the per-repo render only when the row is actually visible in
-    // its hoisted destination. If the destination highlight section is
-    // collapsed the row would vanish from the sidebar entirely; falling
-    // through to the per-repo body keeps it reachable.
-    let isPinnedDestination = store.state.isPinned
-    let activeBucket = SidebarActiveClassification.classify(store.state) != nil
-    let destinationExpanded = isPinnedDestination ? pinnedExpanded : activeExpanded
-    let isHoistedDuplicate =
-      sidebarHighlightRelevant
-      && highlightSubtitle == nil
-      && destinationExpanded
-      && (isPinnedDestination || activeBucket)
-    if isHoistedDuplicate {
-      EmptyView()
-    } else {
-      SidebarItemBody(
-        store: store,
-        parentStore: parentStore,
-        terminalManager: terminalManager,
-        selectedWorktreeIDs: selectedWorktreeIDs,
-        isRepositoryRemoving: isRepositoryRemoving,
-        hideSubtitle: hideSubtitle,
-        moveMode: moveMode,
-        shortcutHint: shortcutHint,
-        displayNameOverride: displayNameOverride,
-        nestDepth: nestDepth,
-        highlightSubtitle: highlightSubtitle,
-        hideSubtitleOnMatch: hideSubtitleOnMatch
-      )
-    }
+    SidebarItemBody(
+      store: store,
+      parentStore: parentStore,
+      terminalManager: terminalManager,
+      selectedWorktreeIDs: selectedWorktreeIDs,
+      isRepositoryRemoving: isRepositoryRemoving,
+      hideSubtitle: hideSubtitle,
+      moveMode: moveMode,
+      shortcutHint: shortcutHint,
+      displayNameOverride: displayNameOverride,
+      nestDepth: nestDepth,
+      highlightSubtitle: highlightSubtitle,
+      hideSubtitleOnMatch: hideSubtitleOnMatch
+    )
   }
 }
 
@@ -637,23 +529,19 @@ private struct SidebarItemBody: View {
   }
 }
 
-/// Folder repos render one row that must be a direct child of the outer `.onMove` to receive repo-level drags.
+/// Folder repos render one row that must be a direct child of the outer
+/// `.onMove` to receive repo-level drags. The structure pre-resolves the
+/// synthetic worktree id and the shortcut hint; the view does no lookup.
 struct SidebarFolderRow: View {
   let repository: Repository
-  let hotkeyIDs: [Worktree.ID]
+  let rowID: Worktree.ID
+  let shortcutHint: String?
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @Environment(CommandKeyObserver.self) private var commandKeyObserver
-  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
     let isRepositoryRemoving = store.state.isRemovingRepository(repository)
-    // Resolving via the canonical synthetic worktree id keeps the row visible
-    // across `.unpinned` / `.pinned` bucket transitions. `SidebarItemRow`
-    // already per-leaf scopes the leaf store before rendering, so reading
-    // `sidebarItems[id:]` here would only leak observation back to the parent.
-    let rowID = Repository.folderWorktreeID(for: repository.rootURL)
     SidebarItemRow(
       rowID: rowID,
       store: store,
@@ -662,31 +550,8 @@ struct SidebarFolderRow: View {
       isRepositoryRemoving: isRepositoryRemoving,
       hideSubtitle: true,
       moveMode: .alwaysEnabled,
-      shortcutHint: shortcutHint(for: rowID)
+      shortcutHint: shortcutHint
     )
-  }
-
-  // Folder rows show a single hint, so a linear scan beats allocating a dict per render.
-  private func shortcutHint(for rowID: Worktree.ID) -> String? {
-    guard commandKeyObserver.isPressed,
-      let index = hotkeyIDs.firstIndex(of: rowID)
-    else { return nil }
-    return AppShortcuts.worktreeSelectionShortcutDisplay(
-      atSlot: index,
-      overrides: settingsFile.global.shortcutOverrides
-    )
-  }
-}
-
-private enum SidebarShortcutIndex {
-  /// Defensive against a forged bucket roster: a duplicate `Worktree.ID` would trap
-  /// `Dictionary(uniqueKeysWithValues:)` inside the SwiftUI render loop. Keep the first
-  /// slot and fire loudly in DEBUG so a real invariant break surfaces in dev, not prod.
-  static func build(from hotkeyIDs: [Worktree.ID]) -> [Worktree.ID: Int] {
-    Dictionary(hotkeyIDs.enumerated().map { ($0.element, $0.offset) }) { first, _ in
-      assertionFailure("Duplicate Worktree.ID in sidebar hotkey order.")
-      return first
-    }
   }
 }
 

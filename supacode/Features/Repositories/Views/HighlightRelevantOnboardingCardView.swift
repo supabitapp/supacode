@@ -20,12 +20,17 @@ struct HighlightRelevantOnboardingCardView: View {
     SidebarCardRelevance.isDismissed(at: dismissedAt, relevantSince: cardRelevantSinceDate)
   }
 
-  /// Pure resolver. Visible only while the toggle is on and the user hasn't
-  /// dismissed past the relevance cutoff. The caller owns the AppStorage
-  /// reads, keeping this resolver free of hidden global reads and SwiftUI
-  /// re-rendering at the priority-host layer.
-  static func resolveMode(highlightRelevant: Bool, dismissedAt: Date) -> Mode {
-    highlightRelevant && !Self.isDismissed(at: dismissedAt) ? .visible : .hidden
+  /// Pure resolver. Visible while either grouping toggle is on and the user
+  /// hasn't dismissed past the relevance cutoff. The caller owns the
+  /// AppStorage reads, keeping this resolver free of hidden global reads and
+  /// SwiftUI re-rendering at the priority-host layer.
+  static func resolveMode(
+    groupPinnedRows: Bool,
+    groupActiveRows: Bool,
+    dismissedAt: Date
+  ) -> Mode {
+    let anyOn = groupPinnedRows || groupActiveRows
+    return anyOn && !Self.isDismissed(at: dismissedAt) ? .visible : .hidden
   }
 
   var body: some View {
@@ -48,7 +53,7 @@ private struct HighlightRelevantOnboardingCardBody: View {
       content: {
         VStack(alignment: .leading, spacing: 4) {
           SidebarCardLabel(title: "Pinned and Active at a glance", description: description)
-          Text("Toggle in View → Highlight Relevant Sidebar Items")
+          Text("Toggle in View → Group Relevant Sidebar Rows")
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .padding(.top, 2)

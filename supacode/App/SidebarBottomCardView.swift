@@ -25,7 +25,8 @@ struct SidebarBottomCardView: View {
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
   @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
   private var onboardingDismissedAt: Date = .distantPast
-  @Shared(.sidebarHighlightRelevant) private var highlightRelevant: Bool
+  @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
+  @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
   @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
   private var highlightDismissedAt: Date = .distantPast
 
@@ -34,7 +35,8 @@ struct SidebarBottomCardView: View {
       for: store, dismissedAt: agentDismissedAt
     )
     let highlightMode = HighlightRelevantOnboardingCardView.resolveMode(
-      highlightRelevant: highlightRelevant,
+      groupPinnedRows: groupPinnedRows,
+      groupActiveRows: groupActiveRows,
       dismissedAt: highlightDismissedAt
     )
     let onboardingMode = NestedWorktreesOnboardingCardView.resolveMode(
