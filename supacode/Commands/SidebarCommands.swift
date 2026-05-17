@@ -12,8 +12,6 @@ struct SidebarCommands: Commands {
   private var nestedOnboardingDismissedAt: Date = .distantPast
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
   @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
-  @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
-  private var highlightOnboardingDismissedAt: Date = .distantPast
 
   /// Binding that pairs the nesting toggle with a permadismiss of the
   /// onboarding card on transitions to `false`. Lives on the menu command
@@ -34,43 +32,22 @@ struct SidebarCommands: Commands {
     )
   }
 
-  /// Group Pinned Rows toggle. When the user turns it off and the Active
-  /// toggle is already off, the highlight onboarding card has nothing left
-  /// to advertise — permadismiss it so it doesn't reappear on next launch.
+  /// The auto-dismiss for the highlight onboarding card is state-driven from
+  /// the reducer's `.sidebarGroupingTogglesChanged` handler so any entry
+  /// point that flips the toggles gets the dismiss. Menu bindings just
+  /// write through to @Shared.
   private var groupPinnedRowsToggle: Binding<Bool> {
     Binding(
       get: { groupPinnedRows },
-      set: { newValue in
-        $groupPinnedRows.withLock { $0 = newValue }
-        autoDismissHighlightOnboardingIfFullyDisabled(
-          afterPinned: newValue,
-          afterActive: groupActiveRows
-        )
-      }
+      set: { newValue in $groupPinnedRows.withLock { $0 = newValue } }
     )
   }
 
   private var groupActiveRowsToggle: Binding<Bool> {
     Binding(
       get: { groupActiveRows },
-      set: { newValue in
-        $groupActiveRows.withLock { $0 = newValue }
-        autoDismissHighlightOnboardingIfFullyDisabled(
-          afterPinned: groupPinnedRows,
-          afterActive: newValue
-        )
-      }
+      set: { newValue in $groupActiveRows.withLock { $0 = newValue } }
     )
-  }
-
-  private func autoDismissHighlightOnboardingIfFullyDisabled(
-    afterPinned: Bool,
-    afterActive: Bool
-  ) {
-    guard !afterPinned, !afterActive,
-      !HighlightRelevantOnboardingCardView.isDismissed(at: highlightOnboardingDismissedAt)
-    else { return }
-    $highlightOnboardingDismissedAt.withLock { $0 = .now }
   }
 
   var body: some Commands {

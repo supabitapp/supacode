@@ -209,9 +209,12 @@ struct RepositoriesFeature {
   enum Action {
     case sidebarItems(IdentifiedActionOf<SidebarItemFeature>)
     case task
-    /// Fired by the `.task` long-running observers on `@Shared(.sidebarGroupPinnedRows)`
-    /// and `@Shared(.sidebarGroupActiveRows)`. Pure no-op outside of that path —
-    /// the post-reduce hook handles every other recompute trigger.
+    /// Fired by `SidebarListView.onChange` whenever `@Shared(.sidebarGroupPinnedRows)`
+    /// or `@Shared(.sidebarGroupActiveRows)` mutates. The post-reduce hook picks
+    /// up the new toggle state and rebuilds the cached structure; the explicit
+    /// handler also state-drives the highlight-onboarding auto-dismiss so any
+    /// path that mutates the toggles (menu, deeplink, defaults edit) gets the
+    /// dismiss, not just the menu binding setter.
     case sidebarGroupingTogglesChanged
     case setOpenPanelPresented(Bool)
     case loadPersistedRepositories
@@ -439,8 +442,18 @@ struct RepositoriesFeature {
 
       case .sidebarGroupingTogglesChanged:
         // The post-reduce hook below picks up the toggle state and rebuilds.
-        // Fired from `SidebarCommands` menu bindings so the structure
-        // recomputes the moment the user flips a grouping toggle.
+        // Auto-dismiss the highlight onboarding card here (not in the menu
+        // binding setter) so any entry point that mutates the toggles fires
+        // the dismiss: menu, deeplink, defaults edit, programmatic test.
+        @Shared(.sidebarGroupPinnedRows) var groupPinned
+        @Shared(.sidebarGroupActiveRows) var groupActive
+        if !groupPinned, !groupActive {
+          @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
+          var dismissedAt: Date = .distantPast
+          if !HighlightRelevantOnboardingCardView.isDismissed(at: dismissedAt) {
+            $dismissedAt.withLock { $0 = now }
+          }
+        }
         return .none
 
       case .setOpenPanelPresented(let isPresented):

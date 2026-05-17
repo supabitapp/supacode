@@ -171,12 +171,29 @@ private struct SidebarItemGroupView: View {
   }
 
   private func moveRows(_ offsets: IndexSet, _ destination: Int) {
+    // `rowIDs` here is the post-hoisting visible list; the full bucket lives
+    // on `sidebar.sections`. Translate against the full order so hoisted
+    // siblings keep their relative positions across the move.
+    let target: (repositoryID: Repository.ID, bucket: SidebarBucket)
     switch moveBehavior {
-    case .disabled: break
-    case .pinned(let repositoryID):
-      store.send(.pinnedWorktreesMoved(repositoryID: repositoryID, offsets, destination))
-    case .unpinned(let repositoryID):
-      store.send(.unpinnedWorktreesMoved(repositoryID: repositoryID, offsets, destination))
+    case .disabled: return
+    case .pinned(let id): target = (id, .pinned)
+    case .unpinned(let id): target = (id, .unpinned)
+    }
+    guard let fullKeys = store.state.sidebar.sections[target.repositoryID]?
+      .buckets[target.bucket]?.items.keys else { return }
+    guard let translated = SidebarItemGroup.translateFilteredMove(
+      offsets: offsets,
+      destination: destination,
+      visibleIDs: rowIDs,
+      fullIDs: Array(fullKeys)
+    ) else { return }
+    switch moveBehavior {
+    case .disabled: return
+    case .pinned(let id):
+      store.send(.pinnedWorktreesMoved(repositoryID: id, translated.offsets, translated.destination))
+    case .unpinned(let id):
+      store.send(.unpinnedWorktreesMoved(repositoryID: id, translated.offsets, translated.destination))
     }
   }
 }

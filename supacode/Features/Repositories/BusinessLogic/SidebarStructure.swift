@@ -620,4 +620,42 @@ extension SidebarItemGroup {
       ),
     ]
   }
+
+  /// SwiftUI emits `.onMove` offsets/destination against the *visible* rows
+  /// (the post-hoisting filter). The reducer's `pinnedWorktreesMoved` /
+  /// `unpinnedWorktreesMoved` mutates the *full* bucket. Translate visible
+  /// indices to full-bucket indices before dispatching so a reorder inside a
+  /// bucket with hoisted rows lands the dragged row at the visible target
+  /// without disturbing hoisted siblings' relative positions.
+  ///
+  /// Returns `nil` if the inputs disagree (visible id not present in full,
+  /// or out-of-range offset / destination); the caller should drop the move.
+  static func translateFilteredMove(
+    offsets: IndexSet,
+    destination: Int,
+    visibleIDs: [Worktree.ID],
+    fullIDs: [Worktree.ID]
+  ) -> (offsets: IndexSet, destination: Int)? {
+    guard destination >= 0, destination <= visibleIDs.count else { return nil }
+    var fullIndexByID: [Worktree.ID: Int] = [:]
+    fullIndexByID.reserveCapacity(fullIDs.count)
+    for (index, id) in fullIDs.enumerated() { fullIndexByID[id] = index }
+
+    var translatedOffsets = IndexSet()
+    for visibleIndex in offsets {
+      guard visibleIDs.indices.contains(visibleIndex) else { return nil }
+      guard let fullIndex = fullIndexByID[visibleIDs[visibleIndex]] else { return nil }
+      translatedOffsets.insert(fullIndex)
+    }
+
+    let translatedDestination: Int
+    if destination == visibleIDs.count {
+      translatedDestination = fullIDs.count
+    } else if let fullIndex = fullIndexByID[visibleIDs[destination]] {
+      translatedDestination = fullIndex
+    } else {
+      return nil
+    }
+    return (translatedOffsets, translatedDestination)
+  }
 }

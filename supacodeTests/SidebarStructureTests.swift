@@ -3,6 +3,7 @@ import Foundation
 import IdentifiedCollections
 import OrderedCollections
 import Sharing
+import SwiftUI
 import Testing
 
 @testable import SupacodeSettingsShared
@@ -324,5 +325,133 @@ struct SidebarStructureTests {
     }.flatMap { $0 }
     #expect(pinnedIDs == [folderID])
     #expect(!hasFolderSection)
+  }
+
+  // MARK: - SidebarItemGroup.translateFilteredMove.
+
+  @Test func translateFilteredMoveMapsAcrossHoistedRows() {
+    let full = ["a", "b", "c", "d", "e"]
+    let visible = ["a", "b", "d", "e"]  // c is hoisted.
+
+    // Move visible offset 2 (d) to visible offset 0 (before a).
+    let result = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet([2]),
+      destination: 0,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(result?.offsets == IndexSet([3]))
+    #expect(result?.destination == 0)
+  }
+
+  @Test func translateFilteredMoveDestinationPastEndMapsToFullEnd() {
+    let full = ["a", "b", "c", "d"]
+    let visible = ["a", "c", "d"]  // b is hoisted.
+
+    let result = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet([0]),
+      destination: visible.count,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(result?.offsets == IndexSet([0]))
+    #expect(result?.destination == full.count)
+  }
+
+  @Test func translateFilteredMoveReturnsNilForOutOfRangeOffset() {
+    let full = ["a", "b", "c"]
+    let visible = ["a", "c"]
+
+    let result = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet([5]),
+      destination: 0,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(result == nil)
+  }
+
+  @Test func translateFilteredMoveReturnsNilForOutOfRangeDestination() {
+    let full = ["a", "b", "c"]
+    let visible = ["a", "c"]
+
+    let result = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet([0]),
+      destination: 99,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(result == nil)
+  }
+
+  @Test func translateFilteredMoveReturnsNilWhenVisibleHasIDNotInFull() {
+    let full = ["a", "b"]
+    let visible = ["a", "ghost"]  // "ghost" isn't in full.
+
+    let result = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet([1]),
+      destination: 0,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(result == nil)
+  }
+
+  @Test func translateFilteredMoveAppliedYieldsExpectedFullOrder() {
+    let full = ["a", "b", "c", "d", "e"]
+    let visible = ["a", "b", "d", "e"]  // c is hoisted.
+
+    // Drag b (visible 1) past d (to before e, visible 3).
+    let translated = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet([1]),
+      destination: 3,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(translated != nil)
+    guard let translated else { return }
+
+    var reordered = full
+    reordered.move(fromOffsets: translated.offsets, toOffset: translated.destination)
+    // Hoisted c stays put relative to its neighbors; b lands before e.
+    #expect(reordered == ["a", "c", "d", "b", "e"])
+  }
+
+  @Test func translateFilteredMoveHandlesEmptyOffsets() {
+    let full = ["a", "b"]
+    let visible = ["a", "b"]
+
+    let result = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet(),
+      destination: 1,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(result?.offsets == IndexSet())
+    #expect(result?.destination == 1)
+  }
+
+  @Test func translateFilteredMoveLastVisibleIndexMapsBeforeHoistedTail() {
+    // Inclusive upper-bound test: visible's last index (NOT past-end) when
+    // followed by a hoisted tail row must map to its own full index, not the
+    // full-end. Drops the dragged row before the hoisted tail, not after.
+    let full = ["a", "b", "c", "d"]  // d is hoisted.
+    let visible = ["a", "b", "c"]
+
+    let translated = SidebarItemGroup.translateFilteredMove(
+      offsets: IndexSet([0]),
+      destination: visible.count - 1,
+      visibleIDs: visible,
+      fullIDs: full
+    )
+    #expect(translated != nil)
+    guard let translated else { return }
+    #expect(translated.offsets == IndexSet([0]))
+    #expect(translated.destination == 2)
+
+    var reordered = full
+    reordered.move(fromOffsets: translated.offsets, toOffset: translated.destination)
+    // Hoisted d stays last; a moves to just before c.
+    #expect(reordered == ["b", "a", "c", "d"])
   }
 }
