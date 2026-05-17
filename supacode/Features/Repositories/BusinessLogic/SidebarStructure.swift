@@ -257,67 +257,147 @@ extension RepositoriesFeature.State {
       sidebarStructure = new
     }
   }
-}
 
-extension RepositoriesFeature.Action {
-  /// Coarse predicate naming the actions whose handlers touch
-  /// `sidebarItems` / `sidebar` buckets / `repositories` / `expandedRepositoryIDs`
-  /// or any other input `SidebarStructure` reads from. Actions absent here
-  /// skip the post-reduce recompute entirely (user requirement: don't
-  /// rebuild on actions that can't affect the visible sidebar).
-  var affectsSidebarStructure: Bool {
-    switch self {
-    // Only the per-leaf actions that mutate fields the structure reads.
-    case .sidebarItems(.element(id: _, action: let inner)):
-      return inner.affectsSidebarStructure
-    case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged:
-      return true
-    case .repositoriesLoaded, .openRepositoriesFinished,
-      .repositoryRemovalCompleted, .repositoriesRemoved,
-      .removeFailedRepository:
-      return true
-    case .repositoryExpansionChanged, .branchNestExpansionChanged,
-      .repositoriesMoved, .pinnedWorktreesMoved, .unpinnedWorktreesMoved:
-      return true
-    case .pinWorktree, .unpinWorktree:
-      return true
-    case .archiveWorktreeApply, .unarchiveWorktree,
-      .deleteWorktreeApply, .worktreeDeleted,
-      .createWorktreeInRepository, .createRandomWorktreeInRepository,
-      .createRandomWorktreeSucceeded, .createRandomWorktreeFailed,
-      .pendingWorktreeProgressUpdated,
-      .archiveScriptCompleted, .deleteScriptCompleted, .scriptCompleted,
-      .consumeSetupScript, .consumeTerminalFocus,
-      .autoDeleteExpiredArchivedWorktrees:
-      return true
-    case .worktreeBranchNameLoaded, .worktreeLineChangesLoaded,
-      .worktreeNotificationReceived, .worktreeInfoEvent,
-      .repositoryPullRequestsLoaded:
-      return true
-    // Repo customization save mutates `sidebar.sections[id].title/color`,
-    // which the highlight-row tag and per-repo color cache both read.
-    case .repositoryCustomization(.presented(.delegate(.save))):
-      return true
-    default:
-      return false
+  /// Refreshes the cached `selectedWorktreeSlice` from the focused row, using
+  /// an Equatable diff so observation only invalidates on a real change.
+  /// Mirrors `recomputeSidebarStructureIfChanged()` for slice-affecting
+  /// actions; per-leaf reads on `sidebarItems[id:]` happen here, not in views.
+  mutating func recomputeSelectedWorktreeSliceIfChanged() {
+    let new = selectedRow(for: selectedWorktreeID).map { SelectedWorktreeSlice($0) }
+    if new != selectedWorktreeSlice {
+      selectedWorktreeSlice = new
+    }
+  }
+
+  /// Equatable-diffs the toolbar notification snapshot against the cache so a
+  /// per-row notification append only invalidates SwiftUI when the toolbar
+  /// projection actually changes.
+  mutating func recomputeToolbarNotificationGroupsIfChanged() {
+    let new = computeToolbarNotificationGroups()
+    if new != toolbarNotificationGroupsCache {
+      toolbarNotificationGroupsCache = new
     }
   }
 }
 
+/// Per-cache invalidation flag set returned by every reducer action. Exhaustive
+/// switches over the action enums force every new case to declare which
+/// post-reduce caches it touches; a missing case is a compile error rather
+/// than a silent "skip the recompute".
+struct CacheInvalidations: OptionSet {
+  let rawValue: UInt8
+  static let sidebarStructure = CacheInvalidations(rawValue: 1 << 0)
+  static let selectedWorktreeSlice = CacheInvalidations(rawValue: 1 << 1)
+  static let toolbarNotificationGroups = CacheInvalidations(rawValue: 1 << 2)
+  static let all: CacheInvalidations = [
+    .sidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups,
+  ]
+}
+
 extension SidebarItemFeature.Action {
-  /// Subset of per-leaf actions that mutate fields `SidebarStructure` reads
-  /// (`lifecycle`, `runningScripts`, `agents`, `hasUnseenNotifications`).
-  /// Display-only mutations (diff stats, PR refresh, drag/focus/hint flags)
-  /// don't trigger a recompute.
-  var affectsSidebarStructure: Bool {
+  var cacheInvalidations: CacheInvalidations {
     switch self {
-    case .lifecycleChanged, .runningScriptStarted, .runningScriptStopped,
-      .agentSnapshotChanged, .terminalProjectionChanged:
-      return true
-    case .diffStatsChanged, .pullRequestQueryStarted, .pullRequestChanged,
+    case .lifecycleChanged, .runningScriptStarted, .runningScriptStopped:
+      return [.sidebarStructure, .selectedWorktreeSlice]
+    case .agentSnapshotChanged:
+      return .sidebarStructure
+    case .terminalProjectionChanged:
+      return [.sidebarStructure, .toolbarNotificationGroups]
+    case .pullRequestChanged:
+      return .selectedWorktreeSlice
+    case .diffStatsChanged, .pullRequestQueryStarted,
       .shortcutHintChanged, .dragSessionChanged,
       .focusTerminalRequested, .focusTerminalConsumed:
-      return false
+      return []
+    }
+  }
+}
+
+extension RepositoriesFeature.Action {
+  /// Exhaustive cache-invalidation map. Update this alongside every new
+  /// `RepositoriesFeature.Action` case. Adding a case without listing it here
+  /// is a compile error (no `default`), so we never silently regress the
+  /// "post-reduce skips the recompute" path.
+  var cacheInvalidations: CacheInvalidations {
+    switch self {
+    case .sidebarItems(.element(id: _, action: let inner)):
+      return inner.cacheInvalidations
+    case .sidebarItems:
+      return []
+
+    // Sidebar layout toggles only.
+    case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
+      .repositoryExpansionChanged, .branchNestExpansionChanged,
+      .repositoriesMoved, .pinnedWorktreesMoved, .unpinnedWorktreesMoved,
+      .worktreeNotificationReceived, .worktreeLineChangesLoaded,
+      .consumeTerminalFocus:
+      return .sidebarStructure
+
+    // Bulk repository / worktree set changes that touch all caches.
+    case .repositoriesLoaded, .openRepositoriesFinished,
+      .repositoryRemovalCompleted, .repositoriesRemoved,
+      .removeFailedRepository,
+      .archiveWorktreeApply, .unarchiveWorktree,
+      .deleteWorktreeApply, .worktreeDeleted,
+      .createWorktreeInRepository, .createRandomWorktreeInRepository,
+      .worktreeInfoEvent,
+      .autoDeleteExpiredArchivedWorktrees:
+      return .all
+
+    // Layout + slice but not the notification snapshot (no notification touch).
+    case .createRandomWorktreeSucceeded, .createRandomWorktreeFailed,
+      .pendingWorktreeProgressUpdated,
+      .archiveScriptCompleted, .deleteScriptCompleted, .scriptCompleted,
+      .consumeSetupScript,
+      .pinWorktree, .unpinWorktree,
+      .worktreeBranchNameLoaded,
+      .repositoryPullRequestsLoaded:
+      return [.sidebarStructure, .selectedWorktreeSlice]
+
+    // Selection changes only refresh the slice.
+    case .selectionChanged, .selectWorktree, .selectArchivedWorktrees,
+      .selectNextWorktree, .selectPreviousWorktree,
+      .worktreeHistoryBack, .worktreeHistoryForward:
+      return .selectedWorktreeSlice
+
+    // Repo customization save mutates the section title / color, which flow
+    // into the sidebar layout's highlight tag and the notification group name.
+    case .repositoryCustomization(.presented(.delegate(.save))):
+      return .all
+    case .repositoryCustomization:
+      return []
+
+    // Everything else is UI / effects / transient state, no cache touched.
+    case .task, .setOpenPanelPresented, .loadPersistedRepositories,
+      .refreshWorktrees, .reloadRepositories,
+      .setSidebarSelectedWorktreeIDs,
+      .openRepositories,
+      .revealSelectedWorktreeInSidebar, .consumePendingSidebarReveal,
+      .createRandomWorktree,
+      .promptedWorktreeCreationDataLoaded, .startPromptedWorktreeCreation,
+      .promptedWorktreeCreationChecked,
+      .requestArchiveWorktree, .requestArchiveWorktrees,
+      .archiveWorktreeConfirmed,
+      .requestDeleteSidebarItems, .deleteSidebarItemConfirmed,
+      .deleteWorktreeFailed,
+      .requestDeleteRepository,
+      .presentAlert,
+      .refreshGithubIntegrationAvailability,
+      .githubIntegrationAvailabilityUpdated,
+      .repositoryPullRequestRefreshCompleted,
+      .setGithubIntegrationEnabled,
+      .setMergedWorktreeAction,
+      .setAutoDeleteArchivedWorktreesAfterDays,
+      .setMoveNotifiedWorktreeToTop,
+      .pullRequestAction,
+      .showToast, .dismissToast,
+      .delayedPullRequestRefresh,
+      .openRepositorySettings, .requestCustomizeRepository,
+      .contextMenuOpenWorktree,
+      .worktreeCreationPrompt,
+      .alert,
+      .delegate:
+      return []
     }
   }
 }

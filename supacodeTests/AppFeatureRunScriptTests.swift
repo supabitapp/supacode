@@ -111,6 +111,7 @@ struct AppFeatureRunScriptTests {
     // Pre-populate running state to simulate an already-running script.
     initialState.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
+    initialState.repositories.applyPostReduceCacheRecomputes()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: initialState) {
       AppFeature()

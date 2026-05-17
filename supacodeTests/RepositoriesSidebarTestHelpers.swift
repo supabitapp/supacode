@@ -5,14 +5,28 @@ import Foundation
 
 extension RepositoriesFeature.State {
   /// Test mirror of the full sidebar pipeline: `syncSidebar` (matching
-  /// reducer-body handlers that explicitly resync) + the structure recompute
-  /// the post-reduce hook would run. `$0.reconcileSidebarForTesting()` in a
-  /// TestStore expectation covers both in one call so tests don't have to
-  /// remember to mirror each piece separately.
+  /// reducer-body handlers that explicitly resync) + every cache recompute the
+  /// post-reduce hook would run. Use this when the action explicitly resyncs.
   @MainActor
   mutating func reconcileSidebarForTesting() {
     RepositoriesFeature.syncSidebar(&self)
-    recomputeSidebarStructureIfChanged()
+    applyPostReduceCacheRecomputes()
+  }
+
+  /// Mirrors the post-reduce hook for TestStore expectations. Pass the same
+  /// `CacheInvalidations` set the action's `cacheInvalidations` returns so the
+  /// expected state mutates exactly what the live reducer does, no more.
+  @MainActor
+  mutating func applyPostReduceCacheRecomputes(_ invalidations: CacheInvalidations = .all) {
+    if invalidations.contains(.sidebarStructure) {
+      recomputeSidebarStructureIfChanged()
+    }
+    if invalidations.contains(.selectedWorktreeSlice) {
+      recomputeSelectedWorktreeSliceIfChanged()
+    }
+    if invalidations.contains(.toolbarNotificationGroups) {
+      recomputeToolbarNotificationGroupsIfChanged()
+    }
   }
 
   /// Convenience init for tests that need a populated row/grouping store from a roster.

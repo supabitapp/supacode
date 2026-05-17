@@ -1,0 +1,124 @@
+import ComposableArchitecture
+import Foundation
+import IdentifiedCollections
+import SupacodeSettingsShared
+import Testing
+
+@testable import supacode
+
+/// Pins the load-bearing #289 contract: storms on the focused row that
+/// only touch agent / surface / notification fields must NOT mutate the
+/// cached `selectedWorktreeSlice` or `toolbarNotificationGroupsCache`.
+@MainActor
+struct SelectedWorktreeSliceCacheTests {
+  @Test func agentSnapshotChangeOnFocusedRowDoesNotMutateSlice() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(worktree.id)
+    state.reconcileSidebarForTesting()
+    let sliceBefore = state.selectedWorktreeSlice
+    #expect(sliceBefore != nil, "Cache must be populated for the focused row")
+
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+
+    // Agent storm: only mutates `agents` / `hasAgentActivity`. Slice excludes
+    // those, so the post-reduce diff must not invalidate the cache.
+    await store.send(
+      .sidebarItems(.element(id: worktree.id, action: .agentSnapshotChanged([], hasActivity: false)))
+    )
+    #expect(store.state.selectedWorktreeSlice == sliceBefore)
+  }
+
+  @Test func terminalProjectionChangeOnFocusedRowDoesNotMutateSlice() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(worktree.id)
+    state.reconcileSidebarForTesting()
+    let sliceBefore = state.selectedWorktreeSlice
+
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+    let surfaceID = UUID()
+    await store.send(
+      .sidebarItems(
+        .element(
+          id: worktree.id,
+          action: .terminalProjectionChanged(
+            WorktreeRowProjection(
+              surfaceIDs: [surfaceID],
+              isProgressBusy: false,
+              hasUnseenNotifications: false,
+              notifications: []
+            )
+          )
+        )
+      )
+    ) {
+      $0.sidebarItems[id: worktree.id]?.surfaceIDs = [surfaceID]
+      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .toolbarNotificationGroups])
+    }
+
+    #expect(store.state.selectedWorktreeSlice == sliceBefore)
+  }
+
+  @Test func agentSnapshotChangeOnFocusedRowDoesNotMutateNotificationCache() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(worktree.id)
+    state.reconcileSidebarForTesting()
+    let cacheBefore = state.toolbarNotificationGroupsCache
+
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+    await store.send(
+      .sidebarItems(.element(id: worktree.id, action: .agentSnapshotChanged([], hasActivity: false)))
+    )
+
+    #expect(store.state.toolbarNotificationGroupsCache == cacheBefore)
+  }
+
+  @Test func runningScriptStartedOnFocusedRowMutatesSlice() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(worktree.id)
+    state.reconcileSidebarForTesting()
+    let scriptID = UUID()
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+
+    await store.send(
+      .sidebarItems(
+        .element(
+          id: worktree.id, action: .runningScriptStarted(id: scriptID, tint: .blue)
+        )
+      )
+    ) {
+      $0.sidebarItems[id: worktree.id]?.runningScripts.append(.init(id: scriptID, tint: .blue))
+      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
+    }
+
+    // Verify the cache picked up the new running script (sanity that the
+    // recompute path actually fires for this action).
+    #expect(store.state.selectedWorktreeSlice?.runningScripts.contains(where: { $0.id == scriptID }) == true)
+  }
+
+  private func makeWorktree(id: String, repoRoot: String) -> Worktree {
+    Worktree(
+      id: id,
+      name: "wt",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: id),
+      repositoryRootURL: URL(fileURLWithPath: repoRoot)
+    )
+  }
+
+  private func makeRepository(id: String, worktrees: [Worktree]) -> Repository {
+    Repository(
+      id: id,
+      rootURL: URL(fileURLWithPath: id),
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: worktrees)
+    )
+  }
+}

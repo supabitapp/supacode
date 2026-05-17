@@ -154,6 +154,16 @@ struct RepositoriesFeature {
     /// in the recompute helper keeps a no-op rebuild from invalidating
     /// SwiftUI when the user-visible layout didn't actually change.
     var sidebarStructure: SidebarStructure = .placeholder
+    /// Cached projection of the focused row's display fields. The detail body
+    /// reads this directly instead of `sidebarItems[id: id]` so per-leaf agent
+    /// / notification mutations on the focused row don't invalidate the
+    /// detail tree. Recomputed via `recomputeSelectedWorktreeSliceIfChanged()`.
+    var selectedWorktreeSlice: SelectedWorktreeSlice?
+    /// Cached toolbar notification snapshot. Detail body reads this instead of
+    /// iterating `sidebarItems` (which would observe every per-row notification
+    /// mutation across all worktrees). Recomputed via
+    /// `recomputeToolbarNotificationGroupsIfChanged()`.
+    var toolbarNotificationGroupsCache: [ToolbarNotificationRepositoryGroup] = []
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
     @Presents var alert: AlertState<Alert>?
@@ -3302,8 +3312,16 @@ struct RepositoriesFeature {
     // `withDependencies`.
     Reduce { state, action in
       @Dependency(\.sidebarStructureAutoRecompute) var autoRecompute
-      if autoRecompute, action.affectsSidebarStructure {
+      guard autoRecompute else { return .none }
+      let invalidations = action.cacheInvalidations
+      if invalidations.contains(.sidebarStructure) {
         state.recomputeSidebarStructureIfChanged()
+      }
+      if invalidations.contains(.selectedWorktreeSlice) {
+        state.recomputeSelectedWorktreeSliceIfChanged()
+      }
+      if invalidations.contains(.toolbarNotificationGroups) {
+        state.recomputeToolbarNotificationGroupsIfChanged()
       }
       return .none
     }
@@ -3879,10 +3897,8 @@ extension RepositoriesFeature.State {
     return sidebarItems[id: id]
   }
 
-  /// Value-typed projection of `selectedRow` carrying only the fields the
-  /// detail body actually reads. Excludes `agents` / `hasAgentActivity` /
-  /// `surfaceIDs` / `notifications` so an agent storm on the focused worktree
-  /// doesn't invalidate the detail body's observation surface.
+  /// Ad-hoc slice for callers that need a one-off projection by ID. The
+  /// detail body should read the cached `selectedWorktreeSlice` field.
   func selectedWorktreeSlice(for id: Worktree.ID?) -> SelectedWorktreeSlice? {
     selectedRow(for: id).map { SelectedWorktreeSlice($0) }
   }

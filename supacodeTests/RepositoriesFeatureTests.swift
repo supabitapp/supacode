@@ -164,6 +164,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectWorktree(worktree.id)) {
       $0.selection = .worktree(worktree.id)
       $0.sidebarSelectedWorktreeIDs = [worktree.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -184,6 +185,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -263,6 +265,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([])) {
       $0.selection = nil
       $0.sidebarSelectedWorktreeIDs = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -281,6 +284,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.archivedWorktrees])) {
       $0.selection = .archivedWorktrees
       $0.sidebarSelectedWorktreeIDs = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -296,12 +300,12 @@ struct RepositoriesFeatureTests {
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = true }
-      $0.recomputeSidebarStructureIfChanged()
+      $0.applyPostReduceCacheRecomputes()
     }
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: true)) {
       $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = false }
-      $0.recomputeSidebarStructureIfChanged()
+      $0.applyPostReduceCacheRecomputes()
     }
   }
 
@@ -316,7 +320,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repository.id, default: .init()].collapsed = true }
-      $0.recomputeSidebarStructureIfChanged()
+      $0.applyPostReduceCacheRecomputes()
     }
 
     // Collapsing again should be a no-op.
@@ -337,6 +341,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     #expect(store.state.sidebarItems.allSatisfy { !$0.shouldFocusTerminal })
@@ -417,6 +422,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.worktree("/tmp/unknown")])) {
       $0.selection = nil
       $0.sidebarSelectedWorktreeIDs = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -434,6 +440,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.archivedWorktrees, .worktree(worktree.id)])) {
       $0.selection = .archivedWorktrees
       $0.sidebarSelectedWorktreeIDs = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -459,11 +466,11 @@ struct RepositoriesFeatureTests {
     // bit flips on the targeted section.
     await store.send(.repositoryExpansionChanged(repoB.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repoB.id, default: .init()].collapsed = true }
-      $0.recomputeSidebarStructureIfChanged()
+      $0.applyPostReduceCacheRecomputes()
     }
     await store.send(.repositoryExpansionChanged(repoA.id, isExpanded: false)) {
       $0.$sidebar.withLock { $0.sections[repoA.id, default: .init()].collapsed = true }
-      $0.recomputeSidebarStructureIfChanged()
+      $0.applyPostReduceCacheRecomputes()
     }
   }
 
@@ -1076,7 +1083,7 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.alert = expectedAlert
-      $0.recomputeSidebarStructureIfChanged()
+      $0.applyPostReduceCacheRecomputes()
     }
     await store.finish()
     #expect(removed.value == false)
@@ -2199,7 +2206,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
-    state.recomputeSidebarStructureIfChanged()
+    state.applyPostReduceCacheRecomputes()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2237,7 +2244,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
-    state.recomputeSidebarStructureIfChanged()
+    state.applyPostReduceCacheRecomputes()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2268,7 +2275,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
-    state.recomputeSidebarStructureIfChanged()
+    state.applyPostReduceCacheRecomputes()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -2337,7 +2344,7 @@ struct RepositoriesFeatureTests {
       .init(id: completing.id, tint: completing.resolvedTintColor)
     state.sidebarItems[id: worktree.id]?.runningScripts[id: surviving.id] =
       .init(id: surviving.id, tint: surviving.resolvedTintColor)
-    state.recomputeSidebarStructureIfChanged()
+    state.applyPostReduceCacheRecomputes()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -3896,6 +3903,7 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
+      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.shouldFocusTerminal = true
@@ -5226,6 +5234,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt2.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5246,6 +5255,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5264,6 +5274,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5286,6 +5297,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5304,6 +5316,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5332,6 +5345,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(feature.id)
       $0.sidebarSelectedWorktreeIDs = [feature.id]
       $0.worktreeHistoryBackStack = [main.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5358,6 +5372,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(worktree.id)
       $0.sidebarSelectedWorktreeIDs = [worktree.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5384,6 +5399,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt3.id)
       $0.sidebarSelectedWorktreeIDs = [wt3.id]
       $0.worktreeHistoryBackStack = [wt1.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5410,6 +5426,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt3.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5468,6 +5485,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt3.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5491,6 +5509,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeHistoryForwardStack = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5527,6 +5546,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = []
       $0.worktreeHistoryForwardStack = [wt2.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5548,6 +5568,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeHistoryForwardStack = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5598,6 +5619,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = []
       $0.worktreeHistoryForwardStack = [wt3.id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -5615,6 +5637,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.worktreeHistoryBack) {
       $0.worktreeHistoryBackStack = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
   }
 
@@ -5666,6 +5689,7 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
+      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.shouldFocusTerminal = true
@@ -5810,6 +5834,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([])) {
       $0.selection = nil
       $0.sidebarSelectedWorktreeIDs = []
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     #expect(store.state.worktreeHistoryBackStack.isEmpty)
@@ -5861,6 +5886,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [target]
       // Oldest entry is dropped when we exceed the 50-item cap.
       $0.worktreeHistoryBackStack = (2..<51).map { worktrees[$0].id } + [worktrees[0].id]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }

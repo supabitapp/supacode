@@ -1,4 +1,5 @@
 import Foundation
+import IdentifiedCollections
 
 struct ToolbarNotificationRepositoryGroup: Identifiable, Equatable {
   let id: Repository.ID
@@ -26,9 +27,11 @@ struct ToolbarNotificationWorktreeGroup: Identifiable, Equatable {
 }
 
 extension RepositoriesFeature.State {
-  func toolbarNotificationGroups(
-    terminalManager: WorktreeTerminalManager
-  ) -> [ToolbarNotificationRepositoryGroup] {
+  /// Reads notification data off the per-row `SidebarItemFeature.State`
+  /// (populated via `terminalProjectionChanged`) instead of the live
+  /// `WorktreeTerminalManager`, so this is a pure reducer-state computation.
+  /// Cached on `toolbarNotificationGroupsCache`; views read the cache.
+  func computeToolbarNotificationGroups() -> [ToolbarNotificationRepositoryGroup] {
     let repositoriesByID = Dictionary(uniqueKeysWithValues: repositories.map { ($0.id, $0) })
     var groups: [ToolbarNotificationRepositoryGroup] = []
 
@@ -39,14 +42,14 @@ extension RepositoriesFeature.State {
 
       let worktreeGroups: [ToolbarNotificationWorktreeGroup] =
         orderedWorktrees(in: repository).compactMap { worktree -> ToolbarNotificationWorktreeGroup? in
-          guard let state = terminalManager.stateIfExists(for: worktree.id), !state.notifications.isEmpty else {
+          guard let row = sidebarItems[id: worktree.id], !row.notifications.isEmpty else {
             return nil
           }
           return ToolbarNotificationWorktreeGroup(
             id: worktree.id,
             name: worktree.name,
-            notifications: state.notifications,
-            hasUnseenNotifications: terminalManager.hasUnseenNotifications(for: worktree.id)
+            notifications: Array(row.notifications),
+            hasUnseenNotifications: row.hasUnseenNotifications
           )
         }
 

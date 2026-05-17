@@ -1,6 +1,7 @@
 import AppKit
 import ComposableArchitecture
 import Foundation
+import OrderedCollections
 import PostHog
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
@@ -70,13 +71,11 @@ struct AppFeature {
       allScripts.primaryScript
     }
 
-    /// Running script IDs for the currently selected worktree.
+    /// Running script IDs for the currently selected worktree. Sourced from
+    /// the cached slice so an agent storm on the focused row doesn't pull
+    /// observation through `sidebarItems[id:]`.
     var runningScriptIDs: Set<UUID> {
-      guard
-        let worktreeID = repositories.selectedWorktreeID,
-        let scripts = repositories.sidebarItems[id: worktreeID]?.runningScripts
-      else { return [] }
-      return Set(scripts.ids)
+      Set(repositories.selectedWorktreeSlice?.runningScripts.ids ?? [])
     }
 
     /// Whether any `.run`-kind script is currently running in the selected worktree.

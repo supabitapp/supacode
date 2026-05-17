@@ -21,13 +21,9 @@ struct WorktreeDetailView: View {
 
   private func detailBody(state: AppFeature.State) -> some View {
     let repositories = state.repositories
-    // Read the selected row as a value-typed slice that excludes `agents`,
-    // `hasAgentActivity`, `surfaceIDs`, and `notifications`. The detail body
-    // (and its `focusedSceneValue` republishers) used to invalidate on every
-    // agent transition on the focused worktree — the slice projection cuts
-    // that observation dependency so bug #289 stays fixed even when the
-    // focused worktree has a running agent.
-    let selectedRow = repositories.selectedWorktreeSlice(for: repositories.selectedWorktreeID)
+    // Reads the cached slice instead of `sidebarItems[id:]` so per-leaf agent
+    // / notification churn on the focused row doesn't invalidate this body.
+    let selectedRow = repositories.selectedWorktreeSlice
     let selectedWorktree = repositories.worktree(for: repositories.selectedWorktreeID)
     let selectedWorktreeSummaries = selectedWorktreeSummaries(from: repositories)
     let showsMultiSelectionSummary = shouldShowMultiSelectionSummary(
@@ -56,7 +52,7 @@ struct WorktreeDetailView: View {
     // so an unrelated `sidebarItems[id:].agents` mutation on the focused row
     // doesn't re-publish this. Same field, observed through the projected slice.
     let runningScriptIDs = Set(selectedRow?.runningScripts.ids ?? [])
-    let notificationGroups = repositories.toolbarNotificationGroups(terminalManager: terminalManager)
+    let notificationGroups = repositories.toolbarNotificationGroupsCache
     let unseenNotificationWorktreeCount = notificationGroups.reduce(0) { count, repository in
       count + repository.unseenWorktreeCount
     }

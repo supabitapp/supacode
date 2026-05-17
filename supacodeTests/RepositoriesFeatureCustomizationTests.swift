@@ -95,7 +95,7 @@ struct RepositoriesFeatureCustomizationTests {
         sidebar.sections[self.repoID, default: .init()].title = "Renamed"
         sidebar.sections[self.repoID, default: .init()].color = .red
       }
-      $0.recomputeSidebarStructureIfChanged()
+      $0.applyPostReduceCacheRecomputes()
     }
   }
 

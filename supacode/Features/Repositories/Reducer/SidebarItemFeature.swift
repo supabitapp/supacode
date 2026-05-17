@@ -240,11 +240,10 @@ struct WorktreeRowProjection: Equatable, Sendable {
   let notifications: IdentifiedArrayOf<WorktreeTerminalNotification>
 }
 
-/// `selectedRow` projection consumed by `WorktreeDetailView`. Carries only the
-/// fields the detail body actually reads, so `agents` / `hasAgentActivity` /
-/// `surfaceIDs` / `notifications` churn on the focused row doesn't re-run the
-/// detail body (and re-publish all its `focusedSceneValue`s). Restores bug #289
-/// for the focused-worktree scenario.
+/// Value-typed projection of the focused row's display fields, cached on
+/// `RepositoriesFeature.State.selectedWorktreeSlice`. Excludes `agents` /
+/// `hasAgentActivity` / `surfaceIDs` / `notifications` so per-leaf storms on
+/// the focused row don't invalidate the detail body's observation surface.
 struct SelectedWorktreeSlice: Equatable, Sendable {
   let id: SidebarItemID
   let repositoryID: Repository.ID
@@ -257,8 +256,6 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
   let lifecycle: SidebarItemFeature.State.Lifecycle
   let pullRequest: GithubPullRequest?
   let runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript>
-  let repositoryAccent: RepositoryColor?
-  let hasMergedBadge: Bool
 
   init(_ row: SidebarItemFeature.State) {
     self.id = row.id
@@ -272,8 +269,6 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
     self.lifecycle = row.lifecycle
     self.pullRequest = row.pullRequest
     self.runningScripts = row.runningScripts
-    self.repositoryAccent = row.repositoryAccent
-    self.hasMergedBadge = row.hasMergedBadge
   }
 
   var sidebarDisplayName: String? {
