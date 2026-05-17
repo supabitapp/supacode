@@ -2362,37 +2362,36 @@ struct RepositoriesFeature {
         )
 
       case .pinWorktree(let worktreeID):
-        // Main worktrees never appear in any sidebar bucket (the
-        // seed pass skips them), so pinning one is a no-op.
+        // Git "main" worktrees never appear in any sidebar bucket (the
+        // seed pass skips them), so pinning one is a no-op. Folder
+        // synthetic worktrees satisfy `isMainWorktree` by geometry but
+        // ARE pinnable; scope the skip to git repos so folders fall
+        // through to the bucket machinery below.
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
           let repository = state.repositories[id: repositoryID]
         else {
           return .none
         }
-        // Folder-synthetic worktrees pass `isMainWorktree` by
-        // geometry. Surface the deeplink-equivalent alert instead
-        // of silently no-op-ing for folders; for git mains the
-        // silent skip is still correct (main-worktree pinning is
-        // invalid by design).
-        if !repository.isGitRepository {
-          state.alert = folderIncompatibleAlert(action: .pin)
+        if repository.isGitRepository, state.isMainWorktree(worktree) {
           return .none
         }
-        if state.isMainWorktree(worktree) {
-          return .none
-        }
+        // Pin / unpin are unarchive-adjacent (the new bucket flow drops
+        // `archivedAt` via `removeAnywhere` + `insert`). Refuse to pin
+        // an archived row so a deeplink or programmatic dispatch can't
+        // silently resurrect it; the user must unarchive first.
+        if state.isWorktreeArchived(worktreeID) { return .none }
         analyticsClient.capture("worktree_pinned", nil)
         state.$sidebar.withLock { sidebar in
-          // The seed invariant puts every non-main worktree into
-          // either `.pinned` or `.unpinned`. A second click on an
-          // already-pinned row reorders it to the top.
-          let from = sidebar.currentBucket(of: worktreeID, in: repositoryID) ?? .unpinned
-          sidebar.move(
+          // `removeAnywhere` + `insert` enforces the "exactly one bucket"
+          // invariant against pre-states that have the row in `.pinned` and
+          // `.unpinned` simultaneously (hand-edit, migrator race) and also
+          // handles the not-bucketed case (folders before first reconcile).
+          sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID)
+          sidebar.insert(
             worktree: worktreeID,
             in: repositoryID,
-            from: from,
-            to: .pinned,
+            bucket: .pinned,
             position: 0
           )
         }
@@ -2401,21 +2400,23 @@ struct RepositoriesFeature {
 
       case .unpinWorktree(let worktreeID):
         guard let repositoryID = state.repositoryID(containing: worktreeID),
-          let repository = state.repositories[id: repositoryID]
+          state.repositories[id: repositoryID] != nil
         else {
           return .none
         }
-        if !repository.isGitRepository {
-          state.alert = folderIncompatibleAlert(action: .unpin)
-          return .none
-        }
+        // Mirrors the `pinWorktree` archive guard: don't let an archived
+        // row trip through the bucket machinery and lose its `archivedAt`
+        // timestamp as a side effect.
+        if state.isWorktreeArchived(worktreeID) { return .none }
         analyticsClient.capture("worktree_unpinned", nil)
         state.$sidebar.withLock { sidebar in
-          sidebar.move(
+          // Same invariant as `pinWorktree`: collapse any pre-existing
+          // bucket placement into a single `.unpinned` entry.
+          sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID)
+          sidebar.insert(
             worktree: worktreeID,
             in: repositoryID,
-            from: .pinned,
-            to: .unpinned,
+            bucket: .unpinned,
             position: 0
           )
         }
@@ -4576,7 +4577,11 @@ extension RepositoriesFeature.State {
         rebuilt[repoID] = section
         continue
       }
-      let mainID = repository.worktrees.first(where: { isMainWorktree($0) })?.id
+      // Folder synthetic worktrees satisfy `isMainWorktree` by geometry but are
+      // user-pinnable. Scope the main-worktree skip to git repos so a pin on a
+      // folder survives `.repositoriesLoaded`.
+      let mainID =
+        repository.isGitRepository ? repository.worktrees.first(where: { isMainWorktree($0) })?.id : nil
       let worktreeIDs = Set(repository.worktrees.map(\.id))
       var copy = section
       var seenInCuratedBuckets: Set<Worktree.ID> = []
@@ -4584,7 +4589,7 @@ extension RepositoriesFeature.State {
         if bucketID == .archived { continue }
         var prunedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
         for (worktreeID, item) in bucket.items {
-          if worktreeID == mainID { continue }
+          if let mainID, worktreeID == mainID { continue }
           if pruneLivenessAgainstRoster, !worktreeIDs.contains(worktreeID) { continue }
           prunedItems[worktreeID] = item
           seenInCuratedBuckets.insert(worktreeID)
@@ -4600,7 +4605,7 @@ extension RepositoriesFeature.State {
       // Seed every live non-main worktree that isn't already curated. Mutation
       // actions assume every live worktree has a bucket and skip fallback paths.
       for worktree in repository.worktrees {
-        if worktree.id == mainID { continue }
+        if let mainID, worktree.id == mainID { continue }
         if seenInCuratedBuckets.contains(worktree.id) || archivedIDs.contains(worktree.id) { continue }
         var unpinned = copy.buckets[.unpinned] ?? .init()
         unpinned.items[worktree.id] = .init()

@@ -1863,12 +1863,161 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func folderPinUnpinFlowsThroughBucketMachinery() async {
+    // Folders use the same `pinWorktree` / `unpinWorktree` actions as git
+    // worktrees. The two invariants this test locks:
+    //  1. A pin reaches the `.pinned` bucket even though the folder's
+    //     synthetic worktree wasn't pre-seeded into any bucket.
+    //  2. A subsequent `.repositoriesLoaded` round-trip does not scrub the
+    //     pin. `reconcileSidebarState` previously dropped any bucket entry
+    //     whose id matched a main worktree, and folder synthetics satisfy
+    //     `isMainWorktree` by geometry, so without the fix the pin
+    //     vanished on every reload.
+    let folderRoot = "/tmp/folder-pin-\(UUID().uuidString)"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      name: Repository.name(for: folderURL), detail: "",
+      workingDirectory: folderURL, repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    let store = TestStore(initialState: makeState(repositories: [folderRepo])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.pinWorktree(folderWorktree.id))
+    #expect(store.state.sidebar.sections[folderRepo.id]?.buckets[.pinned]?.items[folderWorktree.id] != nil)
+    #expect(store.state.sidebar.sections[folderRepo.id]?.buckets[.unpinned]?.items[folderWorktree.id] == nil)
+    #expect(store.state.sidebarItems[id: folderWorktree.id]?.isPinned == true)
+
+    await store.send(
+      .repositoriesLoaded(
+        [folderRepo],
+        failures: [],
+        roots: [folderRepo.rootURL],
+        animated: false,
+      )
+    )
+    #expect(store.state.sidebar.sections[folderRepo.id]?.buckets[.pinned]?.items[folderWorktree.id] != nil)
+    #expect(store.state.sidebarItems[id: folderWorktree.id]?.isPinned == true)
+
+    await store.send(.unpinWorktree(folderWorktree.id))
+    #expect(store.state.sidebar.sections[folderRepo.id]?.buckets[.pinned]?.items[folderWorktree.id] == nil)
+    #expect(store.state.sidebar.sections[folderRepo.id]?.buckets[.unpinned]?.items[folderWorktree.id] != nil)
+    #expect(store.state.sidebarItems[id: folderWorktree.id]?.isPinned == false)
+
+    await store.send(
+      .repositoriesLoaded(
+        [folderRepo],
+        failures: [],
+        roots: [folderRepo.rootURL],
+        animated: false,
+      )
+    )
+    #expect(store.state.sidebar.sections[folderRepo.id]?.buckets[.unpinned]?.items[folderWorktree.id] != nil)
+    #expect(store.state.sidebarItems[id: folderWorktree.id]?.isPinned == false)
+  }
+
+  @Test func pinWorktreeCollapsesPreExistingDoubleBucketState() async {
+    // `removeAnywhere` + `insert` is supposed to enforce the
+    // "exactly one bucket" invariant against pre-states (hand-edit,
+    // migrator race) where the same id lives in `.pinned` and
+    // `.unpinned` simultaneously. Seed that pre-state explicitly and
+    // confirm `pinWorktree` collapses it to a single `.pinned` entry.
+    let worktree = makeWorktree(id: "/tmp/dbl-bucket/wt", name: "duck", repoRoot: "/tmp/dbl-bucket")
+    let repository = makeRepository(id: "/tmp/dbl-bucket", worktrees: [worktree])
+    var initial = makeState(repositories: [repository])
+    initial.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [
+          .pinned: .init(items: [worktree.id: .init()]),
+          .unpinned: .init(items: [worktree.id: .init()]),
+        ]
+      )
+    }
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.pinWorktree(worktree.id))
+    let section = store.state.sidebar.sections[repository.id]
+    #expect(section?.buckets[.pinned]?.items[worktree.id] != nil)
+    #expect(section?.buckets[.unpinned]?.items[worktree.id] == nil)
+  }
+
+  @Test func unpinWorktreeCollapsesPreExistingDoubleBucketState() async {
+    // Symmetric to `pinWorktreeCollapsesPreExistingDoubleBucketState`: an
+    // unpin against a row that lives in both `.pinned` and `.unpinned`
+    // must end with the row in `.unpinned` only.
+    let worktree = makeWorktree(id: "/tmp/dbl-bucket-u/wt", name: "duck", repoRoot: "/tmp/dbl-bucket-u")
+    let repository = makeRepository(id: "/tmp/dbl-bucket-u", worktrees: [worktree])
+    var initial = makeState(repositories: [repository])
+    initial.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [
+          .pinned: .init(items: [worktree.id: .init()]),
+          .unpinned: .init(items: [worktree.id: .init()]),
+        ]
+      )
+    }
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.unpinWorktree(worktree.id))
+    let section = store.state.sidebar.sections[repository.id]
+    #expect(section?.buckets[.pinned]?.items[worktree.id] == nil)
+    #expect(section?.buckets[.unpinned]?.items[worktree.id] != nil)
+  }
+
+  @Test func pinWorktreeIsNoOpOnArchivedRow() async {
+    // Bucket relocation uses `removeAnywhere` which strips `archivedAt`
+    // as a side effect. The archive guard refuses to relocate archived
+    // rows so the timestamp survives a stray deeplink / hotkey dispatch.
+    let worktree = makeWorktree(id: "/tmp/arch-pin/wt", name: "duck", repoRoot: "/tmp/arch-pin")
+    let repository = makeRepository(id: "/tmp/arch-pin", worktrees: [worktree])
+    var initial = makeState(repositories: [repository])
+    initial.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [.archived: .init(items: [worktree.id: .init(archivedAt: .now)])]
+      )
+    }
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.pinWorktree(worktree.id))
+    let archived = store.state.sidebar.sections[repository.id]?.buckets[.archived]
+    #expect(archived?.items[worktree.id] != nil)
+    #expect(archived?.items[worktree.id]?.archivedAt != nil)
+    #expect(store.state.sidebar.sections[repository.id]?.buckets[.pinned]?.items[worktree.id] == nil)
+
+    await store.send(.unpinWorktree(worktree.id))
+    let archivedAfterUnpin = store.state.sidebar.sections[repository.id]?.buckets[.archived]
+    #expect(archivedAfterUnpin?.items[worktree.id] != nil)
+    #expect(archivedAfterUnpin?.items[worktree.id]?.archivedAt != nil)
+  }
+
   @Test func requestArchiveWorktreeForFolderShowsActionNotAvailable() async {
-    // S1: the deeplink layer rejects archive/pin/unpin on folders,
-    // but the hotkey / context-menu path used to silently no-op
-    // because the synthetic main-worktree satisfies `isMainWorktree`
-    // geometrically. Surface the same "Action not available" alert
-    // the deeplink shows.
+    // Archive still rejects on folders (no archived bucket for them); pin
+    // and unpin now flow through the standard bucket machinery so they
+    // produce no alert. See `folderPinUnpinFlowsThroughBucketMachinery`.
     let folderRoot = "/tmp/folder-archive-\(UUID().uuidString)"
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
@@ -1885,29 +2034,17 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    // The helper produces a per-action title + body so users know
-    // which action they just tried. Keep each expected alert
-    // narrow to the one being exercised.
-    func expectedAlert(name: String) -> AlertState<RepositoriesFeature.Alert> {
-      AlertState {
-        TextState("\(name) not available")
-      } actions: {
-        ButtonState(role: .cancel) { TextState("OK") }
-      } message: {
-        TextState("\(name) only applies to git repositories.")
-      }
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Archive not available")
+    } actions: {
+      ButtonState(role: .cancel) { TextState("OK") }
+    } message: {
+      TextState("Archive only applies to git repositories.")
     }
     await store.send(.requestArchiveWorktree(folderWorktree.id, folderRepo.id)) {
-      $0.alert = expectedAlert(name: "Archive")
+      $0.alert = expectedAlert
     }
     await store.send(.alert(.dismiss)) { $0.alert = nil }
-    await store.send(.pinWorktree(folderWorktree.id)) {
-      $0.alert = expectedAlert(name: "Pin")
-    }
-    await store.send(.alert(.dismiss)) { $0.alert = nil }
-    await store.send(.unpinWorktree(folderWorktree.id)) {
-      $0.alert = expectedAlert(name: "Unpin")
-    }
   }
 
   @Test func requestArchiveWorktreesShowsBatchConfirmation() async {

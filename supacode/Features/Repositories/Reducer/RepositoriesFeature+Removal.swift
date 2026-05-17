@@ -131,21 +131,17 @@ extension RepositoriesFeature {
   /// folder row (hotkey, deeplink). Drives
   /// `folderIncompatibleAlert` so every entry point presents the
   /// same precise copy ("Archive only applies to git repositories.")
-  /// instead of a generic "Action not available." Shared across
-  /// this feature's hotkey handlers AND the `AppFeature` deeplink
-  /// layer so the copy can't drift between entry points.
+  /// instead of a generic "Action not available." Shared between
+  /// this feature's hotkey handlers and the `AppFeature` deeplink
+  /// layer so the copy can't drift.
   enum FolderIncompatibleAction: Equatable, Sendable {
     case archive
     case unarchive
-    case pin
-    case unpin
 
     var displayName: String {
       switch self {
       case .archive: "Archive"
       case .unarchive: "Unarchive"
-      case .pin: "Pin"
-      case .unpin: "Unpin"
       }
     }
 
@@ -191,11 +187,11 @@ extension RepositoriesFeature {
         repositoryID, outcome: .failureSilent, selectionWasRemoved: false))
   }
 
-  /// Shared "Action not available" alert shown when a git-only
-  /// action (archive / pin / unpin) is dispatched against a
-  /// folder repository. Four call sites produced the same
-  /// `AlertState` inline before this helper existed — now they
-  /// share one construction so the copy can't drift.
+  /// Shared "Action not available" alert shown when archive /
+  /// unarchive is dispatched against a folder repository. Multiple
+  /// call sites produced the same `AlertState` inline before this
+  /// helper existed; now they share one construction so the copy
+  /// can't drift.
   func folderIncompatibleAlert(action: FolderIncompatibleAction) -> AlertState<Alert> {
     let copy = action.alertCopy
     return messageAlert(title: copy.title, message: copy.message)

@@ -1184,10 +1184,9 @@ struct AppFeature {
       return .none
     }
     // Folders expose the worktree deeplink surface only for the
-    // actions that actually apply — select, open terminals, delete,
-    // run scripts. `.archive` / `.unarchive` / `.pin` / `.unpin`
-    // make no sense for a folder's synthetic main worktree, so
-    // reject them explicitly rather than silently no-op-ing.
+    // actions that actually apply. `.archive` / `.unarchive` still
+    // make no sense for a folder's synthetic main worktree; pin and
+    // unpin now flow through the shared bucket machinery.
     if let folderRepoID = state.repositories.repositoryID(for: worktreeID),
       let folderRepo = state.repositories.repositories[id: folderRepoID],
       !folderRepo.isGitRepository
@@ -1196,8 +1195,6 @@ struct AppFeature {
       switch action {
       case .archive: incompatibleAction = .archive
       case .unarchive: incompatibleAction = .unarchive
-      case .pin: incompatibleAction = .pin
-      case .unpin: incompatibleAction = .unpin
       default: incompatibleAction = nil
       }
       if let incompatibleAction {

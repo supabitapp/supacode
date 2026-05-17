@@ -595,7 +595,11 @@ struct SidebarFolderRow: View {
   var body: some View {
     let state = store.state
     let isRepositoryRemoving = state.isRemovingRepository(repository)
-    if let rowID = state.sidebarGrouping.bucketsByRepository[repository.id]?[.pinned].first {
+    // A folder synthetic worktree seeds into `.unpinned` and migrates to
+    // `.pinned` only after an explicit pin. Resolving via the canonical
+    // synthetic worktree id keeps the row visible across both buckets.
+    let rowID = Repository.folderWorktreeID(for: repository.rootURL)
+    if state.sidebarItems[id: rowID] != nil {
       SidebarItemRow(
         rowID: rowID,
         store: store,
@@ -696,18 +700,24 @@ private struct SidebarItemContextMenu: View {
       Divider()
     }
 
-    let pinnableRows = contextRows.filter { !$0.isMainWorktree }
+    // Folder synthetic rows pass `isMainWorktree` by geometry but are
+    // pinnable; git "main" rows still aren't.
+    let pinnableRows = contextRows.filter { !$0.isMainWorktree || $0.isFolder }
     if !pinnableRows.isEmpty {
       let allPinned = pinnableRows.allSatisfy(\.isPinned)
+      let allFolders = pinnableRows.allSatisfy(\.isFolder)
+      // Folder-only selection reads "Pin Folder" / "Pin Folders"; mixed or
+      // git-only fall back to "Worktree" so the label stays accurate.
+      let noun = allFolders ? "Folder" : "Worktree"
       if allPinned {
-        let label = isBulkSelection ? "Unpin Worktrees" : "Unpin Worktree"
+        let label = isBulkSelection ? "Unpin \(noun)s" : "Unpin \(noun)"
         Button(label, systemImage: "pin.slash") {
           for pinnableRow in pinnableRows {
             togglePin(for: pinnableRow.id, isPinned: true)
           }
         }
       } else {
-        let label = isBulkSelection ? "Pin Worktrees" : "Pin Worktree"
+        let label = isBulkSelection ? "Pin \(noun)s" : "Pin \(noun)"
         Button(label, systemImage: "pin") {
           for pinnableRow in pinnableRows where !pinnableRow.isPinned {
             togglePin(for: pinnableRow.id, isPinned: false)
