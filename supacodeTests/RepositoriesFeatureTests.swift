@@ -6018,7 +6018,7 @@ struct RepositoriesFeatureTests {
 
     let content = WorktreeDetailView.makeToolbarTitleContent(
       selectedWorktree: worktree,
-      selectedRow: folderRow,
+      selectedRow: SelectedWorktreeSlice(folderRow),
       repositories: state,
       hideSubtitleOnMatch: true
     )
@@ -6039,7 +6039,7 @@ struct RepositoriesFeatureTests {
 
     let content = WorktreeDetailView.makeToolbarTitleContent(
       selectedWorktree: worktree,
-      selectedRow: mainRow,
+      selectedRow: SelectedWorktreeSlice(mainRow),
       repositories: state,
       hideSubtitleOnMatch: true
     )
@@ -6063,7 +6063,7 @@ struct RepositoriesFeatureTests {
 
     let content = WorktreeDetailView.makeToolbarTitleContent(
       selectedWorktree: main,
-      selectedRow: mainRow,
+      selectedRow: SelectedWorktreeSlice(mainRow),
       repositories: state,
       hideSubtitleOnMatch: true
     )
@@ -6087,7 +6087,7 @@ struct RepositoriesFeatureTests {
 
     let content = WorktreeDetailView.makeToolbarTitleContent(
       selectedWorktree: feature,
-      selectedRow: featureRow,
+      selectedRow: SelectedWorktreeSlice(featureRow),
       repositories: state,
       hideSubtitleOnMatch: true
     )
@@ -6110,7 +6110,7 @@ struct RepositoriesFeatureTests {
 
     let content = WorktreeDetailView.makeToolbarTitleContent(
       selectedWorktree: feature,
-      selectedRow: featureRow,
+      selectedRow: SelectedWorktreeSlice(featureRow),
       repositories: state,
       hideSubtitleOnMatch: false
     )
@@ -6134,7 +6134,7 @@ struct RepositoriesFeatureTests {
 
     let content = WorktreeDetailView.makeToolbarTitleContent(
       selectedWorktree: worktree,
-      selectedRow: mainRow,
+      selectedRow: SelectedWorktreeSlice(mainRow),
       repositories: state,
       hideSubtitleOnMatch: true
     )

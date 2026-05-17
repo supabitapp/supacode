@@ -2,7 +2,7 @@ import Foundation
 
 struct WorktreeTerminalNotification: Identifiable, Equatable, Sendable {
   let id: UUID
-  let surfaceId: UUID
+  let surfaceID: UUID
   let title: String
   let body: String
   let createdAt: Date
@@ -10,14 +10,14 @@ struct WorktreeTerminalNotification: Identifiable, Equatable, Sendable {
 
   init(
     id: UUID = UUID(),
-    surfaceId: UUID,
+    surfaceID: UUID,
     title: String,
     body: String,
     createdAt: Date,
     isRead: Bool = false
   ) {
     self.id = id
-    self.surfaceId = surfaceId
+    self.surfaceID = surfaceID
     self.title = title
     self.body = body
     self.createdAt = createdAt

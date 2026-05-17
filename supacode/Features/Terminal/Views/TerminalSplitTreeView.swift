@@ -142,9 +142,6 @@ struct TerminalSplitTreeView: View {
                 .allowsHitTesting(false)
             }
           }
-          .overlay(alignment: .top) {
-            GhosttySurfaceProgressOverlay(state: surfaceView.bridge.state)
-          }
           .overlay(alignment: .topTrailing) {
             if surfaceView.bridge.state.searchNeedle != nil {
               GhosttySurfaceSearchOverlay(surfaceView: surfaceView)

@@ -1,3 +1,4 @@
+import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
@@ -8,14 +9,14 @@ struct TerminalTabLabelView: View {
   let isHoveringClose: Bool
   let shortcutHint: String?
   let showsShortcutHint: Bool
-  let agents: [AgentPresenceFeature.AgentInstance]
+  /// Per-tab scoped store. The badge subview observes `state.agents` here
+  /// instead of iterating worktree-wide presence, so an agent storm on tab B
+  /// doesn't invalidate tab A's label body.
+  let tabStore: StoreOf<TerminalTabFeature>
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
-      if !agents.isEmpty {
-        AgentAvatarGroupView(instances: agents, size: 14)
-          .padding(.trailing, 2)
-      }
+      TerminalTabAgentBadge(tabStore: tabStore)
       if let icon = tab.icon {
         Image(systemName: icon)
           .imageScale(.small)
@@ -33,15 +34,34 @@ struct TerminalTabLabelView: View {
         .foregroundStyle(TerminalTabBarColors.activeText)
         .shimmer(isActive: tab.isDirty)
       Spacer(minLength: TerminalTabBarMetrics.contentTrailingSpacing)
-      ZStack {
-        if showsShortcutHint, let shortcutHint {
-          ShortcutHintView(text: shortcutHint, color: TerminalTabBarColors.inactiveText)
-        }
-      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     .contentShape(.rect)
     .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
     .padding(.trailing, TerminalTabBarMetrics.closeButtonSize + TerminalTabBarMetrics.contentSpacing)
+  }
+}
+
+/// Reads agent presence off the per-tab scoped store, so an agent storm on
+/// tab B invalidates only tab B's badge leaf. Mirrors sidebar's
+/// `RunningAgentsBadgeContent` pattern with the inner Equatable wrapper.
+private struct TerminalTabAgentBadge: View {
+  let tabStore: StoreOf<TerminalTabFeature>
+
+  var body: some View {
+    let agents = tabStore.state.agents
+    if !agents.isEmpty {
+      TerminalTabAgentBadgeContent(agents: agents)
+        .equatable()
+    }
+  }
+}
+
+private struct TerminalTabAgentBadgeContent: View, Equatable {
+  let agents: [AgentPresenceFeature.AgentInstance]
+
+  var body: some View {
+    AgentAvatarGroupView(instances: agents, size: 14)
+      .padding(.trailing, 2)
   }
 }

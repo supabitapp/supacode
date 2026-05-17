@@ -1,4 +1,5 @@
 import AppKit
+import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
@@ -8,8 +9,10 @@ struct TerminalTabView: View {
   let isDragging: Bool
   let tabIndex: Int
   let fixedWidth: CGFloat?
-  let hasNotification: Bool
-  let agents: [AgentPresenceFeature.AgentInstance]
+  /// Per-tab scoped store. The view body reads exclusively from this for
+  /// observation-tracked fields (agents, unseen count, progress display) so
+  /// per-tab mutations invalidate only this leaf, not sibling tabs.
+  let tabStore: StoreOf<TerminalTabFeature>
   let onSelect: () -> Void
   let onClose: () -> Void
   let onRename: (String) -> Void
@@ -38,7 +41,7 @@ struct TerminalTabView: View {
           isHoveringClose: isHoveringClose,
           shortcutHint: shortcutHint,
           showsShortcutHint: showsShortcutHint,
-          agents: agents,
+          tabStore: tabStore,
         )
       }
       .buttonStyle(TerminalTabButtonStyle(isPressing: $isPressing))
@@ -52,17 +55,24 @@ struct TerminalTabView: View {
       .contentShape(.rect)
       .help("Open tab \(tab.displayTitle)")
       .accessibilityLabel(tab.displayTitle)
+      .accessibilityValue(accessibilityValue)
       .allowsHitTesting(!isEditing)
       .opacity(isEditing ? 0 : 1)
 
-      // The dot and close X share the same trailing slot: the dot is
-      // visible when the tab is idle and has unread notifications, the
-      // close button replaces it on hover. `TerminalTabCloseButton` already
-      // owns the hover visibility — we mirror it inverted here.
+      // Trailing slot: dot OR hotkey hint OR close button.
+      // Priority: hover → close button; ⌘ pressed → hint; otherwise → dot.
+      // Hint matches sidebar's `Text(shortcutHint).font(.caption).foregroundStyle(.secondary)`
+      // verbatim so the typography stays in lock-step across surfaces.
       ZStack {
-        TabNotificationDot()
-          .opacity(isShowingNotificationDot ? 1 : 0)
-          .allowsHitTesting(false)
+        TerminalTabNotificationIndicator(
+          tabStore: tabStore,
+          suppress: isHovering || isHoveringClose || isDragging || showsShortcutHint
+        )
+        if showsShortcutHint, let shortcutHint, !isHovering, !isDragging {
+          Text(shortcutHint)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
         TerminalTabCloseButton(
           isHoveringTab: isHovering,
           isDragging: isDragging,
@@ -73,7 +83,6 @@ struct TerminalTabView: View {
         )
       }
       .animation(.easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration), value: isHovering)
-      .animation(.easeInOut(duration: 0.2), value: hasNotification)
       .padding(.trailing, TerminalTabBarMetrics.tabHorizontalPadding)
       .opacity(isEditing ? 0 : 1)
       .allowsHitTesting(!isEditing)
@@ -111,7 +120,8 @@ struct TerminalTabView: View {
         isHovering: isHovering,
         isPressing: isPressing,
         isDragging: isDragging,
-        tintColor: tab.tintColor
+        tintColor: tab.tintColor,
+        tabStore: tabStore
       )
     }
     // Below `.background` so the stripe's opacity animates in lockstep with
@@ -198,8 +208,27 @@ struct TerminalTabView: View {
     commandKeyObserver.isPressed && shortcutHint != nil
   }
 
-  private var isShowingNotificationDot: Bool {
-    hasNotification && !isHovering && !isHoveringClose && !isDragging && !showsShortcutHint
+  /// State-aware accessibility value for VoiceOver. Restores the OSC-9 progress
+  /// signal lost when `GhosttySurfaceProgressBar` was deleted: announces
+  /// "Errored", "Paused", "Busy", or "47 percent complete" on the busy tab.
+  private var accessibilityValue: String {
+    tabStore.state.progressDisplay?.accessibilityValue ?? ""
+  }
+}
+
+/// Reads the tab's unread notification count off the per-tab scoped store.
+/// `suppress` short-circuits the count check when the dot would be hidden
+/// anyway (hover, drag, shortcut hint).
+private struct TerminalTabNotificationIndicator: View {
+  let tabStore: StoreOf<TerminalTabFeature>
+  let suppress: Bool
+
+  var body: some View {
+    let isShowing = !suppress && tabStore.state.hasUnseenNotifications
+    TabNotificationDot()
+      .opacity(isShowing ? 1 : 0)
+      .allowsHitTesting(false)
+      .animation(.easeInOut(duration: 0.2), value: isShowing)
   }
 }
 

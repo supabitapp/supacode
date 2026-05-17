@@ -21,7 +21,13 @@ struct WorktreeDetailView: View {
 
   private func detailBody(state: AppFeature.State) -> some View {
     let repositories = state.repositories
-    let selectedRow = repositories.selectedRow(for: repositories.selectedWorktreeID)
+    // Read the selected row as a value-typed slice that excludes `agents`,
+    // `hasAgentActivity`, `surfaceIDs`, and `notifications`. The detail body
+    // (and its `focusedSceneValue` republishers) used to invalidate on every
+    // agent transition on the focused worktree — the slice projection cuts
+    // that observation dependency so bug #289 stays fixed even when the
+    // focused worktree has a running agent.
+    let selectedRow = repositories.selectedWorktreeSlice(for: repositories.selectedWorktreeID)
     let selectedWorktree = repositories.worktree(for: repositories.selectedWorktreeID)
     let selectedWorktreeSummaries = selectedWorktreeSummaries(from: repositories)
     let showsMultiSelectionSummary = shouldShowMultiSelectionSummary(
@@ -46,7 +52,10 @@ struct WorktreeDetailView: View {
     let openActionSelection = state.openActionSelection
     let repoScripts = state.repoScripts
     let globalScripts = state.globalScripts
-    let runningScriptIDs = state.runningScriptIDs
+    // Source `runningScriptIDs` from the slice instead of `state.runningScriptIDs`
+    // so an unrelated `sidebarItems[id:].agents` mutation on the focused row
+    // doesn't re-publish this. Same field, observed through the projected slice.
+    let runningScriptIDs = Set(selectedRow?.runningScripts.ids ?? [])
     let notificationGroups = repositories.toolbarNotificationGroups(terminalManager: terminalManager)
     let unseenNotificationWorktreeCount = notificationGroups.reduce(0) { count, repository in
       count + repository.unseenWorktreeCount
@@ -55,6 +64,7 @@ struct WorktreeDetailView: View {
       repositories: repositories,
       loadingInfo: loadingInfo,
       selectedWorktree: selectedWorktree,
+      selectedSlice: selectedRow,
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
     .toolbar(removing: .title)
@@ -72,7 +82,7 @@ struct WorktreeDetailView: View {
         let toolbarState = WorktreeToolbarState(
           titleContent: titleContent,
           rootURL: selectedWorktree.repositoryRootURL,
-          kind: toolbarKind(for: selectedWorktree, repositories: repositories),
+          kind: toolbarKind(for: selectedWorktree, selectedRow: selectedRow),
           statusToast: repositories.statusToast,
           notificationGroups: notificationGroups,
           unseenNotificationWorktreeCount: unseenNotificationWorktreeCount,
@@ -184,6 +194,7 @@ struct WorktreeDetailView: View {
     repositories: RepositoriesFeature.State,
     loadingInfo: WorktreeLoadingInfo?,
     selectedWorktree: Worktree?,
+    selectedSlice: SelectedWorktreeSlice?,
     selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
   ) -> some View {
     Group {
@@ -199,16 +210,15 @@ struct WorktreeDetailView: View {
       } else if let loadingInfo {
         WorktreeLoadingView(info: loadingInfo)
       } else if let selectedWorktree {
-        let shouldRunSetupScript = repositories.sidebarItems[id: selectedWorktree.id]?.lifecycle == .pending
+        let shouldRunSetupScript = selectedSlice?.lifecycle == .pending
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
         WorktreeTerminalTabsView(
           worktree: selectedWorktree,
           manager: terminalManager,
+          terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           shouldRunSetupScript: shouldRunSetupScript,
           forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) },
-          agentPresence: store.state.agentPresence,
-          agentBadgesEnabled: agentBadgesEnabled
+          createTab: { store.send(.newTerminal) }
         )
         .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -284,7 +294,7 @@ struct WorktreeDetailView: View {
   ) {
     store.send(.repositories(.selectWorktree(worktreeID)))
     if let terminalState = terminalManager.stateIfExists(for: worktreeID) {
-      _ = terminalState.focusSurface(id: notification.surfaceId)
+      _ = terminalState.focusSurface(id: notification.surfaceID)
     }
   }
 
@@ -516,7 +526,7 @@ struct WorktreeDetailView: View {
 
   static func makeToolbarTitleContent(
     selectedWorktree: Worktree,
-    selectedRow: SidebarItemFeature.State?,
+    selectedRow: SelectedWorktreeSlice?,
     repositories: RepositoriesFeature.State,
     hideSubtitleOnMatch: Bool
   ) -> WorktreeToolbarTitleContent {
@@ -562,22 +572,21 @@ struct WorktreeDetailView: View {
 
   private func toolbarKind(
     for selectedWorktree: Worktree,
-    repositories: RepositoriesFeature.State
+    selectedRow: SelectedWorktreeSlice?
   ) -> WorktreeToolbarState.Kind {
-    let selectedRow = repositories.selectedRow(for: selectedWorktree.id)
     guard selectedRow?.isFolder != true else { return .folder }
-    guard let pullRequest = repositories.sidebarItems[id: selectedWorktree.id]?.pullRequest else {
+    guard let pullRequest = selectedRow?.pullRequest else {
       return .git(pullRequest: nil)
     }
     // Only surface the PR when its head branch matches the current
-    // worktree — otherwise stale info sticks around after a rename
+    // worktree, otherwise stale info sticks around after a rename
     // or branch switch.
     let matches = pullRequest.headRefName == nil || pullRequest.headRefName == selectedWorktree.name
     return .git(pullRequest: matches ? pullRequest : nil)
   }
 
   private func loadingInfo(
-    for selectedRow: SidebarItemFeature.State?,
+    for selectedRow: SelectedWorktreeSlice?,
     selectedWorktreeID: Worktree.ID?,
     repositories: RepositoriesFeature.State
   ) -> WorktreeLoadingInfo? {

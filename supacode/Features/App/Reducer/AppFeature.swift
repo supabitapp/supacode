@@ -24,6 +24,10 @@ struct AppFeature {
     var settings: SettingsFeature.State
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
+    /// Terminal-orchestration state. Owns the per-tab feature collection so
+    /// tab-bar views scope through `\.terminals` (narrow) instead of the full
+    /// app store. Mirrors sidebar's `RepositoriesFeature` ownership pattern.
+    var terminals = TerminalsFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
     var repoScripts: [ScriptDefinition] = []
     var globalScripts: [ScriptDefinition] = []
@@ -83,6 +87,7 @@ struct AppFeature {
 
   enum Action {
     case agentPresence(AgentPresenceFeature.Action)
+    case terminals(TerminalsFeature.Action)
     case appLaunched
     case scenePhaseChanged(ScenePhase)
     case repositories(RepositoriesFeature.Action)
@@ -958,6 +963,20 @@ struct AppFeature {
           )
         )
 
+      case .terminalEvent(.tabProjectionChanged(let worktreeID, let projection)):
+        return .send(.terminals(.tabProjectionChanged(worktreeID: worktreeID, projection: projection)))
+
+      case .terminalEvent(.tabRemoved(_, let tabID)):
+        return .send(.terminals(.tabRemoved(tabID: tabID)))
+
+      case .terminalEvent(.tabProgressDisplayChanged(_, let tabID, let display)):
+        return .send(
+          .terminals(.terminalTabs(.element(id: tabID.rawValue, action: .progressDisplayChanged(display))))
+        )
+
+      case .terminals:
+        return .none
+
       case .terminalEvent(.surfacesClosed(let ids)):
         guard !ids.isEmpty else { return .none }
         if ids.count == 1, let id = ids.first {
@@ -973,6 +992,9 @@ struct AppFeature {
       }
     }
     core
+    Scope(state: \.terminals, action: \.terminals) {
+      TerminalsFeature()
+    }
     Scope(state: \.agentPresence, action: \.agentPresence) {
       AgentPresenceFeature()
     }
@@ -1035,16 +1057,31 @@ struct AppFeature {
     badgesEnabled: Bool
   ) -> Effect<Action> {
     let presence = state.agentPresence
-    let effects: [Effect<Action>] = rowIDs.compactMap { rowID in
-      guard let row = state.repositories.sidebarItems[id: rowID] else { return nil }
+    var effects: [Effect<Action>] = []
+    var affectedSurfaces: Set<UUID> = []
+    for rowID in rowIDs {
+      guard let row = state.repositories.sidebarItems[id: rowID] else { continue }
       let agents = presence.agents(across: row.surfaceIDs, badgesEnabled: badgesEnabled)
       let hasActivity = presence.hasActivity(in: row.surfaceIDs)
-      return .send(
-        .repositories(
-          .sidebarItems(
-            .element(id: rowID, action: .agentSnapshotChanged(agents, hasActivity: hasActivity))
+      effects.append(
+        .send(
+          .repositories(
+            .sidebarItems(
+              .element(id: rowID, action: .agentSnapshotChanged(agents, hasActivity: hasActivity))
+            )
           )
         )
+      )
+      affectedSurfaces.formUnion(row.surfaceIDs)
+    }
+    // Per-tab fanout: any tab containing an affected surface re-projects its
+    // agent snapshot. Tab leaves observe `state.agents` directly so per-tab
+    // mutations don't invalidate sibling tab leaves.
+    for tab in state.terminals.terminalTabs
+    where tab.surfaceIDs.contains(where: affectedSurfaces.contains) {
+      let agents = presence.agents(across: tab.surfaceIDs, badgesEnabled: badgesEnabled)
+      effects.append(
+        .send(.terminals(.terminalTabs(.element(id: tab.id, action: .agentSnapshotChanged(agents)))))
       )
     }
     return .merge(effects)

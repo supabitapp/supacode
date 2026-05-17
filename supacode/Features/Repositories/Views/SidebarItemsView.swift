@@ -507,11 +507,11 @@ private struct SidebarItemBody: View {
     .environment(\.focusNotificationAction) { notification in
       guard let terminalState = terminalManager.stateIfExists(for: rowID) else {
         notificationLogger.warning(
-          "No terminal state for worktree \(rowID) when focusing notification \(notification.surfaceId).")
+          "No terminal state for worktree \(rowID) when focusing notification \(notification.surfaceID).")
         return
       }
-      if !terminalState.focusSurface(id: notification.surfaceId) {
-        notificationLogger.warning("Failed to focus surface \(notification.surfaceId) for worktree \(rowID).")
+      if !terminalState.focusSurface(id: notification.surfaceID) {
+        notificationLogger.warning("Failed to focus surface \(notification.surfaceID) for worktree \(rowID).")
       }
     }
     .tag(SidebarSelection.worktree(rowID))

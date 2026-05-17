@@ -403,6 +403,15 @@ final class WorktreeTerminalManager {
     state.onSetupScriptConsumed = { [weak self] in
       self?.emit(.setupScriptConsumed(worktreeID: worktree.id))
     }
+    state.onTabProjectionChanged = { [weak self] projection in
+      self?.emit(.tabProjectionChanged(worktreeID: worktree.id, projection))
+    }
+    state.onTabRemoved = { [weak self] tabID in
+      self?.emit(.tabRemoved(worktreeID: worktree.id, tabID: tabID))
+    }
+    state.onTabProgressDisplayChanged = { [weak self] tabID, display in
+      self?.emit(.tabProgressDisplayChanged(worktreeID: worktree.id, tabID: tabID, display: display))
+    }
     states[worktree.id] = state
     terminalLogger.info("Created terminal state for worktree \(worktree.id)")
     return state
@@ -515,10 +524,10 @@ final class WorktreeTerminalManager {
     for (worktreeID, state) in states {
       for notification in state.unreadNotifications() {
         if let bestCreatedAt, bestCreatedAt >= notification.createdAt { break }
-        guard let tabID = state.tabID(containing: notification.surfaceId) else {
+        guard let tabID = state.tabID(containing: notification.surfaceID) else {
           skippedClosedSurface = true
           terminalLogger.debug(
-            "latestUnreadNotificationLocation: skipping closed surface \(notification.surfaceId) "
+            "latestUnreadNotificationLocation: skipping closed surface \(notification.surfaceID) "
               + "in \(worktreeID); trying older unread."
           )
           continue
@@ -526,7 +535,7 @@ final class WorktreeTerminalManager {
         best = NotificationLocation(
           worktreeID: worktreeID,
           tabID: tabID,
-          surfaceID: notification.surfaceId,
+          surfaceID: notification.surfaceID,
           notificationID: notification.id,
         )
         bestCreatedAt = notification.createdAt

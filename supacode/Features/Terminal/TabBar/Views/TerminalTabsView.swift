@@ -1,15 +1,16 @@
+import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabsView: View {
   @Bindable var manager: TerminalTabManager
+  let terminalState: WorktreeTerminalState
+  let terminalsStore: StoreOf<TerminalsFeature>
   let closeTab: (TerminalTabID) -> Void
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
-  let hasNotification: (TerminalTabID) -> Bool
-  let agentsForTab: (TerminalTabID) -> [AgentPresenceFeature.AgentInstance]
 
   @State private var draggingTabId: TerminalTabID?
   @State private var draggingStartLocation: CGFloat?
@@ -27,6 +28,8 @@ struct TerminalTabsView: View {
         ScrollView(.horizontal) {
           TerminalTabsRowView(
             manager: manager,
+            terminalState: terminalState,
+            terminalsStore: terminalsStore,
             openedTabs: $openedTabs,
             tabLocations: $tabLocations,
             draggingTabId: $draggingTabId,
@@ -38,8 +41,6 @@ struct TerminalTabsView: View {
             closeToRight: closeToRight,
             closeAll: closeAll,
             renameTab: renameTab,
-            hasNotification: hasNotification,
-            agentsForTab: agentsForTab,
             scrollReader: scrollReader
           )
           .padding(.horizontal, TerminalTabBarMetrics.barPadding)

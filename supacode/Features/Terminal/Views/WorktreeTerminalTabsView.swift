@@ -5,11 +5,13 @@ import SwiftUI
 struct WorktreeTerminalTabsView: View {
   let worktree: Worktree
   let manager: WorktreeTerminalManager
+  /// Narrowed terminal-orchestration store. The tab bar scopes per-tab
+  /// `TerminalTabFeature` stores via `\.terminalTabs[id:]` from here, so the
+  /// tab-bar surface area stays bounded to terminal state.
+  let terminalsStore: StoreOf<TerminalsFeature>
   let shouldRunSetupScript: Bool
   let forceAutoFocus: Bool
   let createTab: () -> Void
-  let agentPresence: AgentPresenceFeature.State
-  let agentBadgesEnabled: Bool
   @State private var windowActivity = WindowActivityState.inactive
   // Reading the chrome appearance env makes SwiftUI invalidate this body when
   // `WindowTintColorScheme` republishes after a Ghostty config reload, so the
@@ -24,6 +26,8 @@ struct WorktreeTerminalTabsView: View {
       if !state.shouldHideTabBar {
         TerminalTabBarView(
           manager: state.tabManager,
+          terminalState: state,
+          terminalsStore: terminalsStore,
           createTab: createTab,
           split: { direction in
             _ = state.performBindingActionOnFocusedSurface(direction.ghosttyBinding)
@@ -43,15 +47,6 @@ struct WorktreeTerminalTabsView: View {
           },
           renameTab: { tabId, newTitle in
             state.tabManager.setCustomTitle(tabId, title: newTitle)
-          },
-          hasNotification: { tabId in
-            state.hasUnseenNotification(forTabID: tabId)
-          },
-          agentsForTab: { tabId in
-            agentPresence.agents(
-              across: state.surfaceIDs(inTab: tabId),
-              badgesEnabled: agentBadgesEnabled,
-            )
           },
         )
         .transition(.move(edge: .top).combined(with: .opacity))

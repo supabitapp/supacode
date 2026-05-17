@@ -92,7 +92,7 @@ struct SidebarItemFeatureTests {
     let surface1 = UUID()
     let surface2 = UUID()
     let notif = WorktreeTerminalNotification(
-      surfaceId: surface1,
+      surfaceID: surface1,
       title: "Notification",
       body: "hi",
       createdAt: Date(timeIntervalSince1970: 0)

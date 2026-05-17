@@ -1,8 +1,11 @@
+import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabBarView: View {
   @Bindable var manager: TerminalTabManager
+  let terminalState: WorktreeTerminalState
+  let terminalsStore: StoreOf<TerminalsFeature>
   let createTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
@@ -11,8 +14,6 @@ struct TerminalTabBarView: View {
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
-  let hasNotification: (TerminalTabID) -> Bool
-  let agentsForTab: (TerminalTabID) -> [AgentPresenceFeature.AgentInstance]
   @Environment(\.controlActiveState)
   private var controlActiveState
 
@@ -20,13 +21,13 @@ struct TerminalTabBarView: View {
     HStack(spacing: 0) {
       TerminalTabsView(
         manager: manager,
+        terminalState: terminalState,
+        terminalsStore: terminalsStore,
         closeTab: closeTab,
         closeOthers: closeOthers,
         closeToRight: closeToRight,
         closeAll: closeAll,
         renameTab: renameTab,
-        hasNotification: hasNotification,
-        agentsForTab: agentsForTab,
       )
       Spacer(minLength: 0)
       TerminalTabBarTrailingAccessories(

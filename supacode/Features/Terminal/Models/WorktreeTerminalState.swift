@@ -12,6 +12,17 @@ private let blockingScriptLogger = SupaLogger("BlockingScript")
 private let layoutLogger = SupaLogger("Layout")
 private let terminalStateLogger = SupaLogger("Terminal")
 
+/// Per-tab projection emitted by `WorktreeTerminalState` whenever a tab's
+/// surfaces, focus, unread count, or progress display drifts. The parent
+/// reducer applies this to the matching `TerminalTabFeature.State` so the
+/// tab-bar leaf observes a per-tab store instead of worktree-wide state.
+struct WorktreeTabProjection: Equatable, Sendable {
+  let tabID: TerminalTabID
+  let surfaceIDs: [UUID]
+  let activeSurfaceID: UUID?
+  let unseenNotificationCount: Int
+}
+
 @MainActor
 @Observable
 final class WorktreeTerminalState {
@@ -26,9 +37,17 @@ final class WorktreeTerminalState {
   private let worktree: Worktree
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
-  private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
-  private var surfaces: [UUID: GhosttySurfaceView] = [:]
-  private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
+  @ObservationIgnored private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
+  @ObservationIgnored private var surfaces: [UUID: GhosttySurfaceView] = [:]
+  @ObservationIgnored private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
+  /// Per-tab projection cache. `WorktreeTerminalState` recomputes from `trees`
+  /// / `notifications` / `focusedSurfaceIdByTab`, compares to the cached value,
+  /// and fires `onTabProjectionChanged` only on diff. The manager forwards the
+  /// projection upstream so `TerminalTabFeature.State` mirrors it.
+  @ObservationIgnored private var lastTabProjections: [TerminalTabID: WorktreeTabProjection] = [:]
+  /// Per-tab progress-display cache. Tracks the focused-surface or worst-of
+  /// aggregate so `onTabProgressDisplayChanged` only fires on diff.
+  @ObservationIgnored private var lastTabProgressDisplays: [TerminalTabID: TerminalTabProgressDisplay?] = [:]
   var socketPath: String?
   private(set) var shouldHideTabBar = false
   private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:]
@@ -41,7 +60,10 @@ final class WorktreeTerminalState {
   private var lastEmittedFocusSurfaceId: UUID?
   private var lastWindowIsKey: Bool?
   private var lastWindowIsVisible: Bool?
-  var notifications: [WorktreeTerminalNotification] = []
+  /// Raw notification log. `@ObservationIgnored` so per-tab notification ticks
+  /// flow through `TerminalTabState.unseenNotificationCount` projections instead
+  /// of invalidating every leaf in the worktree.
+  @ObservationIgnored var notifications: [WorktreeTerminalNotification] = []
   var notificationsEnabled = true
   @ObservationIgnored @Dependency(\.date.now) private var now
   private var recentHookBySurfaceID: [UUID: (text: String, recordedAt: Date)] = [:]
@@ -50,13 +72,13 @@ final class WorktreeTerminalState {
   }
 
   func hasUnseenNotification(forSurfaceID surfaceID: UUID) -> Bool {
-    notifications.contains { !$0.isRead && $0.surfaceId == surfaceID }
+    notifications.contains { !$0.isRead && $0.surfaceID == surfaceID }
   }
 
   func hasUnseenNotification(forTabID tabID: TerminalTabID) -> Bool {
     guard let tree = trees[tabID] else { return false }
     let surfaceIDs = Set(tree.leaves().map(\.id))
-    return notifications.contains { !$0.isRead && surfaceIDs.contains($0.surfaceId) }
+    return notifications.contains { !$0.isRead && surfaceIDs.contains($0.surfaceID) }
   }
 
   /// Returns the most recent unread notification in this worktree, or nil.
@@ -86,6 +108,17 @@ final class WorktreeTerminalState {
   var onSetupScriptConsumed: (() -> Void)?
   /// Forwarded to the manager so it can emit a `surfacesClosed` event into TCA.
   var onSurfacesClosed: ((Set<UUID>) -> Void)?
+  /// Fires when a tab's per-tab projection (surfaces / focus / unseen count)
+  /// drifts. Manager forwards into `TerminalTabFeature.State` via
+  /// `tabProjectionChanged` so the leaf observes a per-tab store.
+  var onTabProjectionChanged: ((WorktreeTabProjection) -> Void)?
+  /// Fires when a tab is fully removed (closeTab, closeAll). Manager forwards
+  /// so the parent reducer drops the corresponding `TerminalTabFeature.State`.
+  var onTabRemoved: ((TerminalTabID) -> Void)?
+  /// Fires when a tab's stripe-progress display drifts. Computed off the
+  /// active surface (selected tab) or worst-of-all (unselected tabs) so the
+  /// stripe stays in lock-step with focus and OSC-9 progress mutations.
+  var onTabProgressDisplayChanged: ((TerminalTabID, TerminalTabProgressDisplay?) -> Void)?
 
   init(
     runtime: GhosttyRuntime,
@@ -373,14 +406,14 @@ final class WorktreeTerminalState {
     trees.values.flatMap { $0.leaves().map(\.id) }
   }
 
-  func hasSurface(_ surfaceId: UUID, in tabId: TerminalTabID) -> Bool {
+  func hasSurface(_ surfaceID: UUID, in tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
-    return tree.find(id: surfaceId) != nil
+    return tree.find(id: surfaceID) != nil
   }
 
   /// Checks whether a surface UUID exists anywhere in the worktree (across all tabs).
-  func hasSurfaceAnywhere(_ surfaceId: UUID) -> Bool {
-    surfaces[surfaceId] != nil
+  func hasSurfaceAnywhere(_ surfaceID: UUID) -> Bool {
+    surfaces[surfaceID] != nil
   }
 
   func selectTab(_ tabId: TerminalTabID) {
@@ -388,8 +421,15 @@ final class WorktreeTerminalState {
       terminalStateLogger.warning("selectTab: tab \(tabId.rawValue) not found in worktree \(worktree.id).")
       return
     }
+    let previousSelectedTabId = tabManager.selectedTabId
     tabManager.selectTab(tabId)
     focusSurface(in: tabId)
+    // Re-emit the stripe progress for both old and new selected tabs: their
+    // "focused vs aggregate" branch just flipped.
+    if let previousSelectedTabId, previousSelectedTabId != tabId {
+      emitTabProgressDisplay(for: previousSelectedTabId)
+    }
+    emitTabProgressDisplay(for: tabId)
     emitTaskStatusIfChanged()
   }
 
@@ -591,29 +631,29 @@ final class WorktreeTerminalState {
       surfaceID: surfaceID
     )
     let tree = SplitTree(view: surface)
-    trees[tabId] = tree
-    focusedSurfaceIdByTab[tabId] = surface.id
+    setTree(tree, for: tabId)
+    setFocusedSurface(surface.id, for: tabId)
     return tree
   }
 
   func performSplitAction(
     _ action: GhosttySplitAction,
-    for surfaceId: UUID,
+    for surfaceID: UUID,
     newSurfaceID: UUID? = nil,
     initialInput: String? = nil
   ) -> Bool {
-    guard let tabId = tabID(containing: surfaceId), var tree = trees[tabId] else {
+    guard let tabId = tabID(containing: surfaceID), var tree = trees[tabId] else {
       return false
     }
-    guard let targetNode = tree.find(id: surfaceId) else { return false }
-    guard let targetSurface = surfaces[surfaceId] else { return false }
+    guard let targetNode = tree.find(id: surfaceID) else { return false }
+    guard let targetSurface = surfaces[surfaceID] else { return false }
 
     switch action {
     case .newSplit(let direction):
       let newSurface = createSurface(
         tabId: tabId,
         initialInput: initialInput,
-        inheritingFromSurfaceId: surfaceId,
+        inheritingFromSurfaceId: surfaceID,
         context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
         surfaceID: newSurfaceID,
       )
@@ -628,7 +668,7 @@ final class WorktreeTerminalState {
         return true
       } catch {
         terminalStateLogger.warning(
-          "performSplitAction: failed to insert split for surface \(surfaceId) in tab \(tabId.rawValue): \(error)")
+          "performSplitAction: failed to insert split for surface \(surfaceID) in tab \(tabId.rawValue): \(error)")
         newSurface.closeSurface()
         surfaces.removeValue(forKey: newSurface.id)
         return false
@@ -762,13 +802,17 @@ final class WorktreeTerminalState {
     for index in notifications.indices {
       notifications[index].isRead = true
     }
+    emitAllTabProjections()
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
 
   func markNotificationsRead(forSurfaceID surfaceID: UUID) {
     let previousHasUnseen = hasUnseenNotification
-    for index in notifications.indices where notifications[index].surfaceId == surfaceID {
+    for index in notifications.indices where notifications[index].surfaceID == surfaceID {
       notifications[index].isRead = true
+    }
+    if let tabId = tabID(containing: surfaceID) {
+      emitTabProjection(for: tabId)
     }
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
@@ -778,19 +822,28 @@ final class WorktreeTerminalState {
     let previousHasUnseen = hasUnseenNotification
     guard let index = notifications.firstIndex(where: { $0.id == id }) else { return }
     guard !notifications[index].isRead else { return }
+    let surfaceID = notifications[index].surfaceID
     notifications[index].isRead = true
+    if let tabId = tabID(containing: surfaceID) {
+      emitTabProjection(for: tabId)
+    }
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
 
   func dismissNotification(_ notificationID: WorktreeTerminalNotification.ID) {
     let previousHasUnseen = hasUnseenNotification
+    let affectedSurface = notifications.first(where: { $0.id == notificationID })?.surfaceID
     notifications.removeAll { $0.id == notificationID }
+    if let affectedSurface, let tabId = tabID(containing: affectedSurface) {
+      emitTabProjection(for: tabId)
+    }
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
 
   func dismissAllNotifications() {
     let previousHasUnseen = hasUnseenNotification
     notifications.removeAll()
+    emitAllTabProjections()
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
 
@@ -890,8 +943,8 @@ final class WorktreeTerminalState {
         surfaceID: tabSnapshot.layout.firstLeaf.id,
       )
       let tree = SplitTree(view: surface)
-      trees[tabId] = tree
-      focusedSurfaceIdByTab[tabId] = surface.id
+      setTree(tree, for: tabId)
+      setFocusedSurface(surface.id, for: tabId)
 
       // Recursively restore splits.
       restoreLayoutNode(tabSnapshot.layout, anchor: surface, tabId: tabId)
@@ -908,7 +961,7 @@ final class WorktreeTerminalState {
       // Focus the correct leaf.
       let focusedIndex = max(0, min(tabSnapshot.focusedLeafIndex, leaves.count - 1))
       if focusedIndex < leaves.count {
-        focusedSurfaceIdByTab[tabId] = leaves[focusedIndex].id
+        setFocusedSurface(leaves[focusedIndex].id, for: tabId)
       }
 
       onTabCreated?()
@@ -976,7 +1029,7 @@ final class WorktreeTerminalState {
     )
     do {
       tree = try tree.inserting(view: newSurface, at: anchor, direction: direction, ratio: ratio)
-      trees[tabId] = tree
+      setTree(tree, for: tabId)
       return newSurface
     } catch {
       layoutLogger.warning("Failed to restore split for tab \(tabId.rawValue): \(error)")
@@ -1198,7 +1251,7 @@ final class WorktreeTerminalState {
     }
     view.bridge.onDesktopNotification = { [weak self, weak view] title, body in
       guard let self, let view else { return }
-      self.appendNotification(title: title, body: body, surfaceId: view.id)
+      self.appendNotification(title: title, body: body, surfaceID: view.id)
     }
     view.bridge.onCloseRequest = { [weak self, weak view] processAlive in
       guard let self, let view else { return }
@@ -1219,11 +1272,11 @@ final class WorktreeTerminalState {
   }
 
   private func inheritedSurfaceConfig(
-    fromSurfaceId surfaceId: UUID?,
+    fromSurfaceId surfaceID: UUID?,
     context: ghostty_surface_context_e
   ) -> InheritedSurfaceConfig {
-    guard let surfaceId,
-      let view = surfaces[surfaceId],
+    guard let surfaceID,
+      let view = surfaces[surfaceID],
       let sourceSurface = view.surface
     else {
       return InheritedSurfaceConfig(workingDirectory: nil, fontSize: nil)
@@ -1277,7 +1330,7 @@ final class WorktreeTerminalState {
   // from explicit focus paths (programmatic focus, split navigation, zoom)
   // and from AppKit responder changes when the user clicks a pane.
   private func recordActiveSurface(_ surface: GhosttySurfaceView, in tabId: TerminalTabID) {
-    focusedSurfaceIdByTab[tabId] = surface.id
+    setFocusedSurface(surface.id, for: tabId)
     markNotificationsRead(forSurfaceID: surface.id)
     updateTabTitle(for: tabId)
     emitFocusChangedIfNeeded(surface.id)
@@ -1299,13 +1352,13 @@ final class WorktreeTerminalState {
     if let normalized = Self.normalizedText("\(title) \(body)") {
       recentHookBySurfaceID[surfaceID] = (text: normalized, recordedAt: now)
     }
-    appendNotification(title: title, body: body, surfaceId: surfaceID, fromHook: true)
+    appendNotification(title: title, body: body, surfaceID: surfaceID, fromHook: true)
   }
 
   private func appendNotification(
     title: String,
     body: String,
-    surfaceId: UUID,
+    surfaceID: UUID,
     fromHook: Bool = false
   ) {
     let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1313,10 +1366,10 @@ final class WorktreeTerminalState {
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
     if notificationsEnabled {
       let previousHasUnseen = hasUnseenNotification
-      let isRead = isSelected() && isFocusedSurface(surfaceId)
+      let isRead = isSelected() && isFocusedSurface(surfaceID)
       notifications.insert(
         WorktreeTerminalNotification(
-          surfaceId: surfaceId,
+          surfaceID: surfaceID,
           title: trimmedTitle,
           body: trimmedBody,
           createdAt: now,
@@ -1324,13 +1377,16 @@ final class WorktreeTerminalState {
         ),
         at: 0
       )
+      if let tabId = tabID(containing: surfaceID) {
+        emitTabProjection(for: tabId)
+      }
       emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
     }
     // Suppress OSC 9 system notifications that duplicate a recent hook notification.
-    if !fromHook, shouldSuppressDesktopNotification(title: trimmedTitle, body: trimmedBody, surfaceId: surfaceId) {
+    if !fromHook, shouldSuppressDesktopNotification(title: trimmedTitle, body: trimmedBody, surfaceID: surfaceID) {
       return
     }
-    onNotificationReceived?(surfaceId, trimmedTitle, trimmedBody)
+    onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody)
   }
 
   // MARK: - Notification deduplication (matches supaterm's approach).
@@ -1343,10 +1399,10 @@ final class WorktreeTerminalState {
     "turn complete",
   ]
 
-  private func shouldSuppressDesktopNotification(title: String, body: String, surfaceId: UUID) -> Bool {
+  private func shouldSuppressDesktopNotification(title: String, body: String, surfaceID: UUID) -> Bool {
     guard
       let terminalText = Self.normalizedText("\(title) \(body)"),
-      let recent = recentHookBySurfaceID[surfaceId],
+      let recent = recentHookBySurfaceID[surfaceID],
       now.timeIntervalSince(recent.recordedAt) <= Self.notificationCoalescingWindow
     else {
       return false
@@ -1380,26 +1436,71 @@ final class WorktreeTerminalState {
       cleanupSurfaceState(for: surface.id)
     }
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
+    if lastTabProjections.removeValue(forKey: tabId) != nil {
+      onTabRemoved?(tabId)
+    }
   }
 
-  func tabID(containing surfaceId: UUID) -> TerminalTabID? {
-    for (tabId, tree) in trees where tree.find(id: surfaceId) != nil {
+  func tabID(containing surfaceID: UUID) -> TerminalTabID? {
+    for (tabId, tree) in trees where tree.find(id: surfaceID) != nil {
       return tabId
     }
     return nil
   }
 
-  private func isFocusedSurface(_ surfaceId: UUID) -> Bool {
+  private func isFocusedSurface(_ surfaceID: UUID) -> Bool {
     guard let selectedTabId = tabManager.selectedTabId else {
       return false
     }
-    return focusedSurfaceIdByTab[selectedTabId] == surfaceId
+    return focusedSurfaceIdByTab[selectedTabId] == surfaceID
   }
 
   private func updateRunningState(for tabId: TerminalTabID) {
     guard trees[tabId] != nil else { return }
     tabManager.updateDirty(tabId, isDirty: isTabBusy(tabId))
+    emitTabProgressDisplay(for: tabId)
     emitTaskStatusIfChanged()
+  }
+
+  /// Compute the per-tab stripe progress payload off `trees[tabId]`'s surfaces.
+  /// Selected tab → focused-surface state; unselected tab → worst-of-all
+  /// (ERROR > PAUSE > determinate > indeterminate > none).
+  private func computeTabProgressDisplay(for tabId: TerminalTabID) -> TerminalTabProgressDisplay? {
+    guard let tree = trees[tabId] else { return nil }
+    let leaves = tree.leaves()
+    if tabManager.selectedTabId == tabId,
+      let focusedID = focusedSurfaceIdByTab[tabId],
+      let focused = leaves.first(where: { $0.id == focusedID })
+    {
+      return TerminalTabProgressDisplay.make(
+        progressState: focused.bridge.state.progressState,
+        progressValue: focused.bridge.state.progressValue
+      )
+    }
+    var worst: TerminalTabProgressDisplay?
+    for surface in leaves {
+      guard
+        let candidate = TerminalTabProgressDisplay.make(
+          progressState: surface.bridge.state.progressState,
+          progressValue: surface.bridge.state.progressValue
+        )
+      else { continue }
+      if worst == nil || candidate.severity > worst!.severity {
+        worst = candidate
+      }
+    }
+    return worst
+  }
+
+  /// Recompute and emit the tab's progress display when it differs from the
+  /// cached value. Idempotent so OSC-9 ticks that don't move the stripe state
+  /// don't fire the callback.
+  private func emitTabProgressDisplay(for tabId: TerminalTabID) {
+    let newDisplay = computeTabProgressDisplay(for: tabId)
+    if lastTabProgressDisplays[tabId] != newDisplay {
+      lastTabProgressDisplays[tabId] = newDisplay
+      onTabProgressDisplayChanged?(tabId, newDisplay)
+    }
   }
 
   private func emitTaskStatusIfChanged() {
@@ -1410,10 +1511,10 @@ final class WorktreeTerminalState {
     }
   }
 
-  private func emitFocusChangedIfNeeded(_ surfaceId: UUID) {
-    guard surfaceId != lastEmittedFocusSurfaceId else { return }
-    lastEmittedFocusSurfaceId = surfaceId
-    onFocusChanged?(surfaceId)
+  private func emitFocusChangedIfNeeded(_ surfaceID: UUID) {
+    guard surfaceID != lastEmittedFocusSurfaceId else { return }
+    lastEmittedFocusSurfaceId = surfaceID
+    onFocusChanged?(surfaceID)
   }
 
   private func emitNotificationIndicatorIfNeeded(previousHasUnseen: Bool) {
@@ -1428,8 +1529,72 @@ final class WorktreeTerminalState {
   }
 
   private func updateTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
-    trees[tabId] = tree
+    setTree(tree, for: tabId)
     syncFocusIfNeeded()
+  }
+
+  /// Single mutation point for `trees[tabId]`. Recomputes and emits the per-tab
+  /// projection so `TerminalTabFeature.State` mirrors `trees[tabId]`'s leaves
+  /// + the tab's unread count + focus without observing worktree-wide state.
+  private func setTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
+    trees[tabId] = tree
+    emitTabProjection(for: tabId)
+  }
+
+  /// Single mutation point for `focusedSurfaceIdByTab[tabId]`. Mirrors into the
+  /// per-tab projection so the stripe-progress leaf observes the focus change
+  /// per-tab instead of through the worktree-wide dictionary.
+  private func setFocusedSurface(_ surfaceID: UUID?, for tabId: TerminalTabID) {
+    if let surfaceID {
+      focusedSurfaceIdByTab[tabId] = surfaceID
+    } else {
+      focusedSurfaceIdByTab.removeValue(forKey: tabId)
+    }
+    emitTabProjection(for: tabId)
+  }
+
+  /// Recompute the per-tab projection and emit `onTabProjectionChanged` when
+  /// the value differs from the cached one. Idempotent: a no-op rebuild
+  /// (e.g. a notification arrived on a surface that's already counted) does
+  /// not fire the callback.
+  private func emitTabProjection(for tabId: TerminalTabID) {
+    guard let tree = trees[tabId] else {
+      if lastTabProjections.removeValue(forKey: tabId) != nil {
+        onTabRemoved?(tabId)
+      }
+      return
+    }
+    let surfaceIDs = tree.leaves().map(\.id)
+    let surfaceIDSet = Set(surfaceIDs)
+    let unseenCount = notifications.reduce(into: 0) { partial, notification in
+      if !notification.isRead, surfaceIDSet.contains(notification.surfaceID) {
+        partial += 1
+      }
+    }
+    let projection = WorktreeTabProjection(
+      tabID: tabId,
+      surfaceIDs: surfaceIDs,
+      activeSurfaceID: focusedSurfaceIdByTab[tabId],
+      unseenNotificationCount: unseenCount
+    )
+    guard lastTabProjections[tabId] != projection else { return }
+    lastTabProjections[tabId] = projection
+    onTabProjectionChanged?(projection)
+  }
+
+  /// Recompute every tab's projection. Used after notification-list mutations
+  /// that may span multiple tabs (mark-all-read, dismiss-all).
+  private func emitAllTabProjections() {
+    for tabId in trees.keys {
+      emitTabProjection(for: tabId)
+    }
+  }
+
+  /// Snapshot all current tab projections. Manager replays this when AppFeature
+  /// re-attaches (e.g. on launch / window restore) so `terminalTabs[id:]`
+  /// reconstructs without waiting for the next mutation.
+  func currentTabProjections() -> [WorktreeTabProjection] {
+    Array(lastTabProjections.values)
   }
 
   private func isRunningProgressState(_ state: ghostty_action_progress_report_state_e?) -> Bool {

@@ -239,3 +239,61 @@ struct WorktreeRowProjection: Equatable, Sendable {
   let hasUnseenNotifications: Bool
   let notifications: IdentifiedArrayOf<WorktreeTerminalNotification>
 }
+
+/// `selectedRow` projection consumed by `WorktreeDetailView`. Carries only the
+/// fields the detail body actually reads, so `agents` / `hasAgentActivity` /
+/// `surfaceIDs` / `notifications` churn on the focused row doesn't re-run the
+/// detail body (and re-publish all its `focusedSceneValue`s). Restores bug #289
+/// for the focused-worktree scenario.
+struct SelectedWorktreeSlice: Equatable, Sendable {
+  let id: SidebarItemID
+  let repositoryID: Repository.ID
+  let kind: SidebarItemFeature.State.Kind
+  let name: String
+  let branchName: String
+  let subtitle: String?
+  let isMainWorktree: Bool
+  let isPinned: Bool
+  let lifecycle: SidebarItemFeature.State.Lifecycle
+  let pullRequest: GithubPullRequest?
+  let runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript>
+  let repositoryAccent: RepositoryColor?
+  let hasMergedBadge: Bool
+
+  init(_ row: SidebarItemFeature.State) {
+    self.id = row.id
+    self.repositoryID = row.repositoryID
+    self.kind = row.kind
+    self.name = row.name
+    self.branchName = row.branchName
+    self.subtitle = row.subtitle
+    self.isMainWorktree = row.isMainWorktree
+    self.isPinned = row.isPinned
+    self.lifecycle = row.lifecycle
+    self.pullRequest = row.pullRequest
+    self.runningScripts = row.runningScripts
+    self.repositoryAccent = row.repositoryAccent
+    self.hasMergedBadge = row.hasMergedBadge
+  }
+
+  var sidebarDisplayName: String? {
+    guard !isMainWorktree else { return nil }
+    if id.contains("/") {
+      let pathName = URL(fileURLWithPath: id).lastPathComponent
+      if !pathName.isEmpty { return pathName }
+    }
+    if let subtitle, !subtitle.isEmpty, subtitle != "." {
+      let detailName = URL(fileURLWithPath: subtitle).lastPathComponent
+      if !detailName.isEmpty, detailName != "." { return detailName }
+    }
+    return branchName
+  }
+
+  var accent: WorktreeAccent {
+    if isMainWorktree { return .main }
+    if isPinned { return .pinned }
+    return .default
+  }
+
+  var isFolder: Bool { kind == .folder }
+}

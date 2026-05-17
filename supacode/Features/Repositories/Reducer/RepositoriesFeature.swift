@@ -3879,6 +3879,14 @@ extension RepositoriesFeature.State {
     return sidebarItems[id: id]
   }
 
+  /// Value-typed projection of `selectedRow` carrying only the fields the
+  /// detail body actually reads. Excludes `agents` / `hasAgentActivity` /
+  /// `surfaceIDs` / `notifications` so an agent storm on the focused worktree
+  /// doesn't invalidate the detail body's observation surface.
+  func selectedWorktreeSlice(for id: Worktree.ID?) -> SelectedWorktreeSlice? {
+    selectedRow(for: id).map { SelectedWorktreeSlice($0) }
+  }
+
   func repositoryName(for id: Repository.ID) -> String? {
     repositories[id: id]?.name
   }

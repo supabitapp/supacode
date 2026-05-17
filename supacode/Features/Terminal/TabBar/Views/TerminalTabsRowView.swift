@@ -1,8 +1,11 @@
+import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabsRowView: View {
   @Bindable var manager: TerminalTabManager
+  let terminalState: WorktreeTerminalState
+  let terminalsStore: StoreOf<TerminalsFeature>
   @Binding var openedTabs: [TerminalTabID]
   @Binding var tabLocations: [TerminalTabID: CGRect]
   @Binding var draggingTabId: TerminalTabID?
@@ -14,8 +17,6 @@ struct TerminalTabsRowView: View {
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
-  let hasNotification: (TerminalTabID) -> Bool
-  let agentsForTab: (TerminalTabID) -> [AgentPresenceFeature.AgentInstance]
   let scrollReader: ScrollViewProxy
 
   @State private var dropTargetIndex: Int?
@@ -25,15 +26,19 @@ struct TerminalTabsRowView: View {
     ZStack(alignment: .topLeading) {
       HStack(alignment: .center, spacing: TerminalTabBarMetrics.tabSpacing) {
         ForEach(Array(openedTabs.enumerated()), id: \.element) { index, id in
-          if let item = manager.tabs.first(where: { $0.id == id }) {
+          if let item = manager.tabs.first(where: { $0.id == id }),
+            let tabStore = terminalsStore.scope(
+              state: \.terminalTabs[id: id.rawValue],
+              action: \.terminalTabs[id: id.rawValue]
+            )
+          {
             TerminalTabView(
               tab: item,
               isActive: manager.selectedTabId == id,
               isDragging: draggingTabId == id,
               tabIndex: index,
               fixedWidth: fixedTabWidth,
-              hasNotification: hasNotification(id),
-              agents: agentsForTab(id),
+              tabStore: tabStore,
               onSelect: {
                 manager.selectTab(id)
               },
