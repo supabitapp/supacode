@@ -35,6 +35,11 @@ nonisolated enum AgentHookSettingsCommand {
   static let legacyCLIPathEnvVar = "SUPACODE_CLI_PATH"
   static let legacyAgentHookMarker = "agent-hook"
 
+  /// Used only for stdin-forwarding hooks, where probe session ids can
+  /// overwrite the user's restore-intent session id.
+  private static let interactiveAgentCheck =
+    #"! ps -p $PPID -o args= 2>/dev/null | grep -q -- '--print'"#
+
   private static let envCheck =
     #"[ -n "${SUPACODE_SOCKET_PATH:-}" ]"#
     + #" && [ -n "${SUPACODE_WORKTREE_ID:-}" ]"#
@@ -46,8 +51,9 @@ nonisolated enum AgentHookSettingsCommand {
 
   /// Both stdout AND stderr go to /dev/null — Codex parses hook stdout as
   /// structured JSON and would reject the socket ack otherwise.
-  private static func managed(_ pipeline: String) -> String {
-    "\(envCheck) && \(pipeline) >/dev/null 2>&1 || true \(ownershipMarker)"
+  private static func managed(_ pipeline: String, requiring additionalCheck: String? = nil) -> String {
+    let checks = [envCheck, additionalCheck].compactMap { $0 }.joined(separator: " && ")
+    return "\(checks) && \(pipeline) >/dev/null 2>&1 || true \(ownershipMarker)"
   }
 
   /// Forwards the raw hook event JSON (from stdin) to the socket.
@@ -76,7 +82,7 @@ nonisolated enum AgentHookSettingsCommand {
   static func eventCommand(
     event: HookEvent,
     agent: SkillAgent,
-    forwardStdin: Bool = false
+    forwardStdin: Bool = false,
   ) -> String {
     if forwardStdin {
       let envelopePrefix =
@@ -89,7 +95,7 @@ nonisolated enum AgentHookSettingsCommand {
         #"DATA=$(cat); "#
         + #"printf '%s%s}' "\#(envelopePrefix)" "${DATA:-null}""#
         + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
-      return managed(send)
+      return managed(send, requiring: interactiveAgentCheck)
     }
     let envelope =
       #"{\"event\":\"\#(event.rawValue)\","#
