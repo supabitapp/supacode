@@ -3903,12 +3903,6 @@ extension RepositoriesFeature.State {
     return sidebarItems[id: id]
   }
 
-  /// Ad-hoc slice for callers that need a one-off projection by ID. The
-  /// detail body should read the cached `selectedWorktreeSlice` field.
-  func selectedWorktreeSlice(for id: Worktree.ID?) -> SelectedWorktreeSlice? {
-    selectedRow(for: id).map { SelectedWorktreeSlice($0) }
-  }
-
   func repositoryName(for id: Repository.ID) -> String? {
     repositories[id: id]?.name
   }

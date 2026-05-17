@@ -8,6 +8,12 @@ enum WorktreeAccent: Hashable, Sendable {
   case main
   case pinned
 
+  static func derive(isMainWorktree: Bool, isPinned: Bool) -> WorktreeAccent {
+    if isMainWorktree { return .main }
+    if isPinned { return .pinned }
+    return .default
+  }
+
   func shapeStyle(emphasized: Bool) -> AnyShapeStyle {
     guard !emphasized else { return AnyShapeStyle(.secondary) }
     return switch self {
@@ -202,6 +208,26 @@ extension SidebarItemFeature.State {
   /// Cascade: nil for main worktrees, then the row id's last path component,
   /// then the subtitle's last path component, then `branchName`.
   var sidebarDisplayName: String? {
+    SidebarDisplayName.compute(
+      isMainWorktree: isMainWorktree, id: id, subtitle: subtitle, branchName: branchName
+    )
+  }
+  var accent: WorktreeAccent { WorktreeAccent.derive(isMainWorktree: isMainWorktree, isPinned: isPinned) }
+  /// True iff any tracked agent on this row is awaiting user input.
+  /// Drives the Active section's classification ("agent awaiting input").
+  var hasAgentAwaitingInput: Bool { agents.contains(where: \.awaitingInput) }
+}
+
+/// Shared cascade used by both `SidebarItemFeature.State` (row) and
+/// `SelectedWorktreeSlice` (cached projection). Centralising here keeps the
+/// row and the detail title in lock-step; an edge case fix lands once.
+enum SidebarDisplayName {
+  static func compute(
+    isMainWorktree: Bool,
+    id: SidebarItemID,
+    subtitle: String?,
+    branchName: String
+  ) -> String? {
     guard !isMainWorktree else { return nil }
     if id.contains("/") {
       let pathName = URL(fileURLWithPath: id).lastPathComponent
@@ -213,14 +239,6 @@ extension SidebarItemFeature.State {
     }
     return branchName
   }
-  var accent: WorktreeAccent {
-    if isMainWorktree { return .main }
-    if isPinned { return .pinned }
-    return .default
-  }
-  /// True iff any tracked agent on this row is awaiting user input.
-  /// Drives the Active section's classification ("agent awaiting input").
-  var hasAgentAwaitingInput: Bool { agents.contains(where: \.awaitingInput) }
 }
 
 extension SidebarItemFeature.State.Lifecycle {
@@ -272,23 +290,12 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
   }
 
   var sidebarDisplayName: String? {
-    guard !isMainWorktree else { return nil }
-    if id.contains("/") {
-      let pathName = URL(fileURLWithPath: id).lastPathComponent
-      if !pathName.isEmpty { return pathName }
-    }
-    if let subtitle, !subtitle.isEmpty, subtitle != "." {
-      let detailName = URL(fileURLWithPath: subtitle).lastPathComponent
-      if !detailName.isEmpty, detailName != "." { return detailName }
-    }
-    return branchName
+    SidebarDisplayName.compute(
+      isMainWorktree: isMainWorktree, id: id, subtitle: subtitle, branchName: branchName
+    )
   }
 
-  var accent: WorktreeAccent {
-    if isMainWorktree { return .main }
-    if isPinned { return .pinned }
-    return .default
-  }
+  var accent: WorktreeAccent { WorktreeAccent.derive(isMainWorktree: isMainWorktree, isPinned: isPinned) }
 
   var isFolder: Bool { kind == .folder }
 }
