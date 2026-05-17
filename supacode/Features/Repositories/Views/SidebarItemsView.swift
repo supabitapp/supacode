@@ -10,7 +10,7 @@ private nonisolated let notificationLogger = SupaLogger("Notifications")
 struct SidebarItemsView: View {
   let repository: Repository
   /// Precomputed per-repo slot layout from `SidebarStructure`. The view does
-  /// no slot derivation — it walks `groups` in order and renders.
+  /// no slot derivation: it walks `groups` in order and renders.
   let groups: [SidebarItemGroup]
   /// Already-resolved shortcut hint strings from the structure's `slotByID`
   /// joined with `commandKeyObserver.isPressed` + shortcut overrides at the

@@ -52,6 +52,16 @@ struct SidebarItemFeature {
       case archiving
       case deletingScript
       case deleting
+
+      /// True for the wind-down states that should drop out of the Active
+      /// rail. `.pending` stays eligible: a row running its setup script is
+      /// exactly what Active is meant to surface.
+      var isTerminating: Bool {
+        switch self {
+        case .archiving, .deletingScript, .deleting: return true
+        case .idle, .pending: return false
+        }
+      }
     }
 
     var addedLines: Int?

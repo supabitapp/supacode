@@ -3463,7 +3463,7 @@ struct RepositoriesFeatureTests {
   @Test func worktreeIDByOffsetWalksHoistedRowsBeforePerRepoRows() {
     // When a worktree is hoisted into the Pinned section, arrow nav must walk
     // the hoisted row (visible at the top) before falling into the per-repo
-    // rows — matching what the user actually sees in the sidebar.
+    // rows, matching what the user actually sees in the sidebar.
     let repoRoot = "/tmp/repo"
     let main = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)

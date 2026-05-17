@@ -210,11 +210,12 @@ struct RepositoriesFeature {
     case sidebarItems(IdentifiedActionOf<SidebarItemFeature>)
     case task
     /// Fired by `SidebarListView.onChange` whenever `@Shared(.sidebarGroupPinnedRows)`
-    /// or `@Shared(.sidebarGroupActiveRows)` mutates. The post-reduce hook picks
-    /// up the new toggle state and rebuilds the cached structure; the explicit
-    /// handler also state-drives the highlight-onboarding auto-dismiss so any
-    /// path that mutates the toggles (menu, deeplink, defaults edit) gets the
-    /// dismiss, not just the menu binding setter.
+    /// or `@Shared(.sidebarGroupActiveRows)` mutates while the sidebar is mounted.
+    /// The post-reduce hook picks up the new toggle state and rebuilds the cached
+    /// structure; the explicit handler also fires the highlight-onboarding
+    /// auto-dismiss. Toggling from the menu while the sidebar column is collapsed
+    /// bypasses this action; the matching dismiss in `SidebarCommands` setters
+    /// covers that path.
     case sidebarGroupingTogglesChanged
     /// Fired by `SidebarListView.onChange` whenever `@Shared(.sidebarNestWorktreesByBranch)`
     /// mutates. Triggers a structure recompute so the alphabetical per-bucket
@@ -447,9 +448,9 @@ struct RepositoriesFeature {
 
       case .sidebarGroupingTogglesChanged:
         // The post-reduce hook below picks up the toggle state and rebuilds.
-        // Auto-dismiss the highlight onboarding card here (not in the menu
-        // binding setter) so any entry point that mutates the toggles fires
-        // the dismiss: menu, deeplink, defaults edit, programmatic test.
+        // Auto-dismiss the highlight onboarding card when both toggles end up
+        // off; the `SidebarCommands` menu setters fire the same dismiss so
+        // toggling while the sidebar column is collapsed is also covered.
         @Shared(.sidebarGroupPinnedRows) var groupPinned
         @Shared(.sidebarGroupActiveRows) var groupActive
         if !groupPinned, !groupActive {
@@ -3296,10 +3297,9 @@ struct RepositoriesFeature {
     // Targeted post-reduce hook: only the actions that demonstrably touch
     // structure inputs trigger a recompute. The Equatable diff inside the
     // helper suppresses no-op rebuilds at the SwiftUI layer. Gated on
-    // `\.sidebarStructureAutoRecompute` (default `false` in tests) so the
-    // ~100 TestStore expectations that don't care about sidebar layout
-    // aren't forced to acknowledge a derived-cache mutation. Tests that
-    // verify the structure flip it back on via `withDependencies`.
+    // `\.sidebarStructureAutoRecompute` (defaults to true everywhere); a few
+    // legacy tests that don't care about sidebar layout opt out via
+    // `withDependencies`.
     Reduce { state, action in
       @Dependency(\.sidebarStructureAutoRecompute) var autoRecompute
       if autoRecompute, action.affectsSidebarStructure {

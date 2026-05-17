@@ -12,6 +12,8 @@ struct SidebarCommands: Commands {
   private var nestedOnboardingDismissedAt: Date = .distantPast
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
   @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
+  @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
+  private var highlightOnboardingDismissedAt: Date = .distantPast
 
   /// Binding that pairs the nesting toggle with a permadismiss of the
   /// onboarding card on transitions to `false`. Lives on the menu command
@@ -32,22 +34,36 @@ struct SidebarCommands: Commands {
     )
   }
 
-  /// The auto-dismiss for the highlight onboarding card is state-driven from
-  /// the reducer's `.sidebarGroupingTogglesChanged` handler so any entry
-  /// point that flips the toggles gets the dismiss. Menu bindings just
-  /// write through to @Shared.
+  /// Mirrors `nestWorktreesToggle` so the dismiss also fires when the menu
+  /// is used while the sidebar column is hidden (no `SidebarListView` body
+  /// is alive to dispatch `.sidebarGroupingTogglesChanged`). The reducer
+  /// handler still fires when the sidebar is visible, so this is a
+  /// belt-and-suspenders pair, not the only trigger.
   private var groupPinnedRowsToggle: Binding<Bool> {
     Binding(
       get: { groupPinnedRows },
-      set: { newValue in $groupPinnedRows.withLock { $0 = newValue } }
+      set: { newValue in
+        $groupPinnedRows.withLock { $0 = newValue }
+        dismissHighlightOnboardingIfBothOff()
+      }
     )
   }
 
   private var groupActiveRowsToggle: Binding<Bool> {
     Binding(
       get: { groupActiveRows },
-      set: { newValue in $groupActiveRows.withLock { $0 = newValue } }
+      set: { newValue in
+        $groupActiveRows.withLock { $0 = newValue }
+        dismissHighlightOnboardingIfBothOff()
+      }
     )
+  }
+
+  private func dismissHighlightOnboardingIfBothOff() {
+    guard !groupPinnedRows, !groupActiveRows,
+      !HighlightRelevantOnboardingCardView.isDismissed(at: highlightOnboardingDismissedAt)
+    else { return }
+    $highlightOnboardingDismissedAt.withLock { $0 = .now }
   }
 
   var body: some Commands {

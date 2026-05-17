@@ -11,8 +11,8 @@ struct SidebarListView: View {
   @FocusState private var isSidebarFocused: Bool
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Shared(.settingsFile) private var settingsFile
-  /// Read here purely so SwiftUI re-runs the body — and fires the `.onChange`
-  /// below — when the menu writes a new value. The structure compute itself
+  /// Read here purely so SwiftUI re-runs the body (and fires the `.onChange`
+  /// below) when the menu writes a new value. The structure compute itself
   /// reads the toggles via local `@Shared` inside the reducer.
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
   @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
@@ -187,7 +187,7 @@ struct SidebarListView: View {
 }
 
 /// Single switch that turns one `SidebarStructure.Section` into the right
-/// SwiftUI view. The view has no other dispatch — the structure already
+/// SwiftUI view. The view has no other dispatch: the structure already
 /// answered "what kind of section, what rows, in what order".
 private struct SidebarSectionDispatcher: View {
   let section: SidebarStructure.Section

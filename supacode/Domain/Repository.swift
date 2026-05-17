@@ -105,6 +105,17 @@ struct Repository: Identifiable, Hashable, Sendable {
     worktreeID.hasPrefix(folderWorktreeIDPrefix)
   }
 
+  /// Shared trim + fallback for the sidebar header and the highlight-row tag.
+  /// Trims `custom`; falls back to `fallback` when the trimmed value is empty.
+  static func sidebarDisplayName(custom: String?, fallback: String) -> String {
+    guard let trimmed = custom?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !trimmed.isEmpty
+    else {
+      return fallback
+    }
+    return trimmed
+  }
+
   static func name(for rootURL: URL) -> String {
     let name = rootURL.lastPathComponent
     if name == ".bare" || name == ".git" {

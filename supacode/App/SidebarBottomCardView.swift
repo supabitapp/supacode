@@ -101,12 +101,7 @@ struct SidebarBottomCardView: View {
       case .agent(.updatesAvailable(let agents)):
         "agent:updates:" + agents.map { String(describing: $0) }.sorted().joined(separator: ",")
       case .agent(.promptInstall): "agent:promptInstall"
-      case .agent(.hidden):
-        // `resolve` collapses `.hidden` to `.none` so this is unreachable in
-        // production. Returning a stable string keeps the render path
-        // crash-free if a future caller (e.g. a test or debug surface)
-        // constructs `.agent(.hidden)` directly.
-        "agent:hidden"
+      case .agent(.hidden): "agent:hidden"
       case .highlightRelevantOnboarding: "highlightRelevant:visible"
       case .nestedWorktreesOnboarding: "nestedWorktrees:visible"
       }

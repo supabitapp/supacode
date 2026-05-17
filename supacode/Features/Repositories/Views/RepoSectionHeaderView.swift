@@ -8,12 +8,7 @@ struct RepoSectionHeaderView: View {
   let isRemoving: Bool
 
   private var displayName: String {
-    guard let trimmed = customTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-      !trimmed.isEmpty
-    else {
-      return name
-    }
-    return trimmed
+    Repository.sidebarDisplayName(custom: customTitle, fallback: name)
   }
 
   var body: some View {

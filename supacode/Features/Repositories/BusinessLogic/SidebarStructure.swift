@@ -4,14 +4,9 @@ import Foundation
 import OrderedCollections
 
 /// Dependency switch that gates the reducer's post-reduce sidebar-structure
-/// recompute. Defaults `true` everywhere (live, preview, test) so the cached
-/// structure always matches what production sees: arrow nav, hotkeys, and
-/// other readers of `sidebarStructure` get the same fresh value across
-/// contexts. The Equatable diff inside `recomputeSidebarStructureIfChanged`
-/// keeps no-op rebuilds from triggering TestStore exhaustiveness; tests
-/// that mirror a sidebar-affecting action in their expectation closure
-/// should call `$0.reconcileSidebarForTesting()` to keep the expected
-/// structure in lockstep with the actual one.
+/// recompute. Defaults `true` everywhere so production, preview, and tests
+/// see the same cached structure. See `AGENTS.md` (Sidebar performance) for
+/// the canonical TestStore mirror rules.
 public nonisolated enum SidebarStructureAutoRecomputeKey: DependencyKey {
   public static let liveValue: Bool = true
   public static let previewValue: Bool = true
@@ -249,15 +244,8 @@ struct SidebarStructure: Equatable, Sendable {
 }
 
 extension RepositoriesFeature.State {
-  /// Single entry-point the reducer calls after any action that may have
-  /// changed structure inputs. Equatable-diffs against the cached value so a
+  /// Equatable-diffs the freshly-built structure against the cached one so a
   /// no-op rebuild doesn't invalidate SwiftUI observation.
-  ///
-  /// Reads the two grouping toggles via local `@Shared` accessors rather
-  /// than storing them on State — storing pre-loads UserDefaults at every
-  /// `State()` construction in the test suite, which destabilized timing
-  /// tests in `WorktreeTerminalManagerTests` (the suite never goes through
-  /// the reducer but still incurred the global @Shared init).
   mutating func recomputeSidebarStructureIfChanged() {
     @Shared(.sidebarGroupPinnedRows) var groupPinned
     @Shared(.sidebarGroupActiveRows) var groupActive
@@ -279,25 +267,20 @@ extension RepositoriesFeature.Action {
   /// rebuild on actions that can't affect the visible sidebar).
   var affectsSidebarStructure: Bool {
     switch self {
-    // Every per-leaf mutation flows through the IdentifiedActionOf child.
-    case .sidebarItems:
-      return true
-    // Toggles changed — read by the recompute helper.
+    // Only the per-leaf actions that mutate fields the structure reads.
+    case .sidebarItems(.element(id: _, action: let inner)):
+      return inner.affectsSidebarStructure
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged:
       return true
-    // Repository roster / failure map changed.
     case .repositoriesLoaded, .openRepositoriesFinished,
       .repositoryRemovalCompleted, .repositoriesRemoved,
       .removeFailedRepository:
       return true
-    // Expansion + reorder.
     case .repositoryExpansionChanged, .branchNestExpansionChanged,
       .repositoriesMoved, .pinnedWorktreesMoved, .unpinnedWorktreesMoved:
       return true
-    // Bucket / pin state.
     case .pinWorktree, .unpinWorktree:
       return true
-    // Worktree lifecycle that mutates sidebarItems / pendingWorktrees.
     case .archiveWorktreeApply, .unarchiveWorktree,
       .deleteWorktreeApply, .worktreeDeleted,
       .createWorktreeInRepository, .createRandomWorktreeInRepository,
@@ -307,12 +290,33 @@ extension RepositoriesFeature.Action {
       .consumeSetupScript, .consumeTerminalFocus,
       .autoDeleteExpiredArchivedWorktrees:
       return true
-    // Per-leaf info loaded from background work (changes branchName, PR data).
     case .worktreeBranchNameLoaded, .worktreeLineChangesLoaded,
       .worktreeNotificationReceived, .worktreeInfoEvent,
       .repositoryPullRequestsLoaded:
       return true
+    // Repo customization save mutates `sidebar.sections[id].title/color`,
+    // which the highlight-row tag and per-repo color cache both read.
+    case .repositoryCustomization(.presented(.delegate(.save))):
+      return true
     default:
+      return false
+    }
+  }
+}
+
+extension SidebarItemFeature.Action {
+  /// Subset of per-leaf actions that mutate fields `SidebarStructure` reads
+  /// (`lifecycle`, `runningScripts`, `agents`, `hasUnseenNotifications`).
+  /// Display-only mutations (diff stats, PR refresh, drag/focus/hint flags)
+  /// don't trigger a recompute.
+  var affectsSidebarStructure: Bool {
+    switch self {
+    case .lifecycleChanged, .runningScriptStarted, .runningScriptStopped,
+      .agentSnapshotChanged, .terminalProjectionChanged:
+      return true
+    case .diffStatsChanged, .pullRequestQueryStarted, .pullRequestChanged,
+      .shortcutHintChanged, .dragSessionChanged,
+      .focusTerminalRequested, .focusTerminalConsumed:
       return false
     }
   }
@@ -382,9 +386,9 @@ extension RepositoriesFeature.State {
     if groupActive {
       let candidateIDs = sidebarItems.ids.filter { id in
         guard !archived.contains(id) else { return false }
-        // A row mid-delete shouldn't surface in the Active rail (C10b);
-        // its lifecycle UI already signals the wind-down.
-        return sidebarItems[id: id]?.lifecycle != .deletingScript
+        // Terminating rows already signal their wind-down inline and have
+        // no business surfacing in the Active rail alongside healthy rows.
+        return sidebarItems[id: id]?.lifecycle.isTerminating != true
       }
       activeHoisted = orderedHighlightCandidates(
         forPinned: false,
@@ -458,12 +462,6 @@ extension RepositoriesFeature.State {
     var slotByID: [Worktree.ID: Int] = [:]
     slotByID.reserveCapacity(hotkeyOrder.count)
     for (index, id) in hotkeyOrder.enumerated() {
-      // Forged duplicates would trap `Dictionary(uniqueKeysWithValues:)`; keep
-      // the first slot and assert in DEBUG so a real invariant break surfaces.
-      if slotByID[id] != nil {
-        assertionFailure("Duplicate Worktree.ID in sidebar hotkey order.")
-        continue
-      }
       slotByID[id] = index
     }
 
@@ -482,9 +480,13 @@ extension RepositoriesFeature.State {
       }
       for repoID in contributingRepoIDs {
         guard let repository = repositories[id: repoID] else { continue }
+        let section = sidebar.sections[repoID]
         repositoryHighlightByID[repoID] = SidebarHighlightRepoTag(
-          repoName: repository.name,
-          repoColor: sidebar.sections[repoID]?.color
+          repoName: Repository.sidebarDisplayName(
+            custom: section?.title,
+            fallback: repository.name
+          ),
+          repoColor: section?.color
         )
       }
     }
@@ -577,15 +579,20 @@ extension SidebarItemGroup {
     let pinnedRows = bucket[.pinned]
     let unpinnedRows = bucket[.unpinned]
 
-    let rawMainID: SidebarItemID? = pinnedRows.first.flatMap {
-      state.sidebarItems[id: $0]?.isMainWorktree == true ? $0 : nil
-    }
+    // Scan the whole pinned bucket: rebuild seeds main at index 0, but a
+    // corrupted persisted `.pinned` (hand-edit, migrator race) may surface
+    // main at a non-zero position. Matching `orderedPinnedWorktreeIDs`'s
+    // any-position filter keeps `pinnedTail` and the reducer's source list
+    // in agreement for `translateFilteredMove`.
+    let rawMainID: SidebarItemID? = pinnedRows.first(where: { id in
+      state.sidebarItems[id: id]?.isMainWorktree == true
+    })
 
     var seen: Set<Worktree.ID> = []
-    if let rawMainID, hoistedRowIDs.contains(rawMainID) { seen.insert(rawMainID) }
-
-    let mainID: SidebarItemID? = rawMainID.flatMap { id in
-      hoistedRowIDs.contains(id) ? nil : { seen.insert(id); return id }()
+    var mainID: SidebarItemID?
+    if let rawMainID {
+      seen.insert(rawMainID)
+      if !hoistedRowIDs.contains(rawMainID) { mainID = rawMainID }
     }
 
     var rawPinnedTail: [SidebarItemID] = []
