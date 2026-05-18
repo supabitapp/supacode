@@ -22,6 +22,7 @@ final class TerminalTabManager {
     icon: String?,
     isTitleLocked: Bool = false,
     tintColor: RepositoryColor? = nil,
+    isBlockingScript: Bool = false,
     id: UUID? = nil
   ) -> TerminalTabID {
     let tabID: TerminalTabID
@@ -36,7 +37,14 @@ final class TerminalTabManager {
     } else {
       tabID = TerminalTabID()
     }
-    let tab = TerminalTabItem(id: tabID, title: title, icon: icon, isTitleLocked: isTitleLocked, tintColor: tintColor)
+    let tab = TerminalTabItem(
+      id: tabID,
+      title: title,
+      icon: icon,
+      isTitleLocked: isTitleLocked,
+      tintColor: tintColor,
+      isBlockingScript: isBlockingScript
+    )
     if let selectedTabId,
       let selectedIndex = tabs.firstIndex(where: { $0.id == selectedTabId })
     {
@@ -66,12 +74,18 @@ final class TerminalTabManager {
     tabs[index].customTitle = trimmed.isEmpty ? nil : trimmed
   }
 
-  func unlockAndUpdateTitle(_ id: TerminalTabID, title: String) {
+  func isBlockingScript(_ id: TerminalTabID) -> Bool {
+    tabs.first(where: { $0.id == id })?.isBlockingScript == true
+  }
+
+  /// Mark a blocking-script tab as completed. Title / icon / lock survive so
+  /// the row reads as "this WAS an Archive Script run"; tint + dirty clear and
+  /// the completed flag flips so views can show the freeze indicator.
+  func markBlockingScriptCompleted(_ id: TerminalTabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-    tabs[index].isTitleLocked = false
-    tabs[index].title = title
-    tabs[index].icon = nil
     tabs[index].tintColor = nil
+    tabs[index].isDirty = false
+    tabs[index].isBlockingScriptCompleted = true
   }
 
   func updateDirty(_ id: TerminalTabID, isDirty: Bool) {

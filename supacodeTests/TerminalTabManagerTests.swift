@@ -73,38 +73,42 @@ struct TerminalTabManagerTests {
     #expect(tab?.icon == "play.fill")
   }
 
-  @Test func unlockAndUpdateTitleResetsTabToDefaults() {
+  @Test func markBlockingScriptCompletedKeepsTitleAndIcon() {
     let manager = TerminalTabManager()
     let tabId = manager.createTab(
       title: "Run Script",
       icon: "play.fill",
       isTitleLocked: true,
-      tintColor: .green
+      tintColor: .green,
+      isBlockingScript: true
     )
-    let before = manager.tabs.first { $0.id == tabId }
-    #expect(before?.isTitleLocked == true)
-    #expect(before?.icon == "play.fill")
-    #expect(before?.tintColor == .green)
+    manager.updateDirty(tabId, isDirty: true)
 
-    manager.unlockAndUpdateTitle(tabId, title: "wt-1 2")
+    manager.markBlockingScriptCompleted(tabId)
 
     let after = manager.tabs.first { $0.id == tabId }
-    #expect(after?.title == "wt-1 2")
-    #expect(after?.isTitleLocked == false)
-    #expect(after?.icon == nil)
+    #expect(after?.title == "Run Script")
+    #expect(after?.icon == "play.fill")
+    #expect(after?.isTitleLocked == true)
+    #expect(after?.isBlockingScript == true)
+    #expect(after?.isBlockingScriptCompleted == true)
     #expect(after?.tintColor == nil)
+    #expect(after?.isDirty == false)
   }
 
-  @Test func unlockAndUpdateTitleAllowsSubsequentTitleUpdates() {
+  @Test func markBlockingScriptCompletedKeepsTitleImmutable() {
     let manager = TerminalTabManager()
-    let tabId = manager.createTab(title: "Run Script", icon: "play.fill", isTitleLocked: true)
+    let tabId = manager.createTab(
+      title: "Run Script",
+      icon: "play.fill",
+      isTitleLocked: true,
+      isBlockingScript: true
+    )
 
+    manager.markBlockingScriptCompleted(tabId)
     manager.updateTitle(tabId, title: "should be ignored")
-    #expect(manager.tabs.first { $0.id == tabId }?.title == "Run Script")
 
-    manager.unlockAndUpdateTitle(tabId, title: "wt-1 1")
-    manager.updateTitle(tabId, title: "new shell title")
-    #expect(manager.tabs.first { $0.id == tabId }?.title == "new shell title")
+    #expect(manager.tabs.first { $0.id == tabId }?.title == "Run Script")
   }
 
   @Test func setCustomTitleOverridesDisplayTitle() {

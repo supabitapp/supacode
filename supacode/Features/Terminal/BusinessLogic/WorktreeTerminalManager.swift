@@ -214,7 +214,7 @@ final class WorktreeTerminalManager {
       let terminal = state(for: worktree)
       terminal.selectTab(tabID)
       let ghosttyDirection: GhosttySplitAction.NewDirection = direction == .vertical ? .down : .right
-      let resolvedInput = makeCommandInput(script: input ?? "")
+      let resolvedInput = BlockingScriptRunner.makeCommandInput(script: input ?? "")
       let splitSucceeded = terminal.performSplitAction(
         .newSplit(direction: ghosttyDirection),
         for: surfaceID,

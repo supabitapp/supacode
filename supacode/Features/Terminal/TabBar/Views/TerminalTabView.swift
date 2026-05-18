@@ -59,19 +59,25 @@ struct TerminalTabView: View {
       .allowsHitTesting(!isEditing)
       .opacity(isEditing ? 0 : 1)
 
-      // Trailing slot: dot OR hotkey hint OR close button.
-      // Priority: hover wins (close button beats ⌘ hint);
-      // ⌘ pressed without hover shows the hint; otherwise the notification dot.
-      // `.fontWeight(.regular)` is explicit because the tab bar lacks the sidebar's
-      // List/vibrancy context, where `.font(.caption)` would otherwise render heavier.
+      // Trailing slot priority: close button (on hover) > ⌘ hint > lock (frozen tab) > notification dot.
+      // The lock subsumes the dot so a script that fires a bell on its way out doesn't contest the
+      // "this tab is frozen" signal.
       ZStack {
-        TerminalTabNotificationIndicator(
-          tabStore: tabStore,
-          suppress: isHovering || isHoveringClose || isDragging || isShowingHint
-        )
+        if tab.isBlockingScriptCompleted {
+          TerminalTabLockIndicator(
+            suppress: isHovering || isHoveringClose || isDragging || isShowingHint
+          )
+        } else {
+          TerminalTabNotificationIndicator(
+            tabStore: tabStore,
+            suppress: isHovering || isHoveringClose || isDragging || isShowingHint
+          )
+        }
         if isShowingHint, let shortcutHint {
           Text(shortcutHint)
             .font(.caption)
+            // Explicit `.regular` because the tab bar lacks the sidebar's List/vibrancy
+            // context, where `.font(.caption)` would otherwise render heavier.
             .fontWeight(.regular)
             .foregroundStyle(.secondary)
         }
@@ -249,6 +255,26 @@ private struct TerminalTabNotificationIndicator: View {
       .opacity(isShowing ? 1 : 0)
       .allowsHitTesting(false)
       .animation(.easeInOut(duration: 0.2), value: isShowing)
+  }
+}
+
+/// Idle-slot marker for blocking-script tabs. Sits in the same place as the
+/// notification dot but never animates in/out from hover state because the
+/// surface is permanently locked. `suppress` mirrors the dot's hide-on-hover
+/// rules so close button and ⌘ hint always win.
+private struct TerminalTabLockIndicator: View {
+  let suppress: Bool
+
+  var body: some View {
+    Image(systemName: "lock.fill")
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+      .frame(width: TerminalTabBarMetrics.closeButtonSize, height: TerminalTabBarMetrics.closeButtonSize)
+      .opacity(suppress ? 0 : 1)
+      .allowsHitTesting(false)
+      .accessibilityLabel("Locked tab")
+      .help("Script finished. This tab is read-only and won't survive quitting Supacode.")
+      .animation(.easeInOut(duration: 0.2), value: suppress)
   }
 }
 

@@ -1309,11 +1309,30 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   func performBindingAction(_ action: String) {
+    #if DEBUG
+      recordedBindingActions.append(action)
+    #endif
     guard let surface else { return }
     _ = action.withCString { ptr in
       ghostty_surface_binding_action(surface, ptr, UInt(action.lengthOfBytes(using: .utf8)))
     }
   }
+
+  /// Flip the surface into read-only and mirror the state up-front so tests
+  /// observe it without Ghostty's `GHOSTTY_ACTION_READONLY` callback. Idempotent
+  /// against a stale mirror because Ghostty only exposes a toggle binding; we
+  /// avoid an UN-freeze API to keep the toggle from silently flipping ON.
+  func enableReadOnly() {
+    guard bridge.state.readOnly != GHOSTTY_READONLY_ON else { return }
+    bridge.state.readOnly = GHOSTTY_READONLY_ON
+    performBindingAction("toggle_readonly")
+  }
+
+  #if DEBUG
+    /// Records every `performBindingAction` call so tests can assert the
+    /// binding was actually invoked (the C surface is nil under xctest).
+    var recordedBindingActions: [String] = []
+  #endif
 
   private func translationState(_ event: NSEvent, surface: ghostty_surface_t) -> (
     NSEvent, NSEvent.ModifierFlags

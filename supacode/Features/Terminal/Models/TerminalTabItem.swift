@@ -11,6 +11,12 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
   var isDirty: Bool
   var isTitleLocked: Bool
   var tintColor: RepositoryColor?
+  /// Sticky marker for tabs born from `runBlockingScript`; stays true after
+  /// completion so guardrails outlive the script (these tabs die with the app).
+  var isBlockingScript: Bool
+  /// Flips true once `markBlockingScriptCompleted` runs. Distinguishes "running"
+  /// from "frozen" so the view can show the lock indicator only post-completion.
+  var isBlockingScriptCompleted: Bool
 
   var displayTitle: String { customTitle ?? title }
 
@@ -21,7 +27,9 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
     icon: String?,
     isDirty: Bool = false,
     isTitleLocked: Bool = false,
-    tintColor: RepositoryColor? = nil
+    tintColor: RepositoryColor? = nil,
+    isBlockingScript: Bool = false,
+    isBlockingScriptCompleted: Bool = false
   ) {
     self.id = id
     self.title = title
@@ -30,5 +38,7 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
     self.isDirty = isDirty
     self.isTitleLocked = isTitleLocked
     self.tintColor = tintColor
+    self.isBlockingScript = isBlockingScript
+    self.isBlockingScriptCompleted = isBlockingScriptCompleted
   }
 }

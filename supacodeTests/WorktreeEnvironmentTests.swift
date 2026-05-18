@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -21,7 +22,7 @@ struct WorktreeEnvironmentTests {
 
   @Test func blockingScriptLaunchWritesScriptAndMetadataFiles() throws {
     let launch = try #require(
-      try makeBlockingScriptLaunch(
+      try BlockingScriptRunner.makeLaunch(
         script: """
           docker compose down
           codex exec "test"
@@ -34,36 +35,53 @@ struct WorktreeEnvironmentTests {
     }
 
     let scriptContents = try String(contentsOf: launch.scriptURL, encoding: .utf8)
-    let runnerContents = try String(contentsOf: launch.runnerURL, encoding: .utf8)
+    let runnerScript = try String(contentsOf: launch.runnerURL, encoding: .utf8)
     let shellPathContents = try String(contentsOf: launch.shellPathURL, encoding: .utf8)
 
     #expect(
       launch.directoryURL.deletingLastPathComponent().path(percentEncoded: false)
         == FileManager.default.temporaryDirectory.path(percentEncoded: false)
     )
-    #expect(launch.commandInput == shellSingleQuoted(launch.runnerURL.path(percentEncoded: false)) + "\n")
+    #expect(
+      launch.commandInput == BlockingScriptRunner.shellSingleQuoted(launch.runnerURL.path(percentEncoded: false)) + "\n"
+    )
     #expect(scriptContents == "docker compose down\ncodex exec \"test\"\n")
     #expect(shellPathContents == "/opt/homebrew/bin/fish\n")
-    #expect(
-      runnerContents.contains(
-        "IFS= read -r SUPACODE_SHELL_PATH < \(shellSingleQuoted(launch.shellPathURL.path(percentEncoded: false)))"
-      )
-        == true
+    let quotedShellPath = BlockingScriptRunner.shellSingleQuoted(
+      launch.shellPathURL.path(percentEncoded: false))
+    let quotedScriptPath = BlockingScriptRunner.shellSingleQuoted(
+      launch.scriptURL.path(percentEncoded: false))
+    #expect(runnerScript.contains("SUPACODE_SHELL_PATH_FILE=\(quotedShellPath)") == true)
+    #expect(runnerScript.contains("\"$SUPACODE_SHELL_PATH\" -l \(quotedScriptPath)") == true)
+    // The runner exec-tails after emitting OSC 133;D so the outer shell
+    // stays blocked and no new prompt prints in the readonly tab.
+    #expect(runnerScript.contains("exec tail -f /dev/null") == true)
+    #expect(runnerScript.contains("133;D") == true)
+    #expect(runnerScript.contains("docker compose down") == false)
+    #expect(runnerScript.contains("codex exec \"test\"") == false)
+  }
+
+  @Test func blockingScriptLaunchSetsOwnerOnlyPermissionsOnAllArtifacts() throws {
+    let launch = try #require(
+      try BlockingScriptRunner.makeLaunch(script: "echo ok", shellPath: "/bin/zsh")
     )
-    #expect(
-      runnerContents.contains(
-        "\"$SUPACODE_SHELL_PATH\" -l \(shellSingleQuoted(launch.scriptURL.path(percentEncoded: false)))"
-      )
-        == true
-    )
-    #expect(runnerContents.contains("exec") == false)
-    #expect(runnerContents.contains("docker compose down") == false)
-    #expect(runnerContents.contains("codex exec \"test\"") == false)
+    defer { try? FileManager.default.removeItem(at: launch.directoryURL) }
+
+    let fileManager = FileManager.default
+    func mode(_ url: URL) throws -> Int {
+      let attrs = try fileManager.attributesOfItem(atPath: url.path(percentEncoded: false))
+      return (attrs[.posixPermissions] as? NSNumber)?.intValue ?? -1
+    }
+    // Script + shell-path hold user secrets: 0o600. Directory + runner: 0o700.
+    #expect(try mode(launch.directoryURL) == 0o700)
+    #expect(try mode(launch.scriptURL) == 0o600)
+    #expect(try mode(launch.shellPathURL) == 0o600)
+    #expect(try mode(launch.runnerURL) == 0o700)
   }
 
   @Test func blockingScriptLaunchReturnsNilForWhitespaceOnlyScripts() throws {
     #expect(
-      try makeBlockingScriptLaunch(
+      try BlockingScriptRunner.makeLaunch(
         script: """
 
           """,
@@ -74,7 +92,7 @@ struct WorktreeEnvironmentTests {
 
   @Test func blockingScriptLaunchPropagatesNonZeroExitCodeInZsh() throws {
     let launch = try #require(
-      try makeBlockingScriptLaunch(
+      try BlockingScriptRunner.makeLaunch(
         script: "exit 1",
         shellPath: "/bin/zsh"
       )
@@ -92,6 +110,9 @@ struct WorktreeEnvironmentTests {
     let process = Process()
     process.executableURL = launch.runnerURL
     process.environment = ["HOME": tempHome.path(percentEncoded: false)]
+    // The runner exec-tails when `[ -t 0 ]`, hanging forever; force a non-TTY
+    // stdin so the `else exit "$SUPACODE_EXIT"` branch wins under xctest.
+    process.standardInput = Pipe()
 
     try process.run()
     process.waitUntilExit()
@@ -106,7 +127,7 @@ struct WorktreeEnvironmentTests {
       directoryHint: .isDirectory
     )
     let launch = try #require(
-      try makeBlockingScriptLaunch(
+      try BlockingScriptRunner.makeLaunch(
         script: "exit 1",
         shellPath: "/bin/zsh",
         baseDirectoryURL: baseDirectoryURL
@@ -127,11 +148,105 @@ struct WorktreeEnvironmentTests {
     process.executableURL = URL(fileURLWithPath: "/bin/zsh")
     process.arguments = ["-lc", launch.commandInput]
     process.environment = ["HOME": tempHome.path(percentEncoded: false)]
+    // Same non-TTY override as the sibling test: the runner's `[ -t 0 ]`
+    // gate would otherwise `exec tail -f /dev/null` and hang the test.
+    process.standardInput = Pipe()
 
     try process.run()
     process.waitUntilExit()
 
     #expect(launch.commandInput.starts(with: "'") == true)
     #expect(process.terminationStatus == 1)
+  }
+
+  @Test func blockingScriptRunnerEmits133CDPairWhenShellPathDisappears() throws {
+    let launch = try #require(
+      try BlockingScriptRunner.makeLaunch(
+        script: "true",
+        shellPath: "/bin/zsh"
+      )
+    )
+    defer {
+      try? FileManager.default.removeItem(at: launch.directoryURL)
+    }
+    // Simulate a TOCTOU between `[ -r ]` and `read -r`: shell-path file
+    // vanishes after `makeLaunch` wrote it. The trap must still pair 133;D
+    // with the hoisted 133;C so `command_finished` always fires.
+    try FileManager.default.removeItem(at: launch.shellPathURL)
+
+    let stdoutPipe = Pipe()
+    let process = Process()
+    process.executableURL = launch.runnerURL
+    process.standardInput = Pipe()
+    process.standardOutput = stdoutPipe
+    process.standardError = Pipe()
+    try process.run()
+    process.waitUntilExit()
+
+    let stdout =
+      String(
+        data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
+        encoding: .utf8
+      ) ?? ""
+    #expect(process.terminationStatus == 127)
+    #expect(stdout.contains("\u{1B}]133;C\u{07}"))
+    #expect(stdout.contains("\u{1B}]133;D;127\u{07}"))
+  }
+
+  @Test func blockingScriptRunnerEmitsCommandFinishedUnderRealPTYBeforeExecTail() throws {
+    let launch = try #require(
+      try BlockingScriptRunner.makeLaunch(script: "true", shellPath: "/bin/zsh")
+    )
+    let tempHome = FileManager.default.temporaryDirectory.appending(
+      path: "supacode-pty-home-\(UUID().uuidString.lowercased())",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
+    defer {
+      try? FileManager.default.removeItem(at: launch.directoryURL)
+      try? FileManager.default.removeItem(at: tempHome)
+    }
+
+    // Allocate a real PTY so `[ -t 0 ]` is true and the runner takes the
+    // `exec tail -f /dev/null` branch (the actual shipping path). Stdin only
+    // needs to be a TTY for the gate; stdout still goes through a pipe.
+    var controllerFD: Int32 = -1
+    var subordinateFD: Int32 = -1
+    #expect(openpty(&controllerFD, &subordinateFD, nil, nil, nil) == 0)
+    defer {
+      close(controllerFD)
+      close(subordinateFD)
+    }
+
+    let stdoutPipe = Pipe()
+    let process = Process()
+    process.executableURL = launch.runnerURL
+    process.environment = ["HOME": tempHome.path(percentEncoded: false)]
+    process.standardInput = FileHandle(fileDescriptor: subordinateFD, closeOnDealloc: false)
+    process.standardOutput = stdoutPipe
+    process.standardError = Pipe()
+    try process.run()
+
+    // Let the runner emit 133;C, execute `true`, emit 133;D, then block on
+    // `exec tail`. Half a second is comfortable on local + CI; the alternative
+    // (poll readabilityHandler) needs lock-guarded shared state for a fixed
+    // payload we're only inspecting after termination.
+    Thread.sleep(forTimeInterval: 0.5)
+    process.terminate()
+    process.waitUntilExit()
+
+    let observed =
+      String(
+        data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
+        encoding: .utf8
+      ) ?? ""
+    #expect(observed.contains("\u{1B}]133;C\u{07}"), "133;C missing from PTY stdout")
+    #expect(observed.contains("\u{1B}]133;D;0\u{07}"), "133;D missing from PTY stdout")
+    // 133;C must precede 133;D so Ghostty's command timer pairs correctly.
+    if let cRange = observed.range(of: "\u{1B}]133;C\u{07}"),
+      let dRange = observed.range(of: "\u{1B}]133;D;0\u{07}")
+    {
+      #expect(cRange.lowerBound < dRange.lowerBound)
+    }
   }
 }

@@ -1,6 +1,7 @@
 import Clocks
 import Dependencies
 import Foundation
+import GhosttyKit
 import SupacodeSettingsShared
 import Testing
 
@@ -1022,6 +1023,8 @@ struct WorktreeTerminalManagerTests {
     #expect(tab?.title == "Run")
     #expect(tab?.isTitleLocked == true)
     #expect(tab?.tintColor == .green)
+    #expect(tab?.isBlockingScript == true)
+    #expect(tab?.isBlockingScriptCompleted == false)
 
     // Simulate Ctrl+C (SIGINT = exit code 130).
     surface.bridge.onCommandFinished?(130)
@@ -1033,9 +1036,18 @@ struct WorktreeTerminalManagerTests {
     }
 
     let updatedTab = state.tabManager.tabs.first { $0.id == tabId }
-    #expect(updatedTab?.isTitleLocked == false)
-    #expect(updatedTab?.icon == nil)
+    #expect(updatedTab?.title == "Run")
+    #expect(updatedTab?.icon == "play")
+    #expect(updatedTab?.isTitleLocked == true)
+    #expect(updatedTab?.isBlockingScript == true)
+    #expect(updatedTab?.isBlockingScriptCompleted == true)
     #expect(updatedTab?.tintColor == nil)
+    #expect(updatedTab?.isDirty == false)
+    // Both the mirror update and the binding dispatch must land; without the
+    // recorded-bindings check a regression that drops the toggle but keeps
+    // the optimistic mirror would still pass.
+    #expect(surface.bridge.state.readOnly == GHOSTTY_READONLY_ON)
+    #expect(surface.recordedBindingActions.contains("toggle_readonly"))
   }
 
   @Test func blockingScriptTabTitleResetsAfterFailure() {
@@ -1060,9 +1072,63 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onCommandFinished?(1)
 
     let updatedTab = state.tabManager.tabs.first { $0.id == tabId }
-    #expect(updatedTab?.isTitleLocked == false)
-    #expect(updatedTab?.icon == nil)
+    #expect(updatedTab?.title == "Archive Script")
+    #expect(updatedTab?.icon == "archivebox.fill")
+    #expect(updatedTab?.isTitleLocked == true)
+    #expect(updatedTab?.isBlockingScript == true)
     #expect(updatedTab?.tintColor == nil)
+    #expect(updatedTab?.isDirty == false)
+  }
+
+  @Test func runBlockingScriptClosesLingeringFrozenTabOfSameKind() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    // First archive run, complete it, and confirm the tab is frozen.
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo first"))
+    guard let state = manager.stateIfExists(for: worktree.id),
+      let firstTabId = state.tabManager.selectedTabId,
+      let firstSurface = state.splitTree(for: firstTabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected first blocking-script tab and surface")
+      return
+    }
+    firstSurface.bridge.onCommandFinished?(0)
+    #expect(state.isBlockingScriptCompleted(firstTabId))
+    #expect(state.tabManager.tabs.count == 1)
+
+    // Re-run archive: the lingering frozen tab must be closed and a fresh tab
+    // minted. Without the cleanup the old tab would still be selected and the
+    // user would never see the new run.
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo second"))
+    let secondTabId = state.tabManager.selectedTabId
+    #expect(secondTabId != nil)
+    #expect(secondTabId != firstTabId)
+    #expect(!state.tabManager.tabs.contains(where: { $0.id == firstTabId }))
+    #expect(state.tabManager.tabs.count == 1)
+  }
+
+  @Test func residualProgressReportDoesNotResurrectDirtyOnFrozenTab() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    guard let state = manager.stateIfExists(for: worktree.id),
+      let tabId = state.tabManager.selectedTabId,
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected blocking-script tab and surface")
+      return
+    }
+    surface.bridge.onCommandFinished?(0)
+    #expect(state.tabManager.tabs.first { $0.id == tabId }?.isDirty == false)
+
+    // Simulate the 15s `progressResetTask` re-firing a fresh in-flight progress
+    // report just before its REMOVE. Without the gate in `updateRunningState`,
+    // `isTabBusy` would see the running state and flip dirty back to true.
+    surface.bridge.state.progressState = GHOSTTY_PROGRESS_STATE_INDETERMINATE
+    surface.bridge.onProgressReport?(GHOSTTY_PROGRESS_STATE_INDETERMINATE)
+
+    #expect(state.tabManager.tabs.first { $0.id == tabId }?.isDirty == false)
+    #expect(state.isBlockingScriptCompleted(tabId))
   }
 
   @Test func selectTabWithValidIdChangesSelection() {
@@ -1448,35 +1514,26 @@ struct WorktreeTerminalManagerTests {
     #expect(state.tabManager.editingTabID == nil)
   }
 
-  @Test func captureLayoutSnapshotStripsCustomTitleFromBlockingScriptTab() {
+  @Test func captureLayoutSnapshotExcludesBlockingScriptTabs() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
-
+    let state = manager.state(for: worktree)
+    _ = state.createTab()
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
 
-    guard let state = manager.stateIfExists(for: worktree.id),
-      let tabId = state.tabManager.selectedTabId,
-      let index = state.tabManager.tabs.firstIndex(where: { $0.id == tabId })
-    else {
-      Issue.record("Expected blocking script tab")
-      return
-    }
-
-    // Simulate a pathological state where a customTitle landed on a blocking-script tab
-    // (e.g. from a corrupted snapshot). Direct field write bypasses the lock guard.
-    state.tabManager.tabs[index].customTitle = "my-name"
+    #expect(state.tabManager.tabs.count == 2)
 
     guard let snapshot = state.captureLayoutSnapshot() else {
       Issue.record("Expected non-nil snapshot")
       return
     }
-
-    #expect(snapshot.tabs.first?.customTitle == nil)
-    #expect(snapshot.tabs.first?.icon == nil)
-    #expect(snapshot.tabs.first?.tintColor == nil)
+    // The blocking-script tab dies with the app (bypasses zmx, freezes
+    // readonly on completion), so it must not be persisted into the layout.
+    #expect(snapshot.tabs.count == 1)
+    #expect(snapshot.tabs.first?.title != "Archive Script")
   }
 
-  @Test func captureLayoutSnapshotPreservesCustomTitleAfterBlockingScriptCompletes() async {
+  @Test func captureLayoutSnapshotExcludesCompletedBlockingScriptTabs() async {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
@@ -1491,20 +1548,94 @@ struct WorktreeTerminalManagerTests {
       return
     }
 
-    // Complete the script — unlocks the tab and clears the blockingScripts entry.
     surface.bridge.onCommandFinished?(0)
     _ = await nextEvent(stream) { event in
       if case .blockingScriptCompleted = event { return true }
       return false
     }
+    // After completion the tab keeps its title / icon / lock and stays
+    // flagged as blocking-script; snapshot exclusion survives completion.
+    #expect(state.tabManager.tabs.first { $0.id == tabId }?.isBlockingScript == true)
+    #expect(state.captureLayoutSnapshot() == nil)
+  }
 
-    state.tabManager.setCustomTitle(tabId, title: "user pick")
+  @Test func captureLayoutSnapshotSelectsLeftNeighborWhenSelectedTabIsExcluded() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    guard let tabA = state.createTab() else {
+      Issue.record("Expected first regular tab")
+      return
+    }
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    guard let tabB = state.tabManager.selectedTabId else {
+      Issue.record("Expected blocking-script tab selected after runBlockingScript")
+      return
+    }
+    guard let tabC = state.createTab() else {
+      Issue.record("Expected trailing regular tab")
+      return
+    }
+    state.tabManager.selectTab(tabB)
+    #expect(state.tabManager.tabs.map(\.id) == [tabA, tabB, tabC])
+    #expect(state.tabManager.tabs[1].isBlockingScript == true)
 
     guard let snapshot = state.captureLayoutSnapshot() else {
       Issue.record("Expected non-nil snapshot")
       return
     }
-    #expect(snapshot.tabs.first?.customTitle == "user pick")
+    // The walk in `captureLayoutSnapshot` must pick the left surviving
+    // neighbor (tabA at filtered index 0), not fall through to tabC. The
+    // pre-fix code computed `selectedIndex` against the unfiltered list
+    // and would have landed on tabC after `restoreFromSnapshot` clamping.
+    #expect(snapshot.tabs.count == 2)
+    #expect(snapshot.tabs[snapshot.selectedTabIndex].id == tabA.rawValue)
+  }
+
+  @Test func performSplitActionRefusesNewSplitOnBlockingScriptTab() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    guard let state = manager.stateIfExists(for: worktree.id),
+      let tabId = state.tabManager.selectedTabId,
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected blocking-script tab and surface")
+      return
+    }
+
+    let succeeded = state.performSplitAction(.newSplit(direction: .right), for: surface.id)
+
+    #expect(succeeded == false)
+    #expect(state.splitTree(for: tabId).leaves().count == 1)
+  }
+
+  @Test func performSplitOperationRefusesDropOntoBlockingScriptTab() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    guard let regularTab = state.createTab(),
+      let regularSurface = state.splitTree(for: regularTab).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected regular tab and surface")
+      return
+    }
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    guard let blockingTab = state.tabManager.selectedTabId,
+      let blockingSurface = state.splitTree(for: blockingTab).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected blocking-script tab and surface")
+      return
+    }
+    let blockingLeavesBefore = state.splitTree(for: blockingTab).leaves().count
+
+    state.performSplitOperation(
+      .drop(payloadId: regularSurface.id, destinationId: blockingSurface.id, zone: .right),
+      in: blockingTab,
+    )
+
+    #expect(state.splitTree(for: blockingTab).leaves().count == blockingLeavesBefore)
+    #expect(state.splitTree(for: regularTab).leaves().count == 1)
   }
 
   @Test func restoreFromSnapshotIgnoresWhitespaceOnlyCustomTitle() {

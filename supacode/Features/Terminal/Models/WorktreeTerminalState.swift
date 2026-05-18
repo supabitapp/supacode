@@ -225,7 +225,7 @@ final class WorktreeTerminalState {
     let resolvedInheritanceSurfaceId = inheritingFromSurfaceId ?? currentFocusedSurfaceId()
     let title = "\(worktree.name) \(nextTabIndex())"
     let setupInput = setupScriptInput(setupScript: setupScript)
-    let commandInput = initialInput.flatMap { formatCommandInput($0) }
+    let commandInput = initialInput.flatMap { BlockingScriptRunner.makeCommandInput(script: $0) }
     let resolvedInput: String?
     switch (setupInput, commandInput) {
     case (nil, nil):
@@ -297,7 +297,7 @@ final class WorktreeTerminalState {
 
   @discardableResult
   func runBlockingScript(kind: BlockingScriptKind, _ script: String) -> TerminalTabID? {
-    let launch: BlockingScriptLaunch
+    let launch: BlockingScriptRunner.LaunchArtifacts
     do {
       guard let prepared = try blockingScriptLaunch(script) else { return nil }
       launch = prepared
@@ -328,6 +328,7 @@ final class WorktreeTerminalState {
         inheritingFromSurfaceId: currentFocusedSurfaceId(),
         context: GHOSTTY_SURFACE_CONTEXT_TAB,
         tabID: nil,
+        isBlockingScript: true,
       )
     )
     guard let tabId else {
@@ -357,6 +358,9 @@ final class WorktreeTerminalState {
     let inheritingFromSurfaceId: UUID?
     let context: ghostty_surface_context_e
     let tabID: UUID?
+    /// Marks the tab as a blocking-script tab so the no-split / no-rename
+    /// / readonly-after-completion guardrails apply.
+    var isBlockingScript: Bool = false
   }
 
   private func createTab(_ creation: TabCreation) -> TerminalTabID? {
@@ -365,6 +369,7 @@ final class WorktreeTerminalState {
       icon: creation.icon,
       isTitleLocked: creation.isTitleLocked,
       tintColor: creation.tintColor,
+      isBlockingScript: creation.isBlockingScript,
       id: creation.tabID,
     )
     // When a tab ID is explicitly provided, use it as the initial surface ID
@@ -654,6 +659,11 @@ final class WorktreeTerminalState {
 
     switch action {
     case .newSplit(let direction):
+      // Splits would leak a zmx-wrapped sibling into a transactional tab.
+      // Refuse before allocating a surface so the tab stays single-pane.
+      if tabManager.isBlockingScript(tabId) {
+        return false
+      }
       let newSurface = createSurface(
         tabId: tabId,
         initialInput: initialInput,
@@ -726,6 +736,9 @@ final class WorktreeTerminalState {
 
   func performSplitOperation(_ operation: TerminalSplitTreeView.Operation, in tabId: TerminalTabID) {
     guard var tree = trees[tabId] else { return }
+    // Drag-to-drop surfaces from other tabs into a blocking-script tab would
+    // introduce a zmx-wrapped sibling. Same rationale as the `newSplit` guard.
+    if case .drop = operation, tabManager.isBlockingScript(tabId) { return }
 
     switch operation {
     case .resize(let node, let ratio):
@@ -889,6 +902,8 @@ final class WorktreeTerminalState {
     guard !tabManager.tabs.isEmpty else { return nil }
     var tabSnapshots: [TerminalLayoutSnapshot.TabSnapshot] = []
     for tab in tabManager.tabs {
+      // Blocking-script tabs die with the app; persisting them would resurrect a dead session.
+      if tab.isBlockingScript { continue }
       guard let tree = trees[tab.id], let root = tree.root else {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
@@ -900,24 +915,40 @@ final class WorktreeTerminalState {
         focusedId.flatMap { id in
           leaves.firstIndex(where: { $0.id == id })
         } ?? 0
-      let isBlockingScriptTab = blockingScripts[tab.id] != nil
       tabSnapshots.append(
         TerminalLayoutSnapshot.TabSnapshot(
           id: tab.id.rawValue,
           title: tab.title,
-          customTitle: isBlockingScriptTab ? nil : tab.customTitle,
-          icon: isBlockingScriptTab ? nil : tab.icon,
-          tintColor: isBlockingScriptTab ? nil : tab.tintColor,
+          customTitle: tab.customTitle,
+          icon: tab.icon,
+          tintColor: tab.tintColor,
           layout: layout,
           focusedLeafIndex: focusedLeafIndex,
         )
       )
     }
     guard !tabSnapshots.isEmpty else { return nil }
-    let selectedIndex =
-      tabManager.selectedTabId.flatMap { id in
-        tabManager.tabs.firstIndex(where: { $0.id == id })
-      } ?? 0
+    // Walk against the surviving tabs (post-filter), preferring the nearest
+    // left neighbor when the originally-selected tab was excluded. If every
+    // left neighbor is also excluded, fall through to the leftmost surviving
+    // tab. Computing against `tabManager.tabs` would land on the wrong
+    // neighbor for `[A, B(blocking, selected), C]`.
+    let selectedIndex: Int = {
+      guard let selectedID = tabManager.selectedTabId else { return 0 }
+      if let direct = tabSnapshots.firstIndex(where: { $0.id == selectedID.rawValue }) {
+        return direct
+      }
+      guard let originalIndex = tabManager.tabs.firstIndex(where: { $0.id == selectedID }) else {
+        return 0
+      }
+      for index in stride(from: originalIndex - 1, through: 0, by: -1) {
+        let candidate = tabManager.tabs[index]
+        if let surviving = tabSnapshots.firstIndex(where: { $0.id == candidate.id.rawValue }) {
+          return surviving
+        }
+      }
+      return 0
+    }()
     return TerminalLayoutSnapshot(tabs: tabSnapshots, selectedTabIndex: selectedIndex)
   }
 
@@ -1096,11 +1127,7 @@ final class WorktreeTerminalState {
 
   private func setupScriptInput(setupScript: String?) -> String? {
     guard pendingSetupScript, let script = setupScript else { return nil }
-    return formatCommandInput(script)
-  }
-
-  private func formatCommandInput(_ script: String) -> String? {
-    makeCommandInput(script: script)
+    return BlockingScriptRunner.makeCommandInput(script: script)
   }
 
   private func cleanupBlockingScriptLaunchDirectory(for tabId: TerminalTabID) {
@@ -1129,8 +1156,8 @@ final class WorktreeTerminalState {
   // The typed command stays shell-portable by invoking a generated wrapper file
   // that reads the shell path from a sibling file and launches the user script,
   // rather than serializing it into a shell-escaped `-c` string.
-  private func blockingScriptLaunch(_ script: String) throws -> BlockingScriptLaunch? {
-    try makeBlockingScriptLaunch(
+  private func blockingScriptLaunch(_ script: String) throws -> BlockingScriptRunner.LaunchArtifacts? {
+    try BlockingScriptRunner.makeLaunch(
       script: script,
       shellPath: defaultShellPath()
     )
@@ -1157,16 +1184,18 @@ final class WorktreeTerminalState {
     completeBlockingScript(kind, tabId: tabId, exitCode: nil, reportedTabId: nil)
   }
 
-  // Unlocks the tab and asynchronously fires the completion callback,
-  // unless a new script of the same kind has already started.
+  // Marks the blocking-script tab as completed and flips every surface in
+  // it to Ghostty's readonly mode so the user can't keep typing into a
+  // shell that won't survive app quit. Fires the completion callback
+  // asynchronously unless a new script of the same kind already started.
   private func completeBlockingScript(
     _ kind: BlockingScriptKind,
     tabId: TerminalTabID,
     exitCode: Int?,
     reportedTabId: TerminalTabID?
   ) {
-    tabManager.unlockAndUpdateTitle(tabId, title: "\(worktree.name) \(nextTabIndex())")
-    tabManager.updateDirty(tabId, isDirty: isTabBusy(tabId))
+    tabManager.markBlockingScriptCompleted(tabId)
+    freezeBlockingScriptSurfaces(in: tabId)
     emitTaskStatusIfChanged()
 
     Task { @MainActor [weak self] in
@@ -1179,6 +1208,12 @@ final class WorktreeTerminalState {
         return
       }
       self.onBlockingScriptCompleted?(kind, exitCode, reportedTabId)
+    }
+  }
+
+  private func freezeBlockingScriptSurfaces(in tabId: TerminalTabID) {
+    for surfaceID in surfaceIDs(inTab: tabId) {
+      surfaces[surfaceID]?.enableReadOnly()
     }
   }
 
@@ -1500,9 +1535,18 @@ final class WorktreeTerminalState {
     return focusedSurfaceIdByTab[selectedTabId] == surfaceID
   }
 
+  /// True for a blocking-script tab whose script has already finished.
+  func isBlockingScriptCompleted(_ tabId: TerminalTabID) -> Bool {
+    tabManager.tabs.first(where: { $0.id == tabId })?.isBlockingScriptCompleted == true
+  }
+
   private func updateRunningState(for tabId: TerminalTabID) {
     guard trees[tabId] != nil else { return }
-    tabManager.updateDirty(tabId, isDirty: isTabBusy(tabId))
+    // Frozen tabs stay sticky: the 15s `progressResetTask` re-fires
+    // `onProgressReport` after `command_finished` and would otherwise
+    // resurrect the dirty shimmer on a tab the user reads as done.
+    let isFrozen = isBlockingScriptCompleted(tabId)
+    tabManager.updateDirty(tabId, isDirty: isFrozen ? false : isTabBusy(tabId))
     emitTabProgressDisplay(for: tabId)
     emitTaskStatusIfChanged()
   }
@@ -1836,84 +1880,4 @@ final class WorktreeTerminalState {
       surfaceStates[surfaceID] = state
     }
   #endif
-}
-
-nonisolated func makeCommandInput(
-  script: String
-) -> String? {
-  let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-  guard !trimmed.isEmpty else { return nil }
-  return trimmed + "\n"
-}
-
-nonisolated struct BlockingScriptLaunch {
-  let directoryURL: URL
-  let runnerURL: URL
-  let scriptURL: URL
-  let shellPathURL: URL
-  let commandInput: String
-}
-
-nonisolated func makeBlockingScriptLaunch(
-  script: String,
-  shellPath: String,
-  baseDirectoryURL: URL = FileManager.default.temporaryDirectory
-) throws -> BlockingScriptLaunch? {
-  let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-  guard !trimmed.isEmpty else { return nil }
-
-  let fileManager = FileManager.default
-  let directoryURL = baseDirectoryURL.appending(
-    path: "supacode-blocking-script-\(UUID().uuidString.lowercased())",
-    directoryHint: .isDirectory
-  )
-  let runnerURL = directoryURL.appending(path: "run", directoryHint: .notDirectory)
-  let scriptURL = directoryURL.appending(path: "script", directoryHint: .notDirectory)
-  let shellPathURL = directoryURL.appending(path: "shell-path", directoryHint: .notDirectory)
-
-  do {
-    try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-    try Data((trimmed + "\n").utf8).write(to: scriptURL, options: [.atomic])
-    try Data((shellPath + "\n").utf8).write(to: shellPathURL, options: [.atomic])
-    try Data(
-      blockingScriptRunnerContents(
-        scriptURL: scriptURL,
-        shellPathURL: shellPathURL
-      ).utf8
-    ).write(to: runnerURL, options: [.atomic])
-    try fileManager.setAttributes(
-      [.posixPermissions: 0o700],
-      ofItemAtPath: runnerURL.path(percentEncoded: false)
-    )
-  } catch {
-    try? fileManager.removeItem(at: directoryURL)
-    throw error
-  }
-
-  return BlockingScriptLaunch(
-    directoryURL: directoryURL,
-    runnerURL: runnerURL,
-    scriptURL: scriptURL,
-    shellPathURL: shellPathURL,
-    commandInput: shellSingleQuoted(runnerURL.path(percentEncoded: false)) + "\n"
-  )
-}
-
-nonisolated func blockingScriptRunnerContents(
-  scriptURL: URL,
-  shellPathURL: URL
-) -> String {
-  let quotedShellPath = shellSingleQuoted(shellPathURL.path(percentEncoded: false))
-  let quotedScriptPath = shellSingleQuoted(scriptURL.path(percentEncoded: false))
-
-  return """
-    #!/bin/sh
-    set -eu
-    IFS= read -r SUPACODE_SHELL_PATH < \(quotedShellPath)
-    "$SUPACODE_SHELL_PATH" -l \(quotedScriptPath)
-    """
-}
-
-nonisolated func shellSingleQuoted(_ value: String) -> String {
-  "'\(value.replacing("'", with: "'\"'\"'"))'"
 }

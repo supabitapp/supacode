@@ -319,10 +319,8 @@ struct AgentBusyStateTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
     let resolvedWorktree = worktree ?? makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(resolvedWorktree, kind: .archive, script: "echo ok"))
-
-    let state = manager.stateIfExists(for: resolvedWorktree.id)!
-    let tabId = state.tabManager.selectedTabId!
+    let state = manager.state(for: resolvedWorktree) { false }
+    let tabId = state.createTab()!
     let surface = state.splitTree(for: tabId).root!.leftmostLeaf()
     return SurfaceFixture(manager: manager, presence: presence, state: state, tabId: tabId, surface: surface)
   }
