@@ -50,6 +50,10 @@ struct WorktreeCustomizationParentTests {
     // existing per-row state instead of forcing the reducer's `syncSidebar`
     // to materialise rows mid-action and flag the test on unrelated diffs.
     RepositoriesFeature.syncSidebar(&state)
+    // Pre-warm the post-reduce caches so the in-reducer recompute is a delta
+    // from a populated baseline (matches what every action would see in a
+    // real run) rather than a build-from-nil that registers as state churn.
+    state.applyPostReduceCacheRecomputes()
     return state
   }
 
@@ -147,6 +151,9 @@ struct WorktreeCustomizationParentTests {
       // syncSidebar fans the bucketed Item write into the per-row mirror.
       $0.sidebarItems[id: self.worktreeID]?.customTitle = "Renamed"
       $0.sidebarItems[id: self.worktreeID]?.customTint = .red
+      // The save action invalidates every cache; mirror the post-reduce hook
+      // so the test diff only contains intentional state changes.
+      $0.applyPostReduceCacheRecomputes()
     }
   }
 

@@ -3819,26 +3819,36 @@ struct RepositoriesFeature {
       if !added.isEmpty { remainingDiscoveredNamesByRepo[repository.id] = added }
     }
     var transfers: [PendingCustomizationTransfer] = []
+    // Pass 1: consume name matches up front. This drains the discovered-name
+    // set AND the count budget so the count-based fallback in pass 2 only
+    // fires for the leftover budget, never for a discovered name that a
+    // later pending row was going to match.
+    var droppedPendingIDs: Set<String> = []
+    for pending in state.pendingWorktrees {
+      guard repositoryIDs.contains(pending.repositoryID),
+        let pendingName = pending.progress.worktreeName,
+        remainingDiscoveredNamesByRepo[pending.repositoryID]?.contains(pendingName) == true
+      else { continue }
+      remainingDiscoveredNamesByRepo[pending.repositoryID]?.remove(pendingName)
+      if let customization = pending.customization,
+        customization.title != nil || customization.color != nil
+      {
+        transfers.append(
+          PendingCustomizationTransfer(
+            repositoryID: pending.repositoryID,
+            worktreeName: pendingName,
+            customization: customization,
+          )
+        )
+      }
+      addedCounts[pending.repositoryID, default: 0] = max(0, (addedCounts[pending.repositoryID] ?? 0) - 1)
+      droppedPendingIDs.insert(pending.id)
+    }
+    // Pass 2: count-based drop for the unnamed remainder. Skip anything pass 1
+    // already removed by id.
     let filtered = state.pendingWorktrees.filter { pending in
       guard repositoryIDs.contains(pending.repositoryID) else { return false }
-      if let pendingName = pending.progress.worktreeName,
-        remainingDiscoveredNamesByRepo[pending.repositoryID]?.contains(pendingName) == true
-      {
-        remainingDiscoveredNamesByRepo[pending.repositoryID]?.remove(pendingName)
-        if let customization = pending.customization,
-          customization.title != nil || customization.color != nil
-        {
-          transfers.append(
-            PendingCustomizationTransfer(
-              repositoryID: pending.repositoryID,
-              worktreeName: pendingName,
-              customization: customization,
-            )
-          )
-        }
-        addedCounts[pending.repositoryID, default: 0] = max(0, (addedCounts[pending.repositoryID] ?? 0) - 1)
-        return false
-      }
+      if droppedPendingIDs.contains(pending.id) { return false }
       guard let remaining = addedCounts[pending.repositoryID], remaining > 0 else { return true }
       addedCounts[pending.repositoryID] = remaining - 1
       return false
