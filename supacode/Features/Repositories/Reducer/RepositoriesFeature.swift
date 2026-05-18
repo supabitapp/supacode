@@ -3844,11 +3844,13 @@ struct RepositoriesFeature {
       addedCounts[pending.repositoryID, default: 0] = max(0, (addedCounts[pending.repositoryID] ?? 0) - 1)
       droppedPendingIDs.insert(pending.id)
     }
-    // Pass 2: count-based drop for the unnamed remainder. Skip anything pass 1
-    // already removed by id.
+    // Pass 2: count-based drop for the unnamed remainder. Named pending rows
+    // only drop via pass 1's exact name match; otherwise concurrent creations
+    // can prune the wrong row when only a sibling worktree appears.
     let filtered = state.pendingWorktrees.filter { pending in
       guard repositoryIDs.contains(pending.repositoryID) else { return false }
       if droppedPendingIDs.contains(pending.id) { return false }
+      if pending.progress.worktreeName != nil { return true }
       guard let remaining = addedCounts[pending.repositoryID], remaining > 0 else { return true }
       addedCounts[pending.repositoryID] = remaining - 1
       return false
