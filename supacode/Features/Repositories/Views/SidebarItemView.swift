@@ -265,12 +265,13 @@ private struct TitleView: View, Equatable {
           isEmphasized
           ? AnyShapeStyle(.secondary)
           : repoColor.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.secondary)
-        // `.layoutPriority(1)` on the trail makes the repo prefix yield first
-        // under a narrow sidebar so the disambiguator survives truncation.
+        // `.layoutPriority(1)` on the repo makes the trail yield first under
+        // a narrow sidebar so the colored repo tag survives truncation.
         HStack(spacing: 0) {
           Text(repo)
             .foregroundStyle(repoStyle)
             .lineLimit(1)
+            .layoutPriority(1)
           if let trail {
             Text(" · ")
               .foregroundStyle(.secondary)
@@ -278,7 +279,6 @@ private struct TitleView: View, Equatable {
             Text(trail)
               .foregroundStyle(accentStyle)
               .lineLimit(1)
-              .layoutPriority(1)
           }
         }
         .font(.footnote)
