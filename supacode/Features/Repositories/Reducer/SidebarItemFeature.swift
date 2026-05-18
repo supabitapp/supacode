@@ -217,7 +217,7 @@ extension SidebarItemFeature.State {
   /// then the subtitle's last path component, then `branchName`.
   var sidebarDisplayName: String? {
     SidebarDisplayName.compute(
-      isMainWorktree: isMainWorktree, id: id, subtitle: subtitle, branchName: branchName
+      isMainWorktree: isMainWorktree, id: id, subtitle: subtitle, branchName: branchName,
     )
   }
   /// Final string the row should render: user override (trimmed) when set,
@@ -240,7 +240,7 @@ enum SidebarDisplayName {
     isMainWorktree: Bool,
     id: SidebarItemID,
     subtitle: String?,
-    branchName: String
+    branchName: String,
   ) -> String? {
     guard !isMainWorktree else { return nil }
     if id.contains("/") {
@@ -294,6 +294,8 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
   let subtitle: String?
   let isMainWorktree: Bool
   let isPinned: Bool
+  let customTitle: String?
+  let customTint: RepositoryColor?
   let lifecycle: SidebarItemFeature.State.Lifecycle
   let pullRequest: GithubPullRequest?
   let runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript>
@@ -307,6 +309,8 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
     self.subtitle = row.subtitle
     self.isMainWorktree = row.isMainWorktree
     self.isPinned = row.isPinned
+    self.customTitle = row.customTitle
+    self.customTint = row.customTint
     self.lifecycle = row.lifecycle
     self.pullRequest = row.pullRequest
     self.runningScripts = row.runningScripts
@@ -314,8 +318,12 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
 
   var sidebarDisplayName: String? {
     SidebarDisplayName.compute(
-      isMainWorktree: isMainWorktree, id: id, subtitle: subtitle, branchName: branchName
+      isMainWorktree: isMainWorktree, id: id, subtitle: subtitle, branchName: branchName,
     )
+  }
+
+  var resolvedSidebarTitle: String? {
+    SidebarDisplayName.resolved(custom: customTitle, fallback: sidebarDisplayName)
   }
 
   var accent: WorktreeAccent { WorktreeAccent.derive(isMainWorktree: isMainWorktree, isPinned: isPinned) }

@@ -949,7 +949,9 @@ struct RepositoriesFeatureTests {
               branchName: "feature/new",
               baseRef: nil,
               fetchOrigin: true,
-              placement: WorktreePlacementOverride(name: nil, path: nil)
+              placement: WorktreePlacementOverride(name: nil, path: nil),
+              title: nil,
+              color: nil
             )
           )
         )

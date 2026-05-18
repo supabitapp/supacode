@@ -576,10 +576,11 @@ struct WorktreeDetailView: View {
       {
         return nil
       }
-      let worktreeName = selectedRow.sidebarDisplayName ?? "Default"
+      let worktreeName = selectedRow.resolvedSidebarTitle ?? "Default"
       let branchName = selectedWorktree.name
       let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
-      if hideSubtitleOnMatch, worktreeName == branchLastComponent { return nil }
+      let hasCustomTitle = selectedRow.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+      if hideSubtitleOnMatch, !hasCustomTitle, worktreeName == branchLastComponent { return nil }
       return worktreeName
     }()
 

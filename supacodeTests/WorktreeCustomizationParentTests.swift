@@ -69,7 +69,7 @@ struct WorktreeCustomizationParentTests {
         repositoryID: self.repoID,
         defaultName: "feature/x",
         title: "Spicy",
-        color: .blue
+        color: .blue,
       )
     }
   }
@@ -85,7 +85,7 @@ struct WorktreeCustomizationParentTests {
         repositoryID: self.repoID,
         defaultName: "feature/x",
         title: "",
-        color: nil
+        color: nil,
       )
     }
   }
@@ -120,7 +120,7 @@ struct WorktreeCustomizationParentTests {
       repositoryID: repoID,
       defaultName: "feature/x",
       title: "",
-      color: nil
+      color: nil,
     )
     let store = TestStore(initialState: initial) {
       RepositoriesFeature()
@@ -150,6 +150,47 @@ struct WorktreeCustomizationParentTests {
     }
   }
 
+  @Test func saveDelegateRefreshesSelectedWorktreeSlice() async {
+    var initial = makeInitialState()
+    initial.setSingleWorktreeSelection(worktreeID)
+    initial.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+    initial.worktreeCustomization = WorktreeCustomizationFeature.State(
+      worktreeID: worktreeID,
+      repositoryID: repoID,
+      defaultName: "feature/x",
+      title: "",
+      color: nil,
+    )
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .worktreeCustomization(
+        .presented(
+          .delegate(
+            .save(
+              worktreeID: worktreeID,
+              repositoryID: repoID,
+              title: "Renamed",
+              color: .red,
+            )
+          )))
+    ) {
+      $0.worktreeCustomization = nil
+      $0.$sidebar.withLock { sidebar in
+        sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.title =
+          "Renamed"
+        sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.color = .red
+      }
+      $0.sidebarItems[id: self.worktreeID]?.customTitle = "Renamed"
+      $0.sidebarItems[id: self.worktreeID]?.customTint = .red
+      $0.applyPostReduceCacheRecomputes()
+    }
+    #expect(store.state.selectedWorktreeSlice?.resolvedSidebarTitle == "Renamed")
+    #expect(store.state.selectedWorktreeSlice?.customTint == .red)
+  }
+
   @Test func cancelDelegateClearsPresentedState() async {
     var initial = makeInitialState()
     initial.worktreeCustomization = WorktreeCustomizationFeature.State(
@@ -157,7 +198,7 @@ struct WorktreeCustomizationParentTests {
       repositoryID: repoID,
       defaultName: "feature/x",
       title: "",
-      color: nil
+      color: nil,
     )
     let store = TestStore(initialState: initial) {
       RepositoriesFeature()
