@@ -56,14 +56,11 @@ struct WorktreeTerminalTabsView: View {
       }
       if let selectedId = state.tabManager.selectedTabId {
         TerminalTabContentStack(tabs: state.tabManager.tabs, selectedTabId: selectedId) { tabId in
-          TerminalSplitTreeAXContainer(
-            tree: state.splitTree(for: tabId),
+          TerminalSplitTreePane(
+            tabId: tabId,
             terminalState: state,
-            activeSurfaceID: state.activeSurfaceID(for: tabId),
-            unfocusedSplitOverlay: unfocusedSplitOverlay,
-            action: { operation in
-              state.performSplitOperation(operation, in: tabId)
-            }
+            terminalsStore: terminalsStore,
+            unfocusedSplitOverlay: unfocusedSplitOverlay
           )
         }
       } else {
@@ -110,5 +107,31 @@ struct WorktreeTerminalTabsView: View {
       )
     }
     return windowActivity
+  }
+}
+
+/// Reads the per-tab projection so SwiftUI invalidates whenever the tab's surface
+/// set or focus changes. `WorktreeTerminalState.trees` and `focusedSurfaceIdByTab`
+/// are `@ObservationIgnored`, so without this dependency Cmd+D / Cmd+W would not
+/// re-render until something else (a worktree switch) forced a body recompute.
+private struct TerminalSplitTreePane: View {
+  let tabId: TerminalTabID
+  let terminalState: WorktreeTerminalState
+  let terminalsStore: StoreOf<TerminalsFeature>
+  let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+
+  var body: some View {
+    let projection = terminalsStore.terminalTabs[id: tabId]
+    let _ = projection?.surfaceIDs
+    let _ = projection?.activeSurfaceID
+    TerminalSplitTreeAXContainer(
+      tree: terminalState.splitTree(for: tabId),
+      terminalState: terminalState,
+      activeSurfaceID: terminalState.activeSurfaceID(for: tabId),
+      unfocusedSplitOverlay: unfocusedSplitOverlay,
+      action: { operation in
+        terminalState.performSplitOperation(operation, in: tabId)
+      }
+    )
   }
 }

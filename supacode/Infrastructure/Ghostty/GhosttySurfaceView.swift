@@ -121,6 +121,21 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
   }
   var onFocusChange: ((Bool) -> Void)?
+  /// Asked on re-attachment to a window: should this surface re-claim
+  /// firstResponder right now? SwiftUI detaches sibling panes during split
+  /// rebuilds (e.g. after closing a surface), and AppKit doesn't auto-promote
+  /// a re-attached view, so without this hook the recorded focus owner sits in
+  /// the tree without listening to keystrokes. Only consulted on RE-attachment
+  /// (not the first mount) so we never fight the initial-focus path.
+  var shouldClaimFocus: (() -> Bool)?
+  /// Set the first time this view lands in a real window. The self-claim path
+  /// is gated on this so it only fires for the re-attachment case.
+  private var hasBeenInWindow = false
+  /// Outstanding self-claim Task from the most recent re-attach. Rapid split
+  /// rebuilds would otherwise queue one Task per attach; cancelling the prior
+  /// keeps the queue at most one deep without changing correctness (each Task
+  /// is already idempotent on its own guards).
+  private var pendingFocusClaim: Task<Void, Never>?
 
   private var accessibilityPaneIndexHelp: String?
 
@@ -358,7 +373,37 @@ final class GhosttySurfaceView: NSView, Identifiable {
     if window == nil {
       // SwiftUI can temporarily detach a pane while rebuilding split/zoom layout.
       // If we keep the stale local focus bit, detached panes still intercept bindings.
+      pendingFocusClaim?.cancel()
+      pendingFocusClaim = nil
       focusDidChange(false)
+    } else if hasBeenInWindow, shouldClaimFocus?() == true {
+      // Re-attached after a split-tree rebuild dropped us. AppKit doesn't
+      // auto-promote a re-attached view to firstResponder, so claim it back
+      // ourselves on the next runloop tick (immediate claim is unreliable
+      // when SwiftUI is mid-mount and `window` may still flip).
+      let attachedWindow = window
+      pendingFocusClaim?.cancel()
+      pendingFocusClaim = Task { @MainActor [weak self] in
+        guard
+          let self,
+          !Task.isCancelled,
+          let window = self.window,
+          window === attachedWindow,
+          self.shouldClaimFocus?() == true
+        else { return }
+        // Only reclaim from the no-owner or sibling-terminal case. Stealing
+        // from a non-terminal responder (command palette, inline rename text
+        // field) mid-rebuild would yank focus from whatever the user is
+        // actively typing into.
+        let responder = window.firstResponder
+        guard responder !== self else { return }
+        if responder == nil || responder is GhosttySurfaceView {
+          _ = window.makeFirstResponder(self)
+        }
+      }
+    }
+    if window != nil {
+      hasBeenInWindow = true
     }
     updateScreenObservers()
     updateContentScale()

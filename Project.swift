@@ -5,6 +5,8 @@ let ghosttyResourcesPath: Path = ".build/ghostty/share/ghostty"
 let ghosttyTerminfoPath: Path = ".build/ghostty/share/terminfo"
 let ghosttyBuildScriptPath: Path = "scripts/build-ghostty.sh"
 let verifyGitWtScriptPath: Path = "scripts/verify-git-wt.sh"
+let zmxBuildScriptPath: Path = "scripts/build-zmx.sh"
+let zmxBinaryPath: Path = ".build/zmx/bin/zmx"
 let embedGhosttyResourcesScriptPath: Path = "scripts/embed-ghostty-resources.sh"
 let embedRuntimeAssetsScriptPath: Path = "scripts/embed-runtime-assets.sh"
 
@@ -77,6 +79,7 @@ let embedGhosttyResourcesOutputPaths: [Path] = [
 
 let embedRuntimeAssetsInputPaths: [FileListGlob] = [
   "$(SRCROOT)/Resources/git-wt/wt",
+  "$(SRCROOT)/\(zmxBinaryPath.pathString)",
   "$(SRCROOT)/supacode/Resources/Themes/Supacode Light",
   "$(SRCROOT)/supacode/Resources/Themes/Supacode Dark",
   "$(BUILT_PRODUCTS_DIR)/supacode",
@@ -85,6 +88,7 @@ let embedRuntimeAssetsInputPaths: [FileListGlob] = [
 
 let embedRuntimeAssetsOutputPaths: [Path] = [
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/git-wt/wt",
+  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/zmx/zmx",
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Supacode Light",
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Supacode Dark",
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/supacode",
@@ -206,6 +210,11 @@ let project = Project(
         .pre(
           script: shellScript(verifyGitWtScriptPath),
           name: "Verify git-wt",
+          basedOnDependencyAnalysis: false
+        ),
+        .pre(
+          script: shellScript(zmxBuildScriptPath),
+          name: "Build zmx",
           basedOnDependencyAnalysis: false
         ),
         .post(

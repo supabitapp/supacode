@@ -239,7 +239,6 @@ struct GlobalSettingsScriptsCodableTests {
     [
       "appearanceMode": "dark",
       "defaultEditorID": "automatic",
-      "confirmBeforeQuit": true,
       "updateChannel": "stable",
       "updatesAutomaticallyCheckForUpdates": true,
       "updatesAutomaticallyDownloadUpdates": false,

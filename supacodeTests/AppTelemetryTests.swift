@@ -41,7 +41,6 @@ struct AppTelemetryTests {
         settings: GlobalSettings(
           appearanceMode: .system,
           defaultEditorID: OpenWorktreeAction.automaticSettingsID,
-          confirmBeforeQuit: true,
           updateChannel: .stable,
           updatesAutomaticallyCheckForUpdates: true,
           updatesAutomaticallyDownloadUpdates: false,

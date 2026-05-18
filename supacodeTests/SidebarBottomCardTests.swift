@@ -6,36 +6,50 @@ import Testing
 
 @MainActor
 struct SidebarBottomCardTests {
-  @Test func agentUpdatesWinOverOnboarding() {
+  @Test func agentUpdatesWinOverEverything() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .updatesAvailable([.claude]),
+      terminalPersistenceMode: .visible,
       highlightMode: .visible,
       onboardingMode: .visible
     )
     #expect(resolved == .agent(.updatesAvailable([.claude])))
   }
 
-  @Test func agentPromptWinsOverOnboarding() {
+  @Test func agentPromptWinsOverEverything() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .promptInstall,
+      terminalPersistenceMode: .visible,
       highlightMode: .visible,
       onboardingMode: .visible
     )
     #expect(resolved == .agent(.promptInstall))
   }
 
+  @Test func terminalPersistenceWinsOverHighlightAndNested() {
+    let resolved = SidebarBottomCardView.Slot.resolve(
+      agentMode: .hidden,
+      terminalPersistenceMode: .visible,
+      highlightMode: .visible,
+      onboardingMode: .visible
+    )
+    #expect(resolved == .terminalPersistenceOnboarding)
+  }
+
   @Test func highlightWinsOverNestedOnboarding() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
+      terminalPersistenceMode: .hidden,
       highlightMode: .visible,
       onboardingMode: .visible
     )
     #expect(resolved == .highlightRelevantOnboarding)
   }
 
-  @Test func nestedOnboardingShowsWhenHighlightDismissed() {
+  @Test func nestedOnboardingShowsWhenHigherPriorityDismissed() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
+      terminalPersistenceMode: .hidden,
       highlightMode: .hidden,
       onboardingMode: .visible
     )
@@ -45,10 +59,17 @@ struct SidebarBottomCardTests {
   @Test func noneWhenAllHidden() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
+      terminalPersistenceMode: .hidden,
       highlightMode: .hidden,
       onboardingMode: .hidden
     )
     #expect(resolved == SidebarBottomCardView.Slot.none)
+  }
+
+  @Test func terminalPersistenceTransitionTokenIsStable() {
+    #expect(
+      SidebarBottomCardView.Slot.terminalPersistenceOnboarding.transitionToken == "terminalPersistence:visible"
+    )
   }
 
   @Test func agentVariantStableAcrossSkillAgentOrder() {

@@ -4,3 +4,6 @@
 [submodule "Resources/git-wt"]
 	path = Resources/git-wt
 	url = https://github.com/khoi/git-wt.git
+[submodule "ThirdParty/zmx"]
+	path = ThirdParty/zmx
+	url = https://github.com/neurosnap/zmx
