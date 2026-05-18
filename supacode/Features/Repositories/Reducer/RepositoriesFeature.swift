@@ -3783,47 +3783,44 @@ struct RepositoriesFeature {
     return (loaded, failures)
   }
 
-  private func applyRepositories(
-    _ repositories: [Repository],
-    roots: [URL],
-    shouldPruneArchivedWorktreeIDs: Bool,
-    state: inout State,
-    animated: Bool
-  ) -> ApplyRepositoriesResult {
+  /// Customization transfer record produced by `prunedPendingWorktrees` and
+  /// consumed by `seedCustomizationForDiscoveredWorktree`. A struct rather
+  /// than a tuple so the two helpers can pass the payload around without
+  /// tripping the `large_tuple` lint.
+  private struct PendingCustomizationTransfer {
+    let repositoryID: Repository.ID
+    let worktreeName: String
+    let customization: PendingWorktree.Customization
+  }
+
+  /// Filter `state.pendingWorktrees` against a freshly-loaded roster. Pending
+  /// rows whose `worktreeName` matches a newly-discovered worktree are pruned
+  /// and (when customized) hand their title / color to the caller for
+  /// transfer onto the bucketed Item. Pending rows without a final name fall
+  /// back to a count-based drop so the random-name path keeps its old shape.
+  private func prunedPendingWorktrees(
+    state: State,
+    repositories: [Repository],
+    repositoryIDs: Set<Repository.ID>
+  ) -> ([PendingWorktree], [PendingCustomizationTransfer]) {
     let previousCounts = Dictionary(
       uniqueKeysWithValues: state.repositories.map { ($0.id, $0.worktrees.count) }
     )
-    let repositoryIDs = Set(repositories.map(\.id))
-    let newCounts = Dictionary(
-      uniqueKeysWithValues: repositories.map { ($0.id, $0.worktrees.count) }
-    )
+    let newCounts = Dictionary(uniqueKeysWithValues: repositories.map { ($0.id, $0.worktrees.count) })
     var addedCounts: [Repository.ID: Int] = [:]
     for (id, newCount) in newCounts {
-      let oldCount = previousCounts[id] ?? 0
-      let added = newCount - oldCount
-      if added > 0 {
-        addedCounts[id] = added
-      }
+      let added = newCount - (previousCounts[id] ?? 0)
+      if added > 0 { addedCounts[id] = added }
     }
-    // Map repo → set of newly-discovered worktree names, so we can drop a
-    // pending row by NAME when a reload races the per-pending success
-    // handler. Falling back to count-based drop preserves the old shape for
-    // pending rows that haven't picked a final name yet (e.g. the random
-    // path that names mid-stream).
     var remainingDiscoveredNamesByRepo: [Repository.ID: Set<String>] = [:]
     for repository in repositories {
-      let previousNames = Set(
-        state.repositories[id: repository.id]?.worktrees.map(\.name) ?? []
-      )
+      let previousNames = Set(state.repositories[id: repository.id]?.worktrees.map(\.name) ?? [])
       let added = Set(repository.worktrees.map(\.name)).subtracting(previousNames)
       if !added.isEmpty { remainingDiscoveredNamesByRepo[repository.id] = added }
     }
-    var customizationTransfers: [(Repository.ID, String, PendingWorktree.Customization)] = []
-    let filteredPendingWorktrees = state.pendingWorktrees.filter { pending in
+    var transfers: [PendingCustomizationTransfer] = []
+    let filtered = state.pendingWorktrees.filter { pending in
       guard repositoryIDs.contains(pending.repositoryID) else { return false }
-      // Name match first: a customized pending whose final name we know
-      // hands its title / color to the bucketed Item for the matching
-      // newly-discovered worktree before being dropped.
       if let pendingName = pending.progress.worktreeName,
         remainingDiscoveredNamesByRepo[pending.repositoryID]?.contains(pendingName) == true
       {
@@ -3831,41 +3828,67 @@ struct RepositoriesFeature {
         if let customization = pending.customization,
           customization.title != nil || customization.color != nil
         {
-          customizationTransfers.append((pending.repositoryID, pendingName, customization))
+          transfers.append(
+            PendingCustomizationTransfer(
+              repositoryID: pending.repositoryID,
+              worktreeName: pendingName,
+              customization: customization,
+            )
+          )
         }
         addedCounts[pending.repositoryID, default: 0] = max(0, (addedCounts[pending.repositoryID] ?? 0) - 1)
         return false
       }
-      // Count-based fallback: only drop when there's still budget AND we
-      // didn't match by name above.
       guard let remaining = addedCounts[pending.repositoryID], remaining > 0 else { return true }
       addedCounts[pending.repositoryID] = remaining - 1
       return false
     }
-    if !customizationTransfers.isEmpty {
-      state.$sidebar.withLock { sidebar in
-        for (repoID, worktreeName) in customizationTransfers.map({ ($0.0, $0.1) }) {
-          // Find the worktree id from the freshly-loaded roster (we matched
-          // by name above; promote the match to an id for the bucket write).
-          guard
-            let worktreeID = repositories.first(where: { $0.id == repoID })?
-              .worktrees.first(where: { $0.name == worktreeName })?.id
-          else { continue }
-          let customization = customizationTransfers.first(where: { $0.0 == repoID && $0.1 == worktreeName })!.2
-          var section = sidebar.sections[repoID] ?? .init()
-          var bucket = section.buckets[.unpinned] ?? .init()
-          var item = bucket.items[worktreeID] ?? .init()
-          // Don't overwrite a value the user set via Customize Worktree…
-          // between the pending creation and the reload — the bucketed Item
-          // is authoritative once non-nil.
-          if item.title == nil { item.title = customization.title }
-          if item.color == nil { item.color = customization.color }
-          bucket.items[worktreeID] = item
-          section.buckets[.unpinned] = bucket
-          sidebar.sections[repoID] = section
-        }
+    return (filtered, transfers)
+  }
+
+  /// Write each transferred pending customization onto the bucketed Item for
+  /// the matching newly-discovered worktree. Skips fields the user has
+  /// already set via Customize Worktree… so the bucketed Item stays
+  /// authoritative once non-nil.
+  private func seedCustomizationForDiscoveredWorktree(
+    transfers: [PendingCustomizationTransfer],
+    repositories: [Repository],
+    state: inout State
+  ) {
+    guard !transfers.isEmpty else { return }
+    state.$sidebar.withLock { sidebar in
+      for transfer in transfers {
+        guard
+          let worktreeID = repositories.first(where: { $0.id == transfer.repositoryID })?
+            .worktrees.first(where: { $0.name == transfer.worktreeName })?.id
+        else { continue }
+        var section = sidebar.sections[transfer.repositoryID] ?? .init()
+        var bucket = section.buckets[.unpinned] ?? .init()
+        var item = bucket.items[worktreeID] ?? .init()
+        if item.title == nil { item.title = transfer.customization.title }
+        if item.color == nil { item.color = transfer.customization.color }
+        bucket.items[worktreeID] = item
+        section.buckets[.unpinned] = bucket
+        sidebar.sections[transfer.repositoryID] = section
       }
     }
+  }
+
+  private func applyRepositories(
+    _ repositories: [Repository],
+    roots: [URL],
+    shouldPruneArchivedWorktreeIDs: Bool,
+    state: inout State,
+    animated: Bool
+  ) -> ApplyRepositoriesResult {
+    let repositoryIDs = Set(repositories.map(\.id))
+    let (filteredPendingWorktrees, customizationTransfers) =
+      prunedPendingWorktrees(state: state, repositories: repositories, repositoryIDs: repositoryIDs)
+    seedCustomizationForDiscoveredWorktree(
+      transfers: customizationTransfers,
+      repositories: repositories,
+      state: &state,
+    )
     let availableWorktreeIDs = Set(repositories.flatMap { $0.worktrees.map(\.id) })
     let (filteredRemovingRepositoryIDs, filteredActiveRemovalBatches) =
       prunedRemovalTrackers(state: state, availableRepoIDs: repositoryIDs)
