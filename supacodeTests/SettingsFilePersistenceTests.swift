@@ -166,7 +166,6 @@ struct SettingsFilePersistenceTests {
     }
 
     #expect(settings.global.appearanceMode == .dark)
-    #expect(settings.global.confirmBeforeQuit == true)
     #expect(settings.global.updatesAutomaticallyCheckForUpdates == false)
     #expect(settings.global.updatesAutomaticallyDownloadUpdates == true)
     #expect(settings.global.inAppNotificationsEnabled == true)
@@ -189,6 +188,81 @@ struct SettingsFilePersistenceTests {
 
   @Test func freshInstallDefaultsTerminalThemeSyncEnabledToTrue() {
     #expect(GlobalSettings.default.terminalThemeSyncEnabled == true)
+  }
+
+  @Test(.dependencies) func decodesLegacyConfirmBeforeQuitTrueAsAlways() throws {
+    // Opt-out users (`confirmBeforeQuit = true` in the old single-toggle model)
+    // must land on `.always`, NOT `.auto`. `.auto` would silently re-enable the
+    // dialog only when active work exists, which is the opposite of what they
+    // configured ("ask me every time, no matter what").
+    let legacy = LegacySettingsFileWithQuitToggle(
+      global: LegacyGlobalSettingsWithQuitToggle(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: true,
+        updatesAutomaticallyDownloadUpdates: false,
+        confirmBeforeQuit: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmQuitMode == .always)
+  }
+
+  @Test(.dependencies) func decodesLegacyConfirmBeforeQuitFalseAsNever() throws {
+    // Symmetric to the `true` case: explicit opt-out must stay opt-out.
+    let legacy = LegacySettingsFileWithQuitToggle(
+      global: LegacyGlobalSettingsWithQuitToggle(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: true,
+        updatesAutomaticallyDownloadUpdates: false,
+        confirmBeforeQuit: false
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmQuitMode == .never)
+  }
+
+  @Test(.dependencies) func freshInstallDefaultsConfirmQuitModeToAuto() throws {
+    // Neither the new key nor the legacy key is present (fresh-installed
+    // bundle). The decode must fall through to `.auto`, the new default.
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmQuitMode == .auto)
   }
 
   @Test(.dependencies) func roundTripsExplicitTerminalThemeSyncEnabled() throws {
@@ -266,4 +340,16 @@ private struct LegacyGlobalSettingsWithArchiveFlag: Codable {
   var updatesAutomaticallyCheckForUpdates: Bool
   var updatesAutomaticallyDownloadUpdates: Bool
   var automaticallyArchiveMergedWorktrees: Bool
+}
+
+private struct LegacySettingsFileWithQuitToggle: Codable {
+  var global: LegacyGlobalSettingsWithQuitToggle
+  var repositories: [String: RepositorySettings]
+}
+
+private struct LegacyGlobalSettingsWithQuitToggle: Codable {
+  var appearanceMode: AppearanceMode
+  var updatesAutomaticallyCheckForUpdates: Bool
+  var updatesAutomaticallyDownloadUpdates: Bool
+  var confirmBeforeQuit: Bool
 }

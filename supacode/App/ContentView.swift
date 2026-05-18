@@ -91,6 +91,12 @@ struct ContentView: View {
       }
     }
     .focusedSceneAction(
+      \.terminateAllTerminalSessionsAction,
+      enabled: store.hasAnyTerminalSurface
+    ) {
+      store.send(.requestTerminateAllTerminalSessions)
+    }
+    .focusedSceneAction(
       \.revealInSidebarAction,
       enabled: repositoriesStore.selectedWorktreeID != nil
     ) {

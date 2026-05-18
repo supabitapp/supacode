@@ -11,7 +11,7 @@ struct AgentPresenceFeature {
   /// Activity state per (surface, agent). Set atomically by the wire events
   /// `busy` / `awaiting_input` / `idle`. The agent's Stop equivalent fires
   /// `idle`; `awaiting_input` is an explicit prompt the user must answer.
-  enum Activity: Sendable, Equatable {
+  enum Activity: String, Sendable, Equatable {
     case awaitingInput
     case busy
     case idle
@@ -26,14 +26,20 @@ struct AgentPresenceFeature {
     var awaitingInput: Bool { activity == .awaitingInput }
   }
 
-  struct PresenceKey: Hashable, Sendable {
+  // `nonisolated` so `stageRestore` (off-main at launch) can use Hashable.
+  nonisolated struct PresenceKey: Hashable, Sendable {
     let agent: SkillAgent
     let surfaceID: UUID
   }
 
-  struct PresenceRecord: Equatable, Sendable {
+  nonisolated struct PresenceRecord: Equatable, Sendable {
     var activity: Activity = .idle
     var pids: Set<pid_t>
+  }
+
+  nonisolated struct RestoredRecord: Sendable {
+    let alivePids: Set<pid_t>
+    let activity: Activity
   }
 
   // `nonisolated` is load-bearing here. Without it the @Reducer macro
@@ -50,6 +56,10 @@ struct AgentPresenceFeature {
     case stop
     case surfaceClosed(UUID)
     case surfacesClosed(Set<UUID>)
+    /// Stage records for the off-main liveness pass. Apply lands as
+    /// `restoreFromSnapshotChecked` so `kill(2)` never runs on the main actor.
+    case restoreFromSnapshot(staged: [PresenceKey: StagedRestore])
+    case restoreFromSnapshotChecked(records: [PresenceKey: RestoredRecord])
 
     enum Delegate: Equatable, Sendable {
       /// Surfaces whose presence record was added, removed, or had its activity flip.
@@ -117,6 +127,22 @@ struct AgentPresenceFeature {
       case .surfacesClosed(let ids):
         Self.drop(surfaces: ids, from: &state)
         return Self.surfacesChangedEffect(ids)
+
+      case .restoreFromSnapshot(let staged):
+        guard !staged.isEmpty else { return .none }
+        return .run { send in
+          let checked = staged.compactMapValues { stage -> RestoredRecord? in
+            let alive = stage.pids.filter { Self.isAlive($0) }
+            guard !alive.isEmpty else { return nil }
+            return RestoredRecord(alivePids: alive, activity: stage.activity)
+          }
+          guard !checked.isEmpty else { return }
+          await send(.restoreFromSnapshotChecked(records: checked))
+        }
+
+      case .restoreFromSnapshotChecked(let records):
+        let changed = Self.applyRestore(records: records, into: &state)
+        return Self.surfacesChangedEffect(changed)
       }
     }
   }
@@ -216,6 +242,53 @@ struct AgentPresenceFeature {
     return dirtySurfaces
   }
 
+  struct StagedRestore: Sendable {
+    let pids: Set<pid_t>
+    let activity: Activity
+  }
+
+  /// Build the staged-restore dict from persisted layouts. No `kill(2)` here;
+  /// liveness check is the caller's responsibility in `.run`.
+  nonisolated static func stageRestore(
+    fromLayouts layouts: some Sequence<TerminalLayoutSnapshot>
+  ) -> [PresenceKey: StagedRestore] {
+    var staged: [PresenceKey: StagedRestore] = [:]
+    for layout in layouts {
+      for (surfaceID, records) in layout.allAgentRecords() {
+        for record in records {
+          guard let agent = SkillAgent(rawValue: record.agent) else { continue }
+          let pids = Set(record.pids.filter { $0 > 0 })
+          guard !pids.isEmpty else { continue }
+          let activity = Activity(rawValue: record.activity) ?? .idle
+          staged[PresenceKey(agent: agent, surfaceID: surfaceID)] =
+            StagedRestore(pids: pids, activity: activity)
+        }
+      }
+    }
+    return staged
+  }
+
+  /// Rejects non-positive pids; `kill(0, ...)` targets process groups, not
+  /// individual processes.
+  nonisolated static func isAlive(_ pid: pid_t) -> Bool {
+    pid > 0 && kill(pid, 0) == 0
+  }
+
+  /// A hook event that raced ahead of the restore takes precedence.
+  private static func applyRestore(
+    records: [PresenceKey: RestoredRecord],
+    into state: inout State
+  ) -> Set<UUID> {
+    var dirtySurfaces: Set<UUID> = []
+    for (key, record) in records {
+      if state.records[key] != nil { continue }
+      state.records[key] = PresenceRecord(activity: record.activity, pids: record.alivePids)
+      dirtySurfaces.insert(key.surfaceID)
+    }
+    for surfaceID in dirtySurfaces { rebuildPresence(forSurface: surfaceID, in: &state) }
+    return dirtySurfaces
+  }
+
   private static func rebuildPresence(forSurface surfaceID: UUID, in state: inout State) {
     let agents = Set(
       state.records.compactMap { entry in
@@ -227,6 +300,26 @@ struct AgentPresenceFeature {
     } else {
       state.bySurface[surfaceID] = agents
     }
+  }
+}
+
+extension AgentPresenceFeature.State {
+  /// Sorted output so the persisted JSON stays diff-stable.
+  func agentsBySurface() -> [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]] {
+    guard !records.isEmpty else { return [:] }
+    var result: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]] = [:]
+    for (key, record) in records {
+      let entry = TerminalLayoutSnapshot.SurfaceAgentRecord(
+        agent: key.agent.rawValue,
+        pids: record.pids.sorted(),
+        activity: record.activity.rawValue
+      )
+      result[key.surfaceID, default: []].append(entry)
+    }
+    for (id, entries) in result {
+      result[id] = entries.sorted { $0.agent < $1.agent }
+    }
+    return result
   }
 }
 

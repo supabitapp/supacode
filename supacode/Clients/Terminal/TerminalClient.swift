@@ -15,6 +15,21 @@ struct TerminalClient {
   var selectedSurfaceID: @MainActor @Sendable (Worktree.ID) -> UUID?
   var latestUnreadNotification: @MainActor @Sendable () -> NotificationLocation?
   var markNotificationRead: @MainActor @Sendable (Worktree.ID, UUID) -> Void
+  /// Blocking scripts (setup / archive / delete / run) bypass zmx and die
+  /// with the app, so the auto-mode quit confirmation needs to know.
+  var hasInflightBlockingScripts: @MainActor @Sendable () -> Bool
+  /// Close every tracked surface and kill its zmx session in parallel.
+  /// Awaited from the quit path so teardown completes before process exit.
+  var terminateAllSessions: @MainActor @Sendable () async -> Void
+  /// Kill `supa-*` sessions hosted by the daemon that no persisted layout
+  /// references. Called at launch to clean up crash / force-quit orphans.
+  var reapOrphanSessions: @MainActor @Sendable (_ knownSurfaceIDs: Set<UUID>) async -> Void
+  /// Persist layouts with embedded per-surface agent records. Called on
+  /// background and on quit so a force-quit between them caps staleness.
+  var saveLayoutsWithAgents:
+    @MainActor @Sendable (
+      _ agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]]
+    ) -> Void
 
   enum Command: Equatable {
     case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil)
@@ -80,6 +95,10 @@ struct TerminalClient {
     /// Forwarded from the terminal manager for hook events received over the socket.
     /// `AppFeature` translates this into `agentPresence(.hookEventReceived)`.
     case agentHookEventReceived(AgentHookEvent)
+    /// Flips when the "any live surface anywhere" aggregate changes. Lets
+    /// menu / focused-action gates read one Bool instead of iterating
+    /// `sidebarItems` from a view body.
+    case terminalHasAnySurfaceChanged(hasAny: Bool)
   }
 }
 
@@ -94,7 +113,11 @@ extension TerminalClient: DependencyKey {
     selectedTabID: { _ in fatalError("TerminalClient.selectedTabID not configured") },
     selectedSurfaceID: { _ in fatalError("TerminalClient.selectedSurfaceID not configured") },
     latestUnreadNotification: { fatalError("TerminalClient.latestUnreadNotification not configured") },
-    markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") }
+    markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") },
+    hasInflightBlockingScripts: { fatalError("TerminalClient.hasInflightBlockingScripts not configured") },
+    terminateAllSessions: { fatalError("TerminalClient.terminateAllSessions not configured") },
+    reapOrphanSessions: { _ in fatalError("TerminalClient.reapOrphanSessions not configured") },
+    saveLayoutsWithAgents: { _ in fatalError("TerminalClient.saveLayoutsWithAgents not configured") }
   )
 
   static let testValue = TerminalClient(
@@ -107,7 +130,11 @@ extension TerminalClient: DependencyKey {
     selectedTabID: unimplemented("TerminalClient.selectedTabID", placeholder: nil),
     selectedSurfaceID: unimplemented("TerminalClient.selectedSurfaceID", placeholder: nil),
     latestUnreadNotification: unimplemented("TerminalClient.latestUnreadNotification", placeholder: nil),
-    markNotificationRead: unimplemented("TerminalClient.markNotificationRead")
+    markNotificationRead: unimplemented("TerminalClient.markNotificationRead"),
+    hasInflightBlockingScripts: unimplemented("TerminalClient.hasInflightBlockingScripts", placeholder: false),
+    terminateAllSessions: unimplemented("TerminalClient.terminateAllSessions"),
+    reapOrphanSessions: unimplemented("TerminalClient.reapOrphanSessions"),
+    saveLayoutsWithAgents: unimplemented("TerminalClient.saveLayoutsWithAgents")
   )
 }
 

@@ -16,7 +16,6 @@ struct SettingsFeatureTests {
     let loaded = GlobalSettings(
       appearanceMode: .dark,
       defaultEditorID: OpenWorktreeAction.automaticSettingsID,
-      confirmBeforeQuit: true,
       updateChannel: .stable,
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
@@ -47,7 +46,6 @@ struct SettingsFeatureTests {
     await store.receive(\.settingsLoaded) {
       $0.appearanceMode = .dark
       $0.defaultEditorID = OpenWorktreeAction.automaticSettingsID
-      $0.confirmBeforeQuit = true
       $0.updateChannel = .stable
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
@@ -73,7 +71,6 @@ struct SettingsFeatureTests {
     let initialSettings = GlobalSettings(
       appearanceMode: .system,
       defaultEditorID: OpenWorktreeAction.automaticSettingsID,
-      confirmBeforeQuit: true,
       updateChannel: .stable,
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: false,
@@ -101,7 +98,6 @@ struct SettingsFeatureTests {
     let expectedSettings = GlobalSettings(
       appearanceMode: .light,
       defaultEditorID: initialSettings.defaultEditorID,
-      confirmBeforeQuit: initialSettings.confirmBeforeQuit,
       updateChannel: initialSettings.updateChannel,
       updatesAutomaticallyCheckForUpdates: initialSettings.updatesAutomaticallyCheckForUpdates,
       updatesAutomaticallyDownloadUpdates: initialSettings.updatesAutomaticallyDownloadUpdates,
@@ -213,7 +209,6 @@ struct SettingsFeatureTests {
     let loaded = GlobalSettings(
       appearanceMode: .light,
       defaultEditorID: OpenWorktreeAction.automaticSettingsID,
-      confirmBeforeQuit: false,
       updateChannel: .tip,
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
@@ -232,7 +227,6 @@ struct SettingsFeatureTests {
     await store.send(.settingsLoaded(loaded)) {
       $0.appearanceMode = .light
       $0.defaultEditorID = OpenWorktreeAction.automaticSettingsID
-      $0.confirmBeforeQuit = false
       $0.updateChannel = .tip
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
@@ -349,21 +343,6 @@ struct SettingsFeatureTests {
     await store.receive(\.delegate.settingsChanged)
     #expect(store.state.repositorySettings?.globalPullRequestMergeStrategy == .squash)
     #expect(settingsFile.global.pullRequestMergeStrategy == .squash)
-  }
-
-  @Test(.dependencies) func toggleRestoreTerminalLayoutPersists() async {
-    @Shared(.settingsFile) var settingsFile
-    $settingsFile.withLock { $0.global = .default }
-
-    let store = TestStore(initialState: SettingsFeature.State()) {
-      SettingsFeature()
-    }
-
-    await store.send(.binding(.set(\.restoreTerminalLayoutEnabled, true))) {
-      $0.restoreTerminalLayoutEnabled = true
-    }
-    await store.receive(\.delegate.settingsChanged)
-    #expect(settingsFile.global.restoreTerminalLayoutEnabled == true)
   }
 
   // MARK: - Global scripts.

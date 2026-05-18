@@ -43,7 +43,6 @@ public struct SettingsFeature {
   public struct State: Equatable {
     public var appearanceMode: AppearanceMode
     public var defaultEditorID: String
-    public var confirmBeforeQuit: Bool
     public var updateChannel: UpdateChannel
     public var updatesAutomaticallyCheckForUpdates: Bool
     public var updatesAutomaticallyDownloadUpdates: Bool
@@ -62,7 +61,6 @@ public struct SettingsFeature {
     public var copyUntrackedOnWorktreeCreate: Bool
     public var pullRequestMergeStrategy: PullRequestMergeStrategy
     public var terminalThemeSyncEnabled: Bool
-    public var restoreTerminalLayoutEnabled: Bool
     public var hideSingleTabBar: Bool
     public var automatedActionPolicy: AutomatedActionPolicy
     public var defaultWorktreeBaseDirectoryPath: String
@@ -72,6 +70,8 @@ public struct SettingsFeature {
     public var richAgentNotificationsEnabled: Bool
     public var agentPresenceBadgesEnabled: Bool
     public var autoUpdateAgentIntegrationsEnabled: Bool
+    public var confirmQuitMode: ConfirmQuitMode
+    public var terminateSessionsOnQuit: Bool
     public var cliInstallState = CLIInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
@@ -85,7 +85,6 @@ public struct SettingsFeature {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
       appearanceMode = settings.appearanceMode
       defaultEditorID = normalizedDefaultEditorID
-      confirmBeforeQuit = settings.confirmBeforeQuit
       updateChannel = settings.updateChannel
       updatesAutomaticallyCheckForUpdates = settings.updatesAutomaticallyCheckForUpdates
       updatesAutomaticallyDownloadUpdates = settings.updatesAutomaticallyDownloadUpdates
@@ -104,7 +103,6 @@ public struct SettingsFeature {
       copyUntrackedOnWorktreeCreate = settings.copyUntrackedOnWorktreeCreate
       pullRequestMergeStrategy = settings.pullRequestMergeStrategy
       terminalThemeSyncEnabled = settings.terminalThemeSyncEnabled
-      restoreTerminalLayoutEnabled = settings.restoreTerminalLayoutEnabled
       hideSingleTabBar = settings.hideSingleTabBar
       automatedActionPolicy = settings.automatedActionPolicy
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
@@ -113,6 +111,8 @@ public struct SettingsFeature {
       richAgentNotificationsEnabled = settings.richAgentNotificationsEnabled
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       autoUpdateAgentIntegrationsEnabled = settings.autoUpdateAgentIntegrationsEnabled
+      confirmQuitMode = settings.confirmQuitMode
+      terminateSessionsOnQuit = settings.terminateSessionsOnQuit
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -121,7 +121,6 @@ public struct SettingsFeature {
       GlobalSettings(
         appearanceMode: appearanceMode,
         defaultEditorID: defaultEditorID,
-        confirmBeforeQuit: confirmBeforeQuit,
         updateChannel: updateChannel,
         updatesAutomaticallyCheckForUpdates: updatesAutomaticallyCheckForUpdates,
         updatesAutomaticallyDownloadUpdates: updatesAutomaticallyDownloadUpdates,
@@ -140,7 +139,6 @@ public struct SettingsFeature {
         copyUntrackedOnWorktreeCreate: copyUntrackedOnWorktreeCreate,
         pullRequestMergeStrategy: pullRequestMergeStrategy,
         terminalThemeSyncEnabled: terminalThemeSyncEnabled,
-        restoreTerminalLayoutEnabled: restoreTerminalLayoutEnabled,
         hideSingleTabBar: hideSingleTabBar,
         automatedActionPolicy: automatedActionPolicy,
         defaultWorktreeBaseDirectoryPath: SupacodePaths.normalizedWorktreeBaseDirectoryPath(
@@ -151,7 +149,9 @@ public struct SettingsFeature {
         globalScripts: globalScripts,
         richAgentNotificationsEnabled: richAgentNotificationsEnabled,
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
-        autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled
+        autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
+        confirmQuitMode: confirmQuitMode,
+        terminateSessionsOnQuit: terminateSessionsOnQuit
       )
     }
   }
@@ -261,7 +261,6 @@ public struct SettingsFeature {
         }
         state.appearanceMode = normalizedSettings.appearanceMode
         state.defaultEditorID = normalizedSettings.defaultEditorID
-        state.confirmBeforeQuit = normalizedSettings.confirmBeforeQuit
         state.updateChannel = normalizedSettings.updateChannel
         state.updatesAutomaticallyCheckForUpdates = normalizedSettings.updatesAutomaticallyCheckForUpdates
         state.updatesAutomaticallyDownloadUpdates = normalizedSettings.updatesAutomaticallyDownloadUpdates
@@ -280,7 +279,6 @@ public struct SettingsFeature {
         state.copyUntrackedOnWorktreeCreate = normalizedSettings.copyUntrackedOnWorktreeCreate
         state.pullRequestMergeStrategy = normalizedSettings.pullRequestMergeStrategy
         state.terminalThemeSyncEnabled = normalizedSettings.terminalThemeSyncEnabled
-        state.restoreTerminalLayoutEnabled = normalizedSettings.restoreTerminalLayoutEnabled
         state.hideSingleTabBar = normalizedSettings.hideSingleTabBar
         state.automatedActionPolicy = normalizedSettings.automatedActionPolicy
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
@@ -289,6 +287,8 @@ public struct SettingsFeature {
         state.richAgentNotificationsEnabled = normalizedSettings.richAgentNotificationsEnabled
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
         state.autoUpdateAgentIntegrationsEnabled = normalizedSettings.autoUpdateAgentIntegrationsEnabled
+        state.confirmQuitMode = normalizedSettings.confirmQuitMode
+        state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)

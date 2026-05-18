@@ -32,16 +32,18 @@ public struct AppearanceSettingsView: View {
         }
       }
       Section {
-        Toggle(
-          "Confirm before Quitting",
-          isOn: $store.confirmBeforeQuit
-        )
-        .help("Ask before quitting Supacode")
-        Toggle(isOn: $store.restoreTerminalLayoutEnabled) {
-          Text("Restore Terminal Layout")
-          Text("Reopen tabs, splits, and working directories from your last session.")
+        Picker(selection: $store.confirmQuitMode) {
+          ForEach(ConfirmQuitMode.allCases, id: \.self) { mode in
+            Text(mode.label).tag(mode)
+          }
+        } label: {
+          Text("Confirm before Quitting")
+          Text(store.confirmQuitMode.subtitle)
         }
-        .help("Restore tabs and splits when reopening a worktree")
+        Toggle(isOn: $store.terminateSessionsOnQuit) {
+          Text("Terminate Sessions on Quit")
+          Text("Close all tabs and stop background shells when quitting.")
+        }
       }
       Section("Editor") {
         Picker(

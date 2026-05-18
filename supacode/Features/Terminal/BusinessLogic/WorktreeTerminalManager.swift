@@ -17,6 +17,8 @@ final class WorktreeTerminalManager {
   @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var notificationsEnabled = true
   private var lastNotificationIndicatorCount: Int?
+  // Cached so views read one Bool instead of iterating sidebarItems.
+  private var lastEmittedHasAnyTerminalSurface: Bool?
   /// Per-worktree dedup of `worktreeProjectionChanged`; identical projections
   /// (common on hook storms) are dropped before they hit the AsyncStream.
   private var lastEmittedProjections: [Worktree.ID: WorktreeRowProjection] = [:]
@@ -26,6 +28,8 @@ final class WorktreeTerminalManager {
   private var pendingIdleHookEvents: [IdleDebounceKey: Task<Void, Never>] = [:]
   @ObservationIgnored
   private let hookEventSleep: @Sendable (Duration) async throws -> Void
+  @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
+  @ObservationIgnored @Dependency(\.analyticsClient) private var analyticsClient
   /// Holds `.idle` long enough to collapse PostToolUse/PreToolUse busy/idle alternation
   /// into a sustained busy; stays sub-perceptible for the badge clearing at end-of-session.
   private static let idleHookDebounceDuration: Duration = .milliseconds(400)
@@ -325,6 +329,9 @@ final class WorktreeTerminalManager {
       }
     }
     emitNotificationIndicatorCountIfNeeded()
+    // Seed hasAny so a new subscriber starts at the correct value.
+    lastEmittedHasAnyTerminalSurface = false
+    emitHasAnyTerminalSurfaceIfNeeded()
     // Seed each worktree's projection so rows attached after the stream start
     // pick up the current snapshot (otherwise they'd stay default until the
     // next mutation).
@@ -470,8 +477,13 @@ final class WorktreeTerminalManager {
       removed.append((id, state))
     }
     let prunedSurfaceIDs = Set(removed.flatMap { _, state in state.allSurfaceIDs })
+    let prunedSessionIDs = removed.flatMap { _, state in
+      state.allSurfaceIDs.map { ZmxSessionID.make(surfaceID: $0) }
+    }
     for (id, state) in removed {
-      saveLayoutSnapshot?(id, state.captureLayoutSnapshot())
+      // Clear instead of resaving: archived / deleted worktrees should leave
+      // no trace in `layouts.json`.
+      saveLayoutSnapshot?(id, nil)
       state.closeAllSurfaces()
       // Signals the reducer to drop any orphan `terminalTabs` entries and
       // recently-removed-tab records for this worktree so a same-session
@@ -485,6 +497,27 @@ final class WorktreeTerminalManager {
     cancelPendingIdleHooks(forSurfaceIDs: prunedSurfaceIDs)
     for (id, _) in removed { lastEmittedProjections.removeValue(forKey: id) }
     emitNotificationIndicatorCountIfNeeded()
+    emitHasAnyTerminalSurfaceIfNeeded()
+    killZmxSessions(prunedSessionIDs)
+  }
+
+  /// Tears down persistent zmx sessions for worktrees that just left the keep set.
+  /// Parallel kill so a single stuck daemon doesn't pin the executor for
+  /// `subprocessTimeout * N` (the bound is now one timeout regardless of N).
+  private func killZmxSessions(_ sessionIDs: [String]) {
+    guard !sessionIDs.isEmpty else { return }
+    let client = zmxClient
+    analyticsClient.capture(
+      "terminal_persistence_session_killed",
+      ["reason": "worktree_pruned", "count": sessionIDs.count]
+    )
+    Task.detached {
+      await withTaskGroup(of: Void.self) { group in
+        for id in sessionIDs {
+          group.addTask { await client.killSession(id) }
+        }
+      }
+    }
   }
 
   func tabExists(worktreeID: Worktree.ID, tabID: TerminalTabID) -> Bool {
@@ -520,6 +553,57 @@ final class WorktreeTerminalManager {
 
   func isBlockingScriptRunning(kind: BlockingScriptKind, for worktreeID: Worktree.ID) -> Bool {
     states[worktreeID]?.isBlockingScriptRunning(kind: kind) == true
+  }
+
+  var hasInflightBlockingScripts: Bool {
+    states.values.contains(where: \.hasInflightBlockingScripts)
+  }
+
+  /// Tear down every tracked surface AND reap any orphans the daemon still
+  /// hosts. zmx is a long-lived per-user daemon that outlives our app quit,
+  /// so "Quit and Terminate" must explicitly sweep orphan sessions or they
+  /// would survive forever.
+  func terminateAllSessions() async {
+    let trackedSurfaceIDs = states.values.flatMap(\.allSurfaceIDs)
+    let trackedSessionIDs = trackedSurfaceIDs.map(ZmxSessionID.make(surfaceID:))
+    for state in states.values {
+      state.closeAllSurfaces()
+    }
+    emitHasAnyTerminalSurfaceIfNeeded()
+    let liveSessions = await zmxClient.listSessions()
+    let allSessions = Array(Set(trackedSessionIDs).union(liveSessions))
+    guard !allSessions.isEmpty else { return }
+    let orphanCount = Set(allSessions).subtracting(trackedSessionIDs).count
+    analyticsClient.capture(
+      "terminal_persistence_session_killed",
+      ["reason": "user_quit", "count": allSessions.count, "orphan_count": orphanCount]
+    )
+    let client = zmxClient
+    await withTaskGroup(of: Void.self) { group in
+      for id in allSessions {
+        group.addTask { await client.killSession(id) }
+      }
+    }
+  }
+
+  /// Reaps `supa-*` sessions zmx hosts that no persisted layout claims;
+  /// catches orphans from crashes / force-quits.
+  func reapOrphanSessions(knownSurfaceIDs: Set<UUID>) async {
+    let liveSessions = await zmxClient.listSessions()
+    let knownSessionIDs = Set(knownSurfaceIDs.map(ZmxSessionID.make(surfaceID:)))
+    let orphans = Set(liveSessions).subtracting(knownSessionIDs)
+    guard !orphans.isEmpty else { return }
+    terminalLogger.info("Reaping \(orphans.count) orphan zmx session(s)")
+    analyticsClient.capture(
+      "terminal_persistence_session_killed",
+      ["reason": "orphan_reaped", "count": orphans.count]
+    )
+    let client = zmxClient
+    await withTaskGroup(of: Void.self) { group in
+      for id in orphans {
+        group.addTask { await client.killSession(id) }
+      }
+    }
   }
 
   func setNotificationsEnabled(_ enabled: Bool) {
@@ -578,13 +662,16 @@ final class WorktreeTerminalManager {
     emitProjection(for: worktreeID)
   }
 
-  func saveAllLayoutSnapshots() {
+  /// Embed `agentsBySurface` in each surface so badges survive relaunch.
+  func saveAllLayoutSnapshots(
+    agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]] = [:]
+  ) {
     guard let saveLayoutSnapshot else {
       assertionFailure("saveLayoutSnapshot closure not configured.")
       return
     }
     for (id, state) in states {
-      saveLayoutSnapshot(id, state.captureLayoutSnapshot())
+      saveLayoutSnapshot(id, state.captureLayoutSnapshot(agentsBySurface: agentsBySurface))
     }
   }
 
@@ -616,6 +703,18 @@ final class WorktreeTerminalManager {
     }
   }
 
+  /// Emits only on flip; nil previous treated as false to match the reducer's
+  /// default and avoid a stream-start `hasAny: false` echo. Uses
+  /// `hasAnySurface` (O(1) on `surfaces.isEmpty`) so the per-projection check
+  /// doesn't walk every split tree.
+  private func emitHasAnyTerminalSurfaceIfNeeded() {
+    let hasAny = states.values.contains(where: \.hasAnySurface)
+    let previous = lastEmittedHasAnyTerminalSurface ?? false
+    guard hasAny != previous else { return }
+    lastEmittedHasAnyTerminalSurface = hasAny
+    emit(.terminalHasAnySurfaceChanged(hasAny: hasAny))
+  }
+
   /// Builds the row projection and emits only when it diverges from the last
   /// emitted snapshot. Suppresses the no-op storms that PreToolUse / PostToolUse
   /// hook bursts produce after the per-row equality short-circuit lands.
@@ -625,8 +724,11 @@ final class WorktreeTerminalManager {
     guard eventContinuation != nil else { return }
     guard let state = states[worktreeID] else { return }
     let projection = state.currentProjection()
-    if lastEmittedProjections[worktreeID] == projection { return }
+    guard lastEmittedProjections[worktreeID] != projection else { return }
     lastEmittedProjections[worktreeID] = projection
     emit(.worktreeProjectionChanged(worktreeID, projection))
+    // hasAny can only flip when this worktree's surface set actually changed,
+    // which `projectionChanged` already implies.
+    emitHasAnyTerminalSurfaceIfNeeded()
   }
 }

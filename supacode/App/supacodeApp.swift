@@ -51,7 +51,10 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
-    terminalManager?.saveAllLayoutSnapshots()
+    // Embed agent records so badges survive relaunch (agents only emit
+    // session_start once per process lifetime).
+    let agentsBySurface = appStore?.state.agentPresence.agentsBySurface() ?? [:]
+    terminalManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -182,8 +185,6 @@ struct SupacodeApp: App {
       }
     }
     terminalManager.loadLayoutSnapshot = { worktreeID in
-      @SharedReader(.settingsFile) var settingsFile
-      guard settingsFile.global.restoreTerminalLayoutEnabled else { return nil }
       @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
       return layouts[worktreeID]
     }
@@ -233,6 +234,18 @@ struct SupacodeApp: App {
         },
         markNotificationRead: { worktreeID, notificationID in
           terminalManager.markNotificationRead(worktreeID: worktreeID, notificationID: notificationID)
+        },
+        hasInflightBlockingScripts: {
+          terminalManager.hasInflightBlockingScripts
+        },
+        terminateAllSessions: {
+          await terminalManager.terminateAllSessions()
+        },
+        reapOrphanSessions: { knownSurfaceIDs in
+          await terminalManager.reapOrphanSessions(knownSurfaceIDs: knownSurfaceIDs)
+        },
+        saveLayoutsWithAgents: { agentsBySurface in
+          terminalManager.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
         }
       )
       values.worktreeInfoWatcher = WorktreeInfoWatcherClient(

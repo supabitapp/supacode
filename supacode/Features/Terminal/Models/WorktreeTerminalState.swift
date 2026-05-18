@@ -88,6 +88,8 @@ final class WorktreeTerminalState {
   @ObservationIgnored private(set) var surfaceStates: [UUID: WorktreeSurfaceState] = [:]
   var notificationsEnabled = true
   @ObservationIgnored @Dependency(\.date.now) private var now
+  @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
+  @ObservationIgnored @Dependency(\.analyticsClient) private var analyticsClient
   private var recentHookBySurfaceID: [UUID: (text: String, recordedAt: Date)] = [:]
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
@@ -187,6 +189,10 @@ final class WorktreeTerminalState {
 
   func isBlockingScriptRunning(kind: BlockingScriptKind) -> Bool {
     blockingScripts.values.contains(kind)
+  }
+
+  var hasInflightBlockingScripts: Bool {
+    !blockingScripts.isEmpty
   }
 
   private func updateShouldHideTabBar() {
@@ -360,6 +366,7 @@ final class WorktreeTerminalState {
         context: GHOSTTY_SURFACE_CONTEXT_TAB,
         tabID: nil,
         isBlockingScript: true,
+        bypassZmx: true,
       )
     )
     guard let tabId else {
@@ -392,6 +399,9 @@ final class WorktreeTerminalState {
     /// Marks the tab as a blocking-script tab so the no-split / no-rename
     /// / readonly-after-completion guardrails apply.
     var isBlockingScript: Bool = false
+    /// Skip zmx session wrapping for transactional surfaces (blocking setup/archive/delete scripts)
+    /// that must die with the app rather than survive.
+    var bypassZmx: Bool = false
   }
 
   private func createTab(_ creation: TabCreation) -> TerminalTabID? {
@@ -411,7 +421,8 @@ final class WorktreeTerminalState {
       command: creation.command,
       initialInput: creation.initialInput,
       context: creation.context,
-      surfaceID: creation.tabID != nil ? tabId.rawValue : nil
+      surfaceID: creation.tabID != nil ? tabId.rawValue : nil,
+      bypassZmx: creation.bypassZmx
     )
     updateShouldHideTabBar()
     if creation.focusing, let surface = tree.root?.leftmostLeaf() {
@@ -445,6 +456,9 @@ final class WorktreeTerminalState {
   var allSurfaceIDs: [UUID] {
     trees.values.flatMap { $0.leaves().map(\.id) }
   }
+
+  /// O(1) emptiness check that skips the split-tree walk in `allSurfaceIDs`.
+  var hasAnySurface: Bool { !surfaces.isEmpty }
 
   func hasSurface(_ surfaceID: UUID, in tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
@@ -664,7 +678,8 @@ final class WorktreeTerminalState {
     command: String? = nil,
     initialInput: String? = nil,
     context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB,
-    surfaceID: UUID? = nil
+    surfaceID: UUID? = nil,
+    bypassZmx: Bool = false
   ) -> SplitTree<GhosttySurfaceView> {
     if let existing = trees[tabId] {
       return existing
@@ -675,7 +690,8 @@ final class WorktreeTerminalState {
       initialInput: initialInput,
       inheritingFromSurfaceId: inheritingFromSurfaceId,
       context: context,
-      surfaceID: surfaceID
+      surfaceID: surfaceID,
+      bypassZmx: bypassZmx
     )
     let tree = SplitTree(view: surface)
     setTree(tree, for: tabId)
@@ -936,7 +952,14 @@ final class WorktreeTerminalState {
 
   // MARK: - Layout Snapshot
 
-  func captureLayoutSnapshot() -> TerminalLayoutSnapshot? {
+  /// Capture a layout snapshot, optionally embedding per-surface agent
+  /// presence records. The caller (AppDelegate's `applicationWillTerminate`
+  /// path) reads `AppFeature.State.agentPresence.records` and converts it
+  /// into the per-surface dict before invoking this so agents persist
+  /// atomically with their owning surface and vanish on prune.
+  func captureLayoutSnapshot(
+    agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]] = [:]
+  ) -> TerminalLayoutSnapshot? {
     guard !tabManager.tabs.isEmpty else { return nil }
     var tabSnapshots: [TerminalLayoutSnapshot.TabSnapshot] = []
     for tab in tabManager.tabs {
@@ -946,7 +969,7 @@ final class WorktreeTerminalState {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
       }
-      let layout = captureLayoutNode(root)
+      let layout = captureLayoutNode(root, agentsBySurface: agentsBySurface)
       let leaves = root.leaves()
       let focusedId = focusedSurfaceIdByTab[tab.id]
       let focusedLeafIndex =
@@ -991,12 +1014,17 @@ final class WorktreeTerminalState {
   }
 
   private func captureLayoutNode(
-    _ node: SplitTree<GhosttySurfaceView>.Node
+    _ node: SplitTree<GhosttySurfaceView>.Node,
+    agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]]
   ) -> TerminalLayoutSnapshot.LayoutNode {
     switch node {
     case .leaf(let view):
       return .leaf(
-        TerminalLayoutSnapshot.SurfaceSnapshot(id: view.id, workingDirectory: view.bridge.state.pwd)
+        TerminalLayoutSnapshot.SurfaceSnapshot(
+          id: view.id,
+          workingDirectory: view.bridge.state.pwd,
+          agents: agentsBySurface[view.id]
+        )
       )
     case .split(let split):
       let direction: SplitDirection =
@@ -1008,8 +1036,8 @@ final class WorktreeTerminalState {
         TerminalLayoutSnapshot.SplitSnapshot(
           direction: direction,
           ratio: split.ratio,
-          left: captureLayoutNode(split.left),
-          right: captureLayoutNode(split.right)
+          left: captureLayoutNode(split.left, agentsBySurface: agentsBySurface),
+          right: captureLayoutNode(split.right, agentsBySurface: agentsBySurface)
         )
       )
     }
@@ -1267,6 +1295,10 @@ final class WorktreeTerminalState {
     if let socketPath {
       env["SUPACODE_SOCKET_PATH"] = socketPath
     }
+    // Lock ZMX_DIR to the value the app's probe used so the shell can't
+    // re-export a different value from .zshrc / .zprofile and silently
+    // overflow `sockaddr_un.sun_path` past the probe's check.
+    env["ZMX_DIR"] = ZmxSocketBudget.socketDir()
     // Prepend the bundled CLI binary directory to PATH so that `supacode`
     // resolves to the CLI tool, not the app binary added by Ghostty.
     if let cliBinDir = Bundle.main.resourceURL?
@@ -1295,7 +1327,8 @@ final class WorktreeTerminalState {
     workingDirectoryOverride: URL? = nil,
     inheritingFromSurfaceId: UUID?,
     context: ghostty_surface_context_e,
-    surfaceID: UUID? = nil
+    surfaceID: UUID? = nil,
+    bypassZmx: Bool = false
   ) -> GhosttySurfaceView {
     let resolvedID: UUID
     if let requested = surfaceID {
@@ -1311,16 +1344,36 @@ final class WorktreeTerminalState {
     let surfaceID = resolvedID
     terminalStateLogger.info("createSurface: resolved=\(surfaceID)")
     let inherited = inheritedSurfaceConfig(fromSurfaceId: inheritingFromSurfaceId, context: context)
+    let (resolvedCommand, resolvedInitialInput) = resolveZmxWrapping(
+      surfaceID: surfaceID,
+      command: command,
+      initialInput: initialInput,
+      bypassZmx: bypassZmx
+    )
     let view = GhosttySurfaceView(
       id: surfaceID,
       runtime: runtime,
       workingDirectory: workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory,
-      command: command,
-      initialInput: initialInput,
+      command: resolvedCommand,
+      initialInput: resolvedInitialInput,
       environmentVariables: surfaceEnvironment(tabId: tabId, surfaceID: surfaceID),
       fontSize: inherited.fontSize,
       context: context
     )
+    wireSurfaceCallbacks(view: view, tabId: tabId, surfaceID: surfaceID)
+    surfaces[view.id] = view
+    surfaceStates[view.id] = WorktreeSurfaceState()
+    return view
+  }
+
+  /// Extracted from `createSurface` so the latter stays under swiftlint's
+  /// cyclomatic-complexity cap. The closures all branch on `[weak self,
+  /// weak view]` so the count adds up fast.
+  private func wireSurfaceCallbacks(
+    view: GhosttySurfaceView,
+    tabId: TerminalTabID,
+    surfaceID: UUID
+  ) {
     view.bridge.onTitleChange = { [weak self, weak view] title in
       guard let self, let view else { return }
       if self.focusedSurfaceIdByTab[tabId] == view.id {
@@ -1377,9 +1430,30 @@ final class WorktreeTerminalState {
       self.recordActiveSurface(view, in: tabId)
       self.emitTaskStatusIfChanged()
     }
-    surfaces[view.id] = view
-    surfaceStates[view.id] = WorktreeSurfaceState()
-    return view
+    view.shouldClaimFocus = { [weak self] in
+      guard let self else { return false }
+      return self.focusedSurfaceIdByTab[tabId] == surfaceID
+    }
+  }
+
+  /// Wraps the surface command in `zmx attach <session-id>` so the underlying shell
+  /// survives app quit. `initialInput` is always passed through; zmx itself is
+  /// authoritative for attach-vs-create, so we never gate setup-script firing on
+  /// a stale snapshot of daemon state.
+  private func resolveZmxWrapping(
+    surfaceID: UUID,
+    command: String?,
+    initialInput: String?,
+    bypassZmx: Bool
+  ) -> (command: String?, initialInput: String?) {
+    if bypassZmx {
+      return (command, initialInput)
+    }
+    let sessionID = ZmxSessionID.make(surfaceID: surfaceID)
+    guard let wrapped = zmxClient.wrapCommand(sessionID, command) else {
+      return (command, initialInput)
+    }
+    return (wrapped, initialInput)
   }
 
   private struct InheritedSurfaceConfig: Equatable {
@@ -1453,9 +1527,17 @@ final class WorktreeTerminalState {
   }
 
   // Single source of truth for the tab's active pane so the overlay renderer
-  // can't drift across surfaces.
+  // can't drift across surfaces. Self-corrects when the stored id points at a
+  // since-closed surface (or is nil while leaves still exist): a tab with any
+  // visible leaves must report exactly one of them as active, otherwise the
+  // dim-overlay reads either "no surface selected" (no leaf matches) or "all
+  // surfaces selected" (no id → guard short-circuits the dim check for every
+  // leaf).
   func activeSurfaceID(for tabId: TerminalTabID) -> UUID? {
-    focusedSurfaceIdByTab[tabId]
+    if let stored = focusedSurfaceIdByTab[tabId], surfaces[stored] != nil {
+      return stored
+    }
+    return trees[tabId]?.visibleLeaves().first?.id
   }
 
   /// Appends a notification from an agent hook on a specific surface.
@@ -1540,6 +1622,10 @@ final class WorktreeTerminalState {
     return collapsed.isEmpty ? nil : collapsed
   }
 
+  /// Detaches one surface from the local bookkeeping. The zmx session is NOT
+  /// killed here; callers route the kill through `killZmxSessions(forSurfaceIDs:)`
+  /// so a single multi-pane close emits one `count=N` analytics event + one
+  /// `withTaskGroup` instead of N events and N detached Tasks.
   private func cleanupSurfaceState(for surfaceID: UUID) {
     recentHookBySurfaceID.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
@@ -1547,12 +1633,35 @@ final class WorktreeTerminalState {
     onSurfacesClosed?([surfaceID])
   }
 
+  /// Tears down persistent zmx sessions for surfaces the user just closed.
+  /// `isBundled` (not `executableURL`) is the gate so sessions created on a
+  /// previous under-budget launch still tear down when this launch exceeds the
+  /// socket budget. One analytics event + one `withTaskGroup` per call.
+  private func killZmxSessions(forSurfaceIDs surfaceIDs: [UUID]) {
+    guard !surfaceIDs.isEmpty, zmxClient.isBundled() else { return }
+    let sessionIDs = surfaceIDs.map(ZmxSessionID.make(surfaceID:))
+    let client = zmxClient
+    analyticsClient.capture(
+      "terminal_persistence_session_killed",
+      ["reason": "user_close", "count": sessionIDs.count]
+    )
+    Task.detached {
+      await withTaskGroup(of: Void.self) { group in
+        for id in sessionIDs {
+          group.addTask { await client.killSession(id) }
+        }
+      }
+    }
+  }
+
   private func removeTree(for tabId: TerminalTabID) {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
+    let leafIDs = tree.leaves().map(\.id)
     for surface in tree.leaves() {
       surface.closeSurface()
       cleanupSurfaceState(for: surface.id)
     }
+    killZmxSessions(forSurfaceIDs: leafIDs)
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     if lastTabProjections.removeValue(forKey: tabId) != nil {
       onTabRemoved?(tabId)
@@ -1800,11 +1909,13 @@ final class WorktreeTerminalState {
     guard let tabId = tabID(containing: view.id), let tree = trees[tabId] else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
+      killZmxSessions(forSurfaceIDs: [view.id])
       return
     }
     guard let node = tree.find(id: view.id) else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
+      killZmxSessions(forSurfaceIDs: [view.id])
       return
     }
     let nextSurface =
@@ -1814,6 +1925,7 @@ final class WorktreeTerminalState {
     let newTree = tree.removing(node)
     view.closeSurface()
     cleanupSurfaceState(for: view.id)
+    killZmxSessions(forSurfaceIDs: [view.id])
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
@@ -1840,6 +1952,16 @@ final class WorktreeTerminalState {
       } else {
         focusedSurfaceIdByTab.removeValue(forKey: tabId)
       }
+    }
+    // Invariant: a tab with visible leaves must have a live, focused surface so
+    // AppKit's firstResponder lands on something the user can type into. The
+    // transfer above only fires when the closed surface was the recorded
+    // focused one; re-check afterwards and push focus to the first visible
+    // leaf when the recorded id still doesn't resolve to a live surface.
+    if focusedSurfaceIdByTab[tabId].flatMap({ surfaces[$0] }) == nil,
+      let fallback = newTree.visibleLeaves().first
+    {
+      focusSurface(fallback, in: tabId)
     }
   }
 

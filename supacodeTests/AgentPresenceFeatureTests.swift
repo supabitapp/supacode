@@ -432,6 +432,141 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.hasActivity(in: [surfaceID]) == true)
   }
 
+  // MARK: - restoreFromSnapshot (layouts-embedded).
+
+  @Test func restoreFromLayoutsSeedsRecordsForSurfacesWithLivePids() {
+    // Sessions zmx kept alive across quit must surface their agent badges on
+    // first paint of the next launch instead of waiting for the next idle/busy
+    // transition (agents only emit `session_start` once per process lifetime).
+    var harness = Harness()
+    let surfaceID = UUID()
+    let livePid = getpid()
+    let layout = makeLayout(surfaces: [
+      (surfaceID, [record(agent: .claude, pids: [livePid], activity: "busy")])
+    ])
+
+    harness.restoreFromLayouts([layout])
+
+    #expect(harness.state.bySurface[surfaceID] == [.claude])
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.activity == .busy)
+    #expect(harness.state.records[key]?.pids == [livePid])
+  }
+
+  @Test func restoreFromLayoutsOnlyHydratesSurfacesThatExistInLayouts() {
+    // Records live INSIDE layout leaves, so a since-deleted layout's records
+    // are gone by construction. This test confirms the implicit filter holds.
+    var harness = Harness()
+    let known = UUID()
+    let layout = makeLayout(surfaces: [
+      (known, [record(agent: .claude, pids: [getpid()])])
+    ])
+
+    harness.restoreFromLayouts([layout])
+
+    #expect(harness.state.bySurface[known] == [.claude])
+    #expect(harness.state.bySurface.count == 1)
+  }
+
+  @Test func restoreFromLayoutsDropsRecordsWithOnlyDeadPids() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let layout = makeLayout(surfaces: [
+      (surfaceID, [record(agent: .claude, pids: [makeDeadPid()])])
+    ])
+
+    harness.restoreFromLayouts([layout])
+
+    #expect(harness.state.records.isEmpty)
+    #expect(harness.state.bySurface[surfaceID] == nil)
+  }
+
+  @Test func restoreFromLayoutsKeepsLivePidsAndDropsDeadOnesInSameEntry() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let live = getpid()
+    let dead = makeDeadPid()
+    let layout = makeLayout(surfaces: [
+      (surfaceID, [record(agent: .claude, pids: [live, dead])])
+    ])
+
+    harness.restoreFromLayouts([layout])
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.pids == [live])
+  }
+
+  @Test func restoreFromLayoutsDoesNotOverwriteRecordsThatRacedAhead() {
+    // If a hook event lands between the AppFeature launch effect spawning and
+    // the restore dispatch (rare but possible), the live record is the source
+    // of truth and the restore must not clobber it.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let racePid: pid_t = getpid()
+    harness.send(
+      .hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: racePid))
+    )
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    let snapshotPid: pid_t = 99_998
+    let layout = makeLayout(surfaces: [
+      (surfaceID, [record(agent: .claude, pids: [snapshotPid])])
+    ])
+
+    harness.restoreFromLayouts([layout])
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.activity == .busy)
+    #expect(harness.state.records[key]?.pids == [racePid])
+  }
+
+  @Test func restoreFromLayoutsHandlesMultipleAgentsPerSurface() {
+    // Per AgentPresenceFeature docs: "A surface can host multiple agents
+    // (rare, but possible if e.g. Claude spawns Codex)". The per-surface
+    // array preserves that multiplicity.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let live = getpid()
+    let layout = makeLayout(surfaces: [
+      (
+        surfaceID,
+        [
+          record(agent: .claude, pids: [live], activity: "busy"),
+          record(agent: .codex, pids: [live], activity: "idle"),
+        ]
+      )
+    ])
+
+    harness.restoreFromLayouts([layout])
+
+    #expect(harness.state.bySurface[surfaceID] == [.claude, .codex])
+  }
+
+  @Test func restoreFromLayoutsKeepsLiveAgentAndDropsDeadAgentOnSameSurface() {
+    // Mixed-liveness case: one agent on a surface exited cleanly, another is
+    // still running. Only the live one's badge should resurrect.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let live = getpid()
+    let dead = makeDeadPid()
+    let layout = makeLayout(surfaces: [
+      (
+        surfaceID,
+        [
+          record(agent: .claude, pids: [live], activity: "busy"),
+          record(agent: .codex, pids: [dead], activity: "idle"),
+        ]
+      )
+    ])
+
+    harness.restoreFromLayouts([layout])
+
+    #expect(harness.state.bySurface[surfaceID] == [.claude])
+    let claudeKey = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    let codexKey = AgentPresenceFeature.PresenceKey(agent: .codex, surfaceID: surfaceID)
+    #expect(harness.state.records[claudeKey]?.pids == [live])
+    #expect(harness.state.records[codexKey] == nil)
+  }
+
   // MARK: - Helpers.
 
   /// Direct-reducer harness mirroring the singleton's sync API. The sweep timer
@@ -451,6 +586,53 @@ struct AgentPresenceFeatureTests {
       guard !alive.isEmpty else { return }
       send(.livenessSweepResult(snapshot: snapshot, alive: alive))
     }
+
+    /// Drives the 2-phase restore synchronously for tests: stage → liveness →
+    /// apply. The live reducer hops the liveness check off the main actor; the
+    /// sync harness does it inline so assertions run against the post-apply state.
+    @MainActor mutating func restoreFromLayouts(_ layouts: [TerminalLayoutSnapshot]) {
+      let staged = AgentPresenceFeature.stageRestore(fromLayouts: layouts)
+      let checked = staged.compactMapValues { stage -> AgentPresenceFeature.RestoredRecord? in
+        let alive = stage.pids.filter { AgentPresenceFeature.isAlive($0) }
+        guard !alive.isEmpty else { return nil }
+        return AgentPresenceFeature.RestoredRecord(alivePids: alive, activity: stage.activity)
+      }
+      guard !checked.isEmpty else { return }
+      send(.restoreFromSnapshotChecked(records: checked))
+    }
+  }
+
+  // MARK: - Layout helpers for restore tests.
+
+  private func makeLayout(
+    surfaces: [(id: UUID, agents: [TerminalLayoutSnapshot.SurfaceAgentRecord])]
+  ) -> TerminalLayoutSnapshot {
+    let tabs = surfaces.map { surface in
+      TerminalLayoutSnapshot.TabSnapshot(
+        id: UUID(),
+        title: "tab",
+        customTitle: nil,
+        icon: nil,
+        tintColor: nil,
+        layout: .leaf(
+          TerminalLayoutSnapshot.SurfaceSnapshot(
+            id: surface.id,
+            workingDirectory: nil,
+            agents: surface.agents
+          )
+        ),
+        focusedLeafIndex: 0
+      )
+    }
+    return TerminalLayoutSnapshot(tabs: tabs, selectedTabIndex: 0)
+  }
+
+  private func record(
+    agent: SkillAgent,
+    pids: [Int32],
+    activity: String = "idle"
+  ) -> TerminalLayoutSnapshot.SurfaceAgentRecord {
+    TerminalLayoutSnapshot.SurfaceAgentRecord(agent: agent.rawValue, pids: pids, activity: activity)
   }
 
   private func makeEvent(

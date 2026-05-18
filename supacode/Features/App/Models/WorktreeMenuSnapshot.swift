@@ -105,7 +105,7 @@ extension AppFeature.Action {
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
         .tabRemoved, .worktreeStateTornDown, .tabProgressDisplayChanged,
-        .surfacesClosed, .agentHookEventReceived:
+        .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged:
         return false
       }
     // Hot agent-storm paths: per-tab churn never mutates snapshot inputs.
@@ -119,7 +119,8 @@ extension AppFeature.Action {
     // directly; any downstream mutation flows back through a classified arm.
     case .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
-      .openWorktree, .openWorktreeFailed, .requestQuit, .newTerminal,
+      .openWorktree, .openWorktreeFailed, .requestQuit,
+      .requestTerminateAllTerminalSessions, .newTerminal,
       .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,

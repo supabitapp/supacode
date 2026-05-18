@@ -14,6 +14,7 @@ private nonisolated let notificationsLogger = SupaLogger("Notifications")
 
 private enum CancelID {
   static let periodicRefresh = "app.periodicRefresh"
+  static let backgroundPersist = "app.backgroundPersist"
 }
 
 @Reducer
@@ -33,6 +34,9 @@ struct AppFeature {
     var repoScripts: [ScriptDefinition] = []
     var globalScripts: [ScriptDefinition] = []
     var notificationIndicatorCount: Int = 0
+    // Cached aggregate from the terminal manager; flips only on the global
+    // any-surface boundary so menu / action gates avoid sidebarItems iteration.
+    var hasAnyTerminalSurface: Bool = false
     var lastKnownSystemNotificationsEnabled: Bool
     var lastKnownAgentPresenceBadgesEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
@@ -109,6 +113,7 @@ struct AppFeature {
     case openWorktree(OpenWorktreeAction)
     case openWorktreeFailed(OpenActionError)
     case requestQuit
+    case requestTerminateAllTerminalSessions
     case newTerminal
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
@@ -135,6 +140,8 @@ struct AppFeature {
   enum Alert: Equatable {
     case dismiss
     case confirmQuit
+    case confirmQuitAndTerminate
+    case confirmTerminateAllTerminalSessions
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -168,6 +175,16 @@ struct AppFeature {
             for await event in await worktreeInfoWatcher.events() {
               await send(.repositories(.worktreeInfoEvent(event)))
             }
+          },
+          .run { send in
+            // Reap crash / force-quit orphans, then resurrect agent badges
+            // from embedded records. Races with `.task` under `.merge`; the
+            // worktreeProjectionChanged handler re-fans-out if restore wins.
+            @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
+            let known = Set(layouts.values.flatMap { $0.allSurfaceIDs })
+            let staged = AgentPresenceFeature.stageRestore(fromLayouts: layouts.values)
+            await terminalClient.reapOrphanSessions(known)
+            await send(.agentPresence(.restoreFromSnapshot(staged: staged)))
           }
         )
 
@@ -196,7 +213,22 @@ struct AppFeature {
             }
             .cancellable(id: CancelID.periodicRefresh, cancelInFlight: true)
           )
-        case .inactive, .background:
+        case .background:
+          // Snapshot on the way out so a force-quit / crash doesn't drop
+          // running-agent state before `applicationWillTerminate` fires.
+          // Coalesce so rapid Cmd+Tab churn writes once per 1s burst.
+          let agentsBySurface = state.agentPresence.agentsBySurface()
+          return .merge(
+            .cancel(id: CancelID.periodicRefresh),
+            .run { _ in
+              try? await Task.sleep(for: .seconds(1))
+              await MainActor.run {
+                terminalClient.saveLayoutsWithAgents(agentsBySurface)
+              }
+            }
+            .cancellable(id: CancelID.backgroundPersist, cancelInFlight: true)
+          )
+        case .inactive:
           return .cancel(id: CancelID.periodicRefresh)
         @unknown default:
           return .cancel(id: CancelID.periodicRefresh)
@@ -449,28 +481,55 @@ struct AppFeature {
         return .none
 
       case .requestQuit:
-        guard state.settings.confirmBeforeQuit else {
-          analyticsClient.capture("app_quit", nil)
-          let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
-          return .concatenate(
-            pendingFDEffect,
-            .run { @MainActor [appLifecycleClient] _ in appLifecycleClient.terminate() },
-          )
-        }
-        state.alert = AlertState {
-          TextState("Quit Supacode?")
-        } actions: {
-          ButtonState(action: .confirmQuit) {
-            TextState("Quit")
+        let mode = state.settings.confirmQuitMode
+        let needsConfirmation: Bool =
+          switch mode {
+          case .never: false
+          case .always: true
+          case .auto: hasActiveWorkBlockingQuit(state: state)
           }
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("Cancel")
+        guard needsConfirmation else {
+          return quitEffect(state: &state, terminateSessions: state.settings.terminateSessionsOnQuit)
+        }
+        state.alert = quitConfirmationAlert(
+          terminateOnQuit: state.settings.terminateSessionsOnQuit,
+          hasBlockingScripts: terminalClient.hasInflightBlockingScripts()
+        )
+        // Without surfacing the main window, an alert raised from Cmd+Q
+        // when no window is up has no scene to anchor to and `terminate()`
+        // sits behind an invisible dialog.
+        return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
+
+      case .alert(.presented(.confirmQuit)):
+        state.alert = nil
+        return quitEffect(state: &state, terminateSessions: state.settings.terminateSessionsOnQuit)
+
+      case .alert(.presented(.confirmQuitAndTerminate)):
+        state.alert = nil
+        return quitEffect(state: &state, terminateSessions: true)
+
+      case .requestTerminateAllTerminalSessions:
+        state.alert = AlertState {
+          TextState("Terminate All Terminal Sessions?")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("Cancel") }
+          ButtonState(role: .destructive, action: .confirmTerminateAllTerminalSessions) {
+            TextState("Terminate Sessions")
           }
         } message: {
-          TextState("This will close all terminal sessions.")
+          TextState(
+            "Every terminal tab will be closed and every background shell stopped. "
+              + "Running scripts will be lost."
+          )
         }
-        // Surface the main window first; the alert is bound there.
         return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
+
+      case .alert(.presented(.confirmTerminateAllTerminalSessions)):
+        state.alert = nil
+        analyticsClient.capture("terminal_sessions_terminated_via_menu", nil)
+        return .run { _ in
+          await terminalClient.terminateAllSessions()
+        }
 
       case .newTerminal:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -735,15 +794,6 @@ struct AppFeature {
         state.alert = nil
         return .none
 
-      case .alert(.presented(.confirmQuit)):
-        analyticsClient.capture("app_quit", nil)
-        let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
-        state.alert = nil
-        return .concatenate(
-          pendingFDEffect,
-          .run { @MainActor [appLifecycleClient] _ in appLifecycleClient.terminate() },
-        )
-
       case .alert:
         return .none
 
@@ -932,6 +982,10 @@ struct AppFeature {
           }
         }
 
+      case .terminalEvent(.terminalHasAnySurfaceChanged(let hasAny)):
+        state.hasAnyTerminalSurface = hasAny
+        return .none
+
       case .terminalEvent(.commandPaletteToggleRequested(let worktreeID)):
         if state.commandPalette.isPresented {
           return .send(.commandPalette(.setPresented(false)))
@@ -964,13 +1018,26 @@ struct AppFeature {
         }
 
       case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
-        guard state.repositories.sidebarItems[id: worktreeID] != nil else { return .none }
-        return .send(
+        guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
+        // Re-fan-out only for surfaces this projection ADDS to the row;
+        // steady-state churn (notification arrival, focus changes) keeps the
+        // surfaceIDs set stable and skips this entirely.
+        let addedSurfaces = Set(projection.surfaceIDs).subtracting(row.surfaceIDs)
+        let restoredAddedSurfaces: Set<UUID> =
+          addedSurfaces.isEmpty || state.agentPresence.bySurface.isEmpty
+          ? []
+          : addedSurfaces.filter { state.agentPresence.bySurface[$0] != nil }
+        let projectionEffect: Effect<Action> = .send(
           .repositories(
             .sidebarItems(
               .element(id: worktreeID, action: .terminalProjectionChanged(projection))
             )
           )
+        )
+        guard !restoredAddedSurfaces.isEmpty else { return projectionEffect }
+        return .concatenate(
+          projectionEffect,
+          .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))
         )
 
       case .terminalEvent(.tabProjectionChanged(let worktreeID, let projection)):
@@ -1695,6 +1762,99 @@ struct AppFeature {
     let cmd = command(worktree)
     let terminalClient = terminalClient
     return .run { _ in await terminalClient.send(cmd) }
+  }
+
+  /// True when in-flight work would not survive a quit. Steady-state
+  /// `.idle` agents are intentionally excluded since persisting them is the
+  /// whole reason zmx wraps the shell; only mid-tool-call (`.busy`) and
+  /// prompt-waiting (`.awaitingInput`) agents are at risk. Running user
+  /// scripts also block because their stdout history dies with the shell.
+  private func hasActiveWorkBlockingQuit(state: State) -> Bool {
+    if terminalClient.hasInflightBlockingScripts() { return true }
+    return state.repositories.sidebarItems.contains { item in
+      if item.lifecycle.isTerminating || item.lifecycle == .pending { return true }
+      if !item.runningScripts.isEmpty { return true }
+      return item.agents.contains { $0.activity != .idle }
+    }
+  }
+
+  /// Single source of truth for the `(terminateOnQuit, hasBlockingScripts)`
+  /// matrix that drives the quit alert. Nested for namespacing (single-use).
+  struct QuitConfirmationContext: Equatable {
+    let terminateOnQuit: Bool
+    let hasBlockingScripts: Bool
+
+    var primaryLabel: String {
+      switch (terminateOnQuit, hasBlockingScripts) {
+      case (false, false): "Quit"
+      case (false, true): "Quit and Stop Scripts"
+      case (true, false): "Quit and Terminate Sessions"
+      case (true, true): "Quit and Stop Everything"
+      }
+    }
+
+    /// `nil` when the user opted into terminate-on-quit globally; the primary
+    /// button already runs the destructive path so a duplicate would be noise.
+    var destructiveLabel: String? {
+      guard !terminateOnQuit else { return nil }
+      return hasBlockingScripts ? "Quit and Stop Everything" : "Quit and Terminate Sessions"
+    }
+
+    var message: String {
+      switch (terminateOnQuit, hasBlockingScripts) {
+      case (false, false):
+        return "Terminal sessions keep running in the background after you quit. "
+          + "Choose Quit and Terminate Sessions to also close every tab and stop their shells."
+      case (false, true):
+        return "Running scripts will be stopped and lost. Terminal sessions keep running in the background. "
+          + "Choose Quit and Stop Everything to also close every tab and stop their shells."
+      case (true, false):
+        return "All terminal tabs will be closed and background shells stopped."
+      case (true, true):
+        return "Running scripts will be stopped and lost. "
+          + "All terminal tabs will be closed and background shells stopped."
+      }
+    }
+  }
+
+  /// Builds the quit confirmation. Cancel is the default so a user mashing
+  /// Enter never accidentally quits. Labels + message route through
+  /// `QuitConfirmationContext` so adding a future axis (e.g. mid-archive)
+  /// only edits one matrix instead of three dispatch points.
+  private func quitConfirmationAlert(
+    terminateOnQuit: Bool,
+    hasBlockingScripts: Bool
+  ) -> AlertState<Alert> {
+    let context = QuitConfirmationContext(
+      terminateOnQuit: terminateOnQuit,
+      hasBlockingScripts: hasBlockingScripts
+    )
+    return AlertState {
+      TextState("Quit Supacode?")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) { TextState("Cancel") }
+      ButtonState(action: .confirmQuit) { TextState(context.primaryLabel) }
+      if let destructive = context.destructiveLabel {
+        ButtonState(role: .destructive, action: .confirmQuitAndTerminate) { TextState(destructive) }
+      }
+    } message: {
+      TextState(context.message)
+    }
+  }
+
+  /// Performs the actual quit. When `terminateSessions` is true we await
+  /// `terminateAllSessions` before calling `appLifecycleClient.terminate()`
+  /// so the zmx daemon teardown completes inside the process lifetime.
+  private func quitEffect(state: inout State, terminateSessions: Bool) -> Effect<Action> {
+    analyticsClient.capture("app_quit", ["terminate_sessions": terminateSessions])
+    let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
+    let terminateEffect: Effect<Action> = .run { @MainActor [terminalClient, appLifecycleClient] _ in
+      if terminateSessions {
+        await terminalClient.terminateAllSessions()
+      }
+      appLifecycleClient.terminate()
+    }
+    return .concatenate(pendingFDEffect, terminateEffect)
   }
 
   /// Extracts a human-readable message from an alert state for CLI error responses.

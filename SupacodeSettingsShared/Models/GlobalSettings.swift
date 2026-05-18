@@ -29,7 +29,6 @@ public nonisolated enum AutoDeletePeriod: Int, Codable, CaseIterable, Comparable
 public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var appearanceMode: AppearanceMode
   public var defaultEditorID: String
-  public var confirmBeforeQuit: Bool
   public var updateChannel: UpdateChannel
   public var updatesAutomaticallyCheckForUpdates: Bool
   public var updatesAutomaticallyDownloadUpdates: Bool
@@ -49,7 +48,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var copyUntrackedOnWorktreeCreate: Bool
   public var pullRequestMergeStrategy: PullRequestMergeStrategy
   public var terminalThemeSyncEnabled: Bool
-  public var restoreTerminalLayoutEnabled: Bool
   public var hideSingleTabBar: Bool
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
@@ -63,11 +61,15 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// strands stale hooks (e.g. legacy `Notification` / `PostToolUseFailure`
   /// entries from earlier wire-protocol revisions).
   public var autoUpdateAgentIntegrationsEnabled: Bool
+  public var confirmQuitMode: ConfirmQuitMode
+  /// When true, quitting Supacode also closes every terminal tab and tears
+  /// down the bundled zmx daemon's sessions, so nothing keeps running in
+  /// the background. Default off because persistence is the headline feature.
+  public var terminateSessionsOnQuit: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
     defaultEditorID: OpenWorktreeAction.automaticSettingsID,
-    confirmBeforeQuit: true,
     updateChannel: .stable,
     updatesAutomaticallyCheckForUpdates: true,
     updatesAutomaticallyDownloadUpdates: false,
@@ -86,7 +88,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyUntrackedOnWorktreeCreate: false,
     pullRequestMergeStrategy: .merge,
     terminalThemeSyncEnabled: true,
-    restoreTerminalLayoutEnabled: false,
     hideSingleTabBar: false,
     automatedActionPolicy: .cliOnly,
     defaultWorktreeBaseDirectoryPath: nil,
@@ -95,13 +96,14 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     globalScripts: [],
     richAgentNotificationsEnabled: true,
     agentPresenceBadgesEnabled: true,
-    autoUpdateAgentIntegrationsEnabled: true
+    autoUpdateAgentIntegrationsEnabled: true,
+    confirmQuitMode: .auto,
+    terminateSessionsOnQuit: false
   )
 
   public init(
     appearanceMode: AppearanceMode,
     defaultEditorID: String,
-    confirmBeforeQuit: Bool,
     updateChannel: UpdateChannel,
     updatesAutomaticallyCheckForUpdates: Bool,
     updatesAutomaticallyDownloadUpdates: Bool,
@@ -120,7 +122,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyUntrackedOnWorktreeCreate: Bool = false,
     pullRequestMergeStrategy: PullRequestMergeStrategy = .merge,
     terminalThemeSyncEnabled: Bool = true,
-    restoreTerminalLayoutEnabled: Bool = false,
     hideSingleTabBar: Bool = false,
     automatedActionPolicy: AutomatedActionPolicy = .cliOnly,
     defaultWorktreeBaseDirectoryPath: String? = nil,
@@ -129,11 +130,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     globalScripts: [ScriptDefinition] = [],
     richAgentNotificationsEnabled: Bool = true,
     agentPresenceBadgesEnabled: Bool = true,
-    autoUpdateAgentIntegrationsEnabled: Bool = true
+    autoUpdateAgentIntegrationsEnabled: Bool = true,
+    confirmQuitMode: ConfirmQuitMode = .auto,
+    terminateSessionsOnQuit: Bool = false
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
-    self.confirmBeforeQuit = confirmBeforeQuit
     self.updateChannel = updateChannel
     self.updatesAutomaticallyCheckForUpdates = updatesAutomaticallyCheckForUpdates
     self.updatesAutomaticallyDownloadUpdates = updatesAutomaticallyDownloadUpdates
@@ -152,7 +154,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
     self.terminalThemeSyncEnabled = terminalThemeSyncEnabled
-    self.restoreTerminalLayoutEnabled = restoreTerminalLayoutEnabled
     self.hideSingleTabBar = hideSingleTabBar
     self.automatedActionPolicy = automatedActionPolicy
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
@@ -162,6 +163,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
     self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
+    self.confirmQuitMode = confirmQuitMode
+    self.terminateSessionsOnQuit = terminateSessionsOnQuit
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -181,9 +184,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     defaultEditorID =
       try container.decodeIfPresent(String.self, forKey: .defaultEditorID)
       ?? Self.default.defaultEditorID
-    confirmBeforeQuit =
-      try container.decodeIfPresent(Bool.self, forKey: .confirmBeforeQuit)
-      ?? Self.default.confirmBeforeQuit
     updateChannel =
       try container.decodeIfPresent(UpdateChannel.self, forKey: .updateChannel)
       ?? Self.default.updateChannel
@@ -248,9 +248,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalThemeSyncEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalThemeSyncEnabled)
       ?? false
-    restoreTerminalLayoutEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .restoreTerminalLayoutEnabled)
-      ?? Self.default.restoreTerminalLayoutEnabled
     hideSingleTabBar =
       try container.decodeIfPresent(Bool.self, forKey: .hideSingleTabBar)
       ?? Self.default.hideSingleTabBar
@@ -297,5 +294,23 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoUpdateAgentIntegrationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .autoUpdateAgentIntegrationsEnabled)
       ?? Self.default.autoUpdateAgentIntegrationsEnabled
+    // Reject unrecognized values from corrupted or hand-edited settings files.
+    // Legacy `confirmBeforeQuit: false` users explicitly opted out of the
+    // dialog; `.auto` would silently re-enable it. Map `false` to `.never`
+    // and `true` to `.always` so the strictness intent survives upgrade.
+    if let raw = try container.decodeIfPresent(String.self, forKey: .confirmQuitMode),
+      let mode = ConfirmQuitMode(rawValue: raw)
+    {
+      confirmQuitMode = mode
+    } else if let legacyConfirmBeforeQuit = try legacy.decodeIfPresent(
+      Bool.self, forKey: LegacyCodingKey(stringValue: "confirmBeforeQuit")!)
+    {
+      confirmQuitMode = legacyConfirmBeforeQuit ? .always : .never
+    } else {
+      confirmQuitMode = Self.default.confirmQuitMode
+    }
+    terminateSessionsOnQuit =
+      try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
+      ?? Self.default.terminateSessionsOnQuit
   }
 }
