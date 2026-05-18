@@ -55,11 +55,9 @@ struct WorktreeTerminalTabsView: View {
         TerminalTabContentStack(tabs: state.tabManager.tabs, selectedTabId: selectedId) { tabId in
           TerminalSplitTreeAXContainer(
             tree: state.splitTree(for: tabId),
+            terminalState: state,
             activeSurfaceID: state.activeSurfaceID(for: tabId),
             unfocusedSplitOverlay: unfocusedSplitOverlay,
-            hasNotification: { surfaceID in
-              state.hasUnseenNotification(forSurfaceID: surfaceID)
-            },
             action: { operation in
               state.performSplitOperation(operation, in: tabId)
             }

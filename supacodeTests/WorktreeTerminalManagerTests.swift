@@ -479,6 +479,239 @@ struct WorktreeTerminalManagerTests {
     #expect(manager.hasUnseenNotifications(for: worktree.id) == false)
   }
 
+  // MARK: - Per-surface unseen flag
+
+  @Test func setNotificationsForTestingHydratesPerSurfaceFlag() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let stateA = installSurfaceState(on: state, forSurfaceID: surfaceA)
+    let stateB = installSurfaceState(on: state, forSurfaceID: surfaceB)
+
+    state.setNotificationsForTesting([
+      makeNotification(surfaceID: surfaceA, isRead: false),
+      makeNotification(surfaceID: surfaceB, isRead: true),
+    ])
+
+    #expect(stateA.hasUnseenNotification == true)
+    #expect(stateB.hasUnseenNotification == false)
+  }
+
+  @Test func markNotificationsReadFlipsOnlyMatchingSurfaceFlag() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let stateA = installSurfaceState(on: state, forSurfaceID: surfaceA)
+    let stateB = installSurfaceState(on: state, forSurfaceID: surfaceB)
+    state.setNotificationsForTesting([
+      makeNotification(surfaceID: surfaceA, isRead: false),
+      makeNotification(surfaceID: surfaceB, isRead: false),
+    ])
+
+    state.markNotificationsRead(forSurfaceID: surfaceB)
+
+    #expect(stateA.hasUnseenNotification == true)
+    #expect(stateB.hasUnseenNotification == false)
+  }
+
+  @Test func markSingleNotificationReadKeepsFlagWhenOlderUnreadRemains() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    let surfaceState = installSurfaceState(on: state, forSurfaceID: surfaceID)
+    let first = makeNotification(surfaceID: surfaceID, isRead: false)
+    let second = makeNotification(surfaceID: surfaceID, isRead: false)
+    state.setNotificationsForTesting([first, second])
+
+    state.markNotificationRead(id: first.id)
+
+    #expect(surfaceState.hasUnseenNotification == true)
+
+    state.markNotificationRead(id: second.id)
+
+    #expect(surfaceState.hasUnseenNotification == false)
+  }
+
+  @Test func dismissAllNotificationsClearsPerSurfaceFlag() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    let surfaceState = installSurfaceState(on: state, forSurfaceID: surfaceID)
+    state.setNotificationsForTesting([
+      makeNotification(surfaceID: surfaceID, isRead: false)
+    ])
+    #expect(surfaceState.hasUnseenNotification == true)
+
+    state.dismissAllNotifications()
+
+    #expect(surfaceState.hasUnseenNotification == false)
+  }
+
+  @Test func dismissSingleNotificationRefreshesPerSurfaceFlag() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    let surfaceState = installSurfaceState(on: state, forSurfaceID: surfaceID)
+    let stale = makeNotification(surfaceID: surfaceID, isRead: false)
+    let fresh = makeNotification(surfaceID: surfaceID, isRead: false)
+    state.setNotificationsForTesting([stale, fresh])
+
+    state.dismissNotification(stale.id)
+    #expect(surfaceState.hasUnseenNotification == true)
+
+    state.dismissNotification(fresh.id)
+    #expect(surfaceState.hasUnseenNotification == false)
+  }
+
+  @Test func appendNotificationFlipsPerSurfaceFlagOnArrival() {
+    withDependencies {
+      $0.date.now = Date(timeIntervalSince1970: 1_234)
+    } operation: {
+      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let worktree = makeWorktree()
+      let state = manager.state(for: worktree)
+      guard let tabId = state.createTab(focusing: false),
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      else {
+        Issue.record("Expected a tab and surface")
+        return
+      }
+
+      state.appendHookNotification(title: "done", body: "exit 0", surfaceID: surface.id)
+
+      #expect(state.surfaceStates[surface.id]?.hasUnseenNotification == true)
+    }
+  }
+
+  @Test func appendNotificationDoesNotFlipFlagWhenFocusedAndSelected() {
+    withDependencies {
+      $0.date.now = Date(timeIntervalSince1970: 1_234)
+    } operation: {
+      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let worktree = makeWorktree()
+      let state = manager.state(for: worktree)
+      state.isSelected = { true }
+      guard let tabId = state.createTab(focusing: true),
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      else {
+        Issue.record("Expected a tab and surface")
+        return
+      }
+
+      state.appendHookNotification(title: "done", body: "exit 0", surfaceID: surface.id)
+
+      #expect(state.surfaceStates[surface.id]?.hasUnseenNotification == false)
+    }
+  }
+
+  @Test func createSurfaceInstallsSurfaceStateEntry() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    guard let tabId = state.createTab(focusing: false),
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+
+    #expect(state.surfaceStates[surface.id] != nil)
+  }
+
+  @Test func cleanupSurfaceStateRemovesSurfaceStateEntry() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    guard let tabId = state.createTab(focusing: false),
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let surfaceID = surface.id
+    #expect(state.surfaceStates[surfaceID] != nil)
+
+    state.closeTab(tabId)
+
+    #expect(state.surfaceStates[surfaceID] == nil)
+  }
+
+  @Test func restoreLayoutSnapshotReDerivesPerSurfaceFlags() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let knownSurfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
+          title: "Terminal 1",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(
+            TerminalLayoutSnapshot.SurfaceSnapshot(
+              id: knownSurfaceID,
+              workingDirectory: "/tmp/repo/wt-1"
+            )
+          ),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    manager.loadLayoutSnapshot = { _ in snapshot }
+    let state = manager.state(for: worktree)
+    // Seed a notification for the not-yet-restored surface; the flag install
+    // is silently dropped because `surfaceStates[knownSurfaceID]` is absent.
+    state.setNotificationsForTesting([
+      makeNotification(surfaceID: knownSurfaceID, isRead: false)
+    ])
+    #expect(state.surfaceStates[knownSurfaceID] == nil)
+
+    state.ensureInitialTab(focusing: false)
+
+    #expect(state.surfaceStates[knownSurfaceID]?.hasUnseenNotification == true)
+  }
+
+  @Test func notificationsDisabledSkipsPerSurfaceFlag() {
+    withDependencies {
+      $0.date.now = Date(timeIntervalSince1970: 1_234)
+    } operation: {
+      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let worktree = makeWorktree()
+      let state = manager.state(for: worktree)
+      state.notificationsEnabled = false
+      guard let tabId = state.createTab(focusing: false),
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      else {
+        Issue.record("Expected a tab and surface")
+        return
+      }
+
+      state.appendHookNotification(title: "done", body: "exit 0", surfaceID: surface.id)
+
+      #expect(state.surfaceStates[surface.id]?.hasUnseenNotification == false)
+    }
+  }
+
+  /// Installs a fresh `WorktreeSurfaceState` via the DEBUG-gated test seam.
+  @discardableResult
+  private func installSurfaceState(
+    on state: WorktreeTerminalState,
+    forSurfaceID surfaceID: UUID
+  ) -> WorktreeSurfaceState {
+    let surfaceState = WorktreeSurfaceState()
+    state.installSurfaceStateForTesting(surfaceState, forSurfaceID: surfaceID)
+    return surfaceState
+  }
+
   @Test func blockingScriptCompletionReportsExitCodeFromCommandFinished() async {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()

@@ -64,6 +64,10 @@ final class WorktreeTerminalState {
   /// flow through `TerminalTabState.unseenNotificationCount` projections instead
   /// of invalidating every leaf in the worktree.
   @ObservationIgnored private(set) var notifications: [WorktreeTerminalNotification] = []
+  /// Per-surface Supacode observables. `@ObservationIgnored` so dict churn
+  /// doesn't invalidate every leaf; the per-instance `hasUnseenNotification` is
+  /// the observed signal.
+  @ObservationIgnored private(set) var surfaceStates: [UUID: WorktreeSurfaceState] = [:]
   var notificationsEnabled = true
   @ObservationIgnored @Dependency(\.date.now) private var now
   private var recentHookBySurfaceID: [UUID: (text: String, recordedAt: Date)] = [:]
@@ -808,6 +812,7 @@ final class WorktreeTerminalState {
     for index in notifications.indices {
       notifications[index].isRead = true
     }
+    clearAllSurfaceUnseenFlags()
     emitAllTabProjections()
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
@@ -817,6 +822,7 @@ final class WorktreeTerminalState {
     for index in notifications.indices where notifications[index].surfaceID == surfaceID {
       notifications[index].isRead = true
     }
+    setSurfaceUnseenFlag(surfaceID, to: false)
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
@@ -830,6 +836,7 @@ final class WorktreeTerminalState {
     guard !notifications[index].isRead else { return }
     let surfaceID = notifications[index].surfaceID
     notifications[index].isRead = true
+    refreshSurfaceUnseenFlag(surfaceID)
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
@@ -840,8 +847,11 @@ final class WorktreeTerminalState {
     let previousHasUnseen = hasUnseenNotification
     let affectedSurface = notifications.first(where: { $0.id == notificationID })?.surfaceID
     notifications.removeAll { $0.id == notificationID }
-    if let affectedSurface, let tabId = tabID(containing: affectedSurface) {
-      emitTabProjection(for: tabId)
+    if let affectedSurface {
+      refreshSurfaceUnseenFlag(affectedSurface)
+      if let tabId = tabID(containing: affectedSurface) {
+        emitTabProjection(for: tabId)
+      }
     }
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
   }
@@ -849,8 +859,28 @@ final class WorktreeTerminalState {
   func dismissAllNotifications() {
     let previousHasUnseen = hasUnseenNotification
     notifications.removeAll()
+    clearAllSurfaceUnseenFlags()
     emitAllTabProjections()
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+  }
+
+  /// Recomputes the surface's unseen flag through the canonical predicate so a
+  /// future tweak to `hasUnseenNotification(forSurfaceID:)` is picked up here
+  /// without a parallel branch silently drifting.
+  private func refreshSurfaceUnseenFlag(_ surfaceID: UUID) {
+    setSurfaceUnseenFlag(surfaceID, to: hasUnseenNotification(forSurfaceID: surfaceID))
+  }
+
+  private func setSurfaceUnseenFlag(_ surfaceID: UUID, to value: Bool) {
+    guard let state = surfaceStates[surfaceID] else { return }
+    guard state.hasUnseenNotification != value else { return }
+    state.hasUnseenNotification = value
+  }
+
+  private func clearAllSurfaceUnseenFlags() {
+    for state in surfaceStates.values where state.hasUnseenNotification {
+      state.hasUnseenNotification = false
+    }
   }
 
   // MARK: - Layout Snapshot
@@ -981,6 +1011,12 @@ final class WorktreeTerminalState {
       if focusing {
         focusSurface(in: selectedTab.id)
       }
+    }
+
+    // Notifications outlive surfaces, so re-derive the freshly minted
+    // `WorktreeSurfaceState` flags or the per-surface dot stays dark after restore.
+    for surfaceID in Set(notifications.map(\.surfaceID)) {
+      refreshSurfaceUnseenFlag(surfaceID)
     }
   }
 
@@ -1269,6 +1305,7 @@ final class WorktreeTerminalState {
       self.emitTaskStatusIfChanged()
     }
     surfaces[view.id] = view
+    surfaceStates[view.id] = WorktreeSurfaceState()
     return view
   }
 
@@ -1383,6 +1420,7 @@ final class WorktreeTerminalState {
         ),
         at: 0
       )
+      refreshSurfaceUnseenFlag(surfaceID)
       if let tabId = tabID(containing: surfaceID) {
         emitTabProjection(for: tabId)
       }
@@ -1432,6 +1470,7 @@ final class WorktreeTerminalState {
   private func cleanupSurfaceState(for surfaceID: UUID) {
     recentHookBySurfaceID.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
+    surfaceStates.removeValue(forKey: surfaceID)
     onSurfacesClosed?([surfaceID])
   }
 
@@ -1783,7 +1822,18 @@ final class WorktreeTerminalState {
     /// projection-bypass path.
     func setNotificationsForTesting(_ list: [WorktreeTerminalNotification]) {
       notifications = list
+      clearAllSurfaceUnseenFlags()
+      for surfaceID in Set(list.map(\.surfaceID)) {
+        refreshSurfaceUnseenFlag(surfaceID)
+      }
       emitAllTabProjections()
+    }
+
+    /// Test-only seam for installing a synthetic `WorktreeSurfaceState` without
+    /// minting a real Ghostty surface. Production writes are gated to
+    /// `createSurface` / `cleanupSurfaceState`.
+    func installSurfaceStateForTesting(_ state: WorktreeSurfaceState, forSurfaceID surfaceID: UUID) {
+      surfaceStates[surfaceID] = state
     }
   #endif
 }

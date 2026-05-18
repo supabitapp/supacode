@@ -60,10 +60,8 @@ struct WorktreeDetailView: View {
     // so an unrelated `sidebarItems[id:].agents` mutation on the focused row
     // doesn't re-publish this. Same field, observed through the projected slice.
     let runningScriptIDs = Set(selectedRow?.runningScripts.ids ?? [])
-    let notificationGroups = repositories.toolbarNotificationGroupsCache
-    let unseenNotificationWorktreeCount = notificationGroups.reduce(0) { count, repository in
-      count + repository.unseenWorktreeCount
-    }
+    // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsPopoverButtonHost`
+    // instead; reading it here would re-render the body on every notification.
     let content = detailContent(
       repositories: repositories,
       loadingInfo: loadingInfo,
@@ -88,8 +86,6 @@ struct WorktreeDetailView: View {
           rootURL: selectedWorktree.repositoryRootURL,
           kind: toolbarKind(for: selectedWorktree, selectedRow: selectedRow),
           statusToast: repositories.statusToast,
-          notificationGroups: notificationGroups,
-          unseenNotificationWorktreeCount: unseenNotificationWorktreeCount,
           openActionSelection: openActionSelection,
           showExtras: commandKeyObserver.isPressed,
           repoScripts: repoScripts,
@@ -99,6 +95,7 @@ struct WorktreeDetailView: View {
         WorktreeToolbarContent(
           toolbarState: toolbarState,
           terminalManager: terminalManager,
+          repositoriesStore: store.scope(state: \.repositories, action: \.repositories),
           onOpenWorktree: { action in
             store.send(.openWorktree(action))
           },
@@ -109,7 +106,6 @@ struct WorktreeDetailView: View {
             store.send(.revealInFinder)
           },
           onSelectNotification: selectToolbarNotification,
-          onDismissAllNotifications: { dismissAllToolbarNotifications(in: notificationGroups) },
           onRunScript: { store.send(.runScript) },
           onRunNamedScript: { store.send(.runNamedScript($0)) },
           onStopScript: { store.send(.stopScript($0)) },
@@ -304,10 +300,32 @@ struct WorktreeDetailView: View {
     }
   }
 
-  private func dismissAllToolbarNotifications(in groups: [ToolbarNotificationRepositoryGroup]) {
-    for repositoryGroup in groups {
-      for worktreeGroup in repositoryGroup.worktrees {
-        terminalManager.stateIfExists(for: worktreeGroup.id)?.dismissAllNotifications()
+  /// Toolbar notification button host. Reads `toolbarNotificationGroupsCache`
+  /// itself so notification churn invalidates only this leaf. `repositoriesStore`
+  /// is optional so previews can mount the host without booting a `Store`.
+  fileprivate struct ToolbarNotificationsPopoverButtonHost: View {
+    let repositoriesStore: StoreOf<RepositoriesFeature>?
+    let terminalManager: WorktreeTerminalManager
+    let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
+
+    var body: some View {
+      if let repositoriesStore {
+        let groups = repositoriesStore.toolbarNotificationGroupsCache
+        if !groups.isEmpty {
+          let unseenWorktreeCount = groups.reduce(0) { $0 + $1.unseenWorktreeCount }
+          ToolbarNotificationsPopoverButton(
+            groups: groups,
+            unseenWorktreeCount: unseenWorktreeCount,
+            onSelectNotification: onSelectNotification,
+            onDismissAll: {
+              for repositoryGroup in groups {
+                for worktreeGroup in repositoryGroup.worktrees {
+                  terminalManager.stateIfExists(for: worktreeGroup.id)?.dismissAllNotifications()
+                }
+              }
+            }
+          )
+        }
       }
     }
   }
@@ -346,8 +364,6 @@ struct WorktreeDetailView: View {
     let rootURL: URL
     let kind: Kind
     let statusToast: RepositoriesFeature.StatusToast?
-    let notificationGroups: [ToolbarNotificationRepositoryGroup]
-    let unseenNotificationWorktreeCount: Int
     let openActionSelection: OpenWorktreeAction
     let showExtras: Bool
     let repoScripts: [ScriptDefinition]
@@ -410,11 +426,11 @@ struct WorktreeDetailView: View {
   fileprivate struct WorktreeToolbarContent: ToolbarContent {
     let toolbarState: WorktreeToolbarState
     let terminalManager: WorktreeTerminalManager
+    let repositoriesStore: StoreOf<RepositoriesFeature>?
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
     let onRevealInFinder: () -> Void
     let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
-    let onDismissAllNotifications: () -> Void
     let onRunScript: () -> Void
     let onRunNamedScript: (ScriptDefinition) -> Void
     let onStopScript: (ScriptDefinition) -> Void
@@ -439,14 +455,11 @@ struct WorktreeDetailView: View {
           pullRequest: toolbarState.pullRequest
         )
         .padding(.horizontal)
-        if !toolbarState.notificationGroups.isEmpty {
-          ToolbarNotificationsPopoverButton(
-            groups: toolbarState.notificationGroups,
-            unseenWorktreeCount: toolbarState.unseenNotificationWorktreeCount,
-            onSelectNotification: onSelectNotification,
-            onDismissAll: onDismissAllNotifications
-          )
-        }
+        ToolbarNotificationsPopoverButtonHost(
+          repositoriesStore: repositoriesStore,
+          terminalManager: terminalManager,
+          onSelectNotification: onSelectNotification
+        )
       }
 
       ToolbarSpacer(.flexible)
@@ -1016,8 +1029,6 @@ private struct WorktreeToolbarPreview: View {
       rootURL: URL(fileURLWithPath: "/tmp/preview"),
       kind: .git(pullRequest: nil),
       statusToast: nil,
-      notificationGroups: [],
-      unseenNotificationWorktreeCount: 0,
       openActionSelection: .finder,
       showExtras: false,
       repoScripts: [ScriptDefinition(kind: .run, command: "npm run dev")],
@@ -1038,11 +1049,11 @@ private struct WorktreeToolbarPreview: View {
       WorktreeDetailView.WorktreeToolbarContent(
         toolbarState: toolbarState,
         terminalManager: WorktreeTerminalManager(runtime: GhosttyRuntime()),
+        repositoriesStore: nil,
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onRevealInFinder: {},
         onSelectNotification: { _, _ in },
-        onDismissAllNotifications: {},
         onRunScript: {},
         onRunNamedScript: { _ in },
         onStopScript: { _ in },
