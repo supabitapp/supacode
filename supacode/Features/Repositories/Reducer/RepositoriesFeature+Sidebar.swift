@@ -48,6 +48,18 @@ extension RepositoriesFeature {
         item.isMainWorktree = isMain
         item.isPinned = isPinned
         item.isMissing = worktree.isMissing
+        // Mirror per-worktree customization from `@Shared(.sidebar)`. Reading
+        // through the currently-owning bucket survives pin / unpin / archive
+        // transitions because the bucket-flow `move` carries the `Item` over.
+        if let bucketID = state.sidebar.currentBucket(of: id, in: repository.id),
+          let storedItem = state.sidebar.sections[repository.id]?.buckets[bucketID]?.items[id]
+        {
+          item.customTitle = storedItem.title
+          item.customTint = storedItem.color
+        } else {
+          item.customTitle = nil
+          item.customTint = nil
+        }
         // Clear the PR query branch when the worktree was renamed.
         if let existing, existing.branchName != worktree.name {
           item.pullRequestBranchAtQueryTime = nil
@@ -83,6 +95,8 @@ extension RepositoriesFeature {
           )
         item.name = pendingName
         item.branchName = pendingName
+        item.customTitle = pending.customization?.title
+        item.customTint = pending.customization?.color
         item.lifecycle =
           state.removingRepositoryIDs[pending.repositoryID] != nil
           ? .deleting

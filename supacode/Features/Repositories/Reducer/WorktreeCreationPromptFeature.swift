@@ -33,6 +33,10 @@ struct WorktreeCreationPromptFeature {
     var showAdvancedOptions: Bool = false
     var validationMessage: String?
     var isValidating = false
+    /// Optional sidebar customization captured by the new Title / Color
+    /// section; transferred to `PendingWorktree.customization` on submit.
+    var title: String = ""
+    var color: RepositoryColor?
 
     /// Default leaf folder name shown as the name-override placeholder.
     var worktreeNamePlaceholder: String {
@@ -100,7 +104,9 @@ struct WorktreeCreationPromptFeature {
       branchName: String,
       baseRef: String?,
       fetchOrigin: Bool,
-      placement: WorktreePlacementOverride
+      placement: WorktreePlacementOverride,
+      title: String?,
+      color: RepositoryColor?
     )
   }
 
@@ -137,6 +143,12 @@ struct WorktreeCreationPromptFeature {
         }
         state.validationMessage = nil
         let pathOverride = state.worktreePathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Preserve the user's typed title verbatim, even when it equals the
+        // branch name. The render is identical (no override → fall back to
+        // branch name) but the round-trip into the Customize sheet relies
+        // on the value surviving.
+        let trimmedTitle = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = trimmedTitle.isEmpty ? nil : trimmedTitle
         return .send(
           .delegate(
             .submit(
@@ -148,7 +160,9 @@ struct WorktreeCreationPromptFeature {
               placement: WorktreePlacementOverride(
                 name: nameOverride.isEmpty ? nil : nameOverride,
                 path: pathOverride.isEmpty ? nil : pathOverride
-              )
+              ),
+              title: resolvedTitle,
+              color: state.color
             )
           )
         )

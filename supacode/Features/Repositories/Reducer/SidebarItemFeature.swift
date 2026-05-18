@@ -50,6 +50,12 @@ struct SidebarItemFeature {
     var hasMergedBadge: Bool
     /// Mirror of `Worktree.isMissing`; drives the orphan row UI.
     var isMissing: Bool = false
+    /// Mirror of `SidebarState.Item.title`; reconcile fans this in from
+    /// `@Shared(.sidebar)`. `nil` or whitespace-only means fall back to `name`.
+    var customTitle: String?
+    /// Mirror of `SidebarState.Item.color`; reconcile fans this in from
+    /// `@Shared(.sidebar)`. `nil` means default styling.
+    var customTint: RepositoryColor?
 
     var lifecycle: Lifecycle = .idle
 
@@ -214,6 +220,12 @@ extension SidebarItemFeature.State {
       isMainWorktree: isMainWorktree, id: id, subtitle: subtitle, branchName: branchName
     )
   }
+  /// Final string the row should render: user override (trimmed) when set,
+  /// else `sidebarDisplayName`. Centralised so sidebar / archive / detail
+  /// views stay in lock-step on the empty / whitespace fallback rule.
+  var resolvedSidebarTitle: String? {
+    SidebarDisplayName.resolved(custom: customTitle, fallback: sidebarDisplayName)
+  }
   var accent: WorktreeAccent { WorktreeAccent.derive(isMainWorktree: isMainWorktree, isPinned: isPinned) }
   /// True iff any tracked agent on this row is awaiting user input.
   /// Drives the Active section's classification ("agent awaiting input").
@@ -240,6 +252,15 @@ enum SidebarDisplayName {
       if !detailName.isEmpty, detailName != "." { return detailName }
     }
     return branchName
+  }
+
+  /// Returns `custom` when set (after trim), otherwise `fallback`. Shared so
+  /// the sidebar, archive, and detail views can't drift on the empty /
+  /// whitespace fallback rule for user-overridden titles.
+  static func resolved(custom: String?, fallback: String?) -> String? {
+    let trimmed = custom?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let trimmed, !trimmed.isEmpty { return trimmed }
+    return fallback
   }
 }
 

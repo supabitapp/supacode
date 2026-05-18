@@ -185,6 +185,44 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     /// item leaves `.archived`, so the field is a reliable "is this
     /// currently archived?" signal without a bucket check.
     var archivedAt: Date?
+    /// Optional user-supplied display title that overrides the
+    /// worktree's branch / folder name in the sidebar row. `nil` (or
+    /// whitespace-only after trim) means "use the default name".
+    var title: String?
+    /// Optional user-supplied tint applied to the sidebar row title.
+    /// `nil` means "default styling".
+    var color: RepositoryColor?
+
+    private enum CodingKeys: String, CodingKey {
+      case archivedAt
+      case title
+      case color
+    }
+
+    init(archivedAt: Date? = nil, title: String? = nil, color: RepositoryColor? = nil) {
+      self.archivedAt = archivedAt
+      self.title = title
+      self.color = color
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      self.archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
+      self.title = try container.decodeIfPresent(String.self, forKey: .title)
+      // Use `try?` so a malformed hex color (introduced by a downgrade
+      // that doesn't understand `.custom`, hand-edit, etc.) drops just
+      // this field rather than killing the row's entire entry.
+      self.color = (try? container.decodeIfPresent(RepositoryColor.self, forKey: .color)) ?? nil
+    }
+
+    func encode(to encoder: any Encoder) throws {
+      var container = encoder.container(keyedBy: CodingKeys.self)
+      try container.encodeIfPresent(archivedAt, forKey: .archivedAt)
+      // Customization fields are only emitted when set so the file
+      // stays clean for worktrees the user never touched.
+      try container.encodeIfPresent(title, forKey: .title)
+      try container.encodeIfPresent(color, forKey: .color)
+    }
   }
 
   /// Flat reference to an archived worktree: the owning repo, the
@@ -307,9 +345,12 @@ nonisolated extension SidebarState {
     at timestamp: Date
   ) {
     var section = sections[repositoryID] ?? .init()
-    section.buckets[from]?.items.removeValue(forKey: worktreeID)
+    // Carry the source-bucket Item forward so user-set title / color survive
+    // archive; fall back to a fresh Item when the source bucket didn't hold it.
+    var carried = section.buckets[from]?.items.removeValue(forKey: worktreeID) ?? .init()
+    carried.archivedAt = timestamp
     var archived = section.buckets[.archived] ?? .init()
-    archived.items[worktreeID] = .init(archivedAt: timestamp)
+    archived.items[worktreeID] = carried
     section.buckets[.archived] = archived
     sections[repositoryID] = section
   }

@@ -42,7 +42,8 @@ struct SidebarItemView: View {
       isPinned: store.isPinned,
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
-      highlightSubtitle: highlightSubtitle
+      highlightSubtitle: highlightSubtitle,
+      customTitle: store.customTitle
     )
 
     Label {
@@ -51,6 +52,7 @@ struct SidebarItemView: View {
           name: resolved.name,
           subtitle: resolved.subtitle,
           accent: resolved.accent,
+          customTint: store.customTint,
           isLifecycleBusy: store.lifecycle.isBusy,
           isTaskRunning: store.isTaskRunning
         )
@@ -102,13 +104,18 @@ struct ResolvedRowDisplay: Equatable {
     isPinned: Bool,
     hideSubtitle: Bool,
     hideSubtitleOnMatch: Bool,
-    highlightSubtitle: SidebarHighlightRepoTag? = nil
+    highlightSubtitle: SidebarHighlightRepoTag? = nil,
+    customTitle: String? = nil
   ) {
     self.accent =
       if isMainWorktree { .main } else if isPinned { .pinned } else { .default }
 
+    // User override (trimmed) takes precedence over derived names.
+    let trimmedCustom = customTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedCustom = (trimmedCustom?.isEmpty == false) ? trimmedCustom : nil
+
     if kind == .folder {
-      self.name = branchName
+      self.name = resolvedCustom ?? branchName
       // Folder rows ARE the repo, so a repo prefix would just repeat the title.
       self.subtitle = .none
       return
@@ -116,7 +123,7 @@ struct ResolvedRowDisplay: Equatable {
 
     let resolvedWorktreeName = worktreeName ?? "Default"
     let effectiveWorktreeName = resolvedWorktreeName.isEmpty ? branchName : resolvedWorktreeName
-    self.name = branchName
+    self.name = resolvedCustom ?? branchName
 
     let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
     let isMatch = effectiveWorktreeName == branchLastComponent
@@ -235,6 +242,9 @@ private struct TitleView: View, Equatable {
   let name: String
   let subtitle: ResolvedRowDisplay.Subtitle
   let accent: WorktreeAccent
+  /// User-supplied row tint. When set, paints the title — otherwise the
+  /// title uses the platform default foreground.
+  let customTint: RepositoryColor?
   let isLifecycleBusy: Bool
   let isTaskRunning: Bool
   // `==` ignores @Environment; SwiftUI tracks env changes separately.
@@ -244,6 +254,7 @@ private struct TitleView: View, Equatable {
     lhs.name == rhs.name
       && lhs.subtitle == rhs.subtitle
       && lhs.accent == rhs.accent
+      && lhs.customTint == rhs.customTint
       && lhs.isLifecycleBusy == rhs.isLifecycleBusy
       && lhs.isTaskRunning == rhs.isTaskRunning
   }
@@ -253,10 +264,14 @@ private struct TitleView: View, Equatable {
     let isEmphasized = backgroundProminence == .increased
     let accentStyle = accent.shapeStyle(emphasized: isEmphasized)
     VStack(alignment: .leading, spacing: 0) {
-      Text(name)
+      let titleText = Text(name)
         .font(.body)
         .lineLimit(1)
-        .shimmer(isActive: isBusy)
+      if let customTint, !isEmphasized {
+        titleText.foregroundStyle(customTint.color).shimmer(isActive: isBusy)
+      } else {
+        titleText.shimmer(isActive: isBusy)
+      }
       switch subtitle {
       case .none:
         EmptyView()

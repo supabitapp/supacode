@@ -2,9 +2,11 @@ import ComposableArchitecture
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
+@Suite(.serialized)
 struct WorktreeCreationPromptFeatureTests {
   private func makeState(
     automaticBaseRef: String = "origin/main",
@@ -12,9 +14,11 @@ struct WorktreeCreationPromptFeatureTests {
     remoteNames: [String] = ["origin"],
     branchMenu: BaseRefBranchMenu? = nil,
     selectedBaseRef: String? = nil,
-    defaultWorktreeBaseDirectory: String = "/tmp/repo/.worktrees"
+    defaultWorktreeBaseDirectory: String = "/tmp/repo/.worktrees",
+    title: String = "",
+    color: RepositoryColor? = nil
   ) -> WorktreeCreationPromptFeature.State {
-    WorktreeCreationPromptFeature.State(
+    var state = WorktreeCreationPromptFeature.State(
       repositoryID: "/tmp/repo/",
       repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
       repositoryName: "repo",
@@ -28,6 +32,9 @@ struct WorktreeCreationPromptFeatureTests {
       defaultWorktreeBaseDirectory: defaultWorktreeBaseDirectory,
       validationMessage: nil
     )
+    state.title = title
+    state.color = color
+    return state
   }
 
   @Test func baseRefSelectedUpdatesSelectionAndClearsValidation() async {
@@ -82,7 +89,9 @@ struct WorktreeCreationPromptFeatureTests {
           branchName: "feature/new",
           baseRef: "origin/dev",
           fetchOrigin: true,
-          placement: WorktreePlacementOverride(name: nil, path: nil)
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: nil,
+          color: nil
         )
       )
     )
@@ -106,7 +115,9 @@ struct WorktreeCreationPromptFeatureTests {
           branchName: "feature/new",
           baseRef: "main",
           fetchOrigin: false,
-          placement: WorktreePlacementOverride(name: nil, path: nil)
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: nil,
+          color: nil
         )
       )
     )
@@ -137,7 +148,9 @@ struct WorktreeCreationPromptFeatureTests {
           placement: WorktreePlacementOverride(
             name: "feature_new",
             path: "~/Repos"
-          )
+          ),
+          title: nil,
+          color: nil
         )
       )
     )
@@ -219,5 +232,86 @@ struct WorktreeCreationPromptFeatureTests {
     state.branchName = "feature/foo"
     state.worktreeNameOverride = "feature_foo"
     #expect(state.resolvedWorktreeLocationPreview == "/tmp/repo/.worktrees/feature_foo/")
+  }
+
+  // MARK: - Title / Color customization
+
+  @Test func submitTrimsBranchAndForwardsTitleAndColor() async {
+    var state = makeState(title: "  Spicy  ", color: .blue)
+    state.branchName = "  feature/x  "
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped)
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/x",
+          baseRef: nil,
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: "Spicy",
+          color: .blue
+        )
+      )
+    )
+  }
+
+  @Test func submitPreservesTitleWhenItMatchesBranch() async {
+    var state = makeState(title: "feature/x")
+    state.branchName = "feature/x"
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped)
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/x",
+          baseRef: nil,
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: "feature/x",
+          color: nil
+        )
+      )
+    )
+  }
+
+  @Test func submitWithNoCustomizationForwardsNilTitleAndColor() async {
+    var state = makeState()
+    state.branchName = "feature/x"
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped)
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/x",
+          baseRef: nil,
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: nil,
+          color: nil
+        )
+      )
+    )
+  }
+
+  @Test func emptyBranchNameBlocksSubmit() async {
+    let store = TestStore(initialState: makeState()) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped) {
+      $0.validationMessage = "Branch name required."
+    }
   }
 }

@@ -1,4 +1,6 @@
 import ComposableArchitecture
+import SupacodeSettingsFeature
+import SupacodeSettingsShared
 import SwiftUI
 
 struct WorktreeCreationPromptView: View {
@@ -35,6 +37,20 @@ struct WorktreeCreationPromptView: View {
         .disabled(store.isSelectedBaseRefLocal)
       }
 
+      Section {
+        TextField(
+          "Title",
+          text: $store.title,
+          prompt: Text("Leave blank to use branch name")
+        )
+        LabeledContent("Color") {
+          ColorSwatchRow(color: $store.color)
+        }
+      } header: {
+        Text("Title & Color")
+        Text("Optional — overrides the row title and tint. Leave blank to use the branch name.")
+      }
+
       WorktreeOptionsSection(store: store)
     }
     .formStyle(.grouped)
@@ -63,6 +79,7 @@ struct WorktreeCreationPromptView: View {
     }
     .frame(minWidth: 420)
     .task { isBranchFieldFocused = true }
+    .dismissSystemColorPanelOnDisappear()
   }
 }
 

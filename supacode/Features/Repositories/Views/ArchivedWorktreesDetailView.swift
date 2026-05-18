@@ -43,6 +43,8 @@ struct ArchivedWorktreesDetailView: View {
                 ArchivedWorktreeRowView(
                   worktree: worktree,
                   pullRequest: store.state.sidebarItems[id: worktree.id]?.pullRequest,
+                  customTitle: store.state.sidebarItems[id: worktree.id]?.customTitle,
+                  customTint: store.state.sidebarItems[id: worktree.id]?.customTint,
                   onUnarchive: {
                     store.send(.unarchiveWorktree(worktree.id))
                   },

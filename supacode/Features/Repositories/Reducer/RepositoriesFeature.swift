@@ -91,6 +91,12 @@ struct RepositoriesFeature {
     var isOpenPanelPresented = false
     var isInitialLoadComplete = false
     var pendingWorktrees: [PendingWorktree] = []
+    /// In-flight customization payloads, keyed by `(repositoryID, branchName)`
+    /// so the New Worktree prompt's `submit` delegate can hand title / color
+    /// off without bloating four action signatures in the creation chain.
+    /// Drained when the `PendingWorktree` materialises in `createWorktreeInRepository`,
+    /// or on a prompt cancel / dismiss.
+    var pendingCreationCustomizations: [Repository.ID: [String: PendingWorktree.Customization]] = [:]
     /// In-flight repo-level removals keyed by repository id. Each record
     /// carries the disposition (only `.gitRepositoryUnlink` / `.folderUnlink`
     /// / `.folderTrash`) and the id of the owning batch aggregator that
@@ -166,6 +172,7 @@ struct RepositoriesFeature {
     var toolbarNotificationGroupsCache: [ToolbarNotificationRepositoryGroup] = []
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
+    @Presents var worktreeCustomization: WorktreeCustomizationFeature.State?
     @Presents var alert: AlertState<Alert>?
 
     // MARK: - Sidebar items (per-row TCA collection).
@@ -385,9 +392,11 @@ struct RepositoriesFeature {
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
+    case requestCustomizeWorktree(Worktree.ID, Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
     case repositoryCustomization(PresentationAction<RepositoryCustomizationFeature.Action>)
+    case worktreeCustomization(PresentationAction<WorktreeCustomizationFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
   }
@@ -959,6 +968,9 @@ struct RepositoriesFeature {
         return .none
 
       case .worktreeCreationPrompt(.presented(.delegate(.cancel))):
+        if let repositoryID = state.worktreeCreationPrompt?.repositoryID {
+          state.pendingCreationCustomizations.removeValue(forKey: repositoryID)
+        }
         state.worktreeCreationPrompt = nil
         return .merge(
           .cancel(id: CancelID.worktreePromptLoad),
@@ -968,10 +980,30 @@ struct RepositoriesFeature {
       case .worktreeCreationPrompt(
         .presented(
           .delegate(
-            .submit(let repositoryID, let branchName, let baseRef, let fetchOrigin, let placement)
+            .submit(
+              let repositoryID,
+              let branchName,
+              let baseRef,
+              let fetchOrigin,
+              let placement,
+              let title,
+              let color
+            )
           )
         )
       ):
+        // Overwrite (or clear) any stale entry for the same (repo, branch)
+        // so a user who typed a title, hit a validation error, blanked the
+        // field, and re-submitted doesn't keep the dropped value alive.
+        if title != nil || color != nil {
+          state.pendingCreationCustomizations[repositoryID, default: [:]][branchName] =
+            PendingWorktree.Customization(title: title, color: color)
+        } else {
+          state.pendingCreationCustomizations[repositoryID]?.removeValue(forKey: branchName)
+          if state.pendingCreationCustomizations[repositoryID]?.isEmpty == true {
+            state.pendingCreationCustomizations.removeValue(forKey: repositoryID)
+          }
+        }
         return .send(
           .startPromptedWorktreeCreation(
             repositoryID: repositoryID,
@@ -1003,6 +1035,13 @@ struct RepositoriesFeature {
         if repository.worktrees.contains(where: { $0.name.lowercased() == normalizedBranchName }) {
           state.worktreeCreationPrompt?.isValidating = false
           state.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
+          // Synchronous duplicate rejection — drop the stashed customization
+          // so it can't be re-applied if the user retries with a different
+          // branch name and the dict entry survives across the second submit.
+          state.pendingCreationCustomizations[repositoryID]?.removeValue(forKey: branchName)
+          if state.pendingCreationCustomizations[repositoryID]?.isEmpty == true {
+            state.pendingCreationCustomizations.removeValue(forKey: repositoryID)
+          }
           return .none
         }
         let gitClient = gitClient
@@ -1040,6 +1079,13 @@ struct RepositoriesFeature {
         state.worktreeCreationPrompt?.isValidating = false
         if let duplicateMessage {
           state.worktreeCreationPrompt?.validationMessage = duplicateMessage
+          // Async-validation duplicate rejection — same drop reasoning as
+          // the sync path: the in-flight customization is no longer
+          // associated with a creation that will land.
+          state.pendingCreationCustomizations[repositoryID]?.removeValue(forKey: branchName)
+          if state.pendingCreationCustomizations[repositoryID]?.isEmpty == true {
+            state.pendingCreationCustomizations.removeValue(forKey: repositoryID)
+          }
           return .none
         }
         state.worktreeCreationPrompt = nil
@@ -1082,6 +1128,9 @@ struct RepositoriesFeature {
             title: "Unable to create worktree",
             message: "This repository is being removed."
           )
+          // Creation is being rejected; drop any in-flight customization for
+          // this repo so it can't bleed into a future creation attempt.
+          state.pendingCreationCustomizations.removeValue(forKey: repository.id)
           return .none
         }
         let previousSelection = state.selectedWorktreeID
@@ -1101,11 +1150,27 @@ struct RepositoriesFeature {
         let copyUntrackedOnWorktreeCreate =
           repositorySettings.copyUntrackedOnWorktreeCreate ?? globalSettings.copyUntrackedOnWorktreeCreate
         let initialWorktreeName: String? = if case .explicit(let name) = nameSource { name } else { nil }
+        // Pull any customization the New Worktree prompt parked for this
+        // (repo, branch) and attach it to the pending row so reconcile
+        // can render the user-typed title / color while git creates the
+        // worktree. Drop the dict entry to avoid leaks if the same name
+        // is used in a later run.
+        let pendingCustomization: PendingWorktree.Customization?
+        if let initialWorktreeName {
+          pendingCustomization =
+            state.pendingCreationCustomizations[repository.id]?.removeValue(forKey: initialWorktreeName)
+          if state.pendingCreationCustomizations[repository.id]?.isEmpty == true {
+            state.pendingCreationCustomizations.removeValue(forKey: repository.id)
+          }
+        } else {
+          pendingCustomization = nil
+        }
         state.pendingWorktrees.append(
           PendingWorktree(
             id: pendingID,
             repositoryID: repository.id,
-            progress: WorktreeCreationProgress(stage: .loadingLocalBranches, worktreeName: initialWorktreeName)
+            progress: WorktreeCreationProgress(stage: .loadingLocalBranches, worktreeName: initialWorktreeName),
+            customization: pendingCustomization
           )
         )
         Self.syncSidebar(&state)
@@ -1413,6 +1478,10 @@ struct RepositoriesFeature {
         }
 
       case .worktreeCreationPrompt(.dismiss):
+        // Don't drain `pendingCreationCustomizations` here — `.dismiss` also
+        // fires on the success path (when the reducer nils the prompt after
+        // validation passes), and the in-flight creation still needs the
+        // customization. Only `.cancel` represents an explicit user back-out.
         state.worktreeCreationPrompt = nil
         return .merge(
           .cancel(id: CancelID.worktreePromptLoad),
@@ -1433,6 +1502,11 @@ struct RepositoriesFeature {
         let pendingID
       ):
         analyticsClient.capture("worktree_created", nil)
+        // Capture the pending row's customization BEFORE the pending drops,
+        // then forward it to the bucketed Item so reconcile renders the
+        // user-typed title / color from the very first paint after the
+        // pending row swaps to the real worktree.
+        let carriedCustomization = state.pendingWorktrees.first(where: { $0.id == pendingID })?.customization
         state.removePendingWorktree(pendingID)
         if state.selection == .worktree(pendingID) {
           // History was already recorded when the pending row was
@@ -1443,6 +1517,23 @@ struct RepositoriesFeature {
           state.setSingleWorktreeSelection(worktree.id, recordHistory: false)
         }
         state.insertWorktree(worktree, repositoryID: repositoryID)
+        if let carriedCustomization, carriedCustomization.title != nil || carriedCustomization.color != nil {
+          // Seed `.unpinned` so the first reconcile renders the customized
+          // row. `reconcileSidebarState` (run by the follow-up
+          // `.reloadRepositories`) treats present buckets as canonical and
+          // leaves this entry alone — the title / color round-trip across
+          // a full reload.
+          state.$sidebar.withLock { sidebar in
+            var section = sidebar.sections[repositoryID] ?? .init()
+            var bucket = section.buckets[.unpinned] ?? .init()
+            var item = bucket.items[worktree.id] ?? .init()
+            item.title = carriedCustomization.title
+            item.color = carriedCustomization.color
+            bucket.items[worktree.id] = item
+            section.buckets[.unpinned] = bucket
+            sidebar.sections[repositoryID] = section
+          }
+        }
         Self.syncSidebar(&state)
         // Synchronous so the detail body never observes a brief `.idle` window
         // between the real-worktree swap and the setup-script path.
@@ -3395,6 +3486,59 @@ struct RepositoriesFeature {
       case .repositoryCustomization:
         return .none
 
+      case .requestCustomizeWorktree(let worktreeID, let repositoryID):
+        // Folder repos, main worktrees, and pending rows have no
+        // user-facing context-menu surface for customization. Guard so a
+        // future deeplink / palette entry can't write customization that
+        // the row would never display.
+        guard let repository = state.repositories[id: repositoryID],
+          repository.isGitRepository,
+          let worktree = repository.worktrees.first(where: { $0.id == worktreeID }),
+          !state.isMainWorktree(worktree)
+        else {
+          return .none
+        }
+        let bucket = state.sidebar.currentBucket(of: worktreeID, in: repositoryID)
+        let storedItem = bucket.flatMap {
+          state.sidebar.sections[repositoryID]?.buckets[$0]?.items[worktreeID]
+        }
+        state.worktreeCustomization = WorktreeCustomizationFeature.State(
+          worktreeID: worktreeID,
+          repositoryID: repositoryID,
+          defaultName: worktree.name,
+          title: storedItem?.title ?? "",
+          color: storedItem?.color
+        )
+        return .none
+
+      case .worktreeCustomization(.presented(.delegate(.cancel))):
+        state.worktreeCustomization = nil
+        return .none
+
+      case .worktreeCustomization(
+        .presented(.delegate(.save(let worktreeID, let repositoryID, let title, let color)))
+      ):
+        // No-op when the worktree was reconciled out between sheet open
+        // and save. A fresh `.init()` Item lands on the next reconcile
+        // without customization, which matches the "nothing to override"
+        // intent that an absent bucket should produce.
+        if let bucketID = state.sidebar.currentBucket(of: worktreeID, in: repositoryID) {
+          state.$sidebar.withLock { sidebar in
+            sidebar.sections[repositoryID]?.buckets[bucketID]?.items[worktreeID]?.title = title
+            sidebar.sections[repositoryID]?.buckets[bucketID]?.items[worktreeID]?.color = color
+          }
+          RepositoriesFeature.syncSidebar(&state)
+        }
+        state.worktreeCustomization = nil
+        return .none
+
+      case .worktreeCustomization(.dismiss):
+        state.worktreeCustomization = nil
+        return .none
+
+      case .worktreeCustomization:
+        return .none
+
       case .contextMenuOpenWorktree(let worktreeID, let action):
         return .send(.delegate(.openWorktreeInApp(worktreeID, action)))
 
@@ -3426,6 +3570,9 @@ struct RepositoriesFeature {
     }
     .ifLet(\.$repositoryCustomization, action: \.repositoryCustomization) {
       RepositoryCustomizationFeature()
+    }
+    .ifLet(\.$worktreeCustomization, action: \.worktreeCustomization) {
+      WorktreeCustomizationFeature()
     }
     // Targeted post-reduce hook: only the actions that demonstrably touch
     // structure inputs trigger a recompute. The Equatable diff inside the
@@ -3658,11 +3805,66 @@ struct RepositoriesFeature {
         addedCounts[id] = added
       }
     }
+    // Map repo → set of newly-discovered worktree names, so we can drop a
+    // pending row by NAME when a reload races the per-pending success
+    // handler. Falling back to count-based drop preserves the old shape for
+    // pending rows that haven't picked a final name yet (e.g. the random
+    // path that names mid-stream).
+    var remainingDiscoveredNamesByRepo: [Repository.ID: Set<String>] = [:]
+    for repository in repositories {
+      let previousNames = Set(
+        state.repositories[id: repository.id]?.worktrees.map(\.name) ?? []
+      )
+      let added = Set(repository.worktrees.map(\.name)).subtracting(previousNames)
+      if !added.isEmpty { remainingDiscoveredNamesByRepo[repository.id] = added }
+    }
+    var customizationTransfers: [(Repository.ID, String, PendingWorktree.Customization)] = []
     let filteredPendingWorktrees = state.pendingWorktrees.filter { pending in
       guard repositoryIDs.contains(pending.repositoryID) else { return false }
+      // Name match first: a customized pending whose final name we know
+      // hands its title / color to the bucketed Item for the matching
+      // newly-discovered worktree before being dropped.
+      if let pendingName = pending.progress.worktreeName,
+        remainingDiscoveredNamesByRepo[pending.repositoryID]?.contains(pendingName) == true
+      {
+        remainingDiscoveredNamesByRepo[pending.repositoryID]?.remove(pendingName)
+        if let customization = pending.customization,
+          customization.title != nil || customization.color != nil
+        {
+          customizationTransfers.append((pending.repositoryID, pendingName, customization))
+        }
+        addedCounts[pending.repositoryID, default: 0] = max(0, (addedCounts[pending.repositoryID] ?? 0) - 1)
+        return false
+      }
+      // Count-based fallback: only drop when there's still budget AND we
+      // didn't match by name above.
       guard let remaining = addedCounts[pending.repositoryID], remaining > 0 else { return true }
       addedCounts[pending.repositoryID] = remaining - 1
       return false
+    }
+    if !customizationTransfers.isEmpty {
+      state.$sidebar.withLock { sidebar in
+        for (repoID, worktreeName) in customizationTransfers.map({ ($0.0, $0.1) }) {
+          // Find the worktree id from the freshly-loaded roster (we matched
+          // by name above; promote the match to an id for the bucket write).
+          guard
+            let worktreeID = repositories.first(where: { $0.id == repoID })?
+              .worktrees.first(where: { $0.name == worktreeName })?.id
+          else { continue }
+          let customization = customizationTransfers.first(where: { $0.0 == repoID && $0.1 == worktreeName })!.2
+          var section = sidebar.sections[repoID] ?? .init()
+          var bucket = section.buckets[.unpinned] ?? .init()
+          var item = bucket.items[worktreeID] ?? .init()
+          // Don't overwrite a value the user set via Customize Worktree…
+          // between the pending creation and the reload — the bucketed Item
+          // is authoritative once non-nil.
+          if item.title == nil { item.title = customization.title }
+          if item.color == nil { item.color = customization.color }
+          bucket.items[worktreeID] = item
+          section.buckets[.unpinned] = bucket
+          sidebar.sections[repoID] = section
+        }
+      }
     }
     let availableWorktreeIDs = Set(repositories.flatMap { $0.worktrees.map(\.id) })
     let (filteredRemovingRepositoryIDs, filteredActiveRemovalBatches) =

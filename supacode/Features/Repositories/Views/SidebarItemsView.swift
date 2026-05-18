@@ -686,6 +686,18 @@ private struct SidebarItemContextMenu: View {
         }
         .help("Open folder settings")
         Divider()
+      } else if let row = contextRows.first,
+        !row.isMainWorktree,
+        !row.lifecycle.isPending
+      {
+        // Main worktrees, pending rows, and folders have no sidebar entry
+        // that Customize Worktree… could meaningfully retint — guard so the
+        // menu only offers the action for rows that will visibly reflect it.
+        Button("Customize Worktree…", systemImage: "paintpalette") {
+          store.send(.requestCustomizeWorktree(rowID, repositoryID))
+        }
+        .help("Set a custom title or color for this worktree")
+        Divider()
       }
     }
 

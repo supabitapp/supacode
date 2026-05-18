@@ -85,6 +85,14 @@ struct ContentView: View {
     ) { customizationStore in
       RepositoryCustomizationView(store: customizationStore)
     }
+    .sheet(
+      item: $repositoriesStore.scope(
+        state: \.worktreeCustomization,
+        action: \.worktreeCustomization
+      )
+    ) { customizationStore in
+      WorktreeCustomizationView(store: customizationStore)
+    }
     .focusedSceneAction(\.toggleLeftSidebarAction, enabled: true) {
       withAnimation(.easeOut(duration: 0.2)) {
         leftSidebarVisibility = leftSidebarVisibility == .detailOnly ? .all : .detailOnly
