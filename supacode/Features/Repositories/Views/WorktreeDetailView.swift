@@ -214,6 +214,13 @@ struct WorktreeDetailView: View {
         MultiSelectedWorktreesDetailView(rows: selectedWorktreeSummaries)
       } else if let loadingInfo {
         WorktreeLoadingView(info: loadingInfo)
+      } else if let failedRepositoryID = repositories.selectedFailedRepositoryID {
+        FailedRepositoryDetailView(
+          repositoryID: failedRepositoryID,
+          failureMessage: repositories.loadFailuresByID[failedRepositoryID]
+        ) {
+          store.send(.repositories(.requestRemoveFailedRepository(failedRepositoryID)))
+        }
       } else if let selectedWorktree, selectedWorktree.isMissing {
         MissingWorktreeDetailView(worktree: selectedWorktree) {
           guard let repositoryID = repositories.sidebarItems[id: selectedWorktree.id]?.repositoryID
@@ -648,6 +655,39 @@ struct WorktreeDetailView: View {
 }
 
 // MARK: - Detail placeholder.
+
+private struct FailedRepositoryDetailView: View {
+  let repositoryID: Repository.ID
+  let failureMessage: String?
+  let requestRemove: () -> Void
+
+  var body: some View {
+    let path = URL(fileURLWithPath: repositoryID).standardizedFileURL.path(percentEncoded: false)
+    ContentUnavailableView {
+      Label("Repository unavailable", systemImage: "exclamationmark.triangle.fill")
+        .foregroundStyle(.pink)
+    } description: {
+      VStack(spacing: 6) {
+        Text("Restore the repository to keep working here, or remove it from Supacode.")
+        // Diagnostic surface for the underlying load failure (permission denied,
+        // missing dir, etc) without disrupting the uniform layout.
+        Text(path)
+          .monospaced()
+          .textSelection(.enabled)
+          .help(failureMessage ?? "")
+      }
+    } actions: {
+      Button(
+        "Remove Repository…",
+        systemImage: "folder.badge.minus",
+        role: .destructive,
+        action: requestRemove
+      )
+      .help("Remove this repository from Supacode. Files on disk are untouched.")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
 
 private struct MissingWorktreeDetailView: View {
   let worktree: Worktree

@@ -329,6 +329,7 @@ struct RepositoriesFeature {
     case unpinnedWorktreesMoved(repositoryID: Repository.ID, IndexSet, Int)
     case deleteWorktreeFailed(String, worktreeID: Worktree.ID)
     case requestDeleteRepository(Repository.ID)
+    case requestRemoveFailedRepository(Repository.ID)
     case removeFailedRepository(Repository.ID)
     /// Per-target signal feeding the batch aggregator. Every
     /// repo-level removal path (folder via delete pipeline,
@@ -412,6 +413,7 @@ struct RepositoriesFeature {
     case confirmArchiveWorktrees([ArchiveWorktreeTarget])
     case confirmDeleteSidebarItems([DeleteWorktreeTarget], disposition: DeleteDisposition)
     case confirmDeleteRepository(Repository.ID)
+    case confirmRemoveFailedRepository(Repository.ID)
     case viewTerminalTab(Worktree.ID, tabId: TerminalTabID)
   }
 
@@ -542,6 +544,7 @@ struct RepositoriesFeature {
         state.loadFailuresByID = Dictionary(
           uniqueKeysWithValues: failures.map { ($0.rootID, $0.message) }
         )
+        state.dropStaleFailedRepositorySelection()
         let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
         let selectionChanged = state.hasSelectionChanged(
           previousSelectionID: previousSelection,
@@ -635,6 +638,7 @@ struct RepositoriesFeature {
         state.loadFailuresByID = Dictionary(
           uniqueKeysWithValues: failures.map { ($0.rootID, $0.message) }
         )
+        state.dropStaleFailedRepositorySelection()
         if !invalidRoots.isEmpty {
           let message = invalidRoots.map { "Supacode couldn't read \($0)." }.joined(separator: "\n")
           state.alert = messageAlert(
@@ -2183,12 +2187,23 @@ struct RepositoriesFeature {
         state.alert = confirmationAlertForRepositoryRemoval(repositoryID: repositoryID, state: state)
         return .none
 
+      case .requestRemoveFailedRepository(let repositoryID):
+        state.alert = confirmationAlertForFailedRepositoryRemoval(
+          repositoryID: repositoryID, state: state
+        )
+        return .none
+
       case .removeFailedRepository(let repositoryID):
-        state.alert = nil
         state.loadFailuresByID.removeValue(forKey: repositoryID)
         state.repositoryRoots.removeAll {
           $0.standardizedFileURL.path(percentEncoded: false) == repositoryID
         }
+        // Drop persisted customization so re-adding the same path doesn't
+        // silently restore the old title/color, matching the healthy-repo path.
+        state.$sidebar.withLock { sidebar in
+          sidebar.sections.removeValue(forKey: repositoryID)
+        }
+        state.dropStaleFailedRepositorySelection()
         return .run { send in
           let loadedPaths = await repositoryPersistence.loadRoots()
           var seen: Set<String> = []
@@ -2208,6 +2223,10 @@ struct RepositoriesFeature {
           )
         }
         .cancellable(id: CancelID.load, cancelInFlight: true)
+
+      case .alert(.presented(.confirmRemoveFailedRepository(let repositoryID))):
+        state.alert = nil
+        return .send(.removeFailedRepository(repositoryID))
 
       case .alert(.presented(.confirmDeleteRepository(let repositoryID))):
         guard let repository = state.repositories[id: repositoryID] else {
@@ -3742,11 +3761,18 @@ extension RepositoriesFeature.State {
     guard !isShowingArchivedWorktrees else {
       return [.archivedWorktrees]
     }
+    if case .failedRepository(let id) = selection {
+      return [.failedRepository(id)]
+    }
     var selections = Set(sidebarSelectedWorktreeIDs.map(SidebarSelection.worktree))
     if let selectedWorktreeID {
       selections.insert(.worktree(selectedWorktreeID))
     }
     return selections
+  }
+
+  var selectedFailedRepositoryID: Repository.ID? {
+    selection?.failedRepositoryID
   }
 
   func worktreeID(byOffset offset: Int) -> Worktree.ID? {
@@ -4048,6 +4074,9 @@ extension RepositoriesFeature.State {
       }
       if case .confirmDeleteSidebarItems(let targets, let disposition)? = button.action.action {
         return .confirmDeleteSidebarItems(targets, disposition: disposition)
+      }
+      if case .confirmRemoveFailedRepository(let repositoryID)? = button.action.action {
+        return .confirmRemoveFailedRepository(repositoryID)
       }
     }
     return nil
@@ -4579,6 +4608,14 @@ extension RepositoriesFeature.State {
       return .send(.delegate(.selectedWorktreeChanged(nil)))
     }
 
+    // Failed-repo selection is exclusive: drop any worktree selection
+    // and clear the detail pane's terminal binding.
+    if let failedID = selections.compactMap(\.failedRepositoryID).first {
+      selection = .failedRepository(failedID)
+      sidebarSelectedWorktreeIDs = []
+      return .send(.delegate(.selectedWorktreeChanged(nil)))
+    }
+
     // Validate against the live repository roster so this stays robust when
     // `sidebarGrouping` hasn't been reconciled yet (e.g. tests that drive the
     // reducer without going through `applyRepositories`).
@@ -4659,6 +4696,18 @@ extension RepositoriesFeature.State {
     }
     let gitRepositories = repositories.filter(\.isGitRepository)
     return gitRepositories.count == 1 ? gitRepositories.first : nil
+  }
+}
+
+extension RepositoriesFeature.State {
+  /// Clears `.failedRepository(id)` selection once `id` is no longer in
+  /// `loadFailuresByID` (it either loaded successfully or was removed),
+  /// so the detail pane lets go of `FailedRepositoryDetailView`.
+  mutating func dropStaleFailedRepositorySelection() {
+    guard case .failedRepository(let id) = selection,
+      loadFailuresByID[id] == nil
+    else { return }
+    selection = nil
   }
 }
 

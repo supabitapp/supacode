@@ -82,6 +82,31 @@ struct WindowTitleTests {
     #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "acme-app")
   }
 
+  @Test func computeFailedRepositoryUsesDirectoryName() {
+    var state = RepositoriesFeature.State()
+    let id = "/tmp/missing-repo"
+    state.repositoryRoots = [URL(fileURLWithPath: id)]
+    state.loadFailuresByID = [id: "Not found"]
+    state.selection = .failedRepository(id)
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "missing-repo · Unavailable")
+  }
+
+  @Test func computeFailedRepositoryPrefersCustomTitle() {
+    var state = RepositoriesFeature.State()
+    let id = "/tmp/missing-repo"
+    state.repositoryRoots = [URL(fileURLWithPath: id)]
+    state.loadFailuresByID = [id: "Not found"]
+    state.selection = .failedRepository(id)
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[id] ?? SidebarState.Section()
+      section.title = "My Project"
+      sidebar.sections[id] = section
+    }
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "My Project · Unavailable")
+  }
+
   // MARK: - helpers.
 
   private func makeState(repoName: String, customTitle: String?) -> RepositoriesFeature.State {

@@ -5887,6 +5887,56 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
 
+  // MARK: - Failed-repo removal.
+
+  @Test func requestRemoveFailedRepositoryShowsConfirmationAlert() async {
+    let repoID = "/tmp/missing-repo"
+    var state = RepositoriesFeature.State()
+    state.repositoryRoots = [URL(fileURLWithPath: repoID)]
+    state.loadFailuresByID = [repoID: "Not found"]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Remove missing-repo?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmRemoveFailedRepository(repoID)) {
+        TextState("Remove Repository")
+      }
+      ButtonState(role: .cancel) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("Removes the repository from Supacode. Nothing on disk is changed.")
+    }
+    await store.send(.requestRemoveFailedRepository(repoID)) {
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func dropStaleFailedRepositorySelectionClearsWhenFailureGone() {
+    var state = RepositoriesFeature.State()
+    state.selection = .failedRepository("/tmp/foo")
+    state.loadFailuresByID = [:]
+    state.dropStaleFailedRepositorySelection()
+    #expect(state.selection == nil)
+  }
+
+  @Test func dropStaleFailedRepositorySelectionPreservesWhenFailureStillPresent() {
+    var state = RepositoriesFeature.State()
+    state.selection = .failedRepository("/tmp/foo")
+    state.loadFailuresByID = ["/tmp/foo": "boom"]
+    state.dropStaleFailedRepositorySelection()
+    #expect(state.selection == .failedRepository("/tmp/foo"))
+  }
+
+  @Test func dropStaleFailedRepositorySelectionPreservesNonFailedSelection() {
+    var state = RepositoriesFeature.State()
+    state.selection = .archivedWorktrees
+    state.dropStaleFailedRepositorySelection()
+    #expect(state.selection == .archivedWorktrees)
+  }
+
   private func makeWorktree(
     id: String,
     name: String,
