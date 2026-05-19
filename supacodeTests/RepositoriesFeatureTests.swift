@@ -1123,9 +1123,6 @@ struct RepositoriesFeatureTests {
     await store.send(.createRandomWorktreeInRepository(repository.id))
     await store.receive(\.createRandomWorktreeSucceeded)
     await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: createdWorktree.id]?.lifecycle = .pending
-    }
-    await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: createdWorktree.id]?.shouldFocusTerminal = true
     }
     await store.finish()
@@ -3895,9 +3892,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
-      $0.reconcileSidebarForTesting()
-    }
-    await store.receive(\.sidebarItems) {
+      RepositoriesFeature.syncSidebar(&$0)
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
       $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
@@ -5681,9 +5676,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
-      $0.reconcileSidebarForTesting()
-    }
-    await store.receive(\.sidebarItems) {
+      RepositoriesFeature.syncSidebar(&$0)
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
       $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }

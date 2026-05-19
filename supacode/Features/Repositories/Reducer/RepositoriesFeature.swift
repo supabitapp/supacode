@@ -1358,10 +1358,10 @@ struct RepositoriesFeature {
         }
         state.insertWorktree(worktree, repositoryID: repositoryID)
         Self.syncSidebar(&state)
-        // Mark pending so the setup-script path picks it up after reconcile.
-        // Arm the focus token so the detail view auto-focuses on first show.
+        // Synchronous so the detail body never observes a brief `.idle` window
+        // between the real-worktree swap and the setup-script path.
+        state.sidebarItems[id: worktree.id]?.lifecycle = .pending
         return .merge(
-          .send(.sidebarItems(.element(id: worktree.id, action: .lifecycleChanged(.pending)))),
           .send(.sidebarItems(.element(id: worktree.id, action: .focusTerminalRequested))),
           .send(.reloadRepositories(animated: false)),
           .send(.delegate(.repositoriesChanged(state.repositories))),
