@@ -45,6 +45,9 @@ struct WorktreeTerminalTabsView: View {
           closeAll: {
             state.closeAllTabs()
           },
+          dismissSplitZoom: { tabId in
+            state.dismissSplitZoom(for: tabId)
+          },
           renameTab: { tabId, newTitle in
             state.tabManager.setCustomTitle(tabId, title: newTitle)
           },

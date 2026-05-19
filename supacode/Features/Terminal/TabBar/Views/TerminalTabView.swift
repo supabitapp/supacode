@@ -15,6 +15,7 @@ struct TerminalTabView: View {
   let tabStore: StoreOf<TerminalTabFeature>
   let onSelect: () -> Void
   let onClose: () -> Void
+  let onDismissSplitZoom: () -> Void
   let onRename: (String) -> Void
   @Binding var closeButtonGestureActive: Bool
   let isEditing: Bool
@@ -59,18 +60,17 @@ struct TerminalTabView: View {
       .allowsHitTesting(!isEditing)
       .opacity(isEditing ? 0 : 1)
 
-      // Trailing slot priority: close button (on hover) > ⌘ hint > lock (frozen tab) > notification dot.
-      // The lock subsumes the dot so a script that fires a bell on its way out doesn't contest the
-      // "this tab is frozen" signal.
+      // Trailing slot priority: zoom-dismiss > close (on hover) > ⌘ hint > lock > dot.
+      // The lock subsumes the dot so a bell on a frozen tab doesn't contest the lock signal.
       ZStack {
         if tab.isBlockingScriptCompleted {
           TerminalTabLockIndicator(
-            suppress: isHovering || isHoveringClose || isDragging || isShowingHint
+            suppress: isHovering || isHoveringClose || isDragging || isShowingHint || isSplitZoomed
           )
         } else {
           TerminalTabNotificationIndicator(
             tabStore: tabStore,
-            suppress: isHovering || isHoveringClose || isDragging || isShowingHint
+            suppress: isHovering || isHoveringClose || isDragging || isShowingHint || isSplitZoomed
           )
         }
         if isShowingHint, let shortcutHint {
@@ -81,14 +81,23 @@ struct TerminalTabView: View {
             .fontWeight(.regular)
             .foregroundStyle(.secondary)
         }
-        TerminalTabCloseButton(
-          isHoveringTab: isHovering,
-          isDragging: isDragging,
-          isShowingShortcutHint: isShowingHint,
-          closeAction: onClose,
-          closeButtonGestureActive: $closeButtonGestureActive,
-          isHoveringClose: $isHoveringClose
-        )
+        if isSplitZoomed {
+          TerminalTabExitSplitZoomButton(
+            isDragging: isDragging,
+            isShowingShortcutHint: isShowingHint,
+            dismissAction: onDismissSplitZoom,
+            closeButtonGestureActive: $closeButtonGestureActive
+          )
+        } else {
+          TerminalTabCloseButton(
+            isHoveringTab: isHovering,
+            isDragging: isDragging,
+            isShowingShortcutHint: isShowingHint,
+            closeAction: onClose,
+            closeButtonGestureActive: $closeButtonGestureActive,
+            isHoveringClose: $isHoveringClose
+          )
+        }
       }
       .animation(.easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration), value: isHovering)
       .padding(.trailing, TerminalTabBarMetrics.tabHorizontalPadding)
@@ -215,6 +224,10 @@ struct TerminalTabView: View {
     return isHovering
       ? TerminalTabBarMetrics.inactiveContentSaturationHover
       : TerminalTabBarMetrics.inactiveContentSaturationIdle
+  }
+
+  private var isSplitZoomed: Bool {
+    tabStore.state.isSplitZoomed
   }
 
   private var shortcutHint: String? {

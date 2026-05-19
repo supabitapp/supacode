@@ -16,6 +16,7 @@ struct TerminalTabsRowView: View {
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
+  let dismissSplitZoom: (TerminalTabID) -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let scrollReader: ScrollViewProxy
 
@@ -44,6 +45,9 @@ struct TerminalTabsRowView: View {
               },
               onClose: {
                 closeTab(id)
+              },
+              onDismissSplitZoom: {
+                dismissSplitZoom(id)
               },
               onRename: { newTitle in
                 renameTab(id, newTitle)

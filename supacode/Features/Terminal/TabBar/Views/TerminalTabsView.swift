@@ -10,6 +10,7 @@ struct TerminalTabsView: View {
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
   let closeAll: () -> Void
+  let dismissSplitZoom: (TerminalTabID) -> Void
   let renameTab: (TerminalTabID, String) -> Void
 
   @State private var draggingTabId: TerminalTabID?
@@ -40,6 +41,7 @@ struct TerminalTabsView: View {
             closeOthers: closeOthers,
             closeToRight: closeToRight,
             closeAll: closeAll,
+            dismissSplitZoom: dismissSplitZoom,
             renameTab: renameTab,
             scrollReader: scrollReader
           )

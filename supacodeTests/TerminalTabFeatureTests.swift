@@ -43,13 +43,44 @@ struct TerminalTabFeatureTests {
           tabID: tabID,
           surfaceIDs: [surface],
           activeSurfaceID: surface,
-          unseenNotificationCount: 3
+          unseenNotificationCount: 3,
+          isSplitZoomed: true
         )
       )
     ) {
       $0.surfaceIDs = [surface]
       $0.activeSurfaceID = surface
       $0.unseenNotificationCount = 3
+      $0.isSplitZoomed = true
+    }
+  }
+
+  @Test func projectionChangedTogglesSplitZoomedIndependently() async {
+    let tabID = TerminalTabID(rawValue: UUID())
+    let surface = UUID()
+    let store = TestStore(
+      initialState: TerminalTabFeature.State(
+        id: tabID,
+        worktreeID: "/tmp/repo",
+        surfaceIDs: [surface],
+        activeSurfaceID: surface,
+        unseenNotificationCount: 0,
+        isSplitZoomed: true
+      )
+    ) { TerminalTabFeature() }
+
+    await store.send(
+      .projectionChanged(
+        WorktreeTabProjection(
+          tabID: tabID,
+          surfaceIDs: [surface],
+          activeSurfaceID: surface,
+          unseenNotificationCount: 0,
+          isSplitZoomed: false
+        )
+      )
+    ) {
+      $0.isSplitZoomed = false
     }
   }
 

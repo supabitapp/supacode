@@ -1,4 +1,6 @@
 import AppKit
+import Sharing
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -88,6 +90,71 @@ struct SplitTreeTests {
 
     let visibleLeaves = fixture.state.splitTree(for: fixture.tabId).visibleLeaves()
     #expect(visibleLeaves.count == 2)
+  }
+
+  @Test func dismissSplitZoomClearsZoomedNode() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    let first = fixture.first
+
+    #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
+    #expect(fixture.state.isSplitZoomed(forTabID: fixture.tabId))
+
+    fixture.state.dismissSplitZoom(for: fixture.tabId)
+    #expect(!fixture.state.isSplitZoomed(forTabID: fixture.tabId))
+    #expect(fixture.state.splitTree(for: fixture.tabId).visibleLeaves().count == 2)
+  }
+
+  @Test func dismissSplitZoomOnNonZoomedTabIsNoop() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    #expect(!fixture.state.isSplitZoomed(forTabID: fixture.tabId))
+
+    fixture.state.dismissSplitZoom(for: fixture.tabId)
+    #expect(!fixture.state.isSplitZoomed(forTabID: fixture.tabId))
+  }
+
+  @Test func tabProjectionMirrorsSplitZoomedFlag() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    let first = fixture.first
+
+    var lastProjection: WorktreeTabProjection?
+    fixture.state.onTabProjectionChanged = { lastProjection = $0 }
+
+    #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
+    #expect(lastProjection?.isSplitZoomed == true)
+
+    fixture.state.dismissSplitZoom(for: fixture.tabId)
+    #expect(lastProjection?.isSplitZoomed == false)
+  }
+
+  @Test func tabBarStaysVisibleOnSingleZoomedTabWhenHideSingleTabBarOn() throws {
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    let originalHide = settingsFile.global.hideSingleTabBar
+    $settingsFile.withLock { $0.global.hideSingleTabBar = true }
+    defer { $settingsFile.withLock { $0.global.hideSingleTabBar = originalHide } }
+
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: Worktree(
+        id: "/tmp/repo/wt-zoom",
+        name: "wt-zoom",
+        detail: "detail",
+        workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-zoom"),
+        repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+      ),
+      splitPreserveZoomOnNavigation: { false }
+    )
+    let tabId = state.createTab()!
+    let first = state.splitTree(for: tabId).root!.leftmostLeaf()
+    _ = state.performSplitAction(.newSplit(direction: .right), for: first.id)
+    state.refreshTabBarVisibility()
+    // Two surfaces in one tab; bar hidden by the single-tab setting.
+    #expect(state.shouldHideTabBar)
+
+    #expect(state.performSplitAction(.toggleSplitZoom, for: first.id))
+    #expect(!state.shouldHideTabBar)
+
+    state.dismissSplitZoom(for: tabId)
+    #expect(state.shouldHideTabBar)
   }
 
   // Locks in that both the AppKit responder path (clicks -> onFocusChange)

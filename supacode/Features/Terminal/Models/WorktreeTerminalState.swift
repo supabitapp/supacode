@@ -21,6 +21,21 @@ struct WorktreeTabProjection: Equatable, Sendable {
   let surfaceIDs: [UUID]
   let activeSurfaceID: UUID?
   let unseenNotificationCount: Int
+  let isSplitZoomed: Bool
+
+  init(
+    tabID: TerminalTabID,
+    surfaceIDs: [UUID],
+    activeSurfaceID: UUID?,
+    unseenNotificationCount: Int,
+    isSplitZoomed: Bool = false
+  ) {
+    self.tabID = tabID
+    self.surfaceIDs = surfaceIDs
+    self.activeSurfaceID = activeSurfaceID
+    self.unseenNotificationCount = unseenNotificationCount
+    self.isSplitZoomed = isSplitZoomed
+  }
 }
 
 @MainActor
@@ -176,13 +191,24 @@ final class WorktreeTerminalState {
 
   private func updateShouldHideTabBar() {
     @Shared(.settingsFile) var settingsFile
-    shouldHideTabBar =
-      settingsFile.global.hideSingleTabBar
-      && tabManager.tabs.count == 1
+    // Force the bar visible on a split-zoomed single tab so the dismiss-zoom indicator has somewhere to live.
+    let wouldHide = settingsFile.global.hideSingleTabBar && tabManager.tabs.count == 1
+    let newValue = wouldHide && !trees.values.contains { $0.zoomed != nil }
+    guard shouldHideTabBar != newValue else { return }
+    shouldHideTabBar = newValue
   }
 
   func refreshTabBarVisibility() {
     updateShouldHideTabBar()
+  }
+
+  func isSplitZoomed(forTabID tabID: TerminalTabID) -> Bool {
+    trees[tabID]?.zoomed != nil
+  }
+
+  func dismissSplitZoom(for tabID: TerminalTabID) {
+    guard let tree = trees[tabID], tree.zoomed != nil else { return }
+    updateTree(tree.settingZoomed(nil), for: tabID)
   }
 
   func ensureInitialTab(focusing: Bool) {
@@ -1630,6 +1656,8 @@ final class WorktreeTerminalState {
   /// + the tab's unread count + focus without observing worktree-wide state.
   private func setTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
     trees[tabId] = tree
+    // Zoom transitions flip the hide-single-tab-bar gate.
+    updateShouldHideTabBar()
     emitTabProjection(for: tabId)
   }
 
@@ -1667,7 +1695,8 @@ final class WorktreeTerminalState {
       tabID: tabId,
       surfaceIDs: surfaceIDs,
       activeSurfaceID: focusedSurfaceIdByTab[tabId],
-      unseenNotificationCount: unseenCount
+      unseenNotificationCount: unseenCount,
+      isSplitZoomed: tree.zoomed != nil
     )
     guard lastTabProjections[tabId] != projection else { return }
     lastTabProjections[tabId] = projection
