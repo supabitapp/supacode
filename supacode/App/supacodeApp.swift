@@ -222,6 +222,12 @@ struct SupacodeApp: App {
         selectedTabID: { worktreeID in
           terminalManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
         },
+        selectedSurfaceID: { worktreeID in
+          guard let state = terminalManager.stateIfExists(for: worktreeID),
+            let tabID = state.tabManager.selectedTabId
+          else { return nil }
+          return state.activeSurfaceID(for: tabID)
+        },
         latestUnreadNotification: {
           terminalManager.latestUnreadNotificationLocation()
         },

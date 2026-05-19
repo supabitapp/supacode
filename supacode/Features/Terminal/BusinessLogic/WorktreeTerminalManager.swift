@@ -258,8 +258,9 @@ final class WorktreeTerminalManager {
       state(for: worktree).performBindingActionOnFocusedSurface("end_search")
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .selectTab, .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune,
-      .setNotificationsEnabled, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
+      .performBindingActionOnSurface, .selectTab, .focusSurface, .splitSurface, .destroyTab,
+      .destroySurface, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
+      .refreshTabBarVisibility, .beginTabRename:
       return false
     }
     return true
@@ -269,6 +270,8 @@ final class WorktreeTerminalManager {
     switch command {
     case .performBindingAction(let worktree, let action):
       state(for: worktree).performBindingActionOnFocusedSurface(action)
+    case .performBindingActionOnSurface(let worktree, let surfaceID, let action):
+      state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .focusSurface,
@@ -299,8 +302,9 @@ final class WorktreeTerminalManager {
       terminalLogger.info("Selected worktree \(id ?? "nil")")
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .startSearch, .searchSelection, .navigateSearchNext, .navigateSearchPrevious, .endSearch,
-      .selectTab, .focusSurface, .splitSurface, .destroyTab, .destroySurface, .beginTabRename:
+      .performBindingActionOnSurface, .startSearch, .searchSelection, .navigateSearchNext,
+      .navigateSearchPrevious, .endSearch, .selectTab, .focusSurface, .splitSurface, .destroyTab,
+      .destroySurface, .beginTabRename:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
   }

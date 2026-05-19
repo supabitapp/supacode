@@ -849,6 +849,8 @@ struct AppFeature {
           // and effect execution can't redirect the rename to the wrong tab.
           let tabID = terminalClient.selectedTabID(worktree.id)
           command = .beginTabRename(worktree, tabID: tabID)
+        } else if let surfaceID = terminalClient.selectedSurfaceID(worktree.id) {
+          command = .performBindingActionOnSurface(worktree, surfaceID: surfaceID, action: action)
         } else {
           command = .performBindingAction(worktree, action: action)
         }

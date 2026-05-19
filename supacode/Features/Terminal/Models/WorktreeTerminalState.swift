@@ -594,6 +594,13 @@ final class WorktreeTerminalState {
   }
 
   @discardableResult
+  func performBindingAction(_ action: String, onSurfaceID surfaceID: UUID) -> Bool {
+    guard let surface = surfaces[surfaceID] else { return false }
+    surface.performBindingAction(action)
+    return true
+  }
+
+  @discardableResult
   func navigateSearchOnFocusedSurface(_ direction: GhosttySearchDirection) -> Bool {
     guard let tabId = tabManager.selectedTabId,
       let focusedId = focusedSurfaceIdByTab[tabId],

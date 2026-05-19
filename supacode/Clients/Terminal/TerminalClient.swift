@@ -9,6 +9,10 @@ struct TerminalClient {
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
   var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TerminalTabID?
   var selectedTabID: @MainActor @Sendable (Worktree.ID) -> TerminalTabID?
+  /// Active surface in the selected tab. Lets the reducer capture the target
+  /// synchronously before an async dispatch races against AppKit focus reshuffle
+  /// (e.g. when a palette dismisses and the leftmost pane reclaims first responder).
+  var selectedSurfaceID: @MainActor @Sendable (Worktree.ID) -> UUID?
   var latestUnreadNotification: @MainActor @Sendable () -> NotificationLocation?
   var markNotificationRead: @MainActor @Sendable (Worktree.ID, UUID) -> Void
 
@@ -22,6 +26,7 @@ struct TerminalClient {
     case closeFocusedTab(Worktree)
     case closeFocusedSurface(Worktree)
     case performBindingAction(Worktree, action: String)
+    case performBindingActionOnSurface(Worktree, surfaceID: UUID, action: String)
     case startSearch(Worktree)
     case searchSelection(Worktree)
     case navigateSearchNext(Worktree)
@@ -87,6 +92,7 @@ extension TerminalClient: DependencyKey {
     surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
     tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
     selectedTabID: { _ in fatalError("TerminalClient.selectedTabID not configured") },
+    selectedSurfaceID: { _ in fatalError("TerminalClient.selectedSurfaceID not configured") },
     latestUnreadNotification: { fatalError("TerminalClient.latestUnreadNotification not configured") },
     markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") }
   )
@@ -99,6 +105,7 @@ extension TerminalClient: DependencyKey {
     surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
     tabID: unimplemented("TerminalClient.tabID", placeholder: nil),
     selectedTabID: unimplemented("TerminalClient.selectedTabID", placeholder: nil),
+    selectedSurfaceID: unimplemented("TerminalClient.selectedSurfaceID", placeholder: nil),
     latestUnreadNotification: unimplemented("TerminalClient.latestUnreadNotification", placeholder: nil),
     markNotificationRead: unimplemented("TerminalClient.markNotificationRead")
   )
