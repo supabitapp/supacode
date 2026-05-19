@@ -37,7 +37,10 @@ final class WorktreeTerminalState {
   private let worktree: Worktree
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
-  @ObservationIgnored private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
+  // Observed: any mutation re-renders `WorktreeTerminalTabsView`. Mutate only
+  // from user-initiated structural changes; per-surface churn must stay on
+  // `surfaceStates` / `WorktreeTabProjection` to keep agent storms cold.
+  private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
   @ObservationIgnored private var surfaces: [UUID: GhosttySurfaceView] = [:]
   @ObservationIgnored private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   /// Per-tab projection cache. `WorktreeTerminalState` recomputes from `trees`
