@@ -20,6 +20,9 @@ struct WorktreeTerminalTabsView: View {
 
   var body: some View {
     let state = manager.state(for: worktree) { shouldRunSetupScript }
+    // Must precede the body's tab-state read. Deferring to `.task` / `.onAppear`
+    // would reintroduce the closed-all flash on first render.
+    let _: Void = state.ensureInitialTab(focusing: false)
     let unfocusedSplitOverlay = manager.unfocusedSplitOverlay()
     let _ = chromeAppearance
     VStack(spacing: 0) {
@@ -78,7 +81,6 @@ struct WorktreeTerminalTabsView: View {
       }
     )
     .onAppear {
-      state.ensureInitialTab(focusing: false)
       if shouldAutoFocusTerminal {
         state.focusSelectedTab()
       }

@@ -52,6 +52,45 @@ struct WorktreeTerminalManagerTests {
     #expect(reusedState.pendingLayoutSnapshot == nil)
   }
 
+  @Test func ensureInitialTabCreatesTabSynchronously() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    state.ensureInitialTab(focusing: false)
+
+    #expect(state.hasAttemptedInitialTab)
+    #expect(state.tabManager.tabs.count == 1)
+    #expect(state.tabManager.selectedTabId != nil)
+  }
+
+  @Test func ensureInitialTabAfterCloseAllDoesNotAutoRecreate() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    state.ensureInitialTab(focusing: false)
+    state.closeAllTabs()
+
+    state.ensureInitialTab(focusing: false)
+
+    #expect(state.tabManager.tabs.isEmpty)
+    #expect(state.tabManager.selectedTabId == nil)
+  }
+
+  @Test func ensureInitialTabConsumesPendingSnapshotAndStickies() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    state.pendingLayoutSnapshot = makeLayoutSnapshot()
+
+    state.ensureInitialTab(focusing: false)
+
+    #expect(state.pendingLayoutSnapshot == nil)
+    #expect(state.hasAttemptedInitialTab)
+    #expect(state.tabManager.tabs.count == 1)
+  }
+
   @Test func buffersEventsUntilStreamCreated() async {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()

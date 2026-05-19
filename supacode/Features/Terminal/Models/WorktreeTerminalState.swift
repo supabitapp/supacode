@@ -72,7 +72,9 @@ final class WorktreeTerminalState {
   private var blockingScriptLaunchDirectories: [TerminalTabID: URL] = [:]
   private var lastBlockingScriptTabByKind: [BlockingScriptKind: TerminalTabID] = [:]
   private var pendingSetupScript: Bool
-  private var isEnsuringInitialTab = false
+  /// Sticky after first attempt so a reselect after `closeAllTabs` doesn't auto-recreate.
+  /// Intentionally never reset; resetting would re-arm the bug.
+  @ObservationIgnored private(set) var hasAttemptedInitialTab = false
   @ObservationIgnored var pendingLayoutSnapshot: TerminalLayoutSnapshot?
   private var lastReportedTaskStatus: WorktreeTaskStatus?
   private var lastEmittedFocusSurfaceId: UUID?
@@ -214,31 +216,17 @@ final class WorktreeTerminalState {
   }
 
   func ensureInitialTab(focusing: Bool) {
+    guard !hasAttemptedInitialTab else { return }
+    hasAttemptedInitialTab = true
     guard tabManager.tabs.isEmpty else { return }
-    guard !isEnsuringInitialTab else { return }
-    isEnsuringInitialTab = true
 
     if let snapshot = pendingLayoutSnapshot {
       pendingLayoutSnapshot = nil
       restoreFromSnapshot(snapshot, focusing: focusing)
-      isEnsuringInitialTab = false
       return
     }
-
-    Task {
-      let setupScript: String?
-      if pendingSetupScript {
-        setupScript = repositorySettings.setupScript
-      } else {
-        setupScript = nil
-      }
-      await MainActor.run {
-        if tabManager.tabs.isEmpty {
-          _ = createTab(focusing: focusing, setupScript: setupScript)
-        }
-        isEnsuringInitialTab = false
-      }
-    }
+    let setupScript = pendingSetupScript ? repositorySettings.setupScript : nil
+    _ = createTab(focusing: focusing, setupScript: setupScript)
   }
 
   @discardableResult
