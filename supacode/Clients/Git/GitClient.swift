@@ -8,6 +8,7 @@ enum GitOperation: String {
   case worktreeCreate = "worktree_create"
   case worktreeRemove = "worktree_remove"
   case worktreePrune = "worktree_prune"
+  case gitCommonDir = "git_common_dir"
   case repoIsBare = "repo_is_bare"
   case branchNames = "branch_names"
   case branchNameValidation = "branch_name_validation"
@@ -42,7 +43,26 @@ enum GitWorktreeCreateEvent: Equatable, Sendable {
   case finished(Worktree)
 }
 
+nonisolated struct WorktreeAdminEntry: Sendable {
+  let adminDirectory: URL
+  let worktreeDirectory: URL
+  let lockReason: String?
+}
+
+// JSON payload written to `<git-common-dir>/worktrees/<name>/locked`
+// for every worktree Supacode manages. Detection keys on `owner ==
+// "supacode"`; the other fields are forensic so a stranded lock file
+// can be traced back to a specific build.
+nonisolated struct SupacodeWorktreeLockMetadata: Codable, Sendable, Equatable {
+  let owner: String
+  let version: String?
+  let build: String?
+  let createdAt: Int64?
+}
+
 struct GitClient {
+  nonisolated static let supacodeLockOwner = "supacode"
+
   private struct WorktreeSortEntry {
     let worktree: Worktree
     let createdAt: Date
@@ -82,10 +102,13 @@ struct GitClient {
       return []
     }
     let data = Data(trimmed.utf8)
+    let fileManager = FileManager.default
     let entries = try JSONDecoder().decode([GitWtWorktreeEntry].self, from: data)
       .filter { !$0.isBare }
     let worktreeEntries = entries.enumerated().map { index, entry in
       let worktreeURL = URL(fileURLWithPath: entry.path).standardizedFileURL
+      // Orphan signal: working dir is gone (lock state checked separately when reconciling).
+      let isMissing = !fileManager.fileExists(atPath: entry.path)
       let name = entry.branch.isEmpty ? worktreeURL.lastPathComponent : entry.branch
       let detail = Self.relativePath(from: repositoryRootURL, to: worktreeURL)
       let id = worktreeURL.path(percentEncoded: false)
@@ -101,7 +124,8 @@ struct GitClient {
           detail: detail,
           workingDirectory: worktreeURL,
           repositoryRootURL: repositoryRootURL,
-          createdAt: createdAt
+          createdAt: createdAt,
+          isMissing: isMissing
         ),
         createdAt: sortDate,
         index: index
@@ -118,11 +142,189 @@ struct GitClient {
       .map(\.worktree)
   }
 
-  nonisolated func pruneWorktrees(for repoRoot: URL) async throws {
+  // Backfill-only: never drop Supacode-owned locks here. Supacode-initiated
+  // `removeWorktree` is the sole release path.
+  nonisolated func reconcileSupacodeLocks(for repoRoot: URL) async {
+    // Folder-kind roots have no git admin dir; skip the shell-outs.
+    guard Repository.isGitRepository(at: repoRoot) else { return }
+    let entries: [WorktreeAdminEntry]
+    do {
+      entries = try await worktreeAdminEntries(for: repoRoot)
+    } catch {
+      gitLogger.warning(
+        "Failed to enumerate admin entries for \(repoRoot.lastPathComponent): \(error)"
+      )
+      return
+    }
+    let fileManager = FileManager.default
+    for entry in entries {
+      guard entry.lockReason == nil else { continue }
+      let exists = fileManager.fileExists(
+        atPath: entry.worktreeDirectory.path(percentEncoded: false)
+      )
+      guard exists else { continue }
+      Self.writeSupacodeLock(at: entry.adminDirectory)
+      gitLogger.info(
+        "Backfilled Supacode lock for worktree \(entry.worktreeDirectory.lastPathComponent)"
+      )
+    }
+    do {
+      _ = try await runGit(
+        operation: .worktreePrune,
+        arguments: ["-C", repoRoot.path(percentEncoded: false), "worktree", "prune"]
+      )
+    } catch {
+      gitLogger.warning(
+        "Reconcile prune failed for \(repoRoot.lastPathComponent): \(error)"
+      )
+    }
+  }
+
+  nonisolated func gitCommonDirectory(for repoRoot: URL) async throws -> URL {
     let path = repoRoot.path(percentEncoded: false)
-    _ = try await runGit(
-      operation: .worktreePrune,
-      arguments: ["-C", path, "worktree", "prune"]
+    let output = try await runGit(
+      operation: .gitCommonDir,
+      arguments: ["-C", path, "rev-parse", "--git-common-dir"]
+    )
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      throw GitClientError.commandFailed(
+        command: "git rev-parse --git-common-dir",
+        message: "Empty output"
+      )
+    }
+    // `URL(fileURLWithPath:relativeTo:)` drops the leaf when the base
+    // URL doesn't carry `hasDirectoryPath`. Compose explicitly so the
+    // resolution doesn't depend on Foundation's disk probe.
+    let base = URL(filePath: repoRoot.path(percentEncoded: false), directoryHint: .isDirectory)
+    let resolved =
+      trimmed.hasPrefix("/")
+      ? URL(filePath: trimmed, directoryHint: .isDirectory)
+      : base.appending(path: trimmed, directoryHint: .isDirectory)
+    return resolved.standardizedFileURL
+  }
+
+  nonisolated func worktreeAdminEntries(for repoRoot: URL) async throws -> [WorktreeAdminEntry] {
+    let commonDir = try await gitCommonDirectory(for: repoRoot)
+    let worktreesDir = commonDir.appending(path: "worktrees", directoryHint: .isDirectory)
+    let fileManager = FileManager.default
+    var isDir: ObjCBool = false
+    let exists = fileManager.fileExists(
+      atPath: worktreesDir.path(percentEncoded: false),
+      isDirectory: &isDir
+    )
+    guard exists, isDir.boolValue else { return [] }
+    let contents =
+      (try? fileManager.contentsOfDirectory(
+        at: worktreesDir,
+        includingPropertiesForKeys: nil,
+        options: [.skipsHiddenFiles]
+      )) ?? []
+    return contents.compactMap(Self.readAdminEntry(at:))
+  }
+
+  // Read `<worktree>/.git` (the linked-worktree pointer file) and
+  // resolve the admin directory it points at. The `gitdir:` line may
+  // be absolute or relative to the worktree dir (git 2.48+ with
+  // `worktree.useRelativePaths`); resolve against `worktreeURL` so
+  // relative pointers don't get mistaken for orphans.
+  nonisolated static func adminDirectory(forWorktreeAt worktreeURL: URL) -> URL? {
+    let worktreeBase = worktreeURL.standardizedFileURL
+    let gitPointer = worktreeBase.appending(path: ".git")
+    var isDir: ObjCBool = false
+    let exists = FileManager.default.fileExists(
+      atPath: gitPointer.path(percentEncoded: false),
+      isDirectory: &isDir
+    )
+    guard exists, !isDir.boolValue else { return nil }
+    guard let raw = try? String(contentsOf: gitPointer, encoding: .utf8) else {
+      return nil
+    }
+    let prefix = "gitdir:"
+    for rawLine in raw.split(whereSeparator: \.isNewline) {
+      let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+      guard line.hasPrefix(prefix) else { continue }
+      let pathPart = String(line.dropFirst(prefix.count))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !pathPart.isEmpty else { return nil }
+      return URL(fileURLWithPath: pathPart, relativeTo: worktreeBase).standardizedFileURL
+    }
+    return nil
+  }
+
+  nonisolated static func writeSupacodeLock(at adminDirectory: URL) {
+    let lockFile = adminDirectory.appending(path: "locked")
+    try? currentSupacodeLockPayload().write(to: lockFile, atomically: true, encoding: .utf8)
+  }
+
+  nonisolated static func removeSupacodeLock(at adminDirectory: URL) {
+    let lockFile = adminDirectory.appending(path: "locked")
+    let path = lockFile.path(percentEncoded: false)
+    guard FileManager.default.fileExists(atPath: path) else { return }
+    // Don't strip a user's `git worktree lock --reason "..."`; only
+    // remove the file when it parses as a Supacode-owned payload.
+    guard let raw = try? String(contentsOf: lockFile, encoding: .utf8),
+      parseSupacodeLockMetadata(from: raw) != nil
+    else { return }
+    try? FileManager.default.removeItem(at: lockFile)
+  }
+
+  // Stamp version/build for forensics on stranded lock files.
+  nonisolated static func currentSupacodeLockPayload() -> String {
+    let info = Bundle.main.infoDictionary
+    let metadata = SupacodeWorktreeLockMetadata(
+      owner: supacodeLockOwner,
+      version: info?["CFBundleShortVersionString"] as? String,
+      build: info?["CFBundleVersion"] as? String,
+      createdAt: Int64(Date().timeIntervalSince1970)
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    guard let data = try? encoder.encode(metadata),
+      let payload = String(bytes: data, encoding: .utf8)
+    else {
+      return Self.minimalSupacodeLockPayload
+    }
+    return payload
+  }
+
+  nonisolated private static let minimalSupacodeLockPayload = #"{"owner":"supacode"}"#
+
+  nonisolated static func parseSupacodeLockMetadata(
+    from reason: String
+  ) -> SupacodeWorktreeLockMetadata? {
+    let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return nil }
+    guard let metadata = try? JSONDecoder().decode(SupacodeWorktreeLockMetadata.self, from: data)
+    else {
+      return nil
+    }
+    return metadata.owner == supacodeLockOwner ? metadata : nil
+  }
+
+  nonisolated private static func readAdminEntry(at adminDirectory: URL) -> WorktreeAdminEntry? {
+    let adminBase = adminDirectory.standardizedFileURL
+    let gitdirFile = adminBase.appending(path: "gitdir")
+    guard let raw = try? String(contentsOf: gitdirFile, encoding: .utf8) else {
+      return nil
+    }
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    // gitdir content may be absolute or relative to the admin dir.
+    let gitPointerURL = URL(fileURLWithPath: trimmed, relativeTo: adminBase)
+    let worktreeDirectory = gitPointerURL.deletingLastPathComponent().standardizedFileURL
+    let lockFile = adminBase.appending(path: "locked")
+    let lockReason: String?
+    if FileManager.default.fileExists(atPath: lockFile.path(percentEncoded: false)) {
+      let contents = (try? String(contentsOf: lockFile, encoding: .utf8)) ?? ""
+      lockReason = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+    } else {
+      lockReason = nil
+    }
+    return WorktreeAdminEntry(
+      adminDirectory: adminBase,
+      worktreeDirectory: worktreeDirectory,
+      lockReason: lockReason
     )
   }
 
@@ -312,6 +514,9 @@ struct GitClient {
                   repositoryRootURL: repositoryRootURL,
                   createdAt: createdAt
                 )
+                if let adminDir = Self.adminDirectory(forWorktreeAt: worktreeURL) {
+                  Self.writeSupacodeLock(at: adminDir)
+                }
                 continuation.yield(.finished(worktree))
                 continuation.finish()
                 return
@@ -462,38 +667,28 @@ struct GitClient {
     let rootPath = worktree.repositoryRootURL.path(percentEncoded: false)
     let worktreeURL = worktree.workingDirectory.standardizedFileURL
     let worktreePath = worktreeURL.path(percentEncoded: false)
+    await releaseSupacodeLock(forWorktreeAt: worktreeURL, repoRoot: worktree.repositoryRootURL)
     let relocatedURL = Self.relocateWorktreeDirectory(worktreeURL)
-    if let relocatedURL {
-      do {
-        _ = try await runGit(
-          operation: .worktreePrune,
-          arguments: ["-C", rootPath, "worktree", "prune", "--expire=now"]
-        )
-      } catch {
-        await runGitWorktreeRemove(rootPath: rootPath, worktreePath: worktreePath)
-      }
-      if deleteBranch, !worktree.name.isEmpty {
-        let names = try await localBranchNames(for: worktree.repositoryRootURL)
-        if names.contains(worktree.name.lowercased()) {
-          _ = try? await runGit(
-            operation: .branchDelete,
-            arguments: ["-C", rootPath, "branch", "-D", worktree.name]
-          )
-        }
-      }
-      Task.detached {
-        try? FileManager.default.removeItem(at: relocatedURL)
-      }
-      return worktree.workingDirectory
-    }
+    // Prune is silent on still-locked entries; the --force --force
+    // remove below is the actual guarantee.
+    _ = try? await runGit(
+      operation: .worktreePrune,
+      arguments: ["-C", rootPath, "worktree", "prune", "--expire=now"]
+    )
     await runGitWorktreeRemove(rootPath: rootPath, worktreePath: worktreePath)
     if deleteBranch, !worktree.name.isEmpty {
-      let names = try await localBranchNames(for: worktree.repositoryRootURL)
+      // Don't leak the relocated trash dir below if the branch lookup throws.
+      let names = (try? await localBranchNames(for: worktree.repositoryRootURL)) ?? []
       if names.contains(worktree.name.lowercased()) {
         _ = try? await runGit(
           operation: .branchDelete,
           arguments: ["-C", rootPath, "branch", "-D", worktree.name]
         )
+      }
+    }
+    if let relocatedURL {
+      Task.detached {
+        try? FileManager.default.removeItem(at: relocatedURL)
       }
     }
     return worktree.workingDirectory
@@ -634,6 +829,9 @@ struct GitClient {
     rootPath: String,
     worktreePath: String
   ) async {
+    // Double `--force` overrides both "dirty worktree" and "locked
+    // worktree" so an orphan whose lock survived an unlock attempt
+    // still gets cleaned up.
     _ = try? await runGit(
       operation: .worktreeRemove,
       arguments: [
@@ -642,9 +840,41 @@ struct GitClient {
         "worktree",
         "remove",
         "--force",
+        "--force",
         worktreePath,
       ]
     )
+  }
+
+  // Scan-fallback handles orphan rows whose `<worktree>/.git` pointer file
+  // is unreadable; path comparison is symlink-resolved to match git's form.
+  nonisolated private func releaseSupacodeLock(
+    forWorktreeAt worktreeURL: URL,
+    repoRoot: URL
+  ) async {
+    if let adminDir = Self.adminDirectory(forWorktreeAt: worktreeURL) {
+      Self.removeSupacodeLock(at: adminDir)
+      return
+    }
+    guard let entries = try? await worktreeAdminEntries(for: repoRoot) else { return }
+    let target = Self.canonicalPath(of: worktreeURL)
+    guard
+      let match = entries.first(where: {
+        Self.canonicalPath(of: $0.worktreeDirectory) == target
+      })
+    else { return }
+    Self.removeSupacodeLock(at: match.adminDirectory)
+  }
+
+  // `resolvingSymlinksInPath` skips the leaf when it's missing on disk;
+  // resolve the parent and re-append so orphan paths still normalize.
+  nonisolated private static func canonicalPath(of url: URL) -> String {
+    let standardized = url.standardizedFileURL
+    let parent = standardized.deletingLastPathComponent()
+    let resolvedParent = parent.resolvingSymlinksInPath()
+    let leaf = standardized.lastPathComponent
+    if leaf.isEmpty { return resolvedParent.path(percentEncoded: false) }
+    return resolvedParent.appending(path: leaf).path(percentEncoded: false)
   }
 
   nonisolated private static func relocateWorktreeDirectory(_ worktreeURL: URL) -> URL? {

@@ -23,6 +23,53 @@ struct AppFeatureDeeplinkTests {
     await store.receive(\.repositories.selectWorktree)
   }
 
+  @Test(.dependencies) func runDeeplinkOnMissingWorktreeSurfacesAlertAndBlocksSpawn() async {
+    let worktree = Worktree(
+      id: "/tmp/repo/gone",
+      name: "gone",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/gone"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      isMissing: true
+    )
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .run))) {
+      $0.repositories.alert = nil
+      $0.alert = AlertState {
+        TextState("Working directory missing")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState(
+          "\(worktree.name) has no working directory on disk. Restore it or delete the worktree."
+        )
+      }
+    }
+    await store.receive(\.repositories.selectWorktree)
+  }
+
+  // Cleanup actions (here: .pin) stay reachable on orphans so the user can
+  // dismiss the row; verifying one non-spawning case pins the spawnsShell matrix.
+  @Test(.dependencies) func pinDeeplinkOnMissingWorktreeRoutedWithoutOrphanAlert() async {
+    let worktree = Worktree(
+      id: "/tmp/repo/gone",
+      name: "gone",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/gone"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      isMissing: true
+    )
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .pin)))
+    await store.receive(\.repositories.selectWorktree)
+    await store.receive(\.repositories.pinWorktree)
+    #expect(store.state.alert == nil)
+  }
+
   @Test(.dependencies) func runWorktreeDeeplink() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)

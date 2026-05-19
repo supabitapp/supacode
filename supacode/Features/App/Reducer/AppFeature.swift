@@ -321,6 +321,11 @@ struct AppFeature {
         return .send(.settings(.setSelection(section)))
 
       case .repositories(.delegate(.runBlockingScript(let worktree, _, let kind, let script))):
+        // Defense-in-depth against a future emitter forgetting the pre-screen.
+        if worktree.isMissing {
+          appLogger.info("Skipping \(kind) blocking script on missing worktree \(worktree.id)")
+          return .none
+        }
         return .run { _ in
           await terminalClient.send(.runBlockingScript(worktree, kind: kind, script: script))
         }
@@ -473,7 +478,9 @@ struct AppFeature {
         return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
 
       case .newTerminal:
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
           return .none
         }
         analyticsClient.capture("terminal_tab_created", nil)
@@ -484,7 +491,9 @@ struct AppFeature {
         }
 
       case .splitTerminal(let direction):
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
           return .none
         }
         return .run { _ in
@@ -532,7 +541,9 @@ struct AppFeature {
         return .send(.runNamedScript(definition))
 
       case .runNamedScript(let incoming):
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
           return .none
         }
         // Re-resolve so a stale view binding can't bypass repo-wins or run a since-deleted script.
@@ -1124,6 +1135,12 @@ struct AppFeature {
     source: OpenWorktreeSource,
     state: State
   ) -> Effect<Action> {
+    // Orphan rows can't be opened anywhere meaningful; bail out
+    // before invoking the workspace / terminal client.
+    if worktree.isMissing {
+      appLogger.info("Ignoring open of missing worktree \(worktree.id) from \(source.rawValue)")
+      return .none
+    }
     analyticsClient.capture("worktree_opened", ["action": action.settingsID, "source": source.rawValue])
     guard action == .editor else {
       return .run { send in
@@ -1299,6 +1316,38 @@ struct AppFeature {
     bypassConfirmation: Bool,
     responseFD: Int32? = nil
   ) -> Effect<Action> {
+    // Block only the actions that would spawn a shell/script at the
+    // missing working dir. Cleanup actions (delete/archive/pin) and
+    // management of already-spawned terminals stay reachable so the
+    // user can actually clear the orphan.
+    let spawnsShell: Bool
+    switch action {
+    case .run, .runScript, .tabNew, .surfaceSplit:
+      spawnsShell = true
+    case .surface(_, _, let input):
+      spawnsShell = input?.isEmpty == false
+    case .select, .stop, .stopScript, .tab, .tabDestroy, .surfaceDestroy,
+      .archive, .unarchive, .delete, .pin, .unpin:
+      spawnsShell = false
+    }
+    if spawnsShell, let worktree = state.repositories.worktree(for: worktreeID), worktree.isMissing {
+      deeplinkLogger.info(
+        "Ignoring shell-spawning deeplink action on missing worktree \(worktreeID)"
+      )
+      // Set alert so the CLI socket response surfaces a real error instead of silent ok=true.
+      state.alert = AlertState {
+        TextState("Working directory missing")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState(
+          "\(worktree.name) has no working directory on disk. Restore it or delete the worktree."
+        )
+      }
+      return .none
+    }
     switch action {
     case .select:
       return .none

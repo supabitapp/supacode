@@ -1401,11 +1401,9 @@ struct RepositoriesFeature {
         // went through `$sidebar.withLock`, so no per-slice save
         // effects are needed here.
         if let cleanupWorktree = cleanup.worktree {
-          let repositoryRootURL = cleanupWorktree.repositoryRootURL
           effects.append(
             .run { send in
               _ = try? await gitClient.removeWorktree(cleanupWorktree, true)
-              _ = try? await gitClient.pruneWorktrees(repositoryRootURL)
               await send(.reloadRepositories(animated: true))
             }
           )
@@ -1460,7 +1458,7 @@ struct RepositoriesFeature {
           TextState("Archive worktree?")
         } actions: {
           ButtonState(role: .destructive, action: .confirmArchiveWorktree(worktree.id, repository.id)) {
-            TextState("Archive (⌘↩)")
+            TextState("Archive worktree")
           }
           ButtonState(role: .cancel) {
             TextState("Cancel")
@@ -1509,7 +1507,7 @@ struct RepositoriesFeature {
           TextState("Archive \(count) worktrees?")
         } actions: {
           ButtonState(role: .destructive, action: .confirmArchiveWorktrees(validTargets)) {
-            TextState("Archive \(count) (⌘↩)")
+            TextState("Archive \(count) worktrees")
           }
           ButtonState(role: .cancel) {
             TextState("Cancel")
@@ -1565,7 +1563,9 @@ struct RepositoriesFeature {
         @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
         let script = repositorySettings.archiveScript
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
+        // Orphan rows have no working dir to run a script in; skip
+        // straight to the apply step so the cleanup still completes.
+        if trimmed.isEmpty || worktree.isMissing {
           return .send(.archiveWorktreeApply(worktreeID, repositoryID))
         }
         return .merge(
@@ -1761,22 +1761,23 @@ struct RepositoriesFeature {
         }
         @Shared(.settingsFile) var settingsFile
         let deleteBranchOnDeleteWorktree = settingsFile.global.deleteBranchOnDeleteWorktree
-        let removalSubject =
-          count == 1
-          ? "the worktree directory and "
-            + (deleteBranchOnDeleteWorktree ? "its local branch" : "keep the local branch")
-          : "the worktree directories and "
-            + (deleteBranchOnDeleteWorktree ? "their local branches" : "keep their local branches")
-        let title = count == 1 ? "🚨 Delete worktree?" : "🚨 Delete \(count) worktrees?"
-        let buttonLabel = count == 1 ? "Delete (⌘↩)" : "Delete \(count) (⌘↩)"
-        let singleTargetName =
-          validTargets.first.flatMap {
-            state.repositories[id: $0.repositoryID]?.worktrees[id: $0.worktreeID]?.name
+        let allMissing = validTargets.allSatisfy { target in
+          state.repositories[id: target.repositoryID]?.worktrees[id: target.worktreeID]?.isMissing
+            == true
+        }
+        let title = count == 1 ? "Delete worktree?" : "Delete \(count) worktrees?"
+        let buttonLabel = count == 1 ? "Delete worktree" : "Delete \(count) worktrees"
+        let message: String =
+          switch (count, deleteBranchOnDeleteWorktree, allMissing) {
+          case (1, _, true): "Removes the orphan worktree entry from this repository."
+          case (_, _, true): "Removes \(count) orphan worktree entries from this repository."
+          case (1, true, false): "This deletes the worktree directory and its local branch."
+          case (1, false, false): "This deletes the worktree directory but keeps the local branch."
+          case (_, true, false):
+            "This deletes \(count) worktree directories and their local branches."
+          case (_, false, false):
+            "This deletes \(count) worktree directories but keeps their local branches."
           }
-        let messageSubject =
-          count == 1
-          ? "Delete \(singleTargetName ?? "worktree")?"
-          : "Delete \(count) worktrees?"
         state.alert = AlertState {
           TextState(title)
         } actions: {
@@ -1790,7 +1791,7 @@ struct RepositoriesFeature {
             TextState("Cancel")
           }
         } message: {
-          TextState("\(messageSubject) This deletes \(removalSubject).")
+          TextState(message)
         }
         return .none
 
@@ -1918,7 +1919,9 @@ struct RepositoriesFeature {
           else { return nil }
           return record.disposition
         }()
-        if trimmed.isEmpty {
+        // Orphan rows have no working dir to run a script in; skip the
+        // script and apply the delete directly so the cleanup completes.
+        if trimmed.isEmpty || worktree.isMissing {
           if let folderIntent {
             // Empty script: finish the folder flow immediately,
             // trashing the directory first if the user asked for it.
@@ -3380,8 +3383,11 @@ struct RepositoriesFeature {
   private func loadRepositories(_ roots: [URL], animated: Bool = false) -> Effect<Action> {
     let gitClient = gitClient
     return .run { [animated, roots] send in
-      for root in roots {
-        _ = try? await gitClient.pruneWorktrees(root)
+      // Each reconcile shells out independently; parallel to keep load latency flat.
+      await withTaskGroup(of: Void.self) { group in
+        for root in roots {
+          group.addTask { await gitClient.reconcileSupacodeLocks(root) }
+        }
       }
       let (repositories, failures) = await loadRepositoriesData(roots)
       await send(
@@ -3833,13 +3839,14 @@ extension RepositoriesFeature.State {
   }
 
   func worktreesForInfoWatcher() -> [Worktree] {
-    // Folder repositories are non-git — skip them so the watcher
-    // doesn't attempt to observe HEAD / diff stats on a directory
-    // without a `.git` path.
+    // Folder repos lack a `.git` to observe, and orphan rows have no
+    // working dir at all; skip both so the watcher doesn't probe paths
+    // that can't service its queries.
     let worktrees =
       repositories
       .filter(\.isGitRepository)
       .flatMap(\.worktrees)
+      .filter { !$0.isMissing }
     guard !isShowingArchivedWorktrees else {
       return worktrees
     }
@@ -4392,6 +4399,7 @@ extension RepositoriesFeature.State {
         workingDirectory: worktree.workingDirectory,
         repositoryRootURL: worktree.repositoryRootURL,
         createdAt: worktree.createdAt,
+        isMissing: worktree.isMissing,
       )
       repositories[index] = Repository(
         id: repository.id,

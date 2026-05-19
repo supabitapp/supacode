@@ -389,19 +389,19 @@ struct AppFeatureCommandPaletteTests {
     let target = RepositoriesFeature.DeleteWorktreeTarget(
       worktreeID: worktree.id, repositoryID: repository.id)
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("🚨 Delete worktree?")
+      TextState("Delete worktree?")
     } actions: {
       ButtonState(
         role: .destructive,
         action: .confirmDeleteSidebarItems([target], disposition: .gitWorktreeDelete)
       ) {
-        TextState("Delete (⌘↩)")
+        TextState("Delete worktree")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
-      TextState("Delete \(worktree.name)? This deletes the worktree directory and its local branch.")
+      TextState("This deletes the worktree directory and its local branch.")
     }
 
     await store.send(.commandPalette(.delegate(.removeWorktree(worktree.id, repository.id))))
@@ -433,7 +433,7 @@ struct AppFeatureCommandPaletteTests {
       TextState("Archive worktree?")
     } actions: {
       ButtonState(role: .destructive, action: .confirmArchiveWorktree(worktree.id, repository.id)) {
-        TextState("Archive (⌘↩)")
+        TextState("Archive worktree")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")

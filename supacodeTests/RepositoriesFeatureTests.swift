@@ -1057,7 +1057,6 @@ struct RepositoriesFeatureTests {
         removed.withValue { $0 = true }
         return URL(fileURLWithPath: "/tmp/removed")
       }
-      $0.gitClient.pruneWorktrees = { _ in }
       $0.gitClient.worktrees = { _ in [mainWorktree] }
     }
 
@@ -1589,7 +1588,6 @@ struct RepositoriesFeatureTests {
         removedWorktreePath.withValue { $0 = workingDirectory.path(percentEncoded: false) }
         return workingDirectory
       }
-      $0.gitClient.pruneWorktrees = { _ in }
     }
     store.exhaustivity = .off
 
@@ -1740,19 +1738,19 @@ struct RepositoriesFeatureTests {
     let target = RepositoriesFeature.DeleteWorktreeTarget(
       worktreeID: worktree.id, repositoryID: repository.id)
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("🚨 Delete worktree?")
+      TextState("Delete worktree?")
     } actions: {
       ButtonState(
         role: .destructive,
         action: .confirmDeleteSidebarItems([target], disposition: .gitWorktreeDelete)
       ) {
-        TextState("Delete (⌘↩)")
+        TextState("Delete worktree")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
-      TextState("Delete \(worktree.name)? This deletes the worktree directory and its local branch.")
+      TextState("This deletes the worktree directory and its local branch.")
     }
 
     await store.send(.requestDeleteSidebarItems([target])) {
@@ -1807,21 +1805,19 @@ struct RepositoriesFeatureTests {
     ]
     await store.send(.requestDeleteSidebarItems(targets)) {
       $0.alert = AlertState {
-        TextState("🚨 Delete worktree?")
+        TextState("Delete worktree?")
       } actions: {
         ButtonState(
           role: .destructive,
           action: .confirmDeleteSidebarItems([targets[1]], disposition: .gitWorktreeDelete)
         ) {
-          TextState("Delete (⌘↩)")
+          TextState("Delete worktree")
         }
         ButtonState(role: .cancel) {
           TextState("Cancel")
         }
       } message: {
-        TextState(
-          "Delete \(feature.name)? This deletes the worktree directory and its local branch."
-        )
+        TextState("This deletes the worktree directory and its local branch.")
       }
     }
   }
@@ -1838,19 +1834,19 @@ struct RepositoriesFeatureTests {
     }
 
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("🚨 Delete 2 worktrees?")
+      TextState("Delete 2 worktrees?")
     } actions: {
       ButtonState(
         role: .destructive,
         action: .confirmDeleteSidebarItems(targets, disposition: .gitWorktreeDelete)
       ) {
-        TextState("Delete 2 (⌘↩)")
+        TextState("Delete 2 worktrees")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
-      TextState("Delete 2 worktrees? This deletes the worktree directories and their local branches.")
+      TextState("This deletes 2 worktree directories and their local branches.")
     }
 
     await store.send(.requestDeleteSidebarItems(targets)) {
@@ -1870,7 +1866,7 @@ struct RepositoriesFeatureTests {
       TextState("Archive worktree?")
     } actions: {
       ButtonState(role: .destructive, action: .confirmArchiveWorktree(worktree.id, repository.id)) {
-        TextState("Archive (⌘↩)")
+        TextState("Archive worktree")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
@@ -2112,7 +2108,7 @@ struct RepositoriesFeatureTests {
       TextState("Archive 2 worktrees?")
     } actions: {
       ButtonState(role: .destructive, action: .confirmArchiveWorktrees(targets)) {
-        TextState("Archive 2 (⌘↩)")
+        TextState("Archive 2 worktrees")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")

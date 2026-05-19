@@ -48,6 +48,8 @@ struct SidebarItemFeature {
     /// Mirror of `@Shared(.sidebar)`; written through actions only.
     var isPinned: Bool
     var hasMergedBadge: Bool
+    /// Mirror of `Worktree.isMissing`; drives the orphan row UI.
+    var isMissing: Bool = false
 
     var lifecycle: Lifecycle = .idle
 

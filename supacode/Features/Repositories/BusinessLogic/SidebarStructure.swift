@@ -529,8 +529,11 @@ extension RepositoriesFeature.State {
     if groupActive {
       let candidateIDs = sidebarItems.ids.filter { id in
         guard !archived.contains(id) else { return false }
+        guard let item = sidebarItems[id: id] else { return false }
         // Terminating rows already signal their wind-down inline.
-        return sidebarItems[id: id]?.lifecycle.isTerminating != true
+        guard !item.lifecycle.isTerminating else { return false }
+        // Orphan rows have no working dir for the agent/script badge to act on.
+        return !item.isMissing
       }
       active = orderedHighlightCandidates(
         forPinned: false,
