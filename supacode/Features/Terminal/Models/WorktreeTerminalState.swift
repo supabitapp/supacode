@@ -207,8 +207,10 @@ final class WorktreeTerminalState {
   }
 
   func dismissSplitZoom(for tabID: TerminalTabID) {
-    guard let tree = trees[tabID], tree.zoomed != nil else { return }
+    guard let tree = trees[tabID], let zoomed = tree.zoomed else { return }
+    let previouslyZoomedSurface = zoomed.leftmostLeaf()
     updateTree(tree.settingZoomed(nil), for: tabID)
+    focusSurface(previouslyZoomedSurface, in: tabID)
   }
 
   func ensureInitialTab(focusing: Bool) {

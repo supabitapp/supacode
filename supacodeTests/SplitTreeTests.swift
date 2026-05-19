@@ -92,16 +92,24 @@ struct SplitTreeTests {
     #expect(visibleLeaves.count == 2)
   }
 
-  @Test func dismissSplitZoomClearsZoomedNode() throws {
+  @Test func dismissSplitZoomClearsZoomedNodeAndFocusesPreviouslyZoomedSurface() throws {
     let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
     let first = fixture.first
+    let second = try #require(fixture.second)
 
     #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
     #expect(fixture.state.isSplitZoomed(forTabID: fixture.tabId))
+    #expect(fixture.state.activeSurfaceID(for: fixture.tabId) == first.id)
+
+    // Move focus to the other surface while zoomed so the dismiss path has
+    // something to override.
+    _ = fixture.state.focusSurface(id: second.id)
+    #expect(fixture.state.activeSurfaceID(for: fixture.tabId) == second.id)
 
     fixture.state.dismissSplitZoom(for: fixture.tabId)
     #expect(!fixture.state.isSplitZoomed(forTabID: fixture.tabId))
     #expect(fixture.state.splitTree(for: fixture.tabId).visibleLeaves().count == 2)
+    #expect(fixture.state.activeSurfaceID(for: fixture.tabId) == first.id)
   }
 
   @Test func dismissSplitZoomOnNonZoomedTabIsNoop() throws {
