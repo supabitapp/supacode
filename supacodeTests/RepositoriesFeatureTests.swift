@@ -1668,6 +1668,60 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func selectionChangedKeepsPendingWorktreeSelected() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let pendingID = "pending:test"
+    var state = makeState(repositories: [repository])
+    state.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: repository.id,
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter")
+      )
+    ]
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.selectionChanged([.worktree(pendingID)])) {
+      $0.selection = .worktree(pendingID)
+      $0.sidebarSelectedWorktreeIDs = [pendingID]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+    }
+    // `worktree(for:)` doesn't surface pending entries; the delegate fires nil
+    // for a pending selection. The detail body still renders the loading view
+    // off the slice's `.pending` lifecycle, so the user sees progress.
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    #expect(store.state.selection == .worktree(pendingID))
+    #expect(store.state.sidebarSelectedWorktreeIDs == [pendingID])
+  }
+
+  @Test func setSidebarSelectedWorktreeIDsKeepsPendingWorktreeInSet() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let pendingID = "pending:test"
+    var state = makeState(repositories: [repository])
+    state.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: repository.id,
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter")
+      )
+    ]
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setSidebarSelectedWorktreeIDs([mainWorktree.id, pendingID])) {
+      $0.sidebarSelectedWorktreeIDs = [mainWorktree.id, pendingID]
+    }
+  }
+
   @Test func pendingProgressUpdateIsIgnoredAfterCreateFailureRemovesPendingWorktree() async {
     let repoRoot = "/tmp/repo"
     let repository = makeRepository(id: repoRoot, worktrees: [makeWorktree(id: repoRoot, name: "main")])
