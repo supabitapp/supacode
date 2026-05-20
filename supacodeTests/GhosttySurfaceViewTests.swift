@@ -102,4 +102,35 @@ struct GhosttySurfaceViewTests {
     #expect(wrapper.safeAreaInsets.bottom == 0)
     #expect(wrapper.safeAreaInsets.right == 0)
   }
+  @Test func acceptsKeyboardInputOnlyForWindowFirstResponder() {
+    #expect(
+      GhosttySurfaceView.acceptsKeyboardInput(
+        hasWindow: true,
+        eventWindowMatches: true,
+        firstResponderIsView: true
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.acceptsKeyboardInput(
+        hasWindow: true,
+        eventWindowMatches: true,
+        firstResponderIsView: false
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.acceptsKeyboardInput(
+        hasWindow: true,
+        eventWindowMatches: false,
+        firstResponderIsView: true
+      )
+    )
+    #expect(
+      GhosttySurfaceView.acceptsKeyboardInput(
+        hasWindow: false,
+        eventWindowMatches: false,
+        firstResponderIsView: false
+      )
+    )
+  }
+
 }

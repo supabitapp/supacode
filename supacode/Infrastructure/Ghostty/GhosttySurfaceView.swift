@@ -640,6 +640,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func keyDown(with event: NSEvent) {
+    guard acceptsKeyboardInput(for: event) else { return }
     guard let surface else {
       interpretKeyEvents([event])
       return
@@ -685,11 +686,13 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func keyUp(with event: NSEvent) {
+    guard acceptsKeyboardInput(for: event) else { return }
     if suppressKeyboardLayoutChangeKeyUp(event) { return }
     sendKey(action: GHOSTTY_ACTION_RELEASE, event: event)
   }
 
   override func flagsChanged(with event: NSEvent) {
+    guard acceptsKeyboardInput(for: event) else { return }
     let mod: UInt32
     switch event.keyCode {
     case 0x39: mod = GHOSTTY_MODS_CAPS.rawValue
@@ -870,7 +873,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   private func localEventKeyUp(_ event: NSEvent) -> NSEvent? {
     if !event.modifierFlags.contains(.command) { return event }
-    guard focused else { return event }
+    guard focused, acceptsKeyboardInput(for: event) else { return event }
     keyUp(with: event)
     return nil
   }
@@ -1030,6 +1033,24 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   func requestFocus() {
     Self.moveFocus(to: self)
+  }
+
+  func acceptsKeyboardInput(for event: NSEvent) -> Bool {
+    guard let window else { return true }
+    return Self.acceptsKeyboardInput(
+      hasWindow: true,
+      eventWindowMatches: event.window.map { $0 === window } ?? true,
+      firstResponderIsView: window.firstResponder === self
+    )
+  }
+
+  static func acceptsKeyboardInput(
+    hasWindow: Bool,
+    eventWindowMatches: Bool,
+    firstResponderIsView: Bool
+  ) -> Bool {
+    guard hasWindow else { return true }
+    return eventWindowMatches && firstResponderIsView
   }
 
   static func moveFocus(
