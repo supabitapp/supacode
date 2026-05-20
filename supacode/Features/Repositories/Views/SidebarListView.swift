@@ -140,7 +140,7 @@ struct SidebarListView: View {
       switch section {
       case .repository(let repositoryID, _),
         .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _):
+        .failedRepository(let repositoryID, _, _, _):
         if let repoIndex = repoIDs.firstIndex(of: repositoryID) {
           repoOffsets.insert(repoIndex)
         }
@@ -158,7 +158,7 @@ struct SidebarListView: View {
       switch section {
       case .repository(let repositoryID, _),
         .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _):
+        .failedRepository(let repositoryID, _, _, _):
         repoDestination = repoIDs.firstIndex(of: repositoryID) ?? repoIDs.count
       case .highlight, .placeholder:
         // Dropping above the highlight prefix collapses to "before the first repo".
@@ -212,10 +212,12 @@ private struct SidebarSectionDispatcher: View {
         shortcutHintByID: shortcutHintByID
       )
       .moveDisabled(true)
-    case .failedRepository(_, let rootURL, let failureMessage):
-      SidebarFailedRepositoryRow(
+    case .failedRepository(let repositoryID, let rootURL, let customTitle, let color):
+      SidebarFailedRepositorySection(
+        repositoryID: repositoryID,
         rootURL: rootURL,
-        failureMessage: failureMessage,
+        customTitle: customTitle,
+        color: color,
         store: store
       )
     case .folder(let repositoryID, let rowID):
@@ -342,28 +344,49 @@ private struct SidebarSectionActionsView: View {
   }
 }
 
-private struct SidebarFailedRepositoryRow: View {
+private struct SidebarFailedRepositorySection: View {
+  let repositoryID: Repository.ID
   let rootURL: URL
-  let failureMessage: String
+  let customTitle: String?
+  let color: RepositoryColor?
   let store: StoreOf<RepositoriesFeature>
 
   var body: some View {
     let standardizedRootURL = rootURL.standardizedFileURL
-    let name = Repository.name(for: standardizedRootURL)
+    let fallbackName = Repository.name(for: standardizedRootURL)
+    let displayName = Repository.sidebarDisplayName(custom: customTitle, fallback: fallbackName)
     let path = standardizedRootURL.path(percentEncoded: false)
-
-    FailedRepositoryRow(
-      name: name,
-      path: path,
-      showFailure: {
-        let message = "\(path)\n\n\(failureMessage)"
-        store.send(.presentAlert(title: "Unable to load \(name)", message: message))
-      },
-      removeRepository: {
-        store.send(.removeFailedRepository(path))
+    Section {
+      FailedRepositoryRow(
+        name: displayName,
+        path: path,
+        removeRepository: { store.send(.requestRemoveFailedRepository(repositoryID)) }
+      )
+      .tag(SidebarSelection.failedRepository(repositoryID))
+      .moveDisabled(true)
+    } header: {
+      RepoSectionHeaderView(
+        name: fallbackName,
+        customTitle: customTitle,
+        color: color,
+        isRemoving: false
+      )
+    }
+    .sectionActions {
+      // No `+`: the repo isn't loadable, so worktree create is meaningless.
+      Menu {
+        Button("Remove Repository…", systemImage: "folder.badge.minus", role: .destructive) {
+          store.send(.requestRemoveFailedRepository(repositoryID))
+        }
+        .help("Remove this repository from Supacode. Files on disk are untouched.")
+      } label: {
+        Image(systemName: "ellipsis")
+          .accessibilityLabel("Options")
+          .frame(maxHeight: .infinity)
+          .contentShape(Rectangle())
       }
-    )
-    .padding(.horizontal, 12)
+      .menuStyle(.secondaryToolbar)
+    }
   }
 }
 

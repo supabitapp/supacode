@@ -65,6 +65,7 @@ struct SidebarItemView: View {
     } icon: {
       IconView(
         isFolder: store.kind == .folder,
+        isMissing: store.isMissing,
         branchName: store.branchName,
         pullRequest: store.pullRequest,
         showsPullRequestInfo: showsPullRequestInfo,
@@ -291,6 +292,7 @@ private struct TitleView: View, Equatable {
 
 private struct IconView: View {
   let isFolder: Bool
+  let isMissing: Bool
   let branchName: String
   let pullRequest: GithubPullRequest?
   let showsPullRequestInfo: Bool
@@ -303,6 +305,7 @@ private struct IconView: View {
     )
     IconContent(
       isFolder: isFolder,
+      isMissing: isMissing,
       icon: SidebarPullRequestIcon.resolve(display.pullRequest),
       checkBadgeState: resolveCheckBadgeState(display.pullRequest),
       rowState: IconRowState(lifecycle),
@@ -329,6 +332,7 @@ enum IconRowState: Equatable {
 
 private struct IconContent: View, Equatable {
   let isFolder: Bool
+  let isMissing: Bool
   let icon: SidebarPullRequestIcon
   let checkBadgeState: SidebarCheckBadgeState?
   let rowState: IconRowState
@@ -337,6 +341,7 @@ private struct IconContent: View, Equatable {
 
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.isFolder == rhs.isFolder
+      && lhs.isMissing == rhs.isMissing
       && lhs.icon == rhs.icon
       && lhs.checkBadgeState == rhs.checkBadgeState
       && lhs.rowState == rhs.rowState
@@ -347,10 +352,11 @@ private struct IconContent: View, Equatable {
   }
 
   private var isSystemImage: Bool {
-    rowState != .idle || isFolder
+    rowState != .idle || isFolder || isMissing
   }
 
   private var folderIconName: String {
+    if isMissing { return "exclamationmark.triangle.fill" }
     switch rowState {
     case .pending: return "truck.box.badge.clock"
     case .archiving: return "archivebox"
@@ -361,6 +367,7 @@ private struct IconContent: View, Equatable {
 
   private var folderColor: AnyShapeStyle {
     guard !isEmphasized else { return AnyShapeStyle(.secondary) }
+    if isMissing { return AnyShapeStyle(.orange) }
     switch rowState {
     case .pending: return AnyShapeStyle(.blue)
     case .archiving: return AnyShapeStyle(.orange)
@@ -370,6 +377,7 @@ private struct IconContent: View, Equatable {
   }
 
   private var accessibilityLabel: String? {
+    if isMissing { return "Working directory missing" }
     switch rowState {
     case .pending: return "Creating"
     case .archiving: return "Archiving"

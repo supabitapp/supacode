@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
 import SupacodeSettingsShared
 
 /// Extracted removal pipeline — the types that model the
@@ -278,6 +279,31 @@ extension RepositoriesFeature {
             selectionWasRemoved: false
           ))
       }
+    }
+  }
+
+  // Failed repos never make it into `state.repositories`, so the shared
+  // helper can't resolve them. Build the alert from the id + custom title.
+  func confirmationAlertForFailedRepositoryRemoval(
+    repositoryID: Repository.ID,
+    state: State
+  ) -> AlertState<Alert> {
+    let fallback = Repository.name(for: URL(fileURLWithPath: repositoryID).standardizedFileURL)
+    let name = Repository.sidebarDisplayName(
+      custom: state.sidebar.sections[repositoryID]?.title,
+      fallback: fallback
+    )
+    return AlertState {
+      TextState("Remove \(name)?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmRemoveFailedRepository(repositoryID)) {
+        TextState("Remove Repository")
+      }
+      ButtonState(role: .cancel) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("Removes the repository from Supacode. Nothing on disk is changed.")
     }
   }
 

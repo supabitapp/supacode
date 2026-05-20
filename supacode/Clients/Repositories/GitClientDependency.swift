@@ -14,7 +14,7 @@ struct GitClientDependency: Sendable {
   /// missing-directory path override explicitly.
   var rootDirectoryExists: @Sendable (URL) async -> Bool
   var worktrees: @Sendable (URL) async throws -> [Worktree]
-  var pruneWorktrees: @Sendable (URL) async throws -> Void
+  var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
   var isValidBranchName: @Sendable (String, URL) async -> Bool
   var branchRefs: @Sendable (URL) async throws -> [String]
@@ -63,7 +63,7 @@ extension GitClientDependency: DependencyKey {
       return exists && isDirectory.boolValue
     },
     worktrees: { try await GitClient().worktrees(for: $0) },
-    pruneWorktrees: { try await GitClient().pruneWorktrees(for: $0) },
+    reconcileSupacodeLocks: { await GitClient().reconcileSupacodeLocks(for: $0) },
     localBranchNames: { try await GitClient().localBranchNames(for: $0) },
     isValidBranchName: { branchName, repoRoot in
       await GitClient().isValidBranchName(branchName, for: repoRoot)
@@ -113,6 +113,7 @@ extension GitClientDependency: DependencyKey {
     var value = liveValue
     value.isGitRepository = { _ in true }
     value.rootDirectoryExists = { _ in true }
+    value.reconcileSupacodeLocks = { _ in }
     return value
   }
 }

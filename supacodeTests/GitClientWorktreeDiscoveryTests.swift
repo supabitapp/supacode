@@ -141,6 +141,43 @@ struct GitClientWorktreeDiscoveryTests {
     #expect(recorder.loginInvocations().isEmpty)
   }
 
+  @Test func worktreesFlagMissingWorkingDirectoryAsOrphan() async throws {
+    let tempRoot = URL(filePath: "/tmp", directoryHint: .isDirectory)
+      .appending(path: "wt-missing-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let repoURL = tempRoot.appending(path: "repo", directoryHint: .isDirectory)
+    let liveURL =
+      tempRoot
+      .appending(path: "repo", directoryHint: .isDirectory)
+      .appending(path: ".worktrees", directoryHint: .isDirectory)
+      .appending(path: "live", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: liveURL, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+    let repoPath = repoURL.path(percentEncoded: false)
+    let livePath = liveURL.path(percentEncoded: false)
+    let missingPath = tempRoot.appending(path: "vanished", directoryHint: .isDirectory)
+      .path(percentEncoded: false)
+    let output = """
+      [
+        {"branch":"main","path":"\(repoPath)","head":"abc","is_bare":false},
+        {"branch":"live","path":"\(livePath)","head":"def","is_bare":false},
+        {"branch":"phantom","path":"\(missingPath)","head":"ghi","is_bare":false}
+      ]
+      """
+    let shell = ShellClient(
+      run: { _, _, _ in ShellOutput(stdout: output, stderr: "", exitCode: 0) },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) }
+    )
+    let client = GitClient(shell: shell)
+
+    let worktrees = try await client.worktrees(for: repoURL)
+    let byID = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.id, $0) })
+
+    #expect(byID[repoPath]?.isMissing == false)
+    #expect(byID[livePath]?.isMissing == false)
+    #expect(byID[missingPath]?.isMissing == true)
+  }
+
   @Test func repoRootFallsBackToLoginShellWhenDirectExecutionCannotResolveGit() async throws {
     let recorder = GitWorktreeDiscoveryRecorder()
     let shell = ShellClient(

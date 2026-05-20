@@ -1,31 +1,40 @@
+import AppKit
+import SupacodeSettingsShared
 import SwiftUI
 
 struct FailedRepositoryRow: View {
   let name: String
   let path: String
-  let showFailure: () -> Void
   let removeRepository: () -> Void
 
   var body: some View {
-    HStack(spacing: 8) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(name)
-          .foregroundStyle(.secondary)
-        Text(path)
-          .font(.caption)
-          .foregroundStyle(.tertiary)
-      }
-      Spacer(minLength: 8)
-      Button("Show load failure", systemImage: "exclamationmark.triangle.fill", action: showFailure)
-        .labelStyle(.iconOnly)
-        .foregroundStyle(.red)
-        .help("Show load failure")
+    Label {
+      Text(name)
+    } icon: {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .resizable()
+        .aspectRatio(contentMode: .fit)
+        .fontWeight(.semibold)
+        .foregroundStyle(.pink)
+        .frame(width: 16, height: 16)
+        .accessibilityLabel("Repository unavailable")
     }
-    .contentShape(Rectangle())
+    .labelStyle(.verticallyCentered)
+    .listRowInsets(.trailing, 4)
+    .listRowInsets(.vertical, 6)
     .contextMenu {
-      Button("Remove Repository", action: removeRepository)
-        .help("Remove repository ")
+      Button("Copy as Pathname", systemImage: "doc.on.doc") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+      }
+      Divider()
+      Button(
+        "Remove Repository…",
+        systemImage: "folder.badge.minus",
+        role: .destructive,
+        action: removeRepository
+      )
+      .help("Remove this repository from Supacode. Files on disk are untouched.")
     }
-    .selectionDisabled(true)
   }
 }

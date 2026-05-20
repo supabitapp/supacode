@@ -406,7 +406,7 @@ struct SidebarStructureTests {
     let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
 
     let failedIndex = structure.sections.firstIndex {
-      if case .failedRepository(let id, _, _) = $0 { return id == failedID }
+      if case .failedRepository(let id, _, _, _) = $0 { return id == failedID }
       return false
     }
     let repoIndex = structure.sections.firstIndex {

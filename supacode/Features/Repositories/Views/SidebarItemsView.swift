@@ -634,7 +634,7 @@ private struct SidebarItemContextMenu: View {
     let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
     let isAllFoldersBulk = isAllFoldersBulk
 
-    if !isBulkSelection {
+    if !isBulkSelection, !worktree.isMissing {
       openActions(overrides: overrides)
       Divider()
     }

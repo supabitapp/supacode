@@ -53,6 +53,7 @@ struct WorktreeDetailView: View {
       selectedWorktree != nil
       && loadingInfo == nil
       && !showsMultiSelectionSummary
+      && selectedWorktree?.isMissing != true
     let openActionSelection = state.openActionSelection
     let repoScripts = state.repoScripts
     let globalScripts = state.globalScripts
@@ -213,6 +214,23 @@ struct WorktreeDetailView: View {
         MultiSelectedWorktreesDetailView(rows: selectedWorktreeSummaries)
       } else if let loadingInfo {
         WorktreeLoadingView(info: loadingInfo)
+      } else if let failedRepositoryID = repositories.selectedFailedRepositoryID {
+        FailedRepositoryDetailView(
+          repositoryID: failedRepositoryID,
+          failureMessage: repositories.loadFailuresByID[failedRepositoryID]
+        ) {
+          store.send(.repositories(.requestRemoveFailedRepository(failedRepositoryID)))
+        }
+      } else if let selectedWorktree, selectedWorktree.isMissing {
+        MissingWorktreeDetailView(worktree: selectedWorktree) {
+          guard let repositoryID = repositories.sidebarItems[id: selectedWorktree.id]?.repositoryID
+          else { return }
+          let target = RepositoriesFeature.DeleteWorktreeTarget(
+            worktreeID: selectedWorktree.id,
+            repositoryID: repositoryID
+          )
+          store.send(.repositories(.requestDeleteSidebarItems([target])))
+        }
       } else if let selectedWorktree {
         let shouldRunSetupScript = selectedSlice?.lifecycle == .pending
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
@@ -637,6 +655,62 @@ struct WorktreeDetailView: View {
 }
 
 // MARK: - Detail placeholder.
+
+private struct FailedRepositoryDetailView: View {
+  let repositoryID: Repository.ID
+  let failureMessage: String?
+  let requestRemove: () -> Void
+
+  var body: some View {
+    let path = URL(fileURLWithPath: repositoryID).standardizedFileURL.path(percentEncoded: false)
+    ContentUnavailableView {
+      Label("Repository unavailable", systemImage: "exclamationmark.triangle.fill")
+        .foregroundStyle(.pink)
+    } description: {
+      VStack(spacing: 6) {
+        Text("Restore the repository to keep working here, or remove it from Supacode.")
+        // Diagnostic surface for the underlying load failure (permission denied,
+        // missing dir, etc) without disrupting the uniform layout.
+        Text(path)
+          .monospaced()
+          .textSelection(.enabled)
+          .help(failureMessage ?? "")
+      }
+    } actions: {
+      Button(
+        "Remove Repository…",
+        systemImage: "folder.badge.minus",
+        role: .destructive,
+        action: requestRemove
+      )
+      .help("Remove this repository from Supacode. Files on disk are untouched.")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+private struct MissingWorktreeDetailView: View {
+  let worktree: Worktree
+  let requestDelete: () -> Void
+
+  var body: some View {
+    ContentUnavailableView {
+      Label("Working directory missing", systemImage: "exclamationmark.triangle.fill")
+        .foregroundStyle(.orange)
+    } description: {
+      VStack(spacing: 6) {
+        Text("Restore the directory to keep working here, or delete this worktree to clean up.")
+        Text(worktree.workingDirectory.path(percentEncoded: false))
+          .monospaced()
+          .textSelection(.enabled)
+      }
+    } actions: {
+      Button("Delete Worktree…", systemImage: "trash", role: .destructive, action: requestDelete)
+        .help("Delete this worktree from Supacode.")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
 
 private struct DetailPlaceholderView: View {
   @State private var messageIndex = Int.random(in: 0..<Self.messages.count)

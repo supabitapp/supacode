@@ -38,7 +38,8 @@ extension RepositoriesFeature {
             repositoryAccent: nil,
             isMainWorktree: isMain,
             isPinned: isPinned,
-            hasMergedBadge: false
+            hasMergedBadge: false,
+            isMissing: worktree.isMissing
           )
         item.name = worktree.name
         item.branchName = worktree.name
@@ -46,6 +47,7 @@ extension RepositoriesFeature {
         item.workingDirectory = worktree.workingDirectory
         item.isMainWorktree = isMain
         item.isPinned = isPinned
+        item.isMissing = worktree.isMissing
         // Clear the PR query branch when the worktree was renamed.
         if let existing, existing.branchName != worktree.name {
           item.pullRequestBranchAtQueryTime = nil

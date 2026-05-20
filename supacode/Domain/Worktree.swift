@@ -7,6 +7,9 @@ struct Worktree: Identifiable, Hashable, Sendable {
   let workingDirectory: URL
   let repositoryRootURL: URL
   let createdAt: Date?
+  /// The admin entry exists but the working dir is gone on disk.
+  /// Drives the orphan UI (warning icon, gated open actions).
+  let isMissing: Bool
 
   nonisolated init(
     id: String,
@@ -14,7 +17,8 @@ struct Worktree: Identifiable, Hashable, Sendable {
     detail: String,
     workingDirectory: URL,
     repositoryRootURL: URL,
-    createdAt: Date? = nil
+    createdAt: Date? = nil,
+    isMissing: Bool = false
   ) {
     self.id = id
     self.name = name
@@ -22,6 +26,7 @@ struct Worktree: Identifiable, Hashable, Sendable {
     self.workingDirectory = workingDirectory
     self.repositoryRootURL = repositoryRootURL
     self.createdAt = createdAt
+    self.isMissing = isMissing
   }
 }
 

@@ -1057,7 +1057,6 @@ struct RepositoriesFeatureTests {
         removed.withValue { $0 = true }
         return URL(fileURLWithPath: "/tmp/removed")
       }
-      $0.gitClient.pruneWorktrees = { _ in }
       $0.gitClient.worktrees = { _ in [mainWorktree] }
     }
 
@@ -1123,9 +1122,6 @@ struct RepositoriesFeatureTests {
 
     await store.send(.createRandomWorktreeInRepository(repository.id))
     await store.receive(\.createRandomWorktreeSucceeded)
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: createdWorktree.id]?.lifecycle = .pending
-    }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: createdWorktree.id]?.shouldFocusTerminal = true
     }
@@ -1589,7 +1585,6 @@ struct RepositoriesFeatureTests {
         removedWorktreePath.withValue { $0 = workingDirectory.path(percentEncoded: false) }
         return workingDirectory
       }
-      $0.gitClient.pruneWorktrees = { _ in }
     }
     store.exhaustivity = .off
 
@@ -1673,6 +1668,60 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func selectionChangedKeepsPendingWorktreeSelected() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let pendingID = "pending:test"
+    var state = makeState(repositories: [repository])
+    state.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: repository.id,
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter")
+      )
+    ]
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.selectionChanged([.worktree(pendingID)])) {
+      $0.selection = .worktree(pendingID)
+      $0.sidebarSelectedWorktreeIDs = [pendingID]
+      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+    }
+    // `worktree(for:)` doesn't surface pending entries; the delegate fires nil
+    // for a pending selection. The detail body still renders the loading view
+    // off the slice's `.pending` lifecycle, so the user sees progress.
+    await store.receive(\.delegate.selectedWorktreeChanged)
+    #expect(store.state.selection == .worktree(pendingID))
+    #expect(store.state.sidebarSelectedWorktreeIDs == [pendingID])
+  }
+
+  @Test func setSidebarSelectedWorktreeIDsKeepsPendingWorktreeInSet() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let pendingID = "pending:test"
+    var state = makeState(repositories: [repository])
+    state.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: repository.id,
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter")
+      )
+    ]
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setSidebarSelectedWorktreeIDs([mainWorktree.id, pendingID])) {
+      $0.sidebarSelectedWorktreeIDs = [mainWorktree.id, pendingID]
+    }
+  }
+
   @Test func pendingProgressUpdateIsIgnoredAfterCreateFailureRemovesPendingWorktree() async {
     let repoRoot = "/tmp/repo"
     let repository = makeRepository(id: repoRoot, worktrees: [makeWorktree(id: repoRoot, name: "main")])
@@ -1740,19 +1789,19 @@ struct RepositoriesFeatureTests {
     let target = RepositoriesFeature.DeleteWorktreeTarget(
       worktreeID: worktree.id, repositoryID: repository.id)
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("🚨 Delete worktree?")
+      TextState("Delete worktree?")
     } actions: {
       ButtonState(
         role: .destructive,
         action: .confirmDeleteSidebarItems([target], disposition: .gitWorktreeDelete)
       ) {
-        TextState("Delete (⌘↩)")
+        TextState("Delete worktree")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
-      TextState("Delete \(worktree.name)? This deletes the worktree directory and its local branch.")
+      TextState("This deletes the worktree directory and its local branch.")
     }
 
     await store.send(.requestDeleteSidebarItems([target])) {
@@ -1807,21 +1856,19 @@ struct RepositoriesFeatureTests {
     ]
     await store.send(.requestDeleteSidebarItems(targets)) {
       $0.alert = AlertState {
-        TextState("🚨 Delete worktree?")
+        TextState("Delete worktree?")
       } actions: {
         ButtonState(
           role: .destructive,
           action: .confirmDeleteSidebarItems([targets[1]], disposition: .gitWorktreeDelete)
         ) {
-          TextState("Delete (⌘↩)")
+          TextState("Delete worktree")
         }
         ButtonState(role: .cancel) {
           TextState("Cancel")
         }
       } message: {
-        TextState(
-          "Delete \(feature.name)? This deletes the worktree directory and its local branch."
-        )
+        TextState("This deletes the worktree directory and its local branch.")
       }
     }
   }
@@ -1838,19 +1885,19 @@ struct RepositoriesFeatureTests {
     }
 
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
-      TextState("🚨 Delete 2 worktrees?")
+      TextState("Delete 2 worktrees?")
     } actions: {
       ButtonState(
         role: .destructive,
         action: .confirmDeleteSidebarItems(targets, disposition: .gitWorktreeDelete)
       ) {
-        TextState("Delete 2 (⌘↩)")
+        TextState("Delete 2 worktrees")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
-      TextState("Delete 2 worktrees? This deletes the worktree directories and their local branches.")
+      TextState("This deletes 2 worktree directories and their local branches.")
     }
 
     await store.send(.requestDeleteSidebarItems(targets)) {
@@ -1870,7 +1917,7 @@ struct RepositoriesFeatureTests {
       TextState("Archive worktree?")
     } actions: {
       ButtonState(role: .destructive, action: .confirmArchiveWorktree(worktree.id, repository.id)) {
-        TextState("Archive (⌘↩)")
+        TextState("Archive worktree")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
@@ -2112,7 +2159,7 @@ struct RepositoriesFeatureTests {
       TextState("Archive 2 worktrees?")
     } actions: {
       ButtonState(role: .destructive, action: .confirmArchiveWorktrees(targets)) {
-        TextState("Archive 2 (⌘↩)")
+        TextState("Archive 2 worktrees")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
@@ -3899,9 +3946,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
-      $0.reconcileSidebarForTesting()
-    }
-    await store.receive(\.sidebarItems) {
+      RepositoriesFeature.syncSidebar(&$0)
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
       $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
@@ -5685,9 +5730,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(newWorktree.id)
       $0.sidebarSelectedWorktreeIDs = [newWorktree.id]
       $0.repositories = [updatedRepository]
-      $0.reconcileSidebarForTesting()
-    }
-    await store.receive(\.sidebarItems) {
+      RepositoriesFeature.syncSidebar(&$0)
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
       $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
@@ -5889,6 +5932,56 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+  }
+
+  // MARK: - Failed-repo removal.
+
+  @Test func requestRemoveFailedRepositoryShowsConfirmationAlert() async {
+    let repoID = "/tmp/missing-repo"
+    var state = RepositoriesFeature.State()
+    state.repositoryRoots = [URL(fileURLWithPath: repoID)]
+    state.loadFailuresByID = [repoID: "Not found"]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    let expectedAlert = AlertState<RepositoriesFeature.Alert> {
+      TextState("Remove missing-repo?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmRemoveFailedRepository(repoID)) {
+        TextState("Remove Repository")
+      }
+      ButtonState(role: .cancel) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("Removes the repository from Supacode. Nothing on disk is changed.")
+    }
+    await store.send(.requestRemoveFailedRepository(repoID)) {
+      $0.alert = expectedAlert
+    }
+  }
+
+  @Test func dropStaleFailedRepositorySelectionClearsWhenFailureGone() {
+    var state = RepositoriesFeature.State()
+    state.selection = .failedRepository("/tmp/foo")
+    state.loadFailuresByID = [:]
+    state.dropStaleFailedRepositorySelection()
+    #expect(state.selection == nil)
+  }
+
+  @Test func dropStaleFailedRepositorySelectionPreservesWhenFailureStillPresent() {
+    var state = RepositoriesFeature.State()
+    state.selection = .failedRepository("/tmp/foo")
+    state.loadFailuresByID = ["/tmp/foo": "boom"]
+    state.dropStaleFailedRepositorySelection()
+    #expect(state.selection == .failedRepository("/tmp/foo"))
+  }
+
+  @Test func dropStaleFailedRepositorySelectionPreservesNonFailedSelection() {
+    var state = RepositoriesFeature.State()
+    state.selection = .archivedWorktrees
+    state.dropStaleFailedRepositorySelection()
+    #expect(state.selection == .archivedWorktrees)
   }
 
   private func makeWorktree(

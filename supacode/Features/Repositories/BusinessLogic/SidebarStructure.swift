@@ -2,6 +2,7 @@ import ComposableArchitecture
 import Dependencies
 import Foundation
 import OrderedCollections
+import SupacodeSettingsShared
 
 /// Dependency switch that gates the reducer's post-reduce sidebar-structure
 /// recompute. Defaults `true` everywhere so production, preview, and tests
@@ -180,7 +181,12 @@ struct SidebarStructure: Equatable, Sendable {
     case highlight(kind: HighlightKind, rowIDs: [Worktree.ID])
     case repository(repositoryID: Repository.ID, groups: [SidebarItemGroup])
     case folder(repositoryID: Repository.ID, rowID: Worktree.ID)
-    case failedRepository(repositoryID: Repository.ID, rootURL: URL, failureMessage: String)
+    case failedRepository(
+      repositoryID: Repository.ID,
+      rootURL: URL,
+      customTitle: String?,
+      color: RepositoryColor?
+    )
     case placeholder
 
     var id: SectionID {
@@ -188,7 +194,7 @@ struct SidebarStructure: Equatable, Sendable {
       case .highlight(let kind, _): .highlight(kind)
       case .repository(let repositoryID, _): .repository(repositoryID)
       case .folder(let repositoryID, _): .folder(repositoryID)
-      case .failedRepository(let repositoryID, _, _): .failedRepository(repositoryID)
+      case .failedRepository(let repositoryID, _, _, _): .failedRepository(repositoryID)
       case .placeholder: .placeholder
       }
     }
@@ -392,7 +398,7 @@ extension RepositoriesFeature.Action {
       .archiveWorktreeConfirmed,
       .requestDeleteSidebarItems, .deleteSidebarItemConfirmed,
       .deleteWorktreeFailed,
-      .requestDeleteRepository,
+      .requestDeleteRepository, .requestRemoveFailedRepository,
       .presentAlert,
       .refreshGithubIntegrationAvailability,
       .githubIntegrationAvailabilityUpdated,
@@ -529,8 +535,11 @@ extension RepositoriesFeature.State {
     if groupActive {
       let candidateIDs = sidebarItems.ids.filter { id in
         guard !archived.contains(id) else { return false }
+        guard let item = sidebarItems[id: id] else { return false }
         // Terminating rows already signal their wind-down inline.
-        return sidebarItems[id: id]?.lifecycle.isTerminating != true
+        guard !item.lifecycle.isTerminating else { return false }
+        // Orphan rows have no working dir for the agent/script badge to act on.
+        return !item.isMissing
       }
       active = orderedHighlightCandidates(
         forPinned: false,
@@ -560,12 +569,14 @@ extension RepositoriesFeature.State {
 
     for rootURL in orderedRepositoryRoots() {
       let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
-      if let failureMessage = loadFailuresByID[repositoryID] {
+      if loadFailuresByID[repositoryID] != nil {
+        let sectionEntry = sidebar.sections[repositoryID]
         sections.append(
           .failedRepository(
             repositoryID: repositoryID,
             rootURL: rootURL,
-            failureMessage: failureMessage
+            customTitle: sectionEntry?.title,
+            color: sectionEntry?.color
           )
         )
         reorderableRepositoryIDs.append(repositoryID)
