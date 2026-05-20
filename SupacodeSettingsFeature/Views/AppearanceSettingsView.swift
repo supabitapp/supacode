@@ -43,7 +43,10 @@ public struct AppearanceSettingsView: View {
         Toggle(isOn: $store.terminateSessionsOnQuit) {
           Text("Terminate Sessions on Quit")
           Text(
-            "Close all tabs and stop background shells when quitting.\nTerminal persistence is powered by [zmx \u{2197}](https://github.com/neurosnap/zmx)."
+            """
+            Close all tabs and stop background shells when quitting.
+            Terminal persistence is powered by [zmx \u{2197}](https://github.com/neurosnap/zmx).
+            """
           )
         }
       }
