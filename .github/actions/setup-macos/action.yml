@@ -4,6 +4,25 @@ description: Install + cache mise tools and Ghostty build outputs
 runs:
   using: composite
   steps:
+    # The bundled zig (0.15.2) self-hosted linker can't link the macOS 26.4+ SDK
+    # (ziglang/zig#31272), which breaks `make build-ghostty-xcframework`. Pin to the
+    # newest installed Xcode <= 26.3, whose SDK zig can link.
+    - name: Select Xcode <= 26.3
+      shell: bash
+      run: |
+        set -euo pipefail
+        selected=""
+        for app in /Applications/Xcode_26.3*.app /Applications/Xcode_26.2*.app \
+          /Applications/Xcode_26.1*.app /Applications/Xcode_26.0*.app; do
+          if [ -d "$app" ]; then selected="$app"; break; fi
+        done
+        if [ -z "$selected" ]; then
+          echo "No Xcode <= 26.3 found on runner; available:" >&2
+          ls -d /Applications/Xcode_*.app >&2 || true
+          exit 1
+        fi
+        sudo xcode-select -s "$selected/Contents/Developer"
+        xcodebuild -version
     - uses: jdx/mise-action@v4
       with:
         version: 2026.3.0
