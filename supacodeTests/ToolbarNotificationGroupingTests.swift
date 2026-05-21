@@ -159,6 +159,32 @@ struct ToolbarNotificationGroupingTests {
     #expect(groups[0].unseenWorktreeCount == 0)
   }
 
+  @Test func usesResolvedSidebarTitleWhenCustomTitleIsSet() {
+    // A user-set custom title (from `WorktreeCustomizationFeature.save`)
+    // flows into `SidebarItemFeature.State.customTitle` via the reconcile
+    // pass; the notification popover must show that resolved title, not
+    // the raw branch name.
+    let repoPath = "/tmp/repo-customized"
+    let main = makeWorktree(id: repoPath, name: "main", repoRoot: repoPath)
+    let feature = makeWorktree(id: "\(repoPath)/feature", name: "feature/x", repoRoot: repoPath)
+
+    let repo = makeRepository(id: repoPath, name: "Repo", worktrees: [main, feature])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    state.repositoryRoots = [repo.rootURL]
+
+    state.sidebarItems[id: feature.id]?.customTitle = "Spicy"
+
+    setRowNotifications(
+      &state, id: feature.id,
+      notifications: [
+        WorktreeTerminalNotification(surfaceID: UUID(), title: "T", body: "done", createdAt: .distantPast)
+      ])
+
+    let groups = state.computeToolbarNotificationGroups()
+
+    #expect(groups.first?.worktrees.first?.name == "Spicy")
+  }
+
   private func setRowNotifications(
     _ state: inout RepositoriesFeature.State,
     id: SidebarItemID,

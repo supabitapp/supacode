@@ -47,7 +47,7 @@ extension RepositoriesFeature.State {
           }
           return ToolbarNotificationWorktreeGroup(
             id: worktree.id,
-            name: worktree.name,
+            name: row.resolvedSidebarTitle ?? worktree.name,
             notifications: Array(row.notifications),
             hasUnseenNotifications: row.hasUnseenNotifications
           )
