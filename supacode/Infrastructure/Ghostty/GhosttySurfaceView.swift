@@ -234,7 +234,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     registerForDraggedTypes(Array(Self.dropTypes))
 
-    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyUp, .leftMouseDown]) {
+    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyUp, .leftMouseDown, .flagsChanged]) {
       [weak self] event in
       self?.localEventHandler(event)
     }
@@ -863,6 +863,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
       localEventKeyUp(event)
     case .leftMouseDown:
       localEventLeftMouseDown(event)
+    case .flagsChanged:
+      localEventFlagsChanged(event)
     default:
       event
     }
@@ -882,6 +884,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
     guard !NSApp.isActive || !window.isKeyWindow else { return event }
     guard !focused else { return event }
     window.makeFirstResponder(self)
+    return event
+  }
+
+  // The responder chain delivers flagsChanged only to the first responder, so forward it to
+  // every other surface; a hovered but unfocused terminal still needs to refresh its links.
+  private func localEventFlagsChanged(_ event: NSEvent) -> NSEvent? {
+    guard window != nil, window?.firstResponder !== self else { return event }
+    flagsChanged(with: event)
     return event
   }
 
@@ -1382,6 +1392,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private func translationState(_ event: NSEvent, surface: ghostty_surface_t) -> (
     NSEvent, NSEvent.ModifierFlags
   ) {
+    // `characters`-family APIs throw on non-key events, so skip translation for a
+    // modifier-only event (otherwise a bare Cmd aborts the send before Ghostty sees it).
+    guard event.type == .keyDown || event.type == .keyUp else {
+      return (event, event.modifierFlags)
+    }
     let translatedModsGhostty = ghostty_surface_key_translation_mods(
       surface, ghosttyMods(event.modifierFlags))
     let translatedMods = appKitMods(translatedModsGhostty)
@@ -1451,6 +1466,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private func ghosttyCharacters(_ event: NSEvent) -> String? {
+    // `characters` throws on non-key events; a bare modifier (flagsChanged) carries none.
+    guard event.type == .keyDown || event.type == .keyUp else { return nil }
     guard let characters = event.characters else { return nil }
     if characters.count == 1,
       let scalar = characters.unicodeScalars.first
