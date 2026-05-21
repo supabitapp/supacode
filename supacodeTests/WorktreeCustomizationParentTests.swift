@@ -251,6 +251,78 @@ struct WorktreeCustomizationParentTests {
     #expect(store.state.sidebarItems[id: worktreeID]?.customTint == .red)
   }
 
+  @Test func unpinWorktreePrefersPinnedPayloadOverStaleUnpinnedSibling() async {
+    // Defensive coverage for a corrupted double-bucket pre-state (hand-edit,
+    // migrator race) where the same row exists in both `.pinned` and
+    // `.unpinned` with different payloads. The pinned entry is the live
+    // row the user sees; unpin must carry its `title` / `color` forward,
+    // not the stale unpinned sibling's.
+    var initial = makeInitialState(seedSidebarBucket: false)
+    initial.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: self.worktreeID,
+        in: self.repoID,
+        bucket: .pinned,
+        item: .init(title: "Live", color: .red)
+      )
+      sidebar.insert(
+        worktree: self.worktreeID,
+        in: self.repoID,
+        bucket: .unpinned,
+        item: .init(title: "Stale", color: .blue)
+      )
+    }
+    RepositoriesFeature.syncSidebar(&initial)
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.unpinWorktree(worktreeID))
+
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.pinned]?.items[worktreeID] == nil)
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[worktreeID]?.title == "Live")
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[worktreeID]?.color == .red)
+  }
+
+  @Test func pinWorktreePrefersUnpinnedPayloadOverStalePinnedSibling() async {
+    // Symmetric to the unpin case: when the same row appears in both
+    // buckets, `.unpinned` is the logical source for a pin, so its
+    // payload — not a stale `.pinned` sibling's — must round-trip.
+    var initial = makeInitialState(seedSidebarBucket: false)
+    initial.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: self.worktreeID,
+        in: self.repoID,
+        bucket: .unpinned,
+        item: .init(title: "Live", color: .red)
+      )
+      sidebar.insert(
+        worktree: self.worktreeID,
+        in: self.repoID,
+        bucket: .pinned,
+        item: .init(title: "Stale", color: .blue)
+      )
+    }
+    RepositoriesFeature.syncSidebar(&initial)
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.pinWorktree(worktreeID))
+
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[worktreeID] == nil)
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.pinned]?.items[worktreeID]?.title == "Live")
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.pinned]?.items[worktreeID]?.color == .red)
+  }
+
   @Test func cancelDelegateClearsPresentedState() async {
     var initial = makeInitialState()
     initial.worktreeCustomization = WorktreeCustomizationFeature.State(

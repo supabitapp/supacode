@@ -377,22 +377,37 @@ nonisolated extension SidebarState {
   /// by the delete flow (the worktree is going away entirely, so
   /// we don't need to know which bucket currently owns it) and by
   /// pin / unpin (which collapse any pre-existing multi-bucket state
-  /// before reinserting). Returns the first found Item — checked in
-  /// the order `.unpinned`, `.pinned`, `.archived` — so callers that
-  /// reinsert (pin / unpin) can carry user-set `title` / `color`
-  /// forward. O(1) — exactly three bucket subscripts, no scan.
+  /// before reinserting). Returns the first found Item in
+  /// `preferring` order so callers that reinsert (pin / unpin) can
+  /// carry user-set `title` / `color` forward; pass the logical
+  /// source bucket first (e.g. `.pinned` for unpin) so a corrupted
+  /// double-bucket pre-state preserves the live row's payload rather
+  /// than a stale sibling's. Default order matches the typical
+  /// "where would a curated row live" search. O(1) — exactly three
+  /// bucket subscripts, no scan.
   @discardableResult
   mutating func removeAnywhere(
     worktree worktreeID: Worktree.ID,
-    in repositoryID: Repository.ID
+    in repositoryID: Repository.ID,
+    preferring: [BucketID] = [.unpinned, .pinned, .archived]
   ) -> Item? {
     guard sections[repositoryID] != nil else {
       return nil
     }
-    let unpinned = sections[repositoryID]?.buckets[.unpinned]?.items.removeValue(forKey: worktreeID)
-    let pinned = sections[repositoryID]?.buckets[.pinned]?.items.removeValue(forKey: worktreeID)
-    let archived = sections[repositoryID]?.buckets[.archived]?.items.removeValue(forKey: worktreeID)
-    return unpinned ?? pinned ?? archived
+    // Remove from every bucket (the "removeAnywhere" contract); the
+    // `preferring` order only determines which carried Item we
+    // return. Buckets outside `preferring` are still purged but
+    // their payload is discarded.
+    var removed: [BucketID: Item] = [:]
+    for bucketID in [BucketID.pinned, .unpinned, .archived] {
+      if let item = sections[repositoryID]?.buckets[bucketID]?.items.removeValue(forKey: worktreeID) {
+        removed[bucketID] = item
+      }
+    }
+    for bucketID in preferring {
+      if let item = removed[bucketID] { return item }
+    }
+    return nil
   }
 
   /// Reorder `bucketID`'s items in `repositoryID` to exactly
