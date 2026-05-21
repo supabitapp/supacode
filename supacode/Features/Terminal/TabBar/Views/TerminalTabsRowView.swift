@@ -41,7 +41,8 @@ struct TerminalTabsRowView: View {
               fixedWidth: fixedTabWidth,
               tabStore: tabStore,
               onSelect: {
-                manager.selectTab(id)
+                // Route through WorktreeTerminalState so selecting a tab also focuses its focused surface.
+                terminalState.selectTab(id)
               },
               onClose: {
                 closeTab(id)
