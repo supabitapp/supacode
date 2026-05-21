@@ -769,6 +769,17 @@ extension SidebarItemGroup {
       seen.insert(id)
     }
 
+    // Read live lifecycle here (the `.deletingScript` flip recomputes the
+    // structure but not the grouping). Render-only: the surfaced row is absent
+    // from the nav, hotkey, and multi-select projections, which exclude archived.
+    if let archivedItems = state.sidebar.sections[repositoryID]?.buckets[.archived]?.items {
+      for id in archivedItems.keys
+      where state.sidebarItems[id: id]?.lifecycle == .deletingScript && !seen.contains(id) {
+        rawUnpinnedTail.append(id)
+        seen.insert(id)
+      }
+    }
+
     var pinnedTail = rawPinnedTail.filter { !hoistedRowIDs.contains($0) }
     let pendingTail = rawPendingTail.filter { !hoistedRowIDs.contains($0) }
     var unpinnedTail = rawUnpinnedTail.filter { !hoistedRowIDs.contains($0) }

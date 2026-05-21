@@ -492,7 +492,7 @@ private struct SidebarItemBody: View {
       switch moveMode {
       case .alwaysDisabled: true
       case .alwaysEnabled: false
-      case .conditional: isRepositoryRemoving || lifecycle == .deleting || lifecycle == .archiving
+      case .conditional: isRepositoryRemoving || lifecycle.isTerminating
       }
     SidebarItemView(
       store: store,

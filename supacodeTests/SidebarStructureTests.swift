@@ -186,6 +186,52 @@ struct SidebarStructureTests {
     #expect(allRowIDs.filter { $0 == duplicate.id }.count == 1)
   }
 
+  // MARK: - Archived rows re-enter while their delete script runs.
+
+  @Test func computeSlotsSurfacesArchivedRowOnlyWhileDeleteScriptRuns() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let archived = makeWorktree(id: "/tmp/repo/arch", name: "arch", repoRoot: repoRoot)
+    let repository = Repository(
+      id: repoRoot.path(percentEncoded: false),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, archived])
+    )
+    var state = makeState(repositories: [repository])
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repository.id] ?? .init()
+      section.buckets[.unpinned]?.items.removeValue(forKey: archived.id)
+      var archivedBucket = section.buckets[.archived] ?? .init()
+      archivedBucket.items[archived.id] = .init(archivedAt: .now)
+      section.buckets[.archived] = archivedBucket
+      sidebar.sections[repository.id] = section
+    }
+    state.reconcileSidebarForTesting()
+
+    func unpinnedTail() -> [Worktree.ID] {
+      SidebarItemGroup.computeSlots(
+        in: state,
+        repositoryID: repository.id,
+        pendingIDs: [],
+        hoistedRowIDs: [],
+        nestWorktreesByBranch: false
+      ).first { $0.slot == .unpinnedTail }?.rowIDs ?? []
+    }
+
+    // Idle archived row stays out of the main sidebar.
+    #expect(!unpinnedTail().contains(archived.id))
+
+    // Delete script running: the row re-enters the sidebar so the spinner /
+    // terminal are reachable.
+    state.sidebarItems[id: archived.id]?.lifecycle = .deletingScript
+    #expect(unpinnedTail().contains(archived.id))
+
+    // Completion or failure resets to idle: the row drops back to archived-only.
+    state.sidebarItems[id: archived.id]?.lifecycle = .idle
+    #expect(!unpinnedTail().contains(archived.id))
+  }
+
   // MARK: - Branch nesting alphabetical sort.
 
   @Test func nestByBranchSortsPinnedAndUnpinnedTailsAlphabetically() {

@@ -3941,7 +3941,9 @@ extension RepositoriesFeature.State {
 
   func selectedRow(for id: Worktree.ID?) -> SidebarItemFeature.State? {
     guard let id else { return nil }
-    if isWorktreeArchived(id) { return nil }
+    // Archived worktrees have no detail row except while their delete script
+    // runs, when the row re-enters the sidebar and must show its terminal.
+    if isWorktreeArchived(id), sidebarItems[id: id]?.lifecycle != .deletingScript { return nil }
     return sidebarItems[id: id]
   }
 
@@ -3992,7 +3994,12 @@ extension RepositoriesFeature.State {
   /// Selectability check (archived = no, pending = yes) used by the worktree-history
   /// navigator and its menu-enablement filter when only a yes / no is needed.
   func worktreeExists(_ worktreeID: Worktree.ID) -> Bool {
-    if isWorktreeArchived(worktreeID) { return false }
+    // A delete-script archived row is surfaced back into the sidebar and stays a
+    // valid selection so a roster reload can't evict the user off its live
+    // terminal mid-run (mirrors `selectedRow`).
+    if isWorktreeArchived(worktreeID) {
+      return sidebarItems[id: worktreeID]?.lifecycle == .deletingScript
+    }
     if pendingWorktree(for: worktreeID) != nil { return true }
     return repositories.contains { $0.worktrees[id: worktreeID] != nil }
   }

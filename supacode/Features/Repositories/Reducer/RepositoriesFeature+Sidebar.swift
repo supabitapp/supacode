@@ -132,7 +132,10 @@ extension RepositoriesFeature {
       }
       unpinned.append(contentsOf: state.orderedUnpinnedWorktreeIDs(in: repository))
       bucket[.unpinned] = unpinned
-      // Archived bucket: only worktrees whose delete script is running stay visible.
+      // Mirrors the surfaced delete-script rows for the `SidebarConsistency`
+      // invariant, but render/nav read them live from `sidebar.sections` in
+      // `computeSlots`. Don't repoint that read here: this is stale on the
+      // `.deletingScript` flip (grouping rebuilds only on roster mutations).
       let archivedIDs = state.archivedWorktreeIDSet
       bucket[.archived] = repository.worktrees
         .filter { worktree in

@@ -2109,6 +2109,57 @@ struct RepositoriesFeatureTests {
     #expect(ids == [pinnedWorktree.id])
   }
 
+  @Test func selectedRowReturnsArchivedWorktreeOnlyWhileDeleteScriptRuns() {
+    // Archived rows resolve a detail row only while their delete script runs,
+    // so the re-surfaced row's terminal stays reachable.
+    let worktree = makeWorktree(id: "/tmp/arch-del/wt", name: "duck", repoRoot: "/tmp/arch-del")
+    let repository = makeRepository(id: "/tmp/arch-del", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repository.id] ?? .init()
+      section.buckets[.unpinned]?.items.removeValue(forKey: worktree.id)
+      var archivedBucket = section.buckets[.archived] ?? .init()
+      archivedBucket.items[worktree.id] = .init(archivedAt: .now)
+      section.buckets[.archived] = archivedBucket
+      sidebar.sections[repository.id] = section
+    }
+
+    #expect(state.selectedRow(for: worktree.id) == nil)
+
+    state.sidebarItems[id: worktree.id]?.lifecycle = .deletingScript
+    #expect(state.selectedRow(for: worktree.id)?.id == worktree.id)
+
+    state.sidebarItems[id: worktree.id]?.lifecycle = .idle
+    #expect(state.selectedRow(for: worktree.id) == nil)
+  }
+
+  @Test func deleteScriptArchivedRowStaysSelectableAcrossReload() {
+    // The `applyRepositories` reload guard nils the selection when
+    // `isSelectionValid` is false; the surfaced delete-script row must stay
+    // valid so a routine reload can't evict the user off its live terminal.
+    let worktree = makeWorktree(id: "/tmp/arch-sel/wt", name: "duck", repoRoot: "/tmp/arch-sel")
+    let repository = makeRepository(id: "/tmp/arch-sel", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repository.id] ?? .init()
+      section.buckets[.unpinned]?.items.removeValue(forKey: worktree.id)
+      var archivedBucket = section.buckets[.archived] ?? .init()
+      archivedBucket.items[worktree.id] = .init(archivedAt: .now)
+      section.buckets[.archived] = archivedBucket
+      sidebar.sections[repository.id] = section
+    }
+
+    #expect(!state.worktreeExists(worktree.id))
+    #expect(!state.isSelectionValid(worktree.id))
+
+    state.sidebarItems[id: worktree.id]?.lifecycle = .deletingScript
+    #expect(state.worktreeExists(worktree.id))
+    #expect(state.isSelectionValid(worktree.id))
+
+    state.sidebarItems[id: worktree.id]?.lifecycle = .idle
+    #expect(!state.isSelectionValid(worktree.id))
+  }
+
   @Test func requestArchiveWorktreeForFolderShowsActionNotAvailable() async {
     // Archive still rejects on folders (no archived bucket for them); pin
     // and unpin now flow through the standard bucket machinery so they
@@ -5102,6 +5153,9 @@ struct RepositoriesFeatureTests {
     }
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: featureWorktree.id]?.lifecycle = .deletingScript
+    // Refresh caches so the surfaced delete-script row is in the initial
+    // structure; otherwise the action's post-reduce recompute reads as a change.
+    state.applyPostReduceCacheRecomputes()
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
