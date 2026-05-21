@@ -198,6 +198,59 @@ struct WorktreeCustomizationParentTests {
     #expect(store.state.selectedWorktreeSlice?.customTint == .red)
   }
 
+  @Test func pinWorktreePreservesCustomTitleAndColor() async {
+    var initial = makeInitialState()
+    initial.$sidebar.withLock { sidebar in
+      sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.title =
+        "Renamed"
+      sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.color = .red
+    }
+    RepositoriesFeature.syncSidebar(&initial)
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.pinWorktree(worktreeID))
+
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[worktreeID] == nil)
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.pinned]?.items[worktreeID]?.title == "Renamed")
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.pinned]?.items[worktreeID]?.color == .red)
+    #expect(store.state.sidebarItems[id: worktreeID]?.customTitle == "Renamed")
+    #expect(store.state.sidebarItems[id: worktreeID]?.customTint == .red)
+  }
+
+  @Test func unpinWorktreePreservesCustomTitleAndColor() async {
+    var initial = makeInitialState(seedSidebarBucket: false)
+    initial.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: self.worktreeID,
+        in: self.repoID,
+        bucket: .pinned,
+        item: .init(title: "Renamed", color: .red)
+      )
+    }
+    RepositoriesFeature.syncSidebar(&initial)
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.unpinWorktree(worktreeID))
+
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.pinned]?.items[worktreeID] == nil)
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[worktreeID]?.title == "Renamed")
+    #expect(store.state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[worktreeID]?.color == .red)
+    #expect(store.state.sidebarItems[id: worktreeID]?.customTitle == "Renamed")
+    #expect(store.state.sidebarItems[id: worktreeID]?.customTint == .red)
+  }
+
   @Test func cancelDelegateClearsPresentedState() async {
     var initial = makeInitialState()
     initial.worktreeCustomization = WorktreeCustomizationFeature.State(

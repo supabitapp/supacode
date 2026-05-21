@@ -2652,11 +2652,15 @@ struct RepositoriesFeature {
           // invariant against pre-states that have the row in `.pinned` and
           // `.unpinned` simultaneously (hand-edit, migrator race) and also
           // handles the not-bucketed case (folders before first reconcile).
-          sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID)
+          // The carried Item preserves user-set `title` / `color` across
+          // the bucket move.
+          var carried = sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID) ?? .init()
+          carried.archivedAt = nil
           sidebar.insert(
             worktree: worktreeID,
             in: repositoryID,
             bucket: .pinned,
+            item: carried,
             position: 0
           )
         }
@@ -2676,12 +2680,15 @@ struct RepositoriesFeature {
         analyticsClient.capture("worktree_unpinned", nil)
         state.$sidebar.withLock { sidebar in
           // Same invariant as `pinWorktree`: collapse any pre-existing
-          // bucket placement into a single `.unpinned` entry.
-          sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID)
+          // bucket placement into a single `.unpinned` entry, carrying
+          // the Item forward so `title` / `color` survive unpin.
+          var carried = sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID) ?? .init()
+          carried.archivedAt = nil
           sidebar.insert(
             worktree: worktreeID,
             in: repositoryID,
             bucket: .unpinned,
+            item: carried,
             position: 0
           )
         }

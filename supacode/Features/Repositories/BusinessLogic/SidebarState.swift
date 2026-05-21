@@ -375,15 +375,24 @@ nonisolated extension SidebarState {
 
   /// Remove `worktreeID` from every bucket of `repositoryID`. Used
   /// by the delete flow (the worktree is going away entirely, so
-  /// we don't need to know which bucket currently owns it). O(1)
-  /// — exactly three bucket subscripts, no scan.
-  mutating func removeAnywhere(worktree worktreeID: Worktree.ID, in repositoryID: Repository.ID) {
+  /// we don't need to know which bucket currently owns it) and by
+  /// pin / unpin (which collapse any pre-existing multi-bucket state
+  /// before reinserting). Returns the first found Item — checked in
+  /// the order `.unpinned`, `.pinned`, `.archived` — so callers that
+  /// reinsert (pin / unpin) can carry user-set `title` / `color`
+  /// forward. O(1) — exactly three bucket subscripts, no scan.
+  @discardableResult
+  mutating func removeAnywhere(
+    worktree worktreeID: Worktree.ID,
+    in repositoryID: Repository.ID
+  ) -> Item? {
     guard sections[repositoryID] != nil else {
-      return
+      return nil
     }
-    sections[repositoryID]?.buckets[.pinned]?.items.removeValue(forKey: worktreeID)
-    sections[repositoryID]?.buckets[.unpinned]?.items.removeValue(forKey: worktreeID)
-    sections[repositoryID]?.buckets[.archived]?.items.removeValue(forKey: worktreeID)
+    let unpinned = sections[repositoryID]?.buckets[.unpinned]?.items.removeValue(forKey: worktreeID)
+    let pinned = sections[repositoryID]?.buckets[.pinned]?.items.removeValue(forKey: worktreeID)
+    let archived = sections[repositoryID]?.buckets[.archived]?.items.removeValue(forKey: worktreeID)
+    return unpinned ?? pinned ?? archived
   }
 
   /// Reorder `bucketID`'s items in `repositoryID` to exactly
