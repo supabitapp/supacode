@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 
 struct GitClientDependency: Sendable {
   var repoRoot: @Sendable (URL) async throws -> URL
@@ -17,7 +18,7 @@ struct GitClientDependency: Sendable {
   var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
   var isValidBranchName: @Sendable (String, URL) async -> Bool
-  var branchRefs: @Sendable (URL) async throws -> [String]
+  var branchInventory: @Sendable (URL, [String]) async throws -> GitBranchInventory
   var defaultRemoteBranchRef: @Sendable (URL) async throws -> String?
   var automaticWorktreeBaseRef: @Sendable (URL) async -> String?
   var ignoredFileCount: @Sendable (URL) async throws -> Int
@@ -68,7 +69,7 @@ extension GitClientDependency: DependencyKey {
     isValidBranchName: { branchName, repoRoot in
       await GitClient().isValidBranchName(branchName, for: repoRoot)
     },
-    branchRefs: { try await GitClient().branchRefs(for: $0) },
+    branchInventory: { try await GitClient().branchInventory(for: $0, remoteNames: $1) },
     defaultRemoteBranchRef: { try await GitClient().defaultRemoteBranchRef(for: $0) },
     automaticWorktreeBaseRef: { await GitClient().automaticWorktreeBaseRef(for: $0) },
     ignoredFileCount: { try await GitClient().ignoredFileCount(for: $0) },

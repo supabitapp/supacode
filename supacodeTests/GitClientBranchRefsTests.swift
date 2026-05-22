@@ -145,4 +145,63 @@ struct GitClientBranchRefsTests {
 
     #expect(ref == nil)
   }
+
+  @Test func branchInventoryGroupsAndSortsLocalAndRemoteBranches() async throws {
+    let shell = ShellClient(
+      run: { _, arguments, _ in
+        if arguments.contains("refs/heads") {
+          return ShellOutput(stdout: "main\nfeature\nalpha\n", stderr: "", exitCode: 0)
+        }
+        if arguments.contains("refs/remotes") {
+          return ShellOutput(
+            stdout: "origin/HEAD\norigin/main\norigin/dev\nupstream/main\n",
+            stderr: "",
+            exitCode: 0
+          )
+        }
+        if arguments.last == "remote" {
+          return ShellOutput(stdout: "origin\nupstream\n", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) }
+    )
+    let client = GitClient(shell: shell)
+
+    let inventory = try await client.branchInventory(
+      for: URL(fileURLWithPath: "/tmp/repo"),
+      remoteNames: ["origin", "upstream"]
+    )
+
+    #expect(inventory.localBranches == ["alpha", "feature", "main"])
+    #expect(inventory.remotes.map(\.name) == ["origin", "upstream"])
+    #expect(inventory.remotes.first?.branches == ["dev", "main"])
+    #expect(inventory.remotes.last?.branches == ["main"])
+  }
+
+  @Test func groupRemoteBranchesOrdersOriginFirstThenAlphabetical() {
+    let groups = GitReferenceQueries.groupRemoteBranches(
+      refs: ["upstream/main", "fork/feature", "origin/dev", "origin/main"],
+      remoteNames: ["upstream", "fork", "origin"]
+    )
+
+    #expect(groups.map(\.name) == ["origin", "fork", "upstream"])
+    #expect(groups[0].branches == ["dev", "main"])
+  }
+
+  @Test func localBranchNameStripsLongestMatchingRemote() {
+    #expect(
+      GitReferenceQueries.localBranchName(fromRemoteRef: "origin/main", remoteNames: ["origin"])
+        == "main"
+    )
+    #expect(
+      GitReferenceQueries.localBranchName(
+        fromRemoteRef: "upstream/feature/x",
+        remoteNames: ["up", "upstream"]
+      ) == "feature/x"
+    )
+    #expect(
+      GitReferenceQueries.localBranchName(fromRemoteRef: "main", remoteNames: ["origin"]) == nil
+    )
+  }
 }

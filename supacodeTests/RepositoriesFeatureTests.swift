@@ -679,7 +679,13 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     } withDependencies: {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
-      $0.gitClient.branchRefs = { _ in ["origin/main", "origin/dev"] }
+      $0.gitClient.remoteNames = { _ in ["origin"] }
+      $0.gitClient.branchInventory = { _, _ in
+        GitBranchInventory(
+          localBranches: ["dev", "main"],
+          remotes: [GitRemoteBranchGroup(name: "origin", branches: ["dev", "main"])]
+        )
+      }
     }
 
     await store.send(.createRandomWorktreeInRepository(repository.id))
@@ -688,11 +694,158 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         repositoryName: repository.name,
         automaticBaseRef: "origin/main",
-        baseRefOptions: ["origin/dev", "origin/main"],
+        defaultBranch: "main",
+        remoteNames: ["origin"],
+        branchMenu: nil,
         branchName: "",
         selectedBaseRef: nil,
         fetchOrigin: true,
         validationMessage: nil
+      )
+    }
+    await store.receive(\.promptedWorktreeBranchesLoaded) {
+      $0.worktreeCreationPrompt?.branchMenu = BaseRefBranchMenu(
+        inventory: GitBranchInventory(
+          localBranches: ["dev", "main"],
+          remotes: [GitRemoteBranchGroup(name: "origin", branches: ["dev", "main"])]
+        ),
+        hoistedLocalBranch: "main"
+      )
+    }
+  }
+
+  @Test func promptedWorktreeBranchesLoadedResetsStalePersistedBaseRef() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
+      repositoryID: repository.id,
+      repositoryName: repository.name,
+      automaticBaseRef: "origin/main",
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
+      branchName: "feature/new",
+      selectedBaseRef: "origin/deleted-branch",
+      fetchOrigin: true,
+      validationMessage: nil
+    )
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let inventory = GitBranchInventory(
+      localBranches: ["main"],
+      remotes: [GitRemoteBranchGroup(name: "origin", branches: ["main"])]
+    )
+    await store.send(.promptedWorktreeBranchesLoaded(repositoryID: repository.id, inventory: inventory)) {
+      $0.worktreeCreationPrompt?.branchMenu = BaseRefBranchMenu(
+        inventory: inventory,
+        hoistedLocalBranch: "main"
+      )
+      $0.worktreeCreationPrompt?.selectedBaseRef = nil
+    }
+  }
+
+  @Test func promptedWorktreeBranchesLoadedKeepsPersistedBaseRefPresentInInventory() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
+      repositoryID: repository.id,
+      repositoryName: repository.name,
+      automaticBaseRef: "origin/main",
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
+      branchName: "feature/new",
+      selectedBaseRef: "origin/dev",
+      fetchOrigin: true,
+      validationMessage: nil
+    )
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    let inventory = GitBranchInventory(
+      localBranches: ["main"],
+      remotes: [GitRemoteBranchGroup(name: "origin", branches: ["dev", "main"])]
+    )
+    await store.send(.promptedWorktreeBranchesLoaded(repositoryID: repository.id, inventory: inventory)) {
+      $0.worktreeCreationPrompt?.branchMenu = BaseRefBranchMenu(
+        inventory: inventory,
+        hoistedLocalBranch: "main"
+      )
+    }
+  }
+
+  @Test func promptedWorktreeBranchesLoadedKeepsBaseRefWhenInventoryEmpty() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
+      repositoryID: repository.id,
+      repositoryName: repository.name,
+      automaticBaseRef: "origin/main",
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
+      branchName: "feature/new",
+      selectedBaseRef: "origin/dev",
+      fetchOrigin: true,
+      validationMessage: nil
+    )
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    // A failed inventory load surfaces as empty; it must not wipe a valid ref.
+    await store.send(
+      .promptedWorktreeBranchesLoaded(repositoryID: repository.id, inventory: GitBranchInventory())
+    ) {
+      $0.worktreeCreationPrompt?.branchMenu = BaseRefBranchMenu(
+        inventory: GitBranchInventory(), hoistedLocalBranch: "main")
+    }
+  }
+
+  @Test func promptedWorktreeBranchesLoadedClearsDefaultBranchWhenLocalBranchMissing() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
+      repositoryID: repository.id,
+      repositoryName: repository.name,
+      automaticBaseRef: "origin/main",
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
+      branchName: "feature/new",
+      selectedBaseRef: nil,
+      fetchOrigin: true,
+      validationMessage: nil
+    )
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+
+    // Only `origin/main` exists remotely; there is no local `main` to base off.
+    let inventory = GitBranchInventory(
+      localBranches: [],
+      remotes: [GitRemoteBranchGroup(name: "origin", branches: ["main"])]
+    )
+    await store.send(.promptedWorktreeBranchesLoaded(repositoryID: repository.id, inventory: inventory)) {
+      $0.worktreeCreationPrompt?.defaultBranch = nil
+      $0.worktreeCreationPrompt?.branchMenu = BaseRefBranchMenu(
+        inventory: inventory,
+        hoistedLocalBranch: nil
       )
     }
   }
@@ -706,7 +859,9 @@ struct RepositoriesFeatureTests {
       repositoryID: repository.id,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
-      baseRefOptions: ["origin/main"],
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
       branchName: "feature/new-branch",
       selectedBaseRef: nil,
       fetchOrigin: true,
@@ -737,7 +892,9 @@ struct RepositoriesFeatureTests {
       repositoryID: repository.id,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
-      baseRefOptions: ["origin/main"],
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
       branchName: "feature/new",
       selectedBaseRef: nil,
       fetchOrigin: true,
@@ -797,7 +954,9 @@ struct RepositoriesFeatureTests {
       repositoryID: repository.id,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
-      baseRefOptions: ["origin/main"],
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
       branchName: "feature/existing",
       selectedBaseRef: nil,
       fetchOrigin: true,
@@ -871,7 +1030,13 @@ struct RepositoriesFeatureTests {
         }
         return "origin/main"
       }
-      $0.gitClient.branchRefs = { _ in ["origin/main"] }
+      $0.gitClient.remoteNames = { _ in ["origin"] }
+      $0.gitClient.branchInventory = { _, _ in
+        GitBranchInventory(
+          localBranches: ["main"],
+          remotes: [GitRemoteBranchGroup(name: "origin", branches: ["main"])]
+        )
+      }
     }
 
     await store.send(.createRandomWorktreeInRepository(repoA.id))
@@ -883,11 +1048,22 @@ struct RepositoriesFeatureTests {
         repositoryID: repoB.id,
         repositoryName: repoB.name,
         automaticBaseRef: "origin/main",
-        baseRefOptions: ["origin/main"],
+        defaultBranch: "main",
+        remoteNames: ["origin"],
+        branchMenu: nil,
         branchName: "",
         selectedBaseRef: nil,
         fetchOrigin: true,
         validationMessage: nil
+      )
+    }
+    await store.receive(\.promptedWorktreeBranchesLoaded) {
+      $0.worktreeCreationPrompt?.branchMenu = BaseRefBranchMenu(
+        inventory: GitBranchInventory(
+          localBranches: ["main"],
+          remotes: [GitRemoteBranchGroup(name: "origin", branches: ["main"])]
+        ),
+        hoistedLocalBranch: "main"
       )
     }
     await store.finish()
@@ -903,7 +1079,9 @@ struct RepositoriesFeatureTests {
       repositoryID: repository.id,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
-      baseRefOptions: ["origin/main"],
+      defaultBranch: "main",
+      remoteNames: ["origin"],
+      branchMenu: nil,
       branchName: "feature/new-branch",
       selectedBaseRef: nil,
       fetchOrigin: true,

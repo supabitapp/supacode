@@ -2,6 +2,45 @@ import Foundation
 
 private nonisolated let gitReferenceLogger = SupaLogger("Git")
 
+/// Local + per-remote branch lists for the new-worktree base-ref picker.
+public nonisolated struct GitBranchInventory: Sendable, Equatable {
+  public var localBranches: [String]
+  public var remotes: [GitRemoteBranchGroup]
+
+  public init(localBranches: [String] = [], remotes: [GitRemoteBranchGroup] = []) {
+    self.localBranches = localBranches
+    self.remotes = remotes
+  }
+
+  public var isEmpty: Bool {
+    localBranches.isEmpty && remotes.allSatisfy(\.branches.isEmpty)
+  }
+
+  /// Whether `ref` is a selectable branch in this inventory, matching the refs
+  /// the base-ref menu renders (`main` locally, `origin/main` per remote).
+  public func contains(ref: String) -> Bool {
+    if localBranches.contains(ref) {
+      return true
+    }
+    return remotes.contains { group in
+      group.branches.contains { "\(group.name)/\($0)" == ref }
+    }
+  }
+}
+
+/// Branches belonging to a single remote, names stripped of the `remote/` prefix.
+public nonisolated struct GitRemoteBranchGroup: Sendable, Equatable, Identifiable {
+  public var name: String
+  public var branches: [String]
+
+  public var id: String { name }
+
+  public init(name: String, branches: [String]) {
+    self.name = name
+    self.branches = branches
+  }
+}
+
 public nonisolated struct GitReferenceQueries: Sendable {
   private let shell: ShellClient
 
@@ -35,6 +74,110 @@ public nonisolated struct GitReferenceQueries: Sendable {
       .filter { !$0.hasSuffix("/HEAD") }
       .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     return deduplicated(refs)
+  }
+
+  /// Local branches plus per-remote branch lists, each sorted alphabetically.
+  /// Takes the already-resolved `remoteNames` so the caller's earlier
+  /// `git remote` (used for the immediate quick picks) isn't run twice.
+  public func branchInventory(for repoRoot: URL, remoteNames: [String]) async throws -> GitBranchInventory {
+    async let localTask = orderedLocalBranchNames(for: repoRoot)
+    async let remoteRefsTask = remoteBranchRefs(for: repoRoot)
+    let (local, remoteRefs) = try await (localTask, remoteRefsTask)
+    return GitBranchInventory(
+      localBranches: Self.sortedAlphabetically(local),
+      remotes: Self.groupRemoteBranches(refs: remoteRefs, remoteNames: remoteNames)
+    )
+  }
+
+  /// Local branch names, case preserved, in declaration order. Named distinctly
+  /// from `GitClient.localBranchNames` (a lowercased `Set` for membership checks)
+  /// so the ordered-list-vs-set contract isn't conflated at a call site.
+  public func orderedLocalBranchNames(for repoRoot: URL) async throws -> [String] {
+    let output = try await runGit(
+      arguments: [
+        "-C",
+        repoRoot.path(percentEncoded: false),
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads",
+      ]
+    )
+    return Self.nonEmptyLines(output)
+  }
+
+  /// Full remote-tracking refs (e.g. `origin/main`), excluding `*/HEAD`.
+  public func remoteBranchRefs(for repoRoot: URL) async throws -> [String] {
+    let output = try await runGit(
+      arguments: [
+        "-C",
+        repoRoot.path(percentEncoded: false),
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/remotes",
+      ]
+    )
+    return Self.nonEmptyLines(output).filter { !$0.hasSuffix("/HEAD") }
+  }
+
+  public func remoteNames(for repoRoot: URL) async throws -> [String] {
+    let output = try await runGit(
+      arguments: [
+        "-C",
+        repoRoot.path(percentEncoded: false),
+        "remote",
+      ]
+    )
+    return Self.nonEmptyLines(output)
+  }
+
+  /// Local branch name for a remote ref (`origin/main` -> `main`), or nil when
+  /// the ref isn't owned by one of the known remotes.
+  public static func localBranchName(fromRemoteRef ref: String, remoteNames: [String]) -> String? {
+    remotePrefixMatch(ref: ref, remoteNames: remoteNames)?.branch
+  }
+
+  /// Single source of truth for stripping a `<remote>/` prefix. Tries the
+  /// longest remote name first so a remote whose name is a prefix of another
+  /// (e.g. `up` vs `upstream`) matches the right one.
+  public static func remotePrefixMatch(ref: String, remoteNames: [String]) -> (remote: String, branch: String)? {
+    for remote in remoteNames.sorted(by: { $0.count > $1.count }) {
+      let prefix = "\(remote)/"
+      guard ref.hasPrefix(prefix) else { continue }
+      let branch = String(ref.dropFirst(prefix.count))
+      return branch.isEmpty ? nil : (remote, branch)
+    }
+    return nil
+  }
+
+  static func groupRemoteBranches(refs: [String], remoteNames: [String]) -> [GitRemoteBranchGroup] {
+    var grouped: [String: [String]] = [:]
+    for ref in refs {
+      guard let match = remotePrefixMatch(ref: ref, remoteNames: remoteNames) else { continue }
+      grouped[match.remote, default: []].append(match.branch)
+    }
+    // `origin` first, then the remaining remotes alphabetically.
+    return
+      remoteNames
+      .sorted { lhs, rhs in
+        if lhs == "origin" { return rhs != "origin" }
+        if rhs == "origin" { return false }
+        return lhs.localizedStandardCompare(rhs) == .orderedAscending
+      }
+      .compactMap { remote in
+        guard let branches = grouped[remote] else { return nil }
+        return GitRemoteBranchGroup(name: remote, branches: sortedAlphabetically(branches))
+      }
+  }
+
+  private static func nonEmptyLines(_ output: String) -> [String] {
+    output
+      .split(whereSeparator: \.isNewline)
+      .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+  }
+
+  private static func sortedAlphabetically(_ values: [String]) -> [String] {
+    values.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
   }
 
   public func defaultRemoteBranchRef(for repoRoot: URL) async throws -> String? {

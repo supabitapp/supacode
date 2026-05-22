@@ -272,9 +272,14 @@ struct RepositoriesFeature {
     )
     case promptedWorktreeCreationDataLoaded(
       repositoryID: Repository.ID,
-      baseRefOptions: [String],
       automaticBaseRef: String,
+      defaultBranch: String?,
+      remoteNames: [String],
       selectedBaseRef: String?
+    )
+    case promptedWorktreeBranchesLoaded(
+      repositoryID: Repository.ID,
+      inventory: GitBranchInventory
     )
     case startPromptedWorktreeCreation(
       repositoryID: Repository.ID,
@@ -848,56 +853,48 @@ struct RepositoriesFeature {
         let selectedBaseRef = repositorySettings.worktreeBaseRef
         let gitClient = gitClient
         let rootURL = repository.rootURL
+        // Resolve the cheap quick-picks (auto ref + matching local
+        // branch) and present the prompt right away, then load the
+        // full local / remote branch lists in the background so the
+        // dialog never blocks on `git for-each-ref`.
         return .run { send in
           let automaticBaseRef = await gitClient.automaticWorktreeBaseRef(rootURL) ?? "HEAD"
           guard !Task.isCancelled else {
             return
           }
-          let baseRefOptions: [String]
-          do {
-            let refs = try await gitClient.branchRefs(rootURL)
-            guard !Task.isCancelled else {
-              return
-            }
-            var options = refs
-            if !automaticBaseRef.isEmpty, !options.contains(automaticBaseRef) {
-              options.append(automaticBaseRef)
-            }
-            if let selectedBaseRef, !selectedBaseRef.isEmpty, !options.contains(selectedBaseRef) {
-              options.append(selectedBaseRef)
-            }
-            baseRefOptions = options.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-          } catch {
-            guard !Task.isCancelled else {
-              return
-            }
-            var options: [String] = []
-            if !automaticBaseRef.isEmpty {
-              options.append(automaticBaseRef)
-            }
-            if let selectedBaseRef, !selectedBaseRef.isEmpty, !options.contains(selectedBaseRef) {
-              options.append(selectedBaseRef)
-            }
-            baseRefOptions = options
-          }
+          let remoteNames = (try? await gitClient.remoteNames(rootURL)) ?? []
+          let defaultBranch = GitReferenceQueries.localBranchName(
+            fromRemoteRef: automaticBaseRef,
+            remoteNames: remoteNames
+          )
           guard !Task.isCancelled else {
             return
           }
           await send(
             .promptedWorktreeCreationDataLoaded(
               repositoryID: repositoryID,
-              baseRefOptions: baseRefOptions,
               automaticBaseRef: automaticBaseRef,
+              defaultBranch: defaultBranch,
+              remoteNames: remoteNames,
               selectedBaseRef: selectedBaseRef
             )
+          )
+          let inventory =
+            (try? await gitClient.branchInventory(rootURL, remoteNames)) ?? GitBranchInventory()
+          guard !Task.isCancelled else {
+            return
+          }
+          await send(
+            .promptedWorktreeBranchesLoaded(repositoryID: repositoryID, inventory: inventory)
           )
         }
         .cancellable(id: CancelID.worktreePromptLoad, cancelInFlight: true)
 
       case .promptedWorktreeCreationDataLoaded(
         let repositoryID,
-        let baseRefOptions,
         let automaticBaseRef,
+        let defaultBranch,
+        let remoteNames,
         let selectedBaseRef
       ):
         guard let repository = state.repositories[id: repositoryID] else {
@@ -908,12 +905,45 @@ struct RepositoriesFeature {
           repositoryID: repository.id,
           repositoryName: repository.name,
           automaticBaseRef: automaticBaseRef,
-          baseRefOptions: baseRefOptions,
+          defaultBranch: defaultBranch,
+          remoteNames: remoteNames,
+          branchMenu: nil,
           branchName: "",
           selectedBaseRef: selectedBaseRef,
           fetchOrigin: promptSettingsFile.global.fetchOriginBeforeWorktreeCreation,
           validationMessage: nil
         )
+        return .none
+
+      case .promptedWorktreeBranchesLoaded(let repositoryID, let inventory):
+        guard var prompt = state.worktreeCreationPrompt, prompt.repositoryID == repositoryID else {
+          return .none
+        }
+        // Drop the default-branch quick pick if no local branch of that name
+        // actually exists (e.g. a fresh clone with only `origin/main`), so it
+        // can't submit a missing ref. Guard on a non-empty inventory so a
+        // failed load doesn't hide a valid quick pick.
+        if !inventory.isEmpty, let defaultBranch = prompt.defaultBranch,
+          !inventory.localBranches.contains(defaultBranch)
+        {
+          prompt.defaultBranch = nil
+        }
+        prompt.branchMenu = BaseRefBranchMenu(
+          inventory: inventory,
+          hoistedLocalBranch: prompt.defaultBranch
+        )
+        // A persisted base ref (from repository settings) can point at a branch
+        // that no longer exists. Fall back to Auto so the prompt doesn't show an
+        // invisible selection and submit a dead ref to `git worktree add`. Only
+        // reconcile against a non-empty inventory so a failed load doesn't wipe a
+        // still-valid ref.
+        if let selectedBaseRef = prompt.selectedBaseRef, !inventory.isEmpty,
+          selectedBaseRef != prompt.automaticBaseRef,
+          !inventory.contains(ref: selectedBaseRef)
+        {
+          prompt.selectedBaseRef = nil
+        }
+        state.worktreeCreationPrompt = prompt
         return .none
 
       case .worktreeCreationPrompt(.presented(.delegate(.cancel))):
@@ -4901,10 +4931,7 @@ extension SidebarState {
 
 extension String {
   /// Returns the remote name if this ref starts with `<remote>/`, matched against known remotes.
-  /// Matches the longest remote name first to handle ambiguous prefixes.
   fileprivate nonisolated func matchingRemote(from remotes: [String]) -> String? {
-    remotes
-      .sorted { $0.count > $1.count }
-      .first { hasPrefix("\($0)/") }
+    GitReferenceQueries.remotePrefixMatch(ref: self, remoteNames: remotes)?.remote
   }
 }

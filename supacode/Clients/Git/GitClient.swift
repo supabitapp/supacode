@@ -369,6 +369,10 @@ struct GitClient {
     try await referenceQueries.branchRefs(for: repoRoot)
   }
 
+  nonisolated func branchInventory(for repoRoot: URL, remoteNames: [String]) async throws -> GitBranchInventory {
+    try await referenceQueries.branchInventory(for: repoRoot, remoteNames: remoteNames)
+  }
+
   nonisolated func defaultRemoteBranchRef(for repoRoot: URL) async throws -> String? {
     try await referenceQueries.defaultRemoteBranchRef(for: repoRoot)
   }

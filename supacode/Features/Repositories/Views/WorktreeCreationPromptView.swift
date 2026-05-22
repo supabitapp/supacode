@@ -22,17 +22,7 @@ struct WorktreeCreationPromptView: View {
       .headerProminence(.increased)
 
       Section {
-        Picker(selection: $store.selectedBaseRef) {
-          automaticRefLabel
-            .tag(Optional<String>.none)
-          ForEach(store.baseRefOptions, id: \.self) { ref in
-            Text(ref)
-              .tag(Optional(ref))
-          }
-        } label: {
-          Text("Base ref")
-          Text("The branch or ref the new worktree will be created from.")
-        }
+        WorktreeBaseRefField(store: store)
 
         Toggle(isOn: $store.fetchOrigin) {
           Text("Fetch remote branch")
@@ -40,6 +30,7 @@ struct WorktreeCreationPromptView: View {
             "Runs `git fetch` to ensure the base branch is up to date before creating the worktree."
           )
         }
+        .disabled(store.isSelectedBaseRefLocal)
       } footer: {
         if let validationMessage = store.validationMessage, !validationMessage.isEmpty {
           Text(validationMessage)
@@ -75,10 +66,127 @@ struct WorktreeCreationPromptView: View {
     .frame(minWidth: 420)
     .task { isBranchFieldFocused = true }
   }
+}
 
-  private var automaticRefLabel: Text {
-    let ref = store.automaticBaseRef
-    guard !ref.isEmpty else { return Text("Auto") }
-    return Text("Auto \(Text(ref).foregroundStyle(.secondary))")
+private struct WorktreeBaseRefField: View {
+  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+
+  var body: some View {
+    LabeledContent {
+      HStack(spacing: 8) {
+        if store.isLoadingBranches {
+          ProgressView()
+            .controlSize(.small)
+        }
+        Menu {
+          WorktreeBaseRefMenuContent(store: store)
+        } label: {
+          Text(store.baseRefMenuLabel)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+      }
+    } label: {
+      Text("Base ref")
+      Text("The branch or ref the new worktree will be created from.")
+    }
+  }
+}
+
+private struct WorktreeBaseRefMenuContent: View {
+  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+
+  var body: some View {
+    WorktreeBaseRefMenuItem(
+      store: store,
+      ref: nil,
+      label: store.automaticBaseRef.isEmpty
+        ? Text("Auto")
+        : Text(store.automaticBaseRef) + Text(" Auto").foregroundStyle(.secondary)
+    )
+    if let defaultBranch = store.defaultBranch {
+      // Tagged "Local" to distinguish it from the remote-tracking Auto ref above.
+      WorktreeBaseRefMenuItem(
+        store: store,
+        ref: defaultBranch,
+        label: Text(defaultBranch) + Text(" Local").foregroundStyle(.secondary)
+      )
+    }
+
+    Divider()
+
+    if let branchMenu = store.branchMenu {
+      if !branchMenu.localBranches.isEmpty {
+        Menu("Local") {
+          ForEach(branchMenu.localBranches) { node in
+            WorktreeBranchNodeMenu(store: store, node: node)
+          }
+        }
+      }
+      ForEach(branchMenu.remotes) { remote in
+        WorktreeRemoteBranchMenu(store: store, remote: remote)
+      }
+    } else {
+      Text("Loading branches…")
+    }
+  }
+}
+
+private struct WorktreeRemoteBranchMenu: View {
+  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+  let remote: BaseRefBranchMenu.Remote
+
+  var body: some View {
+    Menu {
+      ForEach(remote.branches) { node in
+        WorktreeBranchNodeMenu(store: store, node: node)
+      }
+    } label: {
+      Text(remote.name) + Text(" Remote").foregroundStyle(.secondary)
+    }
+  }
+}
+
+private struct WorktreeBranchNodeMenu: View {
+  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+  let node: BranchMenuNode
+
+  var body: some View {
+    if node.children.isEmpty {
+      WorktreeBaseRefMenuItem(store: store, ref: node.ref, label: Text(node.name))
+    } else {
+      Menu(node.name) {
+        // A namespace segment that is also a branch (rare) stays selectable.
+        if let ref = node.ref {
+          WorktreeBaseRefMenuItem(store: store, ref: ref, label: Text(node.name))
+        }
+        ForEach(node.children) { child in
+          WorktreeBranchNodeMenu(store: store, node: child)
+        }
+      }
+    }
+  }
+}
+
+private struct WorktreeBaseRefMenuItem: View {
+  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+  let ref: String?
+  let label: Text
+
+  var body: some View {
+    Button {
+      store.send(.baseRefSelected(ref))
+    } label: {
+      if store.selectedBaseRef == ref {
+        Label {
+          label
+        } icon: {
+          Image(systemName: "checkmark")
+            .accessibilityHidden(true)
+        }
+      } else {
+        label
+      }
+    }
   }
 }
