@@ -1160,7 +1160,7 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onCommandFinished?(0)
     #expect(state.tabManager.tabs.first { $0.id == tabId }?.isDirty == false)
 
-    // Simulate the 15s `progressResetTask` re-firing a fresh in-flight progress
+    // Simulate the stale watch re-firing a fresh in-flight progress
     // report just before its REMOVE. Without the gate in `updateRunningState`,
     // `isTabBusy` would see the running state and flip dirty back to true.
     surface.bridge.state.progressState = GHOSTTY_PROGRESS_STATE_INDETERMINATE

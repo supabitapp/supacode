@@ -1677,8 +1677,8 @@ final class WorktreeTerminalState {
 
   private func updateRunningState(for tabId: TerminalTabID) {
     guard trees[tabId] != nil else { return }
-    // Frozen tabs stay sticky: the 15s `progressResetTask` re-fires
-    // `onProgressReport` after `command_finished` and would otherwise
+    // Frozen tabs stay sticky: the bridge's stale watch re-fires
+    // `onProgressReport(REMOVE)` after `command_finished` and would otherwise
     // resurrect the dirty shimmer on a tab the user reads as done.
     let isFrozen = isBlockingScriptCompleted(tabId)
     tabManager.updateDirty(tabId, isDirty: isFrozen ? false : isTabBusy(tabId))

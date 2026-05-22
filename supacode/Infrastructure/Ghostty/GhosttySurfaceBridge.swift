@@ -63,10 +63,40 @@ final class GhosttySurfaceBridge {
   var onCommandFinished: ((Int?) -> Void)?
   var onChildExited: ((UInt32) -> Void)?
   var onDesktopNotification: ((String, String) -> Void)?
-  private var progressResetTask: Task<Void, Never>?
+
+  // Coalesce OSC-9 progress: a flush task applies the latest value at the
+  // throttle cadence while it moves, and a slow stale-watch clears a bar whose
+  // reports stopped without a REMOVE.
+  private let clock: any Clock<Duration>
+  private let progressThrottleInterval: Duration
+  private let progressIdleInterval: Duration
+  private let progressStaleTimeout: Duration
+  private var pendingProgress: ProgressUpdate?
+  private var appliedProgress: ProgressUpdate?
+  private var progressReportCount = 0
+  private var progressFlushTask: Task<Void, Never>?
+  private var progressStaleTask: Task<Void, Never>?
+
+  init(
+    clock: any Clock<Duration> = ContinuousClock(),
+    progressThrottleInterval: Duration = .milliseconds(50),
+    progressIdleInterval: Duration = .seconds(1),
+    progressStaleTimeout: Duration = .seconds(15)
+  ) {
+    self.clock = clock
+    self.progressThrottleInterval = progressThrottleInterval
+    self.progressIdleInterval = progressIdleInterval
+    self.progressStaleTimeout = progressStaleTimeout
+  }
 
   deinit {
-    progressResetTask?.cancel()
+    progressFlushTask?.cancel()
+    progressStaleTask?.cancel()
+  }
+
+  private struct ProgressUpdate: Equatable {
+    let state: ghostty_action_progress_report_state_e
+    let value: Int?
   }
 
   func handleAction(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
@@ -215,7 +245,8 @@ final class GhosttySurfaceBridge {
   private func handleTitleAndPath(_ action: ghostty_action_s) -> Bool {
     switch action.tag {
     case GHOSTTY_ACTION_SET_TITLE:
-      if let title = string(from: action.action.set_title.title) {
+      // TUIs re-emit the same title constantly; skip the no-op write + a11y post.
+      if let title = string(from: action.action.set_title.title), title != state.title {
         state.title = title
         onTitleChange?(title)
         if let surfaceView {
@@ -259,23 +290,10 @@ final class GhosttySurfaceBridge {
     switch action.tag {
     case GHOSTTY_ACTION_PROGRESS_REPORT:
       let report = action.action.progress_report
-      progressResetTask?.cancel()
-      state.progressValue = report.progress == -1 ? nil : Int(report.progress)
-      if report.state == GHOSTTY_PROGRESS_STATE_REMOVE {
-        state.progressState = nil
-        state.progressValue = nil
-        progressResetTask = nil
-      } else {
-        state.progressState = report.state
-        progressResetTask = Task { @MainActor [weak self] in
-          try? await ContinuousClock().sleep(for: .seconds(15))
-          guard let self, !Task.isCancelled else { return }
-          self.state.progressState = nil
-          self.state.progressValue = nil
-          self.onProgressReport?(GHOSTTY_PROGRESS_STATE_REMOVE)
-        }
-      }
-      onProgressReport?(report.state)
+      ingestProgressReport(
+        state: report.state,
+        value: report.progress == -1 ? nil : Int(report.progress)
+      )
       return true
 
     case GHOSTTY_ACTION_COMMAND_FINISHED:
@@ -304,6 +322,92 @@ final class GhosttySurfaceBridge {
     default:
       return false
     }
+  }
+
+  /// Coalescing entry point for OSC-9 progress. REMOVE clears immediately; a
+  /// value identical to what's already shown only refreshes the stale window.
+  func ingestProgressReport(state: ghostty_action_progress_report_state_e, value: Int?) {
+    guard state != GHOSTTY_PROGRESS_STATE_REMOVE else {
+      flushProgressRemoval()
+      return
+    }
+    // The counter is the stale watch's liveness signal; bump it on every report.
+    progressReportCount &+= 1
+    startProgressStaleWatchIfNeeded()
+    let update = ProgressUpdate(state: state, value: value)
+    guard update != appliedProgress else { return }
+    pendingProgress = update
+    scheduleProgressFlush()
+  }
+
+  /// Leading-edge then trailing throttle: paint a new value immediately when no
+  /// flush is in flight, then batch any further changes into one flush per
+  /// throttle interval. Idles to nothing once the value stops moving.
+  private func scheduleProgressFlush() {
+    guard progressFlushTask == nil else { return }
+    applyPendingProgress()
+    progressFlushTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+      try? await self.clock.sleep(for: self.progressThrottleInterval)
+      // Check cancellation before clearing the handle: a cancelled task (REMOVE
+      // raced a reschedule) must not clobber the live task's handle.
+      guard !Task.isCancelled else { return }
+      self.progressFlushTask = nil
+      guard self.pendingProgress != nil else { return }
+      self.scheduleProgressFlush()
+    }
+  }
+
+  /// Slow watch that clears a bar whose reports stopped without a REMOVE (e.g.
+  /// the process died). Wakes at the idle cadence, not the throttle cadence, so
+  /// a held bar doesn't pin a high-frequency wakeup on the main thread.
+  private func startProgressStaleWatchIfNeeded() {
+    guard progressStaleTask == nil else { return }
+    let startCount = progressReportCount
+    progressStaleTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+      var lastSeenCount = startCount
+      var idleElapsed: Duration = .zero
+      while !Task.isCancelled {
+        try? await self.clock.sleep(for: self.progressIdleInterval)
+        guard !Task.isCancelled else { return }
+        if self.progressReportCount != lastSeenCount {
+          lastSeenCount = self.progressReportCount
+          idleElapsed = .zero
+          continue
+        }
+        idleElapsed += self.progressIdleInterval
+        if idleElapsed >= self.progressStaleTimeout {
+          self.flushProgressRemoval()
+          return
+        }
+      }
+    }
+  }
+
+  private func applyPendingProgress() {
+    guard let pending = pendingProgress else { return }
+    pendingProgress = nil
+    guard pending != appliedProgress else { return }
+    appliedProgress = pending
+    state.progressState = pending.state
+    state.progressValue = pending.value
+    onProgressReport?(pending.state)
+  }
+
+  private func flushProgressRemoval() {
+    // REMOVE wins over any unapplied trailing value: applying it first would
+    // emit a spurious determinate paint that coalesces away before render,
+    // since the bar is clearing anyway.
+    progressFlushTask?.cancel()
+    progressFlushTask = nil
+    progressStaleTask?.cancel()
+    progressStaleTask = nil
+    pendingProgress = nil
+    appliedProgress = nil
+    state.progressState = nil
+    state.progressValue = nil
+    onProgressReport?(GHOSTTY_PROGRESS_STATE_REMOVE)
   }
 
   private func handleMouseAndLink(_ action: ghostty_action_s) -> Bool {
