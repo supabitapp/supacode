@@ -3,6 +3,7 @@ import SwiftUI
 struct ShimmerModifier: ViewModifier {
   let isActive: Bool
   @Environment(\.layoutDirection) private var layoutDirection
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   private let bandSize: CGFloat = 0.3
   private let gradient = Gradient(colors: [
@@ -29,10 +30,10 @@ struct ShimmerModifier: ViewModifier {
   }
 
   func body(content: Content) -> some View {
-    if isActive {
-      // Driving the sweep via `phaseAnimator` lets SwiftUI pause the
-      // timeline when the view is occluded — `.repeatForever` kept
-      // the animation pipeline active even when nothing was visible.
+    if isActive, !reduceMotion {
+      // Driving the sweep via `phaseAnimator` lets SwiftUI pause the timeline
+      // when the view is occluded. `.repeatForever` kept the animation pipeline
+      // active even when nothing was visible.
       content.phaseAnimator([false, true]) { content, animating in
         content.mask(
           LinearGradient(

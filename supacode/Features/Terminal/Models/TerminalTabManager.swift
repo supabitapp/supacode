@@ -64,6 +64,9 @@ final class TerminalTabManager {
   func updateTitle(_ id: TerminalTabID, title: String) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     guard !tabs[index].isTitleLocked else { return }
+    // TUIs rewrite their title constantly; skip no-op writes so an unchanged
+    // title doesn't re-render the tab bar on every report.
+    guard tabs[index].title != title else { return }
     tabs[index].title = title
   }
 

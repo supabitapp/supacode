@@ -110,17 +110,22 @@ struct SidebarPingRing: View {
   let color: Color
   let size: CGFloat
   @Environment(\.pixelLength) private var pixelLength
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    Circle()
+    let ring = Circle()
       .stroke(color, lineWidth: pixelLength)
       .frame(width: size, height: size)
-      .phaseAnimator([false, true]) { content, expanded in
+    if reduceMotion {
+      ring.opacity(0.6)
+    } else {
+      ring.phaseAnimator([false, true]) { content, expanded in
         content
           .scaleEffect(expanded ? 2 : 1)
           .opacity(expanded ? 0 : 0.6)
       } animation: { expanded in
         expanded ? .easeOut(duration: 1) : .linear(duration: 0.001)
       }
+    }
   }
 }

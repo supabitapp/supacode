@@ -324,6 +324,7 @@ private struct SidebarPathGroupAggregatedIndicators: View {
 
   var body: some View {
     SidebarPathGroupIndicatorsView(indicators: SidebarBranchNesting.aggregateIndicators(from: snapshots))
+      .equatable()
   }
 
   private var snapshots: [SidebarBranchNesting.LeafIndicatorSnapshot] {
