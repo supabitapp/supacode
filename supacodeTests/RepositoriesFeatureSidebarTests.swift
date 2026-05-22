@@ -166,7 +166,8 @@ struct RepositoriesFeatureSidebarTests {
       baseRefName: "main",
       commitsCount: 1,
       authorLogin: "tester",
-      statusCheckRollup: nil
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
     )
     var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.sidebarItems[id: worktreeID]?.pullRequest = pullRequest

@@ -78,7 +78,8 @@ private func makePullRequest(
   reviewDecision: String? = nil,
   mergeable: String? = nil,
   mergeStateStatus: String? = nil,
-  checks: [GithubPullRequestStatusCheck] = []
+  checks: [GithubPullRequestStatusCheck] = [],
+  mergeQueueEntry: GithubMergeQueueEntry? = nil
 ) -> GithubPullRequest {
   GithubPullRequest(
     number: 1,
@@ -96,6 +97,7 @@ private func makePullRequest(
     baseRefName: "main",
     commitsCount: 1,
     authorLogin: "khoi",
-    statusCheckRollup: checks.isEmpty ? nil : GithubPullRequestStatusCheckRollup(checks: checks)
+    statusCheckRollup: checks.isEmpty ? nil : GithubPullRequestStatusCheckRollup(checks: checks),
+    mergeQueueEntry: mergeQueueEntry
   )
 }

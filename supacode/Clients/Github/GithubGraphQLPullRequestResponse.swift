@@ -119,6 +119,7 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
     let commits: CommitConnection?
     let author: PullRequestAuthor?
     let statusCheckRollup: GithubPullRequestStatusCheckRollup?
+    let mergeQueueEntry: GithubMergeQueueEntry?
     let headRepository: HeadRepository?
 
     var pullRequest: GithubPullRequest {
@@ -138,7 +139,8 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
         baseRefName: baseRefName,
         commitsCount: commits?.totalCount,
         authorLogin: author?.login,
-        statusCheckRollup: statusCheckRollup
+        statusCheckRollup: statusCheckRollup,
+        mergeQueueEntry: mergeQueueEntry
       )
     }
 

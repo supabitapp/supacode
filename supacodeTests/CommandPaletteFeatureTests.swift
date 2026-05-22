@@ -1131,6 +1131,7 @@ private func makePullRequest(
     baseRefName: "main",
     commitsCount: 1,
     authorLogin: "khoi",
-    statusCheckRollup: checks.isEmpty ? nil : GithubPullRequestStatusCheckRollup(checks: checks)
+    statusCheckRollup: checks.isEmpty ? nil : GithubPullRequestStatusCheckRollup(checks: checks),
+    mergeQueueEntry: nil
   )
 }

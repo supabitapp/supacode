@@ -4448,7 +4448,8 @@ struct RepositoriesFeatureTests {
       baseRefName: "main",
       commitsCount: 1,
       authorLogin: "khoi",
-      statusCheckRollup: nil
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
     )
 
     await store.send(
@@ -6253,7 +6254,8 @@ struct RepositoriesFeatureTests {
       baseRefName: "main",
       commitsCount: 1,
       authorLogin: "khoi",
-      statusCheckRollup: nil
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
     )
   }
 

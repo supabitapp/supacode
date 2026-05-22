@@ -17,4 +17,5 @@ nonisolated struct GithubPullRequest: Decodable, Equatable, Hashable {
   let commitsCount: Int?
   let authorLogin: String?
   let statusCheckRollup: GithubPullRequestStatusCheckRollup?
+  let mergeQueueEntry: GithubMergeQueueEntry?
 }

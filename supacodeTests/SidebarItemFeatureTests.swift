@@ -185,7 +185,8 @@ struct SidebarItemFeatureTests {
       baseRefName: "main",
       commitsCount: 1,
       authorLogin: "tester",
-      statusCheckRollup: nil
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
     )
     state.pullRequest = livePR
     let store = TestStore(initialState: state) {
@@ -207,7 +208,8 @@ struct SidebarItemFeatureTests {
       baseRefName: "main",
       commitsCount: 1,
       authorLogin: "tester",
-      statusCheckRollup: nil
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
     )
     // Late stale result must not replace the live PR.
     await store.send(.pullRequestChanged(stalePR, branchAtQueryTime: "feature/x"))
@@ -236,7 +238,8 @@ struct SidebarItemFeatureTests {
       baseRefName: "main",
       commitsCount: 1,
       authorLogin: "tester",
-      statusCheckRollup: nil
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
     )
     await store.send(.pullRequestQueryStarted(branch: "feature")) {
       $0.pullRequestBranchAtQueryTime = "feature"

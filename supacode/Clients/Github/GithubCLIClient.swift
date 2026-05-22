@@ -575,47 +575,78 @@ nonisolated private func fetchPullRequestsChunk(
   chunk: [String],
   chunkIndex: Int
 ) async throws -> (Int, [String: GithubPullRequest]) {
-  let (query, aliasMap) = makeBatchPullRequestsQuery(branches: chunk)
-  let arguments = [
-    "api",
-    "graphql",
-    "--hostname",
-    request.host,
-    "-f",
-    "query=\(query)",
-    "-f",
-    "owner=\(request.owner)",
-    "-f",
-    "repo=\(request.repo)",
-  ]
   @Dependency(\.continuousClock) var clock
-  let output: String
-  do {
-    output = try await runGh(shell: shell, resolver: resolver, arguments: arguments, repoRoot: nil)
-  } catch GithubCLIError.gatewayTimeout {
-    // One retry covers the intermittent cold-start 504 before the next periodic refresh.
-    try await clock.sleep(for: batchPullRequestsGatewayRetryBackoff)
-    output = try await runGh(shell: shell, resolver: resolver, arguments: arguments, repoRoot: nil)
+
+  func runChunkQuery(includeMergeQueueEntry: Bool) async throws -> (output: String, aliasMap: [String: String]) {
+    let (query, aliasMap) = makeBatchPullRequestsQuery(
+      branches: chunk,
+      includeMergeQueueEntry: includeMergeQueueEntry
+    )
+    let arguments = [
+      "api",
+      "graphql",
+      "--hostname",
+      request.host,
+      "-f",
+      "query=\(query)",
+      "-f",
+      "owner=\(request.owner)",
+      "-f",
+      "repo=\(request.repo)",
+    ]
+    do {
+      let output = try await runGh(shell: shell, resolver: resolver, arguments: arguments, repoRoot: nil)
+      return (output, aliasMap)
+    } catch GithubCLIError.gatewayTimeout {
+      // One retry covers the intermittent cold-start 504 before the next periodic refresh.
+      try await clock.sleep(for: batchPullRequestsGatewayRetryBackoff)
+      let output = try await runGh(shell: shell, resolver: resolver, arguments: arguments, repoRoot: nil)
+      return (output, aliasMap)
+    }
   }
-  guard !output.isEmpty else {
+
+  let result: (output: String, aliasMap: [String: String])
+  do {
+    result = try await runChunkQuery(includeMergeQueueEntry: true)
+  } catch let error where isUnknownMergeQueueFieldError(error) {
+    // GHES < 3.8 rejects `mergeQueueEntry` and fails the whole request; retry without it so PR
+    // state still loads, minus the merge-queue detail that server can't provide anyway.
+    result = try await runChunkQuery(includeMergeQueueEntry: false)
+  }
+  guard !result.output.isEmpty else {
     return (chunkIndex, [:])
   }
 
-  let data = Data(output.utf8)
+  let data = Data(result.output.utf8)
   let decoder = JSONDecoder()
   decoder.dateDecodingStrategy = .iso8601
   let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
   let prsByBranch = response.pullRequestsByBranch(
-    aliasMap: aliasMap,
+    aliasMap: result.aliasMap,
     owner: request.owner,
     repo: request.repo
   )
   return (chunkIndex, prsByBranch)
 }
 
+// GHES < 3.8 rejects the `mergeQueueEntry` selection with a "Field 'mergeQueueEntry' doesn't exist"
+// GraphQL error. Matching both tokens avoids a needless re-fetch on an error that merely echoes the name.
+nonisolated private func isUnknownMergeQueueFieldError(_ error: Error) -> Bool {
+  guard case GithubCLIError.commandFailed(let message) = error else {
+    return false
+  }
+  let lowered = message.lowercased()
+  return lowered.contains("mergequeueentry") && lowered.contains("doesn't exist")
+}
+
 nonisolated private func makeBatchPullRequestsQuery(
-  branches: [String]
+  branches: [String],
+  includeMergeQueueEntry: Bool
 ) -> (query: String, aliasMap: [String: String]) {
+  // `mergeQueueEntry` is absent on GitHub Enterprise Server < 3.8; omitting it lets PR fetching
+  // still succeed there (see the field-rejection fallback in `fetchPullRequestsChunk`).
+  let mergeQueueSelection =
+    includeMergeQueueEntry ? "mergeQueueEntry { position estimatedTimeToMerge state }" : ""
   var aliasMap: [String: String] = [:]
   var selections: [String] = []
   for (index, branch) in branches.enumerated() {
@@ -645,6 +676,7 @@ nonisolated private func makeBatchPullRequestsQuery(
           author {
             login
           }
+          \(mergeQueueSelection)
           headRepository {
             name
             owner { login }

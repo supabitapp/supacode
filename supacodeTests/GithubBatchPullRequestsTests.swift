@@ -434,6 +434,101 @@ struct GithubBatchPullRequestsTests {
     #expect(prs["feat/add-support-for-rubymine"]?.state == "MERGED")
   }
 
+  @Test func decodesMergeQueueEntry() throws {
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 60,
+                  "title": "Queued PR",
+                  "state": "OPEN",
+                  "additions": 3,
+                  "deletions": 1,
+                  "isDraft": false,
+                  "reviewDecision": "APPROVED",
+                  "mergeable": "MERGEABLE",
+                  "mergeStateStatus": "QUEUED",
+                  "updatedAt": "2026-05-01T00:00:00Z",
+                  "url": "https://github.com/octo/repo/pull/60",
+                  "headRefName": "feature-a",
+                  "baseRefName": "main",
+                  "mergeQueueEntry": {
+                    "position": 1,
+                    "estimatedTimeToMerge": 300,
+                    "state": "AWAITING_CHECKS"
+                  },
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "octo" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "feature-a"],
+      owner: "octo",
+      repo: "repo"
+    )
+    let entry = try #require(prs["feature-a"]?.mergeQueueEntry)
+    #expect(entry.position == 1)
+    #expect(entry.displayPosition == 2)
+    #expect(entry.estimatedTimeToMerge == 300)
+    #expect(entry.state == "AWAITING_CHECKS")
+  }
+
+  @Test func decodesNilMergeQueueEntryWhenAbsent() throws {
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 61,
+                  "title": "Plain PR",
+                  "state": "OPEN",
+                  "additions": 1,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2026-05-01T00:00:00Z",
+                  "url": "https://github.com/octo/repo/pull/61",
+                  "headRefName": "feature-a",
+                  "baseRefName": "main",
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "octo" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "feature-a"],
+      owner: "octo",
+      repo: "repo"
+    )
+    #expect(prs["feature-a"]?.mergeQueueEntry == nil)
+  }
+
   @Test func excludesForkPRWithNilBaseRefName() throws {
     // When baseRefName is nil the filter cannot determine whether the
     // local branch is the PR's target, so the PR is excluded conservatively.
