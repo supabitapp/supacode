@@ -184,6 +184,7 @@ enum SidebarPullRequestIcon: Equatable {
   case branch
   case open
   case draft
+  case queued
   case merged
   case closed
 
@@ -193,6 +194,7 @@ enum SidebarPullRequestIcon: Equatable {
     case "MERGED": return .merged
     case "CLOSED": return .closed
     case "OPEN" where pullRequest.isDraft: return .draft
+    case "OPEN" where PullRequestMergeQueueStatus(pullRequest: pullRequest) != nil: return .queued
     case "OPEN": return .open
     default: return .branch
     }
@@ -203,6 +205,7 @@ enum SidebarPullRequestIcon: Equatable {
     case .branch: "git-branch"
     case .open: "git-pull-request"
     case .draft: "git-pull-request-draft"
+    case .queued: "git-merge-queue"
     case .merged: "git-merge"
     case .closed: "git-pull-request-closed"
     }
@@ -213,6 +216,7 @@ enum SidebarPullRequestIcon: Equatable {
     case .branch: AnyShapeStyle(.secondary)
     case .open: AnyShapeStyle(.green)
     case .draft: AnyShapeStyle(.tertiary)
+    case .queued: AnyShapeStyle(.brown)
     case .merged: AnyShapeStyle(.purple)
     case .closed: AnyShapeStyle(.red)
     }

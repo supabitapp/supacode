@@ -3,8 +3,9 @@ import SwiftUI
 enum PullRequestBadgeStyle {
   static let mergedColor = Color.purple
   static let openColor = Color.green
+  static let queuedColor = Color.brown
 
-  static func style(state: String?, number: Int?) -> (text: String, color: Color)? {
+  static func style(state: String?, number: Int?, isQueued: Bool = false) -> (text: String, color: Color)? {
     guard let state = state?.uppercased() else {
       return nil
     }
@@ -12,7 +13,7 @@ enum PullRequestBadgeStyle {
     case "MERGED":
       return (text: number.map { "#\($0)" } ?? "MERGED", color: mergedColor)
     case "OPEN":
-      return (text: number.map { "#\($0)" } ?? "OPEN", color: openColor)
+      return (text: number.map { "#\($0)" } ?? "OPEN", color: isQueued ? queuedColor : openColor)
     default:
       return nil
     }

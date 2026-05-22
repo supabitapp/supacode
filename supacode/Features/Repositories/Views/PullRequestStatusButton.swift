@@ -52,6 +52,7 @@ struct PullRequestStatusModel: Equatable {
   let title: String
   let statusChecks: [GithubPullRequestStatusCheck]
   let detailText: String?
+  let isQueued: Bool
 
   init?(pullRequest: GithubPullRequest?) {
     guard
@@ -65,6 +66,7 @@ struct PullRequestStatusModel: Equatable {
     let state = pullRequest.state.uppercased()
     self.state = state
     self.title = pullRequest.title
+    self.isQueued = PullRequestMergeQueueStatus(pullRequest: pullRequest) != nil
     if state == "MERGED" {
       self.detailText = nil
       self.statusChecks = []
@@ -103,7 +105,7 @@ struct PullRequestStatusModel: Equatable {
   }
 
   var badgeColor: Color {
-    PullRequestBadgeStyle.style(state: state, number: number)?.color ?? .secondary
+    PullRequestBadgeStyle.style(state: state, number: number, isQueued: isQueued)?.color ?? .secondary
   }
 
   static func shouldDisplay(state: String?, number: Int?) -> Bool {

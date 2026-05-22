@@ -15,11 +15,13 @@ struct WorktreePullRequestDisplay {
     let displayPullRequest = matchesWorktree ? pullRequest : nil
     let pullRequestState = displayPullRequest?.state.uppercased()
     let pullRequestNumber = displayPullRequest?.number
+    let isQueued = displayPullRequest.map { PullRequestMergeQueueStatus(pullRequest: $0) != nil } ?? false
     self.pullRequest = displayPullRequest
     self.pullRequestState = pullRequestState
     self.pullRequestBadgeStyle = PullRequestBadgeStyle.style(
       state: pullRequestState,
-      number: pullRequestNumber
+      number: pullRequestNumber,
+      isQueued: isQueued
     )
   }
 }

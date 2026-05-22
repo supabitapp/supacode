@@ -90,6 +90,10 @@ struct PullRequestChecksPopoverView: View {
         }
         .font(.subheadline)
 
+        if let mergeQueueStatus = PullRequestMergeQueueStatus(pullRequest: pullRequest) {
+          PullRequestMergeQueueRow(status: mergeQueueStatus)
+        }
+
         if breakdown.total > 0 {
           HStack {
             PullRequestChecksRingView(breakdown: breakdown)
@@ -135,6 +139,33 @@ struct PullRequestChecksPopoverView: View {
       .padding()
     }
     .frame(minWidth: 260, maxWidth: 840, maxHeight: 720)
+  }
+
+  private struct PullRequestMergeQueueRow: View {
+    let status: PullRequestMergeQueueStatus
+
+    var body: some View {
+      VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 6) {
+          Image("git-merge-queue")
+            .renderingMode(.template)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 14, height: 14)
+            .foregroundStyle(.brown)
+            .accessibilityHidden(true)
+          Text(status.summary)
+            .foregroundStyle(.brown)
+        }
+        .font(.subheadline)
+        if let detail = status.detail {
+          Text(detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .accessibilityElement(children: .combine)
+    }
   }
 
   private static func sortRank(for state: GithubPullRequestCheckState) -> Int {
