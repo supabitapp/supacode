@@ -1251,7 +1251,14 @@ struct AppFeature {
       )
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
-    case .repoWorktreeNew(let repositoryID, let branch, let baseRef, let fetchOrigin):
+    case .repoWorktreeNew(
+      let repositoryID,
+      let branch,
+      let baseRef,
+      let fetchOrigin,
+      let worktreeName,
+      let worktreePath
+    ):
       guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found: \(repositoryID)")
         state.alert = repositoryNotFoundAlert()
@@ -1278,6 +1285,10 @@ struct AppFeature {
       guard let branch else {
         return .send(.repositories(.createRandomWorktreeInRepository(repositoryID)))
       }
+      let placement = WorktreePlacementOverride(
+        name: worktreeName?.isEmpty == true ? nil : worktreeName,
+        path: worktreePath?.isEmpty == true ? nil : worktreePath
+      )
       return .send(
         .repositories(
           .createWorktreeInRepository(
@@ -1285,6 +1296,7 @@ struct AppFeature {
             nameSource: .explicit(branch),
             baseRefSource: baseRef.map { .explicit($0) } ?? .repositorySetting,
             fetchOrigin: fetchOrigin,
+            placement: placement,
           )
         )
       )

@@ -1043,7 +1043,9 @@ struct AppFeatureDeeplinkTests {
           repositoryID: "/tmp/repo",
           branch: nil,
           baseRef: nil,
-          fetchOrigin: false
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
         )
       )
     )
@@ -1531,7 +1533,9 @@ struct AppFeatureDeeplinkTests {
           repositoryID: "/tmp/repo",
           branch: "feature-x",
           baseRef: "main",
-          fetchOrigin: true
+          fetchOrigin: true,
+          worktreeName: nil,
+          worktreePath: nil
         )
       )
     )
@@ -1539,12 +1543,69 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
   }
 
+  @Test(.dependencies) func repoWorktreeNewForwardsNameAndLocationToStream() async {
+    let worktree = makeWorktree()
+    let createdWorktree = makeWorktree()
+    let observedDirectoryOverride = LockIsolated<URL?>(nil)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, directoryOverride in
+        observedDirectoryOverride.withValue { $0 = directoryOverride }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature/foo",
+          baseRef: "main",
+          fetchOrigin: false,
+          worktreeName: "feature_foo",
+          worktreePath: "/tmp/elsewhere"
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(
+      observedDirectoryOverride.value
+        == URL(filePath: "/tmp/elsewhere/feature_foo", directoryHint: .isDirectory).standardizedFileURL)
+  }
+
   @Test(.dependencies) func repoWorktreeNewWithUnknownRepoShowsAlert() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)
 
     await store.send(
-      .deeplink(.repoWorktreeNew(repositoryID: "/nonexistent", branch: nil, baseRef: nil, fetchOrigin: false)))
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/nonexistent",
+          branch: nil,
+          baseRef: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
+        )))
     #expect(store.state.alert != nil)
   }
 

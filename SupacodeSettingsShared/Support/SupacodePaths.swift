@@ -61,6 +61,80 @@ public nonisolated enum SupacodePaths {
     return repositoryDirectory(for: rootURL)
   }
 
+  /// Resolves an explicit worktree directory from the dialog's optional name /
+  /// path overrides. Returns `nil` when neither is set so callers keep `wt`'s
+  /// default `base/<branch>` placement (including nested slashes). The path
+  /// override sets the parent directory (default: the resolved base); the name
+  /// override sets the leaf folder (default: the branch name).
+  public static func resolvedWorktreeDirectory(
+    defaultBaseDirectory: URL,
+    repositoryRootURL: URL,
+    nameOverride: String?,
+    pathOverride: String?,
+    branchName: String
+  ) -> URL? {
+    let trimmedName = nameOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let trimmedPath = pathOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !trimmedName.isEmpty || !trimmedPath.isEmpty else {
+      return nil
+    }
+    return worktreePlacement(
+      defaultBaseDirectory: defaultBaseDirectory,
+      repositoryRootURL: repositoryRootURL,
+      trimmedName: trimmedName,
+      trimmedPath: trimmedPath,
+      branchName: branchName
+    )
+  }
+
+  /// Always-concrete counterpart to `resolvedWorktreeDirectory` for the dialog's
+  /// live destination preview. Falls back to the default base and branch name
+  /// when the overrides are empty.
+  public static func previewWorktreeDirectory(
+    defaultBaseDirectory: URL,
+    repositoryRootURL: URL,
+    nameOverride: String?,
+    pathOverride: String?,
+    branchName: String
+  ) -> URL {
+    worktreePlacement(
+      defaultBaseDirectory: defaultBaseDirectory,
+      repositoryRootURL: repositoryRootURL,
+      trimmedName: nameOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+      trimmedPath: pathOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+      branchName: branchName
+    )
+  }
+
+  /// Shared base + leaf join for both resolvers. `trimmedName` / `trimmedPath`
+  /// are expected pre-trimmed by callers; only the branch-name fallback is
+  /// re-trimmed defensively.
+  private static func worktreePlacement(
+    defaultBaseDirectory: URL,
+    repositoryRootURL: URL,
+    trimmedName: String,
+    trimmedPath: String,
+    branchName: String
+  ) -> URL {
+    let baseURL: URL
+    if let normalizedPath = normalizedWorktreeBaseDirectoryPath(
+      trimmedPath,
+      repositoryRootURL: repositoryRootURL
+    ) {
+      baseURL = URL(filePath: normalizedPath, directoryHint: .isDirectory).standardizedFileURL
+    } else {
+      baseURL = defaultBaseDirectory.standardizedFileURL
+    }
+    let leaf =
+      trimmedName.isEmpty
+      ? branchName.trimmingCharacters(in: .whitespacesAndNewlines)
+      : trimmedName
+    guard !leaf.isEmpty else {
+      return baseURL
+    }
+    return baseURL.appending(path: leaf, directoryHint: .isDirectory).standardizedFileURL
+  }
+
   public static func exampleWorktreePath(
     for repositoryRootURL: URL,
     globalDefaultPath: String?,

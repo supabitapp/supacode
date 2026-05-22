@@ -86,12 +86,22 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://repo/open?path=\(percentEncodeQueryValue(path))"
   }
 
-  static func repoWorktreeNew(repoID: String, branch: String?, base: String?, fetch: Bool) -> String {
+  struct WorktreeNewOptions {
+    var branch: String?
+    var base: String?
+    var fetch: Bool
+    var name: String?
+    var location: String?
+  }
+
+  static func repoWorktreeNew(repoID: String, options: WorktreeNewOptions) -> String {
     var url = "supacode://repo/\(repoID)/worktree/new"
     var params: [String] = []
-    if let branch { params.append("branch=\(percentEncodeQueryValue(branch))") }
-    if let base { params.append("base=\(percentEncodeQueryValue(base))") }
-    if fetch { params.append("fetch=true") }
+    if let branch = options.branch { params.append("branch=\(percentEncodeQueryValue(branch))") }
+    if let base = options.base { params.append("base=\(percentEncodeQueryValue(base))") }
+    if options.fetch { params.append("fetch=true") }
+    if let name = options.name { params.append("name=\(percentEncodeQueryValue(name))") }
+    if let location = options.location { params.append("location=\(percentEncodeQueryValue(location))") }
     if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
     return url
   }

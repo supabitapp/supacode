@@ -448,9 +448,9 @@ struct GitClient {
         + createWorktreeArguments(
           baseDirectory: baseDirectory,
           name: name,
-          copyIgnored: copyFiles.ignored,
-          copyUntracked: copyFiles.untracked,
-          baseRef: baseRef
+          copyFiles: copyFiles,
+          baseRef: baseRef,
+          directoryOverride: nil
         )).joined(separator: " ")
       throw GitClientError.commandFailed(command: command, message: "Empty output")
     }
@@ -462,7 +462,8 @@ struct GitClient {
     in repoRoot: URL,
     baseDirectory: URL,
     copyFiles: (ignored: Bool, untracked: Bool),
-    baseRef: String
+    baseRef: String,
+    directoryOverride: URL? = nil
   ) -> AsyncThrowingStream<GitWorktreeCreateEvent, Error> {
     AsyncThrowingStream { continuation in
       Task {
@@ -472,9 +473,9 @@ struct GitClient {
           let arguments = createWorktreeArguments(
             baseDirectory: baseDirectory,
             name: name,
-            copyIgnored: copyFiles.ignored,
-            copyUntracked: copyFiles.untracked,
-            baseRef: baseRef
+            copyFiles: copyFiles,
+            baseRef: baseRef,
+            directoryOverride: directoryOverride
           )
           let envURL = URL(fileURLWithPath: "/usr/bin/env")
           let localeArguments = ["LANG=C", "LC_ALL=C", "LC_MESSAGES=C"]
@@ -546,22 +547,26 @@ struct GitClient {
   nonisolated private func createWorktreeArguments(
     baseDirectory: URL,
     name: String,
-    copyIgnored: Bool,
-    copyUntracked: Bool,
-    baseRef: String
+    copyFiles: (ignored: Bool, untracked: Bool),
+    baseRef: String,
+    directoryOverride: URL?
   ) -> [String] {
     var arguments = ["--base-dir", baseDirectory.path(percentEncoded: false), "sw"]
-    if copyIgnored {
+    if copyFiles.ignored {
       arguments.append("--copy-ignored")
     }
-    if copyUntracked {
+    if copyFiles.untracked {
       arguments.append("--copy-untracked")
     }
     if !baseRef.isEmpty {
       arguments.append("--from")
       arguments.append(baseRef)
     }
-    if copyIgnored || copyUntracked {
+    if let directoryOverride {
+      arguments.append("--path")
+      arguments.append(directoryOverride.path(percentEncoded: false))
+    }
+    if copyFiles.ignored || copyFiles.untracked {
       arguments.append("--verbose")
     }
     arguments.append(name)

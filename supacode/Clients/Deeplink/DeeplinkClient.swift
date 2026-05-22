@@ -281,11 +281,15 @@ private nonisolated enum DeeplinkParser {
     let branch = queryItems.first(where: { $0.name == "branch" })?.value
     let baseRef = queryItems.first(where: { $0.name == "base" })?.value
     let fetchOrigin = queryItems.first(where: { $0.name == "fetch" })?.value == "true"
+    let worktreeName = queryItems.first(where: { $0.name == "name" })?.value
+    let worktreePath = queryItems.first(where: { $0.name == "location" })?.value
     return .repoWorktreeNew(
       repositoryID: repositoryID,
       branch: branch,
       baseRef: baseRef,
       fetchOrigin: fetchOrigin,
+      worktreeName: worktreeName,
+      worktreePath: worktreePath,
     )
   }
 }

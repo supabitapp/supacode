@@ -11,10 +11,12 @@ struct WorktreeCreationPromptFeatureTests {
     defaultBranch: String? = "main",
     remoteNames: [String] = ["origin"],
     branchMenu: BaseRefBranchMenu? = nil,
-    selectedBaseRef: String? = nil
+    selectedBaseRef: String? = nil,
+    defaultWorktreeBaseDirectory: String = "/tmp/repo/.worktrees"
   ) -> WorktreeCreationPromptFeature.State {
     WorktreeCreationPromptFeature.State(
       repositoryID: "/tmp/repo/",
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
       repositoryName: "repo",
       automaticBaseRef: automaticBaseRef,
       defaultBranch: defaultBranch,
@@ -23,6 +25,7 @@ struct WorktreeCreationPromptFeatureTests {
       branchName: "",
       selectedBaseRef: selectedBaseRef,
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: defaultWorktreeBaseDirectory,
       validationMessage: nil
     )
   }
@@ -78,7 +81,8 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/new",
           baseRef: "origin/dev",
-          fetchOrigin: true
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(name: nil, path: nil)
         )
       )
     )
@@ -101,9 +105,119 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/new",
           baseRef: "main",
-          fetchOrigin: false
+          fetchOrigin: false,
+          placement: WorktreePlacementOverride(name: nil, path: nil)
         )
       )
     )
+  }
+
+  @Test func createButtonTappedThreadsTrimmedPlacementOverrides() async {
+    let store = TestStore(initialState: makeState(selectedBaseRef: "origin/dev")) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.set(\.branchName, "feature/new")) {
+      $0.branchName = "feature/new"
+    }
+    await store.send(.set(\.worktreeNameOverride, "  feature_new  ")) {
+      $0.worktreeNameOverride = "  feature_new  "
+    }
+    await store.send(.set(\.worktreePathOverride, " ~/Repos ")) {
+      $0.worktreePathOverride = " ~/Repos "
+    }
+    await store.send(.createButtonTapped)
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/new",
+          baseRef: "origin/dev",
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(
+            name: "feature_new",
+            path: "~/Repos"
+          )
+        )
+      )
+    )
+  }
+
+  @Test func worktreeNamePlaceholderTracksTrimmedBranchName() {
+    var state = makeState()
+    state.branchName = "  feature/foo  "
+    #expect(state.worktreeNamePlaceholder == "feature/foo")
+  }
+
+  @Test func createButtonTappedRejectsNameOverrideWithSlash() async {
+    var state = makeState()
+    state.branchName = "feature/new"
+    state.worktreeNameOverride = "../escape"
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped) {
+      $0.validationMessage = "Worktree name can't contain slashes."
+    }
+  }
+
+  @Test func createButtonTappedRejectsDotDotNameOverride() async {
+    var state = makeState()
+    state.branchName = "feature/new"
+    state.worktreeNameOverride = ".."
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped) {
+      $0.validationMessage = "Worktree name is invalid."
+    }
+  }
+
+  @Test func createButtonTappedRejectsDotGitNameOverride() async {
+    var state = makeState()
+    state.branchName = "feature/new"
+    state.worktreeNameOverride = ".GIT"
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped) {
+      $0.validationMessage = "Worktree name is invalid."
+    }
+  }
+
+  @Test func createButtonTappedRejectsBackslashNameOverride() async {
+    var state = makeState()
+    state.branchName = "feature/new"
+    state.worktreeNameOverride = #"foo\bar"#
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.createButtonTapped) {
+      $0.validationMessage = "Worktree name can't contain slashes."
+    }
+  }
+
+  @Test func nameValidationErrorAcceptsValidLeafAndEmpty() {
+    #expect(WorktreePlacementOverride.nameValidationError(nil) == nil)
+    #expect(WorktreePlacementOverride.nameValidationError("   ") == nil)
+    #expect(WorktreePlacementOverride.nameValidationError("feature_foo") == nil)
+    #expect(WorktreePlacementOverride.nameValidationError(".gitignore") == nil)
+  }
+
+  @Test func resolvedWorktreeLocationPreviewFallsBackToBaseAndBranch() {
+    var state = makeState(defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees")
+    state.branchName = "feature/foo"
+    #expect(state.resolvedWorktreeLocationPreview == "/tmp/repo/.worktrees/feature/foo/")
+  }
+
+  @Test func resolvedWorktreeLocationPreviewUsesNameOverride() {
+    var state = makeState(defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees")
+    state.branchName = "feature/foo"
+    state.worktreeNameOverride = "feature_foo"
+    #expect(state.resolvedWorktreeLocationPreview == "/tmp/repo/.worktrees/feature_foo/")
   }
 }

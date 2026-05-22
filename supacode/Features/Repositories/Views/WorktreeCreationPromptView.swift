@@ -18,6 +18,8 @@ struct WorktreeCreationPromptView: View {
         // sheets in macOS 26.*, and this is a nice enough fallback.
         Text("New Worktree")
         Text("Create a branch in `\(store.repositoryName)`.")
+      } footer: {
+        WorktreeCreationFooter(store: store)
       }
       .headerProminence(.increased)
 
@@ -31,13 +33,9 @@ struct WorktreeCreationPromptView: View {
           )
         }
         .disabled(store.isSelectedBaseRefLocal)
-      } footer: {
-        if let validationMessage = store.validationMessage, !validationMessage.isEmpty {
-          Text(validationMessage)
-            .foregroundStyle(.red)
-        }
       }
 
+      WorktreeOptionsSection(store: store)
     }
     .formStyle(.grouped)
     .scrollBounceBehavior(.basedOnSize)
@@ -65,6 +63,35 @@ struct WorktreeCreationPromptView: View {
     }
     .frame(minWidth: 420)
     .task { isBranchFieldFocused = true }
+  }
+}
+
+private struct WorktreeOptionsSection: View {
+  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+
+  var body: some View {
+    Section("Advanced", isExpanded: $store.showAdvancedOptions) {
+      // Title-string fields so tapping the label focuses the field, matching
+      // the branch-name field above.
+      TextField("Worktree name", text: $store.worktreeNameOverride, prompt: Text(store.worktreeNamePlaceholder))
+      TextField("Parent folder", text: $store.worktreePathOverride, prompt: Text(store.defaultWorktreeBaseDirectory))
+    }
+  }
+}
+
+private struct WorktreeCreationFooter: View {
+  let store: StoreOf<WorktreeCreationPromptFeature>
+
+  var body: some View {
+    if let message = store.validationMessage ?? store.worktreeNameValidationError, !message.isEmpty {
+      Text(message)
+        .foregroundStyle(.red)
+    } else {
+      Text(store.resolvedWorktreeLocationPreview)
+        .monospaced()
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
   }
 }
 

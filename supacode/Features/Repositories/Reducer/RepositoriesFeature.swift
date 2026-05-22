@@ -268,7 +268,8 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       nameSource: WorktreeCreationNameSource,
       baseRefSource: WorktreeCreationBaseRefSource,
-      fetchOrigin: Bool
+      fetchOrigin: Bool,
+      placement: WorktreePlacementOverride? = nil
     )
     case promptedWorktreeCreationDataLoaded(
       repositoryID: Repository.ID,
@@ -285,13 +286,15 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       branchName: String,
       baseRef: String?,
-      fetchOrigin: Bool
+      fetchOrigin: Bool,
+      placement: WorktreePlacementOverride
     )
     case promptedWorktreeCreationChecked(
       repositoryID: Repository.ID,
       branchName: String,
       baseRef: String?,
       fetchOrigin: Bool,
+      placement: WorktreePlacementOverride,
       duplicateMessage: String?
     )
     case pendingWorktreeProgressUpdated(id: Worktree.ID, progress: WorktreeCreationProgress)
@@ -901,8 +904,16 @@ struct RepositoriesFeature {
           return .none
         }
         @Shared(.settingsFile) var promptSettingsFile
+        @Shared(.repositorySettings(repository.rootURL)) var promptRepositorySettings
+        let defaultWorktreeBaseDirectory = SupacodePaths.worktreeBaseDirectory(
+          for: repository.rootURL,
+          globalDefaultPath: promptSettingsFile.global.defaultWorktreeBaseDirectoryPath,
+          repositoryOverridePath: promptRepositorySettings.worktreeBaseDirectoryPath
+        )
+        .path(percentEncoded: false)
         state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
           repositoryID: repository.id,
+          repositoryRootURL: repository.rootURL,
           repositoryName: repository.name,
           automaticBaseRef: automaticBaseRef,
           defaultBranch: defaultBranch,
@@ -911,6 +922,7 @@ struct RepositoriesFeature {
           branchName: "",
           selectedBaseRef: selectedBaseRef,
           fetchOrigin: promptSettingsFile.global.fetchOriginBeforeWorktreeCreation,
+          defaultWorktreeBaseDirectory: defaultWorktreeBaseDirectory,
           validationMessage: nil
         )
         return .none
@@ -954,18 +966,29 @@ struct RepositoriesFeature {
         )
 
       case .worktreeCreationPrompt(
-        .presented(.delegate(.submit(let repositoryID, let branchName, let baseRef, let fetchOrigin)))
+        .presented(
+          .delegate(
+            .submit(let repositoryID, let branchName, let baseRef, let fetchOrigin, let placement)
+          )
+        )
       ):
         return .send(
           .startPromptedWorktreeCreation(
             repositoryID: repositoryID,
             branchName: branchName,
             baseRef: baseRef,
-            fetchOrigin: fetchOrigin
+            fetchOrigin: fetchOrigin,
+            placement: placement
           )
         )
 
-      case .startPromptedWorktreeCreation(let repositoryID, let branchName, let baseRef, let fetchOrigin):
+      case .startPromptedWorktreeCreation(
+        let repositoryID,
+        let branchName,
+        let baseRef,
+        let fetchOrigin,
+        let placement
+      ):
         guard let repository = state.repositories[id: repositoryID] else {
           state.worktreeCreationPrompt = nil
           state.alert = messageAlert(
@@ -996,6 +1019,7 @@ struct RepositoriesFeature {
               branchName: branchName,
               baseRef: baseRef,
               fetchOrigin: fetchOrigin,
+              placement: placement,
               duplicateMessage: duplicateMessage
             )
           )
@@ -1007,6 +1031,7 @@ struct RepositoriesFeature {
         let branchName,
         let baseRef,
         let fetchOrigin,
+        let placement,
         let duplicateMessage
       ):
         guard let prompt = state.worktreeCreationPrompt, prompt.repositoryID == repositoryID else {
@@ -1023,11 +1048,18 @@ struct RepositoriesFeature {
             repositoryID: repositoryID,
             nameSource: .explicit(branchName),
             baseRefSource: .explicit(baseRef),
-            fetchOrigin: fetchOrigin
+            fetchOrigin: fetchOrigin,
+            placement: placement
           )
         )
 
-      case .createWorktreeInRepository(let repositoryID, let nameSource, let baseRefSource, let fetchOrigin):
+      case .createWorktreeInRepository(
+        let repositoryID,
+        let nameSource,
+        let baseRefSource,
+        let fetchOrigin,
+        let placement
+      ):
         guard let repository = state.repositories[id: repositoryID] else {
           state.alert = messageAlert(
             title: "Unable to create worktree",
@@ -1191,6 +1223,29 @@ struct RepositoriesFeature {
               name = trimmed
             }
             newWorktreeName = name
+            // Validate the name leaf here too: the prompt guards it, but the
+            // CLI / deeplink entry points reach this path without that check.
+            if let nameError = WorktreePlacementOverride.nameValidationError(placement?.name) {
+              await send(
+                .createRandomWorktreeFailed(
+                  title: "Worktree name invalid",
+                  message: nameError,
+                  pendingID: pendingID,
+                  previousSelection: previousSelection,
+                  repositoryID: repository.id,
+                  name: nil,
+                  baseDirectory: worktreeBaseDirectory
+                )
+              )
+              return
+            }
+            let worktreeDirectoryURL = SupacodePaths.resolvedWorktreeDirectory(
+              defaultBaseDirectory: worktreeBaseDirectory,
+              repositoryRootURL: repository.rootURL,
+              nameOverride: placement?.name,
+              pathOverride: placement?.path,
+              branchName: name
+            )
             progress.worktreeName = name
             progress.stage = .checkingRepositoryMode
             await send(
@@ -1276,9 +1331,9 @@ struct RepositoriesFeature {
             progress.commandText = worktreeCreateCommand(
               baseDirectoryURL: worktreeBaseDirectory,
               name: name,
-              copyIgnored: copyIgnored,
-              copyUntracked: copyUntracked,
-              baseRef: resolvedBaseRef
+              copyFiles: (ignored: copyIgnored, untracked: copyUntracked),
+              baseRef: resolvedBaseRef,
+              directoryOverride: worktreeDirectoryURL
             )
             await send(
               .pendingWorktreeProgressUpdated(
@@ -1292,7 +1347,8 @@ struct RepositoriesFeature {
               worktreeBaseDirectory,
               copyIgnored,
               copyUntracked,
-              resolvedBaseRef
+              resolvedBaseRef,
+              worktreeDirectoryURL
             )
             for try await event in stream {
               switch event {
@@ -4426,23 +4482,27 @@ private nonisolated func blockingScriptExitMessage(_ exitCode: Int) -> String {
 private nonisolated func worktreeCreateCommand(
   baseDirectoryURL: URL,
   name: String,
-  copyIgnored: Bool,
-  copyUntracked: Bool,
-  baseRef: String
+  copyFiles: (ignored: Bool, untracked: Bool),
+  baseRef: String,
+  directoryOverride: URL?
 ) -> String {
   let baseDir = baseDirectoryURL.path(percentEncoded: false)
   var parts = ["wt", "--base-dir", baseDir, "sw"]
-  if copyIgnored {
+  if copyFiles.ignored {
     parts.append("--copy-ignored")
   }
-  if copyUntracked {
+  if copyFiles.untracked {
     parts.append("--copy-untracked")
   }
   if !baseRef.isEmpty {
     parts.append("--from")
     parts.append(baseRef)
   }
-  if copyIgnored || copyUntracked {
+  if let directoryOverride {
+    parts.append("--path")
+    parts.append(directoryOverride.path(percentEncoded: false))
+  }
+  if copyFiles.ignored || copyFiles.untracked {
     parts.append("--verbose")
   }
   parts.append(name)

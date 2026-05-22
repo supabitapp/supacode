@@ -56,10 +56,19 @@ extension RepoCommand {
     @Flag(help: "Fetch origin before creating the worktree.")
     var fetch = false
 
+    @Option(help: "Folder name for the worktree. Defaults to the branch name.")
+    var name: String?
+
+    @Option(help: "Parent directory the worktree folder is created in.")
+    var location: String?
+
     func run() throws {
       let rID = try resolveRepoID(repo)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.repoWorktreeNew(repoID: rID, branch: branch, base: base, fetch: fetch)
+        deeplinkURL: DeeplinkURLBuilder.repoWorktreeNew(
+          repoID: rID,
+          options: .init(branch: branch, base: base, fetch: fetch, name: name, location: location)
+        )
       )
     }
   }

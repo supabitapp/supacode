@@ -88,6 +88,55 @@ struct GitClientCreateWorktreeStreamTests {
     #expect(snapshot.arguments.contains("swift-otter"))
   }
 
+  @Test func createWorktreeStreamForwardsDirectoryOverrideAsPathFlag() async throws {
+    let recorder = GitShellInvocationRecorder()
+    let shell = ShellClient(
+      run: { _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },
+      runStream: { _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(ShellOutput(stdout: "", stderr: "", exitCode: 0)))
+          continuation.finish()
+        }
+      },
+      runLoginStreamImpl: { executableURL, arguments, currentDirectoryURL, _ in
+        recorder.record(
+          executableURL: executableURL,
+          arguments: arguments,
+          currentDirectoryURL: currentDirectoryURL
+        )
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.line(ShellStreamLine(source: .stdout, text: "/tmp/elsewhere/feature_foo")))
+          continuation.yield(
+            .finished(ShellOutput(stdout: "/tmp/elsewhere/feature_foo", stderr: "", exitCode: 0))
+          )
+          continuation.finish()
+        }
+      }
+    )
+    let client = GitClient(shell: shell)
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+
+    for try await _ in client.createWorktreeStream(
+      named: "feature/foo",
+      in: repoRoot,
+      baseDirectory: URL(fileURLWithPath: "/tmp/repo/.worktrees"),
+      copyFiles: (ignored: false, untracked: false),
+      baseRef: "origin/main",
+      directoryOverride: URL(fileURLWithPath: "/tmp/elsewhere/feature_foo")
+    ) {}
+
+    let snapshot = recorder.snapshot()
+    if let pathFlagIndex = snapshot.arguments.firstIndex(of: "--path") {
+      #expect(snapshot.arguments.count > pathFlagIndex + 1)
+      #expect(snapshot.arguments[pathFlagIndex + 1] == "/tmp/elsewhere/feature_foo")
+    } else {
+      Issue.record("Expected --path in createWorktreeStream arguments")
+    }
+    // The branch stays the positional argument; only the directory is overridden.
+    #expect(snapshot.arguments.contains("feature/foo"))
+  }
+
   @Test func createWorktreeStreamForwardsOutputLines() async throws {
     let shell = ShellClient(
       run: { _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },

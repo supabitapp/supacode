@@ -688,10 +688,12 @@ struct RepositoriesFeatureTests {
       }
     }
 
+    let expectedDefaultBase = expectedDefaultWorktreeBaseDirectory(for: repository.rootURL)
     await store.send(.createRandomWorktreeInRepository(repository.id))
     await store.receive(\.promptedWorktreeCreationDataLoaded) {
       $0.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
         repositoryID: repository.id,
+        repositoryRootURL: repository.rootURL,
         repositoryName: repository.name,
         automaticBaseRef: "origin/main",
         defaultBranch: "main",
@@ -700,6 +702,7 @@ struct RepositoriesFeatureTests {
         branchName: "",
         selectedBaseRef: nil,
         fetchOrigin: true,
+        defaultWorktreeBaseDirectory: expectedDefaultBase,
         validationMessage: nil
       )
     }
@@ -721,6 +724,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -729,6 +733,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/new",
       selectedBaseRef: "origin/deleted-branch",
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -756,6 +761,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -764,6 +770,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/new",
       selectedBaseRef: "origin/dev",
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -790,6 +797,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -798,6 +806,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/new",
       selectedBaseRef: "origin/dev",
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -821,6 +830,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -829,6 +839,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/new",
       selectedBaseRef: nil,
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -857,6 +868,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -865,6 +877,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/new-branch",
       selectedBaseRef: nil,
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -890,6 +903,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -898,6 +912,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/new",
       selectedBaseRef: nil,
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -915,7 +930,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.fetchRemote = { remote, _ in
         fetchedRemote.withValue { $0 = remote }
       }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
           continuation.finish()
@@ -933,7 +948,8 @@ struct RepositoriesFeatureTests {
               repositoryID: repository.id,
               branchName: "feature/new",
               baseRef: nil,
-              fetchOrigin: true
+              fetchOrigin: true,
+              placement: WorktreePlacementOverride(name: nil, path: nil)
             )
           )
         )
@@ -952,6 +968,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -960,6 +977,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/existing",
       selectedBaseRef: nil,
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -974,7 +992,8 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         branchName: "feature/existing",
         baseRef: nil,
-        fetchOrigin: true
+        fetchOrigin: true,
+        placement: WorktreePlacementOverride(name: nil, path: nil)
       )
     ) {
       $0.worktreeCreationPrompt?.validationMessage = nil
@@ -1046,6 +1065,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.promptedWorktreeCreationDataLoaded) {
       $0.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
         repositoryID: repoB.id,
+        repositoryRootURL: repoB.rootURL,
         repositoryName: repoB.name,
         automaticBaseRef: "origin/main",
         defaultBranch: "main",
@@ -1054,6 +1074,7 @@ struct RepositoriesFeatureTests {
         branchName: "",
         selectedBaseRef: nil,
         fetchOrigin: true,
+        defaultWorktreeBaseDirectory: expectedDefaultWorktreeBaseDirectory(for: repoB.rootURL),
         validationMessage: nil
       )
     }
@@ -1077,6 +1098,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repository.id,
+      repositoryRootURL: repository.rootURL,
       repositoryName: repository.name,
       automaticBaseRef: "origin/main",
       defaultBranch: "main",
@@ -1085,6 +1107,7 @@ struct RepositoriesFeatureTests {
       branchName: "feature/new-branch",
       selectedBaseRef: nil,
       fetchOrigin: true,
+      defaultWorktreeBaseDirectory: "/tmp/repo/.worktrees",
       validationMessage: nil
     )
     state.reconcileSidebarForTesting()
@@ -1102,7 +1125,8 @@ struct RepositoriesFeatureTests {
         repositoryID: repository.id,
         branchName: "feature/new-branch",
         baseRef: nil,
-        fetchOrigin: true
+        fetchOrigin: true,
+        placement: WorktreePlacementOverride(name: nil, path: nil)
       )
     ) {
       $0.worktreeCreationPrompt?.validationMessage = nil
@@ -1286,7 +1310,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
       $0.gitClient.ignoredFileCount = { _ in 2 }
       $0.gitClient.untrackedFileCount = { _ in 1 }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.outputLine(ShellStreamLine(source: .stderr, text: "[1/2] copy .env")))
           continuation.yield(.outputLine(ShellStreamLine(source: .stderr, text: "[2/2] copy .cache")))
@@ -1342,7 +1366,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.fetchRemote = { remote, _ in
         fetchedRemote.withValue { $0 = remote }
       }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
           continuation.finish()
@@ -1387,7 +1411,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.fetchRemote = { _, _ in
         fetchCalled.withValue { $0 = true }
       }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
           continuation.finish()
@@ -1431,7 +1455,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.fetchRemote = { _, _ in
         throw GitClientError.commandFailed(command: "git fetch", message: "network error")
       }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
           continuation.finish()
@@ -1478,7 +1502,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.fetchRemote = { _, _ in
         fetchCalled.withValue { $0 = true }
       }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
           continuation.finish()
@@ -1525,7 +1549,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.fetchRemote = { remote, _ in
         fetchedRemote.withValue { $0 = remote }
       }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
           continuation.finish()
@@ -1572,7 +1596,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.fetchRemote = { _, _ in
         fetchCalled.withValue { $0 = true }
       }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
           continuation.finish()
@@ -1618,7 +1642,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
       $0.gitClient.ignoredFileCount = { _ in 0 }
       $0.gitClient.untrackedFileCount = { _ in 0 }
-      $0.gitClient.createWorktreeStream = { _, _, baseDirectory, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, baseDirectory, _, _, _, _ in
         observedBaseDirectory.withValue { $0 = baseDirectory }
         return AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
@@ -1639,6 +1663,67 @@ struct RepositoriesFeatureTests {
       repositoryOverridePath: "/tmp/repo-override"
     )
     #expect(observedBaseDirectory.value == expectedBaseDirectory)
+  }
+
+  @Test(.dependencies) func createWorktreeForwardsResolvedPlacementOverrideToStream() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/elsewhere/feature_foo",
+      name: "feature/foo",
+      repoRoot: repoRoot
+    )
+    let observedDirectoryOverride = LockIsolated<URL?>(nil)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, directoryOverride in
+        observedDirectoryOverride.withValue { $0 = directoryOverride }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .createWorktreeInRepository(
+        repositoryID: repository.id,
+        nameSource: .explicit("feature/foo"),
+        baseRefSource: .repositorySetting,
+        fetchOrigin: false,
+        placement: WorktreePlacementOverride(name: "feature_foo", path: "/tmp/elsewhere")
+      )
+    )
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    let defaultBase = SupacodePaths.worktreeBaseDirectory(
+      for: repository.rootURL,
+      globalDefaultPath: nil,
+      repositoryOverridePath: nil
+    )
+    let expectedDirectory = SupacodePaths.resolvedWorktreeDirectory(
+      defaultBaseDirectory: defaultBase,
+      repositoryRootURL: repository.rootURL,
+      nameOverride: "feature_foo",
+      pathOverride: "/tmp/elsewhere",
+      branchName: "feature/foo"
+    )
+    #expect(observedDirectoryOverride.value == expectedDirectory)
+    #expect(
+      observedDirectoryOverride.value
+        == URL(filePath: "/tmp/elsewhere/feature_foo", directoryHint: .isDirectory).standardizedFileURL)
   }
 
   @Test(.dependencies) func createRandomWorktreeUsesGlobalWorktreeBaseDirectoryWhenRepositoryOverrideMissing() async {
@@ -1669,7 +1754,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
       $0.gitClient.ignoredFileCount = { _ in 0 }
       $0.gitClient.untrackedFileCount = { _ in 0 }
-      $0.gitClient.createWorktreeStream = { _, _, baseDirectory, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, baseDirectory, _, _, _, _ in
         observedBaseDirectory.withValue { $0 = baseDirectory }
         return AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
@@ -1707,7 +1792,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
       $0.gitClient.ignoredFileCount = { _ in 2 }
       $0.gitClient.untrackedFileCount = { _ in 1 }
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.outputLine(ShellStreamLine(source: .stderr, text: "[1/2] copy .env")))
           continuation.finish(throwing: GitClientError.commandFailed(command: "wt sw", message: "boom"))
@@ -6270,6 +6355,20 @@ struct RepositoriesFeatureTests {
     )
   }
 
+  /// Mirrors the base-directory resolution the reducer bakes into the prompt
+  /// state, reading the same shared settings so the expectation stays accurate
+  /// regardless of the host's home directory.
+  private func expectedDefaultWorktreeBaseDirectory(for repositoryRootURL: URL) -> String {
+    @Shared(.settingsFile) var settingsFile
+    @Shared(.repositorySettings(repositoryRootURL)) var repositorySettings
+    return SupacodePaths.worktreeBaseDirectory(
+      for: repositoryRootURL,
+      globalDefaultPath: settingsFile.global.defaultWorktreeBaseDirectoryPath,
+      repositoryOverridePath: repositorySettings.worktreeBaseDirectoryPath
+    )
+    .path(percentEncoded: false)
+  }
+
   private func expectedScriptFailureAlert(
     kind: BlockingScriptKind,
     exitMessage: String,
@@ -7334,7 +7433,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
-      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _ in
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           Issue.record("createWorktreeStream must not run for folder repositories")
           continuation.finish()

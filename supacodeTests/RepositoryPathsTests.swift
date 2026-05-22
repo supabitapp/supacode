@@ -107,4 +107,88 @@ struct SupacodePathsTests {
 
     #expect(path == expectedPath)
   }
+
+  @Test func resolvedWorktreeDirectoryReturnsNilWhenNoOverrides() {
+    let resolved = SupacodePaths.resolvedWorktreeDirectory(
+      defaultBaseDirectory: URL(filePath: "/tmp/base", directoryHint: .isDirectory),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      nameOverride: "  ",
+      pathOverride: nil,
+      branchName: "feature/foo"
+    )
+
+    #expect(resolved == nil)
+  }
+
+  @Test func resolvedWorktreeDirectoryUsesNameOverrideUnderDefaultBase() {
+    let resolved = SupacodePaths.resolvedWorktreeDirectory(
+      defaultBaseDirectory: URL(filePath: "/tmp/base", directoryHint: .isDirectory),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      nameOverride: "feature_foo",
+      pathOverride: nil,
+      branchName: "feature/foo"
+    )
+    let expected = URL(filePath: "/tmp/base/feature_foo", directoryHint: .isDirectory)
+      .standardizedFileURL
+
+    #expect(resolved == expected)
+  }
+
+  @Test func resolvedWorktreeDirectoryUsesPathOverrideWithBranchLeaf() {
+    let resolved = SupacodePaths.resolvedWorktreeDirectory(
+      defaultBaseDirectory: URL(filePath: "/tmp/base", directoryHint: .isDirectory),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      nameOverride: nil,
+      pathOverride: "/tmp/elsewhere",
+      branchName: "feature_foo"
+    )
+    let expected = URL(filePath: "/tmp/elsewhere/feature_foo", directoryHint: .isDirectory)
+      .standardizedFileURL
+
+    #expect(resolved == expected)
+  }
+
+  @Test func resolvedWorktreeDirectoryCombinesNameAndPathOverrides() {
+    let resolved = SupacodePaths.resolvedWorktreeDirectory(
+      defaultBaseDirectory: URL(filePath: "/tmp/base", directoryHint: .isDirectory),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      nameOverride: "feature_foo",
+      pathOverride: "~/Repos",
+      branchName: "feature/foo"
+    )
+    let expected = URL(
+      filePath: NSString(string: "~/Repos/feature_foo").expandingTildeInPath,
+      directoryHint: .isDirectory
+    )
+    .standardizedFileURL
+
+    #expect(resolved == expected)
+  }
+
+  @Test func previewWorktreeDirectoryFallsBackToBaseAndBranchWhenNoOverrides() {
+    let preview = SupacodePaths.previewWorktreeDirectory(
+      defaultBaseDirectory: URL(filePath: "/tmp/base", directoryHint: .isDirectory),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      nameOverride: nil,
+      pathOverride: nil,
+      branchName: "feature/foo"
+    )
+    let expected = URL(filePath: "/tmp/base/feature/foo", directoryHint: .isDirectory)
+      .standardizedFileURL
+
+    #expect(preview == expected)
+  }
+
+  @Test func previewWorktreeDirectoryReturnsBaseWhenBranchEmptyAndNoOverrides() {
+    let preview = SupacodePaths.previewWorktreeDirectory(
+      defaultBaseDirectory: URL(filePath: "/tmp/base", directoryHint: .isDirectory),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      nameOverride: nil,
+      pathOverride: nil,
+      branchName: ""
+    )
+    let expected = URL(filePath: "/tmp/base", directoryHint: .isDirectory).standardizedFileURL
+
+    #expect(preview == expected)
+  }
 }

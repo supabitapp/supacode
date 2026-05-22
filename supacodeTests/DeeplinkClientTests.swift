@@ -224,7 +224,28 @@ struct DeeplinkClientTests {
           repositoryID: "/tmp/repo",
           branch: "feature-x",
           baseRef: "main",
-          fetchOrigin: true
+          fetchOrigin: true,
+          worktreeName: nil,
+          worktreePath: nil
+        )
+    )
+  }
+
+  @Test func repoWorktreeNewWithNameAndLocation() {
+    let repoEncoded = "%2Ftmp%2Frepo"
+    let url = URL(
+      string:
+        "supacode://repo/\(repoEncoded)/worktree/new?branch=feature%2Ffoo&name=feature_foo&location=%7E%2FRepos"
+    )!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature/foo",
+          baseRef: nil,
+          fetchOrigin: false,
+          worktreeName: "feature_foo",
+          worktreePath: "~/Repos"
         )
     )
   }
@@ -238,7 +259,9 @@ struct DeeplinkClientTests {
           repositoryID: "/tmp/repo",
           branch: nil,
           baseRef: nil,
-          fetchOrigin: false
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
         )
     )
   }
