@@ -469,6 +469,10 @@ private struct CommandPaletteRowView: View {
       }
       .padding(8)
       .contentShape(Rectangle())
+      .transformEnvironment(\.colorScheme) { scheme in
+        guard isSelected, scheme != .dark else { return }
+        scheme = .dark
+      }
       .background(rowBackground)
       .clipShape(.rect(cornerRadius: 5))
     }
