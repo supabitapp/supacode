@@ -19,6 +19,47 @@ struct AgentHookCommandTests {
     #expect(command.contains(#"\"event\":\"idle\""#))
   }
 
+  // MARK: - Claude canonical hook map.
+
+  @Test func claudePostToolUseFiresIdleNotBusy() throws {
+    // PostToolUse releases the shimmer when a tool finishes, so `busy` tracks
+    // active tool execution rather than the whole turn.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let postToolUse = try #require(groups["PostToolUse"])
+    let commands = Self.commandStrings(in: postToolUse)
+    #expect(!commands.isEmpty)
+    #expect(commands.allSatisfy { $0.contains(#"\"event\":\"idle\""#) })
+    #expect(commands.allSatisfy { !$0.contains(#"\"event\":\"busy\""#) })
+  }
+
+  @Test func claudePreToolUseOrdersAwaitingAfterBusy() throws {
+    // Order is load-bearing: the "" matcher (busy) must precede the
+    // AskUserQuestion / ExitPlanMode matcher (awaiting) so the named match fires
+    // last and wins, keeping a permission / plan prompt from shimmering under
+    // busy-only hasActivity. Assert by index, not by predicate.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let preToolUse = try #require(groups["PreToolUse"])
+    #expect(preToolUse.count == 2)
+
+    let first = try #require(preToolUse.first)
+    #expect(first.objectValue?["matcher"]?.stringValue == "")
+    let firstCommand = try #require(Self.commandStrings(in: [first]).first)
+    #expect(firstCommand.contains(#"\"event\":\"busy\""#))
+
+    let second = try #require(preToolUse.last)
+    #expect(second.objectValue?["matcher"]?.stringValue == "AskUserQuestion|ExitPlanMode")
+    let secondCommand = try #require(Self.commandStrings(in: [second]).first)
+    #expect(secondCommand.contains(#"\"event\":\"awaiting_input\""#))
+  }
+
+  private static func commandStrings(in groups: [JSONValue]) -> [String] {
+    groups.flatMap { group in
+      group.objectValue?["hooks"]?.arrayValue?.compactMap {
+        $0.objectValue?["command"]?.stringValue
+      } ?? []
+    }
+  }
+
   @Test func compositeChecksAllFourEnvVars() {
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [.busy], forwardStdinAsNotification: false, agent: .claude)

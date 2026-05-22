@@ -17,15 +17,20 @@ nonisolated enum ClaudeHookSettingsError: Error {
 
 // MARK: - Hook payload.
 
-// Atomic state-set: every Pre/PostToolUse fires `busy`; AskUserQuestion /
-// ExitPlanMode / Notification overwrite to `awaitingInput`; Stop and
-// SessionEnd reset to `idle`. The pid liveness sweep is the safety net
-// for crashed turns.
+// Atomic state-set: UserPromptSubmit / PreToolUse fire `busy`; PostToolUse
+// fires `idle` so the shimmer tracks active tool execution, not the whole turn
+// (the socket debounces idle to bridge between-tool gaps). AskUserQuestion /
+// ExitPlanMode / Notification overwrite to `awaitingInput`; Stop and SessionEnd
+// reset to `idle`. The pid liveness sweep is the safety net for crashed turns.
+// Only Claude has tool-level granularity; Codex and Kiro stay turn-level, so
+// their shimmer spans the whole turn.
 private nonisolated struct ClaudeHooksPayload: Encodable {
   static let awaitingInputToolMatcher = "AskUserQuestion|ExitPlanMode"
 
   private static let busy = AgentHookSettingsCommand.compositeCommand(
     events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+  private static let idle = AgentHookSettingsCommand.compositeCommand(
+    events: [.idle], forwardStdinAsNotification: false, agent: .claude)
   private static let awaitingInputAndNotify = AgentHookSettingsCommand.compositeCommand(
     events: [.awaitingInput], forwardStdinAsNotification: true, agent: .claude)
   private static let awaitingInput = AgentHookSettingsCommand.compositeCommand(
@@ -53,7 +58,7 @@ private nonisolated struct ClaudeHooksPayload: Encodable {
       ),
     ],
     "PostToolUse": [
-      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5)])
+      .init(matcher: "", hooks: [.init(command: Self.idle, timeout: 5)])
     ],
     "Notification": [
       .init(matcher: "", hooks: [.init(command: Self.awaitingInputAndNotify, timeout: 10)])

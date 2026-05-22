@@ -188,8 +188,9 @@ struct AgentPresenceFeature {
     }
   }
 
-  /// No-op on identical activity so PreToolUse/PostToolUse storms don't churn observers.
-  /// Returns true when the record actually flipped.
+  /// No-op on identical activity so repeated same-event hook bursts (e.g. consecutive
+  /// PreToolUse) don't churn observers; the busy/idle flip itself is a real transition,
+  /// debounced upstream. Returns true when the record actually flipped.
   private static func setActivity(_ activity: Activity, for key: PresenceKey, in state: inout State) -> Bool {
     guard var record = state.records[key], record.activity != activity else { return false }
     record.activity = activity
@@ -355,14 +356,16 @@ extension AgentPresenceFeature.State {
       }
   }
 
-  /// Any agent on any of the listed surfaces is busy or awaiting input. Drives
-  /// the sidebar shimmer alongside Ghostty progress state; not gated by the
-  /// badge toggle since the shimmer is a generic "this worktree is doing work"
-  /// signal independent of avatar visibility.
+  /// Any agent on any of the listed surfaces is actively working (`.busy`).
+  /// Awaiting-input is excluded: the agent is parked on the user, not working,
+  /// so it must not shimmer (the inverted badge already signals that state).
+  /// Drives the sidebar shimmer alongside Ghostty progress state; not gated by
+  /// the badge toggle since the shimmer is a generic "this worktree is doing
+  /// work" signal independent of avatar visibility.
   func hasActivity(in surfaceIDs: some Sequence<UUID>) -> Bool {
     let surfaceSet = Set(surfaceIDs)
     return records.contains { entry in
-      entry.value.activity != .idle && surfaceSet.contains(entry.key.surfaceID)
+      entry.value.activity == .busy && surfaceSet.contains(entry.key.surfaceID)
     }
   }
 }

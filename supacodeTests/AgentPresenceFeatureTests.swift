@@ -80,7 +80,7 @@ struct AgentPresenceFeatureTests {
 
     harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
     harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
-    #expect(harness.state.hasActivity(in: [surfaceID]))
+    #expect(!harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
 
     harness.send(.surfaceClosed(surfaceID))
 
@@ -150,7 +150,7 @@ struct AgentPresenceFeatureTests {
 
     harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid)))
     harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
-    #expect(harness.state.hasActivity(in: [surfaceID]))
+    #expect(!harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
 
     harness.livenessSweep()
 
@@ -401,17 +401,33 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.hasActivity(in: [surfaceA, surfaceB]) == true)
   }
 
-  @Test func hasActivityIsTrueForAwaitingOnlyRecord() {
-    // The shimmer is gated on hasActivity, which must light up for
-    // awaiting-input even when no tool is currently running (e.g. a permission
-    // prompt without a paired busy event).
+  @Test func hasActivityIsFalseForAwaitingOnlyRecord() {
+    // The shimmer is gated on hasActivity, which tracks active work only.
+    // Awaiting-input means the agent is parked on the user, not working, so it
+    // must NOT shimmer (the inverted badge already signals the awaiting state).
     var harness = Harness()
     let surfaceID = UUID()
 
     harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
     harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
 
+    #expect(harness.state.hasActivity(in: [surfaceID]) == false)
+    // The badge stays present so the agent is still discoverable while awaiting.
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+  }
+
+  @Test func busyToAwaitingInputDropsActivity() {
+    // A busy agent that flips to awaiting-input releases the shimmer: the work
+    // it was doing has paused on the user.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
     #expect(harness.state.hasActivity(in: [surfaceID]) == true)
+
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+    #expect(harness.state.hasActivity(in: [surfaceID]) == false)
   }
 
   // MARK: - Settings gate.
