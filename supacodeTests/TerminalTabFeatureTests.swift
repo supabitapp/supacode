@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import GhosttyKit
 import SupacodeSettingsShared
 import Testing
 
@@ -134,5 +135,28 @@ struct TerminalTabFeatureTests {
     await store.send(.progressDisplayChanged(nil)) {
       $0.progressDisplay = nil
     }
+  }
+
+  @Test func determinateProgressBucketsToCoarseSteps() {
+    func percent(_ value: Int) -> Int? {
+      guard
+        case .determinate(let bucket) = TerminalTabProgressDisplay.make(
+          progressState: GHOSTTY_PROGRESS_STATE_SET, progressValue: value
+        )?.style
+      else { return nil }
+      return bucket
+    }
+
+    // 0 and the >=100 terminus pass through so the bar starts empty and
+    // visibly completes; mid-run values snap to 5% steps and never reach 100.
+    #expect(percent(-5) == 0)
+    #expect(percent(0) == 0)
+    #expect(percent(2) == 0)
+    #expect(percent(43) == 45)
+    // The min(95) clamp keeps near-full values below the >=100 terminus.
+    #expect(percent(97) == 95)
+    #expect(percent(98) == 95)
+    #expect(percent(100) == 100)
+    #expect(percent(101) == 100)
   }
 }

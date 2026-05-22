@@ -76,17 +76,18 @@ private struct StripeBody: View {
   let pixelLength: CGFloat
 
   var body: some View {
-    GeometryReader { proxy in
-      ZStack(alignment: .leading) {
-        StripeBase(progressDisplay: progressDisplay, color: color)
-        if case .determinate(let percent) = progressDisplay?.style {
-          Rectangle()
-            .fill(color)
-            .frame(width: proxy.size.width * CGFloat(max(0, min(percent, 100))) / 100)
-            .animation(.easeInOut(duration: 0.2), value: percent)
-        }
+    ZStack(alignment: .leading) {
+      StripeBase(progressDisplay: progressDisplay, color: color)
+      if case .determinate(let percent) = progressDisplay?.style {
+        // scaleEffect composites the fill (no relayout) and the determinate
+        // percent is bucketed upstream, so frequent agent ticks stop thrashing
+        // layout / animation on the focused tab. No implicit per-percent tween.
+        Rectangle()
+          .fill(color)
+          .scaleEffect(x: CGFloat(max(0, min(percent, 100))) / 100, anchor: .leading)
       }
     }
+    .frame(maxWidth: .infinity)
     .frame(height: TerminalTabBarMetrics.activeIndicatorHeight)
     .padding(.horizontal, -pixelLength)
     .opacity(opacity)

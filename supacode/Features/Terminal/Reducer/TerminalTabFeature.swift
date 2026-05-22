@@ -112,9 +112,23 @@ extension TerminalTabProgressDisplay {
     case GHOSTTY_PROGRESS_STATE_PAUSE: style = .paused
     case GHOSTTY_PROGRESS_STATE_INDETERMINATE: style = .indeterminate
     default:
-      if let percent = progressValue { style = .determinate(percent: percent) } else { style = .indeterminate }
+      if let percent = progressValue {
+        style = .determinate(percent: Self.bucketedPercent(percent))
+      } else {
+        style = .indeterminate
+      }
     }
     return TerminalTabProgressDisplay(style: style)
+  }
+
+  /// Snap mid-run percents to 5% steps so a 0->100 sweep yields ~20 distinct
+  /// displays instead of ~100, collapsing per-percent store dispatches and
+  /// stripe repaints at the existing equality gates. 0 and the >=100 terminus
+  /// pass through so the bar starts empty and visibly completes.
+  private static func bucketedPercent(_ percent: Int) -> Int {
+    guard percent > 0 else { return 0 }
+    guard percent < 100 else { return 100 }
+    return min(95, (percent + 2) / 5 * 5)
   }
 
   /// Worst-of priority for aggregating across surfaces in an unfocused tab.
