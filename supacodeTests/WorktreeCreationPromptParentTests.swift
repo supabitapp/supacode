@@ -33,12 +33,17 @@ struct WorktreeCreationPromptParentTests {
     state.repositoryRoots = [repository.rootURL]
     state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
       repositoryID: repoID,
+      repositoryRootURL: URL(fileURLWithPath: repoID),
       repositoryName: "create-wt-repo",
       automaticBaseRef: "main",
-      baseRefOptions: ["main"],
+      defaultBranch: "main",
+      remoteNames: [],
+      branchMenu: nil,
       branchName: "",
       selectedBaseRef: nil,
       fetchOrigin: false,
+      defaultWorktreeBaseDirectory: "/tmp/create-wt-repo/.worktrees",
+      validationMessage: nil,
     )
     if !branchNames.isEmpty {
       state.pendingCreationCustomizations[repoID] = branchNames
@@ -94,6 +99,7 @@ struct WorktreeCreationPromptParentTests {
               branchName: "feature/x",
               baseRef: nil,
               fetchOrigin: false,
+              placement: WorktreePlacementOverride(name: nil, path: nil),
               title: nil,
               color: nil,
             )
@@ -114,6 +120,7 @@ struct WorktreeCreationPromptParentTests {
         branchName: "feature/x",
         baseRef: nil,
         fetchOrigin: false,
+        placement: WorktreePlacementOverride(name: nil, path: nil),
         duplicateMessage: "Branch name already exists.",
       )
     ) {
@@ -155,6 +162,7 @@ struct WorktreeCreationPromptParentTests {
         branchName: "feature/x",
         baseRef: nil,
         fetchOrigin: false,
+        placement: WorktreePlacementOverride(name: nil, path: nil),
       )
     ) {
       $0.worktreeCreationPrompt?.isValidating = false
@@ -399,6 +407,7 @@ struct WorktreeCreationPromptParentTests {
               branchName: "feature/x",
               baseRef: nil,
               fetchOrigin: false,
+              placement: WorktreePlacementOverride(name: nil, path: nil),
               title: "Fresh",
               color: .red,
             )
