@@ -54,8 +54,13 @@ struct WorktreeEnvironmentTests {
     #expect(runnerScript.contains("SUPACODE_SHELL_PATH_FILE=\(quotedShellPath)") == true)
     #expect(runnerScript.contains("\"$SUPACODE_SHELL_PATH\" -l \(quotedScriptPath)") == true)
     // The runner exec-tails after emitting OSC 133;D so the outer shell
-    // stays blocked and no new prompt prints in the readonly tab.
+    // stays blocked and no new prompt prints in the readonly tab. Both
+    // 133;C and 133;D matter: `shell-integration = none` is on globally
+    // (GhosttyRuntime.bundledOverridesString) so Ghostty's shell shim
+    // won't emit prompt markers; the runner must self-emit so the
+    // tab-bar progress / `onCommandFinished` path still fires.
     #expect(runnerScript.contains("exec tail -f /dev/null") == true)
+    #expect(runnerScript.contains("133;C") == true)
     #expect(runnerScript.contains("133;D") == true)
     #expect(runnerScript.contains("docker compose down") == false)
     #expect(runnerScript.contains("codex exec \"test\"") == false)

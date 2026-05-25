@@ -537,18 +537,25 @@ final class GhosttyRuntime {
 
   /// Applies Supacode-specific config (padding values, transparent surface)
   /// that takes precedence over user settings.
+  ///
+  /// `background-opacity = 0` makes Ghostty's surface render with alpha 0 so
+  /// the window's tint is the only visual layer; the user's intended value is
+  /// captured separately in `loadConfig` for window-level use.
+  ///
+  /// `shell-integration = none` short-circuits Ghostty's `setupBash` call
+  /// before it can prepend `--posix` to the surface command (#356); zmx
+  /// rejects `--posix` as an unknown arg and the surface fails to launch.
+  internal static let bundledOverridesString = """
+    window-padding-x = 14
+    window-padding-y = 12,0
+    background-opacity = 0
+    shell-integration = none
+    """
+
   private static func loadBundledOverrides(into config: ghostty_config_t) {
-    // `background-opacity = 0` makes Ghostty's surface render with alpha 0
-    // so the window's tint is the only visual layer; the user's intended
-    // value is captured separately in `loadConfig` for window-level use.
-    let defaults = """
-      window-padding-x = 14
-      window-padding-y = 12,0
-      background-opacity = 0
-      """
     let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-defaults.conf")
     do {
-      try defaults.write(to: tempURL, atomically: true, encoding: .utf8)
+      try bundledOverridesString.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {
       logger.warning("Failed to write bundled defaults: \(error.localizedDescription)")
       return
