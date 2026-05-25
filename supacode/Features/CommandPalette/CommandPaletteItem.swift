@@ -33,6 +33,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case newWorktree
     case removeWorktree(Worktree.ID, Repository.ID)
     case archiveWorktree(Worktree.ID, Repository.ID)
+    case renameBranch(Worktree.ID, Repository.ID)
     case viewArchivedWorktrees
     case refreshWorktrees
     case ghosttyCommand(String)
@@ -69,6 +70,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       false
+    case .renameBranch:
+      true
     case .runScript, .stopScript:
       true
     #if DEBUG
@@ -95,7 +98,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .openFailingCheckDetails,
       .worktreeSelect,
       .removeWorktree,
-      .archiveWorktree:
+      .archiveWorktree,
+      .renameBranch:
       false
     case .runScript, .stopScript:
       false
@@ -126,6 +130,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .worktreeSelect,
       .removeWorktree,
       .archiveWorktree,
+      .renameBranch,
       .stopScript:
       nil
     case .runScript(let definition):

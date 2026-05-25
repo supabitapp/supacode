@@ -6867,7 +6867,8 @@ struct RepositoriesFeatureTests {
       name: Repository.name(for: rootURL),
       detail: "",
       workingDirectory: rootURL,
-      repositoryRootURL: rootURL
+      repositoryRootURL: rootURL,
+      isAttached: false
     )
     let folderRepo = Repository(
       id: repoRoot,
@@ -6956,7 +6957,8 @@ struct RepositoriesFeatureTests {
             name: Repository.name(for: url),
             detail: "",
             workingDirectory: url,
-            repositoryRootURL: url
+            repositoryRootURL: url,
+            isAttached: false
           )
           return Repository(
             id: folderRoot,
@@ -7008,7 +7010,8 @@ struct RepositoriesFeatureTests {
       name: Repository.name(for: standardizedURL),
       detail: "",
       workingDirectory: standardizedURL,
-      repositoryRootURL: standardizedURL
+      repositoryRootURL: standardizedURL,
+      isAttached: false
     )
     let folderRepo = Repository(
       id: rootID,
@@ -7044,7 +7047,7 @@ struct RepositoriesFeatureTests {
       name: "folder",
       detail: "",
       workingDirectory: folderURL,
-      repositoryRootURL: folderURL
+      repositoryRootURL: folderURL, isAttached: false
     )
     let folderRepo = Repository(
       id: "/tmp/folder",

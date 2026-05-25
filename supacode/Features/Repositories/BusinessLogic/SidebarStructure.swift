@@ -385,6 +385,13 @@ extension RepositoriesFeature.Action {
     case .repositoryCustomization:
       return []
 
+    // Branch rename updates the worktree.name shown in the sidebar row and
+    // the notification group title, mirroring `.worktreeBranchNameLoaded`.
+    case .renameBranchPrompt(.presented(.delegate(.renamed))):
+      return .all
+    case .renameBranchPrompt:
+      return []
+
     // Everything else is UI / effects / transient state, no cache touched.
     case .task, .setOpenPanelPresented, .loadPersistedRepositories,
       .refreshWorktrees, .reloadRepositories,
@@ -412,6 +419,7 @@ extension RepositoriesFeature.Action {
       .showToast, .dismissToast,
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
+      .requestRenameBranch,
       .contextMenuOpenWorktree,
       .worktreeCreationPrompt,
       .alert,

@@ -678,6 +678,17 @@ private struct SidebarItemContextMenu: View {
           NSPasteboard.general.setString(worktree.name, forType: .string)
         }
       }
+      if let singleRow = contextRows.first,
+        !rowIsFolder,
+        singleRow.lifecycle == .idle,
+        !worktree.isMissing,
+        worktree.isAttached
+      {
+        Button("Rename Branch…", systemImage: "pencil") {
+          store.send(.requestRenameBranch(worktree.id, repositoryID))
+        }
+        .help("Rename the local branch for this worktree")
+      }
       Divider()
       if rowIsFolder {
         // Folder rows have no section ellipsis menu, so Settings lives here.

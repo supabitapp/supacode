@@ -166,6 +166,7 @@ struct RepositoriesFeature {
     var toolbarNotificationGroupsCache: [ToolbarNotificationRepositoryGroup] = []
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
+    @Presents var renameBranchPrompt: RenameBranchFeature.State?
     @Presents var alert: AlertState<Alert>?
 
     // MARK: - Sidebar items (per-row TCA collection).
@@ -385,9 +386,11 @@ struct RepositoriesFeature {
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
+    case requestRenameBranch(Worktree.ID, Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
     case repositoryCustomization(PresentationAction<RepositoryCustomizationFeature.Action>)
+    case renameBranchPrompt(PresentationAction<RenameBranchFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
   }
@@ -3395,6 +3398,54 @@ struct RepositoriesFeature {
       case .repositoryCustomization:
         return .none
 
+      case .requestRenameBranch(let worktreeID, let repositoryID):
+        guard let repository = state.repositories[id: repositoryID],
+          repository.isGitRepository,
+          let worktree = repository.worktrees.first(where: { $0.id == worktreeID }),
+          !worktree.isMissing,
+          worktree.isAttached,
+          !worktree.name.isEmpty
+        else {
+          return .none
+        }
+        guard state.sidebarItems[id: worktreeID]?.lifecycle == .idle else {
+          return .none
+        }
+        state.renameBranchPrompt = RenameBranchFeature.State(
+          worktreeID: worktreeID,
+          repositoryID: repositoryID,
+          repositoryRootURL: repository.rootURL,
+          currentName: worktree.name
+        )
+        return .none
+
+      case .renameBranchPrompt(.presented(.delegate(.cancel))):
+        state.renameBranchPrompt = nil
+        return .none
+
+      case .renameBranchPrompt(.presented(.delegate(.renamed(let worktreeID, let repositoryID, let newName)))):
+        state.updateWorktreeName(worktreeID, name: newName)
+        Self.syncSidebar(&state)
+        state.renameBranchPrompt = nil
+        // Refresh only the renamed row's PR; siblings still point at their
+        // own branches. The HEAD watcher re-emits the name authoritatively.
+        guard let repository = state.repositories[id: repositoryID] else { return .none }
+        return .send(
+          .worktreeInfoEvent(
+            .repositoryPullRequestRefresh(
+              repositoryRootURL: repository.rootURL,
+              worktreeIDs: [worktreeID]
+            )
+          )
+        )
+
+      case .renameBranchPrompt(.dismiss):
+        state.renameBranchPrompt = nil
+        return .none
+
+      case .renameBranchPrompt:
+        return .none
+
       case .contextMenuOpenWorktree(let worktreeID, let action):
         return .send(.delegate(.openWorktreeInApp(worktreeID, action)))
 
@@ -3414,6 +3465,14 @@ struct RepositoriesFeature {
       case .delegate:
         return .none
 
+      case .sidebarItems(.element(id: let id, action: .lifecycleChanged(let lifecycle))):
+        // Dismiss the rename sheet if the row enters a wind-down state.
+        // `.pending` stays eligible since the setup script can co-exist with rename.
+        if state.renameBranchPrompt?.worktreeID == id, lifecycle.isTerminating {
+          state.renameBranchPrompt = nil
+        }
+        return .none
+
       case .sidebarItems:
         return .none
       }
@@ -3426,6 +3485,9 @@ struct RepositoriesFeature {
     }
     .ifLet(\.$repositoryCustomization, action: \.repositoryCustomization) {
       RepositoryCustomizationFeature()
+    }
+    .ifLet(\.$renameBranchPrompt, action: \.renameBranchPrompt) {
+      RenameBranchFeature()
     }
     // Targeted post-reduce hook: only the actions that demonstrably touch
     // structure inputs trigger a recompute. The Equatable diff inside the
@@ -3621,7 +3683,8 @@ struct RepositoriesFeature {
           name: name,
           detail: "",
           workingDirectory: normalizedRoot,
-          repositoryRootURL: normalizedRoot
+          repositoryRootURL: normalizedRoot,
+          isAttached: false
         )
         let repository = Repository(
           id: rootID,
@@ -4535,6 +4598,7 @@ extension RepositoriesFeature.State {
         repositoryRootURL: worktree.repositoryRootURL,
         createdAt: worktree.createdAt,
         isMissing: worktree.isMissing,
+        isAttached: worktree.isAttached,
       )
       repositories[index] = Repository(
         id: repository.id,
