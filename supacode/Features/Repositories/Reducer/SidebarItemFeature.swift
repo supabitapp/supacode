@@ -91,6 +91,10 @@ struct SidebarItemFeature {
     var hasAgentActivity: Bool = false
 
     var surfaceIDs: [UUID] = []
+    /// Sticky once `terminalProjectionChanged` arrives, so a subsequent
+    /// `surfaceIDs == []` (user closed every tab) doesn't re-seed dead UUIDs
+    /// from the last-quit layout snapshot.
+    var hasTerminalProjection: Bool = false
     /// Ghostty progress busy on any surface. Combined with `hasAgentActivity` for shimmer.
     var isProgressBusy: Bool = false
     var hasUnseenNotifications: Bool = false
@@ -171,6 +175,7 @@ struct SidebarItemFeature {
         return .none
 
       case .terminalProjectionChanged(let projection):
+        if !state.hasTerminalProjection { state.hasTerminalProjection = true }
         if state.surfaceIDs != projection.surfaceIDs { state.surfaceIDs = projection.surfaceIDs }
         if state.isProgressBusy != projection.isProgressBusy {
           state.isProgressBusy = projection.isProgressBusy

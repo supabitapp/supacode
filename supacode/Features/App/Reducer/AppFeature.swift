@@ -15,6 +15,7 @@ private nonisolated let notificationsLogger = SupaLogger("Notifications")
 private enum CancelID {
   static let periodicRefresh = "app.periodicRefresh"
   static let backgroundPersist = "app.backgroundPersist"
+  static let agentPresencePersist = "app.agentPresencePersist"
 }
 
 @Reducer
@@ -153,6 +154,7 @@ struct AppFeature {
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(TerminalClient.self) private var terminalClient
   @Dependency(WorktreeInfoWatcherClient.self) private var worktreeInfoWatcher
+  @Dependency(\.continuousClock) private var clock
 
   var body: some Reducer<State, Action> {
     let core = Reduce<State, Action> { state, action in
@@ -179,7 +181,7 @@ struct AppFeature {
           .run { send in
             // Reap crash / force-quit orphans, then resurrect agent badges
             // from embedded records. Races with `.task` under `.merge`; the
-            // worktreeProjectionChanged handler re-fans-out if restore wins.
+            // `repositoriesChanged` handler drains layout-seeded surfaces if restore wins.
             @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
             let known = Set(layouts.values.flatMap { $0.allSurfaceIDs })
             let staged = AgentPresenceFeature.stageRestore(fromLayouts: layouts.values)
@@ -189,7 +191,21 @@ struct AppFeature {
         )
 
       case .agentPresence(.delegate(.surfacesChanged(let surfaces))):
-        return agentPresenceFanOutEffect(surfaces: surfaces, state: state)
+        // Persist on every presence delta, debounced, so a crash mid-session
+        // doesn't lose the most recent agent state. The save only touches
+        // worktrees with a live `WorktreeTerminalState`, so it can't write
+        // rows the user hasn't selected yet.
+        let agentsBySurface = state.agentPresence.agentsBySurface()
+        return .merge(
+          agentPresenceFanOutEffect(surfaces: surfaces, state: state),
+          .run { [clock] _ in
+            try await clock.sleep(for: .seconds(1))
+            await MainActor.run {
+              terminalClient.saveLayoutsWithAgents(agentsBySurface)
+            }
+          }
+          .cancellable(id: CancelID.agentPresencePersist, cancelInFlight: true)
+        )
 
       case .agentPresence:
         return .none
@@ -220,8 +236,8 @@ struct AppFeature {
           let agentsBySurface = state.agentPresence.agentsBySurface()
           return .merge(
             .cancel(id: CancelID.periodicRefresh),
-            .run { _ in
-              try? await Task.sleep(for: .seconds(1))
+            .run { [clock] _ in
+              try await clock.sleep(for: .seconds(1))
               await MainActor.run {
                 terminalClient.saveLayoutsWithAgents(agentsBySurface)
               }
@@ -324,6 +340,15 @@ struct AppFeature {
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
           },
         ])
+        // Drain layout-seeded surfaces (including any that piled up from prior
+        // reconciles before this delegate fired) so restored presence records
+        // light up rows born on this tick.
+        let pendingRehydrate = state.repositories.pendingAgentRehydrateSurfaces
+        state.repositories.pendingAgentRehydrateSurfaces.removeAll()
+        let rehydrate = pendingRehydrate.intersection(state.agentPresence.bySurface.keys)
+        if !rehydrate.isEmpty {
+          effects.append(agentPresenceFanOutEffect(surfaces: rehydrate, state: state))
+        }
         if !state.pendingDeeplinks.isEmpty {
           let pending = state.pendingDeeplinks
           state.pendingDeeplinks.removeAll()
@@ -1049,6 +1074,10 @@ struct AppFeature {
           )
         )
         guard !restoredAddedSurfaces.isEmpty else { return projectionEffect }
+        // Keep the delegate hop here: `projectionEffect` must apply
+        // `terminalProjectionChanged` first so the fan-out reads the updated
+        // `surfaceIDs`. A direct `agentPresenceFanOutEffect(...)` would
+        // capture pre-projection state and miss the new surface.
         return .concatenate(
           projectionEffect,
           .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))

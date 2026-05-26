@@ -172,6 +172,14 @@ struct RepositoriesFeature {
     // MARK: - Sidebar items (per-row TCA collection).
     var sidebarItems: IdentifiedArrayOf<SidebarItemFeature.State> = []
     var sidebarGrouping: SidebarGrouping = .empty
+    /// Long-lived reader hoisted onto State so `reconcileSidebarItems` stays a
+    /// pure static mutator and doesn't re-decode the layouts file on every call.
+    @SharedReader(.layouts) var persistedLayouts: [String: TerminalLayoutSnapshot]
+    /// Surfaces seeded onto rows from the persisted layout but not yet broadcast
+    /// to agent presence. Accumulates across reconciles; the single drain owner
+    /// is `AppFeature.repositoriesChanged`, which intersects against live
+    /// `agentPresence.bySurface` so stale entries from removed repos no-op.
+    var pendingAgentRehydrateSurfaces: Set<UUID> = []
     /// Reverse index from surface UUID to row id, derived from `sidebarItems` so
     /// it cannot drift out of sync.
     var surfaceToItemID: [UUID: SidebarItemID] {

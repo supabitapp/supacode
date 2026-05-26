@@ -104,6 +104,7 @@ struct SidebarItemFeatureTests {
       notifications: []
     )
     await store.send(.terminalProjectionChanged(baseline)) {
+      $0.hasTerminalProjection = true
       $0.surfaceIDs = [surface1]
     }
     // Identical projection: no mutation.
