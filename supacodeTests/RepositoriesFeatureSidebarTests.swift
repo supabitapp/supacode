@@ -4,7 +4,6 @@ import DependenciesTestSupport
 import Foundation
 import OrderedCollections
 import Sharing
-import SupacodeSettingsShared
 import Testing
 
 @testable import SupacodeSettingsShared
