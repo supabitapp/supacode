@@ -43,7 +43,9 @@ struct WorktreeCustomizationFeature {
 
       case .saveButtonTapped:
         let trimmed = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedTitle = trimmed.isEmpty || trimmed == state.defaultName ? nil : trimmed
+        // Preserve the user's input verbatim; typing the default name "locks in" the current name
+        // as a real override rather than silently collapsing to nil.
+        let resolvedTitle = trimmed.isEmpty ? nil : trimmed
         return .send(
           .delegate(
             .save(

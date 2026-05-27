@@ -64,9 +64,10 @@ struct WorktreeCreationPromptParentTests {
   }
 
   @Test func cancelClearsPendingCreationCustomizationsForRepo() async {
-    let store = makeStore(initialState: makeStateWithPrompt(
-      pendingFor: ["feature/x": .init(title: "Test", color: .blue)]
-    ))
+    let store = makeStore(
+      initialState: makeStateWithPrompt(
+        pendingFor: ["feature/x": .init(title: "Test", color: .blue)]
+      ))
 
     await store.send(.worktreeCreationPrompt(.presented(.delegate(.cancel)))) {
       $0.worktreeCreationPrompt = nil
@@ -76,9 +77,10 @@ struct WorktreeCreationPromptParentTests {
 
   @Test func dismissPreservesPendingCreationCustomizations() async {
     // .dismiss also fires when the parent nils the prompt on the success path.
-    let store = makeStore(initialState: makeStateWithPrompt(
-      pendingFor: ["feature/x": .init(title: "Test", color: .blue)]
-    ))
+    let store = makeStore(
+      initialState: makeStateWithPrompt(
+        pendingFor: ["feature/x": .init(title: "Test", color: .blue)]
+      ))
 
     await store.send(.worktreeCreationPrompt(.dismiss)) {
       $0.worktreeCreationPrompt = nil
@@ -86,9 +88,10 @@ struct WorktreeCreationPromptParentTests {
   }
 
   @Test func submitWithoutCustomizationClearsStaleEntryForSameBranch() async {
-    let store = makeStore(initialState: makeStateWithPrompt(
-      pendingFor: ["feature/x": .init(title: "Stale", color: .blue)]
-    ))
+    let store = makeStore(
+      initialState: makeStateWithPrompt(
+        pendingFor: ["feature/x": .init(title: "Stale", color: .blue)]
+      ))
 
     await store.send(
       .worktreeCreationPrompt(
@@ -110,9 +113,10 @@ struct WorktreeCreationPromptParentTests {
   }
 
   @Test func duplicateValidationFailureDropsPendingCustomization() async {
-    let store = makeStore(initialState: makeStateWithPrompt(
-      pendingFor: ["feature/x": .init(title: "Old", color: .blue)]
-    ))
+    let store = makeStore(
+      initialState: makeStateWithPrompt(
+        pendingFor: ["feature/x": .init(title: "Old", color: .blue)]
+      ))
 
     await store.send(
       .promptedWorktreeCreationChecked(
@@ -132,7 +136,7 @@ struct WorktreeCreationPromptParentTests {
 
   @Test func immediateDuplicateInStartPromptedClearsPendingCustomization() async {
     // First-pass duplicate check (runs before the async branch-list fetch) is a normal
-    // prompt-flow rejection — the pending entry must be cleared.
+    // prompt-flow rejection. The pending entry must be cleared.
     var state = makeStateWithPrompt(
       pendingFor: ["feature/x": .init(title: "Stale", color: .blue)]
     )
@@ -196,9 +200,10 @@ struct WorktreeCreationPromptParentTests {
   @Test func createWorktreeTransfersCustomizationFromMapToPendingRow() async {
     // Phase-1 → phase-2 transition: when the explicit-name creation begins, the map
     // entry for the branch must move onto the new `PendingWorktree.customization`.
-    let store = makeStore(initialState: makeStateWithPrompt(
-      pendingFor: ["feature/x": .init(title: "Fresh", color: .red)]
-    ))
+    let store = makeStore(
+      initialState: makeStateWithPrompt(
+        pendingFor: ["feature/x": .init(title: "Fresh", color: .red)]
+      ))
 
     await store.send(
       .createWorktreeInRepository(
@@ -218,7 +223,7 @@ struct WorktreeCreationPromptParentTests {
             worktreeName: "feature/x"
           ),
           customization: .init(title: "Fresh", color: .red)
-        ),
+        )
       ]
     }
   }
@@ -232,7 +237,7 @@ struct WorktreeCreationPromptParentTests {
         repositoryID: repoID,
         progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "feature/x"),
         customization: .init(title: "Fresh", color: .red)
-      ),
+      )
     ]
     let createdWorktreeID = "\(repoID)/feature-x"
     let createdWorktree = Worktree(
@@ -337,7 +342,7 @@ struct WorktreeCreationPromptParentTests {
           repositoryID: self.repoID,
           progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "feature/a"),
           customization: .init(title: "Title A", color: .red),
-        ),
+        )
       ]
       $0.isInitialLoadComplete = true
       $0.$sidebar.withLock { sidebar in
@@ -361,7 +366,7 @@ struct WorktreeCreationPromptParentTests {
         repositoryID: repoID,
         progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "feature/x"),
         customization: .init(title: "Fresh", color: .red)
-      ),
+      )
     ]
     let createdWorktreeID = "\(repoID)/feature-x"
     let createdWorktree = Worktree(
@@ -394,9 +399,10 @@ struct WorktreeCreationPromptParentTests {
   }
 
   @Test func submitWithCustomizationOverwritesStaleEntryForSameBranch() async {
-    let store = makeStore(initialState: makeStateWithPrompt(
-      pendingFor: ["feature/x": .init(title: "Stale", color: .blue)]
-    ))
+    let store = makeStore(
+      initialState: makeStateWithPrompt(
+        pendingFor: ["feature/x": .init(title: "Stale", color: .blue)]
+      ))
 
     await store.send(
       .worktreeCreationPrompt(

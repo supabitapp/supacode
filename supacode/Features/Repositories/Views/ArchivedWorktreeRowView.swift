@@ -9,6 +9,9 @@ struct ArchivedWorktreeRowView: View {
   let customTint: RepositoryColor?
   let onUnarchive: () -> Void
   let onDelete: () -> Void
+  // The system paints selected rows with white-on-blue chrome; the custom tint must yield so the
+  // selected row stays readable (matches `SidebarItemView.TitleView`).
+  @Environment(\.backgroundProminence) private var backgroundProminence
 
   var body: some View {
     let display = WorktreePullRequestDisplay(
@@ -19,7 +22,8 @@ struct ArchivedWorktreeRowView: View {
     let bodyFontAscender = NSFont.preferredFont(forTextStyle: .body).ascender
     // User override wins; fall back to the branch / folder name on whitespace
     // or nil. Centralised so archive / sidebar / detail can't drift.
-    let displayName = SidebarDisplayName.resolved(custom: customTitle, fallback: worktree.name)
+    let displayName =
+      SidebarDisplayName.resolved(custom: customTitle, fallback: worktree.name)
       ?? worktree.name
     VStack(alignment: .leading, spacing: 2) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -34,7 +38,7 @@ struct ArchivedWorktreeRowView: View {
         let titleText = Text(displayName)
           .font(.body)
           .lineLimit(1)
-        if let customTint {
+        if let customTint, backgroundProminence != .increased {
           titleText.foregroundStyle(customTint.color)
         } else {
           titleText

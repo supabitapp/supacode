@@ -305,10 +305,10 @@ private struct SidebarSectionActionsView: View {
 
   var body: some View {
     Menu {
-      Button("Customize Repository…", systemImage: "paintbrush") {
+      Button("Customize Appearance…", systemImage: "paintbrush") {
         store.send(.requestCustomizeRepository(repositoryID))
       }
-      .help("Customize sidebar title and color")
+      .help("Set a custom title or color")
       .disabled(isRemovingRepository)
       Button("Repository Settings…", systemImage: "gear") {
         store.send(.openRepositorySettings(repositoryID))

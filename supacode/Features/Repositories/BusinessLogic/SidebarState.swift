@@ -333,6 +333,48 @@ nonisolated extension SidebarState {
     sections[repositoryID] = section
   }
 
+  /// Merge a user-supplied title / color into whatever bucket already holds the row, falling back
+  /// to `.unpinned` when the row hasn't been seeded yet. Pre-existing non-nil fields on the
+  /// bucketed Item win, so a re-seed never clobbers a manual customization. Used by the
+  /// post-create and discovered-worktree seed sites so a persisted `.pinned` Item never gets
+  /// manufactured into a phantom double-bucket row.
+  mutating func mergeCustomization(
+    title: String?,
+    color: RepositoryColor?,
+    worktree worktreeID: Worktree.ID,
+    in repositoryID: Repository.ID
+  ) {
+    let destinationBucket = currentBucket(of: worktreeID, in: repositoryID) ?? .unpinned
+    var section = sections[repositoryID] ?? .init()
+    var bucket = section.buckets[destinationBucket] ?? .init()
+    var item = bucket.items[worktreeID] ?? .init()
+    if item.title == nil { item.title = title }
+    if item.color == nil { item.color = color }
+    bucket.items[worktreeID] = item
+    section.buckets[destinationBucket] = bucket
+    sections[repositoryID] = section
+  }
+
+  /// Overwrite a row's user-supplied title / color, falling back to `.unpinned` when the row
+  /// hasn't been seeded yet. Unlike `mergeCustomization`, the incoming values always win, since
+  /// this represents an explicit user save intent that must not be silently absorbed.
+  mutating func setCustomization(
+    title: String?,
+    color: RepositoryColor?,
+    worktree worktreeID: Worktree.ID,
+    in repositoryID: Repository.ID
+  ) {
+    let destinationBucket = currentBucket(of: worktreeID, in: repositoryID) ?? .unpinned
+    var section = sections[repositoryID] ?? .init()
+    var bucket = section.buckets[destinationBucket] ?? .init()
+    var item = bucket.items[worktreeID] ?? .init()
+    item.title = title
+    item.color = color
+    bucket.items[worktreeID] = item
+    section.buckets[destinationBucket] = bucket
+    sections[repositoryID] = section
+  }
+
   /// Archive `worktreeID`: drop from `from`, insert into `.archived`
   /// at the tail with the given timestamp. Materialises the section
   /// and the archived bucket when missing so a late-arriving
@@ -383,7 +425,7 @@ nonisolated extension SidebarState {
   /// source bucket first (e.g. `.pinned` for unpin) so a corrupted
   /// double-bucket pre-state preserves the live row's payload rather
   /// than a stale sibling's. Default order matches the typical
-  /// "where would a curated row live" search. O(1) — exactly three
+  /// "where would a curated row live" search. O(1): exactly three
   /// bucket subscripts, no scan.
   @discardableResult
   mutating func removeAnywhere(

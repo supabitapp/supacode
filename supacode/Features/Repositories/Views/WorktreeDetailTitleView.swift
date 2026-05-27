@@ -9,13 +9,18 @@ import SwiftUI
 
 enum WorktreeToolbarTitleContent: Hashable, Sendable {
   case git(GitPayload)
-  case folder(name: String)
+  case folder(name: String, tint: RepositoryColor?)
 
   struct GitPayload: Hashable, Sendable {
+    /// Text rendered as the top-line headline. May be the literal branch name or the user's custom
+    /// title override; never used for accessibility ("Branch X") since custom titles aren't refs.
+    let displayTitle: String
+    /// Actual git ref name. Used by accessibility so screen readers announce the real branch.
     let branchName: String
     let repositoryName: String
     let repositoryColor: RepositoryColor?
     let worktreeSubtitle: String?
+    let worktreeTint: RepositoryColor?
     let accent: WorktreeAccent
     let rootURL: URL
   }
@@ -77,23 +82,26 @@ private struct WorktreeToolbarTitleBody: View {
       .frame(width: 24, height: 24)
       VStack(alignment: .leading, spacing: 0) {
         switch content {
-        case .folder(let name):
+        case .folder(let name, let tint):
           Text(name)
             .font(.callout.weight(.semibold))
+            .foregroundStyle(tint?.color ?? .primary)
             .lineLimit(1)
             .truncationMode(.middle)
         case .git(let payload):
-          Text(payload.branchName)
+          Text(payload.displayTitle)
             .font(.callout.weight(.semibold))
+            .foregroundStyle(payload.worktreeTint?.color ?? .primary)
             .lineLimit(1)
             .truncationMode(.middle)
           let repoText = Text(payload.repositoryName)
             .foregroundStyle(payload.repositoryColor?.color ?? .secondary)
+          let accentStyle = AnyShapeStyle(payload.accent.shapeStyle(emphasized: false))
           let line: Text =
             if let worktreeSubtitle = payload.worktreeSubtitle {
               repoText
                 + Text(" · ").foregroundStyle(.secondary)
-                + Text(worktreeSubtitle).foregroundStyle(payload.accent.shapeStyle(emphasized: false))
+                + Text(worktreeSubtitle).foregroundStyle(accentStyle)
             } else {
               repoText
             }
@@ -110,7 +118,7 @@ private struct WorktreeToolbarTitleBody: View {
 
   private var accessibilityLabel: String {
     switch content {
-    case .folder(let name):
+    case .folder(let name, _):
       return "Folder \(name)"
     case .git(let payload):
       let suffix = payload.worktreeSubtitle.map { ", worktree \($0)" } ?? ""
@@ -165,10 +173,12 @@ enum GitHubOwnerAvatar {
       WorktreeToolbarTitleBody(
         content: .git(
           .init(
+            displayTitle: "sbertix/319-toolbar-details",
             branchName: "sbertix/319-toolbar-details",
             repositoryName: "supacode",
             repositoryColor: .blue,
             worktreeSubtitle: "319-toolbar-details",
+            worktreeTint: nil,
             accent: .pinned,
             rootURL: supacodeRepoRoot
           )
@@ -184,10 +194,12 @@ enum GitHubOwnerAvatar {
       WorktreeToolbarTitleBody(
         content: .git(
           .init(
+            displayTitle: "main",
             branchName: "main",
             repositoryName: "supacode",
             repositoryColor: .blue,
             worktreeSubtitle: "Default",
+            worktreeTint: nil,
             accent: .main,
             rootURL: URL(fileURLWithPath: "/tmp/preview")
           )
@@ -200,7 +212,7 @@ enum GitHubOwnerAvatar {
 #Preview("Folder") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(content: .folder(name: "Documents"))
+      WorktreeToolbarTitleBody(content: .folder(name: "Documents", tint: nil))
     }
   }.frame(width: 600, height: 600)
 }

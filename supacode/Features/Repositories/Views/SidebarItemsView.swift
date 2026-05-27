@@ -640,32 +640,7 @@ private struct SidebarItemContextMenu: View {
       Divider()
     }
 
-    // Folder synthetic rows pass `isMainWorktree` by geometry but are
-    // pinnable; git "main" rows still aren't.
-    let pinnableRows = contextRows.filter { !$0.isMainWorktree || $0.isFolder }
-    if !pinnableRows.isEmpty {
-      let allPinned = pinnableRows.allSatisfy(\.isPinned)
-      let allFolders = pinnableRows.allSatisfy(\.isFolder)
-      // Folder-only selection reads "Pin Folder" / "Pin Folders"; mixed or
-      // git-only fall back to "Worktree" so the label stays accurate.
-      let noun = allFolders ? "Folder" : "Worktree"
-      if allPinned {
-        let label = isBulkSelection ? "Unpin \(noun)s" : "Unpin \(noun)"
-        Button(label, systemImage: "pin.slash") {
-          for pinnableRow in pinnableRows {
-            togglePin(for: pinnableRow.id, isPinned: true)
-          }
-        }
-      } else {
-        let label = isBulkSelection ? "Pin \(noun)s" : "Pin \(noun)"
-        Button(label, systemImage: "pin") {
-          for pinnableRow in pinnableRows where !pinnableRow.isPinned {
-            togglePin(for: pinnableRow.id, isPinned: false)
-          }
-        }
-      }
-      Divider()
-    }
+    pinActions(contextRows: contextRows, isBulkSelection: isBulkSelection)
 
     if !isBulkSelection {
       Button("Copy as Pathname", systemImage: "doc.on.doc") {
@@ -691,6 +666,14 @@ private struct SidebarItemContextMenu: View {
       }
       Divider()
       if rowIsFolder {
+        // Folder rows render through SidebarItemRow, which reads customization from the per-row
+        // bucket Item. Route through the same worktree path so the folder row picks up the title
+        // / color the user picks (section.title would only tint a folder-section header, but
+        // folder sections render with an empty header).
+        Button("Customize Appearance…", systemImage: "paintbrush") {
+          store.send(.requestCustomizeWorktree(rowID, repositoryID))
+        }
+        .help("Set a custom title or color")
         // Folder rows have no section ellipsis menu, so Settings lives here.
         Button("Folder Settings…", systemImage: "gear") {
           store.send(.openRepositorySettings(repositoryID))
@@ -701,13 +684,10 @@ private struct SidebarItemContextMenu: View {
         !row.isMainWorktree,
         !row.lifecycle.isPending
       {
-        // Main worktrees, pending rows, and folders have no sidebar entry
-        // that Customize Worktree… could meaningfully retint — guard so the
-        // menu only offers the action for rows that will visibly reflect it.
-        Button("Customize Worktree…", systemImage: "paintpalette") {
+        Button("Customize Appearance…", systemImage: "paintbrush") {
           store.send(.requestCustomizeWorktree(rowID, repositoryID))
         }
-        .help("Set a custom title or color for this worktree")
+        .help("Set a custom title or color")
         Divider()
       }
     }
@@ -748,6 +728,38 @@ private struct SidebarItemContextMenu: View {
         store.send(.requestDeleteSidebarItems(deleteTargets))
       }
       .appKeyboardShortcut(deleteShortcut)
+    }
+  }
+
+  @ViewBuilder
+  private func pinActions(contextRows: [SidebarItemFeature.State], isBulkSelection: Bool) -> some View {
+    // Folder synthetic rows pass `isMainWorktree` by geometry but are pinnable; git "main" still
+    // aren't. Pending rows can't pin (reducer would no-op on the unresolved ID).
+    let pinnableRows = contextRows.filter {
+      (!$0.isMainWorktree || $0.isFolder) && !$0.lifecycle.isPending
+    }
+    if !pinnableRows.isEmpty {
+      let allPinned = pinnableRows.allSatisfy(\.isPinned)
+      let allFolders = pinnableRows.allSatisfy(\.isFolder)
+      // Folder-only selection reads "Pin Folder" / "Pin Folders"; mixed or
+      // git-only fall back to "Worktree" so the label stays accurate.
+      let noun = allFolders ? "Folder" : "Worktree"
+      if allPinned {
+        let label = isBulkSelection ? "Unpin \(noun)s" : "Unpin \(noun)"
+        Button(label, systemImage: "pin.slash") {
+          for pinnableRow in pinnableRows {
+            togglePin(for: pinnableRow.id, isPinned: true)
+          }
+        }
+      } else {
+        let label = isBulkSelection ? "Pin \(noun)s" : "Pin \(noun)"
+        Button(label, systemImage: "pin") {
+          for pinnableRow in pinnableRows where !pinnableRow.isPinned {
+            togglePin(for: pinnableRow.id, isPinned: false)
+          }
+        }
+      }
+      Divider()
     }
   }
 

@@ -43,7 +43,8 @@ struct SidebarItemView: View {
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       highlightSubtitle: highlightSubtitle,
-      customTitle: store.customTitle
+      customTitle: store.customTitle,
+      customTint: store.customTint
     )
 
     Label {
@@ -105,14 +106,15 @@ struct ResolvedRowDisplay: Equatable {
     hideSubtitle: Bool,
     hideSubtitleOnMatch: Bool,
     highlightSubtitle: SidebarHighlightRepoTag? = nil,
-    customTitle: String? = nil
+    customTitle: String? = nil,
+    customTint: RepositoryColor? = nil
   ) {
     self.accent =
       if isMainWorktree { .main } else if isPinned { .pinned } else { .default }
 
     // User override (trimmed) takes precedence over derived names.
-    let trimmedCustom = customTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let resolvedCustom = (trimmedCustom?.isEmpty == false) ? trimmedCustom : nil
+    let resolvedCustom = SidebarDisplayName.resolved(custom: customTitle, fallback: nil)
+    let hasCustomTitle = resolvedCustom != nil
 
     if kind == .folder {
       self.name = resolvedCustom ?? branchName
@@ -127,12 +129,13 @@ struct ResolvedRowDisplay: Equatable {
 
     let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
     let isMatch = effectiveWorktreeName == branchLastComponent
+    // Once a user types a custom title, they've lost the visual cue that the auto-derived name was
+    // providing, so we always render the subtitle even when it would otherwise collapse on match.
+    let shouldHideOnMatch = hideSubtitleOnMatch && !hasCustomTitle && isMatch
 
     if let highlightSubtitle {
-      // Hide-on-match drop mirrors the per-repo subtitle path so a row
-      // doesn't change its disambiguation policy across hoisting.
       let trail: String?
-      if hideSubtitleOnMatch && isMatch {
+      if shouldHideOnMatch {
         trail = nil
       } else if isMainWorktree {
         trail = "Default"
@@ -149,7 +152,7 @@ struct ResolvedRowDisplay: Equatable {
       return
     }
 
-    if hideSubtitle || (hideSubtitleOnMatch && isMatch) {
+    if hideSubtitle || shouldHideOnMatch {
       self.subtitle = .none
     } else {
       self.subtitle = .plain(effectiveWorktreeName)
@@ -242,8 +245,7 @@ private struct TitleView: View, Equatable {
   let name: String
   let subtitle: ResolvedRowDisplay.Subtitle
   let accent: WorktreeAccent
-  /// User-supplied row tint. When set, paints the title — otherwise the
-  /// title uses the platform default foreground.
+  /// User-supplied row tint. When set, paints the title; otherwise the title uses the default.
   let customTint: RepositoryColor?
   let isLifecycleBusy: Bool
   let isTaskRunning: Bool
@@ -285,8 +287,7 @@ private struct TitleView: View, Equatable {
           isEmphasized
           ? AnyShapeStyle(.secondary)
           : repoColor.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.secondary)
-        // `.layoutPriority(1)` on the repo makes the trail yield first under
-        // a narrow sidebar so the colored repo tag survives truncation.
+        // `.layoutPriority(1)` on the repo makes the trail yield first under a narrow sidebar.
         HStack(spacing: 0) {
           Text(repo)
             .foregroundStyle(repoStyle)

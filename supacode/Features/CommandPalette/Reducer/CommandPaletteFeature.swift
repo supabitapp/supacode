@@ -230,37 +230,20 @@ struct CommandPaletteFeature {
     #if DEBUG
       items.append(contentsOf: debugToastItems())
     #endif
-    if let selectedWorktreeID = repositories.selectedWorktreeID,
-      let selectedRow = repositories.sidebarItems[id: selectedWorktreeID],
-      let selectedRepositoryID = repositories.repositoryID(containing: selectedWorktreeID),
-      let selectedWorktree = repositories.worktree(for: selectedWorktreeID),
-      !selectedRow.isFolder,
-      !selectedRow.name.isEmpty,
-      selectedRow.lifecycle == .idle,
-      selectedWorktree.isAttached,
-      !selectedWorktree.isMissing
-    {
-      let repositoryName = Repository.sidebarDisplayName(
-        custom: repositories.sidebar.sections[selectedRepositoryID]?.title,
-        fallback: repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
-      )
-      items.append(
-        CommandPaletteItem(
-          id: CommandPaletteItemID.renameBranch(selectedWorktreeID),
-          title: "Rename Branch",
-          subtitle: "\(repositoryName) · \(selectedRow.name)",
-          kind: .renameBranch(selectedWorktreeID, selectedRepositoryID)
-        )
-      )
+    if let renameBranchItem = renameBranchItem(from: repositories) {
+      items.append(renameBranchItem)
     }
     for row in repositories.orderedSidebarItems() {
       guard row.lifecycle == .idle else { continue }
-      let repositoryName = repositories.repositoryName(for: row.repositoryID) ?? "Repository"
-      // Folder rows only have a synthetic "main" worktree whose name
-      // matches the repository, so the usual `repo / worktree`
-      // format would render as `Foo / Foo`. Use the repository name
+      let repositoryName = Repository.sidebarDisplayName(
+        custom: repositories.sidebar.sections[row.repositoryID]?.title,
+        fallback: repositories.repositoryName(for: row.repositoryID) ?? "Repository"
+      )
+      let worktreeDisplayName = SidebarDisplayName.resolved(custom: row.customTitle, fallback: row.name) ?? row.name
+      // Folder rows only have a synthetic "main" worktree whose name matches the repository, so
+      // the usual `repo / worktree` format would render as `Foo / Foo`. Use the repository name
       // alone for folders.
-      let title = row.isFolder ? repositoryName : "\(repositoryName) / \(row.name)"
+      let title = row.isFolder ? repositoryName : "\(repositoryName) / \(worktreeDisplayName)"
       items.append(
         CommandPaletteItem(
           id: CommandPaletteItemID.worktreeSelect(row.id),
@@ -271,6 +254,36 @@ struct CommandPaletteFeature {
       )
     }
     return items
+  }
+
+  /// The "Rename Branch" action for the selected git worktree, or `nil` when the
+  /// selection isn't an idle, attached, non-folder worktree that can be renamed.
+  static func renameBranchItem(from repositories: RepositoriesFeature.State) -> CommandPaletteItem? {
+    guard let selectedWorktreeID = repositories.selectedWorktreeID,
+      let selectedRow = repositories.sidebarItems[id: selectedWorktreeID],
+      let selectedRepositoryID = repositories.repositoryID(containing: selectedWorktreeID),
+      let selectedWorktree = repositories.worktree(for: selectedWorktreeID),
+      !selectedRow.isFolder,
+      !selectedRow.name.isEmpty,
+      selectedRow.lifecycle == .idle,
+      selectedWorktree.isAttached,
+      !selectedWorktree.isMissing
+    else {
+      return nil
+    }
+    let repositoryName = Repository.sidebarDisplayName(
+      custom: repositories.sidebar.sections[selectedRepositoryID]?.title,
+      fallback: repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
+    )
+    let worktreeDisplayName =
+      SidebarDisplayName.resolved(custom: selectedRow.customTitle, fallback: selectedRow.name)
+      ?? selectedRow.name
+    return CommandPaletteItem(
+      id: CommandPaletteItemID.renameBranch(selectedWorktreeID),
+      title: "Rename Branch",
+      subtitle: "\(repositoryName) · \(worktreeDisplayName)",
+      kind: .renameBranch(selectedWorktreeID, selectedRepositoryID)
+    )
   }
 
   static func recencyRetentionIDs(

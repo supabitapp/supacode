@@ -558,12 +558,14 @@ struct WorktreeDetailView: View {
     let repositoryID = selectedRow?.repositoryID
     let repository = repositoryID.flatMap { repositories.repositories[id: $0] }
     let section = repositoryID.flatMap { repositories.sidebar.sections[$0] }
-    let customTitle = section?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
     let defaultName = repository?.name ?? selectedWorktree.repositoryRootURL.lastPathComponent
-    let repositoryName = customTitle.flatMap { $0.isEmpty ? nil : $0 } ?? defaultName
+    let repositoryName = SidebarDisplayName.resolved(custom: section?.title, fallback: defaultName) ?? defaultName
 
     if selectedRow?.isFolder == true {
-      return .folder(name: repositoryName)
+      // Folders use the per-row custom title (matches the sidebar's folder title position).
+      let folderName =
+        SidebarDisplayName.resolved(custom: selectedRow?.customTitle, fallback: repositoryName) ?? repositoryName
+      return .folder(name: folderName, tint: selectedRow?.customTint)
     }
 
     let worktreeSubtitle: String? = {
@@ -576,20 +578,32 @@ struct WorktreeDetailView: View {
       {
         return nil
       }
-      let worktreeName = selectedRow.resolvedSidebarTitle ?? "Default"
+      // Subtitle stays on the auto-derived disambiguator (sidebarDisplayName) so the chrome shows
+      // identity context even when the user picked a custom title for the row.
+      let worktreeName = selectedRow.sidebarDisplayName ?? "Default"
       let branchName = selectedWorktree.name
       let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
-      let hasCustomTitle = selectedRow.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-      if hideSubtitleOnMatch, !hasCustomTitle, worktreeName == branchLastComponent { return nil }
+      if hideSubtitleOnMatch, worktreeName == branchLastComponent { return nil }
       return worktreeName
     }()
 
+    // Top text mirrors the sidebar title: custom override if set, else the literal branch name.
+    // `branchName` stays on the real ref so VoiceOver announces "Branch <real-branch>" instead of
+    // the user-typed override (which isn't a ref).
+    let displayTitle =
+      SidebarDisplayName.resolved(
+        custom: selectedRow?.customTitle,
+        fallback: selectedWorktree.name
+      ) ?? selectedWorktree.name
+
     return .git(
       .init(
+        displayTitle: displayTitle,
         branchName: selectedWorktree.name,
         repositoryName: repositoryName,
         repositoryColor: section?.color,
         worktreeSubtitle: worktreeSubtitle,
+        worktreeTint: selectedRow?.customTint,
         accent: selectedRow?.accent ?? .default,
         rootURL: selectedWorktree.repositoryRootURL
       )
@@ -1093,10 +1107,12 @@ private struct WorktreeToolbarPreview: View {
     toolbarState = WorktreeDetailView.WorktreeToolbarState(
       titleContent: .git(
         .init(
+          displayTitle: "feature/toolbar-preview",
           branchName: "feature/toolbar-preview",
           repositoryName: "supacode",
           repositoryColor: .blue,
           worktreeSubtitle: "toolbar-preview",
+          worktreeTint: nil,
           accent: .pinned,
           rootURL: URL(fileURLWithPath: "/tmp/preview")
         )

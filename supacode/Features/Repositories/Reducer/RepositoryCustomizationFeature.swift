@@ -37,7 +37,8 @@ struct RepositoryCustomizationFeature {
 
       case .saveButtonTapped:
         let trimmed = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedTitle = trimmed.isEmpty || trimmed == state.defaultName ? nil : trimmed
+        // Preserve verbatim; typing the default name locks it in as an override.
+        let resolvedTitle = trimmed.isEmpty ? nil : trimmed
         return .send(
           .delegate(
             .save(

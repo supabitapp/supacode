@@ -94,21 +94,29 @@ struct WorktreeCustomizationParentTests {
     }
   }
 
-  @Test func requestCustomizeWorktreeNoOpsForFolderRepos() async {
+  @Test func requestCustomizeWorktreeOpensSheetForFolderSyntheticRow() async {
+    // Folder synthetic rows ARE the row the user customizes; they share the worktree path so the
+    // per-row title / color the picker writes lands on the visible folder row.
     let store = TestStore(
       initialState: makeInitialState(isGitRepository: false, seedSidebarBucket: false)
     ) {
       RepositoriesFeature()
     }
 
-    await store.send(.requestCustomizeWorktree(worktreeID, repoID))
-    // No state mutation expected — `worktreeCustomization` stays nil.
+    await store.send(.requestCustomizeWorktree(worktreeID, repoID)) {
+      $0.worktreeCustomization = WorktreeCustomizationFeature.State(
+        worktreeID: self.worktreeID,
+        repositoryID: self.repoID,
+        defaultName: "customize-wt-repo",
+        title: "",
+        color: nil,
+      )
+    }
   }
 
   @Test func requestCustomizeWorktreeNoOpsForMainWorktrees() async {
-    // The context menu hides the entry for the main worktree row, but a future
-    // palette / deeplink could still route here — the reducer guard is the
-    // backstop so customization can't be written for a row that won't render it.
+    // The context menu hides the entry for the main worktree row, but a future palette /
+    // deeplink could still route here. The reducer guard is the backstop.
     let store = TestStore(initialState: makeInitialState(seedSidebarBucket: false)) {
       RepositoriesFeature()
     }
@@ -289,9 +297,8 @@ struct WorktreeCustomizationParentTests {
   }
 
   @Test func pinWorktreePrefersUnpinnedPayloadOverStalePinnedSibling() async {
-    // Symmetric to the unpin case: when the same row appears in both
-    // buckets, `.unpinned` is the logical source for a pin, so its
-    // payload — not a stale `.pinned` sibling's — must round-trip.
+    // Symmetric to the unpin case: when the same row appears in both buckets, `.unpinned` is the
+    // logical source for a pin, so its payload (not a stale `.pinned` sibling's) must round-trip.
     var initial = makeInitialState(seedSidebarBucket: false)
     initial.$sidebar.withLock { sidebar in
       sidebar.insert(

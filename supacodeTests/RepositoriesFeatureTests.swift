@@ -6477,7 +6477,7 @@ struct RepositoriesFeatureTests {
       hideSubtitleOnMatch: true
     )
 
-    guard case .folder(let name) = content else {
+    guard case .folder(let name, _) = content else {
       Issue.record("Expected .folder content, got \(content)")
       return
     }

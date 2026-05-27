@@ -33,14 +33,26 @@ struct WorktreeCustomizationFeatureTests {
       ))
   }
 
-  @Test func saveDropsTitleWhenEmptyOrMatchesDefault() async {
-    let store = TestStore(initialState: makeState(title: "  feature/x  ")) {
+  @Test func saveDropsTitleOnlyWhenEmptyAfterTrim() async {
+    let store = TestStore(initialState: makeState(title: "   ")) {
       WorktreeCustomizationFeature()
     }
 
     await store.send(.saveButtonTapped)
     await store.receive(
       .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: nil, color: nil)),
+    )
+  }
+
+  @Test func savePreservesTitleEvenWhenItMatchesDefault() async {
+    // Typing the default name locks it in as an explicit override (doesn't collapse to nil).
+    let store = TestStore(initialState: makeState(title: "feature/x")) {
+      WorktreeCustomizationFeature()
+    }
+
+    await store.send(.saveButtonTapped)
+    await store.receive(
+      .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: "feature/x", color: nil)),
     )
   }
 

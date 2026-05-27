@@ -32,14 +32,26 @@ struct RepositoryCustomizationFeatureTests {
       ))
   }
 
-  @Test func saveDropsTitleWhenEmptyOrMatchesDefault() async {
-    let store = TestStore(initialState: makeState(title: "  repo  ")) {
+  @Test func saveDropsTitleOnlyWhenEmptyAfterTrim() async {
+    let store = TestStore(initialState: makeState(title: "   ")) {
       RepositoryCustomizationFeature()
     }
 
     await store.send(.saveButtonTapped)
     await store.receive(
       .delegate(.save(repositoryID: "/tmp/repo", title: nil, color: nil)),
+    )
+  }
+
+  @Test func savePreservesTitleEvenWhenItMatchesDefault() async {
+    // Typing the default name locks it in as an explicit override (doesn't collapse to nil).
+    let store = TestStore(initialState: makeState(title: "repo")) {
+      RepositoryCustomizationFeature()
+    }
+
+    await store.send(.saveButtonTapped)
+    await store.receive(
+      .delegate(.save(repositoryID: "/tmp/repo", title: "repo", color: nil)),
     )
   }
 

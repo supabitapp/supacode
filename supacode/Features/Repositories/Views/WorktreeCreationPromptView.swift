@@ -48,7 +48,7 @@ struct WorktreeCreationPromptView: View {
         }
       } header: {
         Text("Title & Color")
-        Text("Optional — overrides the row title and tint. Leave blank to use the branch name.")
+        Text("Optional. Overrides the row title and tint. Leave blank to use the branch name.")
       }
 
       WorktreeOptionsSection(store: store)

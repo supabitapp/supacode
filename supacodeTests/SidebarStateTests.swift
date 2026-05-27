@@ -388,4 +388,195 @@ struct SidebarStateTests {
     #expect(decoded.collapsedBranchPrefixes.isEmpty)
     #expect(decoded.items.isEmpty)
   }
+
+  // MARK: - Item Codable round-trip.
+
+  @Test func itemRoundTripPreservesTitleAndColor() throws {
+    let archivedAt = Date(timeIntervalSinceReferenceDate: 1_700_000_000)
+    let original = SidebarState.Item(archivedAt: archivedAt, title: "Spicy", color: .custom("#0A1B2C"))
+
+    let encoded = try JSONEncoder().encode(original)
+    let decoded = try JSONDecoder().decode(SidebarState.Item.self, from: encoded)
+
+    #expect(decoded.archivedAt == archivedAt)
+    #expect(decoded.title == "Spicy")
+    #expect(decoded.color == .custom("#0A1B2C"))
+  }
+
+  @Test func itemDecodingDropsMalformedHexColorWithoutKillingRow() throws {
+    // Forward-compat: a hex value introduced by a downgrade-corrupted file (or hand-edit) must
+    // drop just the color, never crash the row decode.
+    let malformedJSON = """
+      { "title": "Renamed", "color": "not-a-hex" }
+      """
+    let data = Data(malformedJSON.utf8)
+    let decoded = try JSONDecoder().decode(SidebarState.Item.self, from: data)
+    #expect(decoded.title == "Renamed")
+    #expect(decoded.color == nil)
+  }
+
+  // MARK: - Archive / unarchive customization carry.
+
+  @Test func archiveCarriesTitleAndColorFromSourceBucket() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Spicy", color: .red)
+    )
+
+    state.archive(worktree: "wt-1", in: "repo", from: .pinned, at: Date(timeIntervalSince1970: 1_000))
+
+    let archived = state.sections["repo"]?.buckets[.archived]?.items["wt-1"]
+    #expect(archived?.title == "Spicy")
+    #expect(archived?.color == .red)
+    #expect(archived?.archivedAt == Date(timeIntervalSince1970: 1_000))
+  }
+
+  @Test func unarchiveCarriesTitleAndColorBackAndClearsArchivedAt() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .archived,
+      item: .init(archivedAt: Date(timeIntervalSince1970: 1_000), title: "Spicy", color: .red)
+    )
+
+    state.unarchive(worktree: "wt-1", in: "repo")
+
+    let unpinned = state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"]
+    #expect(unpinned?.title == "Spicy")
+    #expect(unpinned?.color == .red)
+    #expect(unpinned?.archivedAt == nil)
+    #expect(state.sections["repo"]?.buckets[.archived]?.items["wt-1"] == nil)
+  }
+
+  // MARK: - mergeCustomization invariants.
+
+  @Test func mergeCustomizationLandsInExistingBucketWhenRowAlreadySeeded() {
+    var state = SidebarState()
+    state.insert(worktree: "wt-1", in: "repo", bucket: .pinned)
+
+    state.mergeCustomization(title: "Spicy", color: .red, worktree: "wt-1", in: "repo")
+
+    #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]?.title == "Spicy")
+    #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]?.color == .red)
+    #expect(state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"] == nil)
+  }
+
+  @Test func mergeCustomizationFallsBackToUnpinnedWhenRowMissing() {
+    var state = SidebarState()
+
+    state.mergeCustomization(title: "Spicy", color: .red, worktree: "wt-1", in: "repo")
+
+    #expect(state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"]?.title == "Spicy")
+    #expect(state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"]?.color == .red)
+  }
+
+  @Test func mergeCustomizationPreservesPreExistingNonNilFields() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Manual", color: .blue)
+    )
+
+    state.mergeCustomization(title: "Stale", color: .red, worktree: "wt-1", in: "repo")
+
+    // Manual customization wins against the re-seed payload.
+    #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]?.title == "Manual")
+    #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]?.color == .blue)
+  }
+
+  // MARK: - setCustomization (save-intent overwrite).
+
+  @Test func setCustomizationOverwritesPreExistingFields() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Old", color: .blue)
+    )
+
+    state.setCustomization(title: "New", color: .red, worktree: "wt-1", in: "repo")
+
+    let item = state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]
+    #expect(item?.title == "New")
+    #expect(item?.color == .red)
+  }
+
+  @Test func setCustomizationClearsFieldsWhenPassedNil() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Spicy", color: .red)
+    )
+
+    state.setCustomization(title: nil, color: nil, worktree: "wt-1", in: "repo")
+
+    let item = state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]
+    #expect(item?.title == nil)
+    #expect(item?.color == nil)
+  }
+
+  @Test func setCustomizationFallsBackToUnpinnedWhenRowMissing() {
+    var state = SidebarState()
+
+    state.setCustomization(title: "Spicy", color: .red, worktree: "wt-1", in: "repo")
+
+    let item = state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"]
+    #expect(item?.title == "Spicy")
+    #expect(item?.color == .red)
+  }
+
+  // MARK: - removeAnywhere(preferring:) ordering.
+
+  @Test func removeAnywhereHonorsPreferringOrderWhenRowExistsInMultipleBuckets() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Pinned-Payload", color: .red)
+    )
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .unpinned,
+      item: .init(title: "Unpinned-Payload", color: .blue)
+    )
+
+    let carried = state.removeAnywhere(worktree: "wt-1", in: "repo", preferring: [.pinned, .unpinned])
+
+    #expect(carried?.title == "Pinned-Payload")
+    #expect(carried?.color == .red)
+    #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"] == nil)
+    #expect(state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"] == nil)
+  }
+
+  @Test func removeAnywhereWithReversedPreferringPicksOppositeBucket() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Pinned-Payload", color: .red)
+    )
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .unpinned,
+      item: .init(title: "Unpinned-Payload", color: .blue)
+    )
+
+    let carried = state.removeAnywhere(worktree: "wt-1", in: "repo", preferring: [.unpinned, .pinned])
+
+    #expect(carried?.title == "Unpinned-Payload")
+    #expect(carried?.color == .blue)
+  }
 }

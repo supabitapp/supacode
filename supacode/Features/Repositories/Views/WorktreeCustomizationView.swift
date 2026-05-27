@@ -19,7 +19,7 @@ struct WorktreeCustomizationView: View {
           ColorSwatchRow(color: $store.color)
         }
       } header: {
-        Text("Customize Worktree")
+        Text("Customize Appearance")
         Text("Override the sidebar title and tint for `\(store.defaultName)`.")
       }
       .headerProminence(.increased)

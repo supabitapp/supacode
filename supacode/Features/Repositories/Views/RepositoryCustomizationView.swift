@@ -19,7 +19,7 @@ struct RepositoryCustomizationView: View {
           ColorSwatchRow(color: $store.color)
         }
       } header: {
-        Text("Customize Repository")
+        Text("Customize Appearance")
         Text("Override the sidebar title and tint for `\(store.defaultName)`.")
       }
       .headerProminence(.increased)
