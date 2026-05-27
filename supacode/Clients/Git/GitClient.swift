@@ -18,6 +18,7 @@ enum GitOperation: String {
   case ignoredFileCount = "ignored_file_count"
   case untrackedFileCount = "untracked_file_count"
   case branchDelete = "branch_delete"
+  case branchRename = "branch_rename"
   case lineChanges = "line_changes"
   case remoteInfo = "remote_info"
   case remoteList = "remote_list"
@@ -109,7 +110,8 @@ struct GitClient {
       let worktreeURL = URL(fileURLWithPath: entry.path).standardizedFileURL
       // Orphan signal: working dir is gone (lock state checked separately when reconciling).
       let isMissing = !fileManager.fileExists(atPath: entry.path)
-      let name = entry.branch.isEmpty ? worktreeURL.lastPathComponent : entry.branch
+      let isAttached = !entry.branch.isEmpty
+      let name = isAttached ? entry.branch : worktreeURL.lastPathComponent
       let detail = Self.relativePath(from: repositoryRootURL, to: worktreeURL)
       let id = worktreeURL.path(percentEncoded: false)
       let resourceValues = try? worktreeURL.resourceValues(forKeys: [
@@ -125,7 +127,8 @@ struct GitClient {
           workingDirectory: worktreeURL,
           repositoryRootURL: repositoryRootURL,
           createdAt: createdAt,
-          isMissing: isMissing
+          isMissing: isMissing,
+          isAttached: isAttached
         ),
         createdAt: sortDate,
         index: index
@@ -346,6 +349,20 @@ struct GitClient {
       .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
       .filter { !$0.isEmpty }
     return Set(names)
+  }
+
+  // Failures (collision, invalid ref, missing source) surface as
+  // `GitClientError.commandFailed` so the caller can map stderr.
+  nonisolated func renameBranch(
+    from oldName: String,
+    to newName: String,
+    for repoRoot: URL
+  ) async throws {
+    let path = repoRoot.path(percentEncoded: false)
+    _ = try await runGit(
+      operation: .branchRename,
+      arguments: ["-C", path, "branch", "-m", oldName, newName]
+    )
   }
 
   nonisolated func isValidBranchName(_ branchName: String, for repoRoot: URL) async -> Bool {

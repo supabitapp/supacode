@@ -450,6 +450,45 @@ struct AppFeatureCommandPaletteTests {
     }
   }
 
+  @Test(.dependencies) func renameBranchDispatchesRequest() async {
+    let mainWorktree = makeWorktree(
+      id: "/tmp/repo-rename/main",
+      name: "main",
+      repoRoot: "/tmp/repo-rename"
+    )
+    let worktree = makeWorktree(
+      id: "/tmp/repo-rename/wt-1",
+      name: "feature/old",
+      repoRoot: "/tmp/repo-rename"
+    )
+    let repository = makeRepository(
+      id: "/tmp/repo-rename",
+      worktrees: [mainWorktree, worktree]
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.commandPalette(.delegate(.renameBranch(worktree.id, repository.id))))
+    await store.receive(\.repositories.requestRenameBranch) {
+      $0.repositories.renameBranchPrompt = RenameBranchFeature.State(
+        worktreeID: worktree.id,
+        repositoryID: repository.id,
+        repositoryRootURL: repository.rootURL,
+        currentName: "feature/old"
+      )
+    }
+  }
+
 }
 
 private func makeWorktree(id: String, name: String, repoRoot: String = "/tmp/repo") -> Worktree {

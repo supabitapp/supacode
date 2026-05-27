@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import OrderedCollections
 import Sharing
 import SupacodeSettingsShared
 
@@ -39,6 +40,7 @@ struct CommandPaletteFeature {
     case openRepository
     case removeWorktree(Worktree.ID, Repository.ID)
     case archiveWorktree(Worktree.ID, Repository.ID)
+    case renameBranch(Worktree.ID, Repository.ID)
     case viewArchivedWorktrees
     case refreshWorktrees
     case ghosttyCommand(String)
@@ -228,6 +230,29 @@ struct CommandPaletteFeature {
     #if DEBUG
       items.append(contentsOf: debugToastItems())
     #endif
+    if let selectedWorktreeID = repositories.selectedWorktreeID,
+      let selectedRow = repositories.sidebarItems[id: selectedWorktreeID],
+      let selectedRepositoryID = repositories.repositoryID(containing: selectedWorktreeID),
+      let selectedWorktree = repositories.worktree(for: selectedWorktreeID),
+      !selectedRow.isFolder,
+      !selectedRow.name.isEmpty,
+      selectedRow.lifecycle == .idle,
+      selectedWorktree.isAttached,
+      !selectedWorktree.isMissing
+    {
+      let repositoryName = Repository.sidebarDisplayName(
+        custom: repositories.sidebar.sections[selectedRepositoryID]?.title,
+        fallback: repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
+      )
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.renameBranch(selectedWorktreeID),
+          title: "Rename Branch",
+          subtitle: "\(repositoryName) · \(selectedRow.name)",
+          kind: .renameBranch(selectedWorktreeID, selectedRepositoryID)
+        )
+      )
+    }
     for row in repositories.orderedSidebarItems() {
       guard row.lifecycle == .idle else { continue }
       let repositoryName = repositories.repositoryName(for: row.repositoryID) ?? "Repository"
@@ -257,6 +282,7 @@ struct CommandPaletteFeature {
       ids.append(contentsOf: CommandPaletteItemID.pullRequestIDs(repositoryID: repository.id))
       for worktree in repository.worktrees {
         ids.append(CommandPaletteItemID.worktreeSelect(worktree.id))
+        ids.append(CommandPaletteItemID.renameBranch(worktree.id))
       }
     }
     for script in scripts {
@@ -458,6 +484,10 @@ private enum CommandPaletteItemID {
     "worktree.\(worktreeID).select"
   }
 
+  static func renameBranch(_ worktreeID: Worktree.ID) -> CommandPaletteItem.ID {
+    "worktree.\(worktreeID).rename-branch"
+  }
+
   static func ghosttyCommand(_ command: GhosttyCommand) -> CommandPaletteItem.ID {
     "\(ghosttyPrefix)\(command.action)|\(command.title)"
   }
@@ -564,6 +594,8 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
     return .removeWorktree(worktreeID, repositoryID)
   case .archiveWorktree(let worktreeID, let repositoryID):
     return .archiveWorktree(worktreeID, repositoryID)
+  case .renameBranch(let worktreeID, let repositoryID):
+    return .renameBranch(worktreeID, repositoryID)
   case .viewArchivedWorktrees:
     return .viewArchivedWorktrees
   case .refreshWorktrees:
@@ -617,6 +649,7 @@ private func pullRequestDelegateAction(
     .openRepository,
     .removeWorktree,
     .archiveWorktree,
+    .renameBranch,
     .viewArchivedWorktrees,
     .refreshWorktrees,
     .ghosttyCommand,

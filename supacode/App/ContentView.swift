@@ -93,6 +93,14 @@ struct ContentView: View {
     ) { customizationStore in
       WorktreeCustomizationView(store: customizationStore)
     }
+    .sheet(
+      item: $repositoriesStore.scope(
+        state: \.renameBranchPrompt,
+        action: \.renameBranchPrompt
+      )
+    ) { renameStore in
+      RenameBranchView(store: renameStore)
+    }
     .focusedSceneAction(\.toggleLeftSidebarAction, enabled: true) {
       withAnimation(.easeOut(duration: 0.2)) {
         leftSidebarVisibility = leftSidebarVisibility == .detailOnly ? .all : .detailOnly

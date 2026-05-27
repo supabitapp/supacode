@@ -17,6 +17,7 @@ struct GitClientDependency: Sendable {
   var worktrees: @Sendable (URL) async throws -> [Worktree]
   var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
+  var renameBranch: @Sendable (_ oldName: String, _ newName: String, _ repoRoot: URL) async throws -> Void
   var isValidBranchName: @Sendable (String, URL) async -> Bool
   var branchInventory: @Sendable (URL, [String]) async throws -> GitBranchInventory
   var defaultRemoteBranchRef: @Sendable (URL) async throws -> String?
@@ -67,6 +68,9 @@ extension GitClientDependency: DependencyKey {
     worktrees: { try await GitClient().worktrees(for: $0) },
     reconcileSupacodeLocks: { await GitClient().reconcileSupacodeLocks(for: $0) },
     localBranchNames: { try await GitClient().localBranchNames(for: $0) },
+    renameBranch: { oldName, newName, repoRoot in
+      try await GitClient().renameBranch(from: oldName, to: newName, for: repoRoot)
+    },
     isValidBranchName: { branchName, repoRoot in
       await GitClient().isValidBranchName(branchName, for: repoRoot)
     },

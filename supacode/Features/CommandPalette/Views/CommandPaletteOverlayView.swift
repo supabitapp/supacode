@@ -347,6 +347,8 @@ private struct CommandPaletteRowView: View {
       return "Remove"
     case .archiveWorktree:
       return "Archive"
+    case .renameBranch:
+      return "Rename"
     case .runScript:
       return "Script"
     case .stopScript:
@@ -396,6 +398,8 @@ private struct CommandPaletteRowView: View {
       return "trash"
     case .archiveWorktree:
       return "archivebox"
+    case .renameBranch:
+      return "pencil"
     case .runScript(let definition):
       return definition.resolvedSystemImage
     case .stopScript:
@@ -418,6 +422,8 @@ private struct CommandPaletteRowView: View {
       return true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       return false
+    case .renameBranch:
+      return true
     case .runScript, .stopScript:
       return true
     #if DEBUG
@@ -518,6 +524,8 @@ private struct CommandPaletteRowView: View {
       base = "Remove \(row.title)"
     case .archiveWorktree:
       base = "Archive \(row.title)"
+    case .renameBranch:
+      base = "Rename the local branch for this worktree"
     case .openPullRequest:
       base = "Open pull request on GitHub"
     case .markPullRequestReady:

@@ -385,13 +385,17 @@ extension RepositoriesFeature.Action {
     case .repositoryCustomization:
       return []
 
-    // Worktree customization save mutates the bucketed Item's title / color,
-    // which the row view reads through the per-row `customTitle` / `customTint`
-    // mirror — sidebar layout (highlight tags, name) and notification group
-    // name both pick up the change.
+    // Worktree customization save mutates the bucketed Item's title / color, picked up via
+    // per-row `customTitle` / `customTint` mirror (highlight tags + notification group name).
     case .worktreeCustomization(.presented(.delegate(.save))):
       return .all
     case .worktreeCustomization:
+      return []
+
+    // Branch rename updates the worktree.name shown in the sidebar row and notification group.
+    case .renameBranchPrompt(.presented(.delegate(.renamed))):
+      return .all
+    case .renameBranchPrompt:
       return []
 
     // Everything else is UI / effects / transient state, no cache touched.
@@ -422,6 +426,7 @@ extension RepositoriesFeature.Action {
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
       .requestCustomizeWorktree,
+      .requestRenameBranch,
       .contextMenuOpenWorktree,
       .worktreeCreationPrompt,
       .alert,

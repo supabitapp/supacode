@@ -173,11 +173,20 @@ struct RepositoriesFeature {
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
     @Presents var worktreeCustomization: WorktreeCustomizationFeature.State?
+    @Presents var renameBranchPrompt: RenameBranchFeature.State?
     @Presents var alert: AlertState<Alert>?
 
     // MARK: - Sidebar items (per-row TCA collection).
     var sidebarItems: IdentifiedArrayOf<SidebarItemFeature.State> = []
     var sidebarGrouping: SidebarGrouping = .empty
+    /// Long-lived reader hoisted onto State so `reconcileSidebarItems` stays a
+    /// pure static mutator and doesn't re-decode the layouts file on every call.
+    @SharedReader(.layouts) var persistedLayouts: [String: TerminalLayoutSnapshot]
+    /// Surfaces seeded onto rows from the persisted layout but not yet broadcast
+    /// to agent presence. Accumulates across reconciles; the single drain owner
+    /// is `AppFeature.repositoriesChanged`, which intersects against live
+    /// `agentPresence.bySurface` so stale entries from removed repos no-op.
+    var pendingAgentRehydrateSurfaces: Set<UUID> = []
     /// Reverse index from surface UUID to row id, derived from `sidebarItems` so
     /// it cannot drift out of sync.
     var surfaceToItemID: [UUID: SidebarItemID] {
@@ -393,10 +402,12 @@ struct RepositoriesFeature {
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
     case requestCustomizeWorktree(Worktree.ID, Repository.ID)
+    case requestRenameBranch(Worktree.ID, Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
     case repositoryCustomization(PresentationAction<RepositoryCustomizationFeature.Action>)
     case worktreeCustomization(PresentationAction<WorktreeCustomizationFeature.Action>)
+    case renameBranchPrompt(PresentationAction<RenameBranchFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
   }
@@ -1027,6 +1038,12 @@ struct RepositoriesFeature {
             title: "Unable to create worktree",
             message: "Unable to resolve a repository for the new worktree."
           )
+          // Drain the just-stashed customization so a later retry with the same name doesn't pick
+          // up the orphaned entry.
+          state.pendingCreationCustomizations[repositoryID]?.removeValue(forKey: branchName)
+          if state.pendingCreationCustomizations[repositoryID]?.isEmpty == true {
+            state.pendingCreationCustomizations.removeValue(forKey: repositoryID)
+          }
           return .none
         }
         state.worktreeCreationPrompt?.validationMessage = nil
@@ -1035,9 +1052,8 @@ struct RepositoriesFeature {
         if repository.worktrees.contains(where: { $0.name.lowercased() == normalizedBranchName }) {
           state.worktreeCreationPrompt?.isValidating = false
           state.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
-          // Synchronous duplicate rejection — drop the stashed customization
-          // so it can't be re-applied if the user retries with a different
-          // branch name and the dict entry survives across the second submit.
+          // Synchronous duplicate rejection. Drop the stashed customization so it can't be
+          // re-applied if the user retries with a different branch name.
           state.pendingCreationCustomizations[repositoryID]?.removeValue(forKey: branchName)
           if state.pendingCreationCustomizations[repositoryID]?.isEmpty == true {
             state.pendingCreationCustomizations.removeValue(forKey: repositoryID)
@@ -1079,9 +1095,7 @@ struct RepositoriesFeature {
         state.worktreeCreationPrompt?.isValidating = false
         if let duplicateMessage {
           state.worktreeCreationPrompt?.validationMessage = duplicateMessage
-          // Async-validation duplicate rejection — same drop reasoning as
-          // the sync path: the in-flight customization is no longer
-          // associated with a creation that will land.
+          // Async-validation duplicate rejection. Same drop reasoning as the sync path.
           state.pendingCreationCustomizations[repositoryID]?.removeValue(forKey: branchName)
           if state.pendingCreationCustomizations[repositoryID]?.isEmpty == true {
             state.pendingCreationCustomizations.removeValue(forKey: repositoryID)
@@ -1478,10 +1492,9 @@ struct RepositoriesFeature {
         }
 
       case .worktreeCreationPrompt(.dismiss):
-        // Don't drain `pendingCreationCustomizations` here — `.dismiss` also
-        // fires on the success path (when the reducer nils the prompt after
-        // validation passes), and the in-flight creation still needs the
-        // customization. Only `.cancel` represents an explicit user back-out.
+        // Don't drain `pendingCreationCustomizations` here: `.dismiss` also fires on the success
+        // path (when the reducer nils the prompt after validation passes) and the in-flight
+        // creation still needs the customization. Only `.cancel` is an explicit user back-out.
         state.worktreeCreationPrompt = nil
         return .merge(
           .cancel(id: CancelID.worktreePromptLoad),
@@ -1518,20 +1531,16 @@ struct RepositoriesFeature {
         }
         state.insertWorktree(worktree, repositoryID: repositoryID)
         if let carriedCustomization, carriedCustomization.title != nil || carriedCustomization.color != nil {
-          // Seed `.unpinned` so the first reconcile renders the customized
-          // row. `reconcileSidebarState` (run by the follow-up
-          // `.reloadRepositories`) treats present buckets as canonical and
-          // leaves this entry alone — the title / color round-trip across
-          // a full reload.
+          // Seed customization into whatever bucket currently holds the row (falls back to
+          // `.unpinned` for a brand-new worktree). The bucket probe avoids manufacturing a
+          // phantom double-bucket entry against a persisted `.pinned` Item.
           state.$sidebar.withLock { sidebar in
-            var section = sidebar.sections[repositoryID] ?? .init()
-            var bucket = section.buckets[.unpinned] ?? .init()
-            var item = bucket.items[worktree.id] ?? .init()
-            item.title = carriedCustomization.title
-            item.color = carriedCustomization.color
-            bucket.items[worktree.id] = item
-            section.buckets[.unpinned] = bucket
-            sidebar.sections[repositoryID] = section
+            sidebar.mergeCustomization(
+              title: carriedCustomization.title,
+              color: carriedCustomization.color,
+              worktree: worktree.id,
+              in: repositoryID
+            )
           }
         }
         Self.syncSidebar(&state)
@@ -3507,57 +3516,58 @@ struct RepositoriesFeature {
       case .repositoryCustomization:
         return .none
 
-      case .requestCustomizeWorktree(let worktreeID, let repositoryID):
-        // Folder repos, main worktrees, and pending rows have no
-        // user-facing context-menu surface for customization. Guard so a
-        // future deeplink / palette entry can't write customization that
-        // the row would never display.
+      case .requestCustomizeWorktree,
+        .worktreeCustomization:
+        // Handled by `WorktreeCustomizationParentReducer` below; main switch is at type-checker
+        // capacity, so the customization arms are split out into a dedicated reducer.
+        return .none
+
+      case .requestRenameBranch(let worktreeID, let repositoryID):
         guard let repository = state.repositories[id: repositoryID],
           repository.isGitRepository,
           let worktree = repository.worktrees.first(where: { $0.id == worktreeID }),
-          !state.isMainWorktree(worktree)
+          !worktree.isMissing,
+          worktree.isAttached,
+          !worktree.name.isEmpty
         else {
           return .none
         }
-        let bucket = state.sidebar.currentBucket(of: worktreeID, in: repositoryID)
-        let storedItem = bucket.flatMap {
-          state.sidebar.sections[repositoryID]?.buckets[$0]?.items[worktreeID]
+        guard state.sidebarItems[id: worktreeID]?.lifecycle == .idle else {
+          return .none
         }
-        state.worktreeCustomization = WorktreeCustomizationFeature.State(
+        state.renameBranchPrompt = RenameBranchFeature.State(
           worktreeID: worktreeID,
           repositoryID: repositoryID,
-          defaultName: worktree.name,
-          title: storedItem?.title ?? "",
-          color: storedItem?.color
+          repositoryRootURL: repository.rootURL,
+          currentName: worktree.name
         )
         return .none
 
-      case .worktreeCustomization(.presented(.delegate(.cancel))):
-        state.worktreeCustomization = nil
+      case .renameBranchPrompt(.presented(.delegate(.cancel))):
+        state.renameBranchPrompt = nil
         return .none
 
-      case .worktreeCustomization(
-        .presented(.delegate(.save(let worktreeID, let repositoryID, let title, let color)))
-      ):
-        // No-op when the worktree was reconciled out between sheet open
-        // and save. A fresh `.init()` Item lands on the next reconcile
-        // without customization, which matches the "nothing to override"
-        // intent that an absent bucket should produce.
-        if let bucketID = state.sidebar.currentBucket(of: worktreeID, in: repositoryID) {
-          state.$sidebar.withLock { sidebar in
-            sidebar.sections[repositoryID]?.buckets[bucketID]?.items[worktreeID]?.title = title
-            sidebar.sections[repositoryID]?.buckets[bucketID]?.items[worktreeID]?.color = color
-          }
-          RepositoriesFeature.syncSidebar(&state)
-        }
-        state.worktreeCustomization = nil
+      case .renameBranchPrompt(.presented(.delegate(.renamed(let worktreeID, let repositoryID, let newName)))):
+        state.updateWorktreeName(worktreeID, name: newName)
+        Self.syncSidebar(&state)
+        state.renameBranchPrompt = nil
+        // Refresh only the renamed row's PR; siblings still point at their
+        // own branches. The HEAD watcher re-emits the name authoritatively.
+        guard let repository = state.repositories[id: repositoryID] else { return .none }
+        return .send(
+          .worktreeInfoEvent(
+            .repositoryPullRequestRefresh(
+              repositoryRootURL: repository.rootURL,
+              worktreeIDs: [worktreeID]
+            )
+          )
+        )
+
+      case .renameBranchPrompt(.dismiss):
+        state.renameBranchPrompt = nil
         return .none
 
-      case .worktreeCustomization(.dismiss):
-        state.worktreeCustomization = nil
-        return .none
-
-      case .worktreeCustomization:
+      case .renameBranchPrompt:
         return .none
 
       case .contextMenuOpenWorktree(let worktreeID, let action):
@@ -3579,22 +3589,34 @@ struct RepositoriesFeature {
       case .delegate:
         return .none
 
+      case .sidebarItems(.element(id: let id, action: .lifecycleChanged(let lifecycle))):
+        // Dismiss the rename sheet if the row enters a wind-down state.
+        // `.pending` stays eligible since the setup script can co-exist with rename.
+        if state.renameBranchPrompt?.worktreeID == id, lifecycle.isTerminating {
+          state.renameBranchPrompt = nil
+        }
+        return .none
+
       case .sidebarItems:
         return .none
       }
     }
-    .forEach(\.sidebarItems, action: \.sidebarItems) {
-      SidebarItemFeature()
-    }
-    .ifLet(\.$worktreeCreationPrompt, action: \.worktreeCreationPrompt) {
-      WorktreeCreationPromptFeature()
-    }
-    .ifLet(\.$repositoryCustomization, action: \.repositoryCustomization) {
-      RepositoryCustomizationFeature()
-    }
-    .ifLet(\.$worktreeCustomization, action: \.worktreeCustomization) {
-      WorktreeCustomizationFeature()
-    }
+    Self.worktreeCustomizationReducer
+      .forEach(\.sidebarItems, action: \.sidebarItems) {
+        SidebarItemFeature()
+      }
+      .ifLet(\.$worktreeCreationPrompt, action: \.worktreeCreationPrompt) {
+        WorktreeCreationPromptFeature()
+      }
+      .ifLet(\.$repositoryCustomization, action: \.repositoryCustomization) {
+        RepositoryCustomizationFeature()
+      }
+      .ifLet(\.$worktreeCustomization, action: \.worktreeCustomization) {
+        WorktreeCustomizationFeature()
+      }
+      .ifLet(\.$renameBranchPrompt, action: \.renameBranchPrompt) {
+        RenameBranchFeature()
+      }
     // Targeted post-reduce hook: only the actions that demonstrably touch
     // structure inputs trigger a recompute. The Equatable diff inside the
     // helper suppresses no-op rebuilds at the SwiftUI layer. Gated on
@@ -3789,7 +3811,8 @@ struct RepositoriesFeature {
           name: name,
           detail: "",
           workingDirectory: normalizedRoot,
-          repositoryRootURL: normalizedRoot
+          repositoryRootURL: normalizedRoot,
+          isAttached: false
         )
         let repository = Repository(
           id: rootID,
@@ -3895,14 +3918,12 @@ struct RepositoriesFeature {
           let worktreeID = repositories.first(where: { $0.id == transfer.repositoryID })?
             .worktrees.first(where: { $0.name == transfer.worktreeName })?.id
         else { continue }
-        var section = sidebar.sections[transfer.repositoryID] ?? .init()
-        var bucket = section.buckets[.unpinned] ?? .init()
-        var item = bucket.items[worktreeID] ?? .init()
-        if item.title == nil { item.title = transfer.customization.title }
-        if item.color == nil { item.color = transfer.customization.color }
-        bucket.items[worktreeID] = item
-        section.buckets[.unpinned] = bucket
-        sidebar.sections[transfer.repositoryID] = section
+        sidebar.mergeCustomization(
+          title: transfer.customization.title,
+          color: transfer.customization.color,
+          worktree: worktreeID,
+          in: transfer.repositoryID
+        )
       }
     }
   }
@@ -4793,6 +4814,7 @@ extension RepositoriesFeature.State {
         repositoryRootURL: worktree.repositoryRootURL,
         createdAt: worktree.createdAt,
         isMissing: worktree.isMissing,
+        isAttached: worktree.isAttached,
       )
       repositories[index] = Repository(
         id: repository.id,

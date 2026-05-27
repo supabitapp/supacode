@@ -55,6 +55,7 @@ struct SelectedWorktreeSliceCacheTests {
         )
       )
     ) {
+      $0.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
       $0.sidebarItems[id: worktree.id]?.surfaceIDs = [surfaceID]
       $0.applyPostReduceCacheRecomputes([.sidebarStructure, .toolbarNotificationGroups])
     }

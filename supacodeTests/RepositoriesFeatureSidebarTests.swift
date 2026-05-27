@@ -1,9 +1,12 @@
 import ComposableArchitecture
+import Dependencies
+import DependenciesTestSupport
 import Foundation
 import OrderedCollections
-import SupacodeSettingsShared
+import Sharing
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -226,6 +229,246 @@ struct RepositoriesFeatureSidebarTests {
     }
     await store.finish()
     #expect(store.state.sidebarItems[id: worktreeID]?.pullRequest == nil)
+  }
+
+  @Test(.dependencies) func reconcileSeedsSurfaceIDsFromPersistedLayout() throws {
+    let worktreeID = "/tmp/repo/wt-feature"
+    let repoID = "/tmp/repo/"
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let layout = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: UUID(),
+          title: "tab",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .split(
+            TerminalLayoutSnapshot.SplitSnapshot(
+              direction: .horizontal,
+              ratio: 0.5,
+              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: surfaceA, workingDirectory: nil)),
+              right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: surfaceB, workingDirectory: nil))
+            )
+          ),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let storage = InMemorySettingsFileStorage()
+    let payload = try JSONEncoder().encode([worktreeID: layout])
+    try storage.save(payload, SupacodePaths.layoutsURL)
+
+    try withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { try storage.load($0) },
+        save: { try storage.save($0, $1) }
+      )
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      let worktree = Worktree(
+        id: worktreeID,
+        name: "feature",
+        detail: "",
+        workingDirectory: URL(fileURLWithPath: worktreeID),
+        repositoryRootURL: URL(fileURLWithPath: repoID)
+      )
+      var state = RepositoriesFeature.State()
+      state.repositories = IdentifiedArray(
+        uniqueElements: [
+          Repository(
+            id: repoID,
+            rootURL: URL(fileURLWithPath: repoID),
+            name: "repo",
+            worktrees: IdentifiedArray(uniqueElements: [worktree])
+          )
+        ]
+      )
+      RepositoriesFeature.syncSidebar(&state)
+
+      let seeded = try #require(state.sidebarItems[id: worktreeID])
+      #expect(Set(seeded.surfaceIDs) == Set([surfaceA, surfaceB]))
+      #expect(state.surfaceToItemID[surfaceA] == worktreeID)
+      #expect(state.surfaceToItemID[surfaceB] == worktreeID)
+      #expect(state.pendingAgentRehydrateSurfaces == Set([surfaceA, surfaceB]))
+    }
+  }
+
+  @Test(.dependencies) func reconcileSeedsSurfaceIDsForFolderRepository() throws {
+    let rootURL = URL(fileURLWithPath: "/tmp/folder")
+    let folderID = Repository.folderWorktreeID(for: rootURL)
+    let surfaceA = UUID()
+    let layout = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: UUID(),
+          title: "tab",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: surfaceA, workingDirectory: nil)),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let storage = InMemorySettingsFileStorage()
+    let payload = try JSONEncoder().encode([folderID: layout])
+    try storage.save(payload, SupacodePaths.layoutsURL)
+
+    try withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { try storage.load($0) },
+        save: { try storage.save($0, $1) }
+      )
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      let folderRepository = Repository(
+        id: rootURL.path(percentEncoded: false) + "/",
+        rootURL: rootURL,
+        name: "folder",
+        worktrees: IdentifiedArray(
+          uniqueElements: [
+            Worktree(
+              id: folderID,
+              name: "folder",
+              detail: "",
+              workingDirectory: rootURL,
+              repositoryRootURL: rootURL
+            )
+          ]
+        ),
+        isGitRepository: false
+      )
+      var state = RepositoriesFeature.State()
+      state.repositories = IdentifiedArray(uniqueElements: [folderRepository])
+      RepositoriesFeature.syncSidebar(&state)
+      #expect(state.sidebarItems[id: folderID]?.surfaceIDs == [surfaceA])
+      #expect(state.pendingAgentRehydrateSurfaces.contains(surfaceA))
+      #expect(state.surfaceToItemID[surfaceA] == folderID)
+    }
+  }
+
+  @Test(.dependencies) func reconcileDoesNotOverwriteExistingSurfaceIDsWithStaleLayout() throws {
+    let worktreeID = "/tmp/repo/wt-feature"
+    let repoID = "/tmp/repo/"
+    let liveSurface = UUID()
+    let staleSurface = UUID()
+    let staleLayout = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: UUID(),
+          title: "tab",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: staleSurface, workingDirectory: nil)),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let storage = InMemorySettingsFileStorage()
+    try storage.save(try JSONEncoder().encode([worktreeID: staleLayout]), SupacodePaths.layoutsURL)
+
+    try withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { try storage.load($0) },
+        save: { try storage.save($0, $1) }
+      )
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      let worktree = Worktree(
+        id: worktreeID,
+        name: "feature",
+        detail: "",
+        workingDirectory: URL(fileURLWithPath: worktreeID),
+        repositoryRootURL: URL(fileURLWithPath: repoID)
+      )
+      var state = RepositoriesFeature.State()
+      state.repositories = IdentifiedArray(
+        uniqueElements: [
+          Repository(
+            id: repoID,
+            rootURL: URL(fileURLWithPath: repoID),
+            name: "repo",
+            worktrees: IdentifiedArray(uniqueElements: [worktree])
+          )
+        ]
+      )
+      RepositoriesFeature.syncSidebar(&state)
+      // The live projection arrives and replaces the seeded surfaces.
+      state.sidebarItems[id: worktreeID]?.surfaceIDs = [liveSurface]
+      state.sidebarItems[id: worktreeID]?.hasTerminalProjection = true
+      state.pendingAgentRehydrateSurfaces.removeAll()
+      RepositoriesFeature.syncSidebar(&state)
+      // The carry-forward path must not re-seed from the (now stale) layout.
+      #expect(state.sidebarItems[id: worktreeID]?.surfaceIDs == [liveSurface])
+      #expect(state.pendingAgentRehydrateSurfaces.isEmpty)
+      #expect(state.surfaceToItemID[staleSurface] == nil)
+    }
+  }
+
+  @Test(.dependencies) func reconcileDoesNotReSeedAfterUserClosedEveryTab() throws {
+    let worktreeID = "/tmp/repo/wt-feature"
+    let repoID = "/tmp/repo/"
+    let staleSurface = UUID()
+    let staleLayout = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: UUID(),
+          title: "tab",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: staleSurface, workingDirectory: nil)),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let storage = InMemorySettingsFileStorage()
+    try storage.save(try JSONEncoder().encode([worktreeID: staleLayout]), SupacodePaths.layoutsURL)
+
+    try withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { try storage.load($0) },
+        save: { try storage.save($0, $1) }
+      )
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      let worktree = Worktree(
+        id: worktreeID,
+        name: "feature",
+        detail: "",
+        workingDirectory: URL(fileURLWithPath: worktreeID),
+        repositoryRootURL: URL(fileURLWithPath: repoID)
+      )
+      var state = RepositoriesFeature.State()
+      state.repositories = IdentifiedArray(
+        uniqueElements: [
+          Repository(
+            id: repoID,
+            rootURL: URL(fileURLWithPath: repoID),
+            name: "repo",
+            worktrees: IdentifiedArray(uniqueElements: [worktree])
+          )
+        ]
+      )
+      RepositoriesFeature.syncSidebar(&state)
+      // Simulate the empty projection that arrives when the user closes every
+      // tab: surfaceIDs goes to [] but the row has now been claimed by the live
+      // `WorktreeTerminalState` (`hasTerminalProjection == true`).
+      state.sidebarItems[id: worktreeID]?.surfaceIDs = []
+      state.sidebarItems[id: worktreeID]?.hasTerminalProjection = true
+      state.pendingAgentRehydrateSurfaces.removeAll()
+      RepositoriesFeature.syncSidebar(&state)
+      #expect(state.sidebarItems[id: worktreeID]?.surfaceIDs.isEmpty == true)
+      #expect(state.pendingAgentRehydrateSurfaces.isEmpty)
+      #expect(state.surfaceToItemID[staleSurface] == nil)
+    }
   }
 
   private func makeState(repository: Repository) -> RepositoriesFeature.State {

@@ -93,6 +93,80 @@ struct CommandPaletteFeatureTests {
     #expect(ghosttyItem?.subtitle == "Focus the split to the right.")
   }
 
+  @Test func commandPaletteItems_includesRenameBranchOnlyForSelectedWorktree() {
+    let rootPath = "/tmp/repo-rename"
+    let main = makeWorktree(id: "\(rootPath)/main", name: "main", repoRoot: rootPath)
+    let feature = makeWorktree(
+      id: "\(rootPath)/feature",
+      name: "feature/old",
+      repoRoot: rootPath
+    )
+    let other = makeWorktree(
+      id: "\(rootPath)/other",
+      name: "other",
+      repoRoot: rootPath
+    )
+    let repository = makeRepository(
+      rootPath: rootPath,
+      name: "Repo",
+      worktrees: [main, feature, other]
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(feature.id)
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let renameItems = items.filter {
+      if case .renameBranch = $0.kind { return true }
+      return false
+    }
+    #expect(renameItems.count == 1)
+    #expect(renameItems.first?.id == "worktree.\(feature.id).rename-branch")
+    #expect(renameItems.first?.title == "Rename Branch")
+    #expect(renameItems.first?.subtitle == "Repo · feature/old")
+  }
+
+  @Test func commandPaletteItems_omitsRenameBranchForDetachedHeadSelection() {
+    let rootPath = "/tmp/repo-rename-detached"
+    let main = makeWorktree(id: rootPath, name: "main", repoRoot: rootPath)
+    let detached = Worktree(
+      id: "\(rootPath)/dt",
+      name: "dt",
+      detail: "dt",
+      workingDirectory: URL(fileURLWithPath: "\(rootPath)/dt"),
+      repositoryRootURL: URL(fileURLWithPath: rootPath),
+      isAttached: false
+    )
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main, detached])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(detached.id)
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    #expect(
+      items.contains {
+        if case .renameBranch = $0.kind { return true }
+        return false
+      } == false
+    )
+  }
+
+  @Test func commandPaletteItems_includesRenameBranchForMainWorktreeSelection() {
+    let rootPath = "/tmp/repo-rename-main"
+    // The main worktree is identified by `workingDirectory == repositoryRootURL`,
+    // so the row must live at the repo root for `isMainWorktree` to be true.
+    let main = makeWorktree(id: rootPath, name: "main", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(main.id)
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    #expect(
+      items.contains {
+        if case .renameBranch = $0.kind { return true }
+        return false
+      }
+    )
+  }
+
   @Test func commandPaletteItems_omitGhosttyCommandsWithoutSelectedWorktree() {
     let items = CommandPaletteFeature.commandPaletteItems(
       from: RepositoriesFeature.State(),
