@@ -66,6 +66,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// down the bundled zmx daemon's sessions, so nothing keeps running in
   /// the background. Default off because persistence is the headline feature.
   public var terminateSessionsOnQuit: Bool
+  /// When false, terminal surfaces run their raw command without the
+  /// `zmx attach` wrap, so shells die with the surface and nothing is kept
+  /// alive across app quits. Defaults off — the implicit "keep daemons alive
+  /// per user" coupling between bundle paths and persisted layouts is too
+  /// easy to confuse with stale state in practice; opt-in restores it.
+  public var terminalPersistenceEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -98,7 +104,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: true,
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
-    terminateSessionsOnQuit: false
+    terminateSessionsOnQuit: false,
+    terminalPersistenceEnabled: false
   )
 
   public init(
@@ -132,7 +139,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: Bool = true,
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
-    terminateSessionsOnQuit: Bool = false
+    terminateSessionsOnQuit: Bool = false,
+    terminalPersistenceEnabled: Bool = false
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -165,6 +173,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
     self.confirmQuitMode = confirmQuitMode
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
+    self.terminalPersistenceEnabled = terminalPersistenceEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -312,5 +321,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminateSessionsOnQuit =
       try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
       ?? Self.default.terminateSessionsOnQuit
+    terminalPersistenceEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .terminalPersistenceEnabled)
+      ?? Self.default.terminalPersistenceEnabled
   }
 }

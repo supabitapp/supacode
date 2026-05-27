@@ -40,15 +40,22 @@ public struct AppearanceSettingsView: View {
           Text("Confirm before Quitting")
           Text(store.confirmQuitMode.subtitle)
         }
-        Toggle(isOn: $store.terminateSessionsOnQuit) {
-          Text("Terminate Sessions on Quit")
+        Toggle(isOn: $store.terminalPersistenceEnabled) {
+          Text("Terminal Persistence")
           Text(
             """
-            Close all tabs and stop background shells when quitting.
-            Terminal persistence is powered by [zmx \u{2197}](https://github.com/neurosnap/zmx).
+            Keep terminal shells running across app quits so reopening a tab \
+            reattaches the live session. When off, terminals are ephemeral and \
+            no background processes survive quitting Supacode.
+            Powered by [zmx \u{2197}](https://github.com/neurosnap/zmx).
             """
           )
         }
+        Toggle(isOn: $store.terminateSessionsOnQuit) {
+          Text("Terminate Sessions on Quit")
+          Text("Close all tabs and stop background shells when quitting.")
+        }
+        .disabled(!store.terminalPersistenceEnabled)
       }
       Section("Editor") {
         Picker(

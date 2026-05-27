@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Dependencies
 import Foundation
+import Sharing
 import SupacodeSettingsShared
 
 nonisolated private let zmxLogger = SupaLogger("Zmx")
@@ -192,6 +193,12 @@ extension ZmxClient {
       executableURL: resolveExecutable,
       isBundled: { bundledExecutable() != nil },
       wrapCommand: { sessionID, userCommand in
+        // Read live so a Settings toggle takes effect on the next new surface
+        // without an app restart. Kill / reap paths intentionally stay live
+        // regardless so we can still clean up sessions from any prior enabled
+        // run.
+        @Shared(.settingsFile) var settingsFile
+        guard settingsFile.global.terminalPersistenceEnabled else { return nil }
         guard let executable = resolveExecutable() else { return nil }
         return ZmxAttach.buildCommand(
           executablePath: executable.path(percentEncoded: false),
