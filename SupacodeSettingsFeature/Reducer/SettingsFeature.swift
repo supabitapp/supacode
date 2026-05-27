@@ -73,6 +73,7 @@ public struct SettingsFeature {
     public var confirmQuitMode: ConfirmQuitMode
     public var terminateSessionsOnQuit: Bool
     public var terminalPersistenceEnabled: Bool
+    public var uiTextSize: UITextSize
     public var cliInstallState = CLIInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
@@ -115,6 +116,7 @@ public struct SettingsFeature {
       confirmQuitMode = settings.confirmQuitMode
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
       terminalPersistenceEnabled = settings.terminalPersistenceEnabled
+      uiTextSize = settings.uiTextSize
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -154,7 +156,8 @@ public struct SettingsFeature {
         autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
         confirmQuitMode: confirmQuitMode,
         terminateSessionsOnQuit: terminateSessionsOnQuit,
-        terminalPersistenceEnabled: terminalPersistenceEnabled
+        terminalPersistenceEnabled: terminalPersistenceEnabled,
+        uiTextSize: uiTextSize
       )
     }
   }
@@ -293,6 +296,7 @@ public struct SettingsFeature {
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
         state.terminalPersistenceEnabled = normalizedSettings.terminalPersistenceEnabled
+        state.uiTextSize = normalizedSettings.uiTextSize
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)

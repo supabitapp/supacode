@@ -72,6 +72,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// per user" coupling between bundle paths and persisted layouts is too
   /// easy to confuse with stale state in practice; opt-in restores it.
   public var terminalPersistenceEnabled: Bool
+  /// Drives `.dynamicTypeSize(...)` at the root of every Window scene, so
+  /// the chrome (sidebar, palette, settings) scales with the user's pick.
+  /// Terminal surface font size is independent — owned by Ghostty's own
+  /// zoom commands, not Dynamic Type.
+  public var uiTextSize: UITextSize
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -105,7 +110,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
     terminateSessionsOnQuit: false,
-    terminalPersistenceEnabled: false
+    terminalPersistenceEnabled: false,
+    uiTextSize: .default
   )
 
   public init(
@@ -140,7 +146,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
     terminateSessionsOnQuit: Bool = false,
-    terminalPersistenceEnabled: Bool = false
+    terminalPersistenceEnabled: Bool = false,
+    uiTextSize: UITextSize = .default
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -174,6 +181,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.confirmQuitMode = confirmQuitMode
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
     self.terminalPersistenceEnabled = terminalPersistenceEnabled
+    self.uiTextSize = uiTextSize
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -324,5 +332,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalPersistenceEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalPersistenceEnabled)
       ?? Self.default.terminalPersistenceEnabled
+    uiTextSize =
+      try container.decodeIfPresent(UITextSize.self, forKey: .uiTextSize)
+      ?? Self.default.uiTextSize
   }
 }

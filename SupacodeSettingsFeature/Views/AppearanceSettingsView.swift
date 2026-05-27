@@ -30,6 +30,14 @@ public struct AppearanceSettingsView: View {
           Text("Supacode Terminal Theme")
           Text("When off, honors your Ghostty config theme.")
         }
+        Picker(selection: $store.uiTextSize) {
+          ForEach(UITextSize.allCases) { size in
+            Text(size.title).tag(size)
+          }
+        } label: {
+          Text("UI Text Size")
+          Text("Scales the sidebar, palette, and settings text. Terminal content is unaffected — use ⌘= / ⌘- in a terminal for that.")
+        }
       }
       Section {
         Picker(selection: $store.confirmQuitMode) {

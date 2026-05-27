@@ -408,6 +408,7 @@ struct SupacodeApp: App {
           .environment(ghosttyShortcuts)
           .environment(commandKeyObserver)
       }
+      .dynamicTypeSize(store.settings.uiTextSize.dynamicTypeSize)
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)
     }
@@ -463,6 +464,7 @@ struct SupacodeApp: App {
       SettingsView(store: store)
         .environment(ghosttyShortcuts)
         .environment(commandKeyObserver)
+        .dynamicTypeSize(store.settings.uiTextSize.dynamicTypeSize)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
     }
@@ -472,6 +474,7 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     Window("Deeplink Reference", id: WindowID.deeplinkReference) {
       DeeplinkReferenceView()
+        .dynamicTypeSize(store.settings.uiTextSize.dynamicTypeSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
@@ -479,6 +482,7 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     Window("CLI Reference", id: WindowID.cliReference) {
       CLIReferenceView()
+        .dynamicTypeSize(store.settings.uiTextSize.dynamicTypeSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
