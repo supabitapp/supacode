@@ -1149,6 +1149,152 @@ struct CommandPaletteFeatureTests {
     #expect(ids.contains("script.\(definition.id).run"))
     #expect(ids.contains("script.\(definition.id).stop"))
   }
+
+  @Test func projectSwitcherItems_emptyWhenNoRepositories() {
+    let items = CommandPaletteFeature.projectSwitcherItems(from: RepositoriesFeature.State())
+    #expect(items.isEmpty)
+  }
+
+  @Test func projectSwitcherItems_sortsByMRUThenAlphabetical() {
+    let wtA = makeWorktree(id: "/tmp/repo-a/wt", name: "wt", repoRoot: "/tmp/repo-a")
+    let wtB = makeWorktree(id: "/tmp/repo-b/wt", name: "wt", repoRoot: "/tmp/repo-b")
+    let wtC = makeWorktree(id: "/tmp/repo-c/wt", name: "wt", repoRoot: "/tmp/repo-c")
+    let repoA = makeRepository(rootPath: "/tmp/repo-a", name: "Alpha", worktrees: [wtA])
+    let repoB = makeRepository(rootPath: "/tmp/repo-b", name: "Bravo", worktrees: [wtB])
+    let repoC = makeRepository(rootPath: "/tmp/repo-c", name: "Charlie", worktrees: [wtC])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB, repoC])
+
+    // MRU order: most recent first. Cmd+Tab semantics — index 0 is the
+    // current project, ↓ once moves to the prior project.
+    state.setSingleWorktreeSelection(wtC.id)
+    state.setSingleWorktreeSelection(wtA.id)
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+
+    // MRU head (A), then C, then non-MRU sorted alphabetically (B).
+    #expect(items.map(\.id) == [
+      "project.\(repoA.id).select",
+      "project.\(repoC.id).select",
+      "project.\(repoB.id).select",
+    ])
+    // priorityTier mirrors visible order so an empty-query prioritizeItems()
+    // pass preserves the MRU ranking even though item-level recency is empty.
+    #expect(items.map(\.priorityTier) == [0, 1, 2])
+  }
+
+  @Test func projectSwitcherItems_subtitleShowsLastWorktreeWhenKnown() {
+    let wtMain = makeWorktree(id: "/tmp/repo/main", name: "main", repoRoot: "/tmp/repo")
+    let wtFeat = makeWorktree(id: "/tmp/repo/feat", name: "feature/x", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wtMain, wtFeat])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+
+    state.setSingleWorktreeSelection(wtFeat.id)
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+    let item = items.first { $0.id == "project.\(repo.id).select" }
+    #expect(item?.subtitle == "feature/x")
+  }
+
+  @Test func projectSwitcherItems_subtitleFallsBackToPathWhenNoMRU() {
+    let wt = makeWorktree(id: "/tmp/never-opened/main", name: "main", repoRoot: "/tmp/never-opened")
+    let repo = makeRepository(rootPath: "/tmp/never-opened", name: "Repo", worktrees: [wt])
+    let state = RepositoriesFeature.State(reconciledRepositories: [repo])
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+    let item = items.first { $0.id == "project.\(repo.id).select" }
+    #expect(item?.subtitle == "/tmp/never-opened")
+  }
+
+  @Test func items_dispatchByMode() {
+    let wt = makeWorktree(id: "/tmp/repo/main", name: "main", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wt])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    state.setSingleWorktreeSelection(wt.id)
+
+    let commands = CommandPaletteFeature.items(in: .commands, from: state)
+    let projects = CommandPaletteFeature.items(in: .projectSwitcher, from: state)
+
+    // .commands surfaces the existing palette items (globals, worktree
+    // selects, etc.) and excludes project items entirely.
+    #expect(commands.contains { $0.id.hasPrefix("global.") })
+    #expect(commands.contains { $0.id == "worktree.\(wt.id).select" })
+    #expect(commands.allSatisfy { !$0.id.hasPrefix("project.") })
+
+    // .projectSwitcher is project-only.
+    #expect(projects == [
+      CommandPaletteItem(
+        id: "project.\(repo.id).select",
+        title: "Repo",
+        subtitle: "main",
+        kind: .selectProject(repo.id),
+        priorityTier: 0
+      )
+    ])
+  }
+
+  @Test func presentInMode_setsModeAndPresentsTheView() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.presentInMode(.projectSwitcher)) {
+      $0.isPresented = true
+      $0.mode = .projectSwitcher
+    }
+  }
+
+  @Test func setPresented_falseFromPresentedEmitsDismissedDelegate() async {
+    let store = TestStore(
+      initialState: CommandPaletteFeature.State(isPresented: true, mode: .projectSwitcher)
+    ) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.setPresented(false)) {
+      $0.isPresented = false
+      $0.mode = .commands
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+  }
+
+  @Test func setPresented_falseFromNotPresentedDoesNotEmitDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+    await store.send(.setPresented(false))
+  }
+
+  @Test func togglePresented_dismissEmitsDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State(isPresented: true)) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.togglePresented) {
+      $0.isPresented = false
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+  }
+
+  @Test func activateItem_doesNotEmitDismissedDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State(isPresented: true)) {
+      CommandPaletteFeature()
+    } withDependencies: {
+      $0.date.now = Date(timeIntervalSince1970: 0)
+    }
+
+    let item = CommandPaletteItem(
+      id: "global.open-settings",
+      title: "Open Settings",
+      subtitle: nil,
+      kind: .openSettings
+    )
+    await store.send(.activateItem(item)) {
+      $0.isPresented = false
+      $0.recencyByItemID[item.id] = 0
+    }
+    // The activation delegate carries the focus — no dismissal echo.
+    await store.receive(\.delegate.openSettings)
+  }
 }
 
 private func makeWorktree(

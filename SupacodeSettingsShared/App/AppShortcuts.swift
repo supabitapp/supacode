@@ -5,7 +5,7 @@ import SwiftUI
 
 // Compile-time checkable shortcut identifier.
 public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRepresentable {
-  case commandPalette, openSettings, checkForUpdates, showMainWindow
+  case commandPalette, projectSwitcher, openSettings, checkForUpdates, showMainWindow
   case toggleLeftSidebar, revealInSidebar
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
   case deleteWorktree, confirmWorktreeAction
@@ -36,6 +36,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   private var stableKey: String {
     switch self {
     case .commandPalette: "commandPalette"
+    case .projectSwitcher: "projectSwitcher"
     case .openSettings: "openSettings"
     case .checkForUpdates: "checkForUpdates"
     case .showMainWindow: "showMainWindow"
@@ -65,6 +66,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
 
   private static let stableKeyMap: [String: AppShortcutID] = [
     "commandPalette": .commandPalette,
+    "projectSwitcher": .projectSwitcher,
     "openSettings": .openSettings,
     "checkForUpdates": .checkForUpdates,
     "showMainWindow": .showMainWindow,
@@ -106,6 +108,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   public var displayName: String {
     switch self {
     case .commandPalette: "Command Palette"
+    case .projectSwitcher: "Project Switcher"
     case .openSettings: "Open Settings"
     case .checkForUpdates: "Check For Updates"
     case .showMainWindow: "Show Main Window"
@@ -286,7 +289,8 @@ public enum AppShortcuts {
 
   // MARK: - Shortcut definitions.
 
-  public static let commandPalette = AppShortcut(id: .commandPalette, key: "p", modifiers: .command)
+  public static let commandPalette = AppShortcut(id: .commandPalette, key: "p", modifiers: [.command, .shift])
+  public static let projectSwitcher = AppShortcut(id: .projectSwitcher, key: "p", modifiers: .command)
   public static let openSettings = AppShortcut(id: .openSettings, key: ",", modifiers: .command)
   public static let checkForUpdates = AppShortcut(id: .checkForUpdates, key: "u", modifiers: .command)
   public static let showMainWindow = AppShortcut(id: .showMainWindow, key: "0", modifiers: .command)
@@ -378,7 +382,7 @@ public enum AppShortcuts {
   public static let groups: [AppShortcutGroup] = [
     AppShortcutGroup(
       category: .general,
-      shortcuts: [commandPalette, openSettings, checkForUpdates, showMainWindow]
+      shortcuts: [projectSwitcher, commandPalette, openSettings, checkForUpdates, showMainWindow]
     ),
     AppShortcutGroup(category: .sidebar, shortcuts: [toggleLeftSidebar, revealInSidebar]),
     AppShortcutGroup(

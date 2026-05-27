@@ -6,9 +6,21 @@ import SupacodeSettingsShared
 
 @Reducer
 struct CommandPaletteFeature {
+  /// Two narrow surfaces sharing one palette UI. `.commands` is the
+  /// historical full palette (workttrees, scripts, ghostty actions, PR
+  /// actions, settings); `.projectSwitcher` shows only repositories,
+  /// sorted by `RepositoriesFeature.State.projectMRU`. Mode lives in
+  /// State so the items builder, the view, and the dismiss handler all
+  /// read the same source of truth.
+  enum PaletteMode: Equatable, Sendable {
+    case commands
+    case projectSwitcher
+  }
+
   @ObservableState
   struct State: Equatable {
     var isPresented = false
+    var mode: PaletteMode = .commands
     var query = ""
     var selectedIndex: Int?
     var recencyByItemID: [CommandPaletteItem.ID: TimeInterval] = [:]
@@ -23,6 +35,11 @@ struct CommandPaletteFeature {
     case binding(BindingAction<State>)
     case setPresented(Bool)
     case togglePresented
+    /// Open the palette in a specific mode. No-op if already presented in
+    /// the same mode; switches mode and refreshes selection if already
+    /// presented in a different mode. Wired to the Cmd+P / Cmd+Shift+P
+    /// menu items in `supacodeApp.swift`.
+    case presentInMode(PaletteMode)
     case activateItem(CommandPaletteItem)
     case updateSelection(itemsCount: Int)
     case resetSelection(itemsCount: Int)
@@ -34,6 +51,7 @@ struct CommandPaletteFeature {
   @CasePathable
   enum Delegate: Equatable {
     case selectWorktree(Worktree.ID)
+    case selectProject(Repository.ID)
     case checkForUpdates
     case openSettings
     case newWorktree
@@ -54,6 +72,11 @@ struct CommandPaletteFeature {
     case openFailingCheckDetails(Worktree.ID)
     case runScript(ScriptDefinition)
     case stopScript(UUID, name: String)
+    /// Palette closed without the user activating an item (Esc, outside
+    /// tap, programmatic dismiss). AppFeature uses this to refocus the
+    /// current worktree's terminal — the "terminal is the default
+    /// focus" invariant.
+    case dismissedWithoutSelection
     #if DEBUG
       case debugTestToast(RepositoriesFeature.StatusToast)
     #endif
@@ -69,6 +92,7 @@ struct CommandPaletteFeature {
         return .none
 
       case .setPresented(let isPresented):
+        let wasPresented = state.isPresented
         state.isPresented = isPresented
         if isPresented {
           loadRecency(into: &state)
@@ -76,15 +100,37 @@ struct CommandPaletteFeature {
         } else {
           state.query = ""
           state.selectedIndex = nil
+          state.mode = .commands
+        }
+        if wasPresented, !isPresented {
+          return .send(.delegate(.dismissedWithoutSelection))
         }
         return .none
 
       case .togglePresented:
+        let wasPresented = state.isPresented
         state.isPresented.toggle()
         if state.isPresented {
+          state.mode = .commands
           loadRecency(into: &state)
           state.selectedIndex = nil
         } else {
+          state.query = ""
+          state.selectedIndex = nil
+          state.mode = .commands
+        }
+        if wasPresented, !state.isPresented {
+          return .send(.delegate(.dismissedWithoutSelection))
+        }
+        return .none
+
+      case .presentInMode(let mode):
+        let wasPresented = state.isPresented
+        let modeChanged = state.mode != mode
+        state.isPresented = true
+        state.mode = mode
+        if !wasPresented || modeChanged {
+          loadRecency(into: &state)
           state.query = ""
           state.selectedIndex = nil
         }
@@ -94,8 +140,11 @@ struct CommandPaletteFeature {
         state.isPresented = false
         state.query = ""
         state.selectedIndex = nil
+        state.mode = .commands
         state.recencyByItemID[item.id] = now.timeIntervalSince1970
         saveRecency(state.recencyByItemID)
+        // No `.dismissedWithoutSelection` here: every activation delegate
+        // resolves to a destination that owns its own focus transition.
         return .send(.delegate(delegateAction(for: item.kind)))
 
       case .updateSelection(let itemsCount):
@@ -279,6 +328,7 @@ struct CommandPaletteFeature {
   ) -> [CommandPaletteItem.ID] {
     var ids = CommandPaletteItemID.globalIDs
     for repository in repositories {
+      ids.append(CommandPaletteItemID.project(repository.id))
       ids.append(contentsOf: CommandPaletteItemID.pullRequestIDs(repositoryID: repository.id))
       for worktree in repository.worktrees {
         ids.append(CommandPaletteItemID.worktreeSelect(worktree.id))
@@ -290,6 +340,90 @@ struct CommandPaletteFeature {
       ids.append(CommandPaletteItemID.stopScript(script.id))
     }
     return ids
+  }
+
+  /// Mode-aware item dispatch. The palette overlay calls this once per
+  /// re-render; the mode comes from `State.mode` and the per-mode
+  /// builders own all selection / ranking / subtitle decisions.
+  static func items(
+    in mode: PaletteMode,
+    from repositories: RepositoriesFeature.State,
+    ghosttyCommands: [GhosttyCommand] = [],
+    scripts: [ScriptDefinition] = [],
+    runningScriptIDs: Set<UUID> = []
+  ) -> [CommandPaletteItem] {
+    switch mode {
+    case .commands:
+      return commandPaletteItems(
+        from: repositories,
+        ghosttyCommands: ghosttyCommands,
+        scripts: scripts,
+        runningScriptIDs: runningScriptIDs
+      )
+    case .projectSwitcher:
+      return projectSwitcherItems(from: repositories)
+    }
+  }
+
+  /// Project switcher items. Order: `projectMRU` head first (the current
+  /// project), then prior MRU entries in recency order, then any loaded
+  /// repository not yet in MRU sorted by display name. `priorityTier`
+  /// carries the ordinal so `prioritizeItems` keeps MRU order with an
+  /// empty query; the fuzzy scorer takes over once the user types.
+  ///
+  /// Cmd+P semantics: index 0 = current project (you are here), ↓ once
+  /// lands on index 1 = previous project — Cmd+Tab style.
+  static func projectSwitcherItems(
+    from repositories: RepositoriesFeature.State
+  ) -> [CommandPaletteItem] {
+    let allRepos = repositories.repositories
+    let mruOrder = repositories.projectMRU
+    let mruSet = Set(mruOrder)
+    let mruRepos: [Repository] = mruOrder.compactMap { allRepos[id: $0] }
+    let remaining = allRepos
+      .filter { !mruSet.contains($0.id) }
+      .sorted { lhs, rhs in
+        let lhsName = projectDisplayName(for: lhs, in: repositories)
+        let rhsName = projectDisplayName(for: rhs, in: repositories)
+        return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
+      }
+    let ordered: [Repository] = mruRepos + Array(remaining)
+
+    return ordered.enumerated().map { index, repo in
+      let title = projectDisplayName(for: repo, in: repositories)
+      let subtitle = projectSubtitle(for: repo, in: repositories)
+      return CommandPaletteItem(
+        id: CommandPaletteItemID.project(repo.id),
+        title: title,
+        subtitle: subtitle,
+        kind: .selectProject(repo.id),
+        priorityTier: index
+      )
+    }
+  }
+
+  private static func projectDisplayName(
+    for repository: Repository,
+    in state: RepositoriesFeature.State
+  ) -> String {
+    let custom = state.sidebar.sections[repository.id]?.title
+    return Repository.sidebarDisplayName(custom: custom, fallback: repository.name)
+  }
+
+  /// Subtitle for the project row: name of the last-used worktree if the
+  /// user has been in this project before, otherwise the path. Hides the
+  /// path noise once MRU is established without leaving cold-start rows
+  /// subtitleless.
+  private static func projectSubtitle(
+    for repository: Repository,
+    in state: RepositoriesFeature.State
+  ) -> String? {
+    if let worktreeID = state.lastWorktreeByProject[repository.id],
+      let row = state.sidebarItems[id: worktreeID]
+    {
+      return row.name.isEmpty ? nil : row.name
+    }
+    return repository.rootURL.path(percentEncoded: false)
   }
 }
 
@@ -462,12 +596,17 @@ private func makeClosePullRequestItem(
 
 private enum CommandPaletteItemID {
   static let ghosttyPrefix = "ghostty."
+  static let projectPrefix = "project."
   static let globalCheckForUpdates = "global.check-for-updates"
   static let globalOpenSettings = "global.open-settings"
   static let globalOpenRepository = "global.open-repository"
   static let globalNewWorktree = "global.new-worktree"
   static let globalRefreshWorktrees = "global.refresh-worktrees"
   static let globalViewArchivedWorktrees = "global.view-archived-worktrees"
+
+  static func project(_ repositoryID: Repository.ID) -> CommandPaletteItem.ID {
+    "\(projectPrefix)\(repositoryID).select"
+  }
 
   static var globalIDs: [CommandPaletteItem.ID] {
     [
@@ -582,6 +721,8 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
   switch kind {
   case .worktreeSelect(let id):
     return .selectWorktree(id)
+  case .selectProject(let repositoryID):
+    return .selectProject(repositoryID)
   case .checkForUpdates:
     return .checkForUpdates
   case .openSettings:
@@ -643,6 +784,7 @@ private func pullRequestDelegateAction(
   case .openFailingCheckDetails(let worktreeID):
     return .openFailingCheckDetails(worktreeID)
   case .worktreeSelect,
+    .selectProject,
     .checkForUpdates,
     .openSettings,
     .newWorktree,

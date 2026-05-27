@@ -29,6 +29,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case checkForUpdates
     case openRepository
     case worktreeSelect(Worktree.ID)
+    case selectProject(Repository.ID)
     case openSettings
     case newWorktree
     case removeWorktree(Worktree.ID, Repository.ID)
@@ -70,6 +71,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       false
+    case .selectProject:
+      true
     case .renameBranch:
       true
     case .runScript, .stopScript:
@@ -97,6 +100,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .rerunFailedJobs,
       .openFailingCheckDetails,
       .worktreeSelect,
+      .selectProject,
       .removeWorktree,
       .archiveWorktree,
       .renameBranch:
@@ -128,6 +132,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .rerunFailedJobs,
       .openFailingCheckDetails,
       .worktreeSelect,
+      .selectProject,
       .removeWorktree,
       .archiveWorktree,
       .renameBranch,
