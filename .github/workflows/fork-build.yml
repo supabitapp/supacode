@@ -1,0 +1,121 @@
+name: fork-build
+
+# Manual / branch-scoped runnable build. Produces a downloadable .app.zip so
+# a fork can iterate without needing a working local toolchain (Zig 0.15.2
+# can't link macOS 26.4's libSystem; see ziglang/zig#31272). Kept out of the
+# canonical `test` workflow so this won't run on upstream PRs.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/**
+      - fix/**
+      - exp/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_HTTP_TIMEOUT: 120
+      MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      # Mirror setup-macos's Xcode pin: zig 0.15.2 can't link the 26.4+ SDK.
+      - name: Select Xcode <= 26.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          selected=""
+          for app in /Applications/Xcode_26.3*.app /Applications/Xcode_26.2*.app \
+            /Applications/Xcode_26.1*.app /Applications/Xcode_26.0*.app; do
+            if [ -d "$app" ]; then selected="$app"; break; fi
+          done
+          if [ -z "$selected" ]; then
+            echo "No Xcode <= 26.3 found on runner; available:" >&2
+            ls -d /Applications/Xcode_*.app >&2 || true
+            exit 1
+          fi
+          sudo xcode-select -s "$selected/Contents/Developer"
+          xcodebuild -version
+
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.3.0
+          cache: true
+
+      # Forks won't have TUIST_CONFIG_TOKEN. Auth is an optimization (Swift
+      # package binary cache); without it Tuist falls back to source builds,
+      # which is slower but works. Hide failure so a missing token doesn't
+      # abort the workflow.
+      - name: Authenticate with Tuist (optional)
+        shell: bash
+        continue-on-error: true
+        run: mise exec -- tuist auth login
+
+      - name: Xcode cache key
+        shell: bash
+        run: |
+          XCODE_VERSION="$(xcodebuild -version | tr '\n' '-' | sed 's/[^A-Za-z0-9._-]/_/g; s/-$//')"
+          printf '%s\n' "XCODE_VERSION=$XCODE_VERSION" >> "$GITHUB_ENV"
+
+      - name: Ghostty cache key
+        shell: bash
+        run: |
+          set -euo pipefail
+          GHOSTTY_SHA="$(git -C ThirdParty/ghostty rev-parse HEAD)"
+          printf '%s\n' "GHOSTTY_SHA=$GHOSTTY_SHA" >> "$GITHUB_ENV"
+
+      - name: Ghostty cache
+        id: ghostty_cache
+        uses: actions/cache@v5
+        with:
+          path: .build/ghostty
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-ghostty-v2-${{ env.GHOSTTY_SHA }}-${{ hashFiles('.github/actions/setup-macos/action.yml', 'Project.swift', 'scripts/build-ghostty.sh', 'mise.toml', '.gitmodules') }}
+
+      - name: Build ghostty
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: make build-ghostty-xcframework
+
+      - name: Build app
+        shell: bash
+        run: make build-app
+
+      - name: Locate built .app
+        shell: bash
+        run: |
+          set -euo pipefail
+          settings="$(xcodebuild -workspace supacode.xcworkspace -scheme supacode -configuration Debug -showBuildSettings -json 2>/dev/null)"
+          build_dir="$(echo "$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"
+          product="$(echo "$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"
+          app_path="$build_dir/$product"
+          if [ ! -d "$app_path" ]; then
+            echo "Built .app not found at $app_path" >&2
+            exit 1
+          fi
+          printf '%s\n' "BUILT_APP_PATH=$app_path" >> "$GITHUB_ENV"
+
+      - name: Package .app as zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$(dirname "$BUILT_APP_PATH")"
+          ditto -c -k --keepParent "$(basename "$BUILT_APP_PATH")" "$GITHUB_WORKSPACE/supacode.app.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supacode-${{ github.sha }}
+          path: supacode.app.zip
+          if-no-files-found: error
+          retention-days: 14
