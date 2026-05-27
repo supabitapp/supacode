@@ -365,21 +365,25 @@ struct CommandPaletteFeature {
     }
   }
 
-  /// Project switcher items. Order: `projectMRU` head first (the current
-  /// project), then prior MRU entries in recency order, then any loaded
-  /// repository not yet in MRU sorted by display name. `priorityTier`
-  /// carries the ordinal so `prioritizeItems` keeps MRU order with an
-  /// empty query; the fuzzy scorer takes over once the user types.
+  /// Project switcher items. Order: prior `projectMRU` entries in recency
+  /// order (head = previous project, the one you'd most likely switch to),
+  /// then any loaded repository not yet in MRU sorted by display name.
+  /// `priorityTier` carries the ordinal so `prioritizeItems` keeps MRU
+  /// order with an empty query; the fuzzy scorer takes over once the user
+  /// types.
   ///
-  /// Cmd+P semantics: index 0 = current project (you are here), ↓ once
-  /// lands on index 1 = previous project — Cmd+Tab style.
+  /// Cmd+Tab semantics: the current project (`projectMRU` head) is
+  /// excluded entirely — you can't switch to where you already are, and
+  /// pre-selecting it would make Cmd+P then Enter a no-op. Intra-project
+  /// navigation lives on the worktree palette (Cmd+Shift+P).
   static func projectSwitcherItems(
     from repositories: RepositoriesFeature.State
   ) -> [CommandPaletteItem] {
     let allRepos = repositories.repositories
     let mruOrder = repositories.projectMRU
+    let priorMRU = Array(mruOrder.dropFirst())
     let mruSet = Set(mruOrder)
-    let mruRepos: [Repository] = mruOrder.compactMap { allRepos[id: $0] }
+    let mruRepos: [Repository] = priorMRU.compactMap { allRepos[id: $0] }
     let remaining = allRepos
       .filter { !mruSet.contains($0.id) }
       .sorted { lhs, rhs in

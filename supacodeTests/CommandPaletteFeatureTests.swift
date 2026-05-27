@@ -1155,7 +1155,7 @@ struct CommandPaletteFeatureTests {
     #expect(items.isEmpty)
   }
 
-  @Test func projectSwitcherItems_sortsByMRUThenAlphabetical() {
+  @Test func projectSwitcherItems_dropsCurrentThenSortsByMRUThenAlphabetical() {
     let wtA = makeWorktree(id: "/tmp/repo-a/wt", name: "wt", repoRoot: "/tmp/repo-a")
     let wtB = makeWorktree(id: "/tmp/repo-b/wt", name: "wt", repoRoot: "/tmp/repo-b")
     let wtC = makeWorktree(id: "/tmp/repo-c/wt", name: "wt", repoRoot: "/tmp/repo-c")
@@ -1164,31 +1164,47 @@ struct CommandPaletteFeatureTests {
     let repoC = makeRepository(rootPath: "/tmp/repo-c", name: "Charlie", worktrees: [wtC])
     var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB, repoC])
 
-    // MRU order: most recent first. Cmd+Tab semantics — index 0 is the
-    // current project, ↓ once moves to the prior project.
+    // MRU = [A, C] after select C then select A. Cmd+Tab semantics: the
+    // current project (A) is excluded from the switcher entirely.
     state.setSingleWorktreeSelection(wtC.id)
     state.setSingleWorktreeSelection(wtA.id)
 
     let items = CommandPaletteFeature.projectSwitcherItems(from: state)
 
-    // MRU head (A), then C, then non-MRU sorted alphabetically (B).
+    // Previous MRU (C), then non-MRU sorted alphabetically (B). A is gone.
     #expect(items.map(\.id) == [
-      "project.\(repoA.id).select",
       "project.\(repoC.id).select",
       "project.\(repoB.id).select",
     ])
     // priorityTier mirrors visible order so an empty-query prioritizeItems()
     // pass preserves the MRU ranking even though item-level recency is empty.
-    #expect(items.map(\.priorityTier) == [0, 1, 2])
+    #expect(items.map(\.priorityTier) == [0, 1])
+  }
+
+  @Test func projectSwitcherItems_emptyWhenOnlyCurrentProject() {
+    let wt = makeWorktree(id: "/tmp/only/wt", name: "wt", repoRoot: "/tmp/only")
+    let repo = makeRepository(rootPath: "/tmp/only", name: "Only", worktrees: [wt])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+
+    state.setSingleWorktreeSelection(wt.id)
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+    // Nothing to switch to: the only project is the current one.
+    #expect(items.isEmpty)
   }
 
   @Test func projectSwitcherItems_subtitleShowsLastWorktreeWhenKnown() {
     let wtMain = makeWorktree(id: "/tmp/repo/main", name: "main", repoRoot: "/tmp/repo")
     let wtFeat = makeWorktree(id: "/tmp/repo/feat", name: "feature/x", repoRoot: "/tmp/repo")
+    let wtOther = makeWorktree(id: "/tmp/other/wt", name: "wt", repoRoot: "/tmp/other")
     let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wtMain, wtFeat])
-    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    let other = makeRepository(rootPath: "/tmp/other", name: "Other", worktrees: [wtOther])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo, other])
 
+    // Land on `repo` first so it records a lastWorktree, then move to
+    // `other` so `repo` becomes the previous project (the switcher entry).
     state.setSingleWorktreeSelection(wtFeat.id)
+    state.setSingleWorktreeSelection(wtOther.id)
 
     let items = CommandPaletteFeature.projectSwitcherItems(from: state)
     let item = items.first { $0.id == "project.\(repo.id).select" }
@@ -1207,9 +1223,13 @@ struct CommandPaletteFeatureTests {
 
   @Test func items_dispatchByMode() {
     let wt = makeWorktree(id: "/tmp/repo/main", name: "main", repoRoot: "/tmp/repo")
+    let wtOther = makeWorktree(id: "/tmp/other/wt", name: "wt", repoRoot: "/tmp/other")
     let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wt])
-    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    let other = makeRepository(rootPath: "/tmp/other", name: "Other", worktrees: [wtOther])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo, other])
+    // Other is current; Repo is the previous project the switcher surfaces.
     state.setSingleWorktreeSelection(wt.id)
+    state.setSingleWorktreeSelection(wtOther.id)
 
     let commands = CommandPaletteFeature.items(in: .commands, from: state)
     let projects = CommandPaletteFeature.items(in: .projectSwitcher, from: state)
@@ -1220,7 +1240,7 @@ struct CommandPaletteFeatureTests {
     #expect(commands.contains { $0.id == "worktree.\(wt.id).select" })
     #expect(commands.allSatisfy { !$0.id.hasPrefix("project.") })
 
-    // .projectSwitcher is project-only.
+    // .projectSwitcher is project-only and excludes the current project.
     #expect(projects == [
       CommandPaletteItem(
         id: "project.\(repo.id).select",
