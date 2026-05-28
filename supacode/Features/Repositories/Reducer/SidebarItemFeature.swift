@@ -74,7 +74,7 @@ struct SidebarItemFeature {
 
     var addedLines: Int?
     var removedLines: Int?
-    var pullRequest: GithubPullRequest?
+    var pullRequest: ForgePullRequest?
     /// Branch name at PR-query start; on result land, mismatched results are dropped.
     /// Invariant: non-nil iff a PR query is in flight; cleared by reconcile on branch rename.
     var pullRequestBranchAtQueryTime: String?
@@ -112,7 +112,7 @@ struct SidebarItemFeature {
     case lifecycleChanged(State.Lifecycle)
     case diffStatsChanged(added: Int?, removed: Int?)
     case pullRequestQueryStarted(branch: String)
-    case pullRequestChanged(GithubPullRequest?, branchAtQueryTime: String)
+    case pullRequestChanged(ForgePullRequest?, branchAtQueryTime: String)
     case runningScriptStarted(id: UUID, tint: RepositoryColor)
     case runningScriptStopped(id: UUID)
     case agentSnapshotChanged([AgentPresenceFeature.AgentInstance], hasActivity: Bool)
@@ -279,7 +279,7 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
   let isMainWorktree: Bool
   let isPinned: Bool
   let lifecycle: SidebarItemFeature.State.Lifecycle
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript>
 
   init(_ row: SidebarItemFeature.State) {

@@ -374,7 +374,7 @@ struct WorktreeDetailView: View {
     // Folders have no git remote, so the PR payload is scoped to
     // `.git` — this makes "folder with a pull request" unrepresentable.
     enum Kind {
-      case git(pullRequest: GithubPullRequest?)
+      case git(pullRequest: ForgePullRequest?)
       case folder
     }
 
@@ -392,7 +392,7 @@ struct WorktreeDetailView: View {
       if case .folder = kind { true } else { false }
     }
 
-    var pullRequest: GithubPullRequest? {
+    var pullRequest: ForgePullRequest? {
       if case .git(let pullRequest) = kind { pullRequest } else { nil }
     }
 

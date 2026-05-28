@@ -32,7 +32,7 @@ private func resolveRemoteInfo(
   repositoryRootURL: URL,
   githubCLI: GithubCLIClient,
   gitClient: GitClientDependency
-) async -> GithubRemoteInfo? {
+) async -> ForgeRemoteInfo? {
   if let info = await githubCLI.resolveRemoteInfo(repositoryRootURL) {
     return info
   }
@@ -383,6 +383,10 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       pullRequestsByWorktreeID: [Worktree.ID: GithubPullRequest?]
     )
+    case repositoryMergeRequestsLoaded(
+      repositoryID: Repository.ID,
+      mergeRequestsByWorktreeID: [Worktree.ID: GitLabMergeRequest?]
+    )
     case setGithubIntegrationEnabled(Bool)
     case setMergedWorktreeAction(MergedWorktreeAction?)
     case setAutoDeleteArchivedWorktreesAfterDays(AutoDeletePeriod?)
@@ -462,6 +466,8 @@ struct RepositoriesFeature {
   @Dependency(GitClientDependency.self) private var gitClient
   @Dependency(GithubCLIClient.self) private var githubCLI
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
+  @Dependency(GitLabCLIClient.self) private var gitlabCLI
+  @Dependency(GitLabIntegrationClient.self) private var gitlabIntegration
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(ShellClient.self) private var shellClient
   @Dependency(\.date.now) private var now
@@ -2798,8 +2804,17 @@ struct RepositoriesFeature {
         }
         state.githubIntegrationAvailability = .checking
         let githubIntegration = githubIntegration
+        let gitlabIntegration = gitlabIntegration
         return .run { send in
-          let isAvailable = await githubIntegration.isAvailable()
+          // Any-forge availability gate: the per-repo dispatcher selects the right CLI at fetch
+          // time, so as long as one forge integration is installed + enabled, the refresh
+          // scheduler should let work through. A repo on the absent forge fails fast inside the
+          // batch effect and dispatches `.repositoryPullRequestRefreshCompleted`.
+          async let github = githubIntegration.isAvailable()
+          async let gitlab = gitlabIntegration.isAvailable()
+          let githubAvailable = await github
+          let gitlabAvailable = await gitlab
+          let isAvailable = githubAvailable || gitlabAvailable
           await send(.githubIntegrationAvailabilityUpdated(isAvailable))
         }
         .cancellable(id: CancelID.githubIntegrationAvailability, cancelInFlight: true)
@@ -2898,14 +2913,15 @@ struct RepositoriesFeature {
             continue
           }
           let pullRequest = pullRequestsByWorktreeID[worktreeID] ?? nil
+          let forgePullRequest = pullRequest.map(ForgePullRequest.github)
           let previousPullRequest = state.sidebarItems[id: worktreeID]?.pullRequest
-          let previousMerged = previousPullRequest?.state == "MERGED"
-          let nextMerged = pullRequest?.state == "MERGED"
+          let previousMerged = previousPullRequest?.isMerged == true
+          let nextMerged = forgePullRequest?.isMerged == true
           // Dispatch unconditionally so an identical-PR result still clears the row's watermark.
           rowEffects.append(
             state.updateWorktreePullRequestEffect(
               worktreeID: worktreeID,
-              pullRequest: pullRequest,
+              pullRequest: forgePullRequest,
               branchAtQueryTime: branchSnapshot[worktreeID],
             )
           )
@@ -2935,6 +2951,35 @@ struct RepositoriesFeature {
         }
         return .merge(effects)
 
+      case .repositoryMergeRequestsLoaded(let repositoryID, let mergeRequestsByWorktreeID):
+        // GitLab refresh result. Auto-archive on merged-state transitions is v2; this handler only
+        // updates per-row state via `pullRequestChanged`. Watermark clearing mirrors the GitHub
+        // path: dispatch unconditionally for every queried-but-missing worktree too.
+        guard let repository = state.repositories[id: repositoryID] else {
+          return .none
+        }
+        let branchSnapshot = state.inFlightPullRequestBranchSnapshotsByRepositoryID[repositoryID] ?? [:]
+        let dispatchIDs = Set(branchSnapshot.keys).union(mergeRequestsByWorktreeID.keys)
+        var rowEffects: [Effect<Action>] = []
+        for worktreeID in dispatchIDs.sorted() {
+          guard repository.worktrees[id: worktreeID] != nil else {
+            continue
+          }
+          let mergeRequest = mergeRequestsByWorktreeID[worktreeID] ?? nil
+          let forgePullRequest = mergeRequest.map(ForgePullRequest.gitlab)
+          rowEffects.append(
+            state.updateWorktreePullRequestEffect(
+              worktreeID: worktreeID,
+              pullRequest: forgePullRequest,
+              branchAtQueryTime: branchSnapshot[worktreeID],
+            )
+          )
+        }
+        guard !rowEffects.isEmpty else {
+          return .none
+        }
+        return .merge(rowEffects)
+
       case .pullRequestAction(let worktreeID, let action):
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
@@ -2955,7 +3000,9 @@ struct RepositoriesFeature {
           worktreeIDs: repository.worktrees.map(\.id)
         )
         let branchName = pullRequest.headRefName ?? worktree.name
-        let failingCheckDetailsURL = (pullRequest.statusCheckRollup?.checks ?? []).first {
+        // Status-check rollup details are GitHub-only; GitLab pipeline failing-job extraction
+        // is deferred to v2 alongside the corresponding command-palette actions.
+        let failingCheckDetailsURL = (pullRequest.github?.statusCheckRollup?.checks ?? []).first {
           $0.checkState == .failure && $0.detailsUrl != nil
         }?.detailsUrl
         switch action {
@@ -3519,6 +3566,7 @@ struct RepositoriesFeature {
   ) -> Effect<Action> {
     let gitClient = gitClient
     let githubCLI = githubCLI
+    let gitlabCLI = gitlabCLI
     return .run { send in
       guard
         let remoteInfo = await resolveRemoteInfo(
@@ -3531,22 +3579,42 @@ struct RepositoriesFeature {
         return
       }
       do {
-        let prsByBranch = try await githubCLI.batchPullRequests(
-          remoteInfo.host,
-          remoteInfo.owner,
-          remoteInfo.repo,
-          branches
-        )
-        var pullRequestsByWorktreeID: [Worktree.ID: GithubPullRequest?] = [:]
-        for worktree in worktrees {
-          pullRequestsByWorktreeID[worktree.id] = prsByBranch[worktree.name]
-        }
-        await send(
-          .repositoryPullRequestsLoaded(
-            repositoryID: repositoryID,
-            pullRequestsByWorktreeID: pullRequestsByWorktreeID
+        switch remoteInfo.forge {
+        case .github:
+          let prsByBranch = try await githubCLI.batchPullRequests(
+            remoteInfo.host,
+            remoteInfo.owner,
+            remoteInfo.repo,
+            branches
           )
-        )
+          var pullRequestsByWorktreeID: [Worktree.ID: GithubPullRequest?] = [:]
+          for worktree in worktrees {
+            pullRequestsByWorktreeID[worktree.id] = prsByBranch[worktree.name]
+          }
+          await send(
+            .repositoryPullRequestsLoaded(
+              repositoryID: repositoryID,
+              pullRequestsByWorktreeID: pullRequestsByWorktreeID
+            )
+          )
+        case .gitlab:
+          let mrsByBranch = try await gitlabCLI.batchMergeRequests(
+            remoteInfo.host,
+            remoteInfo.owner,
+            remoteInfo.repo,
+            branches
+          )
+          var mergeRequestsByWorktreeID: [Worktree.ID: GitLabMergeRequest?] = [:]
+          for worktree in worktrees {
+            mergeRequestsByWorktreeID[worktree.id] = mrsByBranch[worktree.name]
+          }
+          await send(
+            .repositoryMergeRequestsLoaded(
+              repositoryID: repositoryID,
+              mergeRequestsByWorktreeID: mergeRequestsByWorktreeID
+            )
+          )
+        }
       } catch {
         await send(.repositoryPullRequestRefreshCompleted(repositoryID))
         return
@@ -4166,7 +4234,7 @@ extension RepositoriesFeature.State {
   }
 
   func isWorktreeMerged(_ worktree: Worktree) -> Bool {
-    sidebarItems[id: worktree.id]?.pullRequest?.state == "MERGED"
+    sidebarItems[id: worktree.id]?.pullRequest?.isMerged == true
   }
 
   func orderedPinnedWorktreeIDs(in repository: Repository) -> [Worktree.ID] {
@@ -4652,7 +4720,7 @@ extension RepositoriesFeature.State {
   /// The row's own equality guard short-circuits the PR-value mutation.
   func updateWorktreePullRequestEffect(
     worktreeID: Worktree.ID,
-    pullRequest: GithubPullRequest?,
+    pullRequest: ForgePullRequest?,
     branchAtQueryTime: String? = nil,
   ) -> Effect<RepositoriesFeature.Action> {
     guard let row = sidebarItems[id: worktreeID] else { return .none }

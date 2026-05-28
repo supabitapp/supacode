@@ -369,7 +369,7 @@ extension RepositoriesFeature.Action {
       .archiveScriptCompleted, .deleteScriptCompleted, .scriptCompleted,
       .consumeSetupScript,
       .pinWorktree, .unpinWorktree,
-      .repositoryPullRequestsLoaded:
+      .repositoryPullRequestsLoaded, .repositoryMergeRequestsLoaded:
       return [.sidebarStructure, .selectedWorktreeSlice]
 
     // Selection changes only refresh the slice.

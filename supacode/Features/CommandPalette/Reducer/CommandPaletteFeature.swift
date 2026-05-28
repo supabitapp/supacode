@@ -214,9 +214,12 @@ struct CommandPaletteFeature {
       items.append(contentsOf: ghosttyCommandItems(ghosttyCommands))
       items.append(contentsOf: scriptItems(scripts: scripts, runningScriptIDs: runningScriptIDs))
     }
+    // v1 GitLab: merge/close/ready/checks command-palette actions are GitHub-only. GitLab MRs surface
+    // in the sidebar and toolbar; the mutation surface lands in v2.
     if let selectedWorktreeID = repositories.selectedWorktreeID,
       let repositoryID = repositories.repositoryID(containing: selectedWorktreeID),
-      let pullRequest = repositories.sidebarItems[id: selectedWorktreeID]?.pullRequest,
+      let forgePullRequest = repositories.sidebarItems[id: selectedWorktreeID]?.pullRequest,
+      let pullRequest = forgePullRequest.github,
       pullRequest.number > 0,
       pullRequest.state.uppercased() != "CLOSED"
     {

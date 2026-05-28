@@ -188,15 +188,26 @@ enum SidebarPullRequestIcon: Equatable {
   case merged
   case closed
 
-  static func resolve(_ pullRequest: GithubPullRequest?) -> Self {
+  static func resolve(_ pullRequest: ForgePullRequest?) -> Self {
     guard let pullRequest else { return .branch }
-    switch pullRequest.state.uppercased() {
-    case "MERGED": return .merged
-    case "CLOSED": return .closed
-    case "OPEN" where pullRequest.isDraft: return .draft
-    case "OPEN" where PullRequestMergeQueueStatus(pullRequest: pullRequest) != nil: return .queued
-    case "OPEN": return .open
-    default: return .branch
+    switch pullRequest {
+    case .github(let pr):
+      switch pr.state.uppercased() {
+      case "MERGED": return .merged
+      case "CLOSED": return .closed
+      case "OPEN" where pr.isDraft: return .draft
+      case "OPEN" where PullRequestMergeQueueStatus(pullRequest: pr) != nil: return .queued
+      case "OPEN": return .open
+      default: return .branch
+      }
+    case .gitlab(let mr):
+      switch mr.state {
+      case .merged: return .merged
+      case .closed, .locked: return .closed
+      case .opened where mr.isDraft: return .draft
+      case .opened: return .open
+      case .unknown: return .branch
+      }
     }
   }
 
@@ -223,12 +234,22 @@ enum SidebarPullRequestIcon: Equatable {
   }
 }
 
-private func resolveCheckBadgeState(_ pullRequest: GithubPullRequest?) -> SidebarCheckBadgeState? {
-  guard let checks = pullRequest?.statusCheckRollup?.checks, !checks.isEmpty else { return nil }
-  let breakdown = PullRequestCheckBreakdown(checks: checks)
-  if breakdown.failed > 0 { return .failing }
-  if breakdown.inProgress > 0 || breakdown.expected > 0 { return .inProgress }
-  return .passing
+private func resolveCheckBadgeState(_ pullRequest: ForgePullRequest?) -> SidebarCheckBadgeState? {
+  guard let pullRequest else { return nil }
+  switch pullRequest {
+  case .github(let pr):
+    guard let checks = pr.statusCheckRollup?.checks, !checks.isEmpty else { return nil }
+    let breakdown = PullRequestCheckBreakdown(checks: checks)
+    if breakdown.failed > 0 { return .failing }
+    if breakdown.inProgress > 0 || breakdown.expected > 0 { return .inProgress }
+    return .passing
+  case .gitlab(let mr):
+    guard let status = mr.pipelineStatus else { return nil }
+    if status.isFailure { return .failing }
+    if status.isInProgress { return .inProgress }
+    if status.isSuccess { return .passing }
+    return nil
+  }
 }
 
 private struct TitleView: View, Equatable {
@@ -298,7 +319,7 @@ private struct IconView: View {
   let isFolder: Bool
   let isMissing: Bool
   let branchName: String
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let showsPullRequestInfo: Bool
   let lifecycle: SidebarItemFeature.State.Lifecycle
 

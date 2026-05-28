@@ -50,7 +50,7 @@ struct GitClientDependency: Sendable {
   var lineChanges: @Sendable (URL) async -> (added: Int, removed: Int)?
   var remoteNames: @Sendable (_ repoRoot: URL) async throws -> [String]
   var fetchRemote: @Sendable (_ remote: String, _ repoRoot: URL) async throws -> Void
-  var remoteInfo: @Sendable (_ repositoryRoot: URL) async -> GithubRemoteInfo?
+  var remoteInfo: @Sendable (_ repositoryRoot: URL) async -> ForgeRemoteInfo?
 }
 
 extension GitClientDependency: DependencyKey {

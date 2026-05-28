@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ToolbarStatusView: View {
   let toast: RepositoriesFeature.StatusToast?
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
 
   var body: some View {
     Group {
@@ -27,7 +27,10 @@ struct ToolbarStatusView: View {
         }
         .transition(.opacity)
       case nil:
-        if let model = PullRequestStatusModel(pullRequest: pullRequest) {
+        if let pullRequest, case .gitlab(let mr) = pullRequest {
+          GitLabMergeRequestStatusView(mergeRequest: mr)
+            .transition(.opacity)
+        } else if let model = PullRequestStatusModel(pullRequest: pullRequest?.github) {
           PullRequestStatusButton(model: model)
             .transition(.opacity)
         } else {

@@ -173,7 +173,7 @@ struct RepositoriesFeatureSidebarTests {
       mergeQueueEntry: nil
     )
     var state = RepositoriesFeature.State(reconciledRepositories: [repository])
-    state.sidebarItems[id: worktreeID]?.pullRequest = pullRequest
+    state.sidebarItems[id: worktreeID]?.pullRequest = .github(pullRequest)
     state.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime = "feature"
     state.inFlightPullRequestBranchSnapshotsByRepositoryID[repoID] = [worktreeID: "feature"]
 
@@ -191,7 +191,7 @@ struct RepositoriesFeatureSidebarTests {
       $0.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime = nil
     }
     await store.finish()
-    #expect(store.state.sidebarItems[id: worktreeID]?.pullRequest == pullRequest)
+    #expect(store.state.sidebarItems[id: worktreeID]?.pullRequest == .github(pullRequest))
   }
 
   @Test func pullRequestsLoadedClearsWatermarkForQueriedButMissingWorktree() async {

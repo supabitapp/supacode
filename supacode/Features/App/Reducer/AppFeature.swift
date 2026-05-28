@@ -434,8 +434,11 @@ struct AppFeature {
             await terminalClient.send(.refreshTabBarVisibility)
           },
           .run { _ in
+            // Enable watcher when either forge integration is active; the per-repo dispatcher
+            // routes by remote-info forge, so it's safe to keep watching even if one forge is off.
+            let trackingEnabled = settings.githubIntegrationEnabled || settings.gitlabIntegrationEnabled
             await worktreeInfoWatcher.send(
-              .setPullRequestTrackingEnabled(settings.githubIntegrationEnabled)
+              .setPullRequestTrackingEnabled(trackingEnabled)
             )
           },
           .run { send in
@@ -2082,7 +2085,7 @@ struct AppFeature {
       case .shortcuts: .shortcuts
       case .scripts: .scripts
       case .updates: .updates
-      case .github: .github
+      case .github: .forges
       }
     return .send(.settings(.setSelection(settingsSection)))
   }

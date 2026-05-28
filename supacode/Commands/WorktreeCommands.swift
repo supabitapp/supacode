@@ -85,7 +85,10 @@ private struct WorktreeMainMenu: Commands {
       }
       .appKeyboardShortcut(openPR)
       .help("Open Pull Request (\(openPR?.display ?? "none"))")
-      .disabled(snapshot.selectedPullRequestURL == nil || !snapshot.githubIntegrationEnabled)
+      .disabled(
+        snapshot.selectedPullRequestURL == nil
+          || (!snapshot.githubIntegrationEnabled && !snapshot.gitlabIntegrationEnabled)
+      )
       Divider()
       Button("Refresh Worktrees", systemImage: "arrow.clockwise") {
         store.send(.repositories(.refreshWorktrees))

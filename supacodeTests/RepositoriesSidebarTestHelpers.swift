@@ -50,6 +50,6 @@ extension RepositoriesFeature.State {
   ) {
     sidebarItems[id: id]?.addedLines = addedLines
     sidebarItems[id: id]?.removedLines = removedLines
-    sidebarItems[id: id]?.pullRequest = pullRequest
+    sidebarItems[id: id]?.pullRequest = pullRequest.map(ForgePullRequest.github)
   }
 }

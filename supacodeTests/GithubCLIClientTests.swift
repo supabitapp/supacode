@@ -386,7 +386,7 @@ struct GithubCLIClientTests {
 
     let info = await client.resolveRemoteInfo(URL(fileURLWithPath: "/tmp/repo"))
 
-    #expect(info == GithubRemoteInfo(host: "github.com", owner: "upstream-org", repo: "upstream-repo"))
+    #expect(info == ForgeRemoteInfo(forge: .github, host: "github.com", owner: "upstream-org", repo: "upstream-repo"))
   }
 
   @Test func resolveRemoteInfoReturnsNilWhenGhFails() async {
@@ -426,7 +426,7 @@ struct GithubCLIClientTests {
       }
     )
     let client = GithubCLIClient.live(shell: shell)
-    let remote = GithubRemoteInfo(host: "github.com", owner: "upstream-org", repo: "upstream-repo")
+    let remote = ForgeRemoteInfo(forge: .github, host: "github.com", owner: "upstream-org", repo: "upstream-repo")
 
     try await client.mergePullRequest(URL(fileURLWithPath: "/tmp/fork"), remote, 42, .squash)
 
@@ -479,7 +479,7 @@ struct GithubCLIClientTests {
       }
     )
     let client = GithubCLIClient.live(shell: shell)
-    let remote = GithubRemoteInfo(host: "ghe.acme.com", owner: "team", repo: "repo")
+    let remote = ForgeRemoteInfo(forge: .github, host: "ghe.acme.com", owner: "team", repo: "repo")
 
     try await client.closePullRequest(URL(fileURLWithPath: "/tmp/fork"), remote, 7)
 
@@ -504,7 +504,7 @@ struct GithubCLIClientTests {
       }
     )
     let client = GithubCLIClient.live(shell: shell)
-    let remote = GithubRemoteInfo(host: "github.com", owner: "owner", repo: "repo")
+    let remote = ForgeRemoteInfo(forge: .github, host: "github.com", owner: "owner", repo: "repo")
 
     try await client.markPullRequestReady(URL(fileURLWithPath: "/tmp/fork"), remote, 13)
 

@@ -12,6 +12,7 @@ import SupacodeSettingsShared
 struct WorktreeMenuSnapshot: Equatable {
   var shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:]
   var githubIntegrationEnabled: Bool = true
+  var gitlabIntegrationEnabled: Bool = true
   var canCreateWorktree: Bool = false
   var canNavigateBackward: Bool = false
   var canNavigateForward: Bool = false
@@ -30,6 +31,7 @@ extension AppFeature.State {
     return WorktreeMenuSnapshot(
       shortcutOverrides: settings.shortcutOverrides,
       githubIntegrationEnabled: settings.githubIntegrationEnabled,
+      gitlabIntegrationEnabled: settings.gitlabIntegrationEnabled,
       canCreateWorktree: repositories.canCreateWorktree,
       canNavigateBackward: repositories.canNavigateWorktreeHistoryBackward,
       canNavigateForward: repositories.canNavigateWorktreeHistoryForward,
@@ -55,6 +57,9 @@ extension AppFeature.State {
       if old.shortcutOverrides != new.shortcutOverrides { diffs.append("shortcutOverrides") }
       if old.githubIntegrationEnabled != new.githubIntegrationEnabled {
         diffs.append("githubIntegrationEnabled")
+      }
+      if old.gitlabIntegrationEnabled != new.gitlabIntegrationEnabled {
+        diffs.append("gitlabIntegrationEnabled")
       }
       if old.canCreateWorktree != new.canCreateWorktree { diffs.append("canCreateWorktree") }
       if old.canNavigateBackward != new.canNavigateBackward {

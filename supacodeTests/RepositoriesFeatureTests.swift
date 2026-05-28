@@ -4313,7 +4313,7 @@ struct RepositoriesFeatureTests {
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
     )
     #expect(
-      store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == mergedPullRequest
+      store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == .github(mergedPullRequest)
     )
   }
 
@@ -4336,7 +4336,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: mainWorktree.id]?.pullRequest = mergedPullRequest
+      $0.sidebarItems[id: mainWorktree.id]?.pullRequest = .github(mergedPullRequest)
     }
     await store.finish()
   }
@@ -4394,7 +4394,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = .github(mergedPullRequest)
     }
     await store.finish()
   }
@@ -4431,7 +4431,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = .github(mergedPullRequest)
     }
     await store.finish()
   }
@@ -4461,7 +4461,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = .github(mergedPullRequest)
     }
     await store.finish()
   }
@@ -4491,7 +4491,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = .github(mergedPullRequest)
     }
     await store.finish()
   }
@@ -4544,7 +4544,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = refreshedPullRequest
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = .github(refreshedPullRequest)
     }
     await store.finish()
   }
@@ -4639,19 +4639,19 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var initialState = makeState(repositories: [repository])
     initialState.githubIntegrationAvailability = .available
-    let batchCalls = LockIsolated<[GithubRemoteInfo]>([])
+    let batchCalls = LockIsolated<[ForgeRemoteInfo]>([])
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
       $0.githubCLI.resolveRemoteInfo = { _ in
-        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+        ForgeRemoteInfo(forge: .github, host: "github.com", owner: "upstream", repo: "project")
       }
       $0.gitClient.remoteInfo = { _ in
         Issue.record("gitClient.remoteInfo should be the fallback, not the first choice")
-        return GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")
+        return ForgeRemoteInfo(forge: .github, host: "github.com", owner: "fork", repo: "project")
       }
       $0.githubCLI.batchPullRequests = { host, owner, repo, _ in
-        batchCalls.withValue { $0.append(GithubRemoteInfo(host: host, owner: owner, repo: repo)) }
+        batchCalls.withValue { $0.append(ForgeRemoteInfo(forge: .github, host: host, owner: owner, repo: repo)) }
         return [:]
       }
     }
@@ -4668,7 +4668,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.repositoryPullRequestRefreshCompleted)
     await store.finish()
 
-    #expect(batchCalls.value == [GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")])
+    #expect(batchCalls.value == [ForgeRemoteInfo(forge: .github, host: "github.com", owner: "upstream", repo: "project")])
   }
 
   @Test func worktreeInfoEventRepositoryPullRequestRefreshFallsBackToGitRemote() async {
@@ -4682,16 +4682,16 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var initialState = makeState(repositories: [repository])
     initialState.githubIntegrationAvailability = .available
-    let batchCalls = LockIsolated<[GithubRemoteInfo]>([])
+    let batchCalls = LockIsolated<[ForgeRemoteInfo]>([])
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
       $0.githubCLI.resolveRemoteInfo = { _ in nil }
       $0.gitClient.remoteInfo = { _ in
-        GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")
+        ForgeRemoteInfo(forge: .github, host: "github.com", owner: "fork", repo: "project")
       }
       $0.githubCLI.batchPullRequests = { host, owner, repo, _ in
-        batchCalls.withValue { $0.append(GithubRemoteInfo(host: host, owner: owner, repo: repo)) }
+        batchCalls.withValue { $0.append(ForgeRemoteInfo(forge: .github, host: host, owner: owner, repo: repo)) }
         return [:]
       }
     }
@@ -4708,7 +4708,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.repositoryPullRequestRefreshCompleted)
     await store.finish()
 
-    #expect(batchCalls.value == [GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")])
+    #expect(batchCalls.value == [ForgeRemoteInfo(forge: .github, host: "github.com", owner: "fork", repo: "project")])
   }
 
   @Test func pullRequestActionMergePassesResolvedRemoteToGh() async {
@@ -4726,13 +4726,13 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.setWorktreeInfoForTesting(
       id: featureWorktree.id, addedLines: nil, removedLines: nil, pullRequest: openPullRequest)
-    let recordedRemote = LockIsolated<GithubRemoteInfo?>(nil)
+    let recordedRemote = LockIsolated<ForgeRemoteInfo?>(nil)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.resolveRemoteInfo = { _ in
-        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+        ForgeRemoteInfo(forge: .github, host: "github.com", owner: "upstream", repo: "project")
       }
       $0.githubCLI.mergePullRequest = { _, remote, _, _ in
         recordedRemote.withValue { $0 = remote }
@@ -4746,7 +4746,76 @@ struct RepositoriesFeatureTests {
     await store.receive(\.worktreeInfoEvent)
     await store.finish()
 
-    #expect(recordedRemote.value == GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project"))
+    #expect(recordedRemote.value == ForgeRemoteInfo(forge: .github, host: "github.com", owner: "upstream", repo: "project"))
+  }
+
+  @Test func worktreeInfoEventRepositoryPullRequestRefreshRoutesGitlabRemoteToGlabBatch() async {
+    let repoRoot = "/tmp/gitlab-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .available
+    let glabBatchCalls = LockIsolated<[ForgeRemoteInfo]>([])
+    let ghBatchCalls = LockIsolated<Int>(0)
+    let mergeRequest = GitLabMergeRequest(
+      iid: 7,
+      title: "Add login flow",
+      state: .opened,
+      additions: 12,
+      deletions: 3,
+      isDraft: false,
+      updatedAt: nil,
+      url: "https://gitlab.com/group/project/-/merge_requests/7",
+      sourceBranch: featureWorktree.name,
+      targetBranch: "main",
+      authorUsername: "octouser",
+      pipelineStatus: .running
+    )
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.resolveRemoteInfo = { _ in nil }
+      $0.gitClient.remoteInfo = { _ in
+        ForgeRemoteInfo(forge: .gitlab, host: "gitlab.com", owner: "group", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        ghBatchCalls.withValue { $0 += 1 }
+        return [:]
+      }
+      $0.gitlabCLI.batchMergeRequests = { host, owner, repo, _ in
+        glabBatchCalls.withValue {
+          $0.append(ForgeRemoteInfo(forge: .gitlab, host: host, owner: owner, repo: repo))
+        }
+        return [featureWorktree.name: mergeRequest]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+
+    #expect(
+      glabBatchCalls.value == [
+        ForgeRemoteInfo(forge: .gitlab, host: "gitlab.com", owner: "group", repo: "project")
+      ]
+    )
+    #expect(ghBatchCalls.value == 0)
+    #expect(
+      store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == .gitlab(mergeRequest)
+    )
   }
 
   @Test func pullRequestActionMergeFallsBackToGitRemoteWhenGhResolverReturnsNil() async {
@@ -4764,14 +4833,14 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.setWorktreeInfoForTesting(
       id: featureWorktree.id, addedLines: nil, removedLines: nil, pullRequest: openPullRequest)
-    let recordedRemote = LockIsolated<GithubRemoteInfo?>(nil)
+    let recordedRemote = LockIsolated<ForgeRemoteInfo?>(nil)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.resolveRemoteInfo = { _ in nil }
       $0.gitClient.remoteInfo = { _ in
-        GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")
+        ForgeRemoteInfo(forge: .github, host: "github.com", owner: "fork", repo: "project")
       }
       $0.githubCLI.mergePullRequest = { _, remote, _, _ in
         recordedRemote.withValue { $0 = remote }
@@ -4785,7 +4854,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.worktreeInfoEvent)
     await store.finish()
 
-    #expect(recordedRemote.value == GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project"))
+    #expect(recordedRemote.value == ForgeRemoteInfo(forge: .github, host: "github.com", owner: "fork", repo: "project"))
   }
 
   @Test func worktreeInfoEventRepositoryPullRequestRefreshMarksInFlightThenCompletes() async {
@@ -5157,7 +5226,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
-      $0.gitClient.remoteInfo = { _ in GithubRemoteInfo(host: "github.com", owner: "o", repo: "r") }
+      $0.gitClient.remoteInfo = { _ in ForgeRemoteInfo(forge: .github, host: "github.com", owner: "o", repo: "r") }
       $0.githubCLI.batchPullRequests = { _, _, _, _ in [featureName: pullRequest] }
     }
 
@@ -5188,7 +5257,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarItems[id: mainWorktree.id]?.pullRequestBranchAtQueryTime = nil
     }
     await store.receive(\.sidebarItems[id: featureWorktree.id].pullRequestChanged) {
-      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = pullRequest
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = .github(pullRequest)
       $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = nil
     }
     await store.receive(\.repositoryPullRequestRefreshCompleted) {

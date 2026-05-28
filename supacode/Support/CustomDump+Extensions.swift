@@ -79,3 +79,23 @@ extension GithubPullRequestStatusCheckRollup: CustomDumpRepresentable {
     checks.count
   }
 }
+
+extension GitLabMergeRequest: CustomDumpRepresentable {
+  var customDumpValue: Any {
+    (
+      iid: iid,
+      state: state,
+      isDraft: isDraft,
+      pipelineStatus: pipelineStatus as Any
+    )
+  }
+}
+
+extension ForgePullRequest: CustomDumpRepresentable {
+  var customDumpValue: Any {
+    switch self {
+    case .github(let pr): return ("github", pr.customDumpValue)
+    case .gitlab(let mr): return ("gitlab", mr.customDumpValue)
+    }
+  }
+}

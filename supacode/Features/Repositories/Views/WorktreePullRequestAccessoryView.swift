@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct WorktreePullRequestDisplay {
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let pullRequestState: String?
   let pullRequestBadgeStyle: (text: String, color: Color)?
 
-  init(worktreeName: String, pullRequest: GithubPullRequest?) {
+  init(worktreeName: String, pullRequest: ForgePullRequest?) {
     let matchesWorktree =
       if let pullRequest {
         pullRequest.headRefName == nil || pullRequest.headRefName == worktreeName
@@ -13,9 +13,10 @@ struct WorktreePullRequestDisplay {
         false
       }
     let displayPullRequest = matchesWorktree ? pullRequest : nil
-    let pullRequestState = displayPullRequest?.state.uppercased()
+    let pullRequestState = displayPullRequest?.displayStateBadge
     let pullRequestNumber = displayPullRequest?.number
-    let isQueued = displayPullRequest.map { PullRequestMergeQueueStatus(pullRequest: $0) != nil } ?? false
+    // Merge-queue is GitHub-only; GitLab MRs never report a queued state in v1.
+    let isQueued = displayPullRequest?.github.map { PullRequestMergeQueueStatus(pullRequest: $0) != nil } ?? false
     self.pullRequest = displayPullRequest
     self.pullRequestState = pullRequestState
     self.pullRequestBadgeStyle = PullRequestBadgeStyle.style(
@@ -33,9 +34,16 @@ struct WorktreePullRequestAccessoryView: View {
     if let pullRequestBadgeStyle = display.pullRequestBadgeStyle,
       let pullRequest = display.pullRequest
     {
-      PullRequestChecksPopoverButton(
-        pullRequest: pullRequest
-      ) {
+      switch pullRequest {
+      case .github(let githubPullRequest):
+        PullRequestChecksPopoverButton(
+          pullRequest: githubPullRequest
+        ) {
+          PullRequestBadgeView(text: pullRequestBadgeStyle.text, color: pullRequestBadgeStyle.color)
+        }
+      case .gitlab:
+        // v1 GitLab: render the badge without a check-rollup popover. Pipeline status display
+        // is a separate v1 surface (sidebar status dot / detail view).
         PullRequestBadgeView(text: pullRequestBadgeStyle.text, color: pullRequestBadgeStyle.color)
       }
     }

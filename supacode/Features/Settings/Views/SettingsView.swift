@@ -88,8 +88,8 @@ private struct SettingsSidebarView: View {
         .tag(SettingsSection.worktree)
       Label("Developer", systemImage: "hammer")
         .tag(SettingsSection.developer)
-      Label("GitHub", image: "github-mark")
-        .tag(SettingsSection.github)
+      Label("Forges", systemImage: "arrow.triangle.branch")
+        .tag(SettingsSection.forges)
       Label("Shortcuts", systemImage: "keyboard")
         .tag(SettingsSection.shortcuts)
       Label("Global Scripts", systemImage: "terminal")
@@ -165,8 +165,8 @@ private struct SettingsDetailView: View {
       KeyboardShortcutsSettingsView(store: settingsStore)
     case .updates:
       UpdatesSettingsView(settingsStore: settingsStore, updatesStore: updatesStore)
-    case .github:
-      GithubSettingsView(store: settingsStore)
+    case .forges:
+      ForgesSettingsView(store: settingsStore)
     case .scripts:
       GlobalScriptsSettingsView(store: settingsStore)
         .navigationTitle("Global Scripts")

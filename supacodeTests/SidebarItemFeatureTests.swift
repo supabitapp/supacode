@@ -189,7 +189,7 @@ struct SidebarItemFeatureTests {
       statusCheckRollup: nil,
       mergeQueueEntry: nil
     )
-    state.pullRequest = livePR
+    state.pullRequest = .github(livePR)
     let store = TestStore(initialState: state) {
       SidebarItemFeature()
     }
@@ -213,8 +213,8 @@ struct SidebarItemFeatureTests {
       mergeQueueEntry: nil
     )
     // Late stale result must not replace the live PR.
-    await store.send(.pullRequestChanged(stalePR, branchAtQueryTime: "feature/x"))
-    #expect(store.state.pullRequest == livePR)
+    await store.send(.pullRequestChanged(.github(stalePR), branchAtQueryTime: "feature/x"))
+    #expect(store.state.pullRequest == .github(livePR))
   }
 
   @Test func pullRequestChangedClearsWatermarkOnSuccessAndOnIdenticalReissue() async {
@@ -246,15 +246,15 @@ struct SidebarItemFeatureTests {
       $0.pullRequestBranchAtQueryTime = "feature"
     }
     // Success path: PR is written and watermark cleared.
-    await store.send(.pullRequestChanged(pullRequest, branchAtQueryTime: "feature")) {
-      $0.pullRequest = pullRequest
+    await store.send(.pullRequestChanged(.github(pullRequest), branchAtQueryTime: "feature")) {
+      $0.pullRequest = .github(pullRequest)
       $0.pullRequestBranchAtQueryTime = nil
     }
     // Identical-payload reissue with a re-armed watermark: PR unchanged, watermark still cleared.
     await store.send(.pullRequestQueryStarted(branch: "feature")) {
       $0.pullRequestBranchAtQueryTime = "feature"
     }
-    await store.send(.pullRequestChanged(pullRequest, branchAtQueryTime: "feature")) {
+    await store.send(.pullRequestChanged(.github(pullRequest), branchAtQueryTime: "feature")) {
       $0.pullRequestBranchAtQueryTime = nil
     }
   }

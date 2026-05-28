@@ -652,7 +652,7 @@ struct GitClient {
     return FileManager.default.fileExists(atPath: lockURL.path(percentEncoded: false))
   }
 
-  nonisolated func remoteInfo(for repositoryRoot: URL) async -> GithubRemoteInfo? {
+  nonisolated func remoteInfo(for repositoryRoot: URL) async -> ForgeRemoteInfo? {
     let path = repositoryRoot.path(percentEncoded: false)
     guard
       let remotesOutput = try? await runGit(
@@ -682,7 +682,7 @@ struct GitClient {
       else {
         continue
       }
-      if let info = Self.parseGithubRemoteInfo(remoteURL) {
+      if let info = Self.parseRemoteInfo(remoteURL) {
         return info
       }
     }
@@ -937,7 +937,7 @@ struct GitClient {
     return nil
   }
 
-  nonisolated static func parseGithubRemoteInfo(_ remoteURL: String) -> GithubRemoteInfo? {
+  nonisolated static func parseRemoteInfo(_ remoteURL: String) -> ForgeRemoteInfo? {
     let trimmed = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
       return nil
@@ -952,33 +952,33 @@ struct GitClient {
       guard hostParts.count == 2 else {
         return nil
       }
-      return parseGithubRemoteInfo(host: String(hostParts[0]), path: String(hostParts[1]))
+      return parseRemoteInfo(host: String(hostParts[0]), path: String(hostParts[1]))
     }
     guard let url = URL(string: trimmed), let host = url.host else {
       return nil
     }
     let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    return parseGithubRemoteInfo(host: host, path: path)
+    return parseRemoteInfo(host: host, path: path)
   }
 
-  nonisolated private static func parseGithubRemoteInfo(host: String, path: String) -> GithubRemoteInfo? {
-    let normalizedHost = host.lowercased()
-    guard normalizedHost.contains("github") else {
+  nonisolated private static func parseRemoteInfo(host: String, path: String) -> ForgeRemoteInfo? {
+    guard let forge = Forge.detect(host: host) else {
       return nil
     }
     let components = path.split(separator: "/", omittingEmptySubsequences: true)
     guard components.count >= 2 else {
       return nil
     }
-    let owner = String(components[0])
-    var repo = String(components[1])
-    if repo.hasSuffix(".git") {
-      repo = String(repo.dropLast(4))
+    var repoSegment = String(components.last!)
+    if repoSegment.hasSuffix(".git") {
+      repoSegment = String(repoSegment.dropLast(4))
     }
-    guard !owner.isEmpty, !repo.isEmpty else {
+    let ownerSegments = components.dropLast().map(String.init)
+    let owner = ownerSegments.joined(separator: "/")
+    guard !owner.isEmpty, !repoSegment.isEmpty else {
       return nil
     }
-    return GithubRemoteInfo(host: host, owner: owner, repo: repo)
+    return ForgeRemoteInfo(forge: forge, host: host, owner: owner, repo: repoSegment)
   }
 
 }

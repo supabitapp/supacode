@@ -148,7 +148,14 @@ private struct RepositoryOwnerAvatar: View {
 enum GitHubOwnerAvatar {
   static func url(for rootURL: URL, gitClient: GitClientDependency) async -> URL? {
     guard let info = await gitClient.remoteInfo(rootURL) else { return nil }
-    return URL(string: "https://github.com/\(info.owner).png?size=64")
+    switch info.forge {
+    case .github:
+      return URL(string: "https://github.com/\(info.owner).png?size=64")
+    case .gitlab:
+      // GitLab serves group / user avatars at `/<path>.png` on the active host. For subgroup
+      // namespaces (owner contains `/`), this 404s — the fallback is rendered when avatarURL stays nil.
+      return URL(string: "https://\(info.host)/\(info.owner).png?width=64")
+    }
   }
 }
 
