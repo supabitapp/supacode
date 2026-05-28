@@ -66,6 +66,15 @@ fi
 
 cd "${zmx_dir}"
 
+# zig compiles its build runner for the native target, which won't link against
+# macOS 26.4+ SDKs (arm64e-only libSystem.tbd; ziglang/zig#31658). Respect a
+# DEVELOPER_DIR the caller already chose (the Makefile exports one); only fall
+# back to Xcode 26.3 — whose SDK still has arm64-macos — when nothing is set,
+# e.g. when this script is run directly. No-op when 26.3 is absent.
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d "/Applications/Xcode_26.3.app/Contents/Developer" ]; then
+  export DEVELOPER_DIR="/Applications/Xcode_26.3.app/Contents/Developer"
+fi
+
 slice_paths=()
 for target in "${zmx_targets[@]}"; do
   slice_prefix="${zmx_build_root}/slices/${target}"

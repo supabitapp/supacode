@@ -78,6 +78,20 @@ if [ -f "${ghostty_fingerprint_path}" ] &&
 fi
 
 cd "${ghostty_dir}"
+
+# macOS 26.4+ SDKs dropped plain `arm64-macos` from libSystem.tbd, leaving only
+# `arm64e-macos`. Zig 0.15.2's Mach-O linker won't match the two, so every
+# libSystem symbol comes up undefined when it compiles its own build runner
+# (ziglang/zig#31658, fixed in 0.16 but Ghostty pins minimum 0.15.2). Build
+# against an Xcode whose SDK still advertises arm64-macos. The dir must be a
+# *full* Xcode (Command Line Tools lack the iOS SDK and the `metal` compiler the
+# xcframework build needs). Respect a DEVELOPER_DIR the caller already chose
+# (the Makefile exports one); only fall back to Xcode 26.3 when nothing is set,
+# e.g. when this script is run directly. No-op when 26.3 is absent.
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d "/Applications/Xcode_26.3.app/Contents/Developer" ]; then
+  export DEVELOPER_DIR="/Applications/Xcode_26.3.app/Contents/Developer"
+fi
+
 mise exec -- zig build -Doptimize=ReleaseFast -Demit-xcframework=true -Dsentry=false --prefix "${ghostty_build_root}" --cache-dir "${ghostty_local_cache_dir}" --global-cache-dir "${ghostty_global_cache_dir}"
 rsync -a --delete "${ghostty_dir}/macos/GhosttyKit.xcframework/" "${xcframework_path}/"
 prepare_xcframework
