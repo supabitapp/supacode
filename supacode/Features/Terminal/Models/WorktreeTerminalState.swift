@@ -1332,7 +1332,7 @@ final class WorktreeTerminalState {
     let surfaceID = resolvedID
     terminalStateLogger.info("createSurface: resolved=\(surfaceID)")
     let inherited = inheritedSurfaceConfig(fromSurfaceId: inheritingFromSurfaceId, context: context)
-    let (resolvedCommand, resolvedInitialInput) = resolveZmxWrapping(
+    let launch = resolveLaunch(
       surfaceID: surfaceID,
       command: command,
       initialInput: initialInput,
@@ -1342,9 +1342,13 @@ final class WorktreeTerminalState {
       id: surfaceID,
       runtime: runtime,
       workingDirectory: workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory,
-      command: resolvedCommand,
-      initialInput: resolvedInitialInput,
+      command: launch.command,
+      initialInput: launch.initialInput,
       environmentVariables: surfaceEnvironment(tabId: tabId, surfaceID: surfaceID),
+      commandWrapper: launch.commandWrapper,
+      // Blocking-script runners (bypassZmx) emit their own OSC 133/7 and must
+      // not get Ghostty's shell integration injected into the host shell.
+      disableShellIntegration: bypassZmx,
       fontSize: inherited.fontSize,
       context: context
     )
@@ -1424,24 +1428,41 @@ final class WorktreeTerminalState {
     }
   }
 
-  /// Wraps the surface command in `zmx attach <session-id>` so the underlying shell
-  /// survives app quit. `initialInput` is always passed through; zmx itself is
-  /// authoritative for attach-vs-create, so we never gate setup-script firing on
-  /// a stale snapshot of daemon state.
-  private func resolveZmxWrapping(
+  struct ResolvedLaunch {
+    var command: String?
+    var initialInput: String?
+    var commandWrapper: [String]
+  }
+
+  /// Routes a surface through zmx so the underlying shell survives app quit.
+  ///
+  /// Interactive surfaces (no explicit `command`) keep `command` nil and inject
+  /// `zmx attach <id>` as a Ghostty `command-wrapper`, so Ghostty resolves and
+  /// integrates the user's real shell exactly as it would without zmx, with zmx
+  /// wrapping the whole resolved (login + integrated) argv.
+  ///
+  /// Explicit commands (scripts) instead wrap the command string itself, since
+  /// they don't want shell resolution / integration. `initialInput` is always
+  /// passed through; zmx is authoritative for attach-vs-create.
+  private func resolveLaunch(
     surfaceID: UUID,
     command: String?,
     initialInput: String?,
     bypassZmx: Bool
-  ) -> (command: String?, initialInput: String?) {
+  ) -> ResolvedLaunch {
     if bypassZmx {
-      return (command, initialInput)
+      return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [])
     }
-    let sessionID = ZmxSessionID.make(surfaceID: surfaceID)
-    guard let wrapped = zmxClient.wrapCommand(sessionID, command) else {
-      return (command, initialInput)
-    }
-    return (wrapped, initialInput)
+    let resolved = ZmxAttach.resolveLaunch(
+      executablePath: zmxClient.executableURL()?.path(percentEncoded: false),
+      sessionID: ZmxSessionID.make(surfaceID: surfaceID),
+      command: command
+    )
+    return ResolvedLaunch(
+      command: resolved.command,
+      initialInput: initialInput,
+      commandWrapper: resolved.commandWrapper
+    )
   }
 
   private struct InheritedSurfaceConfig: Equatable {

@@ -23,9 +23,6 @@ struct ZmxClient: Sendable {
   /// Use for kill paths against sessions persisted from earlier launches: probe
   /// bypass only means "don't wrap a new session", not "don't kill an old one".
   var isBundled: @Sendable () -> Bool
-  /// Wrap a surface command in `zmx attach <session-id>`. Pure; no side effects.
-  /// Returns nil when zmx is unbundled, so callers fall through to the raw `command`.
-  var wrapCommand: @Sendable (_ sessionID: String, _ userCommand: String?) -> String?
   /// Tear down a session. No-op on missing. Bounded by a 5-second timeout so a
   /// stuck daemon can't hold the close path indefinitely.
   var killSession: @Sendable (_ sessionID: String) async -> Void
@@ -191,14 +188,6 @@ extension ZmxClient {
     return ZmxClient(
       executableURL: resolveExecutable,
       isBundled: { bundledExecutable() != nil },
-      wrapCommand: { sessionID, userCommand in
-        guard let executable = resolveExecutable() else { return nil }
-        return ZmxAttach.buildCommand(
-          executablePath: executable.path(percentEncoded: false),
-          sessionID: sessionID,
-          userCommand: userCommand
-        )
-      },
       killSession: { sessionID in
         _ = await runZmx(["kill", sessionID])
       },
@@ -216,7 +205,6 @@ extension ZmxClient {
   nonisolated static let noop = ZmxClient(
     executableURL: { nil },
     isBundled: { false },
-    wrapCommand: { _, _ in nil },
     killSession: { _ in },
     listSessions: { [] }
   )
@@ -309,6 +297,34 @@ nonisolated enum ZmxAttach {
       return attach
     }
     return "\(attach) /bin/sh -c \(shellQuote(command))"
+  }
+
+  /// Argv that launches an interactive surface under zmx, passed to Ghostty as a
+  /// `command-wrapper` (prepended to the resolved shell argv). Each element is a
+  /// separate arg, so no shell quoting is needed even when the path has spaces.
+  static func buildWrapperArgv(executablePath: String, sessionID: String) -> [String] {
+    [executablePath, "attach", sessionID]
+  }
+
+  /// Resolves how a surface launches under zmx, given the budget-gated executable
+  /// path (nil when zmx is unbundled or over budget). Interactive surfaces
+  /// (`command == nil`) keep a nil command and get an argv `command-wrapper`, so
+  /// Ghostty resolves + integrates the real shell and zmx wraps the result.
+  /// Explicit commands (scripts) get a `/bin/sh -c` wrapped command string and no
+  /// wrapper. A nil `executablePath` falls through to the raw command with no zmx.
+  static func resolveLaunch(
+    executablePath: String?,
+    sessionID: String,
+    command: String?
+  ) -> (command: String?, commandWrapper: [String]) {
+    // A blank command is "no command" (interactive); normalize so an empty
+    // string can't slip into the script path and launch a bare shell uninteg.
+    let command = command.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+    guard let executablePath else { return (command, []) }
+    if command == nil {
+      return (nil, buildWrapperArgv(executablePath: executablePath, sessionID: sessionID))
+    }
+    return (buildCommand(executablePath: executablePath, sessionID: sessionID, userCommand: command), [])
   }
 
   static func shellQuote(_ value: String) -> String {
