@@ -42,20 +42,14 @@ nonisolated struct LayoutsKey: SharedKey {
   }
 
   func save(
-    _ value: [String: TerminalLayoutSnapshot],
+    _: [String: TerminalLayoutSnapshot],
     context _: SaveContext,
     continuation: SaveContinuation
   ) {
-    @Dependency(\.settingsFileStorage) var storage
-    do {
-      let encoder = JSONEncoder()
-      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      let data = try encoder.encode(value)
-      try storage.save(data, SupacodePaths.layoutsURL)
-      continuation.resume()
-    } catch {
-      continuation.resume(throwing: error)
-    }
+    // No-op: `LayoutsIncrementalWriter` is the sole disk writer for `layouts.json`.
+    // `@Shared(.layouts)` stays the in-memory source of truth; persisting here too
+    // would race the actor's per-key merge with a whole-dict last-writer-wins clobber.
+    continuation.resume()
   }
 }
 

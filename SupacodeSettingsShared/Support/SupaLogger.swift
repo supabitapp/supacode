@@ -36,4 +36,12 @@ public nonisolated struct SupaLogger: Sendable {
       logger.warning("\(message, privacy: .public)")
     #endif
   }
+
+  public func error(_ message: String) {
+    #if DEBUG
+      print("[\(category)] \(message)")
+    #else
+      logger.error("\(message, privacy: .public)")
+    #endif
+  }
 }
