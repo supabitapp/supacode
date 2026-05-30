@@ -5001,8 +5001,6 @@ extension RepositoriesFeature.State {
         }
       }
       setSingleWorktreeSelection(candidate, recordHistory: false)
-      // Always-focused-terminal: history navigation lands focus on the
-      // restored worktree's terminal, matching the next/prev hotkeys.
       var effects: [Effect<RepositoriesFeature.Action>] = [
         .send(.delegate(.selectedWorktreeChanged(worktree(for: candidate))))
       ]

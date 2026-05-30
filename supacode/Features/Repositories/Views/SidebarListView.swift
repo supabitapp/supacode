@@ -27,11 +27,6 @@ struct SidebarListView: View {
       get: { currentSelections },
       set: { newValue in
         guard newValue != currentSelections else { return }
-        // Always-focused-terminal: sidebar selection (mouse or keyboard
-        // arrow nav through NSOutlineView) should land focus in the new
-        // worktree's terminal. Previously the default `false` left focus
-        // floating, so every sidebar click had to be followed by a
-        // manual click into the terminal.
         store.send(.selectionChanged(newValue, focusTerminal: true))
       }
     )
