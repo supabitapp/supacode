@@ -303,6 +303,9 @@ struct WorktreeTerminalManagerTests {
     server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
     server.onEvent?(makeHookEvent(.idle, surfaceID: surface.id))
 
+    // Settle the stream-delivered events before the direct close so a buffered
+    // busy can't resurrect activity after the surface is gone.
+    await presence.drain()
     presence.send(.surfaceClosed(surface.id))
     await clock.advance(by: .milliseconds(500))
     await presence.drain()
