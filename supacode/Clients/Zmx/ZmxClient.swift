@@ -29,10 +29,11 @@ struct ZmxClient: Sendable {
   /// Tear down a session. No-op on missing. Bounded by a 5-second timeout so a
   /// stuck daemon can't hold the close path indefinitely.
   var killSession: @Sendable (_ sessionID: String) async -> Void
-  /// Returns all live Supacode session names (`supa-<uuid>`) the daemon currently
-  /// hosts. Empty when zmx is unbundled or the daemon is unreachable. Used at
-  /// launch to reap sessions whose owning surface no longer exists.
-  var listSessions: @Sendable () async -> [String]
+  /// Returns each live Supacode session with its attached-client count, or nil
+  /// when the probe failed/timed out. nil means UNKNOWN (never reap); `[]` means
+  /// a successful empty listing. A `clients` of nil marks a session whose count
+  /// is unknown (err/status line), which the reaper must also spare.
+  var listSessionsWithClients: @Sendable () async -> [ZmxSessionListParser.Entry]?
 }
 
 /// Cached probe result so we log the bypass reason exactly once per process
@@ -202,13 +203,11 @@ extension ZmxClient {
       killSession: { sessionID in
         _ = await runZmx(["kill", sessionID])
       },
-      listSessions: {
-        guard let stdout = await runZmx(["ls", "--short"], captureStdout: true) else { return [] }
-        return
-          stdout
-          .split(whereSeparator: \.isNewline)
-          .map { $0.trimmingCharacters(in: .whitespaces) }
-          .filter { $0.hasPrefix(ZmxSessionID.prefix) && !$0.isEmpty }
+      listSessionsWithClients: {
+        // nil from runZmx is the UNKNOWN signal (spawn error / timeout / non-zero
+        // exit); preserve it so the reaper never kills against a failed probe.
+        guard let stdout = await runZmx(["ls"], captureStdout: true) else { return nil }
+        return ZmxSessionListParser.parse(stdout)
       }
     )
   }()
@@ -218,7 +217,7 @@ extension ZmxClient {
     isBundled: { false },
     wrapCommand: { _, _ in nil },
     killSession: { _ in },
-    listSessions: { [] }
+    listSessionsWithClients: { [] }
   )
 }
 
@@ -231,6 +230,45 @@ extension DependencyValues {
   nonisolated var zmxClient: ZmxClient {
     get { self[ZmxClient.self] }
     set { self[ZmxClient.self] = newValue }
+  }
+}
+
+/// Pure parser for zmx's full (`ls`, non-`--short`) tab-delimited listing.
+/// Each line is `[→ |  ]name=<name>\tk=v\t...`; a healthy session carries
+/// `clients=<n>`, an unreachable one carries `err=`/`status=` (no count).
+nonisolated enum ZmxSessionListParser {
+  struct Entry: Equatable, Sendable {
+    var name: String
+    /// nil when the count is unknown (err/status line); the reaper spares these.
+    var clients: Int?
+  }
+
+  static func parse(_ stdout: String) -> [Entry] {
+    stdout
+      .split(whereSeparator: \.isNewline)
+      .compactMap { line -> Entry? in
+        // Strip the current-session arrow / leading indent before tokenizing.
+        var trimmed = Substring(line)
+        if trimmed.hasPrefix("→ ") {
+          trimmed = trimmed.dropFirst(2)
+        }
+        // Non-current sessions are indented with a literal leading space run.
+        while trimmed.first?.isWhitespace == true {
+          trimmed = trimmed.dropFirst()
+        }
+        let fields = trimmed.split(separator: "\t")
+        var values: [Substring: Substring] = [:]
+        for field in fields {
+          guard let separator = field.firstIndex(of: "=") else { continue }
+          let key = field[field.startIndex..<separator]
+          let value = field[field.index(after: separator)...]
+          values[key] = value
+        }
+        guard let name = values["name"], name.hasPrefix(ZmxSessionID.prefix) else { return nil }
+        // Absent `clients=` (err/status line) maps to nil = unknown, not zero.
+        let clients = values["clients"].flatMap { Int($0) }
+        return Entry(name: String(name), clients: clients)
+      }
   }
 }
 
