@@ -819,7 +819,7 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
       HStack(spacing: 8) {
         Image(systemName: "sun.max.fill")
           .font(.callout)
-        Text("00:00 – Open Command Palette (⌘P)")
+        Text("00:00 – Open Command Palette (⌘⇧P)")
           .font(.footnote)
           .monospaced()
       }

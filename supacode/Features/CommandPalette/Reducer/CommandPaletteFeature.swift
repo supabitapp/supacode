@@ -6,9 +6,21 @@ import SupacodeSettingsShared
 
 @Reducer
 struct CommandPaletteFeature {
+  /// Two narrow surfaces sharing one palette UI. `.commands` is the
+  /// historical full palette (worktrees, scripts, ghostty actions, PR
+  /// actions, settings); `.worktreeSwitcher` shows only worktrees, sorted
+  /// by `RepositoriesFeature.State.worktreeMRU`. Mode lives in State so
+  /// the items builder, the view, and the dismiss handler all read the
+  /// same source of truth.
+  enum PaletteMode: Equatable, Sendable {
+    case commands
+    case worktreeSwitcher
+  }
+
   @ObservableState
   struct State: Equatable {
     var isPresented = false
+    var mode: PaletteMode = .commands
     var query = ""
     var selectedIndex: Int?
     var recencyByItemID: [CommandPaletteItem.ID: TimeInterval] = [:]
@@ -23,9 +35,14 @@ struct CommandPaletteFeature {
     case binding(BindingAction<State>)
     case setPresented(Bool)
     case togglePresented
+    /// Open the palette in a specific mode. No-op if already presented in
+    /// the same mode; switches mode and refreshes selection if already
+    /// presented in a different mode. Wired to the Cmd+P / Cmd+Shift+P
+    /// menu items in `supacodeApp.swift`.
+    case presentInMode(PaletteMode)
     case activateItem(CommandPaletteItem)
-    case updateSelection(itemsCount: Int)
-    case resetSelection(itemsCount: Int)
+    case updateSelection(itemsCount: Int, defaultIndex: Int)
+    case resetSelection(itemsCount: Int, defaultIndex: Int)
     case moveSelection(SelectionMove, itemsCount: Int)
     case pruneRecency([CommandPaletteItem.ID])
     case delegate(Delegate)
@@ -55,6 +72,11 @@ struct CommandPaletteFeature {
     case openFailingCheckDetails(Worktree.ID)
     case runScript(ScriptDefinition)
     case stopScript(UUID, name: String)
+    /// Palette closed without the user activating an item (Esc, outside
+    /// tap, programmatic dismiss). AppFeature uses this to refocus the
+    /// current worktree's terminal — the "terminal is the default
+    /// focus" invariant.
+    case dismissedWithoutSelection
     #if DEBUG
       case debugTestToast(RepositoriesFeature.StatusToast)
     #endif
@@ -70,6 +92,7 @@ struct CommandPaletteFeature {
         return .none
 
       case .setPresented(let isPresented):
+        let wasPresented = state.isPresented
         state.isPresented = isPresented
         if isPresented {
           loadRecency(into: &state)
@@ -77,15 +100,37 @@ struct CommandPaletteFeature {
         } else {
           state.query = ""
           state.selectedIndex = nil
+          state.mode = .commands
+        }
+        if wasPresented, !isPresented {
+          return .send(.delegate(.dismissedWithoutSelection))
         }
         return .none
 
       case .togglePresented:
+        let wasPresented = state.isPresented
         state.isPresented.toggle()
         if state.isPresented {
+          state.mode = .commands
           loadRecency(into: &state)
           state.selectedIndex = nil
         } else {
+          state.query = ""
+          state.selectedIndex = nil
+          state.mode = .commands
+        }
+        if wasPresented, !state.isPresented {
+          return .send(.delegate(.dismissedWithoutSelection))
+        }
+        return .none
+
+      case .presentInMode(let mode):
+        let wasPresented = state.isPresented
+        let modeChanged = state.mode != mode
+        state.isPresented = true
+        state.mode = mode
+        if !wasPresented || modeChanged {
+          loadRecency(into: &state)
           state.query = ""
           state.selectedIndex = nil
         }
@@ -95,11 +140,14 @@ struct CommandPaletteFeature {
         state.isPresented = false
         state.query = ""
         state.selectedIndex = nil
+        state.mode = .commands
         state.recencyByItemID[item.id] = now.timeIntervalSince1970
         saveRecency(state.recencyByItemID)
+        // No `.dismissedWithoutSelection` here: every activation delegate
+        // resolves to a destination that owns its own focus transition.
         return .send(.delegate(delegateAction(for: item.kind)))
 
-      case .updateSelection(let itemsCount):
+      case .updateSelection(let itemsCount, let defaultIndex):
         if itemsCount == 0 {
           state.selectedIndex = nil
           return .none
@@ -107,12 +155,12 @@ struct CommandPaletteFeature {
         if let selectedIndex = state.selectedIndex, selectedIndex >= itemsCount {
           state.selectedIndex = itemsCount - 1
         } else if state.selectedIndex == nil {
-          state.selectedIndex = 0
+          state.selectedIndex = min(max(defaultIndex, 0), itemsCount - 1)
         }
         return .none
 
-      case .resetSelection(let itemsCount):
-        state.selectedIndex = itemsCount == 0 ? nil : 0
+      case .resetSelection(let itemsCount, let defaultIndex):
+        state.selectedIndex = itemsCount == 0 ? nil : min(max(defaultIndex, 0), itemsCount - 1)
         return .none
 
       case .moveSelection(let direction, let itemsCount):
@@ -154,14 +202,23 @@ struct CommandPaletteFeature {
   static func filterItems(
     items: [CommandPaletteItem],
     query: String,
+    mode: PaletteMode = .commands,
     recencyByID: [CommandPaletteItem.ID: TimeInterval] = [:],
     now: Date = .now
   ) -> [CommandPaletteItem] {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    let globalItems = items.filter(\.isGlobal)
     guard !trimmed.isEmpty else {
-      let visibleItems = globalItems.filter { !$0.isRootAction }
-      return prioritizeItems(items: visibleItems, recencyByID: recencyByID, now: now)
+      switch mode {
+      case .commands:
+        // The empty-query commands palette shows only the non-root global
+        // actions; worktrees, scripts, and PR actions surface once you type.
+        let visibleItems = items.filter { $0.isGlobal && !$0.isRootAction }
+        return prioritizeItems(items: visibleItems, recencyByID: recencyByID, now: now)
+      case .worktreeSwitcher:
+        // The switcher is a navigation surface: every worktree row is visible
+        // with no query, already ordered MRU-first via `priorityTier`.
+        return prioritizeItems(items: items, recencyByID: recencyByID, now: now)
+      }
     }
     let scorer = CommandPaletteFuzzyScorer(query: trimmed, recencyByID: recencyByID, now: now)
     return scorer.rankedItems(from: items)
@@ -247,19 +304,10 @@ struct CommandPaletteFeature {
     }
     for row in repositories.orderedSidebarItems() {
       guard row.lifecycle == .idle else { continue }
-      let repositoryName = Repository.sidebarDisplayName(
-        custom: repositories.sidebar.sections[row.repositoryID]?.title,
-        fallback: repositories.repositoryName(for: row.repositoryID) ?? "Repository"
-      )
-      let worktreeDisplayName = SidebarDisplayName.resolved(custom: row.customTitle, fallback: row.name) ?? row.name
-      // Folder rows only have a synthetic "main" worktree whose name matches the repository, so
-      // the usual `repo / worktree` format would render as `Foo / Foo`. Use the repository name
-      // alone for folders.
-      let title = row.isFolder ? repositoryName : "\(repositoryName) / \(worktreeDisplayName)"
       items.append(
         CommandPaletteItem(
           id: CommandPaletteItemID.worktreeSelect(row.id),
-          title: title,
+          title: worktreeRowTitle(for: row, in: repositories),
           subtitle: nil,
           kind: .worktreeSelect(row.id)
         )
@@ -315,6 +363,89 @@ struct CommandPaletteFeature {
       ids.append(CommandPaletteItemID.stopScript(script.id))
     }
     return ids
+  }
+
+  /// Mode-aware item dispatch. The palette overlay calls this once per
+  /// re-render; the mode comes from `State.mode` and the per-mode
+  /// builders own all selection / ranking / subtitle decisions.
+  static func items(
+    in mode: PaletteMode,
+    from repositories: RepositoriesFeature.State,
+    ghosttyCommands: [GhosttyCommand] = [],
+    scripts: [ScriptDefinition] = [],
+    runningScriptIDs: Set<UUID> = []
+  ) -> [CommandPaletteItem] {
+    switch mode {
+    case .commands:
+      return commandPaletteItems(
+        from: repositories,
+        ghosttyCommands: ghosttyCommands,
+        scripts: scripts,
+        runningScriptIDs: runningScriptIDs
+      )
+    case .worktreeSwitcher:
+      return worktreeSwitcherItems(from: repositories)
+    }
+  }
+
+  /// Worktree switcher items. Order: `worktreeMRU` entries first in recency
+  /// order (most-recent-first), then any remaining idle worktree in sidebar
+  /// order. `priorityTier` carries the ordinal so `prioritizeItems` keeps MRU
+  /// order with an empty query; the fuzzy scorer — matching the combined
+  /// `repo / worktree` title, so a query hits either the project name or the
+  /// worktree name — takes over once the user types.
+  ///
+  /// The current worktree (`selectedWorktreeID`, normally the `worktreeMRU`
+  /// head) is rendered so you can see where you are, but it carries
+  /// `isCurrentWorktree` so the overlay skips it for the default selection —
+  /// ⌘P then Enter lands on the previous worktree (Cmd+Tab style) instead of
+  /// being a no-op.
+  static func worktreeSwitcherItems(
+    from repositories: RepositoriesFeature.State
+  ) -> [CommandPaletteItem] {
+    let mruRank: [Worktree.ID: Int] = Dictionary(
+      repositories.worktreeMRU.enumerated().map { ($1, $0) },
+      uniquingKeysWith: { first, _ in first }
+    )
+    let currentWorktreeID = repositories.selectedWorktreeID
+    let idleRows = repositories.orderedSidebarItems().filter { $0.lifecycle == .idle }
+    let ordered =
+      idleRows.enumerated().sorted { lhs, rhs in
+        switch (mruRank[lhs.element.id], mruRank[rhs.element.id]) {
+        case let (lhsRank?, rhsRank?): return lhsRank < rhsRank
+        case (_?, nil): return true
+        case (nil, _?): return false
+        case (nil, nil): return lhs.offset < rhs.offset
+        }
+      }
+      .map(\.element)
+
+    return ordered.enumerated().map { index, row in
+      CommandPaletteItem(
+        id: CommandPaletteItemID.worktreeSelect(row.id),
+        title: worktreeRowTitle(for: row, in: repositories),
+        subtitle: nil,
+        kind: .worktreeSelect(row.id),
+        priorityTier: index,
+        isCurrentWorktree: row.id == currentWorktreeID
+      )
+    }
+  }
+
+  /// `repo / worktree` row title shared by the commands palette and the
+  /// worktree switcher. Folder rows only have a synthetic "main" worktree
+  /// whose name matches the repository, so they render as the repository
+  /// name alone to avoid a `Foo / Foo` label.
+  static func worktreeRowTitle(
+    for row: SidebarItemFeature.State,
+    in repositories: RepositoriesFeature.State
+  ) -> String {
+    let repositoryName = Repository.sidebarDisplayName(
+      custom: repositories.sidebar.sections[row.repositoryID]?.title,
+      fallback: repositories.repositoryName(for: row.repositoryID) ?? "Repository"
+    )
+    let worktreeDisplayName = SidebarDisplayName.resolved(custom: row.customTitle, fallback: row.name) ?? row.name
+    return row.isFolder ? repositoryName : "\(repositoryName) / \(worktreeDisplayName)"
   }
 }
 

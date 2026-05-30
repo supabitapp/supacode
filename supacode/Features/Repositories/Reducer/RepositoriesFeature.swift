@@ -148,6 +148,13 @@ struct RepositoriesFeature {
     /// system-driven cleanup promotions.
     var worktreeHistoryBackStack: [Worktree.ID] = []
     var worktreeHistoryForwardStack: [Worktree.ID] = []
+    /// Worktree MRU stack — most-recent-first, deduped. Updated whenever a
+    /// concrete worktree selection lands (both the `setSingleWorktreeSelection`
+    /// hotkey/palette path and the `reduceSelectionChangedEffect` sidebar path);
+    /// the selected worktree moves to the head. Drives the ⌘P worktree switcher
+    /// sort, so ⌘P then Enter is a Cmd+Tab-style toggle between the two most
+    /// recent worktrees. Session-only; not persisted.
+    var worktreeMRU: [Worktree.ID] = []
     /// Single source of truth for all user-curated sidebar state —
     /// section order / collapse / pin / unpin / archive / focused
     /// worktree — persisted to `~/.supacode/sidebar.json`. Replaces
@@ -5373,6 +5380,19 @@ extension RepositoriesFeature.State {
     if recordHistory {
       recordWorktreeHistoryTransition(from: previousID, to: worktreeID)
     }
+    if let worktreeID {
+      recordWorktreeMRU(worktreeID: worktreeID)
+    }
+  }
+
+  /// Hoists the selected worktree to the head of `worktreeMRU`. Called from
+  /// every concrete worktree selection — selection-clearing (nil) paths are
+  /// no-ops so a "select nothing" transition can't poison the MRU head.
+  mutating func recordWorktreeMRU(worktreeID: Worktree.ID) {
+    if let existingIndex = worktreeMRU.firstIndex(of: worktreeID) {
+      worktreeMRU.remove(at: existingIndex)
+    }
+    worktreeMRU.insert(worktreeID, at: 0)
   }
 
   /// Records a fresh worktree navigation: pushes the previous selection onto
@@ -5474,6 +5494,13 @@ extension RepositoriesFeature.State {
     selection = nextSelectedWorktreeID.map(SidebarSelection.worktree)
     sidebarSelectedWorktreeIDs = nextSidebarSelectedWorktreeIDs
     recordWorktreeHistoryTransition(from: previousSelection, to: nextSelectedWorktreeID)
+    // Sidebar selection bypasses `setSingleWorktreeSelection`, so record the
+    // worktree MRU here too — otherwise clicking a worktree (the dominant nav
+    // path) never updates `worktreeMRU`, and the ⌘P switcher can't put the
+    // worktree you actually had open at the top.
+    if let nextSelectedWorktreeID {
+      recordWorktreeMRU(worktreeID: nextSelectedWorktreeID)
+    }
     var effects: [Effect<RepositoriesFeature.Action>] = []
     if focusTerminal,
       let nextSelectedWorktreeID,

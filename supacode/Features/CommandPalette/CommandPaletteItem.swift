@@ -10,19 +10,27 @@ struct CommandPaletteItem: Identifiable, Equatable {
   let subtitle: String?
   let kind: Kind
   let priorityTier: Int
+  /// `true` for the worktree-switcher row that represents the worktree the
+  /// user is already in. The switcher still renders it (so you can see
+  /// where you are), but the overlay skips it for the default selection so
+  /// ⌘P then Enter lands on the previous worktree instead of being a
+  /// no-op. Always `false` outside the worktree switcher.
+  let isCurrentWorktree: Bool
 
   init(
     id: String,
     title: String,
     subtitle: String?,
     kind: Kind,
-    priorityTier: Int = defaultPriorityTier
+    priorityTier: Int = defaultPriorityTier,
+    isCurrentWorktree: Bool = false
   ) {
     self.id = id
     self.title = title
     self.subtitle = subtitle
     self.kind = kind
     self.priorityTier = priorityTier
+    self.isCurrentWorktree = isCurrentWorktree
   }
 
   enum Kind: Equatable {

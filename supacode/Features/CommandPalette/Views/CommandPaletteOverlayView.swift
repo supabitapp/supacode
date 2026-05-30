@@ -95,11 +95,24 @@ struct CommandPaletteOverlayView: View {
   }
 
   private func updateSelection(rows: [CommandPaletteItem]) {
-    store.send(.updateSelection(itemsCount: rows.count))
+    store.send(.updateSelection(itemsCount: rows.count, defaultIndex: defaultSelectionIndex(rows: rows)))
   }
 
   private func resetSelection(rows: [CommandPaletteItem]) {
-    store.send(.resetSelection(itemsCount: rows.count))
+    store.send(.resetSelection(itemsCount: rows.count, defaultIndex: defaultSelectionIndex(rows: rows)))
+  }
+
+  /// Where the cursor lands when there's no prior selection. Normally the
+  /// top row, but the worktree switcher skips its own current-worktree row
+  /// (rendered at index 0 with an empty query) so ⌘P then Enter switches
+  /// to the previous worktree instead of being a no-op. Once the user types,
+  /// the fuzzy-ranked top match wins again.
+  private func defaultSelectionIndex(rows: [CommandPaletteItem]) -> Int {
+    let trimmedQuery = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmedQuery.isEmpty, rows.count > 1, rows.first?.isCurrentWorktree == true else {
+      return 0
+    }
+    return 1
   }
 
   private func moveSelection(_ direction: MoveCommandDirection, rows: [CommandPaletteItem]) {
@@ -140,6 +153,7 @@ struct CommandPaletteOverlayView: View {
     let updatedItems = CommandPaletteFeature.filterItems(
       items: items,
       query: store.query,
+      mode: store.mode,
       recencyByID: store.recencyByItemID,
       now: now
     )

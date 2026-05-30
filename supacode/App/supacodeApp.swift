@@ -442,8 +442,13 @@ struct SupacodeApp: App {
       TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
       WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
+        Button("Go to Worktree") {
+          store.send(.commandPalette(.presentInMode(.worktreeSwitcher)))
+        }
+        .appKeyboardShortcut(AppShortcuts.worktreeSwitcher.effective(from: store.settings.shortcutOverrides))
+        .help("Switch between worktrees, sorted by most recently used")
         Button("Command Palette") {
-          store.send(.commandPalette(.togglePresented))
+          store.send(.commandPalette(.presentInMode(.commands)))
         }
         .appKeyboardShortcut(AppShortcuts.commandPalette.effective(from: store.settings.shortcutOverrides))
         .help("Command Palette")
