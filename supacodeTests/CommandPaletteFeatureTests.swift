@@ -1062,6 +1062,55 @@ struct CommandPaletteFeatureTests {
     await store.receive(.delegate(.ghosttyCommand("goto_split:right")))
   }
 
+  @Test func updateSelection_usesDefaultIndexWhenNoSelection() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+
+    // The project switcher hands a defaultIndex of 1 to skip its own
+    // current-project row; with no prior selection the cursor lands there.
+    await store.send(.updateSelection(itemsCount: 3, defaultIndex: 1)) {
+      $0.selectedIndex = 1
+    }
+  }
+
+  @Test func updateSelection_clampsDefaultIndexToLastRow() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+
+    // A defaultIndex past the end (e.g. a stale switcher list shrank to one
+    // row) clamps to the last valid index rather than overrunning.
+    await store.send(.updateSelection(itemsCount: 1, defaultIndex: 1)) {
+      $0.selectedIndex = 0
+    }
+  }
+
+  @Test func updateSelection_keepsExistingSelectionOverDefault() async {
+    var state = CommandPaletteFeature.State()
+    state.selectedIndex = 0
+    let store = TestStore(initialState: state) {
+      CommandPaletteFeature()
+    }
+
+    // An in-bounds existing selection wins; defaultIndex only seeds a nil
+    // selection so arrow-key navigation isn't yanked back on every refresh.
+    await store.send(.updateSelection(itemsCount: 3, defaultIndex: 1))
+  }
+
+  @Test func resetSelection_usesDefaultIndex() async {
+    var state = CommandPaletteFeature.State()
+    state.selectedIndex = 2
+    let store = TestStore(initialState: state) {
+      CommandPaletteFeature()
+    }
+
+    // resetSelection (fired on query change) snaps straight to defaultIndex.
+    await store.send(.resetSelection(itemsCount: 3, defaultIndex: 1)) {
+      $0.selectedIndex = 1
+    }
+  }
+
   // MARK: - Script items.
 
   @Test func commandPaletteItems_includesRunItemsForConfiguredScripts() {
@@ -1148,6 +1197,189 @@ struct CommandPaletteFeatureTests {
 
     #expect(ids.contains("script.\(definition.id).run"))
     #expect(ids.contains("script.\(definition.id).stop"))
+  }
+
+  @Test func projectSwitcherItems_emptyWhenNoRepositories() {
+    let items = CommandPaletteFeature.projectSwitcherItems(from: RepositoriesFeature.State())
+    #expect(items.isEmpty)
+  }
+
+  @Test func projectSwitcherItems_sortsByMRUThenAlphabeticalAndMarksCurrent() {
+    let wtA = makeWorktree(id: "/tmp/repo-a/wt", name: "wt", repoRoot: "/tmp/repo-a")
+    let wtB = makeWorktree(id: "/tmp/repo-b/wt", name: "wt", repoRoot: "/tmp/repo-b")
+    let wtC = makeWorktree(id: "/tmp/repo-c/wt", name: "wt", repoRoot: "/tmp/repo-c")
+    let repoA = makeRepository(rootPath: "/tmp/repo-a", name: "Alpha", worktrees: [wtA])
+    let repoB = makeRepository(rootPath: "/tmp/repo-b", name: "Bravo", worktrees: [wtB])
+    let repoC = makeRepository(rootPath: "/tmp/repo-c", name: "Charlie", worktrees: [wtC])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB, repoC])
+
+    // MRU = [A, C] after select C then select A. The current project (A,
+    // the MRU head) is rendered first but flagged isCurrentProject so the
+    // overlay skips it for the default selection.
+    state.setSingleWorktreeSelection(wtC.id)
+    state.setSingleWorktreeSelection(wtA.id)
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+
+    // MRU head (A), then prior MRU (C), then non-MRU sorted alphabetically (B).
+    #expect(items.map(\.id) == [
+      "project.\(repoA.id).select",
+      "project.\(repoC.id).select",
+      "project.\(repoB.id).select",
+    ])
+    // priorityTier mirrors visible order so an empty-query prioritizeItems()
+    // pass preserves the MRU ranking even though item-level recency is empty.
+    #expect(items.map(\.priorityTier) == [0, 1, 2])
+    // Only the current project (A) carries the skip-for-default flag.
+    #expect(items.map(\.isCurrentProject) == [true, false, false])
+  }
+
+  @Test func projectSwitcherItems_showsOnlyCurrentProjectFlagged() {
+    let wt = makeWorktree(id: "/tmp/only/wt", name: "wt", repoRoot: "/tmp/only")
+    let repo = makeRepository(rootPath: "/tmp/only", name: "Only", worktrees: [wt])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+
+    state.setSingleWorktreeSelection(wt.id)
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+    // The only project is the current one — still rendered (so you see
+    // where you are), flagged current. The overlay's defaultIndex guard
+    // keeps it selected since there's nowhere else to go.
+    #expect(items.map(\.id) == ["project.\(repo.id).select"])
+    #expect(items.map(\.isCurrentProject) == [true])
+  }
+
+  @Test func projectSwitcherItems_subtitleShowsLastWorktreeWhenKnown() {
+    let wtMain = makeWorktree(id: "/tmp/repo/main", name: "main", repoRoot: "/tmp/repo")
+    let wtFeat = makeWorktree(id: "/tmp/repo/feat", name: "feature/x", repoRoot: "/tmp/repo")
+    let wtOther = makeWorktree(id: "/tmp/other/wt", name: "wt", repoRoot: "/tmp/other")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wtMain, wtFeat])
+    let other = makeRepository(rootPath: "/tmp/other", name: "Other", worktrees: [wtOther])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo, other])
+
+    // Land on `repo` first so it records a lastWorktree, then move to
+    // `other` so `repo` becomes the previous project (the switcher entry).
+    state.setSingleWorktreeSelection(wtFeat.id)
+    state.setSingleWorktreeSelection(wtOther.id)
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+    let item = items.first { $0.id == "project.\(repo.id).select" }
+    #expect(item?.subtitle == "feature/x")
+  }
+
+  @Test func projectSwitcherItems_subtitleFallsBackToPathWhenNoMRU() {
+    let wt = makeWorktree(id: "/tmp/never-opened/main", name: "main", repoRoot: "/tmp/never-opened")
+    let repo = makeRepository(rootPath: "/tmp/never-opened", name: "Repo", worktrees: [wt])
+    let state = RepositoriesFeature.State(reconciledRepositories: [repo])
+
+    let items = CommandPaletteFeature.projectSwitcherItems(from: state)
+    let item = items.first { $0.id == "project.\(repo.id).select" }
+    #expect(item?.subtitle == "/tmp/never-opened")
+  }
+
+  @Test func items_dispatchByMode() {
+    let wt = makeWorktree(id: "/tmp/repo/main", name: "main", repoRoot: "/tmp/repo")
+    let wtOther = makeWorktree(id: "/tmp/other/wt", name: "wt", repoRoot: "/tmp/other")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wt])
+    let other = makeRepository(rootPath: "/tmp/other", name: "Other", worktrees: [wtOther])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo, other])
+    // Other is current; Repo is the previous project the switcher surfaces.
+    state.setSingleWorktreeSelection(wt.id)
+    state.setSingleWorktreeSelection(wtOther.id)
+
+    let commands = CommandPaletteFeature.items(in: .commands, from: state)
+    let projects = CommandPaletteFeature.items(in: .projectSwitcher, from: state)
+
+    // .commands surfaces the existing palette items (globals, worktree
+    // selects, etc.) and excludes project items entirely.
+    #expect(commands.contains { $0.id.hasPrefix("global.") })
+    #expect(commands.contains { $0.id == "worktree.\(wt.id).select" })
+    #expect(commands.allSatisfy { !$0.id.hasPrefix("project.") })
+
+    // .projectSwitcher is project-only. The current project (Other) leads,
+    // flagged so the overlay skips it for the default selection; the prior
+    // project (Repo) follows.
+    #expect(projects == [
+      CommandPaletteItem(
+        id: "project.\(other.id).select",
+        title: "Other",
+        subtitle: "wt",
+        kind: .selectProject(other.id),
+        priorityTier: 0,
+        isCurrentProject: true
+      ),
+      CommandPaletteItem(
+        id: "project.\(repo.id).select",
+        title: "Repo",
+        subtitle: "main",
+        kind: .selectProject(repo.id),
+        priorityTier: 1
+      ),
+    ])
+  }
+
+  @Test func presentInMode_setsModeAndPresentsTheView() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.presentInMode(.projectSwitcher)) {
+      $0.isPresented = true
+      $0.mode = .projectSwitcher
+    }
+  }
+
+  @Test func setPresented_falseFromPresentedEmitsDismissedDelegate() async {
+    let store = TestStore(
+      initialState: CommandPaletteFeature.State(isPresented: true, mode: .projectSwitcher)
+    ) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.setPresented(false)) {
+      $0.isPresented = false
+      $0.mode = .commands
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+  }
+
+  @Test func setPresented_falseFromNotPresentedDoesNotEmitDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+    await store.send(.setPresented(false))
+  }
+
+  @Test func togglePresented_dismissEmitsDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State(isPresented: true)) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.togglePresented) {
+      $0.isPresented = false
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+  }
+
+  @Test func activateItem_doesNotEmitDismissedDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State(isPresented: true)) {
+      CommandPaletteFeature()
+    } withDependencies: {
+      $0.date.now = Date(timeIntervalSince1970: 0)
+    }
+
+    let item = CommandPaletteItem(
+      id: "global.open-settings",
+      title: "Open Settings",
+      subtitle: nil,
+      kind: .openSettings
+    )
+    await store.send(.activateItem(item)) {
+      $0.isPresented = false
+      $0.recencyByItemID[item.id] = 0
+    }
+    // The activation delegate carries the focus — no dismissal echo.
+    await store.receive(\.delegate.openSettings)
   }
 }
 

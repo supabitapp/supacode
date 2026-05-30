@@ -153,7 +153,8 @@ private struct CommandPaletteOverlayHost: View {
     #endif
     return CommandPaletteOverlayView(
       store: store.scope(state: \.commandPalette, action: \.commandPalette),
-      items: CommandPaletteFeature.commandPaletteItems(
+      items: CommandPaletteFeature.items(
+        in: store.commandPalette.mode,
         from: repositoriesStore.state,
         ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
         scripts: store.allScripts,

@@ -95,11 +95,24 @@ struct CommandPaletteOverlayView: View {
   }
 
   private func updateSelection(rows: [CommandPaletteItem]) {
-    store.send(.updateSelection(itemsCount: rows.count))
+    store.send(.updateSelection(itemsCount: rows.count, defaultIndex: defaultSelectionIndex(rows: rows)))
   }
 
   private func resetSelection(rows: [CommandPaletteItem]) {
-    store.send(.resetSelection(itemsCount: rows.count))
+    store.send(.resetSelection(itemsCount: rows.count, defaultIndex: defaultSelectionIndex(rows: rows)))
+  }
+
+  /// Where the cursor lands when there's no prior selection. Normally the
+  /// top row, but the project switcher skips its own current-project row
+  /// (rendered at index 0 with an empty query) so Cmd+P then Enter switches
+  /// to the previous project instead of being a no-op. Once the user types,
+  /// the fuzzy-ranked top match wins again.
+  private func defaultSelectionIndex(rows: [CommandPaletteItem]) -> Int {
+    let trimmedQuery = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmedQuery.isEmpty, rows.count > 1, rows.first?.isCurrentProject == true else {
+      return 0
+    }
+    return 1
   }
 
   private func moveSelection(_ direction: MoveCommandDirection, rows: [CommandPaletteItem]) {
@@ -341,7 +354,7 @@ private struct CommandPaletteRowView: View {
       .ghosttyCommand,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
       .copyCiFailureLogs,
-      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect:
+      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect, .selectProject:
       return nil
     case .removeWorktree:
       return "Remove"
@@ -394,6 +407,8 @@ private struct CommandPaletteRowView: View {
       return "exclamationmark.triangle"
     case .worktreeSelect:
       return nil
+    case .selectProject:
+      return "folder"
     case .removeWorktree:
       return "trash"
     case .archiveWorktree:
@@ -420,7 +435,7 @@ private struct CommandPaletteRowView: View {
       .copyCiFailureLogs,
       .rerunFailedJobs, .openFailingCheckDetails:
       return true
-    case .worktreeSelect, .removeWorktree, .archiveWorktree:
+    case .worktreeSelect, .selectProject, .removeWorktree, .archiveWorktree:
       return false
     case .renameBranch:
       return true
@@ -506,6 +521,8 @@ private struct CommandPaletteRowView: View {
     switch row.kind {
     case .worktreeSelect:
       base = "Switch to \(row.title)"
+    case .selectProject:
+      base = "Switch to project \(row.title)"
     case .checkForUpdates:
       base = "Check for Updates"
     case .openRepository:

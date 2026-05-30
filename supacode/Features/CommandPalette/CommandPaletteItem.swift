@@ -10,25 +10,34 @@ struct CommandPaletteItem: Identifiable, Equatable {
   let subtitle: String?
   let kind: Kind
   let priorityTier: Int
+  /// `true` for the project-switcher row that represents the project the
+  /// user is already in. The switcher still renders it (so you can see
+  /// where you are), but the overlay skips it for the default selection so
+  /// Cmd+P then Enter lands on the previous project instead of being a
+  /// no-op. Always `false` outside the project switcher.
+  let isCurrentProject: Bool
 
   init(
     id: String,
     title: String,
     subtitle: String?,
     kind: Kind,
-    priorityTier: Int = defaultPriorityTier
+    priorityTier: Int = defaultPriorityTier,
+    isCurrentProject: Bool = false
   ) {
     self.id = id
     self.title = title
     self.subtitle = subtitle
     self.kind = kind
     self.priorityTier = priorityTier
+    self.isCurrentProject = isCurrentProject
   }
 
   enum Kind: Equatable {
     case checkForUpdates
     case openRepository
     case worktreeSelect(Worktree.ID)
+    case selectProject(Repository.ID)
     case openSettings
     case newWorktree
     case removeWorktree(Worktree.ID, Repository.ID)
@@ -70,6 +79,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       false
+    case .selectProject:
+      true
     case .renameBranch:
       true
     case .runScript, .stopScript:
@@ -97,6 +108,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .rerunFailedJobs,
       .openFailingCheckDetails,
       .worktreeSelect,
+      .selectProject,
       .removeWorktree,
       .archiveWorktree,
       .renameBranch:
@@ -128,6 +140,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .rerunFailedJobs,
       .openFailingCheckDetails,
       .worktreeSelect,
+      .selectProject,
       .removeWorktree,
       .archiveWorktree,
       .renameBranch,

@@ -142,6 +142,16 @@ struct RepositoriesFeature {
     /// system-driven cleanup promotions.
     var worktreeHistoryBackStack: [Worktree.ID] = []
     var worktreeHistoryForwardStack: [Worktree.ID] = []
+    /// Per-project MRU stack — most-recent-first, deduped. Updated whenever
+    /// `setSingleWorktreeSelection` lands on a concrete worktree; the
+    /// containing repository moves to the head. Drives the Cmd+P project
+    /// switcher sort. Session-only; not persisted.
+    var projectMRU: [Repository.ID] = []
+    /// Last-selected worktree per repository, captured on every concrete
+    /// selection. Cmd+P `selectProject` resolves a project pick to the
+    /// specific worktree the user last had open in it, instead of dumping
+    /// them at the repo's "main".
+    var lastWorktreeByProject: [Repository.ID: Worktree.ID] = [:]
     /// Single source of truth for all user-curated sidebar state —
     /// section order / collapse / pin / unpin / archive / focused
     /// worktree — persisted to `~/.supacode/sidebar.json`. Replaces
@@ -4962,6 +4972,21 @@ extension RepositoriesFeature.State {
     if recordHistory {
       recordWorktreeHistoryTransition(from: previousID, to: worktreeID)
     }
+    if let worktreeID, let repositoryID = repositoryID(containing: worktreeID) {
+      recordProjectMRU(repositoryID: repositoryID, worktreeID: worktreeID)
+    }
+  }
+
+  /// Hoists the containing project to the head of `projectMRU` and pins the
+  /// selected worktree as the project's last-used. Called from every concrete
+  /// `setSingleWorktreeSelection` — selection-clearing (nil) paths are no-ops
+  /// so a "select nothing" transition can't poison the MRU head.
+  mutating func recordProjectMRU(repositoryID: Repository.ID, worktreeID: Worktree.ID) {
+    if let existingIndex = projectMRU.firstIndex(of: repositoryID) {
+      projectMRU.remove(at: existingIndex)
+    }
+    projectMRU.insert(repositoryID, at: 0)
+    lastWorktreeByProject[repositoryID] = worktreeID
   }
 
   /// Records a fresh worktree navigation: pushes the previous selection onto
@@ -5055,6 +5080,13 @@ extension RepositoriesFeature.State {
     selection = nextSelectedWorktreeID.map(SidebarSelection.worktree)
     sidebarSelectedWorktreeIDs = nextSidebarSelectedWorktreeIDs
     recordWorktreeHistoryTransition(from: previousSelection, to: nextSelectedWorktreeID)
+    // Sidebar selection bypasses `setSingleWorktreeSelection`, so record the
+    // project MRU here too — otherwise clicking a worktree (the dominant nav
+    // path) never updates `lastWorktreeByProject`, and Cmd+P `selectProject`
+    // can't return you to the worktree you actually had open.
+    if let nextSelectedWorktreeID, let repositoryID = repositoryID(containing: nextSelectedWorktreeID) {
+      recordProjectMRU(repositoryID: repositoryID, worktreeID: nextSelectedWorktreeID)
+    }
     var effects: [Effect<RepositoriesFeature.Action>] = []
     if focusTerminal,
       let nextSelectedWorktreeID,

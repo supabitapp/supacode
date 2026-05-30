@@ -893,7 +893,39 @@ struct AppFeature {
         return .none
 
       case .commandPalette(.delegate(.selectWorktree(let worktreeID))):
-        return .send(.repositories(.selectWorktree(worktreeID)))
+        // Always-focused-terminal: palette completion lands focus in the
+        // chosen worktree's terminal, matching the menu/deeplink paths
+        // that already passed focusTerminal: true.
+        return .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
+
+      case .commandPalette(.delegate(.selectProject(let repositoryID))):
+        // Resolve project → last-used worktree, falling back to the
+        // project's main worktree when the MRU pointer is empty or
+        // points at a since-removed worktree. The selectWorktree call
+        // carries focusTerminal: true (the default) so activation
+        // lands the user in the terminal.
+        let repositories = state.repositories
+        let mruWorktree =
+          repositories.lastWorktreeByProject[repositoryID]
+          .flatMap { repositories.worktreeExists($0) ? $0 : nil }
+        let resolved: Worktree.ID? =
+          mruWorktree
+          ?? repositories.repositories[id: repositoryID]?
+            .worktrees.first(where: repositories.isMainWorktree)?.id
+          ?? repositories.repositories[id: repositoryID]?.worktrees.first?.id
+        guard let resolved else { return .none }
+        return .send(.repositories(.selectWorktree(resolved)))
+
+      case .commandPalette(.delegate(.dismissedWithoutSelection)):
+        // Always-focused-terminal invariant. Cancellation paths (Esc, outside
+        // tap, programmatic close) don't carry a destination; refocus the
+        // current worktree's terminal so the cursor never lingers nowhere.
+        guard let worktreeID = state.repositories.selectedWorktreeID,
+          state.repositories.sidebarItems[id: worktreeID] != nil
+        else { return .none }
+        return .send(
+          .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
+        )
 
       case .commandPalette(.delegate(.checkForUpdates)):
         return .send(.updates(.checkForUpdates))

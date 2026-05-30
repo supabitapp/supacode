@@ -50,7 +50,7 @@ private struct MotivationalStatusView: View {
           .foregroundStyle(style.color)
           .font(.callout)
           .accessibilityHidden(true)
-        Text("\(context.date, format: .dateTime.hour().minute()) – Open Command Palette (⌘P)")
+        Text("\(context.date, format: .dateTime.hour().minute()) – Open Command Palette (⌘⇧P)")
           .font(.footnote)
           .monospaced()
           .foregroundStyle(.secondary)

@@ -420,8 +420,13 @@ struct SupacodeApp: App {
       TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
       WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
+        Button("Project Switcher") {
+          store.send(.commandPalette(.presentInMode(.projectSwitcher)))
+        }
+        .appKeyboardShortcut(AppShortcuts.projectSwitcher.effective(from: store.settings.shortcutOverrides))
+        .help("Switch between projects, sorted by most recently used")
         Button("Command Palette") {
-          store.send(.commandPalette(.togglePresented))
+          store.send(.commandPalette(.presentInMode(.commands)))
         }
         .appKeyboardShortcut(AppShortcuts.commandPalette.effective(from: store.settings.shortcutOverrides))
         .help("Command Palette")
