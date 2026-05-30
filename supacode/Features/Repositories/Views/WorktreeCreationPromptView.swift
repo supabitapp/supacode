@@ -76,7 +76,7 @@ private struct WorktreeAppearanceSection: View {
 
   var body: some View {
     Section("Title & Color", isExpanded: $store.showAppearanceOptions) {
-      TextField("Title", text: $store.title, prompt: Text(store.branchName))
+      TextField("Title", text: $store.title, prompt: Text(store.worktreeNamePlaceholder))
       LabeledContent("Color") {
         ColorSwatchRow(color: $store.color)
       }
