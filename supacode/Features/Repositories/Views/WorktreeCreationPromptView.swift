@@ -75,7 +75,7 @@ private struct WorktreeAppearanceSection: View {
   @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
 
   var body: some View {
-    Section("Title & Color", isExpanded: $store.showAppearanceOptions) {
+    Section("Appearance", isExpanded: $store.showAppearanceOptions) {
       TextField("Title", text: $store.title, prompt: Text(store.worktreeNamePlaceholder))
       LabeledContent("Color") {
         ColorSwatchRow(color: $store.color)
