@@ -5602,6 +5602,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt1.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectPreviousWorktreeWrapsBackward() async {
@@ -5623,6 +5626,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt2.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectNextWorktreeWithNoSelectionSelectsFirst() async {
@@ -5642,6 +5648,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt1.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectNextWorktreeCollapsesSidebarSelectionToSingleWorktree() async {
@@ -5665,6 +5674,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt2.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectPreviousWorktreeWithNoSelectionSelectsLast() async {
@@ -5684,6 +5696,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt2.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectNextWorktreeFollowsSidebarOrderNotRawWorktreeList() async {
@@ -5713,6 +5728,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: feature.id].focusTerminalRequested) {
+      $0.sidebarItems[id: feature.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectNextWorktreeWithEmptyRowsIsNoOp() async {
@@ -5740,6 +5758,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: worktree.id].focusTerminalRequested) {
+      $0.sidebarItems[id: worktree.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectNextWorktreeSkipsCollapsedRepository() async {
@@ -5767,6 +5788,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt3.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt3.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectPreviousWorktreeSkipsCollapsedRepository() async {
@@ -5794,6 +5818,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt1.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func selectNextWorktreeAllCollapsedIsNoOp() async {
@@ -5853,6 +5880,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt1.id]?.shouldFocusTerminal = true
+    }
   }
 
   // MARK: - Worktree History Back/Forward.
@@ -5914,6 +5944,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt1.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func worktreeHistoryForwardPopsNextAndPushesCurrentToBack() async {
@@ -5936,6 +5969,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt2.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func worktreeHistoryBackWithEmptyStackIsNoOp() async {
@@ -5987,6 +6023,9 @@ struct RepositoriesFeatureTests {
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
+      $0.sidebarItems[id: wt1.id]?.shouldFocusTerminal = true
+    }
   }
 
   @Test func worktreeHistoryBackWithOnlyStaleEntriesIsNoOp() async {
