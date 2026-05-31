@@ -14,9 +14,9 @@ nonisolated struct KiroSettingsInstaller {
   /// defaults in `ensureDefaultAgentConfig` may no longer match upstream and would
   /// silently override a legitimately different config — gate on this prefix to
   /// fail loudly instead.
-  static let supportedVersionPrefix = "1."
+  static let supportedVersionPrefix = "2."
 
-  /// Maximum time to wait on `kiro --version`. A misconfigured login shell (e.g.
+  /// Maximum time to wait on `kiro-cli --version`. A misconfigured login shell (e.g.
   /// an rc file blocking on stdin) can hang the child indefinitely; when that
   /// happens we terminate the process so `waitUntilExit` cannot pin the
   /// cooperative pool thread.
@@ -28,19 +28,19 @@ nonisolated struct KiroSettingsInstaller {
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
   ) {
     self.init(
       homeDirectoryURL: homeDirectoryURL,
       fileManager: fileManager,
-      runKiroVersionCommand: Self.runKiroVersionCommand
+      runKiroVersionCommand: Self.runKiroVersionCommand,
     )
   }
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
     fileManager: FileManager = .default,
-    runKiroVersionCommand: @escaping @Sendable () async throws -> CommandResult
+    runKiroVersionCommand: @escaping @Sendable () async throws -> CommandResult,
   ) {
     self.homeDirectoryURL = homeDirectoryURL
     self.fileManager = fileManager
@@ -68,14 +68,14 @@ nonisolated struct KiroSettingsInstaller {
     try await ensureDefaultAgentConfig()
     try fileInstaller.install(
       settingsURL: settingsURL,
-      hookEntriesByEvent: try KiroHookSettings.hooksByEvent()
+      hookEntriesByEvent: try KiroHookSettings.hooksByEvent(),
     )
   }
 
   func uninstallAllHooks() throws {
     try fileInstaller.uninstall(
       settingsURL: settingsURL,
-      hookEntriesByEvent: try KiroHookSettings.hooksByEvent()
+      hookEntriesByEvent: try KiroHookSettings.hooksByEvent(),
     )
   }
 
@@ -90,7 +90,7 @@ nonisolated struct KiroSettingsInstaller {
     try await validateSupportedKiroVersion()
     try fileManager.createDirectory(
       at: settingsURL.deletingLastPathComponent(),
-      withIntermediateDirectories: true
+      withIntermediateDirectories: true,
     )
     let defaultConfig: [String: JSONValue] = [
       "name": .string("kiro_default"),
@@ -186,7 +186,7 @@ nonisolated struct KiroSettingsInstaller {
   static func runKiroVersionCommand() async throws -> CommandResult {
     let process = Process()
     process.executableURL = CodexSettingsInstaller.loginShellURL()
-    process.arguments = ["-l", "-c", "kiro --version"]
+    process.arguments = ["-l", "-c", "kiro-cli --version"]
     let outputPipe = Pipe()
     let errorPipe = Pipe()
     process.standardOutput = outputPipe
@@ -197,7 +197,7 @@ nonisolated struct KiroSettingsInstaller {
       try? await Task.sleep(nanoseconds: versionCommandTimeoutSeconds * 1_000_000_000)
       if process.isRunning {
         kiroVersionLogger.warning(
-          "kiro --version exceeded \(versionCommandTimeoutSeconds)s; terminating.")
+          "kiro-cli --version exceeded \(versionCommandTimeoutSeconds)s; terminating.")
         process.terminate()
       }
     }
@@ -217,7 +217,7 @@ nonisolated struct KiroSettingsInstaller {
     return .init(
       status: process.terminationStatus,
       standardOutput: standardOutput,
-      standardError: standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+      standardError: standardError.trimmingCharacters(in: .whitespacesAndNewlines),
     )
   }
 
@@ -257,8 +257,8 @@ nonisolated struct KiroSettingsInstaller {
         invalidEventHooks: { KiroSettingsInstallerError.invalidEventHooks($0) },
         invalidHooksObject: { KiroSettingsInstallerError.invalidHooksObject },
         invalidJSON: { KiroSettingsInstallerError.invalidJSON($0) },
-        invalidRootObject: { KiroSettingsInstallerError.invalidRootObject }
-      )
+        invalidRootObject: { KiroSettingsInstallerError.invalidRootObject },
+      ),
     )
   }
 }
