@@ -130,6 +130,58 @@ struct ZmxSocketBudgetTests {
 }
 
 @MainActor
+struct ZmxSessionListParserTests {
+  @Test func parsesClientsZero() {
+    let entries = ZmxSessionListParser.parse("name=supa-abc\tpid=123\tclients=0\tcreated=0\n")
+    #expect(entries == [.init(name: "supa-abc", clients: 0)])
+  }
+
+  @Test func parsesClientsPositive() {
+    let entries = ZmxSessionListParser.parse("name=supa-abc\tpid=123\tclients=2\tcreated=0\n")
+    #expect(entries == [.init(name: "supa-abc", clients: 2)])
+  }
+
+  @Test func errOrStatusLineYieldsNilClients() {
+    let entries = ZmxSessionListParser.parse(
+      "name=supa-abc\terr=ConnectionRefused\tstatus=cleaning up\n"
+    )
+    #expect(entries == [.init(name: "supa-abc", clients: nil)])
+  }
+
+  @Test func stripsCurrentSessionArrowPrefix() {
+    let entries = ZmxSessionListParser.parse("→ name=supa-abc\tpid=1\tclients=1\tcreated=0\n")
+    #expect(entries == [.init(name: "supa-abc", clients: 1)])
+  }
+
+  @Test func stripsLeadingIndentOnNonCurrentSessions() {
+    let entries = ZmxSessionListParser.parse("  name=supa-abc\tclients=0\tpid=1\tcreated=0\n")
+    #expect(entries == [.init(name: "supa-abc", clients: 0)])
+  }
+
+  @Test func filtersNonSupaSessions() {
+    let entries = ZmxSessionListParser.parse(
+      """
+      name=dev\tpid=1\tclients=2\tcreated=0
+      name=supa-abc\tpid=2\tclients=0\tcreated=0
+      """
+    )
+    #expect(entries == [.init(name: "supa-abc", clients: 0)])
+  }
+
+  @Test func dropsBlankAndMalformedLines() {
+    let entries = ZmxSessionListParser.parse(
+      """
+
+      garbage with no equals
+      name=supa-keep\tpid=9\tclients=3\tcreated=0
+
+      """
+    )
+    #expect(entries == [.init(name: "supa-keep", clients: 3)])
+  }
+}
+
+@MainActor
 struct ZmxClientNoopTests {
   /// The default test impl is a no-op so existing TestStore tests are unaffected
   /// by the wrap path. wrapCommand returning nil means callers fall through to

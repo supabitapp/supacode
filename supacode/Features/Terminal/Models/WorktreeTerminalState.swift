@@ -127,6 +127,9 @@ final class WorktreeTerminalState {
   var onNotificationIndicatorChanged: (() -> Void)?
   var onTabCreated: (() -> Void)?
   var onTabClosed: (() -> Void)?
+  /// Fires when the user renames a tab. Manager forwards to the layout-persist
+  /// sink so a custom title survives relaunch without waiting for quit.
+  var onTabRenamed: (() -> Void)?
   var onFocusChanged: ((UUID) -> Void)?
   var onTaskStatusChanged: ((WorktreeTaskStatus) -> Void)?
   var onBlockingScriptCompleted: ((BlockingScriptKind, Int?, TerminalTabID?) -> Void)?
@@ -636,6 +639,14 @@ final class WorktreeTerminalState {
       onBlockingScriptCompleted?(closedBlockingKind, nil, nil)
     }
     onTabClosed?()
+  }
+
+  /// User-initiated rename. Routes through the manager so the new title (or its
+  /// removal on an empty commit) persists incrementally, unlike the restore path
+  /// which seeds `setCustomTitle` directly from a snapshot.
+  func renameTab(_ tabId: TerminalTabID, title: String) {
+    tabManager.setCustomTitle(tabId, title: title)
+    onTabRenamed?()
   }
 
   func closeOtherTabs(keeping tabId: TerminalTabID) {
@@ -1930,6 +1941,10 @@ final class WorktreeTerminalState {
         }
       }
       emitTaskStatusIfChanged()
+      // Closing the last surface via `close_surface` removes the tab here but
+      // skips the `closeTab` projection path; emit one so `onTabRemoved` fires
+      // and the layout persistence sink observes the tab going away.
+      emitTabProjection(for: tabId)
       return
     }
     updateTree(newTree, for: tabId)

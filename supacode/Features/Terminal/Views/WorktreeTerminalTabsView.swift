@@ -52,7 +52,7 @@ struct WorktreeTerminalTabsView: View {
             state.dismissSplitZoom(for: tabId)
           },
           renameTab: { tabId, newTitle in
-            state.tabManager.setCustomTitle(tabId, title: newTitle)
+            state.renameTab(tabId, title: newTitle)
           },
         )
         .transition(.move(edge: .top).combined(with: .opacity))
