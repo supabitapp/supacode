@@ -31,6 +31,8 @@ struct WorktreeCreationPromptFeature {
     var worktreePathOverride: String = ""
     /// Disclosure state for the advanced placement section. Collapsed by default.
     var showAdvancedOptions: Bool = false
+    /// Disclosure state for the title / color appearance section. Collapsed by default.
+    var showAppearanceOptions: Bool = false
     var validationMessage: String?
     var isValidating = false
     /// Optional sidebar customization captured by the new Title / Color

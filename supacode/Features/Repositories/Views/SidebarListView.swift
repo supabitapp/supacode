@@ -27,7 +27,7 @@ struct SidebarListView: View {
       get: { currentSelections },
       set: { newValue in
         guard newValue != currentSelections else { return }
-        store.send(.selectionChanged(newValue))
+        store.send(.selectionChanged(newValue, focusTerminal: true))
       }
     )
     let pendingSidebarReveal = state.pendingSidebarReveal

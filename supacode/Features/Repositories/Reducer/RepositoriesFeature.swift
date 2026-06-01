@@ -765,19 +765,19 @@ struct RepositoriesFeature {
         guard slots.indices.contains(index) else {
           return .run { _ in NSSound.beep() }
         }
-        return .send(.selectWorktree(slots[index].id))
+        return .send(.selectWorktree(slots[index].id, focusTerminal: true))
 
       case .selectNextWorktree:
         guard let id = state.worktreeID(byOffset: 1) else {
           return .run { _ in NSSound.beep() }
         }
-        return .send(.selectWorktree(id))
+        return .send(.selectWorktree(id, focusTerminal: true))
 
       case .selectPreviousWorktree:
         guard let id = state.worktreeID(byOffset: -1) else {
           return .run { _ in NSSound.beep() }
         }
-        return .send(.selectWorktree(id))
+        return .send(.selectWorktree(id, focusTerminal: true))
 
       case .worktreeHistoryBack:
         return state.navigateWorktreeHistoryEffect(direction: .back)
@@ -5001,7 +5001,15 @@ extension RepositoriesFeature.State {
         }
       }
       setSingleWorktreeSelection(candidate, recordHistory: false)
-      return .send(.delegate(.selectedWorktreeChanged(worktree(for: candidate))))
+      var effects: [Effect<RepositoriesFeature.Action>] = [
+        .send(.delegate(.selectedWorktreeChanged(worktree(for: candidate))))
+      ]
+      if sidebarItems[id: candidate] != nil {
+        effects.append(
+          .send(.sidebarItems(.element(id: candidate, action: .focusTerminalRequested)))
+        )
+      }
+      return .merge(effects)
     }
   }
 

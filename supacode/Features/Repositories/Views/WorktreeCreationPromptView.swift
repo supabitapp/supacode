@@ -37,19 +37,7 @@ struct WorktreeCreationPromptView: View {
         .disabled(store.isSelectedBaseRefLocal)
       }
 
-      Section {
-        TextField(
-          "Title",
-          text: $store.title,
-          prompt: Text("Leave blank to use branch name")
-        )
-        LabeledContent("Color") {
-          ColorSwatchRow(color: $store.color)
-        }
-      } header: {
-        Text("Title & Color")
-        Text("Optional. Overrides the row title and tint. Leave blank to use the branch name.")
-      }
+      WorktreeAppearanceSection(store: store)
 
       WorktreeOptionsSection(store: store)
     }
@@ -80,6 +68,19 @@ struct WorktreeCreationPromptView: View {
     .frame(minWidth: 420)
     .task { isBranchFieldFocused = true }
     .dismissSystemColorPanelOnDisappear()
+  }
+}
+
+private struct WorktreeAppearanceSection: View {
+  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+
+  var body: some View {
+    Section("Appearance", isExpanded: $store.showAppearanceOptions) {
+      TextField("Title", text: $store.title, prompt: Text(store.worktreeNamePlaceholder))
+      LabeledContent("Color") {
+        ColorSwatchRow(color: $store.color)
+      }
+    }
   }
 }
 

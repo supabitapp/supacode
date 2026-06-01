@@ -58,10 +58,6 @@ extension SettingsFileStorage {
   }
 }
 
-nonisolated enum SettingsFileStorageError: Error {
-  case missing
-}
-
 nonisolated final class InMemorySettingsFileStorage: @unchecked Sendable {
   private let lock = NSLock()
   private var dataByURL: [URL: Data] = [:]
@@ -70,7 +66,9 @@ nonisolated final class InMemorySettingsFileStorage: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     guard let data = dataByURL[url] else {
-      throw SettingsFileStorageError.missing
+      // Mirror real-disk semantics so callers that distinguish "file absent"
+      // (fresh start) from a read failure see the same `fileReadNoSuchFile`.
+      throw CocoaError(.fileReadNoSuchFile)
     }
     return data
   }

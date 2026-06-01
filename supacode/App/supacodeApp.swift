@@ -51,8 +51,13 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
-    // Embed agent records so badges survive relaunch (agents only emit
-    // session_start once per process lifetime).
+    // Drop the queued debounce timers; an already-started async flush has no
+    // cancellation checkpoint and still completes, but the writer's lock plus the
+    // atomic temp+rename keep this terminal write from tearing. The on-quit save
+    // embeds agent records so badges survive relaunch (agents only emit
+    // session_start once per process lifetime), and a second concurrent instance
+    // overwriting the file is an accepted dev-only last-writer-wins window.
+    terminalManager?.cancelPendingLayoutSaves()
     let agentsBySurface = appStore?.state.agentPresence.agentsBySurface() ?? [:]
     terminalManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
   }
@@ -168,6 +173,11 @@ struct SupacodeApp: App {
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
+    // Source live agent badge records for incremental layout captures; the [:]
+    // default would clobber badges that share a surface key on every save.
+    terminalManager.currentAgentsBySurface = { [weak appStore] in
+      appStore?.state.agentPresence.agentsBySurface() ?? [:]
+    }
     Self.configureSocketHandlers(terminalManager: terminalManager, store: appStore)
   }
 

@@ -30,6 +30,24 @@ final class WorktreeTerminalManager {
   private let hookEventSleep: @Sendable (Duration) async throws -> Void
   @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
   @ObservationIgnored @Dependency(\.analyticsClient) private var analyticsClient
+  /// Serialized off-main writer that merges per-worktree layout changes into
+  /// `layouts.json` without clobbering keys it isn't carrying. Built from the
+  /// dependency context at init so async flushes use the same storage the test
+  /// or app configured, not whatever context happens to be current at flush.
+  @ObservationIgnored private let layoutsWriter: LayoutsIncrementalWriter
+  /// Per-worktree debounce timers for incremental layout saves.
+  @ObservationIgnored private var layoutDirtyTasks: [Worktree.ID: Task<Void, Never>] = [:]
+  /// Per-worktree in-flight positive flush Tasks. A delete awaits the live one
+  /// for its key so `.delete` always lands on the writer after the `.snapshot`,
+  /// preventing a stale positive flush from resurrecting a pruned worktree.
+  @ObservationIgnored private var layoutFlushTasks: [Worktree.ID: Task<Void, Never>] = [:]
+  /// Sleeps the incremental-save debounce window; injected so tests drive it.
+  @ObservationIgnored private let layoutDebounceSleep: @Sendable (Duration) async throws -> Void
+  /// Debounce window before an incremental layout snapshot is flushed.
+  private static let layoutDebounceDuration: Duration = .seconds(1)
+  /// Reads the freshest `agentsBySurface` at flush time so incremental captures
+  /// embed live badge records instead of the empty default.
+  var currentAgentsBySurface: (() -> [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]])?
   /// Holds `.idle` long enough to collapse PostToolUse/PreToolUse busy/idle alternation
   /// into a sustained busy; stays sub-perceptible for the badge clearing at end-of-session.
   private static let idleHookDebounceDuration: Duration = .milliseconds(400)
@@ -54,6 +72,9 @@ final class WorktreeTerminalManager {
   ) {
     self.runtime = runtime
     self.hookEventSleep = { duration in try await clock.sleep(for: duration) }
+    self.layoutDebounceSleep = { duration in try await clock.sleep(for: duration) }
+    @Dependency(\.settingsFileStorage) var settingsFileStorage
+    self.layoutsWriter = LayoutsIncrementalWriter(storage: settingsFileStorage)
     let resolvedServer = socketServer ?? AgentHookSocketServer()
     guard resolvedServer.socketPath != nil else {
       self.socketServer = nil
@@ -66,6 +87,8 @@ final class WorktreeTerminalManager {
 
   isolated deinit {
     for task in pendingIdleHookEvents.values { task.cancel() }
+    for task in layoutDirtyTasks.values { task.cancel() }
+    for task in layoutFlushTasks.values { task.cancel() }
   }
 
   private func configureSocketServer(_ server: AgentHookSocketServer) {
@@ -300,7 +323,7 @@ final class WorktreeTerminalManager {
       guard id != selectedWorktreeID else { return }
       if let previousID = selectedWorktreeID, let previousState = states[previousID] {
         previousState.setAllSurfacesOccluded()
-        saveLayoutSnapshot?(previousID, previousState.captureLayoutSnapshot())
+        markLayoutDirty(worktreeID: previousID)
       }
       selectedWorktreeID = id
       terminalLogger.info("Selected worktree \(id ?? "nil")")
@@ -408,10 +431,15 @@ final class WorktreeTerminalManager {
     state.onTabCreated = { [weak self] in
       self?.emit(.tabCreated(worktreeID: worktree.id))
       self?.emitProjection(for: worktree.id)
+      self?.markLayoutDirty(worktreeID: worktree.id)
     }
     state.onTabClosed = { [weak self] in
       self?.emit(.tabClosed(worktreeID: worktree.id))
       self?.emitProjection(for: worktree.id)
+      self?.markLayoutDirty(worktreeID: worktree.id)
+    }
+    state.onTabRenamed = { [weak self] in
+      self?.markLayoutDirty(worktreeID: worktree.id)
     }
     state.onFocusChanged = { [weak self] surfaceID in
       self?.emit(.focusChanged(worktreeID: worktree.id, surfaceID: surfaceID))
@@ -431,9 +459,11 @@ final class WorktreeTerminalManager {
     }
     state.onTabProjectionChanged = { [weak self] projection in
       self?.emit(.tabProjectionChanged(worktreeID: worktree.id, projection))
+      self?.markLayoutDirty(worktreeID: worktree.id)
     }
     state.onTabRemoved = { [weak self] tabID in
       self?.emit(.tabRemoved(worktreeID: worktree.id, tabID: tabID))
+      self?.markLayoutDirty(worktreeID: worktree.id)
     }
     state.onTabProgressDisplayChanged = { [weak self] tabID, display in
       self?.emit(.tabProgressDisplayChanged(worktreeID: worktree.id, tabID: tabID, display: display))
@@ -484,8 +514,10 @@ final class WorktreeTerminalManager {
     }
     for (id, state) in removed {
       // Clear instead of resaving: archived / deleted worktrees should leave
-      // no trace in `layouts.json`.
-      saveLayoutSnapshot?(id, nil)
+      // no trace in `layouts.json`. The explicit delete bypasses the debounce
+      // and cancels any queued positive save so a pruned worktree can't be
+      // resurrected by an in-flight snapshot.
+      deleteLayoutSnapshot(worktreeID: id)
       state.closeAllSurfaces()
       // Signals the reducer to drop any orphan `terminalTabs` entries and
       // recently-removed-tab records for this worktree so a same-session
@@ -501,6 +533,73 @@ final class WorktreeTerminalManager {
     emitNotificationIndicatorCountIfNeeded()
     emitHasAnyTerminalSurfaceIfNeeded()
     killZmxSessions(prunedSessionIDs)
+  }
+
+  /// Schedules a debounced incremental layout save for `worktreeID`. Coalesces
+  /// a burst of mutations into one write; the snapshot is captured at fire time
+  /// (freshest tree + agent records), mutated into the in-memory `@Shared` dict
+  /// on main, then merged into `layouts.json` off main.
+  func markLayoutDirty(worktreeID: Worktree.ID) {
+    layoutDirtyTasks[worktreeID]?.cancel()
+    layoutDirtyTasks[worktreeID] = Task { [weak self, layoutDebounceSleep] in
+      try? await layoutDebounceSleep(Self.layoutDebounceDuration)
+      guard !Task.isCancelled else { return }
+      self?.flushLayoutSnapshot(worktreeID: worktreeID)
+    }
+  }
+
+  /// Fires after the debounce window: captures the freshest snapshot for
+  /// `worktreeID`, updates the in-memory `@Shared` dict on main, then queues the
+  /// off-main per-key merge. Its only caller is `markLayoutDirty`.
+  private func flushLayoutSnapshot(worktreeID: Worktree.ID) {
+    layoutDirtyTasks[worktreeID] = nil
+    guard let state = states[worktreeID] else { return }
+    let agents = currentAgentsBySurface?() ?? [:]
+    // A nil snapshot (no remaining tabs) clears the key rather than persisting
+    // an empty layout, matching the on-disk "no trace" semantics for emptiness.
+    let snapshot = state.captureLayoutSnapshot(agentsBySurface: agents)
+    saveLayoutSnapshot?(worktreeID, snapshot)
+    let change: LayoutsIncrementalWriter.Change = snapshot.map { .snapshot($0) } ?? .delete
+    let writer = layoutsWriter
+    let task = Task { [weak self] in
+      await writer.flush([worktreeID: change])
+      self?.layoutFlushTasks[worktreeID] = nil
+    }
+    layoutFlushTasks[worktreeID] = task
+  }
+
+  /// Removes `worktreeID` from disk immediately, bypassing the debounce and
+  /// cancelling any queued positive save so a stale snapshot can't resurrect a
+  /// removed worktree. Awaits any in-flight positive flush for the key first so
+  /// the `.delete` always reaches the writer after the `.snapshot`.
+  private func deleteLayoutSnapshot(worktreeID: Worktree.ID) {
+    layoutDirtyTasks[worktreeID]?.cancel()
+    layoutDirtyTasks[worktreeID] = nil
+    saveLayoutSnapshot?(worktreeID, nil)
+    let inflightFlush = layoutFlushTasks[worktreeID]
+    let writer = layoutsWriter
+    // We await inflightFlush so the .delete lands after any in-flight positive
+    // flush; prune also drops the id from states synchronously before any later
+    // saveAllLayoutSnapshots, so no positive snapshot is re-emitted.
+    let task = Task { [weak self] in
+      await inflightFlush?.value
+      await writer.flush([worktreeID: .delete])
+      self?.layoutFlushTasks[worktreeID] = nil
+    }
+    layoutFlushTasks[worktreeID] = task
+  }
+
+  /// Cancels every queued incremental save. Called before the on-quit
+  /// synchronous flush becomes the terminal write.
+  func cancelPendingLayoutSaves() {
+    for task in layoutDirtyTasks.values { task.cancel() }
+    layoutDirtyTasks.removeAll()
+    // Best-effort cancel: an already-started flush has no cancellation
+    // checkpoint in `applyAndWrite`, so it runs to completion. The writer's lock
+    // plus the atomic temp+rename keep the on-quit write from tearing; the worst
+    // case is a stale-but-valid key set on the next launch, never a corrupt file.
+    for task in layoutFlushTasks.values { task.cancel() }
+    layoutFlushTasks.removeAll()
   }
 
   /// Tears down persistent zmx sessions for worktrees that just left the keep set.
@@ -567,18 +666,33 @@ final class WorktreeTerminalManager {
   /// would survive forever.
   func terminateAllSessions() async {
     let trackedSurfaceIDs = states.values.flatMap(\.allSurfaceIDs)
-    let trackedSessionIDs = trackedSurfaceIDs.map(ZmxSessionID.make(surfaceID:))
+    let trackedSessionIDs = Set(trackedSurfaceIDs.map(ZmxSessionID.make(surfaceID:)))
     for state in states.values {
       state.closeAllSurfaces()
     }
     emitHasAnyTerminalSurfaceIfNeeded()
-    let liveSessions = await zmxClient.listSessions()
-    let allSessions = Array(Set(trackedSessionIDs).union(liveSessions))
+    // This instance's tracked sessions are always killed. The orphan subset
+    // (live and untracked) is attach-aware: spared when a client is attached or
+    // the count is unknown, so a concurrently-running instance keeps its
+    // sessions. Orphan reaping is therefore eventually consistent: the last
+    // instance to quit with no live clients sweeps what remains.
+    let liveSessions = await zmxClient.listSessionsWithClients()
+    let orphanSessions: [String]
+    if let liveSessions {
+      orphanSessions = liveSessions.filter { entry in
+        !trackedSessionIDs.contains(entry.name) && entry.clients == 0
+      }
+      .map(\.name)
+    } else {
+      // nil = UNKNOWN probe; still force-kill tracked, but skip the orphan sweep.
+      terminalLogger.info("Skipping quit-time orphan sweep: zmx session probe unavailable")
+      orphanSessions = []
+    }
+    let allSessions = Array(trackedSessionIDs.union(orphanSessions))
     guard !allSessions.isEmpty else { return }
-    let orphanCount = Set(allSessions).subtracting(trackedSessionIDs).count
     analyticsClient.capture(
       "terminal_persistence_session_killed",
-      ["reason": "user_quit", "count": allSessions.count, "orphan_count": orphanCount]
+      ["reason": "user_quit", "count": allSessions.count, "orphan_count": orphanSessions.count]
     )
     let client = zmxClient
     await withTaskGroup(of: Void.self) { group in
@@ -589,11 +703,22 @@ final class WorktreeTerminalManager {
   }
 
   /// Reaps `supa-*` sessions zmx hosts that no persisted layout claims;
-  /// catches orphans from crashes / force-quits.
+  /// catches orphans from crashes / force-quits. Attach-aware: a session with
+  /// a live client (another Supacode instance or a manual `zmx attach`) is
+  /// spared, and a failed probe reaps nothing.
   func reapOrphanSessions(knownSurfaceIDs: Set<UUID>) async {
-    let liveSessions = await zmxClient.listSessions()
+    guard let liveSessions = await zmxClient.listSessionsWithClients() else {
+      // nil = UNKNOWN (probe failed / timed out); never reap on no signal.
+      terminalLogger.info("Skipping orphan reap: zmx session probe unavailable")
+      return
+    }
     let knownSessionIDs = Set(knownSurfaceIDs.map(ZmxSessionID.make(surfaceID:)))
-    let orphans = Set(liveSessions).subtracting(knownSessionIDs)
+    // Only reap orphans we positively know have zero attached clients; spare
+    // clients>0 (in use) and clients==nil (unknown count).
+    let orphans = liveSessions.filter { entry in
+      !knownSessionIDs.contains(entry.name) && entry.clients == 0
+    }
+    .map(\.name)
     guard !orphans.isEmpty else { return }
     terminalLogger.info("Reaping \(orphans.count) orphan zmx session(s)")
     analyticsClient.capture(
@@ -672,9 +797,16 @@ final class WorktreeTerminalManager {
       assertionFailure("saveLayoutSnapshot closure not configured.")
       return
     }
+    // The actor is the sole disk writer (`LayoutsKey.save` is a no-op), so the
+    // on-quit terminal write goes through `flushSync` while still updating the
+    // in-memory `@Shared` dict via `saveLayoutSnapshot` for any live readers.
+    var changes: [Worktree.ID: LayoutsIncrementalWriter.Change] = [:]
     for (id, state) in states {
-      saveLayoutSnapshot(id, state.captureLayoutSnapshot(agentsBySurface: agentsBySurface))
+      let snapshot = state.captureLayoutSnapshot(agentsBySurface: agentsBySurface)
+      saveLayoutSnapshot(id, snapshot)
+      changes[id] = snapshot.map { .snapshot($0) } ?? .delete
     }
+    layoutsWriter.flushSync(changes)
   }
 
   func surfaceBackgroundColorScheme() -> ColorScheme {
