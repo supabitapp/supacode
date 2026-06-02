@@ -14,6 +14,7 @@ final class PresenceTestHarness {
   private let reducer = AgentPresenceFeature()
   private var stream: AsyncStream<TerminalClient.Event>?
   private var consumeTask: Task<Void, Never>?
+  private weak var manager: WorktreeTerminalManager?
   /// Bumped each time the consume task reduces a stream event.
   private var processedCount = 0
   /// Bumped each time the consume task is about to wait for the next event, i.e.
@@ -49,15 +50,28 @@ final class PresenceTestHarness {
     for _ in 0..<64 {
       let parksBefore = parkCount
       let processedBefore = processedCount
-      await Task.megaYield(count: 10_000)
-      let parkedAgain = parkCount > parksBefore
-      let quiet = processedCount == processedBefore
-      settled = parkedAgain && quiet ? settled + 1 : 0
+      // Each megaYield spawns `count` detached tasks. A clock-awoken producer
+      // (e.g. an idle debounce resuming after `clock.advance`) needs enough
+      // yields within a single pass to resume, emit, and let the consumer
+      // reduce before we sample quiescence; too few and a busy suite schedules
+      // the resume after the sample, so we conclude "idle" before the idle
+      // event lands. 1000 keeps the per-call cost two orders below the legacy
+      // 10_000 while staying robust under contention.
+      await Task.megaYield(count: 1000)
+      // Quiescent when the consumer is parked, nothing processed this pass, and
+      // no idle-hook debounce is still scheduled. The last clause closes the
+      // race where `clock.advance` returned but the awoken idle task hasn't yet
+      // emitted: its key lingers in the manager until it does, so a pending
+      // count keeps draining instead of concluding "idle" too early.
+      let consumerIdle = parkCount == parksBefore && processedCount == processedBefore
+      let noPendingIdle = (manager?.pendingIdleHookCountForTesting ?? 0) == 0
+      settled = consumerIdle && noPendingIdle ? settled + 1 : 0
       if settled >= 2 { return }
     }
   }
 
   func attach(to manager: WorktreeTerminalManager) {
+    self.manager = manager
     let stream = manager.eventStream()
     self.stream = stream
     consumeTask?.cancel()
