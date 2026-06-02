@@ -1466,6 +1466,194 @@ struct WorktreeTerminalManagerTests {
     return event
   }
 
+  @Test func coalescesConsecutiveIdenticalTaskStatusEvents() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let stream = manager.eventStream()
+
+    state.onTaskStatusChanged?(.running)
+    state.onTaskStatusChanged?(.running)
+    state.onTaskStatusChanged?(.idle)
+    state.onTaskStatusChanged?(.idle)
+    state.onTaskStatusChanged?(.running)
+
+    // Resubscribing finishes `stream` so the drain below terminates.
+    _ = manager.eventStream()
+
+    var statuses: [WorktreeTaskStatus] = []
+    for await event in stream {
+      guard case .taskStatusChanged(_, let status) = event else { continue }
+      statuses.append(status)
+    }
+
+    #expect(statuses == [.running, .idle, .running])
+  }
+
+  @Test func coalescesConsecutiveIdenticalFocusEvents() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let stream = manager.eventStream()
+    let first = UUID()
+    let second = UUID()
+
+    state.onFocusChanged?(first)
+    state.onFocusChanged?(first)
+    state.onFocusChanged?(second)
+    state.onFocusChanged?(first)
+
+    _ = manager.eventStream()
+
+    var focused: [UUID] = []
+    for await event in stream {
+      guard case .focusChanged(_, let surfaceID) = event else { continue }
+      focused.append(surfaceID)
+    }
+
+    #expect(focused == [first, second, first])
+  }
+
+  @Test func capsTheLiveEventBufferUnderBackpressure() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let stream = manager.eventStream()
+
+    // Lifecycle events are never coalesced, so each one occupies a buffer slot.
+    // Emitting past the cap with nothing draining must shed the oldest, not grow.
+    let overflow = WorktreeTerminalManager.eventBufferCap + 50
+    for _ in 0..<overflow {
+      state.onSetupScriptConsumed?()
+    }
+
+    _ = manager.eventStream()
+
+    var count = 0
+    for await event in stream {
+      if case .setupScriptConsumed = event { count += 1 }
+    }
+
+    #expect(count == WorktreeTerminalManager.eventBufferCap)
+  }
+
+  @Test func purgesCoalesceKeyOnTabTeardownSoIdenticalEventRedelivers() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let stream = manager.eventStream()
+    let tabID = TerminalTabID()
+    let projection = WorktreeTabProjection(
+      tabID: tabID,
+      surfaceIDs: [UUID()],
+      activeSurfaceID: nil,
+      unseenNotificationCount: 0
+    )
+
+    state.onTabProjectionChanged?(projection)
+    state.onTabRemoved?(tabID)
+    // The teardown purged the stale key, so an identical projection for the same
+    // tab id (e.g. a snapshot restore reusing the UUID) must be delivered again.
+    state.onTabProjectionChanged?(projection)
+
+    _ = manager.eventStream()
+
+    var delivered = 0
+    for await event in stream {
+      if case .tabProjectionChanged(_, let value) = event, value.tabID == tabID {
+        delivered += 1
+      }
+    }
+
+    #expect(delivered == 2)
+  }
+
+  @Test func neverCoalescesConsecutiveLifecycleEvents() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let stream = manager.eventStream()
+
+    state.onTabCreated?()
+    state.onTabCreated?()
+
+    _ = manager.eventStream()
+
+    var created = 0
+    for await event in stream {
+      if case .tabCreated = event { created += 1 }
+    }
+
+    #expect(created == 2)
+  }
+
+  @Test func coalescesPendingEventsBeforeSubscription() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    // No subscriber attached yet, so these buffer into pendingEvents; identical
+    // keys must collapse to the latest value before the first subscriber drains.
+    state.onTaskStatusChanged?(.running)
+    state.onTaskStatusChanged?(.idle)
+    state.onTaskStatusChanged?(.running)
+
+    let stream = manager.eventStream()
+    _ = manager.eventStream()
+
+    var statuses: [WorktreeTaskStatus] = []
+    for await event in stream {
+      guard case .taskStatusChanged(_, let status) = event else { continue }
+      statuses.append(status)
+    }
+
+    #expect(statuses == [.running])
+  }
+
+  @Test func capsPendingLifecycleEventsBeforeSubscription() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    // No subscriber attached: lifecycle events fill pendingEvents and must cap.
+    let overflow = WorktreeTerminalManager.pendingEventCap + 50
+    for _ in 0..<overflow {
+      state.onSetupScriptConsumed?()
+    }
+
+    let stream = manager.eventStream()
+    _ = manager.eventStream()
+
+    var count = 0
+    for await event in stream {
+      if case .setupScriptConsumed = event { count += 1 }
+    }
+
+    #expect(count == WorktreeTerminalManager.pendingEventCap)
+  }
+
+  @Test func seedsCoalesceCacheFromPendingReplaySoLiveDuplicateDedups() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    // Buffered before any subscriber attaches, then replayed on subscribe.
+    state.onTaskStatusChanged?(.running)
+    let stream = manager.eventStream()
+    // The replay seeded the cache, so this identical live value must dedup.
+    state.onTaskStatusChanged?(.running)
+
+    _ = manager.eventStream()
+
+    var statuses: [WorktreeTaskStatus] = []
+    for await event in stream {
+      guard case .taskStatusChanged(_, let status) = event else { continue }
+      statuses.append(status)
+    }
+
+    #expect(statuses == [.running])
+  }
+
   private func makeWorktree(id: String = "/tmp/repo/wt-1") -> Worktree {
     let name = URL(fileURLWithPath: id).lastPathComponent
     return Worktree(

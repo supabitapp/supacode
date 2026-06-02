@@ -1,9 +1,18 @@
 import Darwin
 import Dispatch
 import Foundation
+import SupacodeSettingsShared
+
+private let watcherLogger = SupaLogger("WorktreeInfoWatcher")
 
 @MainActor
 final class WorktreeInfoWatcherManager {
+  /// Hard cap on the live event buffer. These events are refresh signals (not
+  /// coalescable state), so the stream is capped rather than deduped: a wedged
+  /// consumer drops the oldest signals instead of letting the buffer grow
+  /// without bound.
+  static let eventBufferCap = 2048
+
   private struct HeadWatcher {
     let headURL: URL
     let source: DispatchSourceFileSystemObject
@@ -80,7 +89,10 @@ final class WorktreeInfoWatcherManager {
 
   func eventStream() -> AsyncStream<WorktreeInfoWatcherClient.Event> {
     eventContinuation?.finish()
-    let (stream, continuation) = AsyncStream.makeStream(of: WorktreeInfoWatcherClient.Event.self)
+    let (stream, continuation) = AsyncStream.makeStream(
+      of: WorktreeInfoWatcherClient.Event.self,
+      bufferingPolicy: .bufferingNewest(Self.eventBufferCap)
+    )
     eventContinuation = continuation
     return stream
   }
@@ -441,6 +453,9 @@ final class WorktreeInfoWatcherManager {
         do {
           try await sleep(request.interval)
         } catch {
+          if !(error is CancellationError) {
+            watcherLogger.error("Worktree refresh loop for \(worktreeID) ended: \(error).")
+          }
           break
         }
         guard !Task.isCancelled else {
@@ -460,7 +475,23 @@ final class WorktreeInfoWatcherManager {
     {
       return
     }
-    eventContinuation?.yield(event)
+    let result = eventContinuation?.yield(event)
+    if case .dropped(let shed)? = result {
+      let cap = Self.eventBufferCap
+      watcherLogger.error(
+        "Worktree info event buffer full (cap \(cap)); shed oldest refresh signal: \(Self.label(for: shed)).")
+    }
+  }
+
+  /// Compact identity for a backpressure-drop log. Strips the pull-request
+  /// refresh's worktree-id list to a count so a drop storm can't flood the log;
+  /// the single-id signals carry small payloads and describe themselves.
+  private static func label(for event: WorktreeInfoWatcherClient.Event) -> String {
+    switch event {
+    case .repositoryPullRequestRefresh(let rootURL, let worktreeIDs):
+      "repositoryPullRequestRefresh(\(rootURL.lastPathComponent), \(worktreeIDs.count) worktrees)"
+    default: String(describing: event)
+    }
   }
 
   private func cancelPullRequestSelectionCooldown(for repositoryRootURL: URL) {

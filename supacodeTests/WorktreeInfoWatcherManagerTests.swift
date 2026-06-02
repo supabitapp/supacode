@@ -146,6 +146,29 @@ struct WorktreeInfoWatcherManagerTests {
     await task.value
     try FileManager.default.removeItem(at: tempRepository.tempRoot)
   }
+
+  @Test func capsTheEventBufferUnderBackpressure() async throws {
+    let tempWorktree = try makeTempWorktree()
+    let manager = WorktreeInfoWatcherManager()
+    manager.handleCommand(.setPullRequestTrackingEnabled(false))
+    let stream = manager.eventStream()
+
+    // Each setWorktrees re-emits an immediate filesChanged for the worktree;
+    // with nothing draining, the buffer must cap rather than grow unbounded.
+    let overflow = WorktreeInfoWatcherManager.eventBufferCap + 50
+    for _ in 0..<overflow {
+      manager.handleCommand(.setWorktrees([tempWorktree.worktree]))
+    }
+    manager.handleCommand(.stop)
+
+    var count = 0
+    for await event in stream where event == .filesChanged(worktreeID: tempWorktree.worktree.id) {
+      count += 1
+    }
+
+    #expect(count == WorktreeInfoWatcherManager.eventBufferCap)
+    try FileManager.default.removeItem(at: tempWorktree.tempRoot)
+  }
 }
 
 actor EventCollector {
