@@ -40,8 +40,6 @@ struct TerminalTabView: View {
           isActive: isActive,
           isHoveringTab: isHovering,
           isHoveringClose: isHoveringClose,
-          shortcutHint: shortcutHint,
-          showsShortcutHint: showsShortcutHint,
           tabStore: tabStore,
         )
       }
@@ -60,9 +58,11 @@ struct TerminalTabView: View {
       .allowsHitTesting(!isEditing)
       .opacity(isEditing ? 0 : 1)
 
-      // Trailing slot priority: zoom-dismiss > close (on hover) > ⌘ hint > lock > dot.
-      // The lock subsumes the dot so a bell on a frozen tab doesn't contest the lock signal.
-      ZStack {
+      // Fixed 24pt trailing slot. Lock and notification dot are mutually exclusive;
+      // the hint, close, and zoom-dismiss buttons cross-fade via opacity. Close/zoom
+      // suppress lock/dot via the `suppress:` parameter when hovering, dragging,
+      // hint-showing, or split-zoomed.
+      ZStack(alignment: .trailing) {
         if tab.isBlockingScriptCompleted {
           TerminalTabLockIndicator(
             suppress: isHovering || isHoveringClose || isDragging || isShowingHint || isSplitZoomed
@@ -73,13 +73,15 @@ struct TerminalTabView: View {
             suppress: isHovering || isHoveringClose || isDragging || isShowingHint || isSplitZoomed
           )
         }
-        if isShowingHint, let shortcutHint {
+        if let shortcutHint {
           Text(shortcutHint)
             .font(.caption)
             // Explicit `.regular` because the tab bar lacks the sidebar's List/vibrancy
             // context, where `.font(.caption)` would otherwise render heavier.
             .fontWeight(.regular)
             .foregroundStyle(.secondary)
+            .opacity(isShowingHint ? 1 : 0)
+            .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: isShowingHint)
         }
         if isSplitZoomed {
           TerminalTabExitSplitZoomButton(
@@ -99,6 +101,7 @@ struct TerminalTabView: View {
           )
         }
       }
+      .frame(width: TerminalTabBarMetrics.trailingSlotWidth, height: TerminalTabBarMetrics.closeButtonSize)
       .animation(.easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration), value: isHovering)
       .padding(.trailing, TerminalTabBarMetrics.tabHorizontalPadding)
       .opacity(isEditing ? 0 : 1)
@@ -115,7 +118,7 @@ struct TerminalTabView: View {
           .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
           .padding(
             .trailing,
-            TerminalTabBarMetrics.closeButtonSize + TerminalTabBarMetrics.contentSpacing
+            TerminalTabBarMetrics.trailingSlotWidth + TerminalTabBarMetrics.contentSpacing
           )
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
           .onSubmit { onEndRename() }
@@ -236,15 +239,11 @@ struct TerminalTabView: View {
     return "⌘\(number)"
   }
 
-  private var showsShortcutHint: Bool {
-    commandKeyObserver.isPressed && shortcutHint != nil
-  }
-
   /// True when the cmd-pressed hotkey hint should occupy the trailing slot.
   /// Hover wins: when the user is over the tab the close button takes the
   /// slot regardless of whether ⌘ is also pressed.
   private var isShowingHint: Bool {
-    showsShortcutHint && !isHovering && !isDragging
+    commandKeyObserver.isPressed && shortcutHint != nil && !isHovering && !isDragging
   }
 
   /// State-aware accessibility value for VoiceOver. Restores the OSC-9 progress

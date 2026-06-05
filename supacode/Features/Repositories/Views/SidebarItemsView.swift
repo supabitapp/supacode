@@ -784,7 +784,7 @@ private struct SidebarItemContextMenu: View {
         Button {
           store.send(.contextMenuOpenWorktree(worktree.id, action))
         } label: {
-          OpenWorktreeActionMenuLabelView(action: action, shortcutHint: nil)
+          OpenWorktreeActionMenuLabelView(action: action)
         }
         .help("Open with \(action.labelTitle)")
       }

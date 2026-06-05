@@ -454,25 +454,23 @@ private struct TrailingView: View {
   let showsPullRequestInfo: Bool
 
   var body: some View {
-    if let shortcutHint {
-      Text(shortcutHint)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    } else {
-      let display = WorktreePullRequestDisplay(
-        worktreeName: store.branchName,
-        pullRequest: showsPullRequestInfo ? store.pullRequest : nil,
-      )
-      let prText = display.pullRequestBadgeStyle?.text
-      let agents = store.agents
-      let scriptColors = store.runningScripts.map(\.tint)
-      let showsNotificationIndicator = store.hasUnseenNotifications
-      let notifications = Array(store.notifications)
-      let added = store.addedLines ?? 0
-      let removed = store.removedLines ?? 0
-      let hasStats = added + removed > 0
-      let hasStatus = !scriptColors.isEmpty || showsNotificationIndicator
+    let hasHint = shortcutHint != nil
+    let display = WorktreePullRequestDisplay(
+      worktreeName: store.branchName,
+      pullRequest: showsPullRequestInfo ? store.pullRequest : nil,
+    )
+    let prText = display.pullRequestBadgeStyle?.text
+    let agents = store.agents
+    let scriptColors = store.runningScripts.map(\.tint)
+    let showsNotificationIndicator = store.hasUnseenNotifications
+    let notifications = Array(store.notifications)
+    let added = store.addedLines ?? 0
+    let removed = store.removedLines ?? 0
+    let hasStats = added + removed > 0
+    let hasStatus = !scriptColors.isEmpty || showsNotificationIndicator
 
+    // Cross-fade via opacity so flipping ⌘ doesn't snap the row.
+    ZStack(alignment: .trailing) {
       HStack(spacing: 6) {
         if hasStats {
           DiffStatsContent(addedLines: added, removedLines: removed)
@@ -497,7 +495,15 @@ private struct TrailingView: View {
       }
       // Title takes the squeeze under narrow widths, not the counters.
       .fixedSize(horizontal: true, vertical: false)
+      .opacity(hasHint ? 0 : 1)
+      .allowsHitTesting(!hasHint)
+
+      Text(shortcutHint ?? "")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .opacity(hasHint ? 1 : 0)
     }
+    .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: hasHint)
   }
 }
 

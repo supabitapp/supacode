@@ -1,16 +1,7 @@
-import Sharing
-import SupacodeSettingsShared
 import SwiftUI
 
 struct PullRequestStatusButton: View {
   let model: PullRequestStatusModel
-  @Environment(CommandKeyObserver.self) private var commandKeyObserver
-  @Shared(.settingsFile) private var settingsFile
-
-  private var openPRDisplay: String {
-    let effective = AppShortcuts.openPullRequest.effective(from: settingsFile.global.shortcutOverrides)
-    return effective?.display ?? ""
-  }
 
   var body: some View {
     PullRequestChecksPopoverButton(pullRequest: model.pullRequest) {
@@ -26,16 +17,9 @@ struct PullRequestStatusButton: View {
           PullRequestChecksRingView(breakdown: breakdown)
         }
         if let detailText = model.detailText {
-          Text(
-            commandKeyObserver.isPressed
-              ? "Open on GitHub \(openPRDisplay)" : detailText
-          )
-          .lineLimit(1)
-        } else if commandKeyObserver.isPressed {
-          Text("Open on GitHub \(openPRDisplay)")
+          Text(detailText)
             .lineLimit(1)
-        }
-        if model.detailText == nil, !commandKeyObserver.isPressed {
+        } else {
           Text(model.title)
             .lineLimit(1)
         }
