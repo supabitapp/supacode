@@ -274,15 +274,10 @@ struct SidebarItemFeatureTests {
 
   // MARK: - UI-scalar guards.
 
-  @Test func shortcutHintAndDragSessionGuardsSkipNoOps() async {
+  @Test func dragSessionGuardSkipsNoOps() async {
     let store = TestStore(initialState: makeState(name: "feature")) {
       SidebarItemFeature()
     }
-    await store.send(.shortcutHintChanged("⌘1")) {
-      $0.shortcutHint = "⌘1"
-    }
-    // Same hint: no-op.
-    await store.send(.shortcutHintChanged("⌘1"))
     await store.send(.dragSessionChanged(isDragging: true)) {
       $0.isDragging = true
     }

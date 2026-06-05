@@ -312,7 +312,7 @@ extension SidebarItemFeature.Action {
     case .pullRequestChanged:
       return .selectedWorktreeSlice
     case .diffStatsChanged, .pullRequestQueryStarted,
-      .shortcutHintChanged, .dragSessionChanged,
+      .dragSessionChanged,
       .focusTerminalRequested, .focusTerminalConsumed:
       return []
     }

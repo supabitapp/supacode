@@ -109,7 +109,6 @@ struct SidebarItemFeature {
     var isTaskRunning: Bool { isProgressBusy || hasAgentActivity }
 
     var isDragging: Bool = false
-    var shortcutHint: String?
     /// One-shot focus token: set when a selection arrives with `focusTerminal: true`.
     var shouldFocusTerminal: Bool = false
   }
@@ -123,7 +122,6 @@ struct SidebarItemFeature {
     case runningScriptStopped(id: UUID)
     case agentSnapshotChanged([AgentPresenceFeature.AgentInstance], hasActivity: Bool)
     case terminalProjectionChanged(WorktreeRowProjection)
-    case shortcutHintChanged(String?)
     case dragSessionChanged(isDragging: Bool)
     case focusTerminalRequested
     case focusTerminalConsumed
@@ -190,11 +188,6 @@ struct SidebarItemFeature {
           state.hasUnseenNotifications = projection.hasUnseenNotifications
         }
         if state.notifications != projection.notifications { state.notifications = projection.notifications }
-        return .none
-
-      case .shortcutHintChanged(let hint):
-        guard state.shortcutHint != hint else { return .none }
-        state.shortcutHint = hint
         return .none
 
       case .dragSessionChanged(let isDragging):
