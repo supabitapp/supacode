@@ -87,7 +87,7 @@ struct GhosttySurfaceBridgeTests {
 
   @Test func desktopNotificationEmitsCallback() {
     let bridge = GhosttySurfaceBridge()
-    var received: (String, String)?
+    var received: (title: String, body: String)?
     bridge.onDesktopNotification = { title, body in
       received = (title, body)
     }
@@ -106,8 +106,71 @@ struct GhosttySurfaceBridgeTests {
       }
     }
 
-    #expect(received?.0 == "Title")
-    #expect(received?.1 == "Body")
+    #expect(received?.title == "Title")
+    #expect(received?.body == "Body")
+  }
+
+  @Test func contextSignalEmitsCallback() {
+    let bridge = GhosttySurfaceBridge()
+    var receivedAction: UInt8?
+    var receivedID: String?
+    var receivedMetadata: String?
+    bridge.onContextSignal = { action, id, metadata in
+      receivedAction = action
+      receivedID = id
+      receivedMetadata = metadata
+    }
+
+    var action = ghostty_action_s()
+    action.tag = GHOSTTY_ACTION_CONTEXT_SIGNAL
+    let target = ghostty_target_s()
+
+    "claude".withCString { idPtr in
+      "event=busy;token=abc".withCString { metaPtr in
+        action.action.context_signal = ghostty_action_context_signal_s(
+          action: 0,
+          id: idPtr,
+          metadata: metaPtr
+        )
+        _ = bridge.handleAction(target: target, action: action)
+      }
+    }
+
+    #expect(receivedAction == 0)
+    #expect(receivedID == "claude")
+    #expect(receivedMetadata == "event=busy;token=abc")
+  }
+
+  @Test func contextSignalDropsNullIDOrMetadata() {
+    let bridge = GhosttySurfaceBridge()
+    var invoked = false
+    bridge.onContextSignal = { _, _, _ in invoked = true }
+
+    var action = ghostty_action_s()
+    action.tag = GHOSTTY_ACTION_CONTEXT_SIGNAL
+    let target = ghostty_target_s()
+
+    // Null id with valid metadata.
+    "event=busy;token=abc".withCString { metaPtr in
+      action.action.context_signal = ghostty_action_context_signal_s(
+        action: 0,
+        id: nil,
+        metadata: metaPtr
+      )
+      _ = bridge.handleAction(target: target, action: action)
+    }
+    #expect(invoked == false)
+
+    // Valid id with null metadata.
+    "claude".withCString { idPtr in
+      action.action.context_signal = ghostty_action_context_signal_s(
+        action: 0,
+        id: idPtr,
+        metadata: nil
+      )
+      _ = bridge.handleAction(target: target, action: action)
+    }
+    #expect(invoked == false)
   }
 
   @Test func coalescesBurstOfProgressReports() async {
