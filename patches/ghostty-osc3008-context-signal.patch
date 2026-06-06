@@ -1,0 +1,275 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 3c4002abc..626c96876 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -641,6 +641,13 @@ typedef struct {
+   const char* body;
+ } ghostty_action_desktop_notification_s;
+ 
++// apprt.action.ContextSignal.C
++typedef struct {
++  uint8_t action;  // 0 = start, 1 = end
++  const char* id;
++  const char* metadata;
++} ghostty_action_context_signal_s;
++
+ // apprt.action.SetTitle.C
+ typedef struct {
+   const char* title;
+@@ -926,6 +933,7 @@ typedef enum {
+   GHOSTTY_ACTION_SEARCH_SELECTED,
+   GHOSTTY_ACTION_READONLY,
+   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
++  GHOSTTY_ACTION_CONTEXT_SIGNAL,
+ } ghostty_action_tag_e;
+ 
+ typedef union {
+@@ -942,6 +950,7 @@ typedef union {
+   ghostty_action_scrollbar_s scrollbar;
+   ghostty_action_inspector_e inspector;
+   ghostty_action_desktop_notification_s desktop_notification;
++  ghostty_action_context_signal_s context_signal;
+   ghostty_action_set_title_s set_title;
+   ghostty_action_set_title_s set_tab_title;
+   ghostty_action_prompt_title_e prompt_title;
+diff --git a/src/Surface.zig b/src/Surface.zig
+index c8055cfee..be18a3b6a 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -1073,6 +1073,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
+             try self.showDesktopNotification(title, body);
+         },
+ 
++        .context_signal => |signal| {
++            const id = std.mem.sliceTo(&signal.id, 0);
++            const metadata = std.mem.sliceTo(&signal.metadata, 0);
++            _ = try self.rt_app.performAction(
++                .{ .surface = self },
++                .context_signal,
++                .{ .action = signal.action, .id = id, .metadata = metadata },
++            );
++        },
++
+         .renderer_health => |health| self.updateRendererHealth(health),
+ 
+         .scrollbar => |scrollbar| self.updateScrollbar(scrollbar),
+diff --git a/src/apprt/action.zig b/src/apprt/action.zig
+index f6865af83..e7180a2d2 100644
+--- a/src/apprt/action.zig
++++ b/src/apprt/action.zig
+@@ -343,6 +343,10 @@ pub const Action = union(Key) {
+     /// otherwise the terminal-set title.
+     copy_title_to_clipboard,
+ 
++    /// OSC 3008 hierarchical context signal (UAPI spec). A program inside the
++    /// terminal signalled a context change.
++    context_signal: ContextSignal,
++
+     /// Sync with: ghostty_action_tag_e
+     pub const Key = enum(c_int) {
+         quit,
+@@ -410,6 +414,7 @@ pub const Action = union(Key) {
+         search_selected,
+         readonly,
+         copy_title_to_clipboard,
++        context_signal,
+ 
+         test "ghostty.h Action.Key" {
+             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+@@ -771,6 +776,28 @@ pub const DesktopNotification = struct {
+     }
+ };
+ 
++pub const ContextSignal = struct {
++    /// 0 = start, 1 = end.
++    action: u8,
++    id: [:0]const u8,
++    metadata: [:0]const u8,
++
++    // Sync with: ghostty_action_context_signal_s
++    pub const C = extern struct {
++        action: u8,
++        id: [*:0]const u8,
++        metadata: [*:0]const u8,
++    };
++
++    pub fn cval(self: ContextSignal) C {
++        return .{
++            .action = self.action,
++            .id = self.id.ptr,
++            .metadata = self.metadata.ptr,
++        };
++    }
++};
++
+ pub const KeySequence = union(enum) {
+     trigger: input.Trigger,
+     end,
+diff --git a/src/apprt/surface.zig b/src/apprt/surface.zig
+index 3cb0016fa..296e70bc9 100644
+--- a/src/apprt/surface.zig
++++ b/src/apprt/surface.zig
+@@ -60,6 +60,20 @@ pub const Message = union(enum) {
+         body: [255:0]u8,
+     },
+ 
++    /// OSC 3008 hierarchical context signal (UAPI spec).
++    context_signal: struct {
++        /// The signalled action: 0 = start, 1 = end.
++        action: u8,
++
++        /// Context identifier (1-64 chars per spec).
++        id: [64:0]u8,
++
++        /// Raw semicolon-separated key=value metadata, truncated to 2047 bytes
++        /// (may split a field; see handleContextSignal). Sized to carry a
++        /// base64-encoded notification payload, not just the tiny presence fields.
++        metadata: [2047:0]u8,
++    },
++
+     /// Health status change for the renderer.
+     renderer_health: renderer.Health,
+ 
+diff --git a/src/terminal/stream.zig b/src/terminal/stream.zig
+index 9771334f9..4187bcbfb 100644
+--- a/src/terminal/stream.zig
++++ b/src/terminal/stream.zig
+@@ -125,6 +125,7 @@ pub const Action = union(Key) {
+     kitty_color_report: kitty.color.OSC,
+     color_operation: ColorOperation,
+     semantic_prompt: SemanticPrompt,
++    context_signal: ContextSignal,
+ 
+     pub const Key = lib.Enum(
+         lib.target,
+@@ -222,6 +223,7 @@ pub const Action = union(Key) {
+             "kitty_color_report",
+             "color_operation",
+             "semantic_prompt",
++            "context_signal",
+         },
+     );
+ 
+@@ -348,6 +350,26 @@ pub const Action = union(Key) {
+         }
+     };
+ 
++    pub const ContextSignal = struct {
++        action: u8,
++        id: []const u8,
++        metadata: []const u8,
++
++        pub const C = extern struct {
++            action: u8,
++            id: lib.String,
++            metadata: lib.String,
++        };
++
++        pub fn cval(self: ContextSignal) ContextSignal.C {
++            return .{
++                .action = self.action,
++                .id = .init(self.id),
++                .metadata = .init(self.metadata),
++            };
++        }
++    };
++
+     pub const StartHyperlink = struct {
+         uri: []const u8,
+         id: ?[]const u8,
+@@ -2047,6 +2069,21 @@ pub fn Stream(comptime H: type) type {
+                     self.handler.vt(.progress_report, v);
+                 },
+ 
++                .context_signal => |v| {
++                    // The u8 wire value is a locked C ABI; pin the enum mapping so a
++                    // future ghostty bump that reorders Action fails loudly here
++                    // instead of silently renumbering every consumer.
++                    comptime {
++                        std.debug.assert(@intFromEnum(@TypeOf(v.action).start) == 0);
++                        std.debug.assert(@intFromEnum(@TypeOf(v.action).end) == 1);
++                    }
++                    self.handler.vt(.context_signal, .{
++                        .action = @intFromEnum(v.action),
++                        .id = v.id,
++                        .metadata = v.metadata,
++                    });
++                },
++
+                 .conemu_sleep,
+                 .conemu_show_message_box,
+                 .conemu_change_tab_title,
+@@ -2058,7 +2095,6 @@ pub fn Stream(comptime H: type) type {
+                 .conemu_run_process,
+                 .kitty_text_sizing,
+                 .kitty_clipboard_protocol,
+-                .context_signal,
+                 => {
+                     log.debug("unimplemented OSC callback: {}", .{cmd});
+                 },
+diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
+index 8e0f91110..93712be0d 100644
+--- a/src/terminal/stream_terminal.zig
++++ b/src/terminal/stream_terminal.zig
+@@ -259,6 +259,7 @@ pub const Handler = struct {
+             // Have no terminal-modifying effect
+             .report_pwd,
+             .show_desktop_notification,
++            .context_signal,
+             .progress_report,
+             .clipboard_contents,
+             .title_push,
+diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
+index fb3a6b3ff..08084ca69 100644
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -327,6 +327,7 @@ pub const StreamHandler = struct {
+             .window_title => try self.windowTitle(value.title),
+             .report_pwd => try self.reportPwd(value.url),
+             .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
++            .context_signal => try self.handleContextSignal(value.action, value.id, value.metadata),
+             .progress_report => self.progressReport(value),
+             .start_hyperlink => try self.startHyperlink(value.uri, value.id),
+             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
+@@ -1447,6 +1448,41 @@ pub const StreamHandler = struct {
+         self.surfaceMessageWriter(message);
+     }
+ 
++    fn handleContextSignal(
++        self: *StreamHandler,
++        action: u8,
++        id: []const u8,
++        metadata: []const u8,
++    ) !void {
++        var message = apprt.surface.Message{ .context_signal = undefined };
++
++        message.context_signal.action = action;
++
++        // id is spec-bounded to 64 (max_context_id_len) by the parser; the clamp
++        // is defense-in-depth and is not expected to fire. Warn symmetrically
++        // with the metadata path so a future spec-cap raise doesn't hide an
++        // id-truncation regression.
++        if (id.len > message.context_signal.id.len) {
++            log.warn("OSC 3008: context_signal id truncated from {d} to {d} bytes", .{
++                id.len, message.context_signal.id.len,
++            });
++        }
++        const id_len = @min(id.len, message.context_signal.id.len);
++        @memcpy(message.context_signal.id[0..id_len], id[0..id_len]);
++        message.context_signal.id[id_len] = 0;
++
++        if (metadata.len > message.context_signal.metadata.len) {
++            log.warn("OSC 3008: context_signal metadata truncated from {d} to {d} bytes", .{
++                metadata.len, message.context_signal.metadata.len,
++            });
++        }
++        const metadata_len = @min(metadata.len, message.context_signal.metadata.len);
++        @memcpy(message.context_signal.metadata[0..metadata_len], metadata[0..metadata_len]);
++        message.context_signal.metadata[metadata_len] = 0;
++
++        self.surfaceMessageWriter(message);
++    }
++
+     /// Send a report to the pty.
+     pub fn sendSizeReport(self: *StreamHandler, style: terminal.SizeReportStyle) void {
+         switch (style) {
