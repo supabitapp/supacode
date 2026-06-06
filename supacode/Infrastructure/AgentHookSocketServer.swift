@@ -4,34 +4,25 @@ import SupacodeSettingsShared
 
 private nonisolated let socketLogger = SupaLogger("AgentHookSocket")
 
-/// Lightweight Unix domain socket server that receives messages from
-/// agent hooks (via `nc -U`) and the Supacode CLI tool.
+/// Lightweight Unix domain socket server for the Supacode CLI control protocol.
 ///
-/// Four message formats are supported:
-/// - **Notification** (legacy text proto): `<worktreeID> <tabID> <surfaceID> <agent>\n<JSON payload>\n`.
-///   The agent field defaults to `"unknown"` when absent. Kept until rich
-///   notifications migrate to the JSON envelope.
-/// - **Command**: JSON object with a `"deeplink"` key wrapping a `supacode://` URL.
-/// - **Query**: JSON object with a `"query"` key and optional parameters.
-/// - **Hook event**: JSON object with a top-level `"event"` string, designed to
-///   be extended without changing the wire format. Drives presence and
-///   activity. See `AgentHookEvent` for the field shape and `EventName` for
-///   known events.
+/// Two message formats are supported, both JSON objects:
+/// - **Command**: a `"deeplink"` key wrapping a `supacode://` URL.
+/// - **Query**: a `"query"` key and optional parameters.
+///
+/// Agent presence and notifications no longer travel over the socket. Hooks emit
+/// them as OSC 3008 to the terminal (see `AgentPresenceOSC`), which also works
+/// over SSH where this socket can't be reached; the socket carries only the CLI
+/// control protocol.
 @MainActor
 final class AgentHookSocketServer {
   private(set) var socketPath: String?
 
   private var listenTask: Task<Void, Never>?
-  /// (worktreeID, tabID, surfaceID, notification).
-  var onNotification: ((String, UUID, UUID, AgentHookNotification) -> Void)?
   /// Deeplink URL received from the CLI. Second parameter is the client FD for response.
   var onCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI. Parameters: resource name, extra params, client FD for response.
   var onQuery: ((String, [String: String], Int32) -> Void)?
-  /// Hook event from an agent bridge (the JSON envelope hook commands write
-  /// directly to the socket). Fire-and-forget — the server has already acked
-  /// the client by the time this fires, so handlers must not block.
-  var onEvent: ((AgentHookEvent) -> Void)?
 
   init() {
     let uid = getuid()
@@ -118,8 +109,6 @@ final class AgentHookSocketServer {
 
         await MainActor.run { [weak self] in
           switch message {
-          case .notification(let worktreeID, let tabID, let surfaceID, let notification):
-            self?.onNotification?(worktreeID, tabID, surfaceID, notification)
           case .command(let deeplinkURL, let clientFD):
             guard let self, let handler = self.onCommand else {
               Self.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
@@ -132,8 +121,6 @@ final class AgentHookSocketServer {
               return
             }
             handler(resource, params, clientFD)
-          case .event(let event):
-            self?.onEvent?(event)
           }
         }
       }
@@ -213,15 +200,10 @@ final class AgentHookSocketServer {
   private nonisolated static let maxPayloadSize = 65_536
 
   nonisolated enum Message: Sendable {
-    case notification(
-      worktreeID: String, tabID: UUID, surfaceID: UUID, notification: AgentHookNotification)
     /// CLI command with the client FD kept open for writing a response.
     case command(deeplinkURL: URL, clientFD: Int32)
     /// CLI query with the client FD kept open for writing data back.
     case query(resource: String, params: [String: String], clientFD: Int32)
-    /// Hook event from an agent bridge. Acked before dispatch, so the FD is
-    /// already closed by the time the handler runs.
-    case event(AgentHookEvent)
   }
 
   /// Writes a JSON response with data to a client and closes the FD.
@@ -294,20 +276,12 @@ final class AgentHookSocketServer {
       return nil
     }
 
-    // For command/query messages, keep the FD open for the response.
-    // For event messages, ack immediately and close — handlers must not
-    // block agent hook execution waiting for app state.
+    // Command/query messages keep the FD open so the handler can write a response.
     switch message {
     case .command(let url, _):
       return .command(deeplinkURL: url, clientFD: clientFD)
     case .query(let resource, let params, _):
       return .query(resource: resource, params: params, clientFD: clientFD)
-    case .event:
-      sendCommandResponse(clientFD: clientFD, ok: true)
-      return message
-    default:
-      close(clientFD)
-      return message
     }
   }
 
@@ -340,63 +314,26 @@ final class AgentHookSocketServer {
 
   nonisolated static func parse(data: Data) -> Message? {
     guard let rawString = String(data: data, encoding: .utf8) else {
-      socketLogger.warning("Dropped non-UTF8 hook payload (\(data.count) bytes)")
+      socketLogger.warning("Dropped non-UTF8 CLI payload (\(data.count) bytes)")
       return nil
     }
-
     let raw = rawString.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !raw.isEmpty else {
-      socketLogger.debug("Dropped empty hook payload")
+      socketLogger.debug("Dropped empty CLI payload")
       return nil
     }
-
-    // JSON object starting with `{` → CLI message (event, query, or command).
-    if raw.hasPrefix("{") {
-      return parseJSONMessage(data: data)
-    }
-
-    // Notification (legacy text proto): `worktreeID tabID surfaceID agent\n<JSON payload>`.
-    // Activity events flow through the JSON envelope path above.
-    let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
-    let headerParts = lines[0].split(separator: " ", maxSplits: 3)
-    guard
-      headerParts.count >= 3,
-      let tabID = UUID(uuidString: String(headerParts[1])),
-      let surfaceID = UUID(uuidString: String(headerParts[2]))
-    else {
-      socketLogger.warning("Malformed header: \(lines[0])")
+    // The CLI control protocol is always a JSON object (command or query).
+    guard raw.hasPrefix("{") else {
+      socketLogger.debug("Dropped non-JSON socket payload")
       return nil
     }
-
-    let worktreeID = String(headerParts[0])
-
-    // Notification: 4th header field is the agent name; remaining lines are JSON.
-    // Agent is a raw string intentionally — left open for custom agents since
-    // the socket is already listening and anyone can send messages.
-    guard lines.count > 1 else {
-      socketLogger.warning("Single-line text payload no longer supported: \(lines[0])")
-      return nil
-    }
-    let agent = headerParts.count >= 4 ? String(headerParts[3]) : "unknown"
-    let jsonPayload = lines.dropFirst().joined(separator: "\n")
-
-    guard let jsonData = jsonPayload.data(using: .utf8) else {
-      socketLogger.warning("Invalid notification payload encoding")
-      return nil
-    }
-
-    guard let notification = parseNotification(agent: agent, data: jsonData) else {
-      return nil
-    }
-    return .notification(
-      worktreeID: worktreeID,
-      tabID: tabID,
-      surfaceID: surfaceID,
-      notification: notification
-    )
+    return parseJSONMessage(data: data)
   }
 
-  private nonisolated static func parseNotification(
+  /// Parses an agent notification JSON payload into an `AgentHookNotification`,
+  /// decoding the body from whichever agent-specific field is present. The OSC
+  /// notify leg is the sole caller; the socket no longer carries notifications.
+  nonisolated static func parseNotification(
     agent: String,
     data: Data
   ) -> AgentHookNotification? {
@@ -418,24 +355,9 @@ final class AgentHookSocketServer {
     )
   }
 
-  /// Parses a JSON message into an event, query, or command. The placeholder
+  /// Parses a CLI JSON message into a query or command. The placeholder
   /// `clientFD` of `-1` is replaced with the real FD in `acceptAndParse`.
-  ///
-  /// Discriminator precedence: a top-level `"event"` string routes to the
-  /// hook-event parser exclusively — an event-shaped payload never falls
-  /// through to query/command parsing, so a malformed event produces a single
-  /// clear warning instead of two misleading ones.
   private nonisolated static func parseJSONMessage(data: Data) -> Message? {
-    let probe = try? JSONDecoder().decode(EventDiscriminatorProbe.self, from: data)
-    if let event = probe?.event, !event.isEmpty {
-      do {
-        let parsed = try JSONDecoder().decode(AgentHookEvent.self, from: data)
-        return .event(parsed)
-      } catch {
-        socketLogger.warning("Hook event payload failed to decode: \(error)")
-        return nil
-      }
-    }
     guard let request = SocketCommandRequest(data: data) else {
       socketLogger.warning("Failed to decode CLI message payload")
       return nil
@@ -453,13 +375,6 @@ final class AgentHookSocketServer {
   }
 }
 
-/// Probe used to detect the `event` discriminator without paying for a full
-/// envelope decode. Decoding this is cheap — the JSON parser walks until it
-/// finds the field and ignores the rest.
-private nonisolated struct EventDiscriminatorProbe: Decodable {
-  let event: String?
-}
-
 /// Parsed notification from a coding agent hook event.
 nonisolated struct AgentHookNotification: Equatable, Sendable {
   let agent: String
@@ -468,12 +383,14 @@ nonisolated struct AgentHookNotification: Equatable, Sendable {
   let body: String?
 }
 
-/// JSON envelope for hook events sent by the agent bridge.
-/// `surface_id` is the only required scope field — tab and worktree are
-/// derived app-side from the current terminal topology so a moved/split
-/// surface never carries stale attribution.
+/// An agent presence/activity event. Built by the OSC ingest from a verified
+/// presence signal (memberwise init, attributed to the receiving surface), and
+/// also `Decodable` from the legacy JSON envelope shape below for test
+/// construction. `surface_id` is the only scope field; tab and worktree are
+/// derived app-side from the current terminal topology so a moved/split surface
+/// never carries stale attribution.
 ///
-/// Wire shape:
+/// JSON shape (the Decodable contract):
 /// ```json
 /// {
 ///   "event": "session_start",   // discriminator + event name (required)
@@ -486,8 +403,8 @@ nonisolated struct AgentHookNotification: Equatable, Sendable {
 /// }
 /// ```
 nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
-  /// Known event names. Stored as raw `String` on the wire so unknown events
-  /// from a newer bridge / older app don't drop — handlers can ignore them.
+  /// Known event names. Stored as raw `String` so an unknown event from a newer
+  /// emitter / older app doesn't drop; handlers can ignore them.
   enum EventName: String, Sendable {
     case sessionStart = "session_start"
     case sessionEnd = "session_end"
@@ -504,7 +421,7 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
   let pid: pid_t?
   let timestamp: Date?
   /// Event-specific payload preserved as opaque JSON. Handlers decode with
-  /// their own typed shape via `decodeData(_:)` — keeps this layer decoupled
+  /// their own typed shape via `decodeData(_:)`, keeping this layer decoupled
   /// from per-event payload schemas.
   let data: JSONValue?
 
@@ -513,7 +430,7 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
 
   /// Decode the per-event `data` payload into a concrete type. Returns nil
   /// when `data` is missing. Returns nil and logs a warning when `data` is
-  /// present but fails to decode against `T` — silent nil there would make a
+  /// present but fails to decode against `T`; silent nil there would make a
   /// shape mismatch invisible to handlers.
   func decodeData<T: Decodable>(_ type: T.Type = T.self) -> T? {
     guard let data else { return nil }
@@ -545,7 +462,7 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
     self.agent = try container.decodeIfPresent(String.self, forKey: .agent) ?? "unknown"
     self.version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
     if let rawPid = try container.decodeIfPresent(Int.self, forKey: .pid) {
-      // Reject 0 and negatives — `kill(0, 0)` succeeds for the caller's
+      // Reject 0 and negatives: `kill(0, 0)` succeeds for the caller's
       // process group and `kill(-N, 0)` for group N, both of which would
       // pin a permanent badge in the liveness sweep on a buggy hook (e.g.
       // `pid:$$` from a subshell that recycled).
@@ -564,6 +481,34 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
       self.timestamp = nil
     }
     self.data = try container.decodeIfPresent(JSONValue.self, forKey: .data)
+  }
+
+  /// Memberwise init for synthesizing events from sources other than the JSON
+  /// wire. The OSC presence path uses it: attribution is by the receiving
+  /// surface and there is no remote pid, so `pid` defaults to nil.
+  init(
+    version: Int = 1,
+    agent: String,
+    event: String,
+    surfaceID: UUID,
+    pid: pid_t? = nil,
+    timestamp: Date? = nil,
+    data: JSONValue? = nil
+  ) {
+    self.version = version
+    self.agent = agent
+    self.event = event
+    self.surfaceID = surfaceID
+    // Mirror the Decodable validation: a non-positive pid would let `kill(0/-N, 0)`
+    // match the caller's process group and pin a permanent badge.
+    if let pid, pid <= 0 {
+      socketLogger.warning("Clamped non-positive pid \(pid) to nil in AgentHookEvent(agent: \(agent)).")
+      self.pid = nil
+    } else {
+      self.pid = pid
+    }
+    self.timestamp = timestamp
+    self.data = data
   }
 
   private static func decodeUUID(
@@ -602,7 +547,7 @@ private nonisolated struct AgentHookPayload: Decodable {
     hookEventName = try container.decodeIfPresent(String.self, forKey: .hookEventName)
     title = try container.decodeIfPresent(String.self, forKey: .title)
     // Tolerate per-field decode errors (e.g. `"message": 42`) so a single
-    // malformed field does not drop the whole notification — fall through
+    // malformed field does not drop the whole notification; fall through
     // to the next candidate instead.
     let candidates = [CodingKeys.message, .lastAssistantMessage, .assistantResponse]
       .map { key in Self.decodeOptionalString(container, forKey: key) }
