@@ -13,7 +13,7 @@ nonisolated enum HookEvent: String {
 
 nonisolated enum AgentHookSettingsCommand {
   /// Sentinel comment appended to every Supacode-installed hook command.
-  /// `AgentHookCommandOwnership` uses this — and ONLY this — to identify
+  /// `AgentHookCommandOwnership` uses this (and ONLY this) to identify
   /// managed commands. `SUPACODE_SOCKET_PATH` is documented public API
   /// (CLI skill env table, Pi extension example, deeplink reference), so
   /// matching on the env-var name alone would silently strip user-authored
@@ -22,7 +22,7 @@ nonisolated enum AgentHookSettingsCommand {
 
   /// Documented public env var. Used as ONE half of the legacy CLI-shim
   /// fingerprint (paired with `supacode integration event`); never matched
-  /// alone — user-authored hooks reference it legitimately.
+  /// alone. User-authored hooks reference it legitimately.
   static let socketPathEnvVar = "SUPACODE_SOCKET_PATH"
 
   /// Markers present in legacy Supacode hook commands (pre-socket).
@@ -43,22 +43,11 @@ nonisolated enum AgentHookSettingsCommand {
     + #" && [ -n "${SUPACODE_TAB_ID:-}" ]"#
     + #" && [ -n "${SUPACODE_SURFACE_ID:-}" ]"#
 
-  private static let ids =
-    "$SUPACODE_WORKTREE_ID $SUPACODE_TAB_ID $SUPACODE_SURFACE_ID"
-
-  /// Both stdout AND stderr go to /dev/null — Codex parses hook stdout as
-  /// structured JSON and would reject the socket ack otherwise.
-  private static func managed(_ pipeline: String) -> String {
-    "\(envCheck) && \(pipeline) >/dev/null 2>&1 || true \(ownershipMarker)"
-  }
-
-  /// Builds a single shell command that fires every `event` envelope and
-  /// optionally forwards stdin as a notification, all under one envCheck
-  /// guard with one sentinel. Stdin is consumed once via `payload=$(cat)`
-  /// so the same payload can be relayed after the fixed envelopes. The
-  /// precondition rejects a no-op invocation because the empty-empty
-  /// fallthrough would otherwise emit `{ ; }` (shell syntax error masked
-  /// by `|| true`).
+  /// Composes the OSC 3008 hook command: one token guard, then (once that passes)
+  /// the tty resolve plus a presence emit per event and/or a notify emit, all in a
+  /// single brace group whose output is suppressed. Guarding first keeps the
+  /// command truly inert outside Supacode (no `ps` runs when the token is unset).
+  /// The precondition rejects a no-op invocation that would emit nothing.
   static func compositeCommand(
     events: [HookEvent],
     forwardStdinAsNotification: Bool,
@@ -68,43 +57,18 @@ nonisolated enum AgentHookSettingsCommand {
       !events.isEmpty || forwardStdinAsNotification,
       "compositeCommand needs at least one side-effect (events or stdin forward).",
     )
-    if events.count == 1, !forwardStdinAsNotification {
-      return managed(envelopePipeline(event: events[0], agent: agent))
-    }
-    if events.isEmpty, forwardStdinAsNotification {
-      return managed(notifyPipeline(agent: agent, payloadExpr: nil))
-    }
-    var steps: [String] = []
-    if forwardStdinAsNotification { steps.append("payload=$(cat)") }
-    for event in events {
-      steps.append(envelopePipeline(event: event, agent: agent))
-    }
-    if forwardStdinAsNotification {
-      steps.append(notifyPipeline(agent: agent, payloadExpr: #""$payload""#))
-    }
-    return managed("{ \(steps.joined(separator: "; ")); }")
+    var steps: [String] = [AgentPresenceOSC.ttyResolveSnippet]
+    steps += events.map { AgentPresenceOSC.emitShell(event: $0, agent: agent) }
+    if forwardStdinAsNotification { steps.append(AgentPresenceOSC.emitNotifyShell(agent: agent)) }
+    return "\(oscGuardExpr) && { \(steps.joined(separator: "; ")); } >/dev/null 2>&1 || true \(ownershipMarker)"
   }
 
-  private static func envelopePipeline(event: HookEvent, agent: SkillAgent) -> String {
-    let envelope =
-      #"{\"event\":\"\#(event.rawValue)\","#
-      + #"\"v\":1,\"agent\":\"\#(agent.rawValue)\","#
-      + #"\"surface_id\":\"$SUPACODE_SURFACE_ID\",\"pid\":$PPID}"#
-    return #"printf '%s' "\#(envelope)" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
-  }
-
-  /// `payloadExpr == nil` → forward stdin live via `cat`. Non-nil → relay
-  /// a previously-stashed shell expression (so the composite path can
-  /// consume stdin once and reuse it after event envelopes).
-  private static func notifyPipeline(agent: SkillAgent, payloadExpr: String?) -> String {
-    let body: String
-    if let payloadExpr {
-      body = #"printf '%s' \#(payloadExpr)"#
-    } else {
-      body = "cat"
-    }
-    return
-      #"{ printf '%s \#(agent.rawValue)\n' "\#(ids)"; \#(body); }"#
-      + #" | /usr/bin/nc -U -w1 "$SUPACODE_SOCKET_PATH""#
+  /// Guard for the OSC command: the per-surface OSC token set (the
+  /// no-op-outside-Supacode gate) and a surface id present. Fires both locally and
+  /// over SSH; the pid suffix inside the presence emit is what's gated on the
+  /// socket path, not the emission itself.
+  private static var oscGuardExpr: String {
+    #"[ -n "${\#(AgentPresenceOSC.tokenEnvVar):-}" ]"#
+      + #" && [ -n "${SUPACODE_SURFACE_ID:-}" ]"#
   }
 }

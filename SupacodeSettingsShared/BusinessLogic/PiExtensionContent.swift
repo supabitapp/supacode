@@ -11,36 +11,29 @@ nonisolated enum PiExtensionContent {
   static let indexTs = """
     \(ownershipMarker)
     /**
-     * Supacode ↔ Pi integration extension.
+     * Supacode + Pi integration extension.
      *
-     * Reports agent lifecycle hooks back to Supacode via the Unix domain socket
-     * it injects into every managed terminal session, matching the semantics of
-     * the existing Claude and Codex hook integrations.
+     * Reports agent lifecycle and notifications to Supacode by emitting OSC 3008
+     * escape sequences to the controlling terminal. The sequences are inert in any
+     * terminal that does not handle OSC 3008, and reach Supacode over SSH too (no
+     * local socket needed), matching the Claude / Codex / Kiro hook integrations.
      *
-     * Required env vars (injected automatically by Supacode):
-     *   SUPACODE_SOCKET_PATH  — path to the Unix domain socket
-     *   SUPACODE_WORKTREE_ID  — worktree identifier
-     *   SUPACODE_TAB_ID       — tab UUID
-     *   SUPACODE_SURFACE_ID   — terminal surface UUID
+     * Required env var (injected automatically by Supacode on every surface):
+     *   SUPACODE_OSC_TOKEN  per-surface capability nonce; gates emission and is
+     *                       verified app-side. Absent = not a Supacode surface.
+     * Optional:
+     *   SUPACODE_SOCKET_PATH  present only on the local host; gates the local pid
+     *                         so the app's liveness sweep can reap a crashed agent.
      *
      * Hook event mapping:
-     *   extension load      → session_start  (agent presence badge)
-     *   Pi agent_start      → busy           (UserPromptSubmit equivalent)
-     *   Pi agent_end        → idle           (Stop equivalent — resets activity)
-     *                       → notification with last_assistant_message
-     *   Pi session_shutdown → session_end    (SessionEnd equivalent)
-     *                       → idle           (defensive activity reset)
+     *   extension load      -> session_start  (agent presence badge)
+     *   Pi agent_start      -> busy
+     *   Pi agent_end        -> idle + notification with last_assistant_message
+     *   Pi session_shutdown -> session_end + idle (defensive activity reset)
      */
 
     import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-    import { createConnection } from "node:net";
-
-    interface SupacodeEnv {
-      socketPath: string;
-      worktreeId: string;
-      tabId: string;
-      surfaceId: string;
-    }
+    import { openSync, writeSync, closeSync } from "node:fs";
 
     interface HookPayload {
       hook_event_name: string;
@@ -49,73 +42,82 @@ nonisolated enum PiExtensionContent {
       last_assistant_message?: string;
     }
 
-    function readSupacodeEnv(): SupacodeEnv | null {
-      const socketPath = process.env["SUPACODE_SOCKET_PATH"];
-      const worktreeId = process.env["SUPACODE_WORKTREE_ID"];
-      const tabId = process.env["SUPACODE_TAB_ID"];
-      const surfaceId = process.env["SUPACODE_SURFACE_ID"];
+    const AGENT = "pi";
 
-      if (!socketPath || !worktreeId || !tabId || !surfaceId) return null;
-      return { socketPath, worktreeId, tabId, surfaceId };
+    let lastWarnedAt = 0;
+    const WARN_INTERVAL_MS = 60_000;
+
+    function readToken(): string | null {
+      const token = process.env["SUPACODE_OSC_TOKEN"];
+      return token && token.length > 0 ? token : null;
     }
 
     /**
-     * Sends raw bytes to a Unix domain socket and closes the connection.
-     * Times out after 1 s (Pi serializes hook callbacks, so a stalled
-     * delivery would stall the agent) and swallows all errors —
-     * hook delivery is best-effort.
+     * The agent's local process id as an OSC pid suffix, but only on the local
+     * host (SUPACODE_SOCKET_PATH is set). A remote pid over SSH would be
+     * meaningless to the app's liveness sweep, so it is omitted there.
      */
-    function sendToSocket(socketPath: string, data: Buffer): Promise<void> {
-      return new Promise<void>((resolve) => {
-        let settled = false;
-        const done = () => {
-          if (!settled) {
-            settled = true;
-            resolve();
+    function localPidSuffix(): string {
+      return process.env["SUPACODE_SOCKET_PATH"] ? `;pid=${process.pid}` : "";
+    }
+
+    /**
+     * Writes an OSC sequence to the controlling terminal. The extension runs
+     * inside the Pi TUI process, which owns the terminal, so /dev/tty resolves.
+     * Best-effort, but a systematically-failing tty is logged at most once per
+     * `WARN_INTERVAL_MS` to stderr so a broken write path is distinguishable
+     * from "not a Supacode surface" without spamming the log on every emit.
+     */
+    function writeToTerminal(sequence: string): void {
+      try {
+        const fd = openSync("/dev/tty", "w");
+        try {
+          // Loop until the full byte length lands: a short write would leave a
+          // half OSC 3008 with no ST (ESC\\) and corrupt the terminal parser.
+          const bytes = Buffer.from(sequence, "utf8");
+          let offset = 0;
+          while (offset < bytes.length) {
+            try {
+              const written = writeSync(fd, bytes, offset, bytes.length - offset);
+              if (written <= 0) {
+                throw new Error(`short write (${offset}/${bytes.length} bytes)`);
+              }
+              offset += written;
+            } catch (writeErr) {
+              // Retry interrupted / non-blocking transient errors; abort on anything else.
+              const code = (writeErr as NodeJS.ErrnoException).code;
+              if (code === "EINTR" || code === "EAGAIN") continue;
+              throw writeErr;
+            }
           }
-        };
-
-        const client = createConnection({ path: socketPath });
-        const timer = setTimeout(() => {
-          client.destroy();
-          done();
-        }, 1000);
-
-        client.on("connect", () => {
-          client.write(data, () => {
-            client.end();
-            clearTimeout(timer);
-            done();
-          });
-        });
-
-        client.on("error", () => {
-          clearTimeout(timer);
-          done();
-        });
-      });
+        } finally {
+          closeSync(fd);
+        }
+      } catch (err) {
+        const now = Date.now();
+        if (now - lastWarnedAt > WARN_INTERVAL_MS) {
+          lastWarnedAt = now;
+          const e = err as NodeJS.ErrnoException;
+          const code = e.code ?? "";
+          const errno = e.errno ?? "";
+          const message = e.message ?? String(err);
+          process.stderr.write(
+            `supacode: OSC emit failed: code=${code} errno=${errno} message=${message}\\n`,
+          );
+        }
+      }
     }
 
-    function sendNotification(env: SupacodeEnv, payload: HookPayload): Promise<void> {
-      const header = `${env.worktreeId} ${env.tabId} ${env.surfaceId} pi\\n`;
-      const body = JSON.stringify(payload) + "\\n";
-      return sendToSocket(env.socketPath, Buffer.from(header + body, "utf8"));
+    function emitPresence(token: string, event: string): void {
+      const action = event === "session_end" ? "end" : "start";
+      const meta = `event=${event};token=${token}${localPidSuffix()}`;
+      writeToTerminal(`\\x1b]3008;${action}=${AGENT};${meta}\\x1b\\\\`);
     }
 
-    /**
-     * Sends a hook event (session lifecycle or per-turn activity) using
-     * the same JSON envelope every other agent emits.
-     */
-    function sendEvent(env: SupacodeEnv, eventName: string): Promise<void> {
-      const envelope = {
-        event: eventName,
-        v: 1,
-        agent: "pi",
-        surface_id: env.surfaceId,
-        pid: process.pid,
-      };
-      const body = JSON.stringify(envelope) + "\\n";
-      return sendToSocket(env.socketPath, Buffer.from(body, "utf8"));
+    function emitNotification(token: string, payload: HookPayload): void {
+      const data = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+      const meta = `kind=notify;token=${token};data=${data}`;
+      writeToTerminal(`\\x1b]3008;start=${AGENT};${meta}\\x1b\\\\`);
     }
 
     function lastAssistantText(ctx: { sessionManager: { getEntries(): any[] } }): string | undefined {
@@ -140,34 +142,34 @@ nonisolated enum PiExtensionContent {
     }
 
     export default function (pi: ExtensionAPI) {
-      const env = readSupacodeEnv();
+      const token = readToken();
 
-      // Not running under Supacode — skip lifecycle hooks.
-      if (!env) return;
+      // Not running under Supacode, or not a Supacode surface: stay inert.
+      if (!token) return;
 
       // Extension load = agent process running. Pi has no equivalent of
       // Claude's SessionStart hook, so we fire it ourselves.
-      void sendEvent(env, "session_start");
+      emitPresence(token, "session_start");
 
-      pi.on("agent_start", async (_event, _ctx) => {
-        await sendEvent(env, "busy");
+      pi.on("agent_start", (_event, _ctx) => {
+        emitPresence(token, "busy");
       });
 
-      pi.on("agent_end", async (_event, ctx) => {
+      pi.on("agent_end", (_event, ctx) => {
         // Atomic state-set: `idle` overwrites whatever was running on the
-        // Supacode side — turn-level Stop equivalent.
-        await sendEvent(env, "idle");
+        // Supacode side (turn-level Stop equivalent).
+        emitPresence(token, "idle");
 
         const lastMessage = lastAssistantText(ctx);
-        await sendNotification(env, {
+        emitNotification(token, {
           hook_event_name: "Stop",
           last_assistant_message: lastMessage,
         });
       });
 
-      pi.on("session_shutdown", async (_event, _ctx) => {
-        await sendEvent(env, "session_end");
-        await sendEvent(env, "idle");
+      pi.on("session_shutdown", (_event, _ctx) => {
+        emitPresence(token, "session_end");
+        emitPresence(token, "idle");
       });
     }
     """
