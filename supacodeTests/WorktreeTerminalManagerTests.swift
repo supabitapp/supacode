@@ -142,7 +142,7 @@ struct WorktreeTerminalManagerTests {
     #expect(state.socketPath == nil)
   }
 
-  @Test func socketActivityEventRoutesToDecodedWorktreeState() async {
+  @Test func oscHookActivityEventRoutesToWorktreeState() async {
     let server = AgentHookSocketServer()
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server)
     let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
@@ -157,14 +157,14 @@ struct WorktreeTerminalManagerTests {
       return
     }
 
-    server.onEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
-    server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
+    state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
     await presence.drain()
 
     #expect(presence.state.hasActivity(in: [surface.id]))
   }
 
-  @Test func socketIdleEventIsDebouncedAcrossToolStorm() async {
+  @Test func oscIdleEventIsDebouncedAcrossToolStorm() async {
     let clock = TestClock()
     let server = AgentHookSocketServer()
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
@@ -179,23 +179,23 @@ struct WorktreeTerminalManagerTests {
       return
     }
 
-    server.onEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
-    server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
+    state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
 
-    server.onEvent?(makeHookEvent(.idle, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
     await clock.advance(by: .milliseconds(100))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
 
-    server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
     await clock.advance(by: .milliseconds(500))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
   }
 
-  @Test func socketIdleCommitsAfterDebounceWindow() async {
+  @Test func oscIdleCommitsAfterDebounceWindow() async {
     let clock = TestClock()
     let server = AgentHookSocketServer()
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
@@ -210,9 +210,9 @@ struct WorktreeTerminalManagerTests {
       return
     }
 
-    server.onEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
-    server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
-    server.onEvent?(makeHookEvent(.idle, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
+    state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
 
     await clock.advance(by: .milliseconds(399))
     await presence.drain()
@@ -223,7 +223,7 @@ struct WorktreeTerminalManagerTests {
     #expect(!presence.state.hasActivity(in: [surface.id]))
   }
 
-  @Test func socketIdleDebouncesPerAgentIndependently() async {
+  @Test func oscIdleDebouncesPerAgentIndependently() async {
     let clock = TestClock()
     let server = AgentHookSocketServer()
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
@@ -238,13 +238,13 @@ struct WorktreeTerminalManagerTests {
       return
     }
 
-    server.onEvent?(makeHookEvent(.sessionStart, agent: .claude, surfaceID: surface.id, pid: getpid()))
-    server.onEvent?(makeHookEvent(.sessionStart, agent: .codex, surfaceID: surface.id, pid: getpid()))
-    server.onEvent?(makeHookEvent(.busy, agent: .claude, surfaceID: surface.id))
-    server.onEvent?(makeHookEvent(.busy, agent: .codex, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.sessionStart, agent: .claude, surfaceID: surface.id, pid: getpid()))
+    state.onAgentHookEvent?(makeHookEvent(.sessionStart, agent: .codex, surfaceID: surface.id, pid: getpid()))
+    state.onAgentHookEvent?(makeHookEvent(.busy, agent: .claude, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.busy, agent: .codex, surfaceID: surface.id))
 
     // Codex idles; Claude stays busy. After window, only Codex should commit idle.
-    server.onEvent?(makeHookEvent(.idle, agent: .codex, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.idle, agent: .codex, surfaceID: surface.id))
     await clock.advance(by: .milliseconds(400))
 
     await presence.drain()
@@ -256,7 +256,7 @@ struct WorktreeTerminalManagerTests {
     #expect(presence.state.hasActivity(in: [surface.id]))
   }
 
-  @Test func socketSessionEndCancelsPendingIdle() async {
+  @Test func oscSessionEndCancelsPendingIdle() async {
     let clock = TestClock()
     let server = AgentHookSocketServer()
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
@@ -272,10 +272,10 @@ struct WorktreeTerminalManagerTests {
     }
 
     let pid = getpid()
-    server.onEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: pid))
-    server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
-    server.onEvent?(makeHookEvent(.idle, surfaceID: surface.id))
-    server.onEvent?(makeHookEvent(.sessionEnd, surfaceID: surface.id, pid: pid))
+    state.onAgentHookEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: pid))
+    state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.sessionEnd, surfaceID: surface.id, pid: pid))
 
     await clock.advance(by: .milliseconds(500))
     await presence.drain()
@@ -284,7 +284,7 @@ struct WorktreeTerminalManagerTests {
     #expect(!presence.state.hasActivity(in: [surface.id]))
   }
 
-  @Test func socketSurfaceClosedWhileIdlePendingIsHarmless() async {
+  @Test func oscSurfaceClosedWhileIdlePendingIsHarmless() async {
     let clock = TestClock()
     let server = AgentHookSocketServer()
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
@@ -299,9 +299,9 @@ struct WorktreeTerminalManagerTests {
       return
     }
 
-    server.onEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
-    server.onEvent?(makeHookEvent(.busy, surfaceID: surface.id))
-    server.onEvent?(makeHookEvent(.idle, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.sessionStart, surfaceID: surface.id, pid: getpid()))
+    state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
+    state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
 
     // Settle the stream-delivered events before the direct close so a buffered
     // busy can't resurrect activity after the surface is gone.
@@ -313,31 +313,27 @@ struct WorktreeTerminalManagerTests {
     #expect(!presence.state.hasActivity(in: [surface.id]))
   }
 
-  @Test func socketNotificationRoutesToDecodedWorktreeState() {
+  @Test func oscHookNotificationLandsInWorktreeState() {
     withDependencies {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
+      $0.continuousClock = ImmediateClock()
     } operation: {
-      let server = AgentHookSocketServer()
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
+      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
 
       manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
 
       guard let state = manager.stateIfExists(for: worktree.id),
         let tabId = state.tabManager.selectedTabId,
-        let surface = state.splitTree(for: tabId).root?.leftmostLeaf(),
-        let encodedID = worktree.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
       else {
-        Issue.record("Expected blocking script tab and socket server")
+        Issue.record("Expected blocking script tab")
         return
       }
 
-      server.onNotification?(
-        encodedID,
-        tabId.rawValue,
-        surface.id,
-        AgentHookNotification(agent: "codex", event: "Stop", title: "Done", body: "All complete")
-      )
+      // The OSC notify path decodes + sanitizes app-side, then appends to the
+      // surface's worktree state via this same entry point.
+      state.appendHookNotification(title: "Done", body: "All complete", surfaceID: surface.id)
 
       #expect(
         state.notifications.contains {
@@ -616,6 +612,7 @@ struct WorktreeTerminalManagerTests {
   @Test func appendNotificationFlipsPerSurfaceFlagOnArrival() {
     withDependencies {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
+      $0.continuousClock = ImmediateClock()
     } operation: {
       let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree()
@@ -636,6 +633,7 @@ struct WorktreeTerminalManagerTests {
   @Test func appendNotificationDoesNotFlipFlagWhenFocusedAndSelected() {
     withDependencies {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
+      $0.continuousClock = ImmediateClock()
     } operation: {
       let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree()
@@ -726,6 +724,7 @@ struct WorktreeTerminalManagerTests {
   @Test func notificationsDisabledSkipsPerSurfaceFlag() {
     withDependencies {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
+      $0.continuousClock = ImmediateClock()
     } operation: {
       let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree()
@@ -1460,7 +1459,7 @@ struct WorktreeTerminalManagerTests {
         "surface_id": "\(surfaceID.uuidString)"\(pidLine)
       }
       """
-    guard case .event(let event) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
+    guard let event = try? JSONDecoder().decode(AgentHookEvent.self, from: Data(json.utf8)) else {
       preconditionFailure("Failed to parse test event")
     }
     return event

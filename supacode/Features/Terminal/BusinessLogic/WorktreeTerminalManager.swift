@@ -149,18 +149,6 @@ final class WorktreeTerminalManager {
   }
 
   private func configureSocketServer(_ server: AgentHookSocketServer) {
-    server.onNotification = { [weak self] worktreeID, _, surfaceID, notification in
-      guard let self else { return }
-      guard self.settingsFile.global.richAgentNotificationsEnabled else { return }
-      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      guard let state = self.states[decoded] else {
-        terminalLogger.debug("Dropped hook notification for unknown worktree \(decoded)")
-        return
-      }
-      let title = notification.title ?? notification.agent
-      let body = notification.body ?? ""
-      state.appendHookNotification(title: title, body: body, surfaceID: surfaceID)
-    }
     server.onCommand = { [weak self] deeplinkURL, clientFD in
       guard let handler = self?.onDeeplinkCommand else {
         AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
@@ -175,18 +163,10 @@ final class WorktreeTerminalManager {
       }
       handler(resource, params, clientFD)
     }
-    // Always record; the badges toggle gates DISPLAY in
-    // `AgentPresenceFeature.State.agents(forSurface:badgesEnabled:)`.
-    // Gating recording too would drop session_start events fired while
-    // the toggle was off, so flipping it back on later wouldn't restore
-    // badges for already-running agents.
-    server.onEvent = { [weak self] event in
-      self?.dispatchHookEvent(event)
-    }
   }
 
   /// Holds `.idle` for a debounce window so PostToolUse / PreToolUse storms don't flap downstream UI.
-  /// Lives at the socket boundary so the debounce applies before the event lands in TCA.
+  /// Applies the idle debounce before the OSC-sourced event lands in TCA.
   private func dispatchHookEvent(_ event: AgentHookEvent) {
     guard let agent = SkillAgent(rawValue: event.agent) else {
       applyHookEvent(event)
@@ -483,6 +463,10 @@ final class WorktreeTerminalManager {
     }
     state.onSurfacesClosed = { [weak self] ids in
       self?.emit(.surfacesClosed(ids))
+    }
+    // OSC-sourced presence events go through the existing idle-debounce funnel.
+    state.onAgentHookEvent = { [weak self] event in
+      self?.dispatchHookEvent(event)
     }
     state.onNotificationReceived = { [weak self] surfaceID, title, body in
       self?.emit(
