@@ -6,7 +6,7 @@ import Foundation
 /// Test-only harness around an `AgentPresenceFeature.State`. A background task
 /// drains the manager's event stream and routes `agentHookEventReceived` /
 /// `surfacesClosed` events into the reducer so callers can drive the manager
-/// via `server.onEvent(...)` and then await `harness.drain()` to settle
+/// via `state.onAgentHookEvent(...)` and then await `harness.drain()` to settle
 /// presence before asserting.
 @MainActor
 final class PresenceTestHarness {
@@ -38,7 +38,7 @@ final class PresenceTestHarness {
     send(.livenessSweepResult(snapshot: snapshot, alive: alive))
   }
 
-  /// Settles presence after `server.onEvent(...)` / `clock.advance(...)`. Each
+  /// Settles presence after `state.onAgentHookEvent(...)` / `clock.advance(...)`. Each
   /// pass runs `megaYield` (flushing the consume task plus any clock-awoken
   /// manager emit, e.g. an idle debounce resuming after `clock.advance`) and
   /// returns once the consumer has parked again with no reduction in the final

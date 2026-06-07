@@ -4,8 +4,6 @@ import Foundation
 import Sharing
 import SupacodeSettingsShared
 
-private let presenceLogger = SupaLogger("AgentPresence")
-
 @Reducer
 struct AgentPresenceFeature {
   /// Activity state per (surface, agent). Set atomically by the wire events
@@ -34,6 +32,11 @@ struct AgentPresenceFeature {
 
   nonisolated struct PresenceRecord: Equatable, Sendable {
     var activity: Activity = .idle
+    /// Local pids attributed to this record. Empty means the OSC presence was
+    /// emitted without a local pid (SSH attach); `pids.isEmpty` is the
+    /// discriminator for the pid-less lifecycle branches below. Every event
+    /// arrives over OSC now, so there is no "socket-owned" record to defend
+    /// against.
     var pids: Set<pid_t>
   }
 
@@ -71,7 +74,8 @@ struct AgentPresenceFeature {
   @ObservableState
   struct State: Equatable {
     /// Per-(surface, agent) record. Pids drive the liveness sweep and record
-    /// disposal. All bridges require a pid in the envelope.
+    /// disposal. Socket bridges carry a pid; the OSC-over-SSH transport seeds
+    /// pid-less records that the sweep skips.
     var records: [PresenceKey: PresenceRecord] = [:]
     /// Per-surface agent presence. A surface can host multiple agents (rare,
     /// but possible if e.g. Claude spawns Codex). Order not guaranteed; sort before display.
@@ -161,40 +165,68 @@ struct AgentPresenceFeature {
     let key = PresenceKey(agent: agent, surfaceID: event.surfaceID)
     switch event.eventName {
     case .sessionStart:
-      guard let pid = event.pid else { return [] }
-      var record = state.records[key] ?? PresenceRecord(pids: [])
-      let inserted = record.pids.insert(pid).inserted
-      state.records[key] = record
-      rebuildPresence(forSurface: event.surfaceID, in: &state)
-      return inserted ? [event.surfaceID] : []
-    case .sessionEnd:
-      guard let pid = event.pid, var record = state.records[key] else { return [] }
-      let removed = record.pids.remove(pid) != nil
-      if record.pids.isEmpty {
-        state.records.removeValue(forKey: key)
-      } else {
+      // A pid is the local-hook source (OSC presence carries `pid=$PPID` only on
+      // the local host); a missing pid is the OSC-over-SSH source, which attributes
+      // by the receiving surface and has no local pid to track.
+      if let pid = event.pid {
+        var record = state.records[key] ?? PresenceRecord(pids: [])
+        let inserted = record.pids.insert(pid).inserted
         state.records[key] = record
+        rebuildPresence(forSurface: event.surfaceID, in: &state)
+        return inserted ? [event.surfaceID] : []
       }
+      // Pid-less OSC seed: don't clobber a record that already carries a pid.
+      guard state.records[key] == nil else { return [] }
+      state.records[key] = PresenceRecord(pids: [])
       rebuildPresence(forSurface: event.surfaceID, in: &state)
-      return removed ? [event.surfaceID] : []
+      return [event.surfaceID]
+    case .sessionEnd:
+      if let pid = event.pid {
+        guard var record = state.records[key] else { return [] }
+        let removed = record.pids.remove(pid) != nil
+        if record.pids.isEmpty {
+          state.records.removeValue(forKey: key)
+        } else {
+          state.records[key] = record
+        }
+        rebuildPresence(forSurface: event.surfaceID, in: &state)
+        return removed ? [event.surfaceID] : []
+      }
+      // Pid-less (OSC over SSH): only tear down a pid-less record; never one
+      // that carries a tracked local pid the liveness sweep still owns.
+      guard let record = state.records[key], record.pids.isEmpty else { return [] }
+      state.records.removeValue(forKey: key)
+      rebuildPresence(forSurface: event.surfaceID, in: &state)
+      return [event.surfaceID]
     case .busy:
-      return setActivity(.busy, for: key, in: &state) ? [event.surfaceID] : []
+      return applyActivity(.busy, event: event, key: key, into: &state) ? [event.surfaceID] : []
     case .awaitingInput:
-      return setActivity(.awaitingInput, for: key, in: &state) ? [event.surfaceID] : []
+      return applyActivity(.awaitingInput, event: event, key: key, into: &state) ? [event.surfaceID] : []
     case .idle:
-      return setActivity(.idle, for: key, in: &state) ? [event.surfaceID] : []
+      return applyActivity(.idle, event: event, key: key, into: &state) ? [event.surfaceID] : []
     case .notification, .none:
       return []
     }
   }
 
-  /// No-op on identical activity so repeated same-event hook bursts (e.g. consecutive
-  /// PreToolUse) don't churn observers; the busy/idle flip itself is a real transition,
-  /// debounced upstream. Returns true when the record actually flipped.
-  private static func setActivity(_ activity: Activity, for key: PresenceKey, in state: inout State) -> Bool {
-    guard var record = state.records[key], record.activity != activity else { return false }
-    record.activity = activity
-    state.records[key] = record
+  /// Auto-seed only on the OSC path (pid == nil), and only when the activity
+  /// would actually carry a badge: SSH attach can land on `busy` /
+  /// `awaiting_input` with no prior `session_start`, but an `idle` arriving
+  /// after the `session_end` + `idle` composite shutdown emit must NOT
+  /// re-create the record. A pid-less idle re-seed would be skipped by the
+  /// liveness sweep and pinned until surface close.
+  private static func applyActivity(
+    _ activity: Activity, event: AgentHookEvent, key: PresenceKey, into state: inout State
+  ) -> Bool {
+    if var record = state.records[key] {
+      guard record.activity != activity else { return false }
+      record.activity = activity
+      state.records[key] = record
+      return true
+    }
+    guard event.pid == nil, activity != .idle else { return false }
+    state.records[key] = PresenceRecord(activity: activity, pids: [])
+    rebuildPresence(forSurface: event.surfaceID, in: &state)
     return true
   }
 
@@ -258,6 +290,8 @@ struct AgentPresenceFeature {
       for (surfaceID, records) in layout.allAgentRecords() {
         for record in records {
           guard let agent = SkillAgent(rawValue: record.agent) else { continue }
+          // Pid-less OSC records aren't restore-durable: they persist with no
+          // pid, so they drop here and re-seed on the next OSC event post-relaunch.
           let pids = Set(record.pids.filter { $0 > 0 })
           guard !pids.isEmpty else { continue }
           let activity = Activity(rawValue: record.activity) ?? .idle
@@ -283,6 +317,7 @@ struct AgentPresenceFeature {
     var dirtySurfaces: Set<UUID> = []
     for (key, record) in records {
       if state.records[key] != nil { continue }
+      // Restored records always have alive pids (pid-less OSC records are dropped in stageRestore).
       state.records[key] = PresenceRecord(activity: record.activity, pids: record.alivePids)
       dirtySurfaces.insert(key.surfaceID)
     }

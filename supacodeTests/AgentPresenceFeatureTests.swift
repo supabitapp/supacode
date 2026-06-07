@@ -21,16 +21,19 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
   }
 
-  @Test func sessionStartWithoutPidIsIgnored() {
-    // Every bridge today (Claude/Codex/Kiro hooks, Pi extension) sends a
-    // pid in the envelope. A pid-less event is treated as malformed:
-    // accepting it would create a record the liveness sweep can't reap.
+  @Test func sessionStartWithoutPidSeedsPidlessRecord() {
+    // The OSC-over-SSH transport attributes by the receiving surface and has no
+    // remote pid, so a pid-less session_start is a valid signal: it seeds a
+    // record so the badge lights at launch. The record carries no pid, so the
+    // kill(2) sweep skips it; teardown is via session_end or surface close.
     var harness = Harness()
     let surfaceID = UUID()
 
     harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
 
-    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.pids.isEmpty == true)
   }
 
   @Test func sessionEndRemovesAgentForSurface() {
@@ -98,7 +101,7 @@ struct AgentPresenceFeatureTests {
         "surface_id": "\(surfaceID.uuidString)"
       }
       """
-    guard case .event(let parsed) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
+    guard let parsed = try? JSONDecoder().decode(AgentHookEvent.self, from: Data(json.utf8)) else {
       Issue.record("Expected event")
       return
     }
@@ -117,6 +120,155 @@ struct AgentPresenceFeatureTests {
           agent: .claude, surfaceID: surfaceID)))
 
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  // MARK: - OSC (pid-less) presence.
+
+  @Test func pidlessBusyWithoutSessionStartAutoSeeds() {
+    // Over SSH the user may attach to a surface whose agent is already running,
+    // so the first OSC seen is `busy`, not `session_start`. The pid-less path
+    // must auto-seed a record so the badge lights regardless of arrival order.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+
+    let claude = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .claude }
+    #expect(claude?.activity == .busy)
+    #expect(harness.state.hasActivity(in: [surfaceID]) == true)
+  }
+
+  @Test func pidlessSessionEndRemovesPidlessRecord() {
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func pidlessRecordSurvivesSweepThatReapsCoLocatedDeadPid() {
+    // A pid-less (OSC) record must survive the sweep even while a co-located dead
+    // pid-bearing record is reaped: the sweep only targets records with pids.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: deadPid)))
+
+    harness.livenessSweep()
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+    let claudeKey = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[claudeKey]?.activity == .busy)
+  }
+
+  @Test func pidBearingActivityWithoutPresenceDoesNotSeed() {
+    // Auto-seed is pid-less-only. A pid-bearing awaiting_input / idle
+    // with no session_start must still be dropped, like busyWithoutPresenceIsDropped.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.idle, agent: .codex, surfaceID: surfaceID, pid: getpid())))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func pidlessSessionEndTearsDownRegardlessOfActivity() {
+    // Teardown keys on record.pids.isEmpty, not the activity flip: an OSC record
+    // that went busy then idle must still be removed by session_end.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.idle, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+  }
+
+  @Test func pidBearingRecordSurvivesPidlessSessionEnd() {
+    // Pid-bearing wins: a pid-less (OSC over SSH) session_end must never tear
+    // down a record that still carries a tracked local pid for the same
+    // surface/agent.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
+  }
+
+  @Test func pidlessSessionStartDoesNotClobberPidBearingRecord() {
+    // Pid-bearing wins on seed too: a pid-less OSC session_start arriving after
+    // the local hook has registered a pid must not reset the record.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.pids == [pid])
+  }
+
+  @Test func pidlessSessionStartUpgradedByPidSessionStartCarriesPid() {
+    // OSC pid-less arrives first (SSH attach), then the local hook lands with a
+    // pid: the existing pid-less record must be upgraded in place so the sweep
+    // can reap it.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid: pid_t = 1234
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid)))
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.pids == [pid])
+  }
+
+  @Test func pidlessSessionEndFollowedByIdleDoesNotReseedRecord() {
+    // Both Claude's SessionEnd hook and the Pi `session_shutdown` extension emit
+    // a `session_end` + `idle` composite. After the pid-less session_end clears
+    // the record, the debounced idle must NOT auto-seed a new pid-less record:
+    // the sweep can never reap such a record (no pid to check) and no further
+    // session_end follows, so the badge would stay until surface close.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.idle, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key] == nil)
+  }
+
+  @Test func pidUpgradedRecordIsReapedByMatchingPidSessionEnd() {
+    // Pid-less seed (SSH attach) followed by a pid-bearing session_start that
+    // upgrades the record. The matching pid-bearing session_end must remove the
+    // record entirely; otherwise the badge sticks once the pid set goes empty.
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid: pid_t = 1234
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key] == nil)
   }
 
   // MARK: - Liveness.
@@ -668,7 +820,7 @@ struct AgentPresenceFeatureTests {
         "surface_id": "\(surfaceID.uuidString)"\(pidLine)
       }
       """
-    guard case .event(let event) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
+    guard let event = try? JSONDecoder().decode(AgentHookEvent.self, from: Data(json.utf8)) else {
       preconditionFailure("Failed to parse test event")
     }
     return event
