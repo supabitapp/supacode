@@ -32,6 +32,52 @@ struct AgentBusyStateTests {
     #expect(!fixture.isBusy)
   }
 
+  @Test func presenceWithMismatchedTokenIsDroppedFromLiveBridge() {
+    let fixture = makeStateWithSurface()
+    var forwardedEvents = 0
+    fixture.state.onAgentHookEvent = { _ in forwardedEvents += 1 }
+
+    // Drive the live `onContextSignal` callpath with a presence payload whose
+    // token doesn't match the surface's nonce: the manager-side hook must never see it.
+    fixture.surface.bridge.onContextSignal?(0, "claude", "event=busy;token=WRONG")
+
+    #expect(forwardedEvents == 0)
+    #expect(!fixture.isBusy)
+  }
+
+  @Test func presenceWithOtherSurfaceTokenIsDroppedFromLiveBridge() {
+    // Two live surfaces share the worktree state. Surface A's real token must not
+    // validate when echoed on surface B's bridge: tokens are per-surface, so a
+    // payload that authenticates for A is a spoof for B.
+    let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree) { false }
+    let tabAId = state.createTab()!
+    let tabBId = state.createTab()!
+    let surfaceA = state.splitTree(for: tabAId).root!.leftmostLeaf()
+    let surfaceB = state.splitTree(for: tabBId).root!.leftmostLeaf()
+    guard let tokenA = state.debugOSCToken(forSurfaceID: surfaceA.id) else {
+      Issue.record("Expected an OSC token for surface A")
+      return
+    }
+
+    var forwardedForA = 0
+    var forwardedForB = 0
+    let previous = state.onAgentHookEvent
+    state.onAgentHookEvent = { event in
+      if event.surfaceID == surfaceA.id { forwardedForA += 1 }
+      if event.surfaceID == surfaceB.id { forwardedForB += 1 }
+      previous?(event)
+    }
+
+    // Deliver a presence signal carrying A's token on B's bridge: the receiving
+    // surface is B, so the expected token is B's nonce and A's token must mismatch.
+    surfaceB.bridge.onContextSignal?(0, "claude", "event=busy;token=\(tokenA)")
+
+    #expect(forwardedForA == 0)
+    #expect(forwardedForB == 0)
+  }
+
   @Test func activityEventForUnknownSurfaceIsNoOp() {
     let fixture = makeStateWithSurface()
 
@@ -106,6 +152,7 @@ struct AgentBusyStateTests {
   @Test(.dependencies) func hookNotificationRecordedForDedup() {
     withDependencies {
       $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = ImmediateClock()
     } operation: {
       let fixture = makeStateWithSurface()
 
@@ -120,132 +167,140 @@ struct AgentBusyStateTests {
     }
   }
 
-  @Test(.dependencies) func oscNotificationSuppressedWithinWindow() {
+  @Test(.dependencies) func agentOSCSuppressedWhenCustomFiredFirst() {
     withDependencies {
       $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = ImmediateClock()
     } operation: {
       let fixture = makeStateWithSurface()
-      var systemNotificationCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in
-        systemNotificationCount += 1
-      }
+      var systemCount = 0
+      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
 
-      // Hook notification fires system notification.
-      fixture.state.appendHookNotification(
-        title: "Done",
-        body: "Task complete",
-        surfaceID: fixture.surface.id,
-      )
-      #expect(systemNotificationCount == 1)
+      // Hook-first: our expanded custom notification fires.
+      fixture.state.appendHookNotification(title: "Done", body: "Expanded detail", surfaceID: fixture.surface.id)
+      #expect(systemCount == 1)
 
-      // OSC 9 with identical text within the 2s window (via bridge callback).
-      fixture.surface.bridge.onDesktopNotification?("Done", "Task complete")
-
-      // The system notification should be suppressed (still 1).
-      #expect(systemNotificationCount == 1)
-      // But the in-app notification is still recorded.
-      #expect(fixture.state.notifications.count == 2)
+      // The agent's own OSC 9 summary for the same surface is dropped immediately.
+      fixture.surface.bridge.onDesktopNotification?("Done", "summary")
+      #expect(systemCount == 1)
+      #expect(fixture.state.notifications.count == 1)
+      #expect(fixture.state.debugPendingOSCCount == 0)
     }
   }
 
-  @Test(.dependencies) func oscNotificationNotSuppressedAfterWindow() {
-    let baseDate = Date(timeIntervalSince1970: 1000)
-    let currentDate = LockIsolated(baseDate)
-
-    withDependencies {
-      $0.date = .init { currentDate.value }
+  @Test(.dependencies) func agentOSCNotSuppressedAfterWindow() async {
+    let clock = TestClock()
+    await withDependencies {
+      $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = clock
     } operation: {
       let fixture = makeStateWithSurface()
-      var systemNotificationCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in
-        systemNotificationCount += 1
-      }
+      var systemCount = 0
+      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
 
-      // Hook notification at t=1000.
-      fixture.state.appendHookNotification(
-        title: "Done",
-        body: "All complete",
-        surfaceID: fixture.surface.id,
-      )
-      #expect(systemNotificationCount == 1)
+      // Custom notification fires, then the suppression window fully elapses.
+      fixture.state.appendHookNotification(title: "Done", body: "Expanded detail", surfaceID: fixture.surface.id)
+      #expect(systemCount == 1)
+      await clock.advance(by: .seconds(0.6))
 
-      // OSC 9 at t=1003 (beyond the 2s window).
-      currentDate.setValue(baseDate.addingTimeInterval(3))
-      fixture.surface.bridge.onDesktopNotification?("Done", "All complete")
+      // The OSC 9 now lands outside the window, so it is held instead of dropped.
+      fixture.surface.bridge.onDesktopNotification?("Done", "summary")
+      await Task.megaYield()
+      #expect(systemCount == 1)
+      #expect(fixture.state.debugPendingOSCCount == 1)
 
-      // Not suppressed — fires system notification.
-      #expect(systemNotificationCount == 2)
+      // After its own hold it shows.
+      await clock.advance(by: .seconds(0.5))
+      await Task.megaYield()
+      #expect(systemCount == 2)
     }
   }
 
-  @Test(.dependencies) func genericCompletionTextSuppressedWithinWindow() {
-    withDependencies {
+  @Test(.dependencies) func agentOSCDroppedWhenCustomSupersedesDuringHold() async {
+    let clock = TestClock()
+    await withDependencies {
       $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = clock
     } operation: {
       let fixture = makeStateWithSurface()
-      var systemNotificationCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in
-        systemNotificationCount += 1
-      }
+      var systemCount = 0
+      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
 
-      // Hook notification with specific text.
-      fixture.state.appendHookNotification(
-        title: "Claude",
-        body: "Refactored the module",
-        surfaceID: fixture.surface.id,
-      )
-      #expect(systemNotificationCount == 1)
+      // OSC-9-first: the agent's summary arrives and is held.
+      fixture.surface.bridge.onDesktopNotification?("Done", "summary")
+      await Task.megaYield()
+      #expect(systemCount == 0)
+      #expect(fixture.state.debugPendingOSCCount == 1)
 
-      // OSC 9 with generic "Task Complete" text.
-      fixture.surface.bridge.onDesktopNotification?("Task Complete", "")
+      // Our expanded custom notification lands during the hold: it shows and the
+      // held OSC 9 is dropped.
+      fixture.state.appendHookNotification(title: "Done", body: "Expanded detail", surfaceID: fixture.surface.id)
+      #expect(systemCount == 1)
+      #expect(fixture.state.debugPendingOSCCount == 0)
 
-      // Generic completion text is suppressed.
-      #expect(systemNotificationCount == 1)
+      await clock.advance(by: .seconds(0.5))
+      await Task.megaYield()
+      #expect(systemCount == 1)
     }
   }
 
-  @Test(.dependencies) func closingTabCleansRecentHookEntries() {
-    withDependencies {
+  @Test(.dependencies) func agentOSCShownAfterHoldWithoutCustom() async {
+    let clock = TestClock()
+    await withDependencies {
       $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = clock
     } operation: {
       let fixture = makeStateWithSurface()
+      var systemCount = 0
+      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
 
-      fixture.state.appendHookNotification(
-        title: "Done",
-        body: "All complete",
-        surfaceID: fixture.surface.id,
-      )
-      #expect(fixture.state.debugRecentHookCount == 1)
+      fixture.surface.bridge.onDesktopNotification?("Agent", "standalone")
+      await Task.megaYield()
+      #expect(systemCount == 0)
+
+      // No custom notification superseded it, so after the hold it shows.
+      await clock.advance(by: .seconds(0.5))
+      await Task.megaYield()
+      #expect(systemCount == 1)
+    }
+  }
+
+  @Test(.dependencies) func closingSurfaceCancelsHeldOSC() async {
+    let clock = TestClock()
+    await withDependencies {
+      $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = clock
+    } operation: {
+      let fixture = makeStateWithSurface()
+      var systemCount = 0
+      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      // No prior custom notification, so the OSC 9 is held (not suppressed).
+      fixture.surface.bridge.onDesktopNotification?("Agent", "held")
+      await Task.megaYield()
+      #expect(fixture.state.debugPendingOSCCount == 1)
 
       fixture.state.closeTab(fixture.tabId)
+      #expect(fixture.state.debugPendingOSCCount == 0)
 
-      #expect(fixture.state.debugRecentHookCount == 0)
+      // Advancing past the hold window proves the cancelled OSC never fires late.
+      await clock.advance(by: .seconds(0.5))
+      await Task.megaYield()
+      #expect(systemCount == 0)
+      #expect(fixture.state.notifications.count == 0)
     }
   }
 
-  @Test(.dependencies) func closingSurfaceCleansRecentHookEntries() {
+  @Test(.dependencies) func closingSurfaceClearsCustomNotificationTimestamp() {
     withDependencies {
       $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = ImmediateClock()
     } operation: {
       let fixture = makeStateWithSurface()
-      #expect(fixture.state.performSplitAction(.newSplit(direction: .right), for: fixture.surface.id))
+      fixture.state.appendHookNotification(title: "Done", body: "x", surfaceID: fixture.surface.id)
+      #expect(fixture.state.debugCustomNotificationTimestampCount == 1)
 
-      let leaves = fixture.state.splitTree(for: fixture.tabId).leaves()
-      guard let splitSurface = leaves.first(where: { $0.id != fixture.surface.id }) else {
-        Issue.record("Expected split surface")
-        return
-      }
-
-      fixture.state.appendHookNotification(
-        title: "Done",
-        body: "All complete",
-        surfaceID: splitSurface.id,
-      )
-      #expect(fixture.state.debugRecentHookCount == 1)
-
-      splitSurface.bridge.onCloseRequest?(false)
-
-      #expect(fixture.state.debugRecentHookCount == 0)
+      fixture.state.closeTab(fixture.tabId)
+      #expect(fixture.state.debugCustomNotificationTimestampCount == 0)
     }
   }
 
@@ -300,7 +355,7 @@ struct AgentBusyStateTests {
         "surface_id": "\(surfaceID.uuidString)"\(pidLine)
       }
       """
-    guard case .event(let event) = AgentHookSocketServer.parse(data: Data(json.utf8)) else {
+    guard let event = try? JSONDecoder().decode(AgentHookEvent.self, from: Data(json.utf8)) else {
       preconditionFailure("Failed to parse test event")
     }
     return event
