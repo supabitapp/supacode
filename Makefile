@@ -58,10 +58,7 @@ $(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAM
 	mise exec -- tuist generate --no-open --cache-profile "$*"
 	touch "$@"
 
-# Release archive consumes the binary cache (development target set, Release
-# configuration). Both pipelines warm the Release graph in a `warm` job that the
-# archive `needs` (main.yml for tip, release.yml for stable), so this compiles
-# only the app shell rather than the whole dependency graph.
+# Consumes the warmed Release binary cache, so archive compiles only the app shell.
 $(TUIST_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
@@ -176,17 +173,6 @@ bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUIL
 	git tag -s "v$$version" -m "v$$version"; \
 	echo "version bumped to $$version (build $$build), tagged v$$version"
 
-bump-and-release: bump-version # Bump version and push tags to trigger release
+# main.yml detects the tag at HEAD and cuts the release with auto-generated notes.
+bump-and-release: bump-version # Bump version and push tags to trigger the release
 	git push --follow-tags
-	@tag="$$(git describe --tags --abbrev=0)"; \
-	repo="$$(gh repo view --json nameWithOwner -q .nameWithOwner)"; \
-	prev="$$(gh release view --json tagName -q .tagName 2>/dev/null || echo '')"; \
-	tmp="$$(mktemp)"; \
-	if [ -n "$$prev" ]; then \
-		gh api "repos/$$repo/releases/generate-notes" -f tag_name="$$tag" -f previous_tag_name="$$prev" --jq '.body' > "$$tmp"; \
-	else \
-		gh api "repos/$$repo/releases/generate-notes" -f tag_name="$$tag" --jq '.body' > "$$tmp"; \
-	fi; \
-	$${EDITOR:-vim} "$$tmp"; \
-	gh release create "$$tag" --notes-file "$$tmp"; \
-	rm -f "$$tmp"
