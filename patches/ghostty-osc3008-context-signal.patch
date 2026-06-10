@@ -273,3 +273,18 @@ index fb3a6b3ff..08084ca69 100644
      /// Send a report to the pty.
      pub fn sendSizeReport(self: *StreamHandler, style: terminal.SizeReportStyle) void {
          switch (style) {
+diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
+index 36cfd7f82..f610bf4e2 100644
+--- a/src/terminal/osc.zig
++++ b/src/terminal/osc.zig
+@@ -583,7 +583,9 @@ pub const Parser = struct {
+             },
+ 
+             .@"3008" => switch (c) {
+-                ';' => self.captureTrailing(.fixed),
++                // Supacode: allocating (like OSC 52) so an over-2048 notify keeps its
++                // title/earlier fields instead of being discarded whole (body may drop).
++                ';' => self.captureTrailing(.allocating),
+                 else => self.state = .invalid,
+             },
+ 

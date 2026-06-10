@@ -1491,9 +1491,8 @@ final class WorktreeTerminalState {
 
   /// Routes an OSC 3008 context signal to the presence or notify handler.
   private func handleContextSignal(surfaceID: UUID, id: String, metadata: String) {
-    // Route by notify INTENT, not by parse success: a notify whose payload was
-    // truncated past the 2047-byte cap fails parseNotify, and must log as a
-    // notify drop rather than silently falling through to the presence handler.
+    // Route by notify INTENT, not by parse success, so a malformed notify logs as
+    // a notify drop rather than silently falling through to the presence handler.
     if AgentPresenceOSC.isNotifyMetadata(metadata) {
       handleNotifySignal(surfaceID: surfaceID, id: id, metadata: metadata)
     } else {
@@ -1565,8 +1564,7 @@ final class WorktreeTerminalState {
   }
 
   /// Verify an OSC 3008 notify signal against the receiving surface's nonce, then
-  /// decode + sanitize the agent notification and display it via the same hook
-  /// path the socket uses. Gated by the rich-notifications setting like the socket.
+  /// sanitize and display it. Gated by the rich-notifications setting.
   private func handleNotifySignal(surfaceID: UUID, id: String, metadata: String) {
     switch Self.notification(
       id: id,
@@ -1581,16 +1579,26 @@ final class WorktreeTerminalState {
         terminalStateLogger.debug("Dropped trusted OSC notify; rich notifications disabled.")
         return
       }
+      // A body present on the wire but decoded empty means a ghostty truncation or
+      // an escape-cut the shed loop couldn't recover: keep it out of silent-failure
+      // territory by logging, even though we still show the title-only toast.
+      if resolved.body.isEmpty, let wireBody = AgentPresenceOSC.parseFields(metadata)?[Substring("body")],
+        !wireBody.isEmpty
+      {
+        terminalStateLogger.debug(
+          "OSC notify body present on wire (\(wireBody.utf8.count) b64 bytes) but decoded empty: surface \(surfaceID)."
+        )
+      }
       appendHookNotification(title: resolved.title, body: resolved.body, surfaceID: surfaceID)
     case .failure(.tokenMismatch(let agent)):
       // A wrong token is a potential spoof over the wider SSH capability; warn.
       terminalStateLogger.warning(
         "Rejected OSC notify with mismatched token for surface \(surfaceID), agent=\(agent).")
     case .failure(.parseFailed):
-      // A payload truncated past the metadata cap fails base64 decode here.
-      // Log the byte count so a Ghostty truncation can be correlated with the drop.
+      // parseNotify only fails now on missing token / empty id (not a truncated body,
+      // which decodes to an empty field, logged in the success arm above).
       terminalStateLogger.warning(
-        "Dropped malformed OSC notify (metadata bytes: \(metadata.utf8.count), cap 2047) for surface \(surfaceID).")
+        "Dropped malformed OSC notify (metadata bytes: \(metadata.utf8.count)) for surface \(surfaceID).")
     case .failure(.unknownSurface), .failure(.missingToken), .failure(.empty):
       terminalStateLogger.debug("Dropped OSC notify signal for surface \(surfaceID).")
     }
@@ -1606,10 +1614,9 @@ final class WorktreeTerminalState {
     case empty
   }
 
-  /// Pure trust + parse decision for an OSC notify signal: returns the sanitized
-  /// (title, body) on success, or a typed `NotifyDrop` so the caller can log per
-  /// cause. Title/body are bounded and stripped of control characters since the
-  /// OSC leg is a wider capability than the local socket.
+  /// Pure trust + parse decision for an OSC notify signal. Title/body are bounded
+  /// and stripped of control characters since the OSC leg is a wider capability
+  /// than a local socket. Title falls back to the agent name; body may be empty.
   nonisolated static func notification(
     id: String,
     metadata: String,
@@ -1624,10 +1631,8 @@ final class WorktreeTerminalState {
     guard AgentPresenceOSC.tokensMatch(notify.token, expectedToken) else {
       return .failure(.tokenMismatch(agent: notify.agent))
     }
-    guard let parsed = AgentHookSocketServer.parseNotification(agent: notify.agent, data: notify.payload)
-    else { return .failure(.parseFailed) }
-    let title = sanitizeNotificationText(parsed.title ?? notify.agent, max: 200)
-    let body = sanitizeNotificationText(parsed.body ?? "", max: 1000)
+    let title = sanitizeNotificationText(notify.title ?? notify.agent, max: 200)
+    let body = sanitizeNotificationText(notify.body ?? "", max: 1000)
     guard !(title.isEmpty && body.isEmpty) else { return .failure(.empty) }
     return .success((title, body))
   }

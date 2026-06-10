@@ -330,31 +330,6 @@ final class AgentHookSocketServer {
     return parseJSONMessage(data: data)
   }
 
-  /// Parses an agent notification JSON payload into an `AgentHookNotification`,
-  /// decoding the body from whichever agent-specific field is present. The OSC
-  /// notify leg is the sole caller; the socket no longer carries notifications.
-  nonisolated static func parseNotification(
-    agent: String,
-    data: Data
-  ) -> AgentHookNotification? {
-    guard let payload = try? JSONDecoder().decode(AgentHookPayload.self, from: data) else {
-      let preview = String(data: data.prefix(200), encoding: .utf8) ?? "<non-UTF8>"
-      socketLogger.warning("Failed to decode \(agent) notification payload: \(preview)")
-      return nil
-    }
-
-    if payload.body == nil {
-      socketLogger.warning(
-        "All body fields nil in \(agent) \(payload.hookEventName ?? "unknown") notification")
-    }
-    return AgentHookNotification(
-      agent: agent,
-      event: payload.hookEventName ?? "unknown",
-      title: payload.title,
-      body: payload.body
-    )
-  }
-
   /// Parses a CLI JSON message into a query or command. The placeholder
   /// `clientFD` of `-1` is replaced with the real FD in `acceptAndParse`.
   private nonisolated static func parseJSONMessage(data: Data) -> Message? {
@@ -373,14 +348,6 @@ final class AgentHookSocketServer {
       return .command(deeplinkURL: url, clientFD: -1)
     }
   }
-}
-
-/// Parsed notification from a coding agent hook event.
-nonisolated struct AgentHookNotification: Equatable, Sendable {
-  let agent: String
-  let event: String
-  let title: String?
-  let body: String?
 }
 
 /// An agent presence/activity event. Built by the OSC ingest from a verified
@@ -522,51 +489,6 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
         debugDescription: "`\(key.stringValue)` is not a valid UUID: \(raw).")
     }
     return uuid
-  }
-}
-
-/// Raw JSON payload from a coding agent hook event. The `body` is decoded from
-/// whichever agent-specific field is present: Claude uses `message`, Codex uses
-/// `last_assistant_message`, Kiro uses `assistant_response`. Precedence favors
-/// `message` so unknown agents that speak the Claude shape keep working.
-private nonisolated struct AgentHookPayload: Decodable {
-  let hookEventName: String?
-  let title: String?
-  let body: String?
-
-  private enum CodingKeys: String, CodingKey {
-    case hookEventName = "hook_event_name"
-    case title
-    case message
-    case lastAssistantMessage = "last_assistant_message"
-    case assistantResponse = "assistant_response"
-  }
-
-  init(from decoder: Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    hookEventName = try container.decodeIfPresent(String.self, forKey: .hookEventName)
-    title = try container.decodeIfPresent(String.self, forKey: .title)
-    // Tolerate per-field decode errors (e.g. `"message": 42`) so a single
-    // malformed field does not drop the whole notification; fall through
-    // to the next candidate instead.
-    let candidates = [CodingKeys.message, .lastAssistantMessage, .assistantResponse]
-      .map { key in Self.decodeOptionalString(container, forKey: key) }
-    // Skip empty strings too: Claude occasionally emits `"message": ""`, in
-    // which case Codex's `last_assistant_message` / Kiro's `assistant_response`
-    // still hold the useful body.
-    body = candidates.compactMap { $0 }.first { !$0.isEmpty }
-  }
-
-  private static func decodeOptionalString(
-    _ container: KeyedDecodingContainer<CodingKeys>,
-    forKey key: CodingKeys
-  ) -> String? {
-    do {
-      return try container.decodeIfPresent(String.self, forKey: key)
-    } catch {
-      socketLogger.warning("Failed to decode hook payload field \(key.rawValue): \(error)")
-      return nil
-    }
   }
 }
 

@@ -19,8 +19,9 @@ import Foundation
 ///   sweep so a crashed local agent is reaped. Omitted over SSH.
 ///
 /// The same transport also carries the rich notification leg
-/// (`kind=notify;token=<token>;data=<base64-json>`); presence and notify are
-/// disjoint metadata shapes routed by which `parse*` succeeds.
+/// (`kind=notify;token=<token>;title=<base64>;body=<base64>`); the emitter
+/// extracts the display title/body so the wire stays small and the app carries no
+/// agent-specific JSON shape. Presence and notify are disjoint metadata shapes.
 ///
 /// Single source of truth for both the emit side (the agent hook) and the parse
 /// side (the app), so the field names can't drift.
@@ -33,8 +34,18 @@ public nonisolated enum AgentPresenceOSC {
   static let tokenField = "token"
   static let pidField = "pid"
   static let kindField = "kind"
-  static let dataField = "data"
+  static let titleField = "title"
+  static let bodyField = "body"
   static let notifyKind = "notify"
+
+  /// Notify body source keys, in display precedence. Used by the shell extractor
+  /// (`emitNotifyShell`); the Pi extension sends its body directly.
+  public static let notifyBodyKeys = ["message", "last_assistant_message", "assistant_response"]
+
+  /// Emit-side byte caps. Keep the notify metadata under libghostty's 2048-byte
+  /// OSC buffer, over which the whole sequence is discarded (not truncated).
+  static let notifyBodyByteBudget = 1000
+  static let notifyTitleByteBudget = 160
 
   /// A parsed, NOT-yet-trusted presence signal. The caller must verify `token`
   /// against the receiving surface's nonce before acting on it.
@@ -82,7 +93,7 @@ public nonisolated enum AgentPresenceOSC {
 
   /// True when the metadata carries `kind=notify`. Cheap routing check (presence
   /// vs notify) that inspects the `kind` field, not a raw substring, so a base64
-  /// `data` value that happens to contain "kind=notify" can't misroute.
+  /// `body` value that happens to contain "kind=notify" can't misroute.
   public static func isNotifyMetadata(_ metadata: String) -> Bool {
     parseFields(metadata)?[Substring(kindField)] == Substring(notifyKind)
   }
@@ -97,7 +108,7 @@ public nonisolated enum AgentPresenceOSC {
   /// which an attacker who can splice into the wire could exploit to flip
   /// `event=` or to pair a valid `token=` with an injected `kind=notify`. All
   /// other duplicate keys keep the historical last-write-wins behavior.
-  static func parseFields(_ metadata: String) -> [Substring: Substring]? {
+  public static func parseFields(_ metadata: String) -> [Substring: Substring]? {
     var fields: [Substring: Substring] = [:]
     for pair in metadata.split(separator: ";", omittingEmptySubsequences: true) {
       guard let equalsIndex = pair.firstIndex(of: "=") else { continue }
@@ -114,30 +125,57 @@ public nonisolated enum AgentPresenceOSC {
     Substring(tokenField), Substring(eventField), Substring(kindField),
   ]
 
-  /// A parsed, NOT-yet-trusted notification signal. `payload` is the decoded
-  /// agent JSON (the same shape the socket notify pipeline forwards). The caller
-  /// must verify `token` against the receiving surface's nonce before acting.
+  /// A parsed, NOT-yet-trusted notification signal with already-decoded display
+  /// text. The caller must verify `token` against the surface nonce before acting.
   public struct NotifySignal: Equatable, Sendable {
-    /// Context id, i.e. the agent rawValue.
     public let agent: String
     public let token: String
-    /// The base64-decoded agent notification JSON.
-    public let payload: Data
+    /// Both nil-on-empty; the caller falls back to the agent name for a missing
+    /// title and shows a title-only toast for a missing body.
+    public let title: String?
+    public let body: String?
   }
 
-  /// Parse an OSC 3008 notify signal (`kind=notify;token=<token>;data=<base64>`).
-  /// Returns nil unless it carries the notify kind, a non-empty token, and a
-  /// base64-decodable payload. Does NOT verify the token.
+  /// Parse `kind=notify;token=<token>;title=<base64>;body=<base64>`. Requires the
+  /// notify kind and a non-empty token; title/body are optional. Does NOT verify
+  /// the token.
   public static func parseNotify(id: String, metadata: String) -> NotifySignal? {
     guard !id.isEmpty else { return nil }
     guard let fields = parseFields(metadata) else { return nil }
     guard fields[Substring(kindField)] == Substring(notifyKind) else { return nil }
     guard let token = fields[Substring(tokenField)], !token.isEmpty else { return nil }
-    guard
-      let rawData = fields[Substring(dataField)],
-      let payload = Data(base64Encoded: String(rawData))
-    else { return nil }
-    return NotifySignal(agent: id, token: String(token), payload: payload)
+    return NotifySignal(
+      agent: id,
+      token: String(token),
+      title: decodedNotifyField(fields[Substring(titleField)]),
+      body: decodedNotifyField(fields[Substring(bodyField)]),
+    )
+  }
+
+  private static func decodedNotifyField(_ raw: Substring?) -> String? {
+    guard let raw, let text = decodeNotifyValue(String(raw)), !text.isEmpty else { return nil }
+    return text
+  }
+
+  /// Reverse one base64 notify field back to display text. A field byte-capped at
+  /// emit can end mid-escape or mid-UTF8, so trailing bytes are shed until the
+  /// quoted value parses as a JSON string (`JSONDecoder` rejects both an invalid
+  /// UTF-8 tail and a dangling escape). nil only on non-base64 input; an
+  /// undecodable-but-base64 field collapses to "" (treated as absent, not a
+  /// parse failure).
+  static func decodeNotifyValue(_ base64: String) -> String? {
+    guard var data = Data(base64Encoded: base64) else { return nil }
+    let quote = Data([0x22])
+    // 12 = longest dangling escape (a `\uXXXX\uXXXX` surrogate pair), so a cut
+    // mid-pair still sheds back to valid text instead of dropping the whole body.
+    for _ in 0...min(12, data.count) {
+      if let text = try? JSONDecoder().decode(String.self, from: quote + data + quote) {
+        return text
+      }
+      if data.isEmpty { break }
+      data.removeLast()
+    }
+    return ""
   }
 
   /// The OSC 3008 action for an event: session_end ends a context, everything
@@ -187,21 +225,42 @@ public nonisolated enum AgentPresenceOSC {
       + #"printf '\#(payload)' "$\#(tokenEnvVar)" "$__sp" > "$__tty""#
   }
 
-  /// The `key=value` metadata a notify signal carries. `parseNotify` recovers the
-  /// payload from this exact shape.
-  static func notifyMetadata(token: String, data: String) -> String {
-    "\(kindField)=\(notifyKind);\(tokenField)=\(token);\(dataField)=\(data)"
+  /// The `key=value` metadata a notify signal carries; `title` / `body` are base64.
+  static func notifyMetadata(token: String, title: String, body: String) -> String {
+    "\(kindField)=\(notifyKind);\(tokenField)=\(token);\(titleField)=\(title);\(bodyField)=\(body)"
   }
 
-  /// Shell snippet that reads the agent notification JSON from stdin,
-  /// base64-encodes it, and emits the OSC 3008 notify sequence echoing
-  /// `$SUPACODE_OSC_TOKEN`. `base64 | tr -d '\n'` is portable (macOS + Linux) and
-  /// strips the wrapping newlines so the payload stays a single OSC field. The
-  /// emit/parse pair is locked to STANDARD base64 (`Data(base64Encoded:)` rejects
-  /// the URL-safe alphabet a busybox/alpine `base64` might default to).
+  /// Portable awk that extracts one JSON string value from the agent's hook JSON
+  /// on stdin. `keys` is a comma-separated precedence list (first non-empty wins);
+  /// the raw escaped value is copied verbatim up to the first unescaped `"` and
+  /// capped to `budget` (a mid-escape cut is tolerated by `decodeNotifyValue`).
+  /// Matches the first `"key":` occurrence, assuming a flat top-level payload.
+  /// No `RS`/`\x` tricks and no single quote, so it is portable and shell-safe.
+  /// The caller runs it under `LC_ALL=C` so `length`/`substr` are byte-based
+  /// (gawk in a UTF-8 locale would otherwise count characters and overshoot 2048).
+  static let notifyExtractAwk =
+    #"function ws(c){return c==" "||c=="\t"||c=="\n"||c=="\r"}"#
+    + #"function fv(s,key,  p,i,n,c,o,e){p="\""key"\"";i=index(s,p);if(i==0)return "";"#
+    + #"i+=length(p);n=length(s);while(i<=n){if(ws(substr(s,i,1)))i++;else break}"#
+    + #"if(substr(s,i,1)!=":")return "";i++;while(i<=n){if(ws(substr(s,i,1)))i++;else break}"#
+    + #"if(substr(s,i,1)!="\"")return "";i++;o="";e=0;while(i<=n){c=substr(s,i,1);"#
+    + #"if(e){o=o c;e=0;i++;continue}if(c=="\\"){o=o c;e=1;i++;continue}if(c=="\"")break;o=o c;i++}return o}"#
+    + #"{d=d $0}END{n=split(keys,ks,",");v="";for(j=1;j<=n;j++){v=fv(d,ks[j]);if(v!="")break}"#
+    + #"if(length(v)>budget+0)v=substr(v,1,budget+0);printf "%s",v}"#
+
+  /// Reads the hook JSON from stdin once, extracts a bounded title/body via a
+  /// portable `awk` pass (no `jq`/`python`, so it works over SSH), base64s each,
+  /// and emits the OSC 3008 notify. Sending only the display fields keeps the wire
+  /// under libghostty's 2048-byte OSC ceiling. Locked to STANDARD base64.
   static func emitNotifyShell(agent: SkillAgent) -> String {
-    let payload = #"\033]3008;start=\#(agent.rawValue);\#(notifyMetadata(token: "%s", data: "%s"))\033\\"#
-    return #"__osc_d=$(base64 | tr -d '\n'); printf '\#(payload)' "$\#(tokenEnvVar)" "$__osc_d" > "$__tty""#
+    let payload = #"\033]3008;start=\#(agent.rawValue);\#(notifyMetadata(token: "%s", title: "%s", body: "%s"))\033\\"#
+    let bodyKeys = notifyBodyKeys.joined(separator: ",")
+    return #"__in=$(cat); "#
+      + #"__t=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(titleField)" "#
+      + #"-v budget=\#(notifyTitleByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
+      + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
+      + #"-v budget=\#(notifyBodyByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
+      + #"printf '\#(payload)' "$\#(tokenEnvVar)" "$__t" "$__b" > "$__tty""#
   }
 
   /// Equal-length constant-time compare. A length mismatch returns immediately;

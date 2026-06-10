@@ -87,8 +87,8 @@ struct AgentHookCommandTests {
 
   @Test func notifyDoesNotReferenceWorktreeOrTabIDs() {
     // The notify leg used to prefix a `worktree tab surface agent` header for
-    // the socket text proto. The OSC notify carries only the base64 payload and
-    // the per-surface token, so those ids must be gone.
+    // the socket text proto. The OSC notify carries only the per-surface token
+    // and base64 title/body, so those ids must be gone.
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [], forwardStdinAsNotification: true, agent: .codex)
     #expect(!command.contains("SUPACODE_WORKTREE_ID"))
@@ -348,7 +348,7 @@ struct AgentHookCommandTests {
   @Test func notifyComposesOSCNotify() {
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [.idle], forwardStdinAsNotification: true, agent: .claude)
-    #expect(command.contains("]3008;start=claude;kind=notify;token=%s;data=%s"))
+    #expect(command.contains("]3008;start=claude;kind=notify;token=%s;title=%s;body=%s"))
     #expect(command.contains("base64 | tr -d"))
   }
 
@@ -387,7 +387,9 @@ struct AgentHookCommandTests {
     #expect(remoteSignal.pid == nil)
   }
 
-  @Test func notifyBase64sStdinPayload() throws {
+  @Test func notifyExtractsBodyFromStdinThroughAwk() throws {
+    // End-to-end: the real shell hook runs the awk extractor over Claude's stdin
+    // JSON and the resulting OSC parses back with the body intact.
     let json = #"{"hook_event_name":"Stop","message":"hi there"}"#
     let base: [String: String] = [
       "SUPACODE_OSC_TOKEN": "tok",
@@ -396,14 +398,17 @@ struct AgentHookCommandTests {
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [], forwardStdinAsNotification: true, agent: .claude)
     let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
-    #expect(tty.contains("]3008;start=claude;kind=notify;token=tok;data="))
-    #expect(tty.contains("data=\(Data(json.utf8).base64EncodedString())"))
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.token == "tok")
+    #expect(signal.body == "hi there")
   }
 
-  @Test func eventsPlusNotifyDeliverPresenceAndFullStdin() throws {
-    // events + notify: both legs fire, and the notify leg must receive the
-    // COMPLETE JSON (not a partial read), proving the guarded-body stdin handoff.
-    let json = #"{"hook_event_name":"Stop","message":"the full message survives intact"}"#
+  @Test func notifyAwkPreservesEscapedQuotesNewlinesAndUnicode() throws {
+    // The awk extractor must copy the escaped JSON value verbatim so embedded
+    // quotes / newlines / unicode survive the round-trip, and pick the body via
+    // the precedence list (here `last_assistant_message`, with `message` empty).
+    let json =
+      #"{"hook_event_name":"Stop","title":"Done","message":"","last_assistant_message":"line \"one\"\nDONE ✓"}"#
     let base: [String: String] = [
       "SUPACODE_OSC_TOKEN": "tok",
       "SUPACODE_SURFACE_ID": UUID().uuidString,
@@ -412,7 +417,55 @@ struct AgentHookCommandTests {
       events: [.idle], forwardStdinAsNotification: true, agent: .claude)
     let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
     #expect(tty.contains("]3008;start=claude;event=idle;"))
-    #expect(tty.contains("data=\(Data(json.utf8).base64EncodedString())"))
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.title == "Done")
+    #expect(signal.body == "line \"one\"\nDONE ✓")
+  }
+
+  @Test(arguments: [
+    // message wins over the fallbacks.
+    (#"{"message":"primary","last_assistant_message":"secondary","assistant_response":"tertiary"}"#, "primary"),
+    // The awk is not type-aware: empty / null / numeric `message` falls through only
+    // because `fv` requires an opening `"` after the colon and finds none.
+    (#"{"message":"","last_assistant_message":"fallback"}"#, "fallback"),
+    (#"{"message":null,"last_assistant_message":"fallback"}"#, "fallback"),
+    (#"{"message":42,"assistant_response":"kiro body"}"#, "kiro body"),
+    (#"{"assistant_response":"kiro body"}"#, "kiro body"),
+  ])
+  func notifyAwkResolvesBodyByPrecedence(json: String, expectedBody: String) throws {
+    let base: [String: String] = [
+      "SUPACODE_OSC_TOKEN": "tok",
+      "SUPACODE_SURFACE_ID": UUID().uuidString,
+    ]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body == expectedBody)
+  }
+
+  @Test func notifyByteCapFiresAndWireStaysUnderOSCCeiling() throws {
+    // Drive a body past notifyBodyByteBudget through the REAL awk and assert the
+    // emitted metadata stays under libghostty's 2048-byte OSC ceiling (the headline
+    // guarantee) and the decoded body is a sane truncated prefix. Exercises the
+    // `length(v)>budget` branch and the LC_ALL=C byte cap end to end.
+    let bodyText = String(repeating: "a", count: 4000)
+    let json = #"{"hook_event_name":"Stop","message":"\#(bodyText)"}"#
+    let base: [String: String] = [
+      "SUPACODE_OSC_TOKEN": "tok",
+      "SUPACODE_SURFACE_ID": UUID().uuidString,
+    ]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    // Metadata is everything after `]3008;` up to ST; assert it is under the cap.
+    let marker = try #require(tty.range(of: "]3008;"))
+    let afterMarker = tty[marker.upperBound...]
+    let stRange = try #require(afterMarker.range(of: "\u{1b}\\"))
+    #expect(afterMarker[..<stRange.lowerBound].utf8.count < 2048)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body?.isEmpty == false)
+    #expect(signal.body?.allSatisfy { $0 == "a" } == true)
   }
 
   @Test func emitsNothingOutsideSupacode() throws {
@@ -465,6 +518,25 @@ struct AgentHookCommandTests {
     return AgentPresenceOSC.parse(id: id, metadata: metadata)
   }
 
+  /// Same split as `parsePresence`, but targets the notify OSC (which may follow a
+  /// presence OSC in the same tty stream) by anchoring on its `kind=notify`.
+  private static func parseNotify(fromTTY tty: String) -> AgentPresenceOSC.NotifySignal? {
+    guard let kindRange = tty.range(of: "kind=notify") else { return nil }
+    guard
+      let marker = tty.range(
+        of: "]3008;", options: .backwards, range: tty.startIndex..<kindRange.lowerBound)
+    else { return nil }
+    let afterMarker = tty[marker.upperBound...]
+    guard let stRange = afterMarker.range(of: "\u{1b}\\") else { return nil }
+    let body = afterMarker[..<stRange.lowerBound]
+    guard let firstSemi = body.firstIndex(of: ";") else { return nil }
+    let firstField = body[..<firstSemi]
+    let metadata = String(body[body.index(after: firstSemi)...])
+    guard let equals = firstField.firstIndex(of: "=") else { return nil }
+    let id = String(firstField[firstField.index(after: equals)...])
+    return AgentPresenceOSC.parseNotify(id: id, metadata: metadata)
+  }
+
   // Shared head: token guard, then (inside one brace group) resolve $__tty from
   // the parent agent's controlling terminal since the hook has none of its own.
   private static let guardAndTTY =
@@ -480,9 +552,15 @@ struct AgentHookCommandTests {
   }
 
   private static func notify(_ agent: String) -> String {
-    #"__osc_d=$(base64 | tr -d '\n'); "#
-      + #"printf '\033]3008;start=\#(agent);kind=notify;token=%s;data=%s\033\\' "#
-      + #""$SUPACODE_OSC_TOKEN" "$__osc_d" > "$__tty"; "#
+    let bodyKeys = AgentPresenceOSC.notifyBodyKeys.joined(separator: ",")
+    let awk = AgentPresenceOSC.notifyExtractAwk
+    return #"__in=$(cat); "#
+      + #"__t=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(AgentPresenceOSC.titleField)" "#
+      + #"-v budget=\#(AgentPresenceOSC.notifyTitleByteBudget) '\#(awk)' | base64 | tr -d '\n'); "#
+      + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
+      + #"-v budget=\#(AgentPresenceOSC.notifyBodyByteBudget) '\#(awk)' | base64 | tr -d '\n'); "#
+      + #"printf '\033]3008;start=\#(agent);kind=notify;token=%s;title=%s;body=%s\033\\' "#
+      + #""$SUPACODE_OSC_TOKEN" "$__t" "$__b" > "$__tty"; "#
   }
 
   static let snapshotClaudeBusy =

@@ -35,11 +35,9 @@ nonisolated enum PiExtensionContent {
     import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
     import { openSync, writeSync, closeSync } from "node:fs";
 
-    interface HookPayload {
-      hook_event_name: string;
+    interface NotifyContent {
       title?: string;
-      message?: string;
-      last_assistant_message?: string;
+      body?: string;
     }
 
     const AGENT = "pi";
@@ -114,9 +112,21 @@ nonisolated enum PiExtensionContent {
       writeToTerminal(`\\x1b]3008;${action}=${AGENT};${meta}\\x1b\\\\`);
     }
 
-    function emitNotification(token: string, payload: HookPayload): void {
-      const data = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
-      const meta = `kind=notify;token=${token};data=${data}`;
+    // JSON-escape (minus the surrounding quotes) so the wire matches the shell
+    // awk path, byte-cap to the same budget, then base64. App-side
+    // decodeNotifyValue reverses both and tolerates a mid-escape cut.
+    function notifyField(value: string, budget: number): string {
+      const escaped = JSON.stringify(value).slice(1, -1);
+      const buf = Buffer.from(escaped, "utf8");
+      const capped = buf.length > budget ? buf.subarray(0, budget) : buf;
+      return capped.toString("base64");
+    }
+
+    function emitNotification(token: string, content: NotifyContent): void {
+      const meta =
+        `kind=notify;token=${token}` +
+        `;title=${notifyField(content.title ?? "", \(AgentPresenceOSC.notifyTitleByteBudget))}` +
+        `;body=${notifyField(content.body ?? "", \(AgentPresenceOSC.notifyBodyByteBudget))}`;
       writeToTerminal(`\\x1b]3008;start=${AGENT};${meta}\\x1b\\\\`);
     }
 
@@ -159,12 +169,7 @@ nonisolated enum PiExtensionContent {
         // Atomic state-set: `idle` overwrites whatever was running on the
         // Supacode side (turn-level Stop equivalent).
         emitPresence(token, "idle");
-
-        const lastMessage = lastAssistantText(ctx);
-        emitNotification(token, {
-          hook_event_name: "Stop",
-          last_assistant_message: lastMessage,
-        });
+        emitNotification(token, { body: lastAssistantText(ctx) });
       });
 
       pi.on("session_shutdown", (_event, _ctx) => {

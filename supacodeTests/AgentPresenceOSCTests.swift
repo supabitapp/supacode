@@ -187,59 +187,115 @@ struct AgentPresenceOSCTests {
 
   // MARK: - parseNotify.
 
+  /// base64 of the JSON-escaped content of `text`, matching the wire the emitter
+  /// ships (`awk`-extracted escaped value / Pi's `JSON.stringify(...).slice(1,-1)`).
+  private static func field(_ text: String) -> String {
+    guard let json = try? JSONEncoder().encode(text) else { return "" }
+    // `json` is `"..."`; drop the surrounding quote bytes, keep the escaped content.
+    return Data(json.dropFirst().dropLast()).base64EncodedString()
+  }
+
+  private static func notifyMeta(token: String = "tok", title: String? = nil, body: String? = nil) -> String {
+    AgentPresenceOSC.notifyMetadata(
+      token: token, title: title.map(field) ?? "", body: body.map(field) ?? "")
+  }
+
   @Test func parsesValidNotify() {
-    let json = #"{"hook_event_name":"Stop","message":"hi"}"#
-    let b64 = Data(json.utf8).base64EncodedString()
-    let signal = AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;token=tok;data=\(b64)")
+    let signal = AgentPresenceOSC.parseNotify(id: "claude", metadata: Self.notifyMeta(body: "hi"))
     #expect(signal?.agent == "claude")
     #expect(signal?.token == "tok")
-    #expect(signal?.payload == Data(json.utf8))
+    #expect(signal?.title == nil)
+    #expect(signal?.body == "hi")
+  }
+
+  @Test func parsesNotifyWithTitleAndBody() {
+    let signal = AgentPresenceOSC.parseNotify(
+      id: "claude", metadata: Self.notifyMeta(title: "Done", body: "all good"))
+    #expect(signal?.title == "Done")
+    #expect(signal?.body == "all good")
+  }
+
+  @Test func decodesEscapedQuotesNewlinesAndUnicode() {
+    let signal = AgentPresenceOSC.parseNotify(
+      id: "claude", metadata: Self.notifyMeta(body: "line \"one\"\nDONE ✓"))
+    #expect(signal?.body == "line \"one\"\nDONE ✓")
   }
 
   @Test func rejectsNotifyWithoutKind() {
-    let b64 = Data("x".utf8).base64EncodedString()
-    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "token=tok;data=\(b64)") == nil)
+    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "token=tok;body=\(Self.field("x"))") == nil)
   }
 
   @Test func rejectsNotifyWithoutToken() {
-    let b64 = Data("x".utf8).base64EncodedString()
-    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;data=\(b64)") == nil)
+    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;body=\(Self.field("x"))") == nil)
   }
 
-  @Test func rejectsNotifyWithoutData() {
-    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;token=tok") == nil)
-  }
-
-  @Test func rejectsNotifyWithInvalidBase64() {
-    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;token=tok;data=!!notb64") == nil)
+  @Test func notifyWithoutBodyParsesAsTitleOnly() {
+    // Body is optional: a missing body yields a title-only signal (macOS shows a
+    // body-less toast), not a dropped notify.
+    let signal = AgentPresenceOSC.parseNotify(id: "claude", metadata: Self.notifyMeta(title: "Heads up"))
+    #expect(signal?.title == "Heads up")
+    #expect(signal?.body == nil)
   }
 
   @Test func rejectsNotifyWithEmptyId() {
-    let b64 = Data("x".utf8).base64EncodedString()
-    #expect(AgentPresenceOSC.parseNotify(id: "", metadata: "kind=notify;token=tok;data=\(b64)") == nil)
+    #expect(AgentPresenceOSC.parseNotify(id: "", metadata: Self.notifyMeta(body: "x")) == nil)
+  }
+
+  @Test func invalidBase64FieldDecodesToNil() {
+    let signal = AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;token=tok;body=!!notb64")
+    #expect(signal?.body == nil)
+  }
+
+  @Test func decodeToleratesTrailingPartialEscapeFromEmitCut() {
+    // A body byte-capped mid-`\"` leaves a dangling backslash; decoding must shed
+    // it and preview the rest rather than dropping the notify (the >2048 truncate
+    // path relies on this).
+    let escaped = #"say \"#  // ends with a lone backslash (a cut `\"`)
+    let signal = AgentPresenceOSC.parseNotify(
+      id: "claude", metadata: "kind=notify;token=tok;body=\(Data(escaped.utf8).base64EncodedString())")
+    #expect(signal?.body == "say ")
+  }
+
+  @Test func decodeShedsCutSurrogatePairEscapeToPreview() {
+    // A body cut mid surrogate-pair escape (`\uD83D\uDE0` is 11 dangling bytes)
+    // must shed back to the recoverable prefix, not drop the whole body to empty.
+    let escaped = #"done \uD83D\uDE0"#
+    let signal = AgentPresenceOSC.parseNotify(
+      id: "claude", metadata: "kind=notify;token=tok;body=\(Data(escaped.utf8).base64EncodedString())")
+    // The recoverable prefix survives (not dropped to empty); exact trailing
+    // depends on Foundation's lone-surrogate handling, so assert the prefix.
+    #expect(signal?.body?.hasPrefix("done") == true)
+  }
+
+  @Test func base64TruncatedBodyDecodesToNilTitleOnly() {
+    // A mid-base64 cut (length not a multiple of 4, the ghostty .allocating path)
+    // is not decodable: the body drops and the toast falls back to the title.
+    let valid = Data("hello world body".utf8).base64EncodedString()
+    let cut = String(valid.dropLast())  // break base64 alignment
+    let signal = AgentPresenceOSC.parseNotify(
+      id: "claude", metadata: "kind=notify;token=tok;title=\(Self.field("Done"));body=\(cut)")
+    #expect(signal?.title == "Done")
+    #expect(signal?.body == nil)
   }
 
   @Test func notifyMetadataRoundTripsThroughParseNotify() {
-    let json = #"{"message":"round trip"}"#
-    let metadata = AgentPresenceOSC.notifyMetadata(token: "tok", data: Data(json.utf8).base64EncodedString())
+    let metadata = Self.notifyMeta(title: "T", body: "round trip")
     let signal = AgentPresenceOSC.parseNotify(id: "codex", metadata: metadata)
-    #expect(signal?.payload == Data(json.utf8))
+    #expect(signal?.title == "T")
+    #expect(signal?.body == "round trip")
     #expect(signal?.token == "tok")
   }
 
   @Test func presenceParseRejectsNotifyMetadata() {
     // Presence and notify are disjoint: a notify payload must not parse as presence.
-    let b64 = Data("x".utf8).base64EncodedString()
-    #expect(AgentPresenceOSC.parse(id: "claude", metadata: "kind=notify;token=tok;data=\(b64)") == nil)
+    #expect(AgentPresenceOSC.parse(id: "claude", metadata: Self.notifyMeta(body: "x")) == nil)
   }
 
   // MARK: - notification (trust + sanitize).
 
   @Test func notificationTrustsMatchingTokenAndExtractsBody() {
-    let json = #"{"hook_event_name":"Stop","message":"all done"}"#
-    let metadata = "kind=notify;token=tok;data=\(Data(json.utf8).base64EncodedString())"
     let resolved = WorktreeTerminalState.notification(
-      id: "claude", metadata: metadata, expectedToken: "tok", surfaceExists: true)
+      id: "claude", metadata: Self.notifyMeta(body: "all done"), expectedToken: "tok", surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
@@ -248,9 +304,9 @@ struct AgentPresenceOSCTests {
   }
 
   @Test func notificationDropsMismatchedToken() {
-    let metadata = "kind=notify;token=wrong;data=\(Data(#"{"message":"x"}"#.utf8).base64EncodedString())"
     let result = WorktreeTerminalState.notification(
-      id: "claude", metadata: metadata, expectedToken: "right", surfaceExists: true)
+      id: "claude", metadata: Self.notifyMeta(token: "wrong", body: "x"),
+      expectedToken: "right", surfaceExists: true)
     guard case .failure(.tokenMismatch(let agent)) = result else {
       Issue.record("expected tokenMismatch, got \(result)")
       return
@@ -259,9 +315,8 @@ struct AgentPresenceOSCTests {
   }
 
   @Test func notificationDropsUnknownSurface() {
-    let metadata = "kind=notify;token=tok;data=\(Data(#"{"message":"x"}"#.utf8).base64EncodedString())"
     let result = WorktreeTerminalState.notification(
-      id: "claude", metadata: metadata, expectedToken: nil, surfaceExists: false)
+      id: "claude", metadata: Self.notifyMeta(body: "x"), expectedToken: nil, surfaceExists: false)
     if case .failure(.unknownSurface) = result {} else { Issue.record("expected unknownSurface, got \(result)") }
   }
 
@@ -270,9 +325,8 @@ struct AgentPresenceOSCTests {
     // benign, not a spoof: the call site routes `.unknownSurface` to `.debug`,
     // never `.warning`. Asserting the exact failure case locks that mapping in
     // since `tokenMismatch` / `parseFailed` are the only warn-level branches.
-    let metadata = "kind=notify;token=tok;data=\(Data(#"{"message":"x"}"#.utf8).base64EncodedString())"
     let result = WorktreeTerminalState.notification(
-      id: "claude", metadata: metadata, expectedToken: nil, surfaceExists: false)
+      id: "claude", metadata: Self.notifyMeta(body: "x"), expectedToken: nil, surfaceExists: false)
     guard case .failure(let drop) = result else {
       Issue.record("expected failure, got \(result)")
       return
@@ -286,9 +340,8 @@ struct AgentPresenceOSCTests {
   }
 
   @Test func notificationFallsBackToAgentTitleWhenAbsent() {
-    let metadata = "kind=notify;token=tok;data=\(Data(#"{"message":"body only"}"#.utf8).base64EncodedString())"
     let resolved = WorktreeTerminalState.notification(
-      id: "codex", metadata: metadata, expectedToken: "tok", surfaceExists: true)
+      id: "codex", metadata: Self.notifyMeta(body: "body only"), expectedToken: "tok", surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
@@ -296,12 +349,23 @@ struct AgentPresenceOSCTests {
     #expect(value.title == "codex")
   }
 
+  @Test func notificationShowsTitleOnlyToastWhenBodyAbsent() {
+    // A turn-complete notify with no body still fires, showing just the title.
+    let resolved = WorktreeTerminalState.notification(
+      id: "claude", metadata: Self.notifyMeta(), expectedToken: "tok", surfaceExists: true)
+    guard case .success(let value) = resolved else {
+      Issue.record("expected success, got \(resolved)")
+      return
+    }
+    #expect(value.title == "claude")
+    #expect(value.body.isEmpty)
+  }
+
   @Test func notificationDropsPayloadThatSanitizesEmpty() {
     // Body of only control / whitespace and no usable title sanitizes to empty,
     // so the toast is suppressed rather than shown blank.
-    let metadata = "kind=notify;token=tok;data=\(Data(#"{"message":"\n"}"#.utf8).base64EncodedString())"
     let result = WorktreeTerminalState.notification(
-      id: " ", metadata: metadata, expectedToken: "tok", surfaceExists: true)
+      id: " ", metadata: Self.notifyMeta(body: "\n"), expectedToken: "tok", surfaceExists: true)
     if case .failure(.empty) = result {} else { Issue.record("expected empty, got \(result)") }
   }
 
@@ -323,11 +387,9 @@ struct AgentPresenceOSCTests {
     // unicode escape (raw 0x1B is illegal in a JSON string); the C0 strip
     // must drop both the opening ESC and the trailing ST ESC before the
     // toast sees them.
-    let json =
-      #"{"hook_event_name":"Stop","message":"before\u001b]3008;start=evil;event=busy;token=X\u001b\\after"}"#
-    let metadata = "kind=notify;token=tok;data=\(Data(json.utf8).base64EncodedString())"
+    let body = "before\u{1B}]3008;start=evil;event=busy;token=X\u{1B}\\after"
     let resolved = WorktreeTerminalState.notification(
-      id: "claude", metadata: metadata, expectedToken: "tok", surfaceExists: true)
+      id: "claude", metadata: Self.notifyMeta(body: body), expectedToken: "tok", surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
@@ -348,20 +410,14 @@ struct AgentPresenceOSCTests {
   // MARK: - large payload (metadata cap headroom).
 
   @Test func largeNotifyPayloadNearMetadataCapRoundTripsEndToEnd() {
-    // Locks the design margin against a future Ghostty cap reduction or a Claude
-    // payload growth that would silently drop notifications: a ~1.5KB Codex
-    // `last_assistant_message` must survive parseNotify + notification(...) with
-    // the title / body resolving correctly. Sized so the base64-expanded
-    // metadata stays just under the 2047-byte OSC cap.
+    // A near-cap body must survive parseNotify + notification(...) end to end and
+    // stay under the 2047-byte OSC cap so a real terminal does not truncate.
     let bodyText = String(repeating: "y", count: 1400)
-    let json = #"{"hook_event_name":"Stop","title":"Big","last_assistant_message":"\#(bodyText)"}"#
-    let metadata = AgentPresenceOSC.notifyMetadata(
-      token: "tok", data: Data(json.utf8).base64EncodedString())
-    // Stay under Ghostty's 2047-byte metadata cap so a real terminal would not truncate.
+    let metadata = Self.notifyMeta(title: "Big", body: bodyText)
     #expect(metadata.utf8.count < 2047)
 
     let signal = AgentPresenceOSC.parseNotify(id: "codex", metadata: metadata)
-    #expect(signal?.payload == Data(json.utf8))
+    #expect(signal?.body == bodyText)
 
     let resolved = WorktreeTerminalState.notification(
       id: "codex", metadata: metadata, expectedToken: "tok", surfaceExists: true)
