@@ -5,13 +5,8 @@ import Foundation
 import GhosttyKit
 import IdentifiedCollections
 import Observation
-import Security
 import Sharing
 import SupacodeSettingsShared
-
-#if !DEBUG
-  import Sentry
-#endif
 
 private let blockingScriptLogger = SupaLogger("BlockingScript")
 private let layoutLogger = SupaLogger("Layout")
@@ -93,9 +88,6 @@ final class WorktreeTerminalState {
   /// doesn't invalidate every leaf; the per-instance `hasUnseenNotification` is
   /// the observed signal.
   @ObservationIgnored private(set) var surfaceStates: [UUID: WorktreeSurfaceState] = [:]
-  /// Per-surface secret nonce echoed in OSC 3008 presence signals, compared
-  /// against the incoming token before the signal is trusted.
-  @ObservationIgnored private var oscTokensBySurfaceID: [UUID: String] = [:]
   var notificationsEnabled = true
   @ObservationIgnored @Dependency(\.date.now) private var now
   @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
@@ -134,7 +126,6 @@ final class WorktreeTerminalState {
   #if DEBUG
     var debugCustomNotificationTimestampCount: Int { lastCustomNotificationAt.count }
     var debugPendingOSCCount: Int { pendingAgentOSCNotifications.count }
-    func debugOSCToken(forSurfaceID surfaceID: UUID) -> String? { oscTokensBySurfaceID[surfaceID] }
   #endif
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
@@ -1348,11 +1339,6 @@ final class WorktreeTerminalState {
       let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
       env["PATH"] = currentPath.isEmpty ? cliBinDir : "\(cliBinDir):\(currentPath)"
     }
-    // Per-surface OSC presence capability nonce. Present only on Supacode
-    // surfaces, so the hook treats its absence as the no-op-outside-Supacode gate.
-    let oscToken = Self.makeOSCToken()
-    oscTokensBySurfaceID[surfaceID] = oscToken
-    env[AgentPresenceOSC.tokenEnvVar] = oscToken
     return env
   }
 
@@ -1508,133 +1494,118 @@ final class WorktreeTerminalState {
     switch Self.presenceEvent(
       id: id,
       metadata: metadata,
-      expectedToken: oscTokensBySurfaceID[surfaceID],
       surfaceID: surfaceID,
       surfaceExists: surfaces[surfaceID] != nil
     ) {
     case .success(let event):
       onAgentHookEvent?(event)
-    case .failure(.tokenMismatch(let agent, let event)):
-      // A wrong token is a potential spoof over the wider SSH capability; warn.
-      terminalStateLogger.warning(
-        "Rejected OSC presence with mismatched token for surface \(surfaceID), agent=\(agent), event=\(event).")
     case .failure(.parseFailed):
       // Malformed metadata on a live surface is probe-shaped; warn (mirrors notify).
       terminalStateLogger.warning("Dropped malformed OSC presence signal for surface \(surfaceID).")
-    case .failure(.unknownSurface), .failure(.noToken):
+    case .failure(.unknownSurface):
       terminalStateLogger.debug("Dropped OSC presence signal for surface \(surfaceID).")
     }
   }
 
   /// Typed reasons a presence signal was dropped, so the single call site can pick a
-  /// log severity per cause (warn for spoof-shaped failures, debug otherwise).
+  /// log severity per cause (warn for malformed, debug otherwise).
   enum PresenceDrop: Error, Equatable {
     case unknownSurface
-    case noToken
     case parseFailed
-    case tokenMismatch(agent: String, event: String)
   }
 
-  /// Pure trust decision for an OSC presence signal: returns an `AgentHookEvent`
-  /// attributed to the RECEIVING surface only when the surface is known and the
-  /// echoed token matches its nonce; otherwise a typed `PresenceDrop` so the caller
-  /// can log per cause. The wire never carries a surface id (so a payload can't
-  /// spoof another worktree). The pid is trusted via the per-surface token, not
-  /// verified local: a forged positive pid at worst pins a live-looking badge until
-  /// surface close. The parser still rejects a non-positive pid before it could
-  /// reach the sweep.
+  /// Pure decision for an OSC presence signal: returns an `AgentHookEvent`
+  /// attributed to the RECEIVING surface when the surface is known and the metadata
+  /// is well-formed; otherwise a typed `PresenceDrop` so the caller can log per
+  /// cause. The wire never carries a surface id (so a payload can't spoof another
+  /// worktree). The parser rejects a non-positive pid before it could reach the
+  /// liveness sweep; a forged positive pid at worst pins a live-looking badge.
   nonisolated static func presenceEvent(
     id: String,
     metadata: String,
-    expectedToken: String?,
     surfaceID: UUID,
     surfaceExists: Bool
   ) -> Result<AgentHookEvent, PresenceDrop> {
     guard surfaceExists else { return .failure(.unknownSurface) }
-    guard let expectedToken else { return .failure(.noToken) }
     guard let signal = AgentPresenceOSC.parse(id: id, metadata: metadata) else {
       return .failure(.parseFailed)
-    }
-    guard AgentPresenceOSC.tokensMatch(signal.token, expectedToken) else {
-      return .failure(.tokenMismatch(agent: signal.agent, event: signal.eventRawValue))
     }
     return .success(
       AgentHookEvent(
         agent: signal.agent, event: signal.eventRawValue, surfaceID: surfaceID, pid: signal.pid))
   }
 
-  /// Verify an OSC 3008 notify signal against the receiving surface's nonce, then
-  /// sanitize and display it. Gated by the rich-notifications setting.
+  /// Parse an OSC 3008 notify signal for the receiving surface, then sanitize and
+  /// display it. Gated by the rich-notifications setting.
   private func handleNotifySignal(surfaceID: UUID, id: String, metadata: String) {
     switch Self.notification(
       id: id,
       metadata: metadata,
-      expectedToken: oscTokensBySurfaceID[surfaceID],
       surfaceExists: surfaces[surfaceID] != nil
     ) {
     case .success(let resolved):
-      // Gate AFTER trust check so the setting can't be probed via drop-rate signals.
+      // Gate AFTER parse so the setting can't be probed via drop-rate signals.
       @Shared(.settingsFile) var settingsFile
       guard settingsFile.global.richAgentNotificationsEnabled else {
-        terminalStateLogger.debug("Dropped trusted OSC notify; rich notifications disabled.")
+        terminalStateLogger.debug("Dropped OSC notify; rich notifications disabled.")
         return
       }
-      // A body present on the wire but decoded empty means a ghostty truncation or
-      // an escape-cut the shed loop couldn't recover: keep it out of silent-failure
-      // territory by logging, even though we still show the title-only toast.
-      if resolved.body.isEmpty, let wireBody = AgentPresenceOSC.parseFields(metadata)?[Substring("body")],
-        !wireBody.isEmpty
-      {
-        terminalStateLogger.debug(
-          "OSC notify body present on wire (\(wireBody.utf8.count) b64 bytes) but decoded empty: surface \(surfaceID)."
+      // A body present on the wire but decoded empty means a truncation, an
+      // escape-cut the shed loop couldn't recover, or a non-base64 (probe / forged)
+      // field: keep it out of silent-failure territory by logging, even though we
+      // still show the title-only toast.
+      if resolved.body.isEmpty, resolved.wireBodyByteCount > 0 {
+        let wireBytes = resolved.wireBodyByteCount
+        terminalStateLogger.warning(
+          "OSC notify body present on wire (\(wireBytes) b64 bytes) but decoded empty, dropped: surface \(surfaceID)."
         )
       }
       appendHookNotification(title: resolved.title, body: resolved.body, surfaceID: surfaceID)
-    case .failure(.tokenMismatch(let agent)):
-      // A wrong token is a potential spoof over the wider SSH capability; warn.
-      terminalStateLogger.warning(
-        "Rejected OSC notify with mismatched token for surface \(surfaceID), agent=\(agent).")
     case .failure(.parseFailed):
-      // parseNotify only fails now on missing token / empty id (not a truncated body,
+      // parseNotify only fails on a non-notify / empty id (not a truncated body,
       // which decodes to an empty field, logged in the success arm above).
       terminalStateLogger.warning(
         "Dropped malformed OSC notify (metadata bytes: \(metadata.utf8.count)) for surface \(surfaceID).")
-    case .failure(.unknownSurface), .failure(.missingToken), .failure(.empty):
+    case .failure(.unknownSurface), .failure(.empty):
       terminalStateLogger.debug("Dropped OSC notify signal for surface \(surfaceID).")
     }
   }
 
   /// Typed reasons a notify signal was dropped, so the single call site can pick a
-  /// log severity per cause (warn for spoof-shaped failures, debug otherwise).
+  /// log severity per cause (warn for malformed, debug otherwise).
   enum NotifyDrop: Error {
     case unknownSurface
-    case missingToken
-    case tokenMismatch(agent: String)
     case parseFailed
     case empty
   }
 
-  /// Pure trust + parse decision for an OSC notify signal. Title/body are bounded
-  /// and stripped of control characters since the OSC leg is a wider capability
-  /// than a local socket. Title falls back to the agent name; body may be empty.
+  /// A parsed + sanitized notify ready for display, plus the raw wire body byte
+  /// count so the call site can log a truncated-to-empty body.
+  struct ResolvedNotification: Equatable {
+    let title: String
+    let body: String
+    let wireBodyByteCount: Int
+  }
+
+  /// Pure parse decision for an OSC notify signal. Title/body are bounded and
+  /// stripped of control characters since anything on the terminal can emit one.
+  /// Title falls back to the agent name; body may be empty.
   nonisolated static func notification(
     id: String,
     metadata: String,
-    expectedToken: String?,
     surfaceExists: Bool
-  ) -> Result<(title: String, body: String), NotifyDrop> {
+  ) -> Result<ResolvedNotification, NotifyDrop> {
     guard surfaceExists else { return .failure(.unknownSurface) }
-    guard let expectedToken else { return .failure(.missingToken) }
     guard let notify = AgentPresenceOSC.parseNotify(id: id, metadata: metadata) else {
       return .failure(.parseFailed)
     }
-    guard AgentPresenceOSC.tokensMatch(notify.token, expectedToken) else {
-      return .failure(.tokenMismatch(agent: notify.agent))
-    }
+    // Second-line defense behind the emit-side caps (notifyTitleByteBudget /
+    // notifyBodyByteBudget): these are scalar counts, not bytes, and the wire is
+    // already bounded, so they only bite on a hand-crafted oversized payload.
     let title = sanitizeNotificationText(notify.title ?? notify.agent, max: 200)
     let body = sanitizeNotificationText(notify.body ?? "", max: 1000)
     guard !(title.isEmpty && body.isEmpty) else { return .failure(.empty) }
-    return .success((title, body))
+    return .success(ResolvedNotification(title: title, body: body, wireBodyByteCount: notify.wireBodyByteCount))
   }
 
   /// Bound length and neutralize control characters in attacker-influenceable
@@ -1655,23 +1626,6 @@ final class WorktreeTerminalState {
       }
     }
     return String(scalars).trimmingCharacters(in: .whitespaces)
-  }
-
-  /// 128-bit (32 hex char) nonce. Hex avoids the `;` / `=` / control bytes that
-  /// would corrupt the OSC 3008 metadata framing.
-  static func makeOSCToken() -> String {
-    var bytes = [UInt8](repeating: 0, count: 16)
-    if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess {
-      return bytes.map { String(format: "%02x", $0) }.joined()
-    }
-    // RNG failure downgrades a security capability; surface to Sentry and fall back
-    // to arc4random_buf (always available, no failure path) rather than UUID entropy.
-    terminalStateLogger.error("SecRandomCopyBytes failed; OSC token falling back to arc4random_buf.")
-    #if !DEBUG
-      SentrySDK.logger.error("SecRandomCopyBytes failed; OSC token degraded to arc4random_buf.")
-    #endif
-    arc4random_buf(&bytes, bytes.count)
-    return bytes.map { String(format: "%02x", $0) }.joined()
   }
 
   struct ResolvedLaunch {
@@ -1874,15 +1828,13 @@ final class WorktreeTerminalState {
   /// killed here; callers route the kill through `killZmxSessions(forSurfaceIDs:)`
   /// so a single multi-pane close emits one `count=N` analytics event + one
   /// `withTaskGroup` instead of N events and N detached Tasks.
-  /// Also cancels any held agent OSC 9 and forgets the per-surface OSC token
-  /// and last-custom-notification instant so a future surface ID can't be
-  /// authenticated with stale state.
+  /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
+  /// instant so a future surface ID can't reuse stale dedupe state.
   private func cleanupSurfaceState(for surfaceID: UUID) {
     pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
     lastCustomNotificationAt.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
     surfaceStates.removeValue(forKey: surfaceID)
-    oscTokensBySurfaceID.removeValue(forKey: surfaceID)
     onSurfacesClosed?([surfaceID])
   }
 

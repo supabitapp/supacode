@@ -43,11 +43,11 @@ nonisolated enum AgentHookSettingsCommand {
     + #" && [ -n "${SUPACODE_TAB_ID:-}" ]"#
     + #" && [ -n "${SUPACODE_SURFACE_ID:-}" ]"#
 
-  /// Composes the OSC 3008 hook command: one token guard, then (once that passes)
-  /// the tty resolve plus a presence emit per event and/or a notify emit, all in a
+  /// Composes the OSC 3008 hook command: one guard, then (once that passes) the
+  /// tty resolve plus a presence emit per event and/or a notify emit, all in a
   /// single brace group whose output is suppressed. Guarding first keeps the
-  /// command truly inert outside Supacode (no `ps` runs when the token is unset).
-  /// The precondition rejects a no-op invocation that would emit nothing.
+  /// command truly inert outside Supacode (no `ps` runs when the surface id is
+  /// unset). The precondition rejects a no-op invocation that would emit nothing.
   static func compositeCommand(
     events: [HookEvent],
     forwardStdinAsNotification: Bool,
@@ -63,12 +63,10 @@ nonisolated enum AgentHookSettingsCommand {
     return "\(oscGuardExpr) && { \(steps.joined(separator: "; ")); } >/dev/null 2>&1 || true \(ownershipMarker)"
   }
 
-  /// Guard for the OSC command: the per-surface OSC token set (the
-  /// no-op-outside-Supacode gate) and a surface id present. Fires both locally and
-  /// over SSH; the pid suffix inside the presence emit is what's gated on the
-  /// socket path, not the emission itself.
+  /// Guard for the OSC command: a surface id present (the no-op-outside-Supacode
+  /// gate). Fires both locally and over SSH; the pid suffix inside the presence
+  /// emit is what's gated on the socket path, not the emission itself.
   private static var oscGuardExpr: String {
-    #"[ -n "${\#(AgentPresenceOSC.tokenEnvVar):-}" ]"#
-      + #" && [ -n "${SUPACODE_SURFACE_ID:-}" ]"#
+    #"[ -n "${\#(AgentPresenceOSC.surfaceEnvVar):-}" ]"#
   }
 }

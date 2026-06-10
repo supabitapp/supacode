@@ -32,52 +32,6 @@ struct AgentBusyStateTests {
     #expect(!fixture.isBusy)
   }
 
-  @Test func presenceWithMismatchedTokenIsDroppedFromLiveBridge() {
-    let fixture = makeStateWithSurface()
-    var forwardedEvents = 0
-    fixture.state.onAgentHookEvent = { _ in forwardedEvents += 1 }
-
-    // Drive the live `onContextSignal` callpath with a presence payload whose
-    // token doesn't match the surface's nonce: the manager-side hook must never see it.
-    fixture.surface.bridge.onContextSignal?(0, "claude", "event=busy;token=WRONG")
-
-    #expect(forwardedEvents == 0)
-    #expect(!fixture.isBusy)
-  }
-
-  @Test func presenceWithOtherSurfaceTokenIsDroppedFromLiveBridge() {
-    // Two live surfaces share the worktree state. Surface A's real token must not
-    // validate when echoed on surface B's bridge: tokens are per-surface, so a
-    // payload that authenticates for A is a spoof for B.
-    let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
-    let worktree = makeWorktree()
-    let state = manager.state(for: worktree) { false }
-    let tabAId = state.createTab()!
-    let tabBId = state.createTab()!
-    let surfaceA = state.splitTree(for: tabAId).root!.leftmostLeaf()
-    let surfaceB = state.splitTree(for: tabBId).root!.leftmostLeaf()
-    guard let tokenA = state.debugOSCToken(forSurfaceID: surfaceA.id) else {
-      Issue.record("Expected an OSC token for surface A")
-      return
-    }
-
-    var forwardedForA = 0
-    var forwardedForB = 0
-    let previous = state.onAgentHookEvent
-    state.onAgentHookEvent = { event in
-      if event.surfaceID == surfaceA.id { forwardedForA += 1 }
-      if event.surfaceID == surfaceB.id { forwardedForB += 1 }
-      previous?(event)
-    }
-
-    // Deliver a presence signal carrying A's token on B's bridge: the receiving
-    // surface is B, so the expected token is B's nonce and A's token must mismatch.
-    surfaceB.bridge.onContextSignal?(0, "claude", "event=busy;token=\(tokenA)")
-
-    #expect(forwardedForA == 0)
-    #expect(forwardedForB == 0)
-  }
-
   @Test func activityEventForUnknownSurfaceIsNoOp() {
     let fixture = makeStateWithSurface()
 

@@ -126,7 +126,7 @@ struct GhosttySurfaceBridgeTests {
     let target = ghostty_target_s()
 
     "claude".withCString { idPtr in
-      "event=busy;token=abc".withCString { metaPtr in
+      "event=busy".withCString { metaPtr in
         action.action.context_signal = ghostty_action_context_signal_s(
           action: 0,
           id: idPtr,
@@ -138,7 +138,7 @@ struct GhosttySurfaceBridgeTests {
 
     #expect(receivedAction == 0)
     #expect(receivedID == "claude")
-    #expect(receivedMetadata == "event=busy;token=abc")
+    #expect(receivedMetadata == "event=busy")
   }
 
   @Test func contextSignalDropsNullIDOrMetadata() {
@@ -151,7 +151,7 @@ struct GhosttySurfaceBridgeTests {
     let target = ghostty_target_s()
 
     // Null id with valid metadata.
-    "event=busy;token=abc".withCString { metaPtr in
+    "event=busy".withCString { metaPtr in
       action.action.context_signal = ghostty_action_context_signal_s(
         action: 0,
         id: nil,

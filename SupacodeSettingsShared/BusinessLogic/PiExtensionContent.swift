@@ -19,8 +19,8 @@ nonisolated enum PiExtensionContent {
      * local socket needed), matching the Claude / Codex / Kiro hook integrations.
      *
      * Required env var (injected automatically by Supacode on every surface):
-     *   SUPACODE_OSC_TOKEN  per-surface capability nonce; gates emission and is
-     *                       verified app-side. Absent = not a Supacode surface.
+     *   SUPACODE_SURFACE_ID  present only on a Supacode surface; absence is the
+     *                        no-op gate. Signals are unauthenticated.
      * Optional:
      *   SUPACODE_SOCKET_PATH  present only on the local host; gates the local pid
      *                         so the app's liveness sweep can reap a crashed agent.
@@ -45,9 +45,9 @@ nonisolated enum PiExtensionContent {
     let lastWarnedAt = 0;
     const WARN_INTERVAL_MS = 60_000;
 
-    function readToken(): string | null {
-      const token = process.env["SUPACODE_OSC_TOKEN"];
-      return token && token.length > 0 ? token : null;
+    function isSupacodeSurface(): boolean {
+      const id = process.env["SUPACODE_SURFACE_ID"];
+      return !!id && id.length > 0;
     }
 
     /**
@@ -106,9 +106,9 @@ nonisolated enum PiExtensionContent {
       }
     }
 
-    function emitPresence(token: string, event: string): void {
+    function emitPresence(event: string): void {
       const action = event === "session_end" ? "end" : "start";
-      const meta = `event=${event};token=${token}${localPidSuffix()}`;
+      const meta = `event=${event}${localPidSuffix()}`;
       writeToTerminal(`\\x1b]3008;${action}=${AGENT};${meta}\\x1b\\\\`);
     }
 
@@ -122,9 +122,9 @@ nonisolated enum PiExtensionContent {
       return capped.toString("base64");
     }
 
-    function emitNotification(token: string, content: NotifyContent): void {
+    function emitNotification(content: NotifyContent): void {
       const meta =
-        `kind=notify;token=${token}` +
+        `kind=notify` +
         `;title=${notifyField(content.title ?? "", \(AgentPresenceOSC.notifyTitleByteBudget))}` +
         `;body=${notifyField(content.body ?? "", \(AgentPresenceOSC.notifyBodyByteBudget))}`;
       writeToTerminal(`\\x1b]3008;start=${AGENT};${meta}\\x1b\\\\`);
@@ -152,29 +152,27 @@ nonisolated enum PiExtensionContent {
     }
 
     export default function (pi: ExtensionAPI) {
-      const token = readToken();
-
       // Not running under Supacode, or not a Supacode surface: stay inert.
-      if (!token) return;
+      if (!isSupacodeSurface()) return;
 
       // Extension load = agent process running. Pi has no equivalent of
       // Claude's SessionStart hook, so we fire it ourselves.
-      emitPresence(token, "session_start");
+      emitPresence("session_start");
 
       pi.on("agent_start", (_event, _ctx) => {
-        emitPresence(token, "busy");
+        emitPresence("busy");
       });
 
       pi.on("agent_end", (_event, ctx) => {
         // Atomic state-set: `idle` overwrites whatever was running on the
         // Supacode side (turn-level Stop equivalent).
-        emitPresence(token, "idle");
-        emitNotification(token, { body: lastAssistantText(ctx) });
+        emitPresence("idle");
+        emitNotification({ body: lastAssistantText(ctx) });
       });
 
       pi.on("session_shutdown", (_event, _ctx) => {
-        emitPresence(token, "session_end");
-        emitPresence(token, "idle");
+        emitPresence("session_end");
+        emitPresence("idle");
       });
     }
     """

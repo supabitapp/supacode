@@ -8,42 +8,33 @@ struct AgentPresenceOSCTests {
   // MARK: - parse.
 
   @Test func parsesValidSignal() {
-    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;token=abc123")
+    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy")
     #expect(signal?.agent == "claude")
     #expect(signal?.eventRawValue == "busy")
-    #expect(signal?.token == "abc123")
   }
 
   @Test func rejectsEmptyId() {
-    #expect(AgentPresenceOSC.parse(id: "", metadata: "event=busy;token=abc") == nil)
+    #expect(AgentPresenceOSC.parse(id: "", metadata: "event=busy") == nil)
   }
 
   @Test func rejectsMissingEvent() {
-    #expect(AgentPresenceOSC.parse(id: "claude", metadata: "token=abc") == nil)
+    #expect(AgentPresenceOSC.parse(id: "claude", metadata: "pid=5") == nil)
   }
 
   @Test func rejectsUnknownEvent() {
-    #expect(AgentPresenceOSC.parse(id: "claude", metadata: "event=not_a_real_event;token=abc") == nil)
-  }
-
-  @Test func rejectsMissingToken() {
-    #expect(AgentPresenceOSC.parse(id: "claude", metadata: "event=busy") == nil)
-  }
-
-  @Test func rejectsEmptyToken() {
-    #expect(AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;token=") == nil)
+    #expect(AgentPresenceOSC.parse(id: "claude", metadata: "event=not_a_real_event") == nil)
   }
 
   @Test func ignoresUnknownFieldsAndOrdering() {
+    // A leftover `token=` from an older emitter is just an unknown field now: ignored.
     let signal = AgentPresenceOSC.parse(id: "codex", metadata: "extra=1;token=zzz;event=session_start")
     #expect(signal?.eventRawValue == "session_start")
-    #expect(signal?.token == "zzz")
     #expect(signal?.agent == "codex")
   }
 
   @Test func skipsBareSegmentWithoutEquals() {
     // A segment with no '=' (a stray sentinel byte) is skipped, not fatal.
-    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "garbage;event=idle;token=t")
+    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "garbage;event=idle")
     #expect(signal?.eventRawValue == "idle")
   }
 
@@ -51,22 +42,21 @@ struct AgentPresenceOSCTests {
 
   @Test func emitMetadataRoundTripsThroughParse() {
     for event in [HookEvent.sessionStart, .sessionEnd, .busy, .awaitingInput, .idle] {
-      let metadata = AgentPresenceOSC.metadata(event: event, token: "tok123")
+      let metadata = AgentPresenceOSC.metadata(event: event)
       let signal = AgentPresenceOSC.parse(id: "claude", metadata: metadata)
       #expect(signal?.eventRawValue == event.rawValue)
-      #expect(signal?.token == "tok123")
     }
   }
 
   // MARK: - pid field (local-host liveness).
 
   @Test func parsesPositivePidField() {
-    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;token=tok;pid=4321")
+    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;pid=4321")
     #expect(signal?.pid == 4321)
   }
 
   @Test func absentPidParsesAsNil() {
-    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;token=tok")
+    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy")
     #expect(signal?.eventRawValue == "busy")
     #expect(signal?.pid == nil)
   }
@@ -75,7 +65,7 @@ struct AgentPresenceOSCTests {
     // 0 / negatives would let `kill(_:0)` match the caller's process group and
     // pin a permanent badge; a non-numeric pid is dropped, not fatal.
     for raw in ["0", "-7", "abc", ""] {
-      let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;token=tok;pid=\(raw)")
+      let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;pid=\(raw)")
       #expect(signal?.eventRawValue == "busy")
       #expect(signal?.pid == nil)
     }
@@ -84,20 +74,20 @@ struct AgentPresenceOSCTests {
   @Test func rejectsPidThatOverflowsPidT() {
     // Defense in depth against a future change from `pid_t(raw)` to `Int(raw)`:
     // a value beyond pid_t's range must drop, not wrap.
-    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;token=t;pid=99999999999999")
+    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;pid=99999999999999")
     #expect(signal?.pid == nil)
   }
 
   @Test func metadataPidSuffixRoundTripsThroughParse() {
-    let metadata = AgentPresenceOSC.metadata(event: .busy, token: "tok", pidSuffix: ";pid=99")
+    let metadata = AgentPresenceOSC.metadata(event: .busy, pidSuffix: ";pid=99")
     let signal = AgentPresenceOSC.parse(id: "claude", metadata: metadata)
     #expect(signal?.pid == 99)
   }
 
   @Test func presenceEventThreadsLocalPid() {
-    let metadata = AgentPresenceOSC.metadata(event: .busy, token: "tok", pidSuffix: ";pid=4242")
+    let metadata = AgentPresenceOSC.metadata(event: .busy, pidSuffix: ";pid=4242")
     let result = WorktreeTerminalState.presenceEvent(
-      id: "claude", metadata: metadata, expectedToken: "tok", surfaceID: UUID(), surfaceExists: true)
+      id: "claude", metadata: metadata, surfaceID: UUID(), surfaceExists: true)
     #expect((try? result.get())?.pid == 4242)
   }
 
@@ -108,45 +98,13 @@ struct AgentPresenceOSCTests {
     }
   }
 
-  // MARK: - tokensMatch (anti-spoof compare).
+  // MARK: - presenceEvent (attribution to receiving surface).
 
-  @Test func tokensMatchEqual() {
-    #expect(AgentPresenceOSC.tokensMatch("abc123", "abc123"))
-  }
-
-  @Test func tokensMatchEmpty() {
-    #expect(AgentPresenceOSC.tokensMatch("", ""))
-  }
-
-  @Test func tokensMatchRejectsOneByteDifference() {
-    #expect(!AgentPresenceOSC.tokensMatch("abc123", "abc124"))
-  }
-
-  @Test func tokensMatchRejectsDifferentLengths() {
-    #expect(!AgentPresenceOSC.tokensMatch("abc", "abc1"))
-  }
-
-  // MARK: - makeOSCToken (fixed-length hex invariant).
-
-  @MainActor
-  @Test func makeOSCTokenAlwaysReturns32LowercaseHexChars() {
-    // Guards `tokensMatch`'s fixed-length contract against regressions on either
-    // the SecRandomCopyBytes path or the arc4random_buf fallback.
-    let allowed = Set("0123456789abcdef")
-    for _ in 0..<100 {
-      let token = WorktreeTerminalState.makeOSCToken()
-      #expect(token.count == 32)
-      #expect(token.allSatisfy { allowed.contains($0) })
-    }
-  }
-
-  // MARK: - presenceEvent (trust boundary + attribution).
-
-  @Test func presenceEventTrustsMatchingTokenAndAttributesToReceivingSurface() {
+  @Test func presenceEventAttributesToReceivingSurface() {
     let surfaceID = UUID()
-    let metadata = AgentPresenceOSC.metadata(event: .busy, token: "tok")
+    let metadata = AgentPresenceOSC.metadata(event: .busy)
     let result = WorktreeTerminalState.presenceEvent(
-      id: "claude", metadata: metadata, expectedToken: "tok", surfaceID: surfaceID, surfaceExists: true)
+      id: "claude", metadata: metadata, surfaceID: surfaceID, surfaceExists: true)
     let event = try? result.get()
     #expect(event?.surfaceID == surfaceID)
     #expect(event?.agent == "claude")
@@ -154,23 +112,17 @@ struct AgentPresenceOSCTests {
     #expect(event?.pid == nil)
   }
 
-  @Test func presenceEventDropsMismatchedToken() {
-    let metadata = AgentPresenceOSC.metadata(event: .busy, token: "wrong")
+  @Test func presenceEventDropsUnknownSurface() {
+    let metadata = AgentPresenceOSC.metadata(event: .busy)
     let result = WorktreeTerminalState.presenceEvent(
-      id: "claude", metadata: metadata, expectedToken: "right", surfaceID: UUID(), surfaceExists: true)
-    guard case .failure(.tokenMismatch(let agent, let event)) = result else {
-      Issue.record("expected tokenMismatch, got \(result)")
-      return
-    }
-    #expect(agent == "claude")
-    #expect(event == "busy")
+      id: "claude", metadata: metadata, surfaceID: UUID(), surfaceExists: false)
+    #expect(result == .failure(.unknownSurface))
   }
 
-  @Test func presenceEventDropsUnknownSurface() {
-    let metadata = AgentPresenceOSC.metadata(event: .busy, token: "tok")
+  @Test func presenceEventDropsMalformedMetadata() {
     let result = WorktreeTerminalState.presenceEvent(
-      id: "claude", metadata: metadata, expectedToken: nil, surfaceID: UUID(), surfaceExists: false)
-    #expect(result == .failure(.unknownSurface))
+      id: "claude", metadata: "event=nope", surfaceID: UUID(), surfaceExists: true)
+    #expect(result == .failure(.parseFailed))
   }
 
   // MARK: - AgentHookEvent synthesis.
@@ -195,15 +147,13 @@ struct AgentPresenceOSCTests {
     return Data(json.dropFirst().dropLast()).base64EncodedString()
   }
 
-  private static func notifyMeta(token: String = "tok", title: String? = nil, body: String? = nil) -> String {
-    AgentPresenceOSC.notifyMetadata(
-      token: token, title: title.map(field) ?? "", body: body.map(field) ?? "")
+  private static func notifyMeta(title: String? = nil, body: String? = nil) -> String {
+    AgentPresenceOSC.notifyMetadata(title: title.map(field) ?? "", body: body.map(field) ?? "")
   }
 
   @Test func parsesValidNotify() {
     let signal = AgentPresenceOSC.parseNotify(id: "claude", metadata: Self.notifyMeta(body: "hi"))
     #expect(signal?.agent == "claude")
-    #expect(signal?.token == "tok")
     #expect(signal?.title == nil)
     #expect(signal?.body == "hi")
   }
@@ -222,11 +172,7 @@ struct AgentPresenceOSCTests {
   }
 
   @Test func rejectsNotifyWithoutKind() {
-    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "token=tok;body=\(Self.field("x"))") == nil)
-  }
-
-  @Test func rejectsNotifyWithoutToken() {
-    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;body=\(Self.field("x"))") == nil)
+    #expect(AgentPresenceOSC.parseNotify(id: "claude", metadata: "body=\(Self.field("x"))") == nil)
   }
 
   @Test func notifyWithoutBodyParsesAsTitleOnly() {
@@ -242,7 +188,7 @@ struct AgentPresenceOSCTests {
   }
 
   @Test func invalidBase64FieldDecodesToNil() {
-    let signal = AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;token=tok;body=!!notb64")
+    let signal = AgentPresenceOSC.parseNotify(id: "claude", metadata: "kind=notify;body=!!notb64")
     #expect(signal?.body == nil)
   }
 
@@ -252,7 +198,7 @@ struct AgentPresenceOSCTests {
     // path relies on this).
     let escaped = #"say \"#  // ends with a lone backslash (a cut `\"`)
     let signal = AgentPresenceOSC.parseNotify(
-      id: "claude", metadata: "kind=notify;token=tok;body=\(Data(escaped.utf8).base64EncodedString())")
+      id: "claude", metadata: "kind=notify;body=\(Data(escaped.utf8).base64EncodedString())")
     #expect(signal?.body == "say ")
   }
 
@@ -261,7 +207,7 @@ struct AgentPresenceOSCTests {
     // must shed back to the recoverable prefix, not drop the whole body to empty.
     let escaped = #"done \uD83D\uDE0"#
     let signal = AgentPresenceOSC.parseNotify(
-      id: "claude", metadata: "kind=notify;token=tok;body=\(Data(escaped.utf8).base64EncodedString())")
+      id: "claude", metadata: "kind=notify;body=\(Data(escaped.utf8).base64EncodedString())")
     // The recoverable prefix survives (not dropped to empty); exact trailing
     // depends on Foundation's lone-surrogate handling, so assert the prefix.
     #expect(signal?.body?.hasPrefix("done") == true)
@@ -273,7 +219,7 @@ struct AgentPresenceOSCTests {
     let valid = Data("hello world body".utf8).base64EncodedString()
     let cut = String(valid.dropLast())  // break base64 alignment
     let signal = AgentPresenceOSC.parseNotify(
-      id: "claude", metadata: "kind=notify;token=tok;title=\(Self.field("Done"));body=\(cut)")
+      id: "claude", metadata: "kind=notify;title=\(Self.field("Done"));body=\(cut)")
     #expect(signal?.title == "Done")
     #expect(signal?.body == nil)
   }
@@ -283,7 +229,6 @@ struct AgentPresenceOSCTests {
     let signal = AgentPresenceOSC.parseNotify(id: "codex", metadata: metadata)
     #expect(signal?.title == "T")
     #expect(signal?.body == "round trip")
-    #expect(signal?.token == "tok")
   }
 
   @Test func presenceParseRejectsNotifyMetadata() {
@@ -291,11 +236,11 @@ struct AgentPresenceOSCTests {
     #expect(AgentPresenceOSC.parse(id: "claude", metadata: Self.notifyMeta(body: "x")) == nil)
   }
 
-  // MARK: - notification (trust + sanitize).
+  // MARK: - notification (parse + sanitize).
 
-  @Test func notificationTrustsMatchingTokenAndExtractsBody() {
+  @Test func notificationExtractsBody() {
     let resolved = WorktreeTerminalState.notification(
-      id: "claude", metadata: Self.notifyMeta(body: "all done"), expectedToken: "tok", surfaceExists: true)
+      id: "claude", metadata: Self.notifyMeta(body: "all done"), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
@@ -303,30 +248,19 @@ struct AgentPresenceOSCTests {
     #expect(value.body == "all done")
   }
 
-  @Test func notificationDropsMismatchedToken() {
-    let result = WorktreeTerminalState.notification(
-      id: "claude", metadata: Self.notifyMeta(token: "wrong", body: "x"),
-      expectedToken: "right", surfaceExists: true)
-    guard case .failure(.tokenMismatch(let agent)) = result else {
-      Issue.record("expected tokenMismatch, got \(result)")
-      return
-    }
-    #expect(agent == "claude")
-  }
-
   @Test func notificationDropsUnknownSurface() {
     let result = WorktreeTerminalState.notification(
-      id: "claude", metadata: Self.notifyMeta(body: "x"), expectedToken: nil, surfaceExists: false)
+      id: "claude", metadata: Self.notifyMeta(body: "x"), surfaceExists: false)
     if case .failure(.unknownSurface) = result {} else { Issue.record("expected unknownSurface, got \(result)") }
   }
 
-  @Test func notificationDropsClosedSurfaceWithNilExpectedTokenWithoutWarning() {
-    // A signal targeting a closed surface (no expected token, surface gone) is
-    // benign, not a spoof: the call site routes `.unknownSurface` to `.debug`,
-    // never `.warning`. Asserting the exact failure case locks that mapping in
-    // since `tokenMismatch` / `parseFailed` are the only warn-level branches.
+  @Test func notificationDropsClosedSurfaceWithoutWarning() {
+    // A signal targeting a closed surface is benign, not malformed: the call site
+    // routes `.unknownSurface` to `.debug`, never `.warning`. Asserting the exact
+    // failure case locks that mapping in since `parseFailed` is the only
+    // warn-level branch.
     let result = WorktreeTerminalState.notification(
-      id: "claude", metadata: Self.notifyMeta(body: "x"), expectedToken: nil, surfaceExists: false)
+      id: "claude", metadata: Self.notifyMeta(body: "x"), surfaceExists: false)
     guard case .failure(let drop) = result else {
       Issue.record("expected failure, got \(result)")
       return
@@ -335,13 +269,12 @@ struct AgentPresenceOSCTests {
     } else {
       Issue.record("expected unknownSurface, got \(drop)")
     }
-    if case .tokenMismatch = drop { Issue.record("unknown surface must not log as a spoof warning") }
     if case .parseFailed = drop { Issue.record("unknown surface must not log as a malformed warning") }
   }
 
   @Test func notificationFallsBackToAgentTitleWhenAbsent() {
     let resolved = WorktreeTerminalState.notification(
-      id: "codex", metadata: Self.notifyMeta(body: "body only"), expectedToken: "tok", surfaceExists: true)
+      id: "codex", metadata: Self.notifyMeta(body: "body only"), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
@@ -352,7 +285,7 @@ struct AgentPresenceOSCTests {
   @Test func notificationShowsTitleOnlyToastWhenBodyAbsent() {
     // A turn-complete notify with no body still fires, showing just the title.
     let resolved = WorktreeTerminalState.notification(
-      id: "claude", metadata: Self.notifyMeta(), expectedToken: "tok", surfaceExists: true)
+      id: "claude", metadata: Self.notifyMeta(), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
@@ -365,7 +298,7 @@ struct AgentPresenceOSCTests {
     // Body of only control / whitespace and no usable title sanitizes to empty,
     // so the toast is suppressed rather than shown blank.
     let result = WorktreeTerminalState.notification(
-      id: " ", metadata: Self.notifyMeta(body: "\n"), expectedToken: "tok", surfaceExists: true)
+      id: " ", metadata: Self.notifyMeta(body: "\n"), surfaceExists: true)
     if case .failure(.empty) = result {} else { Issue.record("expected empty, got \(result)") }
   }
 
@@ -387,9 +320,9 @@ struct AgentPresenceOSCTests {
     // unicode escape (raw 0x1B is illegal in a JSON string); the C0 strip
     // must drop both the opening ESC and the trailing ST ESC before the
     // toast sees them.
-    let body = "before\u{1B}]3008;start=evil;event=busy;token=X\u{1B}\\after"
+    let body = "before\u{1B}]3008;start=evil;event=busy\u{1B}\\after"
     let resolved = WorktreeTerminalState.notification(
-      id: "claude", metadata: Self.notifyMeta(body: body), expectedToken: "tok", surfaceExists: true)
+      id: "claude", metadata: Self.notifyMeta(body: body), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
@@ -399,28 +332,28 @@ struct AgentPresenceOSCTests {
     // Printable framing bytes survive (they are not C0); the load-bearing
     // assertion is that the ESC is gone, so a downstream renderer cannot
     // re-trigger an escape parser.
-    #expect(value.body == #"before]3008;start=evil;event=busy;token=X\after"#)
+    #expect(value.body == #"before]3008;start=evil;event=busy\after"#)
     // The standalone sanitize entry point pins the same contract directly.
-    let dirty = "before\u{1B}]3008;start=evil;event=busy;token=X\u{1B}\\after"
+    let dirty = "before\u{1B}]3008;start=evil;event=busy\u{1B}\\after"
     #expect(
       WorktreeTerminalState.sanitizeNotificationText(dirty, max: 1000)
-        == #"before]3008;start=evil;event=busy;token=X\after"#)
+        == #"before]3008;start=evil;event=busy\after"#)
   }
 
   // MARK: - large payload (metadata cap headroom).
 
   @Test func largeNotifyPayloadNearMetadataCapRoundTripsEndToEnd() {
     // A near-cap body must survive parseNotify + notification(...) end to end and
-    // stay under the 2047-byte OSC cap so a real terminal does not truncate.
+    // stay under the 2048-byte OSC cap so a real terminal does not truncate.
     let bodyText = String(repeating: "y", count: 1400)
     let metadata = Self.notifyMeta(title: "Big", body: bodyText)
-    #expect(metadata.utf8.count < 2047)
+    #expect(metadata.utf8.count < 2048)
 
     let signal = AgentPresenceOSC.parseNotify(id: "codex", metadata: metadata)
     #expect(signal?.body == bodyText)
 
     let resolved = WorktreeTerminalState.notification(
-      id: "codex", metadata: metadata, expectedToken: "tok", surfaceExists: true)
+      id: "codex", metadata: metadata, surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return

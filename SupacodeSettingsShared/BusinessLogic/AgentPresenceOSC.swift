@@ -5,33 +5,35 @@ import Foundation
 /// state over SSH where the local Unix socket can't be reached. The sequence is
 /// inert in any terminal that doesn't handle OSC 3008 (no toast, no side effect).
 ///
-/// Emit shape: `OSC 3008 ; <action>=<agent> ; event=<event> ; token=<token>[ ; pid=<pid>] ST`.
+/// Emit shape: `OSC 3008 ; <action>=<agent> ; event=<event>[ ; pid=<pid>] ST`.
 /// libghostty splits that into `id = <agent>` (the context id, up to the first
-/// `;`) and `metadata = "event=<event>;token=<token>[;pid=<pid>]"`, which is what
-/// `parse` receives. `parse` derives the event solely from the `event=` field and
-/// ignores the start/end action byte.
+/// `;`) and `metadata = "event=<event>[;pid=<pid>]"`, which is what `parse`
+/// receives. `parse` derives the event solely from the `event=` field and ignores
+/// the start/end action byte.
 /// - attribution is by the receiving surface, so no surface id is carried;
 /// - `event` is the `HookEvent` rawValue;
-/// - `token` echoes the per-surface `SUPACODE_OSC_TOKEN` capability nonce, which
-///   the app verifies against the receiving surface before trusting the signal;
 /// - `pid` is the agent's LOCAL process id, present only when the hook ran on the
 ///   same host (gated on `SUPACODE_SOCKET_PATH`); it feeds the app's liveness
 ///   sweep so a crashed local agent is reaped. Omitted over SSH.
 ///
 /// The same transport also carries the rich notification leg
-/// (`kind=notify;token=<token>;title=<base64>;body=<base64>`); the emitter
-/// extracts the display title/body so the wire stays small and the app carries no
-/// agent-specific JSON shape. Presence and notify are disjoint metadata shapes.
+/// (`kind=notify;title=<base64>;body=<base64>`); the emitter extracts the display
+/// title/body so the wire stays small and the app carries no agent-specific JSON
+/// shape. Presence and notify are disjoint metadata shapes.
+///
+/// Signals are unauthenticated: anything that can write to the terminal can emit
+/// one, and the worst case is a spurious badge or notification (text is
+/// control-char-sanitized and length-capped app-side). Emission is gated on
+/// `SUPACODE_SURFACE_ID` so it no-ops outside a Supacode surface.
 ///
 /// Single source of truth for both the emit side (the agent hook) and the parse
 /// side (the app), so the field names can't drift.
 public nonisolated enum AgentPresenceOSC {
-  /// Env var carrying the per-surface secret capability nonce. Present only on
-  /// Supacode surfaces, so its presence doubles as the no-op-outside-Supacode gate.
-  public static let tokenEnvVar = "SUPACODE_OSC_TOKEN"
+  /// Env var present only on Supacode surfaces, so its presence is the
+  /// no-op-outside-Supacode emit gate.
+  public static let surfaceEnvVar = "SUPACODE_SURFACE_ID"
 
   static let eventField = "event"
-  static let tokenField = "token"
   static let pidField = "pid"
   static let kindField = "kind"
   static let titleField = "title"
@@ -47,26 +49,22 @@ public nonisolated enum AgentPresenceOSC {
   static let notifyBodyByteBudget = 1000
   static let notifyTitleByteBudget = 160
 
-  /// A parsed, NOT-yet-trusted presence signal. The caller must verify `token`
-  /// against the receiving surface's nonce before acting on it.
+  /// A parsed presence signal.
   public struct Signal: Equatable, Sendable {
     /// Context id, i.e. the agent rawValue.
     public let agent: String
     /// A known HookEvent rawValue. Parse rejects unknown values; stored as
     /// String so wire concerns don't leak into the enum.
     public let eventRawValue: String
-    public let token: String
-    /// The agent's process id, trusted via the per-surface token, not verified
-    /// local: parse/trust can't distinguish a genuinely-local emit from a forged
-    /// `pid=` on the wire. The emit gates it on `SUPACODE_SOCKET_PATH` so a
-    /// legitimate local hook carries it and a remote one omits it, but a forged
-    /// positive pid at worst pins a live-looking badge until surface close.
+    /// The agent's LOCAL process id. The emit gates it on `SUPACODE_SOCKET_PATH`
+    /// so a local hook carries it and a remote one omits it; a forged positive
+    /// pid at worst pins a live-looking badge until surface close.
     public let pid: pid_t?
   }
 
   /// Parse the OSC 3008 context id + raw key=value metadata (as surfaced by
   /// libghostty) into a `Signal`. Returns nil for anything that isn't a
-  /// well-formed presence signal with a known event. Does NOT verify the token.
+  /// well-formed presence signal with a known event.
   public static func parse(id: String, metadata: String) -> Signal? {
     guard !id.isEmpty else { return nil }
     guard let fields = parseFields(metadata) else { return nil }
@@ -74,11 +72,9 @@ public nonisolated enum AgentPresenceOSC {
       let rawEvent = fields[Substring(eventField)],
       HookEvent(rawValue: String(rawEvent)) != nil
     else { return nil }
-    guard let token = fields[Substring(tokenField)], !token.isEmpty else { return nil }
     return Signal(
       agent: id,
       eventRawValue: String(rawEvent),
-      token: String(token),
       pid: parsePid(fields[Substring(pidField)]),
     )
   }
@@ -103,17 +99,16 @@ public nonisolated enum AgentPresenceOSC {
   /// the value keeps everything after the FIRST `=` (`firstIndex(of:)`), so base64
   /// `=` padding survives intact.
   ///
-  /// Duplicate trust-bearing keys (`token`, `event`, `kind`) are rejected: a
-  /// repeated key would otherwise pin perceived state to the last occurrence,
-  /// which an attacker who can splice into the wire could exploit to flip
-  /// `event=` or to pair a valid `token=` with an injected `kind=notify`. All
-  /// other duplicate keys keep the historical last-write-wins behavior.
+  /// Duplicate `event` / `kind` keys are rejected: a repeated key would otherwise
+  /// pin perceived state to the last occurrence, which a splice into the wire
+  /// could exploit to flip `event=` or inject `kind=notify`. All other duplicate
+  /// keys keep the historical last-write-wins behavior.
   public static func parseFields(_ metadata: String) -> [Substring: Substring]? {
     var fields: [Substring: Substring] = [:]
     for pair in metadata.split(separator: ";", omittingEmptySubsequences: true) {
       guard let equalsIndex = pair.firstIndex(of: "=") else { continue }
       let key = pair[..<equalsIndex]
-      if fields[key] != nil, Self.trustBearingFields.contains(key) {
+      if fields[key] != nil, Self.dedupedFields.contains(key) {
         return nil
       }
       fields[key] = pair[pair.index(after: equalsIndex)...]
@@ -121,34 +116,34 @@ public nonisolated enum AgentPresenceOSC {
     return fields
   }
 
-  private static let trustBearingFields: Set<Substring> = [
-    Substring(tokenField), Substring(eventField), Substring(kindField),
+  private static let dedupedFields: Set<Substring> = [
+    Substring(eventField), Substring(kindField),
   ]
 
-  /// A parsed, NOT-yet-trusted notification signal with already-decoded display
-  /// text. The caller must verify `token` against the surface nonce before acting.
+  /// A parsed notification signal with already-decoded display text.
   public struct NotifySignal: Equatable, Sendable {
     public let agent: String
-    public let token: String
     /// Both nil-on-empty; the caller falls back to the agent name for a missing
     /// title and shows a title-only toast for a missing body.
     public let title: String?
     public let body: String?
+    /// Raw base64 byte count of the body field on the wire, before decode. A
+    /// non-zero count alongside a nil `body` means a truncation the shed loop
+    /// couldn't recover, so the caller can log the silent-failure case.
+    public let wireBodyByteCount: Int
   }
 
-  /// Parse `kind=notify;token=<token>;title=<base64>;body=<base64>`. Requires the
-  /// notify kind and a non-empty token; title/body are optional. Does NOT verify
-  /// the token.
+  /// Parse `kind=notify;title=<base64>;body=<base64>`. Requires the notify kind;
+  /// title/body are optional.
   public static func parseNotify(id: String, metadata: String) -> NotifySignal? {
     guard !id.isEmpty else { return nil }
     guard let fields = parseFields(metadata) else { return nil }
     guard fields[Substring(kindField)] == Substring(notifyKind) else { return nil }
-    guard let token = fields[Substring(tokenField)], !token.isEmpty else { return nil }
     return NotifySignal(
       agent: id,
-      token: String(token),
       title: decodedNotifyField(fields[Substring(titleField)]),
       body: decodedNotifyField(fields[Substring(bodyField)]),
+      wireBodyByteCount: fields[Substring(bodyField)]?.utf8.count ?? 0,
     )
   }
 
@@ -166,10 +161,10 @@ public nonisolated enum AgentPresenceOSC {
   static func decodeNotifyValue(_ base64: String) -> String? {
     guard var data = Data(base64Encoded: base64) else { return nil }
     let quote = Data([0x22])
-    // 12 = longest dangling escape (a `\uXXXX\uXXXX` surrogate pair), so a cut
-    // mid-pair still sheds back to valid text instead of dropping the whole body.
+    let decoder = JSONDecoder()
+    // 12 = full `\uXXXX\uXXXX` surrogate-pair length; covers any mid-pair cut (worst dangling tail is 11 bytes).
     for _ in 0...min(12, data.count) {
-      if let text = try? JSONDecoder().decode(String.self, from: quote + data + quote) {
+      if let text = try? decoder.decode(String.self, from: quote + data + quote) {
         return text
       }
       if data.isEmpty { break }
@@ -190,8 +185,8 @@ public nonisolated enum AgentPresenceOSC {
   /// is appended verbatim (e.g. `;pid=123`) so the emit can splice in a
   /// shell-built, conditionally-empty suffix. See `notifyMetadata` for the
   /// notify counterpart.
-  static func metadata(event: HookEvent, token: String, pidSuffix: String = "") -> String {
-    "\(eventField)=\(event.rawValue);\(tokenField)=\(token)\(pidSuffix)"
+  static func metadata(event: HookEvent, pidSuffix: String = "") -> String {
+    "\(eventField)=\(event.rawValue)\(pidSuffix)"
   }
 
   /// Shell that resolves `$__tty` to a writable terminal device for the OSC emits.
@@ -204,30 +199,27 @@ public nonisolated enum AgentPresenceOSC {
     #"__tty=$(ps -o tty= -p "$PPID" 2>/dev/null | tr -d '[:space:]'); "#
     + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac"#
 
-  /// Shell `printf` that emits the OSC 3008 presence sequence for `event`,
-  /// echoing `$SUPACODE_OSC_TOKEN` for the token placeholder. Written to the
-  /// `$__tty` device resolved by `ttyResolveSnippet` so it reaches the terminal
-  /// even though the hook has no controlling terminal and captured stdout. The
-  /// caller guards emission on the token env var and runs `ttyResolveSnippet`
-  /// first.
+  /// Shell `printf` that emits the OSC 3008 presence sequence for `event`. Written
+  /// to the `$__tty` device resolved by `ttyResolveSnippet` so it reaches the
+  /// terminal even though the hook has no controlling terminal and captured
+  /// stdout. The caller guards emission on `SUPACODE_SURFACE_ID` and runs
+  /// `ttyResolveSnippet` first.
   ///
   /// The pid suffix is gated on `SUPACODE_SOCKET_PATH` (set only on the local
-  /// host) so a legitimate local hook carries `$PPID` and a remote one omits it.
-  /// This is not verified on receipt: the per-surface token is the only real
-  /// gate, and a forged positive pid at worst pins a live-looking badge until
-  /// surface close. The suffix is built in shell and filled into a trailing
-  /// `%s`, empty when remote.
+  /// host) so a local hook carries `$PPID` and a remote one omits it; a forged
+  /// positive pid at worst pins a live-looking badge until surface close. The
+  /// suffix is built in shell and filled into a trailing `%s`, empty when remote.
   static func emitShell(event: HookEvent, agent: SkillAgent) -> String {
-    // token=%s then a trailing %s for the shell-built, conditionally-empty pid suffix.
-    let meta = metadata(event: event, token: "%s", pidSuffix: "%s")
+    // Trailing %s for the shell-built, conditionally-empty pid suffix.
+    let meta = metadata(event: event, pidSuffix: "%s")
     let payload = #"\033]3008;\#(action(for: event))=\#(agent.rawValue);\#(meta)\033\\"#
     return #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";\#(pidField)=$PPID"; "#
-      + #"printf '\#(payload)' "$\#(tokenEnvVar)" "$__sp" > "$__tty""#
+      + #"printf '\#(payload)' "$__sp" > "$__tty""#
   }
 
   /// The `key=value` metadata a notify signal carries; `title` / `body` are base64.
-  static func notifyMetadata(token: String, title: String, body: String) -> String {
-    "\(kindField)=\(notifyKind);\(tokenField)=\(token);\(titleField)=\(title);\(bodyField)=\(body)"
+  static func notifyMetadata(title: String, body: String) -> String {
+    "\(kindField)=\(notifyKind);\(titleField)=\(title);\(bodyField)=\(body)"
   }
 
   /// Portable awk that extracts one JSON string value from the agent's hook JSON
@@ -238,6 +230,10 @@ public nonisolated enum AgentPresenceOSC {
   /// No `RS`/`\x` tricks and no single quote, so it is portable and shell-safe.
   /// The caller runs it under `LC_ALL=C` so `length`/`substr` are byte-based
   /// (gawk in a UTF-8 locale would otherwise count characters and overshoot 2048).
+  /// Best-effort by design: a body nested inside an object (e.g. the key appears
+  /// in an inner object before the top-level one) is not extracted correctly. The
+  /// agents we target emit flat payloads; the structured Pi extension path is the
+  /// canonical one when a nested shape is needed.
   static let notifyExtractAwk =
     #"function ws(c){return c==" "||c=="\t"||c=="\n"||c=="\r"}"#
     + #"function fv(s,key,  p,i,n,c,o,e){p="\""key"\"";i=index(s,p);if(i==0)return "";"#
@@ -253,25 +249,13 @@ public nonisolated enum AgentPresenceOSC {
   /// and emits the OSC 3008 notify. Sending only the display fields keeps the wire
   /// under libghostty's 2048-byte OSC ceiling. Locked to STANDARD base64.
   static func emitNotifyShell(agent: SkillAgent) -> String {
-    let payload = #"\033]3008;start=\#(agent.rawValue);\#(notifyMetadata(token: "%s", title: "%s", body: "%s"))\033\\"#
+    let payload = #"\033]3008;start=\#(agent.rawValue);\#(notifyMetadata(title: "%s", body: "%s"))\033\\"#
     let bodyKeys = notifyBodyKeys.joined(separator: ",")
     return #"__in=$(cat); "#
       + #"__t=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(titleField)" "#
       + #"-v budget=\#(notifyTitleByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
       + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
       + #"-v budget=\#(notifyBodyByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
-      + #"printf '\#(payload)' "$\#(tokenEnvVar)" "$__t" "$__b" > "$__tty""#
-  }
-
-  /// Equal-length constant-time compare. A length mismatch returns immediately;
-  /// safe because the expected token is server-generated and fixed-length
-  /// (32 hex chars), not attacker-controlled.
-  public static func tokensMatch(_ lhs: String, _ rhs: String) -> Bool {
-    let lhsBytes = Array(lhs.utf8)
-    let rhsBytes = Array(rhs.utf8)
-    guard lhsBytes.count == rhsBytes.count else { return false }
-    var diff: UInt8 = 0
-    for index in lhsBytes.indices { diff |= lhsBytes[index] ^ rhsBytes[index] }
-    return diff == 0
+      + #"printf '\#(payload)' "$__t" "$__b" > "$__tty""#
   }
 }
