@@ -16,7 +16,7 @@ TUIST_GENERATION_STAMP_DIR := $(CURRENT_MAKEFILE_DIR)/.build/.tuist-generated-st
 TUIST_INSTALL_STAMP := $(TUIST_GENERATION_STAMP_DIR)/.installed
 TUIST_DEVELOPMENT_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/development
 TUIST_SOURCE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/none
-TUIST_SOURCE_RELEASE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/none-release
+TUIST_RELEASE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/development-release
 TUIST_GENERATION_INPUTS := Project.swift Workspace.swift Tuist.swift Tuist/Package.swift $(wildcard Tuist/Package.resolved) $(PROJECT_CONFIG_PATH) mise.toml scripts/build-ghostty.sh scripts/build-zmx.sh
 TUIST_GENERATE_CACHE_PROFILE ?= development
 TUIST_CACHE_CONFIGURATION ?= Debug
@@ -58,7 +58,11 @@ $(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAM
 	mise exec -- tuist generate --no-open --cache-profile "$*"
 	touch "$@"
 
-$(TUIST_SOURCE_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
+# Release archive consumes the binary cache (development target set, Release
+# configuration). Both pipelines warm the Release graph in a `warm` job that the
+# archive `needs` (main.yml for tip, release.yml for stable), so this compiles
+# only the app shell rather than the whole dependency graph.
+$(TUIST_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
 	rm -rf supacode.xcodeproj supacode.xcworkspace
@@ -66,7 +70,7 @@ $(TUIST_SOURCE_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INS
 		[ -e "$$path" ] || continue; \
 		rm -rf "$$path"; \
 	done
-	mise exec -- tuist generate --no-open --cache-profile none --configuration Release
+	mise exec -- tuist generate --no-open --cache-profile development --configuration Release
 	touch "$@"
 
 build-ghostty-xcframework: # Build ghostty framework
@@ -82,7 +86,7 @@ warm-cache: $(TUIST_INSTALL_STAMP) # Warm the full Tuist cacheable graph
 	mise exec -- tuist cache warm --configuration $(TUIST_CACHE_CONFIGURATION)
 
 build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the macOS app (Debug)
-	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation 2>&1 | mise exec -- xcbeautify --disable-logging'
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcbeautify --disable-logging'
 
 run-app: build-app # Build then launch (Debug) with log streaming
 	@settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
@@ -106,7 +110,7 @@ install-dev-build: build-app # install dev build to /Applications
 	ditto "$$src" "$$dst"; \
 	echo "installed $$dst"
 
-archive: $(TUIST_SOURCE_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
+archive: $(TUIST_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
 	mkdir -p build
 	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcbeautify --quiet --disable-logging'
 

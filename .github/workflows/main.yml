@@ -1,4 +1,4 @@
-name: Release Tip
+name: main
 
 on:
   push:
@@ -11,8 +11,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Populate the Tuist binary cache (Debug + Release) for this commit. Promoted to
+  # an upstream gate so `test` and `release` consume it on the SAME commit instead
+  # of recompiling beside it; PRs read the uploaded binaries from the remote cache.
+  warm:
+    runs-on: macos-26
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_HTTP_TIMEOUT: 120
+      MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+      - run: make warm-cache
+        env:
+          TUIST_CACHE_CONFIGURATION: ${{ matrix.configuration }}
+
+  test:
+    runs-on: macos-26
+    needs: [warm]
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_HTTP_TIMEOUT: 120
+      MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+      - run: make lint
+      - run: make inspect-dependencies
+      - run: make build-app
+        env:
+          XCODEBUILD_FLAGS: -showBuildTimingSummary
+      - run: make test
+
   check:
-    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     runs-on: ubuntu-latest
     outputs:
       should_skip: ${{ steps.check.outputs.should_skip }}
@@ -33,7 +76,7 @@ jobs:
 
   build:
     runs-on: macos-26
-    needs: [check]
+    needs: [check, warm]
     if: needs.check.outputs.should_skip != 'true'
     permissions:
       contents: read
@@ -65,13 +108,10 @@ jobs:
           : "${SENTRY_DSN:?secret SENTRY_DSN is not set}"
           : "${POSTHOG_API_KEY:?secret POSTHOG_API_KEY is not set}"
           : "${POSTHOG_HOST:?secret POSTHOG_HOST is not set}"
-          BASE=$(awk -F' = ' '/^CURRENT_PROJECT_VERSION = [0-9]+$/{print $2; exit}' Configurations/Project.xcconfig)
-          OFFSET=${{ github.run_number }}
-          if [ "$OFFSET" -gt 999 ]; then
-            echo "::error::Tip run_number ($OFFSET) exceeds 999. Bump CURRENT_PROJECT_VERSION before the next tip release."
-            exit 1
-          fi
-          BUILD_NUMBER=$((BASE * 1000 + OFFSET))
+          # Seconds since epoch: monotonic, workflow-independent, and identical to
+          # the stable scheme (release.yml). Far above any prior BASE*1000+run_number
+          # value, so Sparkle keeps seeing newer builds across the switch.
+          BUILD_NUMBER=$(date +%s)
           mkdir -p build
           cat > build/ReleaseOverrides.xcconfig <<EOF
           CURRENT_PROJECT_VERSION = $BUILD_NUMBER

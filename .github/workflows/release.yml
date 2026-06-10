@@ -28,9 +28,32 @@ jobs:
             echo "should_skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  # Warm the Release graph for THIS tag in-workflow. bump-and-release pushes main
+  # and publishes the release at the same time, so main.yml's warm runs
+  # concurrently and its cache isn't ready yet; the version bump also rehashes
+  # every first-party target. Warming here makes the archive self-sufficient.
+  warm:
     runs-on: macos-26
     needs: [check]
+    if: needs.check.outputs.should_skip != 'true'
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_HTTP_TIMEOUT: 120
+      MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+      - run: make warm-cache
+        env:
+          TUIST_CACHE_CONFIGURATION: Release
+
+  build:
+    runs-on: macos-26
+    needs: [check, warm]
     if: needs.check.outputs.should_skip != 'true'
     permissions:
       contents: read
@@ -63,8 +86,9 @@ jobs:
           : "${SENTRY_DSN:?secret SENTRY_DSN is not set}"
           : "${POSTHOG_API_KEY:?secret POSTHOG_API_KEY is not set}"
           : "${POSTHOG_HOST:?secret POSTHOG_HOST is not set}"
-          BASE=$(awk -F' = ' '/^CURRENT_PROJECT_VERSION = [0-9]+$/{print $2; exit}' Configurations/Project.xcconfig)
-          BUILD_NUMBER=$((BASE * 1000))
+          # Seconds since epoch: monotonic and identical to the tip scheme
+          # (main.yml), so tip and stable share one build-number scheme.
+          BUILD_NUMBER=$(date +%s)
           mkdir -p build
           cat > build/ReleaseOverrides.xcconfig <<EOF
           CURRENT_PROJECT_VERSION = $BUILD_NUMBER
