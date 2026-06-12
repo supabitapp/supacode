@@ -679,6 +679,14 @@ private struct SidebarItemContextMenu: View {
           store.send(.openRepositorySettings(repositoryID))
         }
         .help("Open folder settings")
+        // Remote folders have no section header either, so the connection editor
+        // (offered on a git remote's section menu) lives here for them.
+        if worktree.host != nil {
+          Button("Edit Connection…", systemImage: "wifi") {
+            store.send(.requestEditRemoteRepository(repositoryID))
+          }
+          .help("Edit the SSH server, port, user, or path")
+        }
         Divider()
       } else if let row = contextRows.first,
         !row.isMainWorktree,
@@ -719,7 +727,16 @@ private struct SidebarItemContextMenu: View {
       }
       .appKeyboardShortcut(archiveShortcut)
     }
-    if !deleteTargets.isEmpty {
+    if !isBulkSelection, rowIsFolder, worktree.host != nil {
+      // A remote folder is the remote repository; its row has no section header,
+      // so removal lives here and must drop the config (the local delete
+      // pipeline only prunes local roots and would leave the config to reappear).
+      Button("Remove Remote Repository…", systemImage: "trash", role: .destructive) {
+        store.send(.requestDeleteRepository(repositoryID))
+      }
+      .help("Remove this remote repository (remote files are untouched)")
+      .appKeyboardShortcut(deleteShortcut)
+    } else if !deleteTargets.isEmpty {
       let deleteLabel =
         isBulkSelection
         ? (isAllFoldersBulk ? "Remove Folders…" : "Delete Worktrees…")
@@ -784,7 +801,7 @@ private struct SidebarItemContextMenu: View {
         Button {
           store.send(.contextMenuOpenWorktree(worktree.id, action))
         } label: {
-          OpenWorktreeActionMenuLabelView(action: action, shortcutHint: nil)
+          OpenWorktreeActionMenuLabelView(action: action)
         }
         .help("Open with \(action.labelTitle)")
       }

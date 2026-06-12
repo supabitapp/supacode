@@ -13,7 +13,6 @@ import SwiftUI
 struct WorktreeDetailView: View {
   @Bindable var store: StoreOf<AppFeature>
   let terminalManager: WorktreeTerminalManager
-  @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.settingsFile) private var settingsFile: SettingsFile
 
@@ -88,7 +87,6 @@ struct WorktreeDetailView: View {
           kind: toolbarKind(for: selectedWorktree, selectedRow: selectedRow),
           statusToast: repositories.statusToast,
           openActionSelection: openActionSelection,
-          showExtras: commandKeyObserver.isPressed,
           repoScripts: repoScripts,
           globalScripts: globalScripts,
           runningScriptIDs: runningScriptIDs,
@@ -383,7 +381,6 @@ struct WorktreeDetailView: View {
     let kind: Kind
     let statusToast: RepositoriesFeature.StatusToast?
     let openActionSelection: OpenWorktreeAction
-    let showExtras: Bool
     let repoScripts: [ScriptDefinition]
     let globalScripts: [ScriptDefinition]
     let runningScriptIDs: Set<UUID>
@@ -483,10 +480,7 @@ struct WorktreeDetailView: View {
       ToolbarSpacer(.flexible)
 
       ToolbarItem {
-        openMenu(
-          openActionSelection: toolbarState.openActionSelection,
-          showExtras: toolbarState.showExtras
-        )
+        openMenu(openActionSelection: toolbarState.openActionSelection)
       }
       ToolbarSpacer(.fixed)
 
@@ -507,7 +501,7 @@ struct WorktreeDetailView: View {
     }
 
     @ViewBuilder
-    private func openMenu(openActionSelection: OpenWorktreeAction, showExtras: Bool) -> some View {
+    private func openMenu(openActionSelection: OpenWorktreeAction) -> some View {
       let availableActions = OpenWorktreeAction.availableCases.filter { $0 != .finder }
       let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
       let primarySelection = resolved == .finder ? availableActions.first : resolved
@@ -519,7 +513,7 @@ struct WorktreeDetailView: View {
               onOpenActionSelectionChanged(action)
               onOpenWorktree(action)
             } label: {
-              OpenWorktreeActionMenuLabelView(action: action, shortcutHint: nil)
+              OpenWorktreeActionMenuLabelView(action: action)
             }
             .buttonStyle(.plain)
             .help(openActionHelpText(for: action, isDefault: isDefault))
@@ -528,14 +522,11 @@ struct WorktreeDetailView: View {
           Button {
             onRevealInFinder()
           } label: {
-            OpenWorktreeActionMenuLabelView(action: .finder, shortcutHint: nil)
+            OpenWorktreeActionMenuLabelView(action: .finder)
           }
-          .help("Reveal in Finder (\(resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
+          .help("Reveal in Finder (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
         } label: {
-          OpenWorktreeActionMenuLabelView(
-            action: primarySelection,
-            shortcutHint: showExtras ? resolveShortcutDisplay(for: AppShortcuts.openWorktree, fallback: "") : nil
-          )
+          OpenWorktreeActionMenuLabelView(action: primarySelection)
         } primaryAction: {
           onOpenWorktree(primarySelection)
         }
@@ -545,7 +536,7 @@ struct WorktreeDetailView: View {
 
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
       guard isDefault else { return action.title }
-      return "\(action.title) (\(resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
+      return "\(action.title) (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
     }
   }
 
@@ -565,7 +556,7 @@ struct WorktreeDetailView: View {
       // Folders use the per-row custom title (matches the sidebar's folder title position).
       let folderName =
         SidebarDisplayName.resolved(custom: selectedRow?.customTitle, fallback: repositoryName) ?? repositoryName
-      return .folder(name: folderName, tint: selectedRow?.customTint)
+      return .folder(name: folderName, tint: selectedRow?.customTint, hostInfo: repository?.host?.displayAuthority)
     }
 
     let worktreeSubtitle: String? = {
@@ -605,7 +596,8 @@ struct WorktreeDetailView: View {
         worktreeSubtitle: worktreeSubtitle,
         worktreeTint: selectedRow?.customTint,
         accent: selectedRow?.accent ?? .default,
-        rootURL: selectedWorktree.repositoryRootURL
+        rootURL: selectedWorktree.repositoryRootURL,
+        hostInfo: repository?.host?.displayAuthority
       )
     )
   }
@@ -667,6 +659,12 @@ struct WorktreeDetailView: View {
     }
     return nil
   }
+
+  static func resolveShortcutDisplay(for shortcut: AppShortcut, fallback: String = "none") -> String {
+    @Shared(.settingsFile) var settingsFile
+    let display = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
+    return display.isEmpty ? fallback : display
+  }
 }
 
 // MARK: - Detail placeholder.
@@ -677,7 +675,7 @@ private struct FailedRepositoryDetailView: View {
   let requestRemove: () -> Void
 
   var body: some View {
-    let path = URL(fileURLWithPath: repositoryID).standardizedFileURL.path(percentEncoded: false)
+    let path = URL(fileURLWithPath: repositoryID.rawValue).standardizedFileURL.path(percentEncoded: false)
     ContentUnavailableView {
       Label("Repository unavailable", systemImage: "exclamationmark.triangle.fill")
         .foregroundStyle(.pink)
@@ -861,13 +859,6 @@ private struct MultiSelectedWorktreeSummary: Identifiable {
   let repositoryName: String?
 }
 
-/// Resolves a shortcut's display string from the user's settings.
-private func resolveShortcutDisplay(for shortcut: AppShortcut, fallback: String = "none") -> String {
-  @Shared(.settingsFile) var settingsFile
-  let display = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
-  return display.isEmpty ? fallback : display
-}
-
 private struct MultiSelectedWorktreesDetailView: View {
   let rows: [MultiSelectedWorktreeSummary]
 
@@ -992,7 +983,6 @@ private struct ScriptMenu: View {
   let onStopRunScripts: () -> Void
   let onManageRepoScripts: () -> Void
   let onManageGlobalScripts: () -> Void
-  @Environment(CommandKeyObserver.self) private var commandKeyObserver
 
   private var primaryScript: ScriptDefinition? {
     toolbarState.primaryScript
@@ -1066,7 +1056,7 @@ private struct ScriptMenu: View {
 
   private func scriptButtonHelp(script: ScriptDefinition, isRunning: Bool, hasCommand: Bool) -> String {
     if isRunning { return "Stop \(script.displayName)." }
-    if !hasCommand { return "\"\(script.displayName)\" has no command — configure it in Settings." }
+    if !hasCommand { return "\"\(script.displayName)\" has no command. Configure it in Settings." }
     return "Run \(script.displayName)."
   }
 
@@ -1074,13 +1064,8 @@ private struct ScriptMenu: View {
   private func scriptLabel(hasRunning: Bool) -> some View {
     let icon = hasRunning ? "stop" : (primaryScript?.resolvedSystemImage ?? "play")
     let label = hasRunning ? "Stop" : (primaryScript?.displayName ?? "Run")
-    let shortcut = hasRunning ? AppShortcuts.stopRunScript : AppShortcuts.runScript
     Label {
-      Text(
-        commandKeyObserver.isPressed
-          ? resolveShortcutDisplay(for: shortcut, fallback: label)
-          : label
-      )
+      Text(label)
     } icon: {
       Image(systemName: icon)
         .accessibilityHidden(true)
@@ -1101,7 +1086,6 @@ private struct ScriptMenu: View {
 @MainActor
 private struct WorktreeToolbarPreview: View {
   private let toolbarState: WorktreeDetailView.WorktreeToolbarState
-  private let commandKeyObserver: CommandKeyObserver
 
   init() {
     toolbarState = WorktreeDetailView.WorktreeToolbarState(
@@ -1114,21 +1098,18 @@ private struct WorktreeToolbarPreview: View {
           worktreeSubtitle: "toolbar-preview",
           worktreeTint: nil,
           accent: .pinned,
-          rootURL: URL(fileURLWithPath: "/tmp/preview")
+          rootURL: URL(fileURLWithPath: "/tmp/preview"),
+          hostInfo: nil
         )
       ),
       rootURL: URL(fileURLWithPath: "/tmp/preview"),
       kind: .git(pullRequest: nil),
       statusToast: nil,
       openActionSelection: .finder,
-      showExtras: false,
       repoScripts: [ScriptDefinition(kind: .run, command: "npm run dev")],
       globalScripts: [],
       runningScriptIDs: [],
     )
-    let observer = CommandKeyObserver()
-    observer.isPressed = false
-    commandKeyObserver = observer
   }
 
   var body: some View {
@@ -1153,7 +1134,6 @@ private struct WorktreeToolbarPreview: View {
         onManageGlobalScripts: {}
       )
     }
-    .environment(commandKeyObserver)
     .frame(width: 900, height: 160)
   }
 }

@@ -324,22 +324,31 @@ struct AppFeature {
               .repositoriesChanged(
                 repositories.map {
                   SettingsRepositorySummary(
-                    id: $0.id,
+                    id: $0.id.rawValue,
                     name: $0.name,
-                    isGitRepository: $0.isGitRepository
+                    isGitRepository: $0.isGitRepository,
+                    isRemote: $0.host != nil,
+                    rootURL: $0.rootURL
                   )
                 }
               )
             )
           ),
           .send(.commandPalette(.pruneRecency(recencyIDs))),
-          .run { [allowed] _ in
-            await terminalClient.send(.prune(allowed))
-          },
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
           },
         ])
+        // Don't prune terminal state while remote repos are still resolving:
+        // their placeholders have no rows yet, so pruning would delete restored
+        // remote layouts and kill their zmx sessions before resolution lands.
+        if state.repositories.resolvingRemoteRepositoryIDs.isEmpty {
+          effects.append(
+            .run { [allowed] _ in
+              await terminalClient.send(.prune(allowed))
+            }
+          )
+        }
         // Drain layout-seeded surfaces (including any that piled up from prior
         // reconciles before this delegate fired) so restored presence records
         // light up rows born on this tick.
@@ -374,7 +383,7 @@ struct AppFeature {
         // the scripts page which is the only settings surface that
         // applies to them.
         let section: SettingsSection =
-          repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
+          repository.isGitRepository ? .repository(repositoryID.rawValue) : .repositoryScripts(repositoryID.rawValue)
         return .send(.settings(.setSelection(section)))
 
       case .repositories(.delegate(.runBlockingScript(let worktree, _, let kind, let script))):
@@ -619,7 +628,9 @@ struct AppFeature {
           if state.repoScripts.isEmpty, !state.globalScripts.isEmpty {
             return .send(.settings(.setSelection(.scripts)))
           }
-          let repositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
+          let repositoryID =
+            state.repositories.repositoryID(containing: worktree.id)?.rawValue
+            ?? worktree.repositoryRootURL.path(percentEncoded: false)
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         return .send(.runNamedScript(definition))
@@ -644,7 +655,9 @@ struct AppFeature {
           if isGlobal {
             return .send(.settings(.setSelection(.scripts)))
           }
-          let repositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
+          let repositoryID =
+            state.repositories.repositoryID(containing: worktree.id)?.rawValue
+            ?? worktree.repositoryRootURL.path(percentEncoded: false)
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
@@ -906,6 +919,9 @@ struct AppFeature {
 
       case .commandPalette(.delegate(.openRepository)):
         return .send(.repositories(.setOpenPanelPresented(true)))
+
+      case .commandPalette(.delegate(.addRemoteRepository)):
+        return .send(.repositories(.requestAddRemoteRepository))
 
       case .commandPalette(.delegate(.removeWorktree(let worktreeID, let repositoryID))):
         return .send(
@@ -1343,7 +1359,7 @@ struct AppFeature {
       // Folders have no general settings pane — send them to the
       // scripts page (the only settings surface that applies).
       let section: SettingsSection =
-        repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
+        repository.isGitRepository ? .repository(repositoryID.rawValue) : .repositoryScripts(repositoryID.rawValue)
       return .send(.settings(.setSelection(section)))
     case .settingsRepoScripts(let repositoryID):
       guard state.repositories.repositories[id: repositoryID] != nil else {
@@ -1351,7 +1367,7 @@ struct AppFeature {
         state.alert = repositoryNotFoundAlert()
         return .none
       }
-      return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
+      return .send(.settings(.setSelection(.repositoryScripts(repositoryID.rawValue))))
     }
   }
 
@@ -1797,7 +1813,7 @@ struct AppFeature {
       // reasonable default disposition for folders.
       return .send(.repositories(.requestDeleteSidebarItems([target])))
     }
-    let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? worktreeID
+    let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? worktreeID.rawValue
     guard bypassConfirmation else {
       return presentDeeplinkConfirmation(
         worktreeID: worktreeID,
@@ -2062,7 +2078,7 @@ struct AppFeature {
     state: State
   ) -> Worktree.ID {
     guard state.repositories.worktree(for: rawID) == nil else { return rawID }
-    let alternate = rawID + "/"
+    let alternate = WorktreeID(rawID.rawValue + "/")
     guard state.repositories.worktree(for: alternate) != nil else { return rawID }
     return alternate
   }
@@ -2093,7 +2109,7 @@ struct AppFeature {
   private func surfaceDeeplinkURL(worktreeID: Worktree.ID, surfaceID: UUID) -> URL? {
     let percentEncodingSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
     let encodedWorktreeID =
-      worktreeID.addingPercentEncoding(withAllowedCharacters: percentEncodingSet) ?? worktreeID
+      worktreeID.rawValue.addingPercentEncoding(withAllowedCharacters: percentEncodingSet) ?? worktreeID.rawValue
     guard let tabID = terminalClient.tabID(worktreeID, surfaceID) else {
       notificationsLogger.debug(
         "Surface \(surfaceID) is no longer attached to a tab in \(worktreeID); "

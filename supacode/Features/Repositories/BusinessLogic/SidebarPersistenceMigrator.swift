@@ -123,7 +123,7 @@ enum SidebarPersistenceMigrator {
 
     @Dependency(\.date.now) var now
     let legacyRoots = RepositoryPathNormalizer.normalize(settingsFile.repositoryRoots)
-    let legacyPinnedSet = Set(RepositoryPathNormalizer.normalize(settingsFile.pinnedWorktreeIDs))
+    let legacyPinnedSet = Set(RepositoryPathNormalizer.normalize(settingsFile.pinnedWorktreeIDs).map { WorktreeID($0) })
     // Merge the pre-#214 ID list into the dated dictionary view
     // BEFORE the fold pass so both sources land in the same
     // `SidebarState.archived` bucket in one shot. `Date.now` matches
@@ -165,7 +165,7 @@ enum SidebarPersistenceMigrator {
     applyCollapsedFlags(into: &state, legacyCollapsed: legacyCollapsed)
     foldArchived(into: &state, legacyArchived: mergedArchived, rootCandidates: candidates)
 
-    state.focusedWorktreeID = legacyFocus.flatMap(RepositoryPathNormalizer.normalize)
+    state.focusedWorktreeID = legacyFocus.flatMap(RepositoryPathNormalizer.normalize).map { WorktreeID($0) }
 
     guard persist(state: state, to: sidebarURL) else {
       return
@@ -202,7 +202,7 @@ enum SidebarPersistenceMigrator {
       Migrated sidebar state: \(state.sections.count) section(s), \
       \(legacyPinnedSet.count) pinned worktree(s), \
       \(mergedArchived.count) archived worktree(s), \
-      focus=\(state.focusedWorktreeID ?? "nil").
+      focus=\(state.focusedWorktreeID?.rawValue ?? "nil").
       """
     )
   }
@@ -301,8 +301,11 @@ enum SidebarPersistenceMigrator {
     legacyPinnedSet: Set<Worktree.ID>
   ) {
     // Canonical baseline: every known root, in settings order.
-    for root in legacyRoots where state.sections[root] == nil {
-      state.sections[root] = .init()
+    for root in legacyRoots {
+      let id = RepositoryID(root)
+      if state.sections[id] == nil {
+        state.sections[id] = .init()
+      }
     }
     // Override layer: `legacyOrder` wins — pull matching roots to
     // the top in the order the user curated. Roots present in
@@ -311,9 +314,10 @@ enum SidebarPersistenceMigrator {
     var reordered: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
     var seen: Set<Repository.ID> = []
     for raw in legacyOrder {
-      guard let id = RepositoryPathNormalizer.normalize(raw) else {
+      guard let normalized = RepositoryPathNormalizer.normalize(raw) else {
         continue
       }
+      let id = RepositoryID(normalized)
       guard seen.insert(id).inserted else {
         continue
       }
@@ -325,13 +329,15 @@ enum SidebarPersistenceMigrator {
     state.sections = reordered
 
     for (rawRepoID, worktreeIDs) in legacyWorktreeOrder {
-      guard let repoID = RepositoryPathNormalizer.normalize(rawRepoID) else {
+      guard let normalizedRepoID = RepositoryPathNormalizer.normalize(rawRepoID) else {
         continue
       }
+      let repoID = RepositoryID(normalizedRepoID)
       for rawWorktreeID in worktreeIDs {
-        guard let worktreeID = RepositoryPathNormalizer.normalize(rawWorktreeID) else {
+        guard let normalizedWorktreeID = RepositoryPathNormalizer.normalize(rawWorktreeID) else {
           continue
         }
+        let worktreeID = WorktreeID(normalizedWorktreeID)
         let bucketID: SidebarState.BucketID =
           legacyPinnedSet.contains(worktreeID) ? .pinned : .unpinned
         state.insert(worktree: worktreeID, in: repoID, bucket: bucketID)
@@ -382,9 +388,10 @@ enum SidebarPersistenceMigrator {
     legacyCollapsed: [String]
   ) {
     for raw in legacyCollapsed {
-      guard let id = RepositoryPathNormalizer.normalize(raw) else {
+      guard let normalized = RepositoryPathNormalizer.normalize(raw) else {
         continue
       }
+      let id = RepositoryID(normalized)
       var section = state.sections[id] ?? .init()
       section.collapsed = true
       state.sections[id] = section
@@ -403,9 +410,10 @@ enum SidebarPersistenceMigrator {
   ) {
     var unplacedArchivedIDs: [Worktree.ID] = []
     for (rawArchivedID, archivedAt) in legacyArchived {
-      guard let archivedWorktreeID = RepositoryPathNormalizer.normalize(rawArchivedID) else {
+      guard let normalizedArchivedID = RepositoryPathNormalizer.normalize(rawArchivedID) else {
         continue
       }
+      let archivedWorktreeID = WorktreeID(normalizedArchivedID)
       let owningRepoID =
         state.sections.first(where: { _, section in
           section.buckets.values.contains(where: { $0.items[archivedWorktreeID] != nil })
@@ -569,13 +577,13 @@ enum SidebarPersistenceMigrator {
       // directory; the trailing slash guards against a spurious
       // match where one candidate is a non-directory prefix of
       // another (e.g. "/tmp/rep" vs "/tmp/repo").
-      guard worktreeID.hasPrefix(candidateWithLeadingSlash + "/") else {
+      guard worktreeID.rawValue.hasPrefix(candidateWithLeadingSlash + "/") else {
         continue
       }
       if candidateWithLeadingSlash.count > (bestMatch?.length ?? 0) {
         bestMatch = (owningRoot, candidateWithLeadingSlash.count)
       }
     }
-    return bestMatch?.owningRoot
+    return bestMatch.map { RepositoryID($0.owningRoot) }
   }
 }

@@ -38,8 +38,19 @@ struct SidebarView: View {
     )
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
-        Button {
-          store.send(.setOpenPanelPresented(true))
+        Menu {
+          Button {
+            store.send(.setOpenPanelPresented(true))
+          } label: {
+            Label("Local Repository or Folder…", systemImage: "laptopcomputer")
+          }
+          .help("Add a local repository or folder (\(openRepo?.display ?? "none"))")
+          Button {
+            store.send(.requestAddRemoteRepository)
+          } label: {
+            Label("Remote Repository or Folder…", systemImage: "wifi")
+          }
+          .help("Add a repository or folder on an SSH host")
         } label: {
           Label {
             Text("Add…")
@@ -49,9 +60,13 @@ struct SidebarView: View {
               .accessibilityHidden(true)
           }
         }
+        .menuIndicator(.hidden)
         .labelStyle(.iconOnly)
-        .help("Add Repository or Folder (\(openRepo?.display ?? "none"))")
+        .help("Add Repository, Folder, or Remote")
       }
+    }
+    .sheet(item: $store.scope(state: \.remoteConnectionForm, action: \.remoteConnectionForm)) { formStore in
+      RemoteConnectionFormView(store: formStore)
     }
     .focusedSceneAction(
       \.confirmWorktreeAction,

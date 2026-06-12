@@ -4,7 +4,6 @@ import SwiftUI
 
 struct OpenWorktreeActionMenuLabelView: View {
   let action: OpenWorktreeAction
-  let shortcutHint: String?
 
   private func resizedIcon(_ image: NSImage, size: CGSize) -> NSImage {
     let newImage = NSImage(size: size)
@@ -21,11 +20,7 @@ struct OpenWorktreeActionMenuLabelView: View {
 
   var body: some View {
     Label {
-      if let shortcutHint {
-        Text(shortcutHint)
-      } else {
-        Text(action.labelTitle)
-      }
+      Text(action.labelTitle)
     } icon: {
       if let icon = action.menuIcon {
         switch icon {

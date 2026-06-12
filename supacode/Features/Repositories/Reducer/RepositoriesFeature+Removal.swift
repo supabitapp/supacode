@@ -220,8 +220,8 @@ extension RepositoriesFeature {
       if let resolved = namesByRepositoryID[id], !resolved.isEmpty {
         return resolved
       }
-      let fallback = URL(fileURLWithPath: id).lastPathComponent
-      return fallback.isEmpty ? id : fallback
+      let fallback = URL(fileURLWithPath: id.rawValue).lastPathComponent
+      return fallback.isEmpty ? id.rawValue : fallback
     }
     let count = failureMessagesByRepositoryID.count
     if count == 1, let (id, message) = failureMessagesByRepositoryID.first {
@@ -288,7 +288,7 @@ extension RepositoriesFeature {
     repositoryID: Repository.ID,
     state: State
   ) -> AlertState<Alert> {
-    let fallback = Repository.name(for: URL(fileURLWithPath: repositoryID).standardizedFileURL)
+    let fallback = Repository.name(for: URL(fileURLWithPath: repositoryID.rawValue).standardizedFileURL)
     let name = Repository.sidebarDisplayName(
       custom: state.sidebar.sections[repositoryID]?.title,
       fallback: fallback

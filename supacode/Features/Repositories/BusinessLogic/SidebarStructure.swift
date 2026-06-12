@@ -185,7 +185,8 @@ struct SidebarStructure: Equatable, Sendable {
       repositoryID: Repository.ID,
       rootURL: URL,
       customTitle: String?,
-      color: RepositoryColor?
+      color: RepositoryColor?,
+      isRemote: Bool
     )
     case placeholder
 
@@ -194,7 +195,7 @@ struct SidebarStructure: Equatable, Sendable {
       case .highlight(let kind, _): .highlight(kind)
       case .repository(let repositoryID, _): .repository(repositoryID)
       case .folder(let repositoryID, _): .folder(repositoryID)
-      case .failedRepository(let repositoryID, _, _, _): .failedRepository(repositoryID)
+      case .failedRepository(let repositoryID, _, _, _, _): .failedRepository(repositoryID)
       case .placeholder: .placeholder
       }
     }
@@ -312,7 +313,7 @@ extension SidebarItemFeature.Action {
     case .pullRequestChanged:
       return .selectedWorktreeSlice
     case .diffStatsChanged, .pullRequestQueryStarted,
-      .shortcutHintChanged, .dragSessionChanged,
+      .dragSessionChanged,
       .focusTerminalRequested, .focusTerminalConsumed:
       return []
     }
@@ -342,7 +343,7 @@ extension RepositoriesFeature.Action {
     // Bulk repository / worktree set changes that touch all caches.
     case .repositoriesLoaded, .openRepositoriesFinished,
       .repositoryRemovalCompleted, .repositoriesRemoved,
-      .removeFailedRepository,
+      .removeFailedRepository, .remoteRepositoryResolved,
       .archiveWorktreeApply, .unarchiveWorktree,
       .deleteWorktreeApply, .worktreeDeleted,
       .createWorktreeInRepository, .createRandomWorktreeInRepository,
@@ -354,6 +355,11 @@ extension RepositoriesFeature.Action {
     // and never mutates `state`. The downstream `.worktreeBranchNameLoaded` /
     // `.repositoryPullRequestsLoaded` arms declare their own invalidations.
     case .worktreeInfoEvent:
+      return []
+
+    // Pure effect launcher: spawns the async SSH resolution, mutates no state.
+    // The per-repo `.remoteRepositoryResolved` results recompute the caches.
+    case .resolveRemoteRepositories:
       return []
 
     // `worktreeBranchNameLoaded` mutates `worktree.name` via `updateWorktreeName`,
@@ -399,7 +405,10 @@ extension RepositoriesFeature.Action {
       return []
 
     // Everything else is UI / effects / transient state, no cache touched.
-    case .task, .setOpenPanelPresented, .loadPersistedRepositories,
+    case .task, .setOpenPanelPresented,
+      .requestAddRemoteRepository, .requestEditRemoteRepository, .remoteConnectionForm,
+      .loadPersistedRepositories,
+      .removeRemoteRepository,
       .refreshWorktrees, .reloadRepositories,
       .setSidebarSelectedWorktreeIDs,
       .openRepositories,
@@ -576,34 +585,39 @@ extension RepositoriesFeature.State {
   }
 
   private func buildRepositorySections(hoisted: Set<Worktree.ID>) -> RepositorySectionsBuild {
-    var sections: [SidebarStructure.Section] = []
+    var localSections: [SidebarStructure.Section] = []
     var reorderableRepositoryIDs: [Repository.ID] = []
     let pendingIDsByRepo: [Repository.ID: Set<Worktree.ID>] = Dictionary(
       grouping: pendingWorktrees,
       by: \.repositoryID
     ).mapValues { Set($0.map(\.id)) }
 
+    // Local repositories. `orderedRepositoryRoots()` keys off the persisted
+    // local `repositoryRoots`; remote repos carry a host-keyed id that never
+    // matches `rootURL.path`, so they fall through `repositories[id:]` here and
+    // are rendered solely by the remote loop below.
     for rootURL in orderedRepositoryRoots() {
-      let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
+      let repositoryID = RepositoryID(rootURL.standardizedFileURL.path(percentEncoded: false))
       if loadFailuresByID[repositoryID] != nil {
         let sectionEntry = sidebar.sections[repositoryID]
-        sections.append(
+        localSections.append(
           .failedRepository(
             repositoryID: repositoryID,
             rootURL: rootURL,
             customTitle: sectionEntry?.title,
-            color: sectionEntry?.color
+            color: sectionEntry?.color,
+            isRemote: false
           )
         )
         reorderableRepositoryIDs.append(repositoryID)
         continue
       }
-      guard let repository = repositories[id: repositoryID] else { continue }
+      guard let repository = repositories[id: repositoryID], repository.host == nil else { continue }
       reorderableRepositoryIDs.append(repositoryID)
       if !repository.isGitRepository {
         let folderRowID = Repository.folderWorktreeID(for: repository.rootURL)
         if !hoisted.contains(folderRowID) {
-          sections.append(.folder(repositoryID: repositoryID, rowID: folderRowID))
+          localSections.append(.folder(repositoryID: repositoryID, rowID: folderRowID))
         }
         continue
       }
@@ -614,9 +628,53 @@ extension RepositoriesFeature.State {
         hoistedRowIDs: hoisted,
         nestWorktreesByBranch: sidebarNestWorktreesByBranch && repository.isGitRepository
       )
-      sections.append(.repository(repositoryID: repositoryID, groups: groups))
+      localSections.append(.repository(repositoryID: repositoryID, groups: groups))
     }
-    return RepositorySectionsBuild(sections: sections, reorderableRepositoryIDs: reorderableRepositoryIDs)
+
+    // Remote repositories (over SSH, host != nil). Rendered inline in the same
+    // flat list, appended after the local sections. Not reorderable: SSH repos
+    // aren't part of the local `repositoryRoots` move/persist machinery. A
+    // non-git remote path renders as a folder row, mirroring local folders.
+    var remoteSections: [SidebarStructure.Section] = []
+    for repository in repositories where repository.host != nil {
+      // A disconnected remote keeps a placeholder repository (so it isn't
+      // pruned) plus a load failure; render it like a missing local folder.
+      if loadFailuresByID[repository.id] != nil {
+        let sectionEntry = sidebar.sections[repository.id]
+        remoteSections.append(
+          .failedRepository(
+            repositoryID: repository.id,
+            rootURL: repository.rootURL,
+            customTitle: sectionEntry?.title,
+            color: sectionEntry?.color,
+            isRemote: true
+          )
+        )
+        continue
+      }
+      if !repository.isGitRepository {
+        // The synthetic folder worktree's own id (`folder:` + host-keyed remote
+        // repo id), so a remote folder never collides with a local one at the
+        // same path.
+        if let folderRowID = repository.worktrees.first?.id, !hoisted.contains(folderRowID) {
+          remoteSections.append(.folder(repositoryID: repository.id, rowID: folderRowID))
+        }
+        continue
+      }
+      let groups = SidebarItemGroup.computeSlots(
+        in: self,
+        repositoryID: repository.id,
+        pendingIDs: pendingIDsByRepo[repository.id] ?? [],
+        hoistedRowIDs: hoisted,
+        nestWorktreesByBranch: sidebarNestWorktreesByBranch
+      )
+      remoteSections.append(.repository(repositoryID: repository.id, groups: groups))
+    }
+
+    return RepositorySectionsBuild(
+      sections: localSections + remoteSections,
+      reorderableRepositoryIDs: reorderableRepositoryIDs
+    )
   }
 
   /// Hotkey assignment output for a single structure pass.
@@ -669,7 +727,8 @@ extension RepositoriesFeature.State {
       let section = sidebar.sections[repoID]
       tags[repoID] = SidebarHighlightRepoTag(
         repoName: Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
-        repoColor: section?.color
+        repoColor: section?.color,
+        hostInfo: repository.host?.displayAuthority
       )
     }
     return tags
@@ -840,8 +899,8 @@ extension SidebarItemGroup {
     in state: RepositoriesFeature.State
   ) -> [SidebarItemID] {
     ids.sorted { lhs, rhs in
-      let lhsName = state.sidebarItems[id: lhs]?.branchName ?? lhs
-      let rhsName = state.sidebarItems[id: rhs]?.branchName ?? rhs
+      let lhsName = state.sidebarItems[id: lhs]?.branchName ?? lhs.rawValue
+      let rhsName = state.sidebarItems[id: rhs]?.branchName ?? rhs.rawValue
       return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
     }
   }

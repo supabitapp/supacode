@@ -9,7 +9,7 @@ import SwiftUI
 
 enum WorktreeToolbarTitleContent: Hashable, Sendable {
   case git(GitPayload)
-  case folder(name: String, tint: RepositoryColor?)
+  case folder(name: String, tint: RepositoryColor?, hostInfo: String?)
 
   struct GitPayload: Hashable, Sendable {
     /// Text rendered as the top-line headline. May be the literal branch name or the user's custom
@@ -23,6 +23,9 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
     let worktreeTint: RepositoryColor?
     let accent: WorktreeAccent
     let rootURL: URL
+    /// `[user@]host[:port]` when the repository lives on an SSH host, else nil;
+    /// rendered as `· host` plus a `wifi` glyph in the subtitle.
+    let hostInfo: String?
   }
 }
 
@@ -82,12 +85,21 @@ private struct WorktreeToolbarTitleBody: View {
       .frame(width: 24, height: 24)
       VStack(alignment: .leading, spacing: 0) {
         switch content {
-        case .folder(let name, let tint):
-          Text(name)
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(tint?.color ?? .primary)
-            .lineLimit(1)
-            .truncationMode(.middle)
+        case .folder(let name, let tint, let hostInfo):
+          HStack(spacing: 4) {
+            Text(name)
+              .font(.callout.weight(.semibold))
+              .foregroundStyle(tint?.color ?? .primary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+            if let hostInfo {
+              Image(systemName: "wifi")
+                .imageScale(.small)
+                .foregroundStyle(.secondary)
+                .help(hostInfo)
+                .accessibilityHidden(true)
+            }
+          }
         case .git(let payload):
           Text(payload.displayTitle)
             .font(.callout.weight(.semibold))
@@ -97,17 +109,26 @@ private struct WorktreeToolbarTitleBody: View {
           let repoText = Text(payload.repositoryName)
             .foregroundStyle(payload.repositoryColor?.color ?? .secondary)
           let accentStyle = AnyShapeStyle(payload.accent.shapeStyle(emphasized: false))
-          let line: Text =
-            if let worktreeSubtitle = payload.worktreeSubtitle {
-              repoText
-                + Text(" · ").foregroundStyle(.secondary)
-                + Text(worktreeSubtitle).foregroundStyle(accentStyle)
-            } else {
-              repoText
+          let trail: Text? = payload.worktreeSubtitle.map { worktreeSubtitle in
+            Text(" · ").foregroundStyle(.secondary)
+              + Text(worktreeSubtitle).foregroundStyle(accentStyle)
+          }
+          HStack(spacing: 0) {
+            repoText
+            if let hostInfo = payload.hostInfo {
+              Image(systemName: "wifi")
+                .imageScale(.small)
+                .foregroundStyle(.secondary)
+                .help(hostInfo)
+                .accessibilityHidden(true)
+                .padding(.leading, 3)
             }
-          line
-            .font(.footnote)
-            .lineLimit(1)
+            if let trail {
+              trail
+            }
+          }
+          .font(.footnote)
+          .lineLimit(1)
         }
       }
     }
@@ -118,7 +139,7 @@ private struct WorktreeToolbarTitleBody: View {
 
   private var accessibilityLabel: String {
     switch content {
-    case .folder(let name, _):
+    case .folder(let name, _, _):
       return "Folder \(name)"
     case .git(let payload):
       let suffix = payload.worktreeSubtitle.map { ", worktree \($0)" } ?? ""
@@ -180,7 +201,8 @@ enum GitHubOwnerAvatar {
             worktreeSubtitle: "319-toolbar-details",
             worktreeTint: nil,
             accent: .pinned,
-            rootURL: supacodeRepoRoot
+            rootURL: supacodeRepoRoot,
+            hostInfo: nil
           )
         )
       )
@@ -201,7 +223,8 @@ enum GitHubOwnerAvatar {
             worktreeSubtitle: "Default",
             worktreeTint: nil,
             accent: .main,
-            rootURL: URL(fileURLWithPath: "/tmp/preview")
+            rootURL: URL(fileURLWithPath: "/tmp/preview"),
+            hostInfo: nil
           )
         )
       )
@@ -212,7 +235,7 @@ enum GitHubOwnerAvatar {
 #Preview("Folder") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(content: .folder(name: "Documents", tint: nil))
+      WorktreeToolbarTitleBody(content: .folder(name: "Documents", tint: nil, hostInfo: nil))
     }
   }.frame(width: 600, height: 600)
 }
