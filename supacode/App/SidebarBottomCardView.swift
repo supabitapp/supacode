@@ -5,10 +5,11 @@ import SwiftUI
 /// Mutually-exclusive host for the pinned sidebar bottom card. Priority order:
 /// 1. Coding-agent updates available / initial install prompt
 ///    (`CodingAgentsSidebarCardView`).
-/// 2. Terminal persistence onboarding prompt (`TerminalPersistenceOnboardingCardView`).
-/// 3. Highlight Relevant onboarding prompt (`HighlightRelevantOnboardingCardView`).
-/// 4. Nested-worktrees onboarding prompt (`NestedWorktreesOnboardingCardView`).
-/// 5. Nothing.
+/// 2. Remote repositories Beta announcement (`RemoteRepositoriesBetaCardView`).
+/// 3. Terminal persistence onboarding prompt (`TerminalPersistenceOnboardingCardView`).
+/// 4. Highlight Relevant onboarding prompt (`HighlightRelevantOnboardingCardView`).
+/// 5. Nested-worktrees onboarding prompt (`NestedWorktreesOnboardingCardView`).
+/// 6. Nothing.
 ///
 /// Owns the `@Shared(.appStorage)` reads as stored properties so SwiftUI
 /// observes them at this layer and re-renders when the user dismisses a
@@ -32,6 +33,8 @@ struct SidebarBottomCardView: View {
   private var highlightDismissedAt: Date = .distantPast
   @Shared(.appStorage("terminalPersistenceOnboardingDismissedAt"))
   private var terminalPersistenceDismissedAt: Date = .distantPast
+  @Shared(.appStorage("remoteRepositoriesBetaOnboardingDismissedAt"))
+  private var remoteRepositoriesBetaDismissedAt: Date = .distantPast
 
   var body: some View {
     let agentMode = CodingAgentsSidebarCardView.resolveMode(
@@ -39,6 +42,9 @@ struct SidebarBottomCardView: View {
     )
     let terminalPersistenceMode = TerminalPersistenceOnboardingCardView.resolveMode(
       dismissedAt: terminalPersistenceDismissedAt
+    )
+    let remoteRepositoriesBetaMode = RemoteRepositoriesBetaCardView.resolveMode(
+      dismissedAt: remoteRepositoriesBetaDismissedAt
     )
     let highlightMode = HighlightRelevantOnboardingCardView.resolveMode(
       groupPinnedRows: groupPinnedRows,
@@ -51,6 +57,7 @@ struct SidebarBottomCardView: View {
     )
     let resolved = Slot.resolve(
       agentMode: agentMode,
+      remoteRepositoriesBetaMode: remoteRepositoriesBetaMode,
       terminalPersistenceMode: terminalPersistenceMode,
       highlightMode: highlightMode,
       onboardingMode: onboardingMode
@@ -61,6 +68,9 @@ struct SidebarBottomCardView: View {
         EmptyView()
       case .agent(let mode):
         CodingAgentsSidebarCardView(store: store, mode: mode)
+          .transition(Slot.transition)
+      case .remoteRepositoriesBeta:
+        RemoteRepositoriesBetaCardView()
           .transition(Slot.transition)
       case .terminalPersistenceOnboarding:
         TerminalPersistenceOnboardingCardView()
@@ -87,6 +97,7 @@ struct SidebarBottomCardView: View {
   enum Slot: Equatable {
     case none
     case agent(CodingAgentsSidebarCardView.Mode)
+    case remoteRepositoriesBeta
     case terminalPersistenceOnboarding
     case highlightRelevantOnboarding
     case nestedWorktreesOnboarding
@@ -95,6 +106,7 @@ struct SidebarBottomCardView: View {
 
     static func resolve(
       agentMode: CodingAgentsSidebarCardView.Mode,
+      remoteRepositoriesBetaMode: RemoteRepositoriesBetaCardView.Mode,
       terminalPersistenceMode: TerminalPersistenceOnboardingCardView.Mode,
       highlightMode: HighlightRelevantOnboardingCardView.Mode,
       onboardingMode: NestedWorktreesOnboardingCardView.Mode
@@ -103,9 +115,9 @@ struct SidebarBottomCardView: View {
       case .updatesAvailable, .promptInstall: return .agent(agentMode)
       case .hidden: break
       }
-      // `terminalPersistenceOnboarding` (zmx) is the newest card and pre-empts
-      // the older highlight / nested-worktrees prompts even when those would
-      // also be visible. Insert future cards at the top of this fall-through.
+      // Newest card wins. `remoteRepositoriesBeta` is the most recent and
+      // pre-empts the older prompts; insert future cards at the top here.
+      if remoteRepositoriesBetaMode == .visible { return .remoteRepositoriesBeta }
       if terminalPersistenceMode == .visible { return .terminalPersistenceOnboarding }
       if highlightMode == .visible { return .highlightRelevantOnboarding }
       return onboardingMode == .visible ? .nestedWorktreesOnboarding : .none
@@ -123,6 +135,7 @@ struct SidebarBottomCardView: View {
         "agent:updates:" + agents.map { String(describing: $0) }.sorted().joined(separator: ",")
       case .agent(.promptInstall): "agent:promptInstall"
       case .agent(.hidden): "agent:hidden"
+      case .remoteRepositoriesBeta: "remoteRepositoriesBeta:visible"
       case .terminalPersistenceOnboarding: "terminalPersistence:visible"
       case .highlightRelevantOnboarding: "highlightRelevant:visible"
       case .nestedWorktreesOnboarding: "nestedWorktrees:visible"

@@ -3,6 +3,8 @@ import Foundation
 import GhosttyKit
 import SupacodeSettingsShared
 
+private let terminalStateLogger = SupaLogger("Terminal")
+
 enum GhosttyOpenURLKind: Equatable {
   case unknown
   case text
@@ -62,7 +64,13 @@ final class GhosttySurfaceBridge {
   // blockingScripts dict in the handlers.
   var onCommandFinished: ((Int?) -> Void)?
   var onChildExited: ((UInt32) -> Void)?
+  // The agent's own OSC 9 desktop notification. Deduped against our richer custom
+  // notification one layer up.
   var onDesktopNotification: ((String, String) -> Void)?
+  // OSC 3008 context signal: (action 0=start/1=end, context id, raw key=value
+  // metadata). Forwarded raw; the per-surface capability token carried in the
+  // metadata is verified one layer up where the surface's nonce lives.
+  var onContextSignal: ((UInt8, String, String) -> Void)?
 
   // Coalesce OSC-9 progress: a flush task applies the latest value at the
   // throttle cadence while it moves, and a slow stale-watch clears a bar whose
@@ -103,6 +111,7 @@ final class GhosttySurfaceBridge {
     if let handled = handleAppAction(action) { return handled }
     if let handled = handleSplitAction(action) { return handled }
     if handleTitleAndPath(action) { return false }
+    if handleContextSignal(action) { return false }
     if handleCommandStatus(action) { return false }
     if handleMouseAndLink(action) {
       return action.tag == GHOSTTY_ACTION_OPEN_URL
@@ -284,6 +293,17 @@ final class GhosttySurfaceBridge {
     default:
       return false
     }
+  }
+
+  private func handleContextSignal(_ action: ghostty_action_s) -> Bool {
+    guard action.tag == GHOSTTY_ACTION_CONTEXT_SIGNAL else { return false }
+    let signal = action.action.context_signal
+    guard let id = string(from: signal.id), let metadata = string(from: signal.metadata) else {
+      terminalStateLogger.warning("OSC 3008 context signal arrived with null id or metadata")
+      return true
+    }
+    onContextSignal?(signal.action, id, metadata)
+    return true
   }
 
   private func handleCommandStatus(_ action: ghostty_action_s) -> Bool {

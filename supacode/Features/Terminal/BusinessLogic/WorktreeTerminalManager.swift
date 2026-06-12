@@ -24,6 +24,19 @@ final class WorktreeTerminalManager {
   private var lastEmittedProjections: [Worktree.ID: WorktreeRowProjection] = [:]
   private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
   private var pendingEvents: [TerminalClient.Event] = []
+  /// Latest-wins events deduped by identity: drops a value equal to the
+  /// immediately-previous one per key (a burst of distinct values still passes),
+  /// so per-tab projection / progress / task-status / focus repeats don't flood
+  /// the stream. Cleared on resubscribe and purged on tab / worktree teardown.
+  private var lastEmittedCoalescable: [CoalesceKey: TerminalClient.Event] = [:]
+  /// Hard cap on the live event buffer. Source coalescing keeps it near-empty in
+  /// practice; this backstops a wedged consumer so memory stays bounded instead
+  /// of growing without limit.
+  static let eventBufferCap = 2048
+  /// Cap for lifecycle events buffered before the first subscriber attaches.
+  /// Coalescable state collapses per key and doesn't count, so this only bounds
+  /// one-shot events; the sole consumer attaches at launch, well under the cap.
+  static let pendingEventCap = 1024
   @ObservationIgnored
   private var pendingIdleHookEvents: [IdleDebounceKey: Task<Void, Never>] = [:]
   @ObservationIgnored
@@ -55,6 +68,50 @@ final class WorktreeTerminalManager {
   private struct IdleDebounceKey: Hashable {
     let surfaceID: UUID
     let agent: SkillAgent
+  }
+
+  /// Identity for a latest-wins event. Two events sharing a key carry the same
+  /// piece of state, so an identical repeat is a no-op and is dropped.
+  private enum CoalesceKey: Hashable {
+    case worktreeProjection(Worktree.ID)
+    case tabProjection(TerminalTabID)
+    case tabProgress(TerminalTabID)
+    case taskStatus(Worktree.ID)
+    case focus(Worktree.ID)
+    case notificationIndicator
+    case hasAnySurface
+  }
+
+  /// Non-nil for state events that are safe to coalesce by identity. Lifecycle /
+  /// one-shot events (tab create / close / remove, notifications, script
+  /// completion, command-palette, teardown) return nil and are never dropped.
+  private static func coalesceKey(for event: TerminalClient.Event) -> CoalesceKey? {
+    switch event {
+    case .worktreeProjectionChanged(let worktreeID, _): .worktreeProjection(worktreeID)
+    case .tabProjectionChanged(_, let projection): .tabProjection(projection.tabID)
+    case .tabProgressDisplayChanged(_, let tabID, _): .tabProgress(tabID)
+    case .taskStatusChanged(let worktreeID, _): .taskStatus(worktreeID)
+    case .focusChanged(let worktreeID, _): .focus(worktreeID)
+    case .notificationIndicatorChanged: .notificationIndicator
+    case .terminalHasAnySurfaceChanged: .hasAnySurface
+    default: nil
+    }
+  }
+
+  /// Compact identity for a backpressure-drop log. Strips the payload-heavy
+  /// cases (projections / notification bodies) to their key ids so a drop storm
+  /// can't flood the log; the rest carry small payloads and describe themselves.
+  private static func label(for event: TerminalClient.Event) -> String {
+    switch event {
+    case .worktreeProjectionChanged(let worktreeID, _): "worktreeProjectionChanged(\(worktreeID))"
+    case .tabProjectionChanged(let worktreeID, let projection):
+      "tabProjectionChanged(\(worktreeID), tab: \(projection.tabID))"
+    case .tabProgressDisplayChanged(let worktreeID, let tabID, _):
+      "tabProgressDisplayChanged(\(worktreeID), tab: \(tabID))"
+    case .notificationReceived(let worktreeID, let surfaceID, _, _):
+      "notificationReceived(\(worktreeID), surface: \(surfaceID))"
+    default: String(describing: event)
+    }
   }
 
   var selectedWorktreeID: Worktree.ID?
@@ -92,18 +149,6 @@ final class WorktreeTerminalManager {
   }
 
   private func configureSocketServer(_ server: AgentHookSocketServer) {
-    server.onNotification = { [weak self] worktreeID, _, surfaceID, notification in
-      guard let self else { return }
-      guard self.settingsFile.global.richAgentNotificationsEnabled else { return }
-      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      guard let state = self.states[decoded] else {
-        terminalLogger.debug("Dropped hook notification for unknown worktree \(decoded)")
-        return
-      }
-      let title = notification.title ?? notification.agent
-      let body = notification.body ?? ""
-      state.appendHookNotification(title: title, body: body, surfaceID: surfaceID)
-    }
     server.onCommand = { [weak self] deeplinkURL, clientFD in
       guard let handler = self?.onDeeplinkCommand else {
         AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
@@ -118,18 +163,10 @@ final class WorktreeTerminalManager {
       }
       handler(resource, params, clientFD)
     }
-    // Always record; the badges toggle gates DISPLAY in
-    // `AgentPresenceFeature.State.agents(forSurface:badgesEnabled:)`.
-    // Gating recording too would drop session_start events fired while
-    // the toggle was off, so flipping it back on later wouldn't restore
-    // badges for already-running agents.
-    server.onEvent = { [weak self] event in
-      self?.dispatchHookEvent(event)
-    }
   }
 
   /// Holds `.idle` for a debounce window so PostToolUse / PreToolUse storms don't flap downstream UI.
-  /// Lives at the socket boundary so the debounce applies before the event lands in TCA.
+  /// Applies the idle debounce before the OSC-sourced event lands in TCA.
   private func dispatchHookEvent(_ event: AgentHookEvent) {
     guard let agent = SkillAgent(rawValue: event.agent) else {
       applyHookEvent(event)
@@ -164,11 +201,18 @@ final class WorktreeTerminalManager {
     emit(.agentHookEventReceived(event))
   }
 
+  #if DEBUG
+    /// Count of idle-hook debounce tasks still scheduled (test-only). A clock-awoken
+    /// resume removes its key only after it emits, so a non-zero count means a
+    /// pending idle event has not yet landed in the stream.
+    var pendingIdleHookCountForTesting: Int { pendingIdleHookEvents.count }
+  #endif
+
   // MARK: - CLI queries.
 
   func listTabs(worktreeID: String) -> [[String: String]]? {
     let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-    guard let state = states[decoded] else { return nil }
+    guard let state = states[WorktreeID(decoded)] else { return nil }
     let selectedTabID = state.tabManager.selectedTabId
     return state.tabManager.tabs.map { tab in
       var entry = ["id": tab.id.rawValue.uuidString]
@@ -179,7 +223,7 @@ final class WorktreeTerminalManager {
 
   func listSurfaces(worktreeID: String, tabID: String) -> [[String: String]]? {
     let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-    guard let state = states[decoded],
+    guard let state = states[WorktreeID(decoded)],
       let tabUUID = UUID(uuidString: tabID)
     else { return nil }
     let terminalTabID = TerminalTabID(rawValue: tabUUID)
@@ -326,7 +370,7 @@ final class WorktreeTerminalManager {
         markLayoutDirty(worktreeID: previousID)
       }
       selectedWorktreeID = id
-      terminalLogger.info("Selected worktree \(id ?? "nil")")
+      terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .startSearch, .searchSelection, .navigateSearchNext,
@@ -338,17 +382,27 @@ final class WorktreeTerminalManager {
 
   func eventStream() -> AsyncStream<TerminalClient.Event> {
     eventContinuation?.finish()
-    let (stream, continuation) = AsyncStream.makeStream(of: TerminalClient.Event.self)
+    let (stream, continuation) = AsyncStream.makeStream(
+      of: TerminalClient.Event.self,
+      bufferingPolicy: .bufferingNewest(Self.eventBufferCap)
+    )
     eventContinuation = continuation
     lastNotificationIndicatorCount = nil
+    // Reset dedup state before replaying so the replay re-seeds both caches; a
+    // fresh subscriber then has the latest value recorded for every key.
+    lastEmittedProjections.removeAll()
+    lastEmittedCoalescable.removeAll()
     if !pendingEvents.isEmpty {
       let bufferedEvents = pendingEvents
       pendingEvents.removeAll()
       for event in bufferedEvents {
+        // Re-emitted fresh below, so drop the buffered copy.
         if case .notificationIndicatorChanged = event {
           continue
         }
-        continuation.yield(event)
+        // Route through emit() (not a raw yield) so a coalescable buffered event
+        // seeds lastEmittedCoalescable and the first identical live event dedups.
+        emit(event)
       }
     }
     emitNotificationIndicatorCountIfNeeded()
@@ -358,19 +412,16 @@ final class WorktreeTerminalManager {
     // Seed each worktree's projection so rows attached after the stream start
     // pick up the current snapshot (otherwise they'd stay default until the
     // next mutation).
-    lastEmittedProjections.removeAll()
     for id in states.keys { emitProjection(for: id) }
     // Replay per-tab projections / stripe-progress displays for the same reason:
     // a new subscriber needs the existing `terminalTabs[id:]` rows seeded so
     // tab-bar leaves don't render empty until the next per-tab mutation.
     for (worktreeID, state) in states {
       for projection in state.currentTabProjections() {
-        continuation.yield(.tabProjectionChanged(worktreeID: worktreeID, projection))
+        emit(.tabProjectionChanged(worktreeID: worktreeID, projection))
       }
       for (tabID, display) in state.currentTabProgressDisplays() {
-        continuation.yield(
-          .tabProgressDisplayChanged(worktreeID: worktreeID, tabID: tabID, display: display)
-        )
+        emit(.tabProgressDisplayChanged(worktreeID: worktreeID, tabID: tabID, display: display))
       }
     }
     return stream
@@ -412,6 +463,10 @@ final class WorktreeTerminalManager {
     }
     state.onSurfacesClosed = { [weak self] ids in
       self?.emit(.surfacesClosed(ids))
+    }
+    // OSC-sourced presence events go through the existing idle-debounce funnel.
+    state.onAgentHookEvent = { [weak self] event in
+      self?.dispatchHookEvent(event)
     }
     state.onNotificationReceived = { [weak self] surfaceID, title, body in
       self?.emit(
@@ -529,7 +584,7 @@ final class WorktreeTerminalManager {
     }
     states = states.filter { worktreeIDs.contains($0.key) }
     cancelPendingIdleHooks(forSurfaceIDs: prunedSurfaceIDs)
-    for (id, _) in removed { lastEmittedProjections.removeValue(forKey: id) }
+    for (id, _) in removed { invalidateCaches(forPrunedWorktree: id) }
     emitNotificationIndicatorCountIfNeeded()
     emitHasAnyTerminalSurfaceIfNeeded()
     killZmxSessions(prunedSessionIDs)
@@ -562,7 +617,7 @@ final class WorktreeTerminalManager {
     let change: LayoutsIncrementalWriter.Change = snapshot.map { .snapshot($0) } ?? .delete
     let writer = layoutsWriter
     let task = Task { [weak self] in
-      await writer.flush([worktreeID: change])
+      await writer.flush([worktreeID.rawValue: change])
       self?.layoutFlushTasks[worktreeID] = nil
     }
     layoutFlushTasks[worktreeID] = task
@@ -583,7 +638,7 @@ final class WorktreeTerminalManager {
     // saveAllLayoutSnapshots, so no positive snapshot is re-emitted.
     let task = Task { [weak self] in
       await inflightFlush?.value
-      await writer.flush([worktreeID: .delete])
+      await writer.flush([worktreeID.rawValue: .delete])
       self?.layoutFlushTasks[worktreeID] = nil
     }
     layoutFlushTasks[worktreeID] = task
@@ -800,11 +855,11 @@ final class WorktreeTerminalManager {
     // The actor is the sole disk writer (`LayoutsKey.save` is a no-op), so the
     // on-quit terminal write goes through `flushSync` while still updating the
     // in-memory `@Shared` dict via `saveLayoutSnapshot` for any live readers.
-    var changes: [Worktree.ID: LayoutsIncrementalWriter.Change] = [:]
+    var changes: [String: LayoutsIncrementalWriter.Change] = [:]
     for (id, state) in states {
       let snapshot = state.captureLayoutSnapshot(agentsBySurface: agentsBySurface)
       saveLayoutSnapshot(id, snapshot)
-      changes[id] = snapshot.map { .snapshot($0) } ?? .delete
+      changes[id.rawValue] = snapshot.map { .snapshot($0) } ?? .delete
     }
     layoutsWriter.flushSync(changes)
   }
@@ -821,10 +876,69 @@ final class WorktreeTerminalManager {
 
   private func emit(_ event: TerminalClient.Event) {
     guard let eventContinuation else {
+      bufferPendingEvent(event)
+      return
+    }
+    if let key = Self.coalesceKey(for: event) {
+      guard lastEmittedCoalescable[key] != event else { return }
+      lastEmittedCoalescable[key] = event
+    }
+    // During prune this fires first and clears the coalesce keys; invalidateCaches
+    // then runs second only to clear the worktree-keyed lastEmittedProjections.
+    for key in Self.invalidatedCoalesceKeys(by: event) {
+      lastEmittedCoalescable.removeValue(forKey: key)
+    }
+    let result = eventContinuation.yield(event)
+    if case .dropped(let shed) = result {
+      terminalLogger.error(
+        "Terminal event buffer full (cap \(Self.eventBufferCap)); shed oldest buffered event: \(Self.label(for: shed))."
+      )
+    }
+  }
+
+  /// Buffers an event emitted before a subscriber attaches. Coalescable state
+  /// keeps only its latest value per key; lifecycle events accumulate up to a
+  /// cap, dropping the oldest so the pre-subscription buffer stays bounded.
+  private func bufferPendingEvent(_ event: TerminalClient.Event) {
+    if let key = Self.coalesceKey(for: event) {
+      pendingEvents.removeAll { Self.coalesceKey(for: $0) == key }
       pendingEvents.append(event)
       return
     }
-    eventContinuation.yield(event)
+    // Mirror the live-path teardown purge so a buffered projection for a
+    // torn-down id can't replay ahead of its teardown on resubscribe.
+    let invalidated = Set(Self.invalidatedCoalesceKeys(by: event))
+    if !invalidated.isEmpty {
+      pendingEvents.removeAll { Self.coalesceKey(for: $0).map(invalidated.contains) ?? false }
+    }
+    if pendingEvents.count >= Self.pendingEventCap {
+      let dropped = pendingEvents.removeFirst()
+      terminalLogger.error(
+        "Pending terminal event buffer full (cap \(Self.pendingEventCap)); dropped oldest: \(Self.label(for: dropped))."
+      )
+    }
+    pendingEvents.append(event)
+  }
+
+  /// Coalesce keys a teardown event invalidates. A coalesced value for a removed
+  /// tab / worktree must not linger: a same-id reuse (snapshot restore reuses
+  /// persisted tab UUIDs) would otherwise be wrongly deduped and dropped.
+  private static func invalidatedCoalesceKeys(by event: TerminalClient.Event) -> [CoalesceKey] {
+    switch event {
+    case .tabRemoved(_, let tabID): [.tabProjection(tabID), .tabProgress(tabID)]
+    case .worktreeStateTornDown(let worktreeID):
+      [.worktreeProjection(worktreeID), .taskStatus(worktreeID), .focus(worktreeID)]
+    default: []
+    }
+  }
+
+  /// Clears the worktree-keyed lastEmittedProjections during prune; emit's purge has
+  /// already cleared the coalesce keys, which this re-clears as a guard against drift.
+  private func invalidateCaches(forPrunedWorktree id: Worktree.ID) {
+    lastEmittedProjections.removeValue(forKey: id)
+    for key in Self.invalidatedCoalesceKeys(by: .worktreeStateTornDown(worktreeID: id)) {
+      lastEmittedCoalescable.removeValue(forKey: key)
+    }
   }
 
   private func emitNotificationIndicatorCountIfNeeded() {

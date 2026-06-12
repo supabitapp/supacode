@@ -77,6 +77,13 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private let commandCString: UnsafeMutablePointer<CChar>?
   private let initialInputCString: UnsafeMutablePointer<CChar>?
   private let environmentVariables: [String: String]
+  /// Argv prepended to Ghostty's resolved command (e.g. `zmx attach <id>`), so
+  /// the real shell runs as a child of the wrapper. Empty means no wrapper.
+  private let commandWrapper: [String]
+  /// Forces `shell-integration = none` for this surface only. Used by
+  /// self-managing surfaces (blocking-script runners) that emit their own OSC
+  /// sequences and must not have Ghostty's integration injected.
+  private let disableShellIntegration: Bool
   private let fontSize: Float32
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
@@ -198,6 +205,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
     command: String? = nil,
     initialInput: String? = nil,
     environmentVariables: [String: String] = [:],
+    commandWrapper: [String] = [],
+    disableShellIntegration: Bool = false,
     fontSize: Float32? = nil,
     context: ghostty_surface_context_e
   ) {
@@ -207,6 +216,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
     self.fontSize = fontSize ?? 0
     self.context = context
     self.environmentVariables = environmentVariables
+    self.commandWrapper = commandWrapper
+    self.disableShellIntegration = disableShellIntegration
     if let workingDirectory {
       let path = Self.normalizedWorkingDirectoryPath(
         workingDirectory.path(percentEncoded: false)
@@ -977,6 +988,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     config.command = commandCString.map { UnsafePointer($0) }
     config.initial_input = initialInputCString.map { UnsafePointer($0) }
     config.context = context
+    config.disable_shell_integration = disableShellIntegration
     // Ghostty copies env vars into its arena allocator, so
     // the C strings only need to live through this call.
     var envVars = environmentVariables.map { key, value in
@@ -991,12 +1003,27 @@ final class GhosttySurfaceView: NSView, Identifiable {
         free(.init(mutating: envVar.value))
       }
     }
-    envVars.withUnsafeMutableBufferPointer { buffer in
-      if let baseAddress = buffer.baseAddress {
-        config.env_vars = baseAddress
-        config.env_var_count = buffer.count
+    // Wrapper argv C strings must also outlive the surface_new call.
+    var wrapperCStrings: [UnsafePointer<CChar>?] = commandWrapper.map { arg in
+      UnsafePointer(arg.withCString { strdup($0)! })
+    }
+    defer {
+      for ptr in wrapperCStrings {
+        free(UnsafeMutablePointer(mutating: ptr))
       }
-      surface = ghostty_surface_new(app, &config)
+    }
+    envVars.withUnsafeMutableBufferPointer { envBuffer in
+      if let baseAddress = envBuffer.baseAddress, !envBuffer.isEmpty {
+        config.env_vars = baseAddress
+        config.env_var_count = envBuffer.count
+      }
+      wrapperCStrings.withUnsafeBufferPointer { wrapperBuffer in
+        if let baseAddress = wrapperBuffer.baseAddress, !wrapperBuffer.isEmpty {
+          config.command_wrapper = baseAddress
+          config.command_wrapper_count = wrapperBuffer.count
+        }
+        surface = ghostty_surface_new(app, &config)
+      }
     }
     bridge.surface = surface
     lastOcclusion = nil

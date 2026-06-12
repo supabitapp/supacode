@@ -31,7 +31,7 @@ enum WindowTitle {
         terminalManager: terminalManager
       )
     case .failedRepository(let repositoryID):
-      let url = URL(fileURLWithPath: repositoryID).standardizedFileURL
+      let url = URL(fileURLWithPath: repositoryID.rawValue).standardizedFileURL
       let name = repoDisplayName(
         repositoryID: repositoryID,
         fallback: Repository.name(for: url),

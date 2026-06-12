@@ -31,25 +31,13 @@ private struct TerminalTabBarAccessoryButton: View {
 
   @Environment(GhosttyShortcutManager.self)
   private var ghosttyShortcuts
-  @Environment(CommandKeyObserver.self)
-  private var commandKeyObserver
 
   var body: some View {
     let shortcut = ghosttyShortcuts.display(for: shortcutBinding)
 
     Button(action: action) {
-      if commandKeyObserver.isPressed {
-        HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
-          Text(title)
-            .font(.caption)
-          if let shortcut {
-            ShortcutHintView(text: shortcut, color: TerminalTabBarColors.inactiveText)
-          }
-        }
-      } else {
-        Label(title, systemImage: systemImage)
-          .labelStyle(.iconOnly)
-      }
+      Label(title, systemImage: systemImage)
+        .labelStyle(.iconOnly)
     }
     .buttonStyle(.plain)
     .foregroundStyle(.secondary)
@@ -69,8 +57,6 @@ private struct TerminalTabBarSplitMenu: View {
 
   @Environment(GhosttyShortcutManager.self)
   private var ghosttyShortcuts
-  @Environment(CommandKeyObserver.self)
-  private var commandKeyObserver
 
   var body: some View {
     let primaryShortcut = ghosttyShortcuts.display(for: primary.ghosttyBinding)
@@ -85,18 +71,8 @@ private struct TerminalTabBarSplitMenu: View {
       }
       .ghosttyKeyboardShortcut(secondary.ghosttyBinding, in: ghosttyShortcuts)
     } label: {
-      if commandKeyObserver.isPressed {
-        HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
-          Text(primary.title)
-            .font(.caption)
-          if let primaryShortcut {
-            ShortcutHintView(text: primaryShortcut, color: TerminalTabBarColors.inactiveText)
-          }
-        }
-      } else {
-        Label(primary.title, systemImage: primary.systemImage)
-          .labelStyle(.iconOnly)
-      }
+      Label(primary.title, systemImage: primary.systemImage)
+        .labelStyle(.iconOnly)
     } primaryAction: {
       split(primary)
     }

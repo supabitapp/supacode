@@ -92,7 +92,41 @@ final class WorktreeTerminalState {
   @ObservationIgnored @Dependency(\.date.now) private var now
   @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
   @ObservationIgnored @Dependency(\.analyticsClient) private var analyticsClient
-  private var recentHookBySurfaceID: [UUID: (text: String, recordedAt: Date)] = [:]
+  @ObservationIgnored @Dependency(\.continuousClock) private var clock
+  /// When a custom (hook / OSC 3008) notification last committed per surface.
+  /// Stored as a monotonic instant so the suppression window and the OSC-9 hold
+  /// share one clock source and can't desync on an NTP step / manual clock change.
+  private var lastCustomNotificationAt: [UUID: any InstantProtocol<Duration>] = [:]
+  /// Agent OSC 9 notifications held to see if a custom notification supersedes them.
+  private var pendingAgentOSCNotifications: [UUID: Task<Void, Never>] = [:]
+  /// How long after a custom notification the agent's own OSC 9 is suppressed.
+  /// Split from `oscHoldWindow` so tuning the suppression side cannot silently
+  /// change the hold side.
+  private static let oscSuppressionAfterCustom: TimeInterval = 0.5
+  /// How long the agent's own OSC 9 is held before firing, waiting for a custom
+  /// notification to supersede it. Covers the socket-vs-inline-stream arrival skew.
+  private static let oscHoldWindow: TimeInterval = 0.5
+  /// Monotonic gap between two instants from the same clock. Opens the existentials
+  /// so the suppression window can compare instants of the type-erased clock.
+  private static func elapsed(
+    from start: any InstantProtocol<Duration>,
+    to end: any InstantProtocol<Duration>
+  ) -> Duration {
+    func gap<I: InstantProtocol>(_ start: I, _ end: any InstantProtocol<Duration>) -> Duration
+    where I.Duration == Duration {
+      guard let end = end as? I else {
+        // Fail OPEN: a type mismatch must not pin the dedupe window true forever.
+        assertionFailure("clock instant type mismatch")
+        return .seconds(Self.oscSuppressionAfterCustom + 1)
+      }
+      return start.duration(to: end)
+    }
+    return gap(start, end)
+  }
+  #if DEBUG
+    var debugCustomNotificationTimestampCount: Int { lastCustomNotificationAt.count }
+    var debugPendingOSCCount: Int { pendingAgentOSCNotifications.count }
+  #endif
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
   }
@@ -117,11 +151,6 @@ final class WorktreeTerminalState {
     notifications.filter { !$0.isRead }.sorted { $0.createdAt > $1.createdAt }
   }
 
-  #if DEBUG
-    var debugRecentHookCount: Int {
-      recentHookBySurfaceID.count
-    }
-  #endif
   var isSelected: () -> Bool = { false }
   var onNotificationReceived: ((UUID, String, String) -> Void)?
   var onNotificationIndicatorChanged: (() -> Void)?
@@ -137,6 +166,9 @@ final class WorktreeTerminalState {
   var onSetupScriptConsumed: (() -> Void)?
   /// Forwarded to the manager so it can emit a `surfacesClosed` event into TCA.
   var onSurfacesClosed: ((Set<UUID>) -> Void)?
+  /// Forwarded to the manager's `dispatchHookEvent` so an OSC-sourced presence
+  /// event joins the same funnel as the socket path (idle-debounce, badge).
+  var onAgentHookEvent: ((AgentHookEvent) -> Void)?
   /// Fires when a tab's per-tab projection (surfaces / focus / unseen count)
   /// drifts. Manager forwards into `TerminalTabFeature.State` via
   /// `tabProjectionChanged` so the leaf observes a per-tab store.
@@ -325,14 +357,36 @@ final class WorktreeTerminalState {
 
   @discardableResult
   func runBlockingScript(kind: BlockingScriptKind, _ script: String) -> TerminalTabID? {
-    let launch: BlockingScriptRunner.LaunchArtifacts
-    do {
-      guard let prepared = try blockingScriptLaunch(script) else { return nil }
-      launch = prepared
-    } catch {
-      blockingScriptLogger.warning("Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): \(error)")
-      onBlockingScriptCompleted?(kind, 1, nil)
-      return nil
+    // Resolve the surface command per host. A remote worktree runs the same
+    // OSC 133 framing on the host over ssh (no local temp files, no zmx wrap),
+    // so the script executes on the remote and not on a same-path local dir.
+    let command: String
+    let initialInput: String?
+    let launchDirectory: URL?
+    if let host = worktree.host {
+      guard
+        let remote = BlockingScriptRunner.remoteCommand(
+          host: host,
+          script: script,
+          remoteWorktreePath: worktree.workingDirectory.path(percentEncoded: false)
+        )
+      else { return nil }
+      command = remote
+      initialInput = nil
+      launchDirectory = nil
+    } else {
+      let launch: BlockingScriptRunner.LaunchArtifacts
+      do {
+        guard let prepared = try blockingScriptLaunch(script) else { return nil }
+        launch = prepared
+      } catch {
+        blockingScriptLogger.warning("Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): \(error)")
+        onBlockingScriptCompleted?(kind, 1, nil)
+        return nil
+      }
+      command = defaultShellPath()
+      initialInput = launch.commandInput
+      launchDirectory = launch.directoryURL
     }
     // Close any previous tab of the same kind (active or lingering
     // from a completed/cancelled run). Clear tracking state first
@@ -350,8 +404,8 @@ final class WorktreeTerminalState {
         icon: kind.tabIcon,
         isTitleLocked: true,
         tintColor: kind.tabColor,
-        command: defaultShellPath(),
-        initialInput: launch.commandInput,
+        command: command,
+        initialInput: initialInput,
         focusing: true,
         inheritingFromSurfaceId: currentFocusedSurfaceId(),
         context: GHOSTTY_SURFACE_CONTEXT_TAB,
@@ -361,13 +415,17 @@ final class WorktreeTerminalState {
       )
     )
     guard let tabId else {
-      cleanupBlockingScriptLaunchDirectory(at: launch.directoryURL)
+      if let launchDirectory {
+        cleanupBlockingScriptLaunchDirectory(at: launchDirectory)
+      }
       blockingScriptLogger.warning("Failed to create \(kind.tabTitle) tab for worktree \(worktree.id)")
       onBlockingScriptCompleted?(kind, 1, nil)
       return nil
     }
     blockingScripts[tabId] = kind
-    blockingScriptLaunchDirectories[tabId] = launch.directoryURL
+    if let launchDirectory {
+      blockingScriptLaunchDirectories[tabId] = launchDirectory
+    }
     lastBlockingScriptTabByKind[kind] = tabId
     tabManager.updateDirty(tabId, isDirty: true)
     emitTaskStatusIfChanged()
@@ -910,7 +968,6 @@ final class WorktreeTerminalState {
   }
 
   func dismissNotification(_ notificationID: WorktreeTerminalNotification.ID) {
-    let previousHasUnseen = hasUnseenNotification
     let affectedSurface = notifications.first(where: { $0.id == notificationID })?.surfaceID
     notifications.removeAll { $0.id == notificationID }
     if let affectedSurface {
@@ -919,15 +976,22 @@ final class WorktreeTerminalState {
         emitTabProjection(for: tabId)
       }
     }
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    // Removing a notification changes the row's notification LIST even when no
+    // unseen flag flips (it was already read), so refresh the row projection
+    // unconditionally. The gated `emitNotificationIndicatorIfNeeded` would skip
+    // it for an already-read notification and leave the toolbar bell stuck
+    // showing the dismissed entry. `emitProjection` is equality-gated downstream.
+    onNotificationIndicatorChanged?()
   }
 
   func dismissAllNotifications() {
-    let previousHasUnseen = hasUnseenNotification
     notifications.removeAll()
     clearAllSurfaceUnseenFlags()
     emitAllTabProjections()
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    // See `dismissNotification`: always refresh the row projection so the
+    // toolbar bell clears even when every dismissed notification was already
+    // read (no unseen-flag flip to trigger the gated indicator emit).
+    onNotificationIndicatorChanged?()
   }
 
   /// Recomputes the surface's unseen flag through the canonical predicate so a
@@ -1288,7 +1352,7 @@ final class WorktreeTerminalState {
     let repoPath = worktree.repositoryRootURL.path(percentEncoded: false)
     env["SUPACODE_REPO_ID"] = percentEncode(repoPath, allowedCharacters: percentEncodingSet, label: "SUPACODE_REPO_ID")
     env["SUPACODE_WORKTREE_ID"] = percentEncode(
-      worktree.id, allowedCharacters: percentEncodingSet, label: "SUPACODE_WORKTREE_ID")
+      worktree.id.rawValue, allowedCharacters: percentEncodingSet, label: "SUPACODE_WORKTREE_ID")
     env["SUPACODE_TAB_ID"] = tabId.rawValue.uuidString
     env["SUPACODE_SURFACE_ID"] = surfaceID.uuidString
     if let socketPath {
@@ -1343,19 +1407,30 @@ final class WorktreeTerminalState {
     let surfaceID = resolvedID
     terminalStateLogger.info("createSurface: resolved=\(surfaceID)")
     let inherited = inheritedSurfaceConfig(fromSurfaceId: inheritingFromSurfaceId, context: context)
-    let (resolvedCommand, resolvedInitialInput) = resolveZmxWrapping(
+    let launch = resolveLaunch(
       surfaceID: surfaceID,
       command: command,
       initialInput: initialInput,
       bypassZmx: bypassZmx
     )
+    // Remote worktrees have no local working directory: the surface command is
+    // an `ssh …` line (see `resolveLaunch`) and the cwd lives on the
+    // remote, so leave `working_directory` nil and let the remote shell `cd`.
+    let resolvedWorkingDirectory: URL? =
+      worktree.host == nil
+      ? (workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory)
+      : nil
     let view = GhosttySurfaceView(
       id: surfaceID,
       runtime: runtime,
-      workingDirectory: workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory,
-      command: resolvedCommand,
-      initialInput: resolvedInitialInput,
+      workingDirectory: resolvedWorkingDirectory,
+      command: launch.command,
+      initialInput: launch.initialInput,
       environmentVariables: surfaceEnvironment(tabId: tabId, surfaceID: surfaceID),
+      commandWrapper: launch.commandWrapper,
+      // Blocking-script runners (bypassZmx) emit their own OSC 133/7 and must
+      // not get Ghostty's shell integration injected into the host shell.
+      disableShellIntegration: bypassZmx,
       fontSize: inherited.fontSize,
       context: context
     )
@@ -1418,7 +1493,11 @@ final class WorktreeTerminalState {
     }
     view.bridge.onDesktopNotification = { [weak self, weak view] title, body in
       guard let self, let view else { return }
-      self.appendNotification(title: title, body: body, surfaceID: view.id)
+      self.handleAgentOSCNotification(title: title, body: body, surfaceID: view.id)
+    }
+    view.bridge.onContextSignal = { [weak self, weak view] _, id, metadata in
+      guard let self, let view else { return }
+      self.handleContextSignal(surfaceID: view.id, id: id, metadata: metadata)
     }
     view.bridge.onCloseRequest = { [weak self, weak view] processAlive in
       guard let self, let view else { return }
@@ -1435,24 +1514,229 @@ final class WorktreeTerminalState {
     }
   }
 
-  /// Wraps the surface command in `zmx attach <session-id>` so the underlying shell
-  /// survives app quit. `initialInput` is always passed through; zmx itself is
-  /// authoritative for attach-vs-create, so we never gate setup-script firing on
-  /// a stale snapshot of daemon state.
-  private func resolveZmxWrapping(
+  /// Routes an OSC 3008 context signal to the presence or notify handler.
+  private func handleContextSignal(surfaceID: UUID, id: String, metadata: String) {
+    // Route by notify INTENT, not by parse success, so a malformed notify logs as
+    // a notify drop rather than silently falling through to the presence handler.
+    if AgentPresenceOSC.isNotifyMetadata(metadata) {
+      handleNotifySignal(surfaceID: surfaceID, id: id, metadata: metadata)
+    } else {
+      handlePresenceSignal(surfaceID: surfaceID, id: id, metadata: metadata)
+    }
+  }
+
+  /// Verify an OSC 3008 presence signal against the receiving surface's nonce,
+  /// then synthesize an `AgentHookEvent` and forward it to the manager. Attribution
+  /// is by the receiving surface, so the wire never carries a surface id that could
+  /// spoof another worktree's badge; a pid rides along only for local hooks.
+  private func handlePresenceSignal(surfaceID: UUID, id: String, metadata: String) {
+    switch Self.presenceEvent(
+      id: id,
+      metadata: metadata,
+      surfaceID: surfaceID,
+      surfaceExists: surfaces[surfaceID] != nil
+    ) {
+    case .success(let event):
+      onAgentHookEvent?(event)
+    case .failure(.parseFailed):
+      // Malformed metadata on a live surface is probe-shaped; warn (mirrors notify).
+      terminalStateLogger.warning("Dropped malformed OSC presence signal for surface \(surfaceID).")
+    case .failure(.unknownSurface):
+      terminalStateLogger.debug("Dropped OSC presence signal for surface \(surfaceID).")
+    }
+  }
+
+  /// Typed reasons a presence signal was dropped, so the single call site can pick a
+  /// log severity per cause (warn for malformed, debug otherwise).
+  enum PresenceDrop: Error, Equatable {
+    case unknownSurface
+    case parseFailed
+  }
+
+  /// Pure decision for an OSC presence signal: returns an `AgentHookEvent`
+  /// attributed to the RECEIVING surface when the surface is known and the metadata
+  /// is well-formed; otherwise a typed `PresenceDrop` so the caller can log per
+  /// cause. The wire never carries a surface id (so a payload can't spoof another
+  /// worktree). The parser rejects a non-positive pid before it could reach the
+  /// liveness sweep; a forged positive pid at worst pins a live-looking badge.
+  nonisolated static func presenceEvent(
+    id: String,
+    metadata: String,
+    surfaceID: UUID,
+    surfaceExists: Bool
+  ) -> Result<AgentHookEvent, PresenceDrop> {
+    guard surfaceExists else { return .failure(.unknownSurface) }
+    guard let signal = AgentPresenceOSC.parse(id: id, metadata: metadata) else {
+      return .failure(.parseFailed)
+    }
+    return .success(
+      AgentHookEvent(
+        agent: signal.agent, event: signal.eventRawValue, surfaceID: surfaceID, pid: signal.pid))
+  }
+
+  /// Parse an OSC 3008 notify signal for the receiving surface, then sanitize and
+  /// display it. Gated by the rich-notifications setting.
+  private func handleNotifySignal(surfaceID: UUID, id: String, metadata: String) {
+    switch Self.notification(
+      id: id,
+      metadata: metadata,
+      surfaceExists: surfaces[surfaceID] != nil
+    ) {
+    case .success(let resolved):
+      // Gate AFTER parse so the setting can't be probed via drop-rate signals.
+      @Shared(.settingsFile) var settingsFile
+      guard settingsFile.global.richAgentNotificationsEnabled else {
+        terminalStateLogger.debug("Dropped OSC notify; rich notifications disabled.")
+        return
+      }
+      // A body present on the wire but decoded empty means a truncation, an
+      // escape-cut the shed loop couldn't recover, or a non-base64 (probe / forged)
+      // field: keep it out of silent-failure territory by logging, even though we
+      // still show the title-only toast.
+      if resolved.body.isEmpty, resolved.wireBodyByteCount > 0 {
+        let wireBytes = resolved.wireBodyByteCount
+        terminalStateLogger.warning(
+          "OSC notify body present on wire (\(wireBytes) b64 bytes) but decoded empty, dropped: surface \(surfaceID)."
+        )
+      }
+      appendHookNotification(title: resolved.title, body: resolved.body, surfaceID: surfaceID)
+    case .failure(.parseFailed):
+      // parseNotify only fails on a non-notify / empty id (not a truncated body,
+      // which decodes to an empty field, logged in the success arm above).
+      terminalStateLogger.warning(
+        "Dropped malformed OSC notify (metadata bytes: \(metadata.utf8.count)) for surface \(surfaceID).")
+    case .failure(.unknownSurface), .failure(.empty):
+      terminalStateLogger.debug("Dropped OSC notify signal for surface \(surfaceID).")
+    }
+  }
+
+  /// Typed reasons a notify signal was dropped, so the single call site can pick a
+  /// log severity per cause (warn for malformed, debug otherwise).
+  enum NotifyDrop: Error {
+    case unknownSurface
+    case parseFailed
+    case empty
+  }
+
+  /// A parsed + sanitized notify ready for display, plus the raw wire body byte
+  /// count so the call site can log a truncated-to-empty body.
+  struct ResolvedNotification: Equatable {
+    let title: String
+    let body: String
+    let wireBodyByteCount: Int
+  }
+
+  /// Pure parse decision for an OSC notify signal. Title/body are bounded and
+  /// stripped of control characters since anything on the terminal can emit one.
+  /// Title falls back to the agent name; body may be empty.
+  nonisolated static func notification(
+    id: String,
+    metadata: String,
+    surfaceExists: Bool
+  ) -> Result<ResolvedNotification, NotifyDrop> {
+    guard surfaceExists else { return .failure(.unknownSurface) }
+    guard let notify = AgentPresenceOSC.parseNotify(id: id, metadata: metadata) else {
+      return .failure(.parseFailed)
+    }
+    // Second-line defense behind the emit-side caps (notifyTitleByteBudget /
+    // notifyBodyByteBudget): these are scalar counts, not bytes, and the wire is
+    // already bounded, so they only bite on a hand-crafted oversized payload.
+    let title = sanitizeNotificationText(notify.title ?? notify.agent, max: 200)
+    let body = sanitizeNotificationText(notify.body ?? "", max: 1000)
+    guard !(title.isEmpty && body.isEmpty) else { return .failure(.empty) }
+    return .success(ResolvedNotification(title: title, body: body, wireBodyByteCount: notify.wireBodyByteCount))
+  }
+
+  /// Bound length and neutralize control characters in attacker-influenceable
+  /// notification text. Newline / tab / carriage return collapse to a space;
+  /// other C0 controls and DEL are dropped (defends against escape-sequence
+  /// injection into the toast). Length is capped in unicode scalars.
+  nonisolated static func sanitizeNotificationText(_ text: String, max: Int) -> String {
+    var scalars = String.UnicodeScalarView()
+    for scalar in text.unicodeScalars {
+      if scalars.count >= max { break }
+      switch scalar.value {
+      case 0x0A, 0x09, 0x0D:
+        scalars.append(" ")
+      case 0x00...0x1F, 0x7F:
+        continue
+      default:
+        scalars.append(scalar)
+      }
+    }
+    return String(scalars).trimmingCharacters(in: .whitespaces)
+  }
+
+  struct ResolvedLaunch {
+    var command: String?
+    var initialInput: String?
+    var commandWrapper: [String]
+  }
+
+  /// Routes a surface through zmx so the underlying shell survives app quit.
+  ///
+  /// Interactive surfaces (no explicit `command`) keep `command` nil and inject
+  /// `zmx attach <id>` as a Ghostty `command-wrapper`, so Ghostty resolves and
+  /// integrates the user's real shell exactly as it would without zmx, with zmx
+  /// wrapping the whole resolved (login + integrated) argv.
+  ///
+  /// Explicit commands (scripts) instead wrap the command string itself, since
+  /// they don't want shell resolution / integration. `initialInput` is always
+  /// passed through; zmx is authoritative for attach-vs-create.
+  private func resolveLaunch(
     surfaceID: UUID,
     command: String?,
     initialInput: String?,
     bypassZmx: Bool
-  ) -> (command: String?, initialInput: String?) {
+  ) -> ResolvedLaunch {
     if bypassZmx {
-      return (command, initialInput)
+      return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [])
     }
     let sessionID = ZmxSessionID.make(surfaceID: surfaceID)
-    guard let wrapped = zmxClient.wrapCommand(sessionID, command) else {
-      return (command, initialInput)
+    // Remote worktree: a *local* zmx session wraps the SSH connection, so zmx
+    // only needs to exist on the client. The remote runs a plain login shell
+    // (no zmx installed there). The surface command is always the wrapped ssh
+    // line (no command-wrapper, since Ghostty wraps the local argv, not the ssh
+    // line). When the caller has no explicit command, default to
+    // cd-into-the-remote-dir so a freshly created session lands in the project.
+    if let host = worktree.host {
+      let userCommand =
+        command
+        ?? Self.remoteDefaultShellCommand(remotePath: worktree.workingDirectory.path(percentEncoded: false))
+      return ResolvedLaunch(
+        command: ZmxAttach.buildRemoteCommand(
+          host: host,
+          localZmxExecutablePath: zmxClient.executableURL()?.path(percentEncoded: false),
+          sessionID: sessionID,
+          userCommand: userCommand,
+          surfaceID: surfaceID
+        ),
+        initialInput: initialInput,
+        commandWrapper: []
+      )
     }
-    return (wrapped, initialInput)
+    let resolved = ZmxAttach.resolveLaunch(
+      executablePath: zmxClient.executableURL()?.path(percentEncoded: false),
+      sessionID: sessionID,
+      command: command
+    )
+    return ResolvedLaunch(
+      command: resolved.command,
+      initialInput: initialInput,
+      commandWrapper: resolved.commandWrapper
+    )
+  }
+
+  /// Default command for a remote worktree surface with no explicit command:
+  /// `cd` into the remote project dir, then exec a login shell. The `cd` failure
+  /// is swallowed so a stale path still drops the user into a usable shell. Nil
+  /// for an empty/root path so we just attach the default shell. The path is
+  /// single-quoted for the remote shell (which re-parses the attach string).
+  static func remoteDefaultShellCommand(remotePath: String) -> String? {
+    let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed != "/" else { return nil }
+    let quoted = "'" + trimmed.replacing("'", with: "'\\''") + "'"
+    return "cd \(quoted) 2>/dev/null; exec \"$SHELL\" -l"
   }
 
   private struct InheritedSurfaceConfig: Equatable {
@@ -1539,25 +1823,56 @@ final class WorktreeTerminalState {
     return trees[tabId]?.visibleLeaves().first?.id
   }
 
-  /// Appends a notification from an agent hook on a specific surface.
+  /// Appends a notification from a custom (hook / OSC 3008) source. Records the
+  /// time so the agent's own OSC 9 for the same event is deduped, and cancels any
+  /// OSC 9 currently held for this surface (the expanded one supersedes it).
   func appendHookNotification(title: String, body: String, surfaceID: UUID) {
     guard surfaces[surfaceID] != nil else {
       terminalStateLogger.debug("Dropped hook notification for unknown surface \(surfaceID) in worktree \(worktree.id)")
       return
     }
-    // Record for deduplication against later OSC 9 notifications.
-    if let normalized = Self.normalizedText("\(title) \(body)") {
-      recentHookBySurfaceID[surfaceID] = (text: normalized, recordedAt: now)
+    lastCustomNotificationAt[surfaceID] = clock.now
+    if let superseded = pendingAgentOSCNotifications.removeValue(forKey: surfaceID) {
+      superseded.cancel()
+      terminalStateLogger.debug(
+        "Dropped held agent OSC 9 for surface \(surfaceID) in worktree \(worktree.id): superseded by hook notification"
+      )
     }
-    appendNotification(title: title, body: body, surfaceID: surfaceID, fromHook: true)
+    appendNotification(title: title, body: body, surfaceID: surfaceID)
   }
 
-  private func appendNotification(
-    title: String,
-    body: String,
-    surfaceID: UUID,
-    fromHook: Bool = false
-  ) {
+  /// The agent's own OSC 9 desktop notification, a summary of the expanded custom
+  /// notification we ship. Deduped: dropped if a custom notification just
+  /// committed for this surface (hook-first); otherwise held briefly and dropped
+  /// if a custom one supersedes it during the hold (OSC-9-first), else shown.
+  private func handleAgentOSCNotification(title: String, body: String, surfaceID: UUID) {
+    if let last = lastCustomNotificationAt[surfaceID],
+      Self.elapsed(from: last, to: clock.now) <= .seconds(Self.oscSuppressionAfterCustom)
+    {
+      terminalStateLogger.debug(
+        "Dropped agent OSC 9 for surface \(surfaceID) in \(worktree.id): custom notification within dedupe window"
+      )
+      return
+    }
+    let clock = clock
+    pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
+    pendingAgentOSCNotifications[surfaceID] = Task { [weak self] in
+      do {
+        try await clock.sleep(for: .seconds(Self.oscHoldWindow))
+      } catch is CancellationError {
+        return
+      } catch {
+        terminalStateLogger.error("OSC 9 hold sleep failed: \(error)")
+        return
+      }
+      guard !Task.isCancelled, let self else { return }
+      self.pendingAgentOSCNotifications.removeValue(forKey: surfaceID)
+      guard self.surfaces[surfaceID] != nil else { return }
+      self.appendNotification(title: title, body: body, surfaceID: surfaceID)
+    }
+  }
+
+  private func appendNotification(title: String, body: String, surfaceID: UUID) {
     let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
@@ -1580,53 +1895,18 @@ final class WorktreeTerminalState {
       }
       emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
     }
-    // Suppress OSC 9 system notifications that duplicate a recent hook notification.
-    if !fromHook, shouldSuppressDesktopNotification(title: trimmedTitle, body: trimmedBody, surfaceID: surfaceID) {
-      return
-    }
     onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody)
-  }
-
-  // MARK: - Notification deduplication (matches supaterm's approach).
-
-  private static let notificationCoalescingWindow: TimeInterval = 2
-
-  private static let genericCompletionTexts: Set<String> = [
-    "agent turn complete",
-    "task complete",
-    "turn complete",
-  ]
-
-  private func shouldSuppressDesktopNotification(title: String, body: String, surfaceID: UUID) -> Bool {
-    guard
-      let terminalText = Self.normalizedText("\(title) \(body)"),
-      let recent = recentHookBySurfaceID[surfaceID],
-      now.timeIntervalSince(recent.recordedAt) <= Self.notificationCoalescingWindow
-    else {
-      return false
-    }
-    if terminalText == recent.text { return true }
-    if recent.text.hasPrefix(terminalText) { return true }
-    if Self.genericCompletionTexts.contains(terminalText) { return true }
-    return false
-  }
-
-  private static func normalizedText(_ value: String) -> String? {
-    let collapsed =
-      value
-      .split(whereSeparator: \.isWhitespace)
-      .joined(separator: " ")
-      .lowercased()
-      .trimmingCharacters(in: .punctuationCharacters)
-    return collapsed.isEmpty ? nil : collapsed
   }
 
   /// Detaches one surface from the local bookkeeping. The zmx session is NOT
   /// killed here; callers route the kill through `killZmxSessions(forSurfaceIDs:)`
   /// so a single multi-pane close emits one `count=N` analytics event + one
   /// `withTaskGroup` instead of N events and N detached Tasks.
+  /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
+  /// instant so a future surface ID can't reuse stale dedupe state.
   private func cleanupSurfaceState(for surfaceID: UUID) {
-    recentHookBySurfaceID.removeValue(forKey: surfaceID)
+    pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
+    lastCustomNotificationAt.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
     surfaceStates.removeValue(forKey: surfaceID)
     onSurfacesClosed?([surfaceID])
@@ -2027,7 +2307,7 @@ final class WorktreeTerminalState {
     /// Test-only seam for bulk-assigning the notifications log. Fans
     /// `emitAllTabProjections()` so `lastTabProjections` stays in sync with
     /// the raw log; production code must go through the per-event helpers
-    /// (`appendNotification`, `markNotificationsRead`, etc.) which already
+    /// (`appendHookNotification`, `markNotificationsRead`, etc.) which already
     /// emit. Gated `#if DEBUG` so release builds genuinely can't reach the
     /// projection-bypass path.
     func setNotificationsForTesting(_ list: [WorktreeTerminalNotification]) {

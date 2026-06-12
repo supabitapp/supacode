@@ -194,13 +194,19 @@ private struct WorktreeFileMenu: Commands {
     #endif
     let overrides = store.worktreeMenuSnapshot.shortcutOverrides
     let openRepo = AppShortcuts.openRepository.effective(from: overrides)
+    let addRemoteRepo = AppShortcuts.addRemoteRepository.effective(from: overrides)
     let confirm = AppShortcuts.confirmWorktreeAction.effective(from: overrides)
     CommandGroup(replacing: .newItem) {
-      Button("Add Repository or Folder...", systemImage: "folder.badge.plus") {
+      Button("Add Local Repository or Folder...", systemImage: "folder.badge.plus") {
         store.send(.repositories(.setOpenPanelPresented(true)))
       }
       .appKeyboardShortcut(openRepo)
-      .help("Add Repository or Folder (\(openRepo?.display ?? "none"))")
+      .help("Add a local repository or folder (\(openRepo?.display ?? "none"))")
+      Button("Add Remote Repository or Folder...", systemImage: "wifi") {
+        store.send(.repositories(.requestAddRemoteRepository))
+      }
+      .appKeyboardShortcut(addRemoteRepo)
+      .help("Add a repository or folder on an SSH host (\(addRemoteRepo?.display ?? "none"))")
       Button("Confirm Action") {
         confirmWorktreeAction?()
       }

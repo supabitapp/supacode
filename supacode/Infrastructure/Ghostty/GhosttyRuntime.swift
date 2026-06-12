@@ -542,14 +542,14 @@ final class GhosttyRuntime {
   /// the window's tint is the only visual layer; the user's intended value is
   /// captured separately in `loadConfig` for window-level use.
   ///
-  /// `shell-integration = none` short-circuits Ghostty's `setupBash` call
-  /// before it can prepend `--posix` to the surface command (#356); zmx
-  /// rejects `--posix` as an unknown arg and the surface fails to launch.
+  /// Shell integration is intentionally left untouched (no `shell-integration`
+  /// override): surfaces run the real shell with zmx injected as a Ghostty
+  /// `command-wrapper`, so Ghostty resolves and integrates the shell exactly as
+  /// it would without zmx, honoring the user's `command` / `shell-integration`.
   internal static let bundledOverridesString = """
     window-padding-x = 14
     window-padding-y = 12,0
     background-opacity = 0
-    shell-integration = none
     """
 
   private static func loadBundledOverrides(into config: ghostty_config_t) {

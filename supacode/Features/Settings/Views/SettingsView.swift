@@ -73,6 +73,52 @@ private struct RepositoryDisclosureLabel: View {
   }
 }
 
+/// One repository row in the settings sidebar. Git repos get a General /
+/// Scripts disclosure; folder repos go straight to Scripts. Shared by the
+/// Local and Remote sections so the two render identically.
+private struct SettingsRepositoryRow: View {
+  let repository: SettingsRepositorySummary
+  @Bindable var settingsStore: StoreOf<SettingsFeature>
+  @Binding var expandedRepositories: Set<String>
+
+  var body: some View {
+    if repository.isGitRepository {
+      let isExpanded = Binding(
+        get: { expandedRepositories.contains(repository.id) },
+        set: { expanded in
+          if expanded {
+            expandedRepositories.insert(repository.id)
+          } else {
+            expandedRepositories.remove(repository.id)
+          }
+        }
+      )
+      DisclosureGroup(isExpanded: isExpanded) {
+        Label("General", systemImage: "gearshape")
+          .tag(SettingsSection.repository(repository.id))
+        Label("Scripts", systemImage: "terminal")
+          .tag(SettingsSection.repositoryScripts(repository.id))
+      } label: {
+        RepositoryDisclosureLabel(
+          repository: repository,
+          settingsStore: settingsStore,
+          isExpanded: isExpanded
+        )
+      }
+    } else {
+      // Folder entries go straight to the scripts page; no general
+      // disclosure row since the git settings don't apply. Selection is
+      // expressed via the row tag so selecting it updates the selection.
+      RepositoryLabel(
+        name: repository.name,
+        rootURL: repository.rootURL,
+        isGitRepository: false
+      )
+      .tag(SettingsSection.repositoryScripts(repository.id))
+    }
+  }
+}
+
 /// Sidebar content for the settings split view.
 private struct SettingsSidebarView: View {
   @Bindable var settingsStore: StoreOf<SettingsFeature>
@@ -97,42 +143,27 @@ private struct SettingsSidebarView: View {
       Label("Updates", systemImage: "arrow.down.circle")
         .tag(SettingsSection.updates)
 
-      Section("Repositories") {
-        ForEach(settingsStore.repositorySummaries, id: \.id) { repository in
-          if repository.isGitRepository {
-            let isExpanded = Binding(
-              get: { expandedRepositories.contains(repository.id) },
-              set: { expanded in
-                if expanded {
-                  expandedRepositories.insert(repository.id)
-                } else {
-                  expandedRepositories.remove(repository.id)
-                }
-              }
+      let localRepositories = settingsStore.repositorySummaries.filter { !$0.isRemote }
+      let remoteRepositories = settingsStore.repositorySummaries.filter(\.isRemote)
+      if !localRepositories.isEmpty {
+        Section("Local") {
+          ForEach(localRepositories, id: \.id) { repository in
+            SettingsRepositoryRow(
+              repository: repository,
+              settingsStore: settingsStore,
+              expandedRepositories: $expandedRepositories
             )
-            DisclosureGroup(isExpanded: isExpanded) {
-              Label("General", systemImage: "gearshape")
-                .tag(SettingsSection.repository(repository.id))
-              Label("Scripts", systemImage: "terminal")
-                .tag(SettingsSection.repositoryScripts(repository.id))
-            } label: {
-              RepositoryDisclosureLabel(
-                repository: repository,
-                settingsStore: settingsStore,
-                isExpanded: isExpanded
-              )
-            }
-          } else {
-            // Folder entries go straight to the scripts page — no
-            // general / disclosure row since the git settings don't
-            // apply. Selection is expressed via the row tag so
-            // selecting it updates `settingsStore.selection`.
-            RepositoryLabel(
-              name: repository.name,
-              rootURL: repository.rootURL,
-              isGitRepository: false
+          }
+        }
+      }
+      if !remoteRepositories.isEmpty {
+        Section("Remote") {
+          ForEach(remoteRepositories, id: \.id) { repository in
+            SettingsRepositoryRow(
+              repository: repository,
+              settingsStore: settingsStore,
+              expandedRepositories: $expandedRepositories
             )
-            .tag(SettingsSection.repositoryScripts(repository.id))
           }
         }
       }

@@ -1,23 +1,20 @@
 import AppKit
 import SwiftUI
 
+/// Tracks whether the user is currently holding ⌘ or ⌃ so the UI can surface shortcut hints.
 @MainActor
 @Observable
 final class CommandKeyObserver {
-  private static let holdDelay: Duration = .milliseconds(300)
-
   var isPressed: Bool
   private var monitor: Any?
   private var didBecomeActiveObserver: NSObjectProtocol?
   private var didResignActiveObserver: NSObjectProtocol?
-  private var holdTask: Task<Void, Never>?
 
   init() {
     isPressed = false
     monitor = nil
     didBecomeActiveObserver = nil
     didResignActiveObserver = nil
-    holdTask = nil
     configureObservers()
   }
 
@@ -54,17 +51,7 @@ final class CommandKeyObserver {
   }
 
   private func handleCommandKeyChange(isDown: Bool) {
-    holdTask?.cancel()
-    holdTask = nil
-
-    if isDown {
-      holdTask = Task {
-        try? await ContinuousClock().sleep(for: Self.holdDelay)
-        guard !Task.isCancelled else { return }
-        isPressed = true
-      }
-    } else {
-      isPressed = false
-    }
+    // Flip immediately; consumers fade the visual change in/out themselves.
+    isPressed = isDown
   }
 }
