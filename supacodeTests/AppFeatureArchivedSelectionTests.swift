@@ -22,7 +22,7 @@ struct AppFeatureArchivedSelectionTests {
       repositoryRootURL: rootURL
     )
     let repository = Repository(
-      id: rootURL.path(percentEncoded: false),
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
       rootURL: rootURL,
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])
@@ -70,7 +70,7 @@ struct AppFeatureArchivedSelectionTests {
       repositoryRootURL: rootURL
     )
     let repository = Repository(
-      id: rootURL.path(percentEncoded: false),
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
       rootURL: rootURL,
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [activeWorktree, archivedWorktree])
@@ -134,7 +134,7 @@ struct AppFeatureArchivedSelectionTests {
       repositoryRootURL: rootURL
     )
     let repository = Repository(
-      id: rootURL.path(percentEncoded: false),
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
       rootURL: rootURL,
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])

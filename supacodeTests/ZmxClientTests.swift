@@ -78,6 +78,26 @@ struct ZmxAttachTests {
     )
     #expect(cmd == "'/zmx' attach s /bin/sh -c 'echo '\\''hi'\\'''")
   }
+
+  /// The interactive wrapper argv is exactly `[exe, "attach", sessionID]`, each a
+  /// separate element (no shell string), so Ghostty execs it directly.
+  @Test func buildWrapperArgvIsAttachWithSession() {
+    let argv = ZmxAttach.buildWrapperArgv(executablePath: "/path/to/zmx", sessionID: "supa-abc")
+    #expect(argv == ["/path/to/zmx", "attach", "supa-abc"])
+  }
+
+  /// A path with spaces stays a single argv element (no quoting / re-splitting),
+  /// since Ghostty receives a tokenized `direct:` command.
+  @Test func buildWrapperArgvKeepsSpacedPathAsOneElement() {
+    let argv = ZmxAttach.buildWrapperArgv(
+      executablePath: "/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx",
+      sessionID: "supa-1"
+    )
+    #expect(argv.count == 3)
+    #expect(argv[0] == "/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx")
+    #expect(argv[1] == "attach")
+    #expect(argv[2] == "supa-1")
+  }
 }
 
 @MainActor
@@ -126,6 +146,44 @@ struct ZmxSocketBudgetTests {
 
   @Test func probeAcceptsShortCustomDir() {
     #expect(ZmxSocketBudget.probe(env: ["ZMX_DIR": "/tmp"]) == nil)
+  }
+}
+
+@MainActor
+struct ZmxResolveLaunchTests {
+  /// Interactive surface (nil command): nil command + `[exe, attach, id]` wrapper,
+  /// so Ghostty resolves + integrates the real shell and zmx wraps the result.
+  @Test func interactiveSurfaceGetsWrapperAndNilCommand() {
+    let resolved = ZmxAttach.resolveLaunch(executablePath: "/zmx", sessionID: "supa-abc", command: nil)
+    #expect(resolved.command == nil)
+    #expect(resolved.commandWrapper == ["/zmx", "attach", "supa-abc"])
+  }
+
+  /// Explicit command (script): wrapped command string and an EMPTY wrapper, so a
+  /// script is never double-wrapped via both `command` and a `command-wrapper`.
+  @Test func explicitCommandIsStringWrappedWithNoWrapper() {
+    let resolved = ZmxAttach.resolveLaunch(executablePath: "/zmx", sessionID: "s", command: "echo hi")
+    #expect(resolved.command == "'/zmx' attach s /bin/sh -c 'echo hi'")
+    #expect(resolved.commandWrapper.isEmpty)
+  }
+
+  /// A blank/whitespace command is normalized to interactive, so it can't slip
+  /// into the script path and launch a bare uninteg. shell.
+  @Test func blankCommandIsTreatedAsInteractive() {
+    let resolved = ZmxAttach.resolveLaunch(executablePath: "/zmx", sessionID: "s", command: "   \n")
+    #expect(resolved.command == nil)
+    #expect(resolved.commandWrapper == ["/zmx", "attach", "s"])
+  }
+
+  /// zmx unbundled / over budget (nil executable): raw command, no zmx at all.
+  @Test func nilExecutableFallsThroughToRawCommand() {
+    let interactive = ZmxAttach.resolveLaunch(executablePath: nil, sessionID: "s", command: nil)
+    #expect(interactive.command == nil)
+    #expect(interactive.commandWrapper.isEmpty)
+
+    let script = ZmxAttach.resolveLaunch(executablePath: nil, sessionID: "s", command: "echo hi")
+    #expect(script.command == "echo hi")
+    #expect(script.commandWrapper.isEmpty)
   }
 }
 
@@ -183,14 +241,6 @@ struct ZmxSessionListParserTests {
 
 @MainActor
 struct ZmxClientNoopTests {
-  /// The default test impl is a no-op so existing TestStore tests are unaffected
-  /// by the wrap path. wrapCommand returning nil means callers fall through to
-  /// the raw command unchanged.
-  @Test func noopWrapCommandReturnsNil() {
-    let cmd = ZmxClient.noop.wrapCommand("any-id", "echo hi")
-    #expect(cmd == nil)
-  }
-
   @Test func noopExecutableURLReturnsNil() {
     #expect(ZmxClient.noop.executableURL() == nil)
   }

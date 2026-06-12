@@ -5,12 +5,12 @@ import Testing
 
 @MainActor
 struct GhosttyRuntimeBundledOverridesTests {
-  /// `shell-integration = none` is the actual #356 fix; it must stay in the
-  /// bundled overrides so Ghostty's `setupBash` is unreachable and `--posix`
-  /// can never be prepended to the surface command. A future refactor that
-  /// drops this line reintroduces the crash.
-  @Test func bundledOverridesDisableShellIntegration() {
-    #expect(GhosttyRuntime.bundledOverridesString.contains("shell-integration = none"))
+  /// Shell integration must NOT be disabled in the bundled overrides: surfaces
+  /// run the real shell with zmx injected as a `command-wrapper`, so Ghostty
+  /// integrates the shell exactly as without zmx. Forcing `none` here would
+  /// regress OSC 7 cwd reporting (the whole point of the wrapper approach).
+  @Test func bundledOverridesDoNotTouchShellIntegration() {
+    #expect(!GhosttyRuntime.bundledOverridesString.contains("shell-integration"))
   }
 
   /// Each line in the heredoc is parsed as a Ghostty `key = value` directive

@@ -16,7 +16,6 @@ struct WorktreeTerminalManagerReaperTests {
       $0.zmxClient = ZmxClient(
         executableURL: { nil },
         isBundled: { true },
-        wrapCommand: { _, _ in nil },
         killSession: { id in killed.withValue { $0.append(id) } },
         listSessionsWithClients: { listing }
       )
@@ -76,7 +75,6 @@ struct WorktreeTerminalManagerReaperTests {
       $0.zmxClient = ZmxClient(
         executableURL: { nil },
         isBundled: { true },
-        wrapCommand: { _, _ in nil },
         killSession: { id in killed.withValue { $0.append(id) } },
         listSessionsWithClients: { listing.value }
       )
@@ -110,7 +108,7 @@ struct WorktreeTerminalManagerReaperTests {
   private func makeWorktree(id: String = "/tmp/repo/wt-1") -> Worktree {
     let name = URL(fileURLWithPath: id).lastPathComponent
     return Worktree(
-      id: id,
+      id: WorktreeID(id),
       name: name,
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: id),

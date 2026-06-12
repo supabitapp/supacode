@@ -215,7 +215,7 @@ struct AppFeatureDeeplinkTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: [folderWorktree],
@@ -1001,7 +1001,7 @@ struct AppFeatureDeeplinkTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: [folderWorktree],
@@ -1021,7 +1021,7 @@ struct AppFeatureDeeplinkTests {
     }
     store.exhaustivity = .off
 
-    await store.send(.deeplink(.settingsRepoScripts(repositoryID: folderRoot)))
+    await store.send(.deeplink(.settingsRepoScripts(repositoryID: RepositoryID(folderRoot))))
     await store.receive(\.settings.setSelection)
   }
 
@@ -1397,7 +1397,7 @@ struct AppFeatureDeeplinkTests {
     }
     store.exhaustivity = .off
 
-    let encoded = worktree.id.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+    let encoded = worktree.id.rawValue.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
     let url = URL(string: "supacode://worktree/\(encoded)")!
     await store.send(.deeplinkReceived(url))
     await store.receive(\.deeplink)
@@ -1982,7 +1982,7 @@ struct AppFeatureDeeplinkTests {
     name: String = "wt-1"
   ) -> Worktree {
     Worktree(
-      id: id,
+      id: WorktreeID(id),
       name: name,
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: id),

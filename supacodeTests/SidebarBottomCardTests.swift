@@ -9,6 +9,7 @@ struct SidebarBottomCardTests {
   @Test func agentUpdatesWinOverEverything() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .updatesAvailable([.claude]),
+      remoteRepositoriesBetaMode: .visible,
       terminalPersistenceMode: .visible,
       highlightMode: .visible,
       onboardingMode: .visible
@@ -19,6 +20,7 @@ struct SidebarBottomCardTests {
   @Test func agentPromptWinsOverEverything() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .promptInstall,
+      remoteRepositoriesBetaMode: .visible,
       terminalPersistenceMode: .visible,
       highlightMode: .visible,
       onboardingMode: .visible
@@ -26,9 +28,21 @@ struct SidebarBottomCardTests {
     #expect(resolved == .agent(.promptInstall))
   }
 
+  @Test func remoteRepositoriesBetaWinsOverOlderOnboarding() {
+    let resolved = SidebarBottomCardView.Slot.resolve(
+      agentMode: .hidden,
+      remoteRepositoriesBetaMode: .visible,
+      terminalPersistenceMode: .visible,
+      highlightMode: .visible,
+      onboardingMode: .visible
+    )
+    #expect(resolved == .remoteRepositoriesBeta)
+  }
+
   @Test func terminalPersistenceWinsOverHighlightAndNested() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
+      remoteRepositoriesBetaMode: .hidden,
       terminalPersistenceMode: .visible,
       highlightMode: .visible,
       onboardingMode: .visible
@@ -39,6 +53,7 @@ struct SidebarBottomCardTests {
   @Test func highlightWinsOverNestedOnboarding() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
+      remoteRepositoriesBetaMode: .hidden,
       terminalPersistenceMode: .hidden,
       highlightMode: .visible,
       onboardingMode: .visible
@@ -49,6 +64,7 @@ struct SidebarBottomCardTests {
   @Test func nestedOnboardingShowsWhenHigherPriorityDismissed() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
+      remoteRepositoriesBetaMode: .hidden,
       terminalPersistenceMode: .hidden,
       highlightMode: .hidden,
       onboardingMode: .visible
@@ -59,6 +75,7 @@ struct SidebarBottomCardTests {
   @Test func noneWhenAllHidden() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .hidden,
+      remoteRepositoriesBetaMode: .hidden,
       terminalPersistenceMode: .hidden,
       highlightMode: .hidden,
       onboardingMode: .hidden
@@ -69,6 +86,12 @@ struct SidebarBottomCardTests {
   @Test func terminalPersistenceTransitionTokenIsStable() {
     #expect(
       SidebarBottomCardView.Slot.terminalPersistenceOnboarding.transitionToken == "terminalPersistence:visible"
+    )
+  }
+
+  @Test func remoteRepositoriesBetaTransitionTokenIsStable() {
+    #expect(
+      SidebarBottomCardView.Slot.remoteRepositoriesBeta.transitionToken == "remoteRepositoriesBeta:visible"
     )
   }
 

@@ -543,6 +543,297 @@ struct GithubCLIClientTests {
     #expect(snapshot.ghCallCount == 2)
     #expect(snapshot.loginCallCount == 2)
   }
+
+  // MARK: - Noisy login-shell output (#377)
+
+  // A ShellClient that resolves `gh` via `which` and returns `stdout` for every gh invocation.
+  static func ghShell(stdout: String) -> ShellClient {
+    ShellClient(
+      run: { executableURL, _, _ in
+        executableURL.lastPathComponent == "which"
+          ? ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+          : ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, _, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: stdout, stderr: "", exitCode: 0)
+      }
+    )
+  }
+
+  @Test func balancedSpansReturnsCleanObjectUnchanged() {
+    #expect(GithubCLIOutput.balancedJSONSpans(in: #"{"a":1}"#).map(String.init) == [#"{"a":1}"#])
+  }
+
+  @Test func balancedSpansStripBannerBeforeObject() {
+    let noisy = "fastfetch banner line\nanother line\n" + #"{"hosts":{}}"#
+    #expect(GithubCLIOutput.balancedJSONSpans(in: noisy).map(String.init) == [#"{"hosts":{}}"#])
+  }
+
+  @Test func balancedSpansStripBannerBeforeArray() {
+    let noisy = "nvm: now using node v20\n" + #"[{"x":1},{"y":2}]"#
+    #expect(GithubCLIOutput.balancedJSONSpans(in: noisy).map(String.init) == [#"[{"x":1},{"y":2}]"#])
+  }
+
+  @Test func balancedSpansDropTrailingNoise() {
+    #expect(GithubCLIOutput.balancedJSONSpans(in: "{\"a\":1}\nshell goodbye").map(String.init) == [#"{"a":1}"#])
+  }
+
+  @Test func balancedSpansIgnoreBracesInsideStrings() {
+    #expect(GithubCLIOutput.balancedJSONSpans(in: #"{"a":"}]"}"#).map(String.init) == [#"{"a":"}]"}"#])
+  }
+
+  @Test func balancedSpansIgnoreEscapedQuoteInsideString() {
+    // The escaped quote keeps the scanner in-string, so the brace before it is not a premature close.
+    #expect(GithubCLIOutput.balancedJSONSpans(in: #"{"a":"}\""}"#).map(String.init) == [#"{"a":"}\""}"#])
+  }
+
+  @Test func balancedSpansReturnBothTopLevelObjectsInOrder() {
+    let input = #"{"a":1}"# + "\n" + #"{"b":2}"#
+    #expect(GithubCLIOutput.balancedJSONSpans(in: input).map(String.init) == [#"{"a":1}"#, #"{"b":2}"#])
+  }
+
+  @Test func balancedSpansSkipUnbalancedOpener() {
+    // A stray brace from a verbose login shell must not swallow the real trailing payload.
+    let noisy = "chpwd () {\n" + #"[{"databaseId":7}]"#
+    #expect(GithubCLIOutput.balancedJSONSpans(in: noisy).map(String.init) == [#"[{"databaseId":7}]"#])
+  }
+
+  @Test func balancedSpansReturnEmptyForPureNoise() {
+    #expect(GithubCLIOutput.balancedJSONSpans(in: "no json here at all").isEmpty)
+  }
+
+  @Test func balancedSpansReturnEmptyForEmptyInput() {
+    #expect(GithubCLIOutput.balancedJSONSpans(in: "   \n  ").isEmpty)
+  }
+
+  @Test func balancedSpansReturnEmptyForUnterminatedPayload() {
+    #expect(GithubCLIOutput.balancedJSONSpans(in: #"{"a":1"#).isEmpty)
+  }
+
+  private struct SingleKeyPayload: Decodable, Equatable {
+    let value: Int
+  }
+
+  @Test func decodeSkipsBracketBearingBannerBeforeObject() throws {
+    let noisy = "warn [deprecated]\n" + #"{"value":1}"#
+    let decoded = try GithubCLIOutput.decode(SingleKeyPayload.self, from: noisy)
+    #expect(decoded == SingleKeyPayload(value: 1))
+  }
+
+  @Test func decodeSkipsVersionManagerBannerBeforeObject() throws {
+    let noisy = "[nvm] using node v20\n" + #"{"hosts":{}}"#
+    let decoded = try GithubCLIOutput.decode(GithubAuthStatusResponse.self, from: noisy)
+    #expect(decoded.hosts.isEmpty)
+  }
+
+  @Test func activeAccountScansAllHostsForActiveAccount() {
+    let response = GithubAuthStatusResponse(hosts: [
+      "ghe.acme.com": [.init(active: false, login: "work")],
+      "github.com": [.init(active: true, login: "sbertix")],
+    ])
+
+    let active = GithubAuthStatusParsing.activeAccount(in: response)
+
+    #expect(active?.host == "github.com")
+    #expect(active?.login == "sbertix")
+  }
+
+  @Test func activeAccountReturnsNilWhenNoAccountActive() {
+    let response = GithubAuthStatusResponse(hosts: [
+      "github.com": [.init(active: false, login: "sbertix")]
+    ])
+
+    #expect(GithubAuthStatusParsing.activeAccount(in: response) == nil)
+  }
+
+  @Test func activeAccountPrefersGithubComWhenMultipleHostsActive() {
+    let response = GithubAuthStatusResponse(hosts: [
+      "ghe.acme.com": [.init(active: true, login: "work")],
+      "github.com": [.init(active: true, login: "sbertix")],
+    ])
+
+    let active = GithubAuthStatusParsing.activeAccount(in: response)
+
+    #expect(active?.host == "github.com")
+    #expect(active?.login == "sbertix")
+  }
+
+  @Test func activeAccountSortsHostsWhenGithubComAbsent() {
+    let response = GithubAuthStatusResponse(hosts: [
+      "z.example.com": [.init(active: true, login: "zed")],
+      "a.example.com": [.init(active: true, login: "ann")],
+    ])
+
+    let active = GithubAuthStatusParsing.activeAccount(in: response)
+
+    #expect(active?.host == "a.example.com")
+    #expect(active?.login == "ann")
+  }
+
+  @Test func authStatusSucceedsDespiteBannerPollutedStdout() async throws {
+    let stdout =
+      "╭─ fastfetch ─╮\n│ os macOS    │\n╰─────────────╯\n"
+      + #"{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"sbertix"}]}}"#
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: stdout))
+
+    let status = try await client.authStatus()
+
+    #expect(status == GithubAuthStatus(username: "sbertix", host: "github.com"))
+  }
+
+  @Test func authStatusReportsActiveAccountOnNonFirstHost() async throws {
+    let stdout = #"""
+      {"hosts":{"ghe.acme.com":[{"active":false,"login":"work"}],"github.com":[{"active":true,"login":"sbertix"}]}}
+      """#
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: stdout))
+
+    let status = try await client.authStatus()
+
+    #expect(status == GithubAuthStatus(username: "sbertix", host: "github.com"))
+  }
+
+  @Test func authStatusThrowsCommandFailedOnNonJsonOutput() async {
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: "command not found: gh"))
+
+    do {
+      _ = try await client.authStatus()
+      Issue.record("Expected authStatus to throw")
+    } catch GithubCLIError.commandFailed(let message) {
+      // No JSON payload -> the shell-pollution hypothesis, not a raw error.
+      #expect(message == GithubCLIOutput.noPayloadMessage)
+    } catch {
+      Issue.record("Unexpected error type: \(error.localizedDescription)")
+    }
+  }
+
+  @Test func authStatusThrowsUndecodableMessageWhenPayloadParsesButSchemaDiffers() async {
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: #"{"unexpected":true}"#))
+
+    do {
+      _ = try await client.authStatus()
+      Issue.record("Expected authStatus to throw")
+    } catch GithubCLIError.commandFailed(let message) {
+      // Found JSON but it failed to decode -> the version-incompatibility hypothesis.
+      #expect(message == GithubCLIOutput.undecodableMessage)
+    } catch {
+      Issue.record("Unexpected error type: \(error.localizedDescription)")
+    }
+  }
+
+  @Test func resolveRemoteInfoSucceedsDespiteBannerPollutedStdout() async {
+    let stdout =
+      "loading shell profile…\n"
+      + #"{"name":"upstream-repo","owner":{"login":"upstream-org"},"#
+      + #""url":"https://github.com/upstream-org/upstream-repo"}"#
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: stdout))
+
+    let info = await client.resolveRemoteInfo(URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(info == GithubRemoteInfo(host: "github.com", owner: "upstream-org", repo: "upstream-repo"))
+  }
+
+  @Test func defaultBranchSucceedsDespiteBannerPollutedStdout() async throws {
+    let stdout = "conda activate base\n" + #"{"defaultBranchRef":{"name":"main"}}"#
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: stdout))
+
+    let branch = try await client.defaultBranch(URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(branch == "main")
+  }
+
+  @Test func defaultBranchThrowsCommandFailedOnNonJsonOutput() async {
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: "not a repo"))
+
+    do {
+      _ = try await client.defaultBranch(URL(fileURLWithPath: "/tmp/repo"))
+      Issue.record("Expected defaultBranch to throw")
+    } catch GithubCLIError.commandFailed {
+      // Expected.
+    } catch {
+      Issue.record("Unexpected error type: \(error.localizedDescription)")
+    }
+  }
+
+  @Test func latestRunSucceedsDespiteBannerPollutedArray() async throws {
+    let stdout =
+      "pyenv: version 3.12\n"
+      + #"[{"databaseId":7,"workflowName":"CI","name":"CI","displayTitle":"Fix","#
+      + #""status":"completed","conclusion":"success","#
+      + #""createdAt":"2026-05-01T00:00:00Z","updatedAt":"2026-05-01T00:00:00Z"}]"#
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: stdout))
+
+    let run = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "main")
+
+    #expect(run?.databaseId == 7)
+    #expect(run?.conclusion == "success")
+  }
+
+  @Test func latestRunReturnsNilForEmptyOutput() async throws {
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: ""))
+
+    let run = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "main")
+
+    #expect(run == nil)
+  }
+
+  @Test func latestRunReturnsNilForBannerWithNoRuns() async throws {
+    // Banner-only stdout with no JSON payload means no runs, not a parse failure.
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: "shell banner with no json"))
+
+    let run = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "main")
+
+    #expect(run == nil)
+  }
+
+  @Test func latestRunThrowsCommandFailedOnPresentButUndecodablePayload() async {
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: #"[{"databaseId":"not-an-int"}]"#))
+
+    do {
+      _ = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "main")
+      Issue.record("Expected latestRun to throw on a present-but-undecodable payload")
+    } catch GithubCLIError.commandFailed {
+      // Expected: a JSON payload that fails to decode is a real parse failure.
+    } catch {
+      Issue.record("Unexpected error type: \(error.localizedDescription)")
+    }
+  }
+
+  @Test func latestRunSkipsStrayBraceBannerBeforeRunArray() async throws {
+    // A stray unbalanced brace (e.g. a `set -x` trace) must not swallow the real run array.
+    let stdout = "+ chpwd () {\n" + #"[{"databaseId":11,"status":"completed"}]"#
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: stdout))
+
+    let run = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "main")
+
+    #expect(run?.databaseId == 11)
+  }
+
+  @Test func latestRunPrefersRealArrayOverLeadingEmptyArrayBanner() async throws {
+    // A leading `[]` from shell noise must not shadow the real run list that follows.
+    let stdout = "[]\n" + #"[{"databaseId":9,"status":"completed","conclusion":"success"}]"#
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: stdout))
+
+    let run = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "main")
+
+    #expect(run?.databaseId == 9)
+  }
+
+  @Test func authStatusReportsPollutionForBracketNoiseWithoutValidJson() async {
+    // Brackets that are not valid JSON (e.g. `[INFO]` log prefixes) are shell noise, not schema drift.
+    let client = GithubCLIClient.live(shell: Self.ghShell(stdout: "[INFO] starting up\n[WARN] no config"))
+
+    do {
+      _ = try await client.authStatus()
+      Issue.record("Expected authStatus to throw")
+    } catch GithubCLIError.commandFailed(let message) {
+      #expect(message == GithubCLIOutput.noPayloadMessage)
+    } catch {
+      Issue.record("Unexpected error type: \(error.localizedDescription)")
+    }
+  }
 }
 
 nonisolated private func graphQLResponse(for arguments: [String]) -> String {

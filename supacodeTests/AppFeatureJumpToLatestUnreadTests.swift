@@ -81,7 +81,7 @@ struct AppFeatureJumpToLatestUnreadTests {
     let store = makeStore(worktree: worktree) {
       $0.terminalClient.latestUnreadNotification = {
         NotificationLocation(
-          worktreeID: missingID,
+          worktreeID: WorktreeID(missingID),
           tabID: TerminalTabID(rawValue: UUID()),
           surfaceID: UUID(),
           notificationID: UUID(),
@@ -105,7 +105,7 @@ struct AppFeatureJumpToLatestUnreadTests {
     name: String = "wt-1"
   ) -> Worktree {
     Worktree(
-      id: id,
+      id: WorktreeID(id),
       name: name,
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: id),

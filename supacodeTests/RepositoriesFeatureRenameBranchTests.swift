@@ -11,7 +11,7 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct RepositoriesFeatureRenameBranchTests {
-  private let repoID = "/tmp/rename-repo"
+  private let repoID: RepositoryID = "/tmp/rename-repo"
 
   private func makeInitialState(
     worktreeName: String = "feature/old",
@@ -20,25 +20,25 @@ struct RepositoriesFeatureRenameBranchTests {
     isAttached: Bool = true
   ) -> RepositoriesFeature.State {
     let mainWorktree = Worktree(
-      id: "\(repoID)/main",
+      id: WorktreeID("\(repoID)/main"),
       name: "main",
       detail: "main",
-      workingDirectory: URL(fileURLWithPath: repoID),
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      workingDirectory: URL(fileURLWithPath: repoID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
       isMissing: false
     )
     let worktree = Worktree(
-      id: "\(repoID)/feature-old",
+      id: WorktreeID("\(repoID)/feature-old"),
       name: worktreeName,
       detail: "feature-old",
       workingDirectory: URL(fileURLWithPath: "\(repoID)/feature-old"),
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
       isMissing: isMissing,
       isAttached: isAttached
     )
     let repository = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "rename-repo",
       worktrees: IdentifiedArray(uniqueElements: [mainWorktree, worktree]),
       isGitRepository: isGitRepository
@@ -55,11 +55,11 @@ struct RepositoriesFeatureRenameBranchTests {
       RepositoriesFeature()
     }
 
-    await store.send(.requestRenameBranch("\(repoID)/feature-old", repoID)) {
+    await store.send(.requestRenameBranch(WorktreeID("\(repoID)/feature-old"), repoID)) {
       $0.renameBranchPrompt = RenameBranchFeature.State(
-        worktreeID: "\(self.repoID)/feature-old",
+        worktreeID: WorktreeID("\(self.repoID)/feature-old"),
         repositoryID: self.repoID,
-        repositoryRootURL: URL(fileURLWithPath: self.repoID),
+        repositoryRootURL: URL(fileURLWithPath: self.repoID.rawValue),
         currentName: "feature/old"
       )
     }
@@ -69,25 +69,25 @@ struct RepositoriesFeatureRenameBranchTests {
     let store = TestStore(initialState: makeInitialState(isGitRepository: false)) {
       RepositoriesFeature()
     }
-    await store.send(.requestRenameBranch("\(repoID)/feature-old", repoID))
+    await store.send(.requestRenameBranch(WorktreeID("\(repoID)/feature-old"), repoID))
   }
 
   @Test func requestRenameBranchNoOpsForMissingWorktree() async {
     let store = TestStore(initialState: makeInitialState(isMissing: true)) {
       RepositoriesFeature()
     }
-    await store.send(.requestRenameBranch("\(repoID)/feature-old", repoID))
+    await store.send(.requestRenameBranch(WorktreeID("\(repoID)/feature-old"), repoID))
   }
 
   @Test func requestRenameBranchSeedsPromptForMainWorktree() async {
     let store = TestStore(initialState: makeInitialState()) {
       RepositoriesFeature()
     }
-    await store.send(.requestRenameBranch("\(repoID)/main", repoID)) {
+    await store.send(.requestRenameBranch(WorktreeID("\(repoID)/main"), repoID)) {
       $0.renameBranchPrompt = RenameBranchFeature.State(
-        worktreeID: "\(self.repoID)/main",
+        worktreeID: WorktreeID("\(self.repoID)/main"),
         repositoryID: self.repoID,
-        repositoryRootURL: URL(fileURLWithPath: self.repoID),
+        repositoryRootURL: URL(fileURLWithPath: self.repoID.rawValue),
         currentName: "main"
       )
     }
@@ -96,9 +96,9 @@ struct RepositoriesFeatureRenameBranchTests {
   @Test func renamedDelegateUpdatesWorktreeAndDispatchesScopedPullRequestRefresh() async {
     var initial = makeInitialState()
     initial.renameBranchPrompt = RenameBranchFeature.State(
-      worktreeID: "\(repoID)/feature-old",
+      worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {
@@ -111,7 +111,7 @@ struct RepositoriesFeatureRenameBranchTests {
         .presented(
           .delegate(
             .renamed(
-              worktreeID: "\(repoID)/feature-old",
+              worktreeID: WorktreeID("\(repoID)/feature-old"),
               repositoryID: repoID,
               newName: "feature/new"
             )
@@ -120,7 +120,7 @@ struct RepositoriesFeatureRenameBranchTests {
       )
     ) {
       $0.renameBranchPrompt = nil
-      $0.updateWorktreeName("\(self.repoID)/feature-old", name: "feature/new")
+      $0.updateWorktreeName(WorktreeID("\(self.repoID)/feature-old"), name: "feature/new")
     }
 
     await store.receive(\.worktreeInfoEvent)
@@ -129,18 +129,18 @@ struct RepositoriesFeatureRenameBranchTests {
     // sidebar item and the structure cache, not just the underlying Worktree.
     #expect(
       store.state.repositories[id: repoID]?
-        .worktrees[id: "\(repoID)/feature-old"]?.name == "feature/new"
+        .worktrees[id: WorktreeID("\(repoID)/feature-old")]?.name == "feature/new"
     )
-    #expect(store.state.sidebarItems[id: "\(repoID)/feature-old"]?.name == "feature/new")
-    #expect(store.state.sidebarItems[id: "\(repoID)/feature-old"]?.branchName == "feature/new")
+    #expect(store.state.sidebarItems[id: WorktreeID("\(repoID)/feature-old")]?.name == "feature/new")
+    #expect(store.state.sidebarItems[id: WorktreeID("\(repoID)/feature-old")]?.branchName == "feature/new")
   }
 
   @Test func lifecyclePendingDoesNotCloseRenameSheet() async {
     var initial = makeInitialState()
     initial.renameBranchPrompt = RenameBranchFeature.State(
-      worktreeID: "\(repoID)/feature-old",
+      worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {
@@ -150,7 +150,7 @@ struct RepositoriesFeatureRenameBranchTests {
 
     await store.send(
       .sidebarItems(
-        .element(id: "\(repoID)/feature-old", action: .lifecycleChanged(.pending))
+        .element(id: WorktreeID("\(repoID)/feature-old"), action: .lifecycleChanged(.pending))
       )
     )
     #expect(store.state.renameBranchPrompt != nil)
@@ -160,31 +160,31 @@ struct RepositoriesFeatureRenameBranchTests {
     let store = TestStore(initialState: makeInitialState(isAttached: false)) {
       RepositoriesFeature()
     }
-    await store.send(.requestRenameBranch("\(repoID)/feature-old", repoID))
+    await store.send(.requestRenameBranch(WorktreeID("\(repoID)/feature-old"), repoID))
   }
 
   @Test func requestRenameBranchNoOpsForNonexistentRepository() async {
     let store = TestStore(initialState: makeInitialState()) {
       RepositoriesFeature()
     }
-    await store.send(.requestRenameBranch("\(repoID)/feature-old", "/does/not/exist"))
+    await store.send(.requestRenameBranch(WorktreeID("\(repoID)/feature-old"), "/does/not/exist"))
   }
 
   @Test func requestRenameBranchNoOpsWhenRowIsNotIdle() async {
     var initial = makeInitialState()
-    initial.sidebarItems[id: "\(repoID)/feature-old"]?.lifecycle = .archiving
+    initial.sidebarItems[id: WorktreeID("\(repoID)/feature-old")]?.lifecycle = .archiving
     let store = TestStore(initialState: initial) {
       RepositoriesFeature()
     }
-    await store.send(.requestRenameBranch("\(repoID)/feature-old", repoID))
+    await store.send(.requestRenameBranch(WorktreeID("\(repoID)/feature-old"), repoID))
   }
 
   @Test func lifecycleFlipClosesRenameSheet() async {
     var initial = makeInitialState()
     initial.renameBranchPrompt = RenameBranchFeature.State(
-      worktreeID: "\(repoID)/feature-old",
+      worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {
@@ -194,7 +194,7 @@ struct RepositoriesFeatureRenameBranchTests {
 
     await store.send(
       .sidebarItems(
-        .element(id: "\(repoID)/feature-old", action: .lifecycleChanged(.archiving))
+        .element(id: WorktreeID("\(repoID)/feature-old"), action: .lifecycleChanged(.archiving))
       )
     ) {
       $0.renameBranchPrompt = nil
@@ -204,9 +204,9 @@ struct RepositoriesFeatureRenameBranchTests {
   @Test func cancelDelegateClearsPresentedState() async {
     var initial = makeInitialState()
     initial.renameBranchPrompt = RenameBranchFeature.State(
-      worktreeID: "\(repoID)/feature-old",
+      worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {

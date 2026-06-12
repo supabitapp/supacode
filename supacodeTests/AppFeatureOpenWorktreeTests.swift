@@ -171,7 +171,7 @@ struct AppFeatureOpenWorktreeTests {
     let repositoryRootURL = URL(fileURLWithPath: "/tmp/repo-\(UUID().uuidString)")
     let worktreeURL = repositoryRootURL.appending(path: "wt-1")
     return Worktree(
-      id: worktreeURL.path(percentEncoded: false),
+      id: WorktreeID(worktreeURL.path(percentEncoded: false)),
       name: "wt-1",
       detail: "detail",
       workingDirectory: worktreeURL,
@@ -181,7 +181,7 @@ struct AppFeatureOpenWorktreeTests {
 
   private func makeRepositoriesState(worktree: Worktree) -> RepositoriesFeature.State {
     let repository = Repository(
-      id: worktree.repositoryRootURL.path(percentEncoded: false),
+      id: RepositoryID(worktree.repositoryRootURL.path(percentEncoded: false)),
       rootURL: worktree.repositoryRootURL,
       name: "repo",
       worktrees: [worktree]

@@ -7,8 +7,8 @@ import Testing
 
 @MainActor
 struct SidebarStateTests {
-  private let repoA = "/tmp/repo-a"
-  private let repoB = "/tmp/repo-b"
+  private let repoA: Repository.ID = "/tmp/repo-a"
+  private let repoB: Repository.ID = "/tmp/repo-b"
 
   // MARK: - move
 

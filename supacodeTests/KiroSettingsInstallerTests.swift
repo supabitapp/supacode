@@ -14,9 +14,9 @@ struct KiroSettingsInstallerTests {
 
   private func makeInstaller(
     homeURL: URL,
-    versionOutput: String = "kiro 1.0.0",
+    versionOutput: String = "kiro-cli 2.0.0",
     versionStatus: Int32 = 0,
-    versionError: Error? = nil
+    versionError: Error? = nil,
   ) -> KiroSettingsInstaller {
     KiroSettingsInstaller(
       homeDirectoryURL: homeURL,
@@ -168,8 +168,8 @@ struct KiroSettingsInstallerTests {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
-    let installer = makeInstaller(homeURL: homeURL, versionOutput: "kiro 2.0.0")
-    await #expect(throws: KiroSettingsInstallerError.unsupportedKiroVersion("2.0.0")) {
+    let installer = makeInstaller(homeURL: homeURL, versionOutput: "kiro-cli 3.0.0")
+    await #expect(throws: KiroSettingsInstallerError.unsupportedKiroVersion("3.0.0")) {
       try await installer.installAllHooks()
     }
   }
@@ -206,9 +206,9 @@ struct KiroSettingsInstallerTests {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
-    let installer = makeInstaller(homeURL: homeURL, versionOutput: "kiro 10.0.0")
+    let installer = makeInstaller(homeURL: homeURL, versionOutput: "kiro-cli 20.0.0")
     await #expect(
-      throws: KiroSettingsInstallerError.unsupportedKiroVersion("10.0.0")
+      throws: KiroSettingsInstallerError.unsupportedKiroVersion("20.0.0")
     ) {
       try await installer.installAllHooks()
     }
@@ -219,14 +219,14 @@ struct KiroSettingsInstallerTests {
     defer { try? fileManager.removeItem(at: homeURL) }
 
     // Login shells can print their own banners to stderr; parsing must prefer
-    // stdout so a stderr "Python 3.11" banner does not reject valid Kiro 1.x.
+    // stdout so a stderr "Python 3.11" banner does not reject valid Kiro 2.x.
     let installer = KiroSettingsInstaller(
       homeDirectoryURL: homeURL,
       fileManager: fileManager,
       runKiroVersionCommand: {
         .init(
           status: 0,
-          standardOutput: "kiro 1.2.3\n",
+          standardOutput: "kiro-cli 2.5.0\n",
           standardError: "Python 3.11.0 (banner)",
         )
       },
@@ -256,6 +256,7 @@ struct KiroSettingsInstallerTests {
   }
 
   @Test func extractVersionHandlesCommonFormats() {
+    #expect(KiroSettingsInstaller.extractVersion(from: "kiro-cli 2.5.0") == "2.5.0")
     #expect(KiroSettingsInstaller.extractVersion(from: "kiro 1.2.3") == "1.2.3")
     #expect(KiroSettingsInstaller.extractVersion(from: "Kiro CLI v1.0.0 (build abcd)") == "1.0.0")
     #expect(KiroSettingsInstaller.extractVersion(from: "1.4") == "1.4")

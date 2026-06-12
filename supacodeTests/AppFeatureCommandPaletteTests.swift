@@ -493,7 +493,7 @@ struct AppFeatureCommandPaletteTests {
 
 private func makeWorktree(id: String, name: String, repoRoot: String = "/tmp/repo") -> Worktree {
   Worktree(
-    id: id,
+    id: WorktreeID(id),
     name: name,
     detail: "detail",
     workingDirectory: URL(fileURLWithPath: id),
@@ -503,7 +503,7 @@ private func makeWorktree(id: String, name: String, repoRoot: String = "/tmp/rep
 
 private func makeRepository(id: String, worktrees: [Worktree]) -> Repository {
   Repository(
-    id: id,
+    id: RepositoryID(id),
     rootURL: URL(fileURLWithPath: id),
     name: "repo",
     worktrees: IdentifiedArray(uniqueElements: worktrees)

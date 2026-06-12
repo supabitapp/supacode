@@ -84,8 +84,8 @@ struct WindowTitleTests {
 
   @Test func computeFailedRepositoryUsesDirectoryName() {
     var state = RepositoriesFeature.State()
-    let id = "/tmp/missing-repo"
-    state.repositoryRoots = [URL(fileURLWithPath: id)]
+    let id: Repository.ID = "/tmp/missing-repo"
+    state.repositoryRoots = [URL(fileURLWithPath: id.rawValue)]
     state.loadFailuresByID = [id: "Not found"]
     state.selection = .failedRepository(id)
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
@@ -94,8 +94,8 @@ struct WindowTitleTests {
 
   @Test func computeFailedRepositoryPrefersCustomTitle() {
     var state = RepositoriesFeature.State()
-    let id = "/tmp/missing-repo"
-    state.repositoryRoots = [URL(fileURLWithPath: id)]
+    let id: Repository.ID = "/tmp/missing-repo"
+    state.repositoryRoots = [URL(fileURLWithPath: id.rawValue)]
     state.loadFailuresByID = [id: "Not found"]
     state.selection = .failedRepository(id)
     state.$sidebar.withLock { sidebar in
@@ -112,14 +112,14 @@ struct WindowTitleTests {
   private func makeState(repoName: String, customTitle: String?) -> RepositoriesFeature.State {
     let rootURL = URL(fileURLWithPath: "/tmp/\(repoName)")
     let worktree = Worktree(
-      id: "/tmp/\(repoName)/main",
+      id: WorktreeID("/tmp/\(repoName)/main"),
       name: "main",
       detail: "",
       workingDirectory: URL(fileURLWithPath: "/tmp/\(repoName)/main"),
       repositoryRootURL: rootURL
     )
     let repository = Repository(
-      id: rootURL.path(percentEncoded: false),
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
       rootURL: rootURL,
       name: repoName,
       worktrees: IdentifiedArray(uniqueElements: [worktree])

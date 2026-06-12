@@ -173,9 +173,9 @@ struct GitClientWorktreeDiscoveryTests {
     let worktrees = try await client.worktrees(for: repoURL)
     let byID = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.id, $0) })
 
-    #expect(byID[repoPath]?.isMissing == false)
-    #expect(byID[livePath]?.isMissing == false)
-    #expect(byID[missingPath]?.isMissing == true)
+    #expect(byID[WorktreeID(repoPath)]?.isMissing == false)
+    #expect(byID[WorktreeID(livePath)]?.isMissing == false)
+    #expect(byID[WorktreeID(missingPath)]?.isMissing == true)
   }
 
   @Test func repoRootFallsBackToLoginShellWhenDirectExecutionCannotResolveGit() async throws {

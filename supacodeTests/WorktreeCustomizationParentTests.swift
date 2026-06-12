@@ -10,30 +10,30 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct WorktreeCustomizationParentTests {
-  private let repoID = "/tmp/customize-wt-repo"
-  private let worktreeID = "/tmp/customize-wt-repo/feature-x"
+  private let repoID: RepositoryID = "/tmp/customize-wt-repo"
+  private let worktreeID: WorktreeID = "/tmp/customize-wt-repo/feature-x"
 
   private func makeInitialState(
     isGitRepository: Bool = true,
     seedSidebarBucket: Bool = true,
   ) -> RepositoriesFeature.State {
     let mainWorktree = Worktree(
-      id: "\(repoID)/main",
+      id: WorktreeID("\(repoID)/main"),
       name: "main",
       detail: "detail",
-      workingDirectory: URL(fileURLWithPath: repoID),
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      workingDirectory: URL(fileURLWithPath: repoID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
     )
     let featureWorktree = Worktree(
       id: worktreeID,
       name: "feature/x",
       detail: "detail",
-      workingDirectory: URL(fileURLWithPath: worktreeID),
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
     )
     let repository = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "customize-wt-repo",
       worktrees: IdentifiedArray(uniqueElements: [mainWorktree, featureWorktree]),
       isGitRepository: isGitRepository,
@@ -121,7 +121,7 @@ struct WorktreeCustomizationParentTests {
       RepositoriesFeature()
     }
 
-    await store.send(.requestCustomizeWorktree("\(repoID)/main", repoID))
+    await store.send(.requestCustomizeWorktree(WorktreeID("\(repoID)/main"), repoID))
     #expect(store.state.worktreeCustomization == nil)
   }
 
