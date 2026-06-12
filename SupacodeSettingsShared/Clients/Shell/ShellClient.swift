@@ -184,6 +184,21 @@ nonisolated private func runProcessStream(
       let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
       do {
         try process.run()
+        // Terminate the child only when the consuming task is cancelled (e.g. a
+        // remote load probe timing out); on normal completion the process already
+        // exited, so signalling its pid would risk a reused pid. Without this the
+        // `waitUntilExit()` below blocks its thread forever on a stalled ssh
+        // connection and no timeout can fire. SIGTERM first, then SIGKILL after a
+        // short grace so an ssh that ignores SIGTERM can't keep the task hung.
+        let pid = process.processIdentifier
+        continuation.onTermination = { @Sendable termination in
+          guard case .cancelled = termination, pid > 0 else { return }
+          kill(pid, SIGTERM)
+          Task.detached {
+            try? await Task.sleep(for: .seconds(2))
+            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+          }
+        }
         let stdoutTask = Task.detached {
           for await line in lineStream(from: outputHandle) {
             await outputAccumulator.append(line, source: .stdout)
