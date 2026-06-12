@@ -2,29 +2,74 @@ import Foundation
 import IdentifiedCollections
 import SupacodeSettingsShared
 
-struct Repository: Identifiable, Hashable, Sendable {
-  let id: String
-  let rootURL: URL
+nonisolated struct Repository: Identifiable, Hashable, Sendable {
+  /// Where the repository lives (local URL or remote host + path). The single
+  /// source of truth for local-vs-remote: `id`, `host`, `rootURL`, and the
+  /// FileManager-safe `localRootURL` all derive from it.
+  let location: RepositoryLocation
+  /// Git repo vs plain directory. Flips freely on reload when the root is
+  /// (un)initialized as a git repo; persistence is unchanged.
+  let kind: RepositoryKind
   let name: String
   let worktrees: IdentifiedArrayOf<Worktree>
-  // Runtime classification — `false` means the rootURL is a plain
-  // directory (no `.git` / `.bare`) and the repository is treated as
-  // a non-git folder. Persistence is unchanged; this flips freely on
-  // reload when the directory is (un)initialized as a git repo.
-  let isGitRepository: Bool
 
+  /// Branded id derived from the location (local: absolute path; remote:
+  /// `remote://<user@host:port><path>`). Stored so legacy/test call sites can
+  /// pass it explicitly, but production construction always derives it.
+  let id: RepositoryID
+
+  /// SSH host this repository lives on, or `nil` for a local repository.
+  var host: RemoteHost? { location.host }
+
+  var isGitRepository: Bool { kind == .git }
+
+  /// Display / settings-key URL. For a remote repo this is a synthetic
+  /// `file://` over the remote path; never hand it to FileManager.
+  var rootURL: URL { location.displayURL }
+
+  /// The on-disk URL for a local repository, `nil` for a remote one. Use this
+  /// for any FileManager work so a remote path can't be touched by accident.
+  var localRootURL: URL? { location.localRootURL }
+
+  /// Designated initializer: id is derived from the location.
   init(
-    id: String,
+    location: RepositoryLocation,
+    kind: RepositoryKind,
+    name: String,
+    worktrees: IdentifiedArrayOf<Worktree>
+  ) {
+    self.location = location
+    self.kind = kind
+    self.name = name
+    self.worktrees = worktrees
+    self.id = location.id
+  }
+
+  /// Back-compat initializer: builds the location from `rootURL` + `host`.
+  /// Kept so existing call sites (and tests) compile while the model migrates.
+  init(
+    id: RepositoryID,
     rootURL: URL,
     name: String,
     worktrees: IdentifiedArrayOf<Worktree>,
-    isGitRepository: Bool = true
+    isGitRepository: Bool = true,
+    host: RemoteHost? = nil
   ) {
-    self.id = id
-    self.rootURL = rootURL
+    if let host {
+      self.location = .remote(host, path: rootURL.path(percentEncoded: false))
+    } else {
+      self.location = .local(rootURL)
+    }
+    self.kind = isGitRepository ? .git : .folder
     self.name = name
     self.worktrees = worktrees
-    self.isGitRepository = isGitRepository
+    self.id = id
+  }
+
+  /// Copy preserving `location` and `kind`, swapping only the worktree set, so a
+  /// remote repo's host and kind survive an in-state worktree mutation.
+  func withWorktrees(_ worktrees: IdentifiedArrayOf<Worktree>) -> Repository {
+    Repository(location: location, kind: kind, name: name, worktrees: worktrees)
   }
 
   var initials: String {
@@ -72,37 +117,23 @@ struct Repository: Identifiable, Hashable, Sendable {
       && fileManager.fileExists(atPath: refsPath)
   }
 
-  /// Prefix on folder-synthetic worktree ids. Single source of truth
-  /// so reducer call sites that need to recover the repo id from a
-  /// folder worktree id (see `repositoryID(fromFolderWorktreeID:)`)
-  /// stay in sync with the constructor below.
-  nonisolated static let folderWorktreeIDPrefix = "folder:"
-
-  /// Stable synthetic worktree id for folder repositories. Keeps the
-  /// existing `SidebarSelection.worktree(id)` + terminal-manager
-  /// plumbing unchanged — folders reuse the same selection path.
+  /// Stable synthetic worktree id for a local folder repository, derived from
+  /// the owning repo id so it round-trips through `WorktreeID.folderRepositoryID`.
   nonisolated static func folderWorktreeID(for rootURL: URL) -> Worktree.ID {
-    folderWorktreeIDPrefix + rootURL.standardizedFileURL.path(percentEncoded: false)
+    WorktreeID.folder(repositoryID: RepositoryLocation.local(rootURL.standardizedFileURL).id)
   }
 
-  /// Round-trip for `folderWorktreeID(for:)`: recover the owning
-  /// `Repository.ID` (the standardized path) from a folder-synthetic
-  /// worktree id. Returns `nil` for non-folder ids so callers can
-  /// distinguish "this isn't a folder worktree" from "this is a
-  /// folder worktree without a known repo."
+  /// Recover the owning `Repository.ID` from a folder-synthetic worktree id.
+  /// `nil` for non-folder ids.
   nonisolated static func repositoryID(
     fromFolderWorktreeID worktreeID: Worktree.ID
   ) -> Repository.ID? {
-    guard worktreeID.hasPrefix(folderWorktreeIDPrefix) else { return nil }
-    return String(worktreeID.dropFirst(folderWorktreeIDPrefix.count))
+    worktreeID.folderRepositoryID
   }
 
-  /// Whether `worktreeID` is a folder-synthetic worktree id (as
-  /// produced by `folderWorktreeID(for:)`). Cheaper than calling
-  /// `repositoryID(fromFolderWorktreeID:)` when the caller only
-  /// wants the discrimination.
+  /// Whether `worktreeID` is a folder-synthetic worktree id.
   nonisolated static func isFolderWorktreeID(_ worktreeID: Worktree.ID) -> Bool {
-    worktreeID.hasPrefix(folderWorktreeIDPrefix)
+    worktreeID.isFolder
   }
 
   /// Shared trim + fallback for the sidebar header and the highlight-row tag.
