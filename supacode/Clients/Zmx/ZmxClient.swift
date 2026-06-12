@@ -23,9 +23,6 @@ struct ZmxClient: Sendable {
   /// Use for kill paths against sessions persisted from earlier launches: probe
   /// bypass only means "don't wrap a new session", not "don't kill an old one".
   var isBundled: @Sendable () -> Bool
-  /// Wrap a surface command in `zmx attach <session-id>`. Pure; no side effects.
-  /// Returns nil when zmx is unbundled, so callers fall through to the raw `command`.
-  var wrapCommand: @Sendable (_ sessionID: String, _ userCommand: String?) -> String?
   /// Tear down a session. No-op on missing. Bounded by a 5-second timeout so a
   /// stuck daemon can't hold the close path indefinitely.
   var killSession: @Sendable (_ sessionID: String) async -> Void
@@ -192,14 +189,6 @@ extension ZmxClient {
     return ZmxClient(
       executableURL: resolveExecutable,
       isBundled: { bundledExecutable() != nil },
-      wrapCommand: { sessionID, userCommand in
-        guard let executable = resolveExecutable() else { return nil }
-        return ZmxAttach.buildCommand(
-          executablePath: executable.path(percentEncoded: false),
-          sessionID: sessionID,
-          userCommand: userCommand
-        )
-      },
       killSession: { sessionID in
         _ = await runZmx(["kill", sessionID])
       },
@@ -215,7 +204,6 @@ extension ZmxClient {
   nonisolated static let noop = ZmxClient(
     executableURL: { nil },
     isBundled: { false },
-    wrapCommand: { _, _ in nil },
     killSession: { _ in },
     listSessionsWithClients: { [] }
   )
@@ -349,8 +337,86 @@ nonisolated enum ZmxAttach {
     return "\(attach) /bin/sh -c \(shellQuote(command))"
   }
 
+  /// Argv that launches an interactive surface under zmx, passed to Ghostty as a
+  /// `command-wrapper` (prepended to the resolved shell argv). Each element is a
+  /// separate arg, so no shell quoting is needed even when the path has spaces.
+  static func buildWrapperArgv(executablePath: String, sessionID: String) -> [String] {
+    [executablePath, "attach", sessionID]
+  }
+
+  /// Resolves how a surface launches under zmx, given the budget-gated executable
+  /// path (nil when zmx is unbundled or over budget). Interactive surfaces
+  /// (`command == nil`) keep a nil command and get an argv `command-wrapper`, so
+  /// Ghostty resolves + integrates the real shell and zmx wraps the result.
+  /// Explicit commands (scripts) get a `/bin/sh -c` wrapped command string and no
+  /// wrapper. A nil `executablePath` falls through to the raw command with no zmx.
+  static func resolveLaunch(
+    executablePath: String?,
+    sessionID: String,
+    command: String?
+  ) -> (command: String?, commandWrapper: [String]) {
+    // A blank command is "no command" (interactive); normalize so an empty
+    // string can't slip into the script path and launch a bare shell uninteg.
+    let command = command.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+    guard let executablePath else { return (command, []) }
+    if command == nil {
+      return (nil, buildWrapperArgv(executablePath: executablePath, sessionID: sessionID))
+    }
+    return (buildCommand(executablePath: executablePath, sessionID: sessionID, userCommand: command), [])
+  }
+
   static func shellQuote(_ value: String) -> String {
     let escaped = value.replacing("'", with: "'\\''")
     return "'\(escaped)'"
   }
+
+  /// Remote surface command: a *local* zmx session whose child process is the
+  /// SSH connection to `host`. Session persistence (detach / reattach) lives on
+  /// the client; the remote just runs a plain login shell, so nothing has to be
+  /// installed on the host. `localZmxExecutablePath` is the budget-gated bundle
+  /// path (nil when zmx is unbundled or over budget), in which case the surface
+  /// is the bare ssh line with no persistence. The ssh line is single-quoted by
+  /// `buildCommand` for the local zmx-wrapping `/bin/sh -c`; its own inner
+  /// quoting (from `SSHCommand.commandLine`) survives that outer level.
+  static func buildRemoteCommand(
+    host: RemoteHost,
+    localZmxExecutablePath: String?,
+    sessionID: String,
+    userCommand: String?,
+    surfaceID: UUID
+  ) -> String {
+    let sshLine = SSHCommand.commandLine(
+      host: host,
+      remoteCommand: remoteShellCommand(userCommand: userCommand, surfaceID: surfaceID)
+    )
+    guard let localZmxExecutablePath else { return sshLine }
+    return buildCommand(executablePath: localZmxExecutablePath, sessionID: sessionID, userCommand: sshLine)
+  }
+
+  /// The command the *remote* shell runs over SSH: exports the surface id (so the
+  /// agent hook's in-band presence OSC is gated to a Supacode surface, see
+  /// `AgentPresenceOSC.emitShell`), prints the beta banner once at connection,
+  /// then runs the user command, or a login shell when there is none. No zmx on
+  /// the remote: persistence is the local zmx wrapping the whole ssh line. The
+  /// awaiting-input signal rides the terminal stream (OSC 3008), not a socket, so
+  /// no reverse forward / remote `SUPACODE_SOCKET_PATH` is needed (the pid suffix
+  /// is dropped over SSH).
+  static func remoteShellCommand(
+    userCommand: String?,
+    surfaceID: UUID
+  ) -> String {
+    let prelude = "export SUPACODE_SURFACE_ID=\(shellQuote(surfaceID.uuidString)); " + betaBanner
+    guard let command = userCommand?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty else {
+      return prelude + "exec \"$SHELL\" -l"
+    }
+    return prelude + command
+  }
+
+  /// Dim banner printed at the top of a remote surface on connection, matching
+  /// the blocking-script read-only banner style. Remote surfaces are in beta and
+  /// some local-only features (Unix-socket agent hooks, worktree HEAD watching)
+  /// are unavailable, so the user gets an up-front heads-up. The session persists
+  /// across reattach, so this only prints on the first connect.
+  static let betaBanner =
+    #"printf '\033[2m── Remote Supacode surfaces are in beta and may have reduced functionality. ──\033[0m\r\n'; "#
 }

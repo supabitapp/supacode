@@ -54,64 +54,78 @@ struct GitClientDependency: Sendable {
 }
 
 extension GitClientDependency: DependencyKey {
-  static let liveValue = GitClientDependency(
-    repoRoot: { try await GitClient().repoRoot(for: $0) },
-    isGitRepository: { Repository.isGitRepository(at: $0) },
-    rootDirectoryExists: { url in
-      var isDirectory: ObjCBool = false
-      let exists = FileManager.default.fileExists(
-        atPath: url.standardizedFileURL.path(percentEncoded: false),
-        isDirectory: &isDirectory
-      )
-      return exists && isDirectory.boolValue
-    },
-    worktrees: { try await GitClient().worktrees(for: $0) },
-    reconcileSupacodeLocks: { await GitClient().reconcileSupacodeLocks(for: $0) },
-    localBranchNames: { try await GitClient().localBranchNames(for: $0) },
-    renameBranch: { oldName, newName, repoRoot in
-      try await GitClient().renameBranch(from: oldName, to: newName, for: repoRoot)
-    },
-    isValidBranchName: { branchName, repoRoot in
-      await GitClient().isValidBranchName(branchName, for: repoRoot)
-    },
-    branchInventory: { try await GitClient().branchInventory(for: $0, remoteNames: $1) },
-    defaultRemoteBranchRef: { try await GitClient().defaultRemoteBranchRef(for: $0) },
-    automaticWorktreeBaseRef: { await GitClient().automaticWorktreeBaseRef(for: $0) },
-    ignoredFileCount: { try await GitClient().ignoredFileCount(for: $0) },
-    untrackedFileCount: { try await GitClient().untrackedFileCount(for: $0) },
-    createWorktree: { name, repoRoot, baseDirectory, copyIgnored, copyUntracked, baseRef in
-      try await GitClient().createWorktree(
-        named: name,
-        in: repoRoot,
-        baseDirectory: baseDirectory,
-        copyFiles: (ignored: copyIgnored, untracked: copyUntracked),
-        baseRef: baseRef
-      )
-    },
-    createWorktreeStream: { name, repoRoot, baseDirectory, copyIgnored, copyUntracked, baseRef, directoryOverride in
-      GitClient().createWorktreeStream(
-        named: name,
-        in: repoRoot,
-        baseDirectory: baseDirectory,
-        copyFiles: (ignored: copyIgnored, untracked: copyUntracked),
-        baseRef: baseRef,
-        directoryOverride: directoryOverride
-      )
-    },
-    removeWorktree: { worktree, deleteBranch in
-      try await GitClient().removeWorktree(worktree, deleteBranch: deleteBranch)
-    },
-    isBareRepository: { repoRoot in
-      try await GitClient().isBareRepository(for: repoRoot)
-    },
-    branchName: { await GitClient().branchName(for: $0) },
-    lineChanges: { await GitClient().lineChanges(at: $0) },
-    remoteNames: { try await GitClient().remoteNames(for: $0) },
-    fetchRemote: { remote, repoRoot in try await GitClient().fetchRemote(remote, for: repoRoot) },
-    remoteInfo: { repositoryRoot in
-      await GitClient().remoteInfo(for: repositoryRoot)
-    }
-  )
+  static let liveValue = make(shell: .live)
+
+  /// Remote flavor: every `git` / `wt` shell-out runs on `host` over SSH.
+  /// `isGitRepository` / `rootDirectoryExists` still probe the *local*
+  /// filesystem, which is unreachable for remote paths, so these stay local-only
+  /// probes the remote load path never relies on.
+  static func ssh(host: RemoteHost) -> GitClientDependency {
+    make(shell: .ssh(host: host))
+  }
+
+  /// Single source of truth for the dependency's closures, parameterized on the
+  /// transport so the local and SSH flavors can't drift.
+  private static func make(shell: ShellClient) -> GitClientDependency {
+    GitClientDependency(
+      repoRoot: { try await GitClient(shell: shell).repoRoot(for: $0) },
+      isGitRepository: { Repository.isGitRepository(at: $0) },
+      rootDirectoryExists: { url in
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(
+          atPath: url.standardizedFileURL.path(percentEncoded: false),
+          isDirectory: &isDirectory
+        )
+        return exists && isDirectory.boolValue
+      },
+      worktrees: { try await GitClient(shell: shell).worktrees(for: $0) },
+      reconcileSupacodeLocks: { await GitClient(shell: shell).reconcileSupacodeLocks(for: $0) },
+      localBranchNames: { try await GitClient(shell: shell).localBranchNames(for: $0) },
+      renameBranch: { oldName, newName, repoRoot in
+        try await GitClient(shell: shell).renameBranch(from: oldName, to: newName, for: repoRoot)
+      },
+      isValidBranchName: { branchName, repoRoot in
+        await GitClient(shell: shell).isValidBranchName(branchName, for: repoRoot)
+      },
+      branchInventory: { try await GitClient(shell: shell).branchInventory(for: $0, remoteNames: $1) },
+      defaultRemoteBranchRef: { try await GitClient(shell: shell).defaultRemoteBranchRef(for: $0) },
+      automaticWorktreeBaseRef: { await GitClient(shell: shell).automaticWorktreeBaseRef(for: $0) },
+      ignoredFileCount: { try await GitClient(shell: shell).ignoredFileCount(for: $0) },
+      untrackedFileCount: { try await GitClient(shell: shell).untrackedFileCount(for: $0) },
+      createWorktree: { name, repoRoot, baseDirectory, copyIgnored, copyUntracked, baseRef in
+        try await GitClient(shell: shell).createWorktree(
+          named: name,
+          in: repoRoot,
+          baseDirectory: baseDirectory,
+          copyFiles: (ignored: copyIgnored, untracked: copyUntracked),
+          baseRef: baseRef
+        )
+      },
+      createWorktreeStream: { name, repoRoot, baseDirectory, copyIgnored, copyUntracked, baseRef, directoryOverride in
+        GitClient(shell: shell).createWorktreeStream(
+          named: name,
+          in: repoRoot,
+          baseDirectory: baseDirectory,
+          copyFiles: (ignored: copyIgnored, untracked: copyUntracked),
+          baseRef: baseRef,
+          directoryOverride: directoryOverride
+        )
+      },
+      removeWorktree: { worktree, deleteBranch in
+        try await GitClient(shell: shell).removeWorktree(worktree, deleteBranch: deleteBranch)
+      },
+      isBareRepository: { repoRoot in
+        try await GitClient(shell: shell).isBareRepository(for: repoRoot)
+      },
+      branchName: { await GitClient(shell: shell).symbolicHeadBranch(at: $0) },
+      lineChanges: { await GitClient(shell: shell).lineChanges(at: $0) },
+      remoteNames: { try await GitClient(shell: shell).remoteNames(for: $0) },
+      fetchRemote: { remote, repoRoot in try await GitClient(shell: shell).fetchRemote(remote, for: repoRoot) },
+      remoteInfo: { repositoryRoot in
+        await GitClient(shell: shell).remoteInfo(for: repositoryRoot)
+      }
+    )
+  }
   // Tests default to "git repository" classification so existing
   // fixtures that mock `gitClient.worktrees` without creating real
   // `.git` directories on disk keep exercising the git code path.

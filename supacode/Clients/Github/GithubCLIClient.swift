@@ -8,7 +8,7 @@ struct GithubAuthStatus: Equatable, Sendable {
   let host: String
 }
 
-private struct GithubAuthStatusResponse: Sendable {
+struct GithubAuthStatusResponse: Sendable {
   let hosts: [String: [GithubAuthAccount]]
 
   struct GithubAuthAccount: Sendable {
@@ -38,6 +38,148 @@ extension GithubAuthStatusResponse.GithubAuthAccount: Decodable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.active = try container.decode(Bool.self, forKey: .active)
     self.login = try container.decode(String.self, forKey: .login)
+  }
+}
+
+// A login shell sources `.zprofile` / `.zlogin` before `gh` runs, so a banner or version-manager
+// line can prepend to captured stdout and corrupt the JSON.
+enum GithubCLIOutput {
+  // No JSON found at all: the likely cause is shell startup output polluting stdout.
+  nonisolated static let noPayloadMessage =
+    "Could not read GitHub CLI output. Your shell startup files may be printing extra output to stdout."
+
+  // Valid JSON was found but failed to decode: the likely cause is an incompatible gh version.
+  nonisolated static let undecodableMessage =
+    "Could not parse GitHub CLI output. The installed GitHub CLI version may be incompatible."
+
+  nonisolated private static let logger = SupaLogger("GithubCLI")
+
+  // Every balanced top-level JSON value ({...} or [...]) in `output`, in source order. An opener that
+  // never balances (a stray brace from shell noise) is skipped, so leading noise cannot swallow a real
+  // payload that follows.
+  nonisolated static func balancedJSONSpans(in output: String) -> [Substring] {
+    var spans: [Substring] = []
+    var searchStart = output.startIndex
+    while let start = output[searchStart...].firstIndex(where: { $0 == "{" || $0 == "[" }) {
+      let opener = output[start]
+      let closer: Character = opener == "{" ? "}" : "]"
+      var depth = 0
+      var inString = false
+      var escaped = false
+      var matchedEnd: String.Index?
+      var index = start
+      scan: while index < output.endIndex {
+        let character = output[index]
+        switch character {
+        case _ where inString && escaped:
+          escaped = false
+        case "\\" where inString:
+          escaped = true
+        case "\"" where inString:
+          inString = false
+        case _ where inString:
+          break
+        case "\"":
+          inString = true
+        case opener:
+          depth += 1
+        case closer:
+          depth -= 1
+          guard depth == 0 else { break }
+          matchedEnd = output.index(after: index)
+          break scan
+        default:
+          break
+        }
+        index = output.index(after: index)
+      }
+      guard let end = matchedEnd else {
+        // Unbalanced opener (stray bracket in noise): skip it and keep scanning.
+        searchStart = output.index(after: start)
+        continue
+      }
+      spans.append(output[start..<end])
+      searchStart = end
+    }
+    return spans
+  }
+
+  // Decodes the JSON payload from possibly noisy gh stdout, surfacing a readable error (with the raw
+  // output logged) instead of an opaque DecodingError. Throws when no payload is found at all.
+  nonisolated static func decode<T: Decodable>(
+    _ type: T.Type,
+    from output: String,
+    decoder: JSONDecoder = JSONDecoder()
+  ) throws -> T {
+    guard let value = try decodeIfPresent(T.self, from: output, decoder: decoder) else {
+      logDecodeFailure(output)
+      throw GithubCLIError.commandFailed(noPayloadMessage)
+    }
+    return value
+  }
+
+  // Returns nil when `output` carries no JSON payload at all (e.g. `gh run list` with no runs), and
+  // throws only when a payload is present but cannot be decoded. gh prints its JSON after any leading
+  // shell noise, so the last decodable span wins.
+  nonisolated static func decodeIfPresent<T: Decodable>(
+    _ type: T.Type,
+    from output: String,
+    decoder: JSONDecoder = JSONDecoder()
+  ) throws -> T? {
+    let spans = balancedJSONSpans(in: output)
+    guard !spans.isEmpty else {
+      return nil
+    }
+    var lastDecodingError: Error?
+    var sawValidJSON = false
+    for span in spans.reversed() {
+      let data = Data(span.utf8)
+      do {
+        return try decoder.decode(T.self, from: data)
+      } catch {
+        lastDecodingError = error
+        if (try? JSONSerialization.jsonObject(with: data)) != nil {
+          sawValidJSON = true
+        }
+      }
+    }
+    let detail = lastDecodingError.map { "\($0)" } ?? "unknown"
+    logger.error("Failed to decode GitHub CLI JSON output: \(snapshot(of: output)) error=\(detail)")
+    // Valid JSON that failed to decode points at gh schema drift; otherwise the brackets were noise.
+    throw GithubCLIError.commandFailed(sawValidJSON ? undecodableMessage : noPayloadMessage)
+  }
+
+  // Logs a length-capped snapshot of the offending output so the user can retrieve it from the log
+  // stream without flooding it with a large banner.
+  nonisolated static func logDecodeFailure(_ output: String) {
+    logger.error("Failed to read GitHub CLI JSON output: \(snapshot(of: output))")
+  }
+
+  // Caps the logged output so a large banner does not flood the log stream.
+  nonisolated private static func snapshot(of output: String) -> String {
+    let limit = 500
+    let prefix = output.prefix(limit)
+    return prefix.endIndex == output.endIndex ? String(prefix) : "\(prefix)… (truncated)"
+  }
+}
+
+enum GithubAuthStatusParsing {
+  // `hosts` is an unordered dictionary, so prefer github.com and otherwise sort the keys: the result
+  // is deterministic even when more than one host has an active account.
+  nonisolated static func activeAccount(
+    in response: GithubAuthStatusResponse
+  ) -> (host: String, login: String)? {
+    let orderedHosts = response.hosts.keys.sorted { lhs, rhs in
+      if lhs == "github.com" { return true }
+      if rhs == "github.com" { return false }
+      return lhs < rhs
+    }
+    for host in orderedHosts {
+      if let active = response.hosts[host]?.first(where: { $0.active }) {
+        return (host, active.login)
+      }
+    }
+    return nil
   }
 }
 
@@ -193,10 +335,9 @@ nonisolated private func defaultBranchFetcher(
       arguments: ["repo", "view", "--json", "defaultBranchRef"],
       repoRoot: repoRoot
     )
-    let data = Data(output.utf8)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    let response = try decoder.decode(GithubRepoViewResponse.self, from: data)
+    let response = try GithubCLIOutput.decode(GithubRepoViewResponse.self, from: output, decoder: decoder)
     return response.defaultBranchRef.name
   }
 }
@@ -221,14 +362,11 @@ nonisolated private func latestRunFetcher(
       ],
       repoRoot: repoRoot
     )
-    if output.isEmpty {
-      return nil
-    }
-    let data = Data(output.utf8)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    let runs = try decoder.decode([GithubWorkflowRun].self, from: data)
-    return runs.first
+    // nil payload means no runs; a present-but-undecodable payload still throws.
+    let runs = try GithubCLIOutput.decodeIfPresent([GithubWorkflowRun].self, from: output, decoder: decoder)
+    return runs?.first
   }
 }
 
@@ -247,33 +385,36 @@ nonisolated private func resolveRemoteInfoFetcher(
   resolver: GithubCLIExecutableResolver
 ) -> @Sendable (URL) async -> GithubRemoteInfo? {
   { repoRoot in
+    let output: String
     do {
-      let output = try await runGh(
+      output = try await runGh(
         shell: shell,
         resolver: resolver,
         arguments: ["repo", "view", "--json", "owner,name,url"],
         repoRoot: repoRoot
       )
-      let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty else {
-        return nil
-      }
-      let response = try JSONDecoder().decode(
-        GithubRepoViewRemoteInfoResponse.self,
-        from: Data(trimmed.utf8)
-      )
-      let host = hostFromRepoViewURL(response.url) ?? "github.com"
-      guard !response.owner.login.isEmpty, !response.name.isEmpty else {
-        return nil
-      }
-      return GithubRemoteInfo(
-        host: host,
-        owner: response.owner.login,
-        repo: response.name
-      )
     } catch {
       return nil
     }
+    // nil contract: decodeIfPresent tolerates leading shell noise and logs a present-but-undecodable
+    // payload before throwing, which `try?` collapses back to nil.
+    guard
+      let response = try? GithubCLIOutput.decodeIfPresent(
+        GithubRepoViewRemoteInfoResponse.self,
+        from: output
+      )
+    else {
+      return nil
+    }
+    let host = hostFromRepoViewURL(response.url) ?? "github.com"
+    guard !response.owner.login.isEmpty, !response.name.isEmpty else {
+      return nil
+    }
+    return GithubRemoteInfo(
+      host: host,
+      owner: response.owner.login,
+      repo: response.name
+    )
   }
 }
 
@@ -460,14 +601,11 @@ nonisolated private func authStatusFetcher(
       arguments: ["auth", "status", "--json", "hosts"],
       repoRoot: nil
     )
-    let data = Data(output.utf8)
-    let response = try decodeAuthStatusResponse(from: data)
-    guard let (host, accounts) = response.hosts.first,
-      let activeAccount = accounts.first(where: { $0.active })
-    else {
+    let response = try GithubCLIOutput.decode(GithubAuthStatusResponse.self, from: output)
+    guard let active = GithubAuthStatusParsing.activeAccount(in: response) else {
       return nil
     }
-    return GithubAuthStatus(username: activeAccount.login, host: host)
+    return GithubAuthStatus(username: active.login, host: active.host)
   }
 }
 
@@ -617,10 +755,13 @@ nonisolated private func fetchPullRequestsChunk(
     return (chunkIndex, [:])
   }
 
-  let data = Data(result.output.utf8)
   let decoder = JSONDecoder()
   decoder.dateDecodingStrategy = .iso8601
-  let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+  let response = try GithubCLIOutput.decode(
+    GithubGraphQLPullRequestResponse.self,
+    from: result.output,
+    decoder: decoder
+  )
   let prsByBranch = response.pullRequestsByBranch(
     aliasMap: result.aliasMap,
     owner: request.owner,
@@ -791,8 +932,4 @@ nonisolated private func shouldRetryGhExecution(after error: Error) -> Bool {
     return true
   }
   return false
-}
-
-nonisolated private func decodeAuthStatusResponse(from data: Data) throws -> GithubAuthStatusResponse {
-  try JSONDecoder().decode(GithubAuthStatusResponse.self, from: data)
 }
