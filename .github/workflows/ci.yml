@@ -1,9 +1,6 @@
-name: inspect-dependencies
+name: ci
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
@@ -13,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  inspect-dependencies:
+  build:
     runs-on: macos-26
     permissions:
       contents: read
@@ -26,4 +23,9 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
+      - run: make lint
       - run: make inspect-dependencies
+      - run: make build-app
+        env:
+          XCODEBUILD_FLAGS: -showBuildTimingSummary
+      - run: make test

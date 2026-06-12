@@ -1,5 +1,5 @@
 name: Setup macOS build deps
-description: Install + cache mise tools and Ghostty build outputs
+description: Install + cache mise tools and ThirdParty build outputs (Ghostty, zmx)
 
 runs:
   using: composite
@@ -36,21 +36,35 @@ runs:
       run: |
         XCODE_VERSION="$(xcodebuild -version | tr '\n' '-' | sed 's/[^A-Za-z0-9._-]/_/g; s/-$//')"
         printf '%s\n' "XCODE_VERSION=$XCODE_VERSION" >> "$GITHUB_ENV"
-    - name: Ghostty cache key
+    - name: ThirdParty cache keys
       shell: bash
       run: |
         set -euo pipefail
-        GHOSTTY_SHA="$(git -C ThirdParty/ghostty rev-parse HEAD)"
-        printf '%s\n' "GHOSTTY_SHA=$GHOSTTY_SHA" >> "$GITHUB_ENV"
+        printf '%s\n' "GHOSTTY_SHA=$(git -C ThirdParty/ghostty rev-parse HEAD)" >> "$GITHUB_ENV"
+        printf '%s\n' "ZMX_SHA=$(git -C ThirdParty/zmx rev-parse HEAD)" >> "$GITHUB_ENV"
+    # Key on only the inputs that change the built artifact (submodule SHA, build
+    # script, zig version, patches) so unrelated action/project edits don't evict it.
     - name: Ghostty cache
       id: ghostty_cache
       uses: actions/cache@v5
       with:
         path: .build/ghostty
-        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-ghostty-v2-${{ env.GHOSTTY_SHA }}-${{ hashFiles('.github/actions/setup-macos/action.yml', 'Project.swift', 'scripts/build-ghostty.sh', 'mise.toml', '.gitmodules') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-ghostty-v3-${{ env.GHOSTTY_SHA }}-${{ hashFiles('scripts/build-ghostty.sh', 'mise.toml', '.gitmodules', 'patches/*.patch') }}
     - name: Build ghostty
       if: steps.ghostty_cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
         make build-ghostty-xcframework
+    - name: zmx cache
+      id: zmx_cache
+      uses: actions/cache@v5
+      with:
+        path: .build/zmx
+        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-zmx-v1-${{ env.ZMX_SHA }}-${{ hashFiles('scripts/build-zmx.sh', 'mise.toml', '.gitmodules') }}
+    - name: Build zmx
+      if: steps.zmx_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        make build-zmx

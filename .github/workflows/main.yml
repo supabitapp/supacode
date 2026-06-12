@@ -1,4 +1,4 @@
-name: Release Tip
+name: main
 
 on:
   push:
@@ -6,13 +6,55 @@ on:
 
   workflow_dispatch: {}
 
+# Never cancel in flight: this pipeline also cuts stable releases. Newer pushes queue.
 concurrency:
   group: ${{ github.workflow }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  # Warm the binary cache upstream so test and build consume it on the same commit.
+  warm:
+    runs-on: macos-26
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_HTTP_TIMEOUT: 120
+      MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+      - run: make warm-cache
+        env:
+          TUIST_CACHE_CONFIGURATION: ${{ matrix.configuration }}
+
+  test:
+    runs-on: macos-26
+    needs: [warm]
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_HTTP_TIMEOUT: 120
+      MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+      - run: make lint
+      - run: make inspect-dependencies
+      - run: make build-app
+        env:
+          XCODEBUILD_FLAGS: -showBuildTimingSummary
+      - run: make test
+
   check:
-    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     runs-on: ubuntu-latest
     outputs:
       should_skip: ${{ steps.check.outputs.should_skip }}
@@ -33,7 +75,7 @@ jobs:
 
   build:
     runs-on: macos-26
-    needs: [check]
+    needs: [check, warm]
     if: needs.check.outputs.should_skip != 'true'
     permissions:
       contents: read
@@ -55,7 +97,7 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
-      - name: Prepare tip overrides
+      - name: Prepare build overrides
         env:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
@@ -65,13 +107,8 @@ jobs:
           : "${SENTRY_DSN:?secret SENTRY_DSN is not set}"
           : "${POSTHOG_API_KEY:?secret POSTHOG_API_KEY is not set}"
           : "${POSTHOG_HOST:?secret POSTHOG_HOST is not set}"
-          BASE=$(awk -F' = ' '/^CURRENT_PROJECT_VERSION = [0-9]+$/{print $2; exit}' Configurations/Project.xcconfig)
-          OFFSET=${{ github.run_number }}
-          if [ "$OFFSET" -gt 999 ]; then
-            echo "::error::Tip run_number ($OFFSET) exceeds 999. Bump CURRENT_PROJECT_VERSION before the next tip release."
-            exit 1
-          fi
-          BUILD_NUMBER=$((BASE * 1000 + OFFSET))
+          # Epoch build number: monotonic, computed once here so the single binary reused by tip and stable carries one version.
+          BUILD_NUMBER=$(date +%s)
           mkdir -p build
           cat > build/ReleaseOverrides.xcconfig <<EOF
           CURRENT_PROJECT_VERSION = $BUILD_NUMBER
@@ -230,6 +267,39 @@ jobs:
             build/appcast.xml
             build/*.delta
 
+  # Gated on build so a stable release is only detected when the binary exists.
+  # The matching tag (pushed via --follow-tags) marks this exact commit as vX.Y.Z.
+  detect:
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+    outputs:
+      release_tag: ${{ steps.detect.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(awk -F' = ' '/^MARKETING_VERSION = /{gsub(/\r/,"",$2); print $2; exit}' Configurations/Project.xcconfig)
+          TAG="v$VERSION"
+          RELEASE_TAG=""
+          if [ "$(git rev-list -n 1 "$TAG" 2>/dev/null || true)" = "${{ github.sha }}" ]; then
+            # Idempotency: skip if this release was already published (re-run safety).
+            ASSET_COUNT=$(gh release view "$TAG" -R "${{ github.repository }}" --json assets --jq '.assets | length' 2>/dev/null || echo "0")
+            if [ "$ASSET_COUNT" -eq 0 ]; then
+              RELEASE_TAG="$TAG"
+            else
+              echo "$TAG already has $ASSET_COUNT assets, skipping stable publish"
+            fi
+          fi
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
   tag:
     runs-on: ubuntu-latest
     needs: [check, build]
@@ -265,10 +335,89 @@ jobs:
           SENTRY_PROJECT: supacode
         run: sentry-cli debug-files upload --include-sources dsyms
 
+  # Stable release: reuses the SAME notarized binaries build produced (no second
+  # archive or notarization) and publishes them with auto-generated notes.
+  publish-stable:
+    runs-on: macos-26
+    needs: [build, detect]
+    if: ${{ needs.detect.outputs.release_tag != '' }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+      RELEASE_REPO: ${{ github.repository }}
+      TAG: ${{ needs.detect.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: build-artifacts
+          path: build
+      - name: Drop the tip appcast/deltas from the shared artifact
+        run: rm -f build/appcast.xml build/*.delta
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          PREV=$(gh release list --exclude-drafts --exclude-pre-releases -R "$RELEASE_REPO" --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+          if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then
+            gh api "repos/$RELEASE_REPO/releases/generate-notes" -f tag_name="$TAG" -f previous_tag_name="$PREV" --jq '.body' > build/release-notes.md
+          else
+            gh api "repos/$RELEASE_REPO/releases/generate-notes" -f tag_name="$TAG" --jq '.body' > build/release-notes.md
+          fi
+      - name: Generate appcast with history and deltas
+        run: |
+          set -euo pipefail
+          MAX_DELTAS=10
+          NOTES_FILE=build/release-notes.md
+          STAGING=$(mktemp -d)
+          ARCHIVE=build/supacode.app.zip
+          ARCHIVE_BASE=$(basename "$ARCHIVE")
+          ARCHIVE_BASE="${ARCHIVE_BASE%.zip}"
+          cp "$ARCHIVE" "$STAGING/"
+          cp "$NOTES_FILE" "$STAGING/$ARCHIVE_BASE.md"
+
+          curl -fsSL "https://supacode.sh/download/latest/appcast.xml" -o "$STAGING/appcast.xml" || true
+
+          SEEN_VERSIONS=""
+          for i in $(seq 1 $MAX_DELTAS); do
+            PREV_TAG=$(gh release list --limit $i --exclude-drafts --exclude-pre-releases -R "$RELEASE_REPO" --json tagName --jq ".[$((i-1))].tagName" 2>/dev/null || true)
+            if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ]; then
+              gh release download "$PREV_TAG" -p "supacode.app.zip" -O "$STAGING/supacode-$PREV_TAG.app.zip" -R "$RELEASE_REPO" 2>/dev/null || true
+              if [ -f "$STAGING/supacode-$PREV_TAG.app.zip" ]; then
+                BUNDLE_VERSION=$(unzip -p "$STAGING/supacode-$PREV_TAG.app.zip" "supacode.app/Contents/Info.plist" 2>/dev/null | /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" /dev/stdin 2>/dev/null || echo "")
+                if [ -n "$BUNDLE_VERSION" ] && echo "$SEEN_VERSIONS" | grep -q "^$BUNDLE_VERSION$"; then
+                  rm -f "$STAGING/supacode-$PREV_TAG.app.zip"
+                else
+                  [ -n "$BUNDLE_VERSION" ] && SEEN_VERSIONS="$SEEN_VERSIONS$BUNDLE_VERSION"$'\n'
+                  gh release view "$PREV_TAG" -R "$RELEASE_REPO" --json body --jq '.body' > "$STAGING/supacode-$PREV_TAG.app.md" 2>/dev/null || true
+                fi
+              fi
+            fi
+          done
+
+          printf "%s" "$SPARKLE_PRIVATE_KEY" | tr -d '\r\n\t ' | ./bins/generate_appcast --download-url-prefix "https://supacode.sh/download/$TAG/" --full-release-notes-url "https://github.com/supabitapp/supacode/releases" --embed-release-notes --maximum-versions $MAX_DELTAS --maximum-deltas $MAX_DELTAS --delta-compression lzma --ed-key-file - "$STAGING"
+          cp "$STAGING/appcast.xml" build/appcast.xml
+          find "$STAGING" -name "*.delta" -exec cp {} build/ \; 2>/dev/null || true
+      - name: Create release and upload assets
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --title "$TAG" --notes-file build/release-notes.md --target "${{ github.sha }}" -R "$RELEASE_REPO" 2>/dev/null || \
+          gh release edit "$TAG" --target "${{ github.sha }}" -R "$RELEASE_REPO"
+          DELTA_FILES=$(find build -name "*.delta" -type f 2>/dev/null | tr '\n' ' ' || true)
+          gh release upload "$TAG" build/supacode.app.zip build/supacode.dmg build/appcast.xml $DELTA_FILES --clobber -R "$RELEASE_REPO"
+      - name: Verify download URLs
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://supacode.sh/download/$TAG/supacode.app.zip" -o /dev/null
+          curl -fsSL "https://supacode.sh/download/$TAG/supacode.dmg" -o /dev/null
+
+  # Ordered after publish-stable so the tip item merges into any freshly cut release. Tolerates a skip
+  # (non-release commits) but blocks on its failure, so the tip merge never runs against a half-published release.
   publish:
     runs-on: ubuntu-latest
-    needs: [check, build, tag]
-    if: needs.check.outputs.should_skip != 'true'
+    needs: [check, build, tag, publish-stable]
+    if: ${{ !cancelled() && needs.check.outputs.should_skip != 'true' && needs.build.result == 'success' && needs.tag.result == 'success' && (needs.publish-stable.result == 'success' || needs.publish-stable.result == 'skipped') }}
     permissions:
       contents: write
     steps:
