@@ -67,7 +67,7 @@ struct AppFeatureSettingsSelectionTests {
           id: repoID.rawValue,
           name: "proj",
           isGitRepository: true,
-          isRemote: true,
+          host: config.host,
           rootURL: URL(fileURLWithPath: "/home/me/proj")
         )
       ]

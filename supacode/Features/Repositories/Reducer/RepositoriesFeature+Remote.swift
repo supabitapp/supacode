@@ -89,7 +89,8 @@ extension RepositoriesFeature {
   /// the row spinning forever.
   nonisolated static func loadRemoteRepository(
     _ config: RemoteRepositoryConfig,
-    repoID: Repository.ID
+    repoID: Repository.ID,
+    shell: ShellClient? = nil
   ) async -> (repository: Repository, failure: LoadFailure?) {
     enum Outcome: Sendable {
       case resolved(Repository, LoadFailure?)
@@ -97,7 +98,7 @@ extension RepositoriesFeature {
     }
     let outcome = await withTaskGroup(of: Outcome.self) { group in
       group.addTask {
-        let loaded = await resolveRemoteRepository(config, repoID: repoID)
+        let loaded = await resolveRemoteRepository(config, repoID: repoID, shell: shell)
         return .resolved(loaded.repository, loaded.failure)
       }
       group.addTask {
@@ -127,15 +128,17 @@ extension RepositoriesFeature {
   /// `ServerAlive*`); any failure becomes a placeholder + `LoadFailure`.
   nonisolated private static func resolveRemoteRepository(
     _ config: RemoteRepositoryConfig,
-    repoID: Repository.ID
+    repoID: Repository.ID,
+    shell: ShellClient? = nil
   ) async -> (repository: Repository, failure: LoadFailure?) {
     let host = config.host
     let rootURL = URL(fileURLWithPath: config.normalizedRemotePath)
-    let shell = ShellClient.ssh(host: host, extraOptions: SSHCommand.backgroundProbeOptions)
+    let shell = shell ?? .ssh(host: host, extraOptions: SSHCommand.backgroundProbeOptions)
     let client = GitClient(shell: shell)
 
     // A populated worktree listing is the unambiguous git case; skip the extra
     // probe round trip for it (the common case).
+    var listingThrew = false
     do {
       let loaded = try await client.gitWorktrees(for: rootURL)
       if !loaded.isEmpty {
@@ -150,6 +153,7 @@ extension RepositoriesFeature {
         return (repository, nil)
       }
     } catch {
+      listingThrew = true
       repositoriesLogger.warning(
         "remote git worktree listing failed for \(host):\(rootURL.path(percentEncoded: false)): "
           + error.localizedDescription
@@ -161,7 +165,20 @@ extension RepositoriesFeature {
     switch await classifyRemotePath(config.normalizedRemotePath, shell: shell) {
     case .folder:
       return (remoteFolderRepository(config: config, repoID: repoID), nil)
+    case .git where listingThrew:
+      // It's a git repo, but the worktree listing threw: collapsing to a single
+      // synthetic main would silently hide the repo's other worktrees. Surface a
+      // failure and keep the placeholder so the next reload re-lists in full.
+      let failure = LoadFailure(
+        rootID: repoID,
+        message:
+          "Connected to \(host.sshDestination) but couldn't list worktrees for "
+          + "\(config.normalizedRemotePath). Supacode will retry."
+      )
+      return (remotePlaceholderRepository(config: config, repoID: repoID), failure)
     case .git:
+      // Listing succeeded but was empty: a single synthetic main is the best
+      // representation of a git repo with nothing else to show.
       let repository = Repository(
         id: repoID,
         rootURL: rootURL,
@@ -171,8 +188,18 @@ extension RepositoriesFeature {
         host: host
       )
       return (repository, nil)
+    case .missing:
+      // Host answered, but the configured path is gone: report the path (not a
+      // misleading "can't reach the host") and keep the placeholder.
+      let failure = LoadFailure(
+        rootID: repoID,
+        message:
+          "\(config.normalizedRemotePath) was not found on \(host.sshDestination). "
+          + "The repository will reappear when the path exists."
+      )
+      return (remotePlaceholderRepository(config: config, repoID: repoID), failure)
     case .unknown:
-      // Unreachable host / missing path: keep an empty placeholder (so the
+      // Unreachable host / ambiguous probe: keep an empty placeholder (so the
       // config isn't pruned and removal / edit still resolve it) and record a
       // load failure so the sidebar shows a "can't reach" row.
       let failure = LoadFailure(
@@ -264,18 +291,22 @@ extension RepositoriesFeature {
     }
   }
 
-  /// Whether a remote path is a git work tree, a plain directory, or
-  /// indeterminate (unreachable host / git missing / not a directory).
+  /// Whether a remote path is a git work tree, a plain directory, reachable but
+  /// absent, or indeterminate. `.missing` (host answered, path gone) is kept
+  /// distinct from `.unknown` (host unreachable / probe ambiguous) so the caller
+  /// can report an accurate failure instead of a blanket "can't reach".
   enum RemotePathKind: Equatable, Sendable {
     case git
     case folder
+    case missing
     case unknown
   }
 
   /// Classify a remote path over ssh in a single round trip so a non-git
-  /// directory can render as a folder. `.unknown` for anything ambiguous (the
-  /// path is gone, the host is unreachable, or git is unavailable) so the
-  /// caller can keep the git fallback rather than mislabel a transient failure.
+  /// directory can render as a folder. `.missing` when the host answers but the
+  /// path is gone; `.unknown` when the host is unreachable or the probe is
+  /// ambiguous, so the caller can keep the git fallback rather than mislabel a
+  /// transient failure.
   nonisolated static func classifyRemotePath(
     _ remotePath: String,
     shell: ShellClient
@@ -292,6 +323,7 @@ extension RepositoriesFeature {
     switch trimmedStdout {
     case "supacode-git": return .git
     case "supacode-folder": return .folder
+    case "supacode-nodir": return .missing
     default:
       repositoriesLogger.warning("classifyRemotePath: unexpected probe stdout: " + trimmedStdout)
       return .unknown
@@ -370,7 +402,7 @@ extension RepositoriesFeature {
   ) -> Effect<Action> {
     guard let host = repository.host else { return .none }
     let repoRoot = repository.rootURL
-    @Shared(.repositorySettings(repoRoot)) var remoteRepositorySettings
+    @Shared(.repositorySettings(repoRoot, host: host)) var remoteRepositorySettings
     let selectedBaseRef = remoteRepositorySettings.worktreeBaseRef
     let existingNames = Set(repository.worktrees.map { $0.name.lowercased() })
     return .run { send in

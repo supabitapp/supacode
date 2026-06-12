@@ -49,16 +49,6 @@ nonisolated enum RepositoryKind: Hashable, Sendable {
   case folder
 }
 
-nonisolated extension RemoteHost {
-  /// `user@host[:port]` token used to brand remote ids. Folds the port in (the
-  /// older `sshDestination`-only brand dropped it, so two hosts differing only
-  /// by port collided). Always shell/url safe for the `remote://` scheme below.
-  var authority: String {
-    guard let port else { return sshDestination }
-    return "\(sshDestination):\(port)"
-  }
-}
-
 /// Where a repository physically lives. The single home for the local-vs-remote
 /// distinction: a local repo carries a real filesystem `URL`, a remote repo
 /// carries its `RemoteHost` plus an absolute path string. There is no way to

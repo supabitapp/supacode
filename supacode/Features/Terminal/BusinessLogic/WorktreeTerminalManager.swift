@@ -537,7 +537,7 @@ final class WorktreeTerminalManager {
     let state = state(for: worktree) { runSetupScriptIfNew }
     let setupScript: String?
     if state.needsSetupScript() {
-      @SharedReader(.repositorySettings(worktree.repositoryRootURL))
+      @SharedReader(.repositorySettings(worktree.repositoryRootURL, host: worktree.host))
       var settings = RepositorySettings.default
       setupScript = settings.setupScript
     } else {

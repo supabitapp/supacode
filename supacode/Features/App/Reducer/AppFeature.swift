@@ -277,7 +277,7 @@ struct AppFeature {
         state.repositories.$sidebar.withLock { sidebar in
           sidebar.focusedWorktreeID = lastFocusedWorktreeID
         }
-        @Shared(.repositorySettings(rootURL)) var repositorySettings
+        @Shared(.repositorySettings(rootURL, host: worktree.host)) var repositorySettings
         let settings = repositorySettings
         return .merge(
           .run { _ in
@@ -327,7 +327,7 @@ struct AppFeature {
                     id: $0.id.rawValue,
                     name: $0.name,
                     isGitRepository: $0.isGitRepository,
-                    isRemote: $0.host != nil,
+                    host: $0.host,
                     rootURL: $0.rootURL
                   )
                 }
@@ -414,7 +414,7 @@ struct AppFeature {
         state.globalScripts = settings.globalScripts
         if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
           let rootURL = selectedWorktree.repositoryRootURL
-          @Shared(.repositorySettings(rootURL)) var repositorySettings
+          @Shared(.repositorySettings(rootURL, host: selectedWorktree.host)) var repositorySettings
           state.openActionSelection = OpenWorktreeAction.fromSettingsID(
             repositorySettings.openActionID,
             defaultEditorID: settings.defaultEditorID
@@ -486,7 +486,7 @@ struct AppFeature {
         }
         let rootURL = worktree.repositoryRootURL
         let actionID = action.settingsID
-        @Shared(.repositorySettings(rootURL)) var repositorySettings
+        @Shared(.repositorySettings(rootURL, host: worktree.host)) var repositorySettings
         $repositorySettings.withLock { $0.openActionID = actionID }
         return .none
 
@@ -755,14 +755,15 @@ struct AppFeature {
           await terminalClient.send(.endSearch(worktree))
         }
 
-      case .settings(.repositorySettings(.delegate(.settingsChanged(let rootURL)))):
+      case .settings(.repositorySettings(.delegate(.settingsChanged(let rootURL, let host)))):
         guard let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
-          selectedWorktree.repositoryRootURL == rootURL
+          selectedWorktree.repositoryRootURL == rootURL,
+          selectedWorktree.host == host
         else {
           return .none
         }
         let worktreeID = selectedWorktree.id
-        @Shared(.repositorySettings(rootURL)) var repositorySettings
+        @Shared(.repositorySettings(rootURL, host: host)) var repositorySettings
         return .send(.worktreeSettingsLoaded(repositorySettings, worktreeID: worktreeID))
 
       case .worktreeSettingsLoaded(let settings, let worktreeID):
@@ -1722,7 +1723,7 @@ struct AppFeature {
   /// Resolves a script by ID across the worktree's repo scripts and the user's globals.
   /// Repo entries win when both buckets carry the same ID.
   private func resolveScript(scriptID: UUID, in worktree: Worktree) -> ScriptDefinition? {
-    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    @SharedReader(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
     @SharedReader(.settingsFile) var settingsFile
     let merged: [ScriptDefinition] = .merged(
       repo: repositorySettings.scripts,

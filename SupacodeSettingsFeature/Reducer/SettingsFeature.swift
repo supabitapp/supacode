@@ -603,10 +603,15 @@ public struct SettingsFeature {
       state.repositorySettings = nil
       return
     }
-    if state.repositorySettings?.rootURL != summary.rootURL {
-      @Shared(.repositorySettings(summary.rootURL)) var repositorySettings
+    // Compare on host too: two remote hosts at the same path share a `rootURL`
+    // but are distinct repositories, so a path-only check would keep stale state.
+    if state.repositorySettings?.rootURL != summary.rootURL
+      || state.repositorySettings?.host != summary.host
+    {
+      @Shared(.repositorySettings(summary.rootURL, host: summary.host)) var repositorySettings
       state.repositorySettings = RepositorySettingsFeature.State(
         rootURL: summary.rootURL,
+        host: summary.host,
         isGitRepository: summary.isGitRepository,
         settings: repositorySettings
       )

@@ -387,7 +387,7 @@ struct SupacodeApp: App {
           clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
         return
       }
-      @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var settings
+      @SharedReader(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
       @SharedReader(.settingsFile) var settingsFile
       let runningIDs: Set<UUID> =
         store.repositories.sidebarItems[id: worktree.id]

@@ -43,6 +43,14 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     return "\(sshDestination):\(port)"
   }
 
+  /// `[user@]host[:port]` token used to brand remote ids and settings keys.
+  /// Always folds in the port (unlike `displayAuthority`), so two hosts that
+  /// differ only by port get distinct ids. Always shell/url safe.
+  public var authority: String {
+    guard let port else { return sshDestination }
+    return "\(sshDestination):\(port)"
+  }
+
   /// Extra `ssh` option arguments derived from the host (currently just the
   /// port). Always shell-safe tokens, so callers can splice them into a
   /// command line without quoting.

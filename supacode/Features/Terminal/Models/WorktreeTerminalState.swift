@@ -194,7 +194,7 @@ final class WorktreeTerminalState {
     self.tabManager = TerminalTabManager()
     _repositorySettings = SharedReader(
       wrappedValue: RepositorySettings.default,
-      .repositorySettings(worktree.repositoryRootURL)
+      .repositorySettings(worktree.repositoryRootURL, host: worktree.host)
     )
     // Pre-hide the tab bar before the first tab is created to
     // avoid a visible flash. updateShouldHideTabBar() handles

@@ -702,7 +702,7 @@ struct RepositoriesFeature {
           return .none
         }
         state.alert = nil
-        @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+        @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
         let script = repositorySettings.archiveScript
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
         // Orphan rows have no working dir to run a script in; skip
@@ -1058,7 +1058,7 @@ struct RepositoriesFeature {
         //     wipe unrelated alerts, specifically the consolidated
         //     trash-failure alert just set by the batch aggregator.
         //   - Deeplink path: same, the caller decides alert state.
-        @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+        @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
         let script = repositorySettings.deleteScript
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
         // Only folder-row intents (`.folderUnlink` / `.folderTrash`)
@@ -1677,7 +1677,7 @@ struct RepositoriesFeature {
         let previousSelection = state.selectedWorktreeID
         let pendingID = WorktreeID("pending:\(uuid().uuidString)")
         @Shared(.settingsFile) var settingsFile
-        @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
+        @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var repositorySettings
         let globalDefaultWorktreeBaseDirectoryPath = settingsFile.global.defaultWorktreeBaseDirectoryPath
         let worktreeBaseDirectory = SupacodePaths.worktreeBaseDirectory(
           for: repository.rootURL,
@@ -2184,6 +2184,7 @@ struct RepositoriesFeature {
           )
         }
         let repoRoot = worktree.repositoryRootURL
+        let repoHost = worktree.host
         let worktreeRoot = worktree.workingDirectory
         let pullRequestRefresh = WorktreeInfoWatcherClient.Event.repositoryPullRequestRefresh(
           repositoryRootURL: repoRoot,
@@ -2286,7 +2287,7 @@ struct RepositoriesFeature {
               )
               return
             }
-            @Shared(.repositorySettings(repoRoot)) var repositorySettings
+            @Shared(.repositorySettings(repoRoot, host: repoHost)) var repositorySettings
             @Shared(.settingsFile) var settingsFile
             let strategy =
               repositorySettings.pullRequestMergeStrategy ?? settingsFile.global.pullRequestMergeStrategy
@@ -3378,7 +3379,7 @@ struct RepositoriesFeature {
             )
           )
         }
-        @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
+        @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var repositorySettings
         let selectedBaseRef = repositorySettings.worktreeBaseRef
         // Remote repos load the prompt's branch lists over ssh (host-aware
         // client); local uses the injected client. The dialog loads these in
@@ -3434,7 +3435,7 @@ struct RepositoriesFeature {
           return .none
         }
         @Shared(.settingsFile) var promptSettingsFile
-        @Shared(.repositorySettings(repository.rootURL)) var promptRepositorySettings
+        @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var promptRepositorySettings
         let defaultWorktreeBaseDirectory = SupacodePaths.worktreeBaseDirectory(
           for: repository.rootURL,
           globalDefaultPath: promptSettingsFile.global.defaultWorktreeBaseDirectoryPath,

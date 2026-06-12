@@ -607,6 +607,65 @@ struct RemotePathClassificationTests {
     )
   }
 
+  /// Routes the `git worktree list` call and the classify probe to separate
+  /// stubs so resolution branches can be exercised independently.
+  private func routingShell(worktreeList: Result<String, Error>, classifyStdout: String) -> ShellClient {
+    ShellClient(
+      run: { _, args, _ in
+        if args.contains("worktree") {
+          switch worktreeList {
+          case .success(let stdout): return ShellOutput(stdout: stdout, stderr: "", exitCode: 0)
+          case .failure(let error): throw error
+          }
+        }
+        return ShellOutput(stdout: classifyStdout, stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) }
+    )
+  }
+
+  private func resolveConfig(path: String = "/srv/repo") -> RemoteRepositoryConfig {
+    RemoteRepositoryConfig(host: RemoteHost(alias: "devbox"), remotePath: path, displayName: "repo")
+  }
+
+  @Test func listingThrowOnGitRepoSurfacesFailureInsteadOfFakeMain() async {
+    let config = resolveConfig()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    // The listing fails transiently while the host stays reachable (classify
+    // still resolves `.git`): we must not collapse to a single fake main.
+    let shell = routingShell(
+      worktreeList: .failure(ShellClientError(command: "git", stdout: "", stderr: "", exitCode: 1)),
+      classifyStdout: "supacode-git"
+    )
+    let loaded = await RepositoriesFeature.loadRemoteRepository(config, repoID: repoID, shell: shell)
+    #expect(loaded.repository.worktrees.isEmpty)
+    #expect(loaded.failure?.message.contains("couldn't list worktrees") == true)
+  }
+
+  @Test func emptyListingOnGitRepoFallsBackToSyntheticMain() async {
+    let config = resolveConfig()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    // A clean but empty listing is genuine: a single synthetic main is correct.
+    let shell = routingShell(worktreeList: .success(""), classifyStdout: "supacode-git")
+    let loaded = await RepositoriesFeature.loadRemoteRepository(config, repoID: repoID, shell: shell)
+    #expect(loaded.failure == nil)
+    #expect(loaded.repository.worktrees.count == 1)
+    #expect(loaded.repository.worktrees.first?.id == RepositoriesFeature.remoteMainWorktree(config: config).id)
+  }
+
+  @Test func missingPathSurfacesPathNotFoundRatherThanCantReach() async {
+    let config = resolveConfig(path: "/srv/gone")
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    let shell = routingShell(
+      worktreeList: .failure(ShellClientError(command: "git", stdout: "", stderr: "", exitCode: 1)),
+      classifyStdout: "supacode-nodir"
+    )
+    let loaded = await RepositoriesFeature.loadRemoteRepository(config, repoID: repoID, shell: shell)
+    #expect(loaded.repository.worktrees.isEmpty)
+    #expect(loaded.failure?.message.contains("was not found") == true)
+    #expect(loaded.failure?.message.contains("Can't reach") == false)
+  }
+
   @Test func gitWorkTreeClassifiesAsGit() async {
     let kind = await RepositoriesFeature.classifyRemotePath("/p", shell: stubShell(stdout: "supacode-git"))
     #expect(kind == .git)
@@ -617,8 +676,10 @@ struct RemotePathClassificationTests {
     #expect(kind == .folder)
   }
 
-  @Test func missingDirOrShellErrorClassifiesAsUnknown() async {
-    #expect(await RepositoriesFeature.classifyRemotePath("/p", shell: stubShell(stdout: "supacode-nodir")) == .unknown)
+  @Test func missingDirClassifiesAsMissingAndShellErrorAsUnknown() async {
+    // A reachable host with an absent path is `.missing`, not `.unknown`, so the
+    // failure can name the path instead of blaming the connection.
+    #expect(await RepositoriesFeature.classifyRemotePath("/p", shell: stubShell(stdout: "supacode-nodir")) == .missing)
     #expect(await RepositoriesFeature.classifyRemotePath("/p", shell: throwingShell()) == .unknown)
   }
 
