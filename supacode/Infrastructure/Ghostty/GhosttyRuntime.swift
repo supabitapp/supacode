@@ -794,6 +794,7 @@ extension NSPasteboard.PasteboardType {
 
 extension NSPasteboard {
   private static let ghosttyEscapeCharacters = "\\ ()[]{}<>\"'`!#$&;|*?\t"
+  private static let logger = SupaLogger("Clipboard")
 
   static func ghosttyEscape(_ str: String) -> String {
     var result = str
@@ -816,7 +817,63 @@ extension NSPasteboard {
         .map { $0.isFileURL ? Self.ghosttyEscape($0.path) : $0.absoluteString }
         .joined(separator: " ")
     }
-    return string(forType: .string)
+    if let text = string(forType: .string) {
+      return text
+    }
+    // 剪贴板里只有原始图片数据（如截图、从网页或图片编辑器复制的图片），既没有
+    // 文件 URL 也没有文本。把图片落盘成临时文件并粘贴它的路径，这样运行在终端里
+    // 的 CLI（如 Claude Code）才能按路径读取图片，而不是粘贴失败、逼用户手动存盘
+    // 再复制路径。
+    if let path = pastedImageFilePath() {
+      return Self.ghosttyEscape(path)
+    }
+    return nil
+  }
+
+  /// 读取剪贴板里的原始图片数据，落盘为临时 PNG，返回未转义的绝对路径。
+  func pastedImageFilePath() -> String? {
+    guard
+      let png = Self.pastedImagePNGData(png: data(forType: .png), tiff: data(forType: .tiff))
+    else {
+      return nil
+    }
+    return Self.writePastedImage(png, to: Self.pastedImagesDirectory)
+  }
+
+  /// 把剪贴板的图片数据归一化为 PNG：优先直接用 PNG，否则把 TIFF 转成 PNG。
+  static func pastedImagePNGData(png: Data?, tiff: Data?) -> Data? {
+    if let png {
+      return png
+    }
+    guard
+      let tiff,
+      let rep = NSBitmapImageRep(data: tiff),
+      let converted = rep.representation(using: .png, properties: [:])
+    else {
+      return nil
+    }
+    return converted
+  }
+
+  static var pastedImagesDirectory: URL {
+    FileManager.default.temporaryDirectory
+      .appending(path: "supacode-pasted-images", directoryHint: .isDirectory)
+  }
+
+  /// 把图片数据写到指定目录下的唯一 PNG 文件，返回未转义的绝对路径，失败返回 nil。
+  static func writePastedImage(_ data: Data, to directory: URL) -> String? {
+    let fileURL = directory.appending(
+      path: "pasted-image-\(UUID().uuidString).png",
+      directoryHint: .notDirectory,
+    )
+    do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try data.write(to: fileURL)
+      return fileURL.path(percentEncoded: false)
+    } catch {
+      logger.error("Failed to write pasted image to \(fileURL.path): \(error)")
+      return nil
+    }
   }
 
   static func ghostty(_ clipboard: ghostty_clipboard_e) -> NSPasteboard? {
