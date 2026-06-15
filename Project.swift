@@ -19,26 +19,26 @@ let ghosttyFingerprintInputScript = """
 """
 
 let appResources: ResourceFileElements = [
-  "supacode/AppIcon.icon",
-  "supacode/Assets.xcassets",
-  "supacode/notification.wav",
+  "tty7/AppIcon.icon",
+  "tty7/Assets.xcassets",
+  "tty7/notification.wav",
 ]
 
 let appBuildableFolders: [BuildableFolder] = [
-  "supacode/App",
-  "supacode/Clients",
-  "supacode/Commands",
-  "supacode/Domain",
-  "supacode/Features",
-  "supacode/Infrastructure",
-  "supacode/Support",
+  "tty7/App",
+  "tty7/Clients",
+  "tty7/Commands",
+  "tty7/Domain",
+  "tty7/Features",
+  "tty7/Infrastructure",
+  "tty7/Support",
 ]
 
 let appDependencies: [TargetDependency] = [
-  .target(name: "SupacodeSettingsShared"),
-  .target(name: "SupacodeSettingsFeature"),
+  .target(name: "Tty7SettingsShared"),
+  .target(name: "Tty7SettingsFeature"),
   .target(name: "GhosttyKit"),
-  .target(name: "supacode-cli"),
+  .target(name: "tty7-cli"),
   .external(name: "ComposableArchitecture"),
   .external(name: "CustomDump"),
   .external(name: "Dependencies"),
@@ -53,9 +53,9 @@ let appDependencies: [TargetDependency] = [
 
 let testDependencies: [TargetDependency] = [
   .target(name: "GhosttyKit"),
-  .target(name: "SupacodeSettingsShared"),
-  .target(name: "SupacodeSettingsFeature"),
-  .target(name: "supacode"),
+  .target(name: "Tty7SettingsShared"),
+  .target(name: "Tty7SettingsFeature"),
+  .target(name: "tty7"),
   .external(name: "Clocks"),
   .external(name: "ComposableArchitecture"),
   .external(name: "ConcurrencyExtras"),
@@ -80,22 +80,22 @@ let embedGhosttyResourcesOutputPaths: [Path] = [
 let embedRuntimeAssetsInputPaths: [FileListGlob] = [
   "$(SRCROOT)/Resources/git-wt/wt",
   "$(SRCROOT)/\(zmxBinaryPath.pathString)",
-  "$(SRCROOT)/supacode/Resources/Themes/Supacode Light",
-  "$(SRCROOT)/supacode/Resources/Themes/Supacode Dark",
-  "$(BUILT_PRODUCTS_DIR)/supacode",
-  "$(UNINSTALLED_PRODUCTS_DIR)/$(PLATFORM_NAME)/supacode",
+  "$(SRCROOT)/tty7/Resources/Themes/tty7 Light",
+  "$(SRCROOT)/tty7/Resources/Themes/tty7 Dark",
+  "$(BUILT_PRODUCTS_DIR)/tty7",
+  "$(UNINSTALLED_PRODUCTS_DIR)/$(PLATFORM_NAME)/tty7",
 ]
 
 let embedRuntimeAssetsOutputPaths: [Path] = [
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/git-wt/wt",
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/zmx/zmx",
-  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Supacode Light",
-  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Supacode Dark",
-  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/supacode",
+  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/tty7 Light",
+  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/tty7 Dark",
+  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/tty7",
 ]
 
 let project = Project(
-  name: "supacode",
+  name: "tty7",
   settings: .settings(
     base: [
       "CLANG_ENABLE_MODULES": "YES",
@@ -114,14 +114,14 @@ let project = Project(
   ),
   targets: [
     .target(
-      name: "supacode-cli",
+      name: "tty7-cli",
       destinations: .macOS,
       product: .commandLineTool,
-      bundleId: "app.supabit.supacode.cli",
+      bundleId: "app.supabit.tty7.cli",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
       buildableFolders: [
-        "supacode-cli",
+        "tty7-cli",
       ],
       dependencies: [
         .external(name: "ArgumentParser"),
@@ -130,8 +130,8 @@ let project = Project(
         base: [
           "CODE_SIGNING_ALLOWED": "NO",
           "ENABLE_HARDENED_RUNTIME": "YES",
-          "PRODUCT_MODULE_NAME": "supacode_cli",
-          "PRODUCT_NAME": "supacode",
+          "PRODUCT_MODULE_NAME": "tty7_cli",
+          "PRODUCT_NAME": "tty7",
           "SKIP_INSTALL": "YES",
           "SWIFT_DEFAULT_ACTOR_ISOLATION": "MainActor",
         ],
@@ -152,14 +152,14 @@ let project = Project(
       output: .xcframework(path: ghosttyXCFrameworkPath, linking: .static)
     ),
     .target(
-      name: "SupacodeSettingsShared",
+      name: "Tty7SettingsShared",
       destinations: .macOS,
       product: .staticFramework,
-      bundleId: "app.supabit.supacode.settings-shared",
+      bundleId: "app.supabit.tty7.settings-shared",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
       buildableFolders: [
-        "SupacodeSettingsShared",
+        "Tty7SettingsShared",
       ],
       dependencies: [
         .external(name: "ComposableArchitecture"),
@@ -175,17 +175,17 @@ let project = Project(
       )
     ),
     .target(
-      name: "SupacodeSettingsFeature",
+      name: "Tty7SettingsFeature",
       destinations: .macOS,
       product: .staticFramework,
-      bundleId: "app.supabit.supacode.settings-feature",
+      bundleId: "app.supabit.tty7.settings-feature",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
       buildableFolders: [
-        "SupacodeSettingsFeature",
+        "Tty7SettingsFeature",
       ],
       dependencies: [
-        .target(name: "SupacodeSettingsShared"),
+        .target(name: "Tty7SettingsShared"),
         .external(name: "ComposableArchitecture"),
         .external(name: "Dependencies"),
         .external(name: "Sharing"),
@@ -198,12 +198,12 @@ let project = Project(
       )
     ),
     .target(
-      name: "supacode",
+      name: "tty7",
       destinations: .macOS,
       product: .app,
-      bundleId: "app.supabit.supacode",
+      bundleId: "app.supabit.tty7",
       deploymentTargets: .macOS("26.0"),
-      infoPlist: .file(path: "supacode/Info.plist"),
+      infoPlist: .file(path: "tty7/Info.plist"),
       resources: appResources,
       buildableFolders: appBuildableFolders,
       scripts: [
@@ -239,31 +239,40 @@ let project = Project(
           "ENABLE_HARDENED_RUNTIME": "YES",
           "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/../Frameworks",
           "OTHER_LDFLAGS": "$(inherited) -lc++",
+          "TTY7_DISPLAY_NAME": "tty7",
         ],
         debug: [
-          "CODE_SIGN_ENTITLEMENTS": "supacode/supacodeDebug.entitlements",
+          "CODE_SIGN_ENTITLEMENTS": "tty7/tty7Debug.entitlements",
+          // Dev builds get their own bundle id + display name so they run
+          // alongside the installed Release app instead of colliding on it via
+          // LaunchServices. Safe: there is no single-instance lock, and the
+          // agent-hook socket is keyed by pid
+          // (/tmp/tty7-<uid>/agent-hook-<pid>.sock). PRODUCT_NAME stays
+          // "tty7" so tty7Tests' hardcoded TEST_HOST still resolves.
+          "PRODUCT_BUNDLE_IDENTIFIER": "app.supabit.tty7.dev",
+          "TTY7_DISPLAY_NAME": "tty7 Dev",
         ],
         release: [
-          "CODE_SIGN_ENTITLEMENTS": "supacode/supacode.entitlements",
+          "CODE_SIGN_ENTITLEMENTS": "tty7/tty7.entitlements",
         ],
         defaultSettings: .essential
       )
     ),
     .target(
-      name: "supacodeTests",
+      name: "tty7Tests",
       destinations: .macOS,
       product: .unitTests,
-      bundleId: "app.supabit.supacodeTests",
+      bundleId: "app.supabit.tty7Tests",
       deploymentTargets: .macOS("26.1"),
       infoPlist: .default,
       buildableFolders: [
-        "supacodeTests",
+        "tty7Tests",
       ],
       dependencies: testDependencies,
       settings: .settings(
         base: [
           "BUNDLE_LOADER": "$(TEST_HOST)",
-          "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/supacode.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/supacode",
+          "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/tty7.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/tty7",
         ],
         defaultSettings: .essential
       )

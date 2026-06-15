@@ -1,8 +1,8 @@
-# Supacode
+# tty7
 
 Native terminal coding agents command center.
 
-![screenshot](https://www.supacode.sh/screenshot.png)
+![screenshot](https://www.tty7.sh/screenshot.png)
 
 ## Technical Stack
 

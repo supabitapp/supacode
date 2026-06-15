@@ -9,8 +9,8 @@ MAKEFLAGS += --no-builtin-rules
 # Derived values (DO NOT TOUCH).
 CURRENT_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 CURRENT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(CURRENT_MAKEFILE_PATH)))
-PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/supacode.xcworkspace
-APP_SCHEME := supacode
+PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/tty7.xcworkspace
+APP_SCHEME := tty7
 PROJECT_CONFIG_PATH := Configurations/Project.xcconfig
 TUIST_GENERATION_STAMP_DIR := $(CURRENT_MAKEFILE_DIR)/.build/.tuist-generated-stamps
 TUIST_INSTALL_STAMP := $(TUIST_GENERATION_STAMP_DIR)/.installed
@@ -50,8 +50,8 @@ $(TUIST_INSTALL_STAMP): $(TUIST_GENERATION_INPUTS)
 $(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
-	rm -rf supacode.xcodeproj supacode.xcworkspace
-	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/supacode-*; do \
+	rm -rf tty7.xcodeproj tty7.xcworkspace
+	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/tty7-*; do \
 		[ -e "$$path" ] || continue; \
 		rm -rf "$$path"; \
 	done
@@ -62,8 +62,8 @@ $(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAM
 $(TUIST_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
-	rm -rf supacode.xcodeproj supacode.xcworkspace
-	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/supacode-*; do \
+	rm -rf tty7.xcodeproj tty7.xcworkspace
+	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/tty7-*; do \
 		[ -e "$$path" ] || continue; \
 		rm -rf "$$path"; \
 	done
@@ -109,10 +109,10 @@ install-dev-build: build-app # install dev build to /Applications
 
 archive: $(TUIST_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
 	mkdir -p build
-	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcbeautify --quiet --disable-logging'
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -archivePath build/tty7.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcbeautify --quiet --disable-logging'
 
 export-archive: # Export xarchive
-	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | mise exec -- xcbeautify --quiet --disable-logging'
+	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/tty7.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | mise exec -- xcbeautify --quiet --disable-logging'
 
 test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	@if [ -t 1 ]; then \
@@ -122,7 +122,7 @@ test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	fi
 
 format: # Format code with swift format (local only).
-	swift format -p --in-place --recursive --configuration ./.swift-format.json supacode supacode-cli supacodeTests SupacodeSettingsShared SupacodeSettingsFeature
+	swift format -p --in-place --recursive --configuration ./.swift-format.json tty7 tty7-cli tty7Tests Tty7SettingsShared Tty7SettingsFeature
 
 lint: # Lint code with swiftlint
 	mise exec -- swiftlint lint --quiet --config .swiftlint.yml
@@ -130,7 +130,7 @@ lint: # Lint code with swiftlint
 check: format lint # Format and lint
 
 log-stream: # Stream logs from the app via log stream
-	log stream --predicate 'subsystem == "app.supabit.supacode"' --style compact --color always
+	log stream --predicate 'subsystem == "app.supabit.tty7"' --style compact --color always
 
 bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUILD=123])
 	@if [ -z "$(VERSION)" ]; then \

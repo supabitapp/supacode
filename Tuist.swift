@@ -1,7 +1,7 @@
 import ProjectDescription
 
 let tuist = Tuist(
-  fullHandle: "supabitapp/supacode",
+  fullHandle: "supabitapp/tty7",
   project: .tuist(
     compatibleXcodeVersions: .upToNextMajor("26.0"),
     swiftVersion: "6.0",

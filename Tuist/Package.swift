@@ -12,7 +12,7 @@ let packageSettings = PackageSettings(
 #endif
 
 let package = Package(
-  name: "supacode",
+  name: "tty7",
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.7.1"),
     .package(url: "https://github.com/apple/swift-collections", exact: "1.3.0"),
@@ -22,7 +22,7 @@ let package = Package(
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.0-beta.2"),
     .package(url: "https://github.com/pointfreeco/swift-case-paths", exact: "1.7.2"),
     .package(url: "https://github.com/pointfreeco/swift-clocks", exact: "1.0.6"),
-    .package(url: "https://github.com/pointfreeco/swift-composable-architecture", exact: "1.23.1"),
+    .package(url: "https://github.com/pointfreeco/swift-composable-architecture", exact: "1.23.2"),
     .package(url: "https://github.com/pointfreeco/swift-concurrency-extras", exact: "1.3.2"),
     .package(url: "https://github.com/pointfreeco/swift-custom-dump", exact: "1.3.4"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies", exact: "1.10.1"),

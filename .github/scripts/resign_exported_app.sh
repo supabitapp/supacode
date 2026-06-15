@@ -4,9 +4,9 @@ set -euo pipefail
 : "${DEVELOPER_ID_IDENTITY_SHA:?}"
 
 export_root=${1:?}
-app_path=$(find "$export_root" -maxdepth 3 -name 'supacode.app' -print -quit)
+app_path=$(find "$export_root" -maxdepth 3 -name 'tty7.app' -print -quit)
 if [ -z "$app_path" ]; then
-  echo "::error::supacode.app not found under $export_root"
+  echo "::error::tty7.app not found under $export_root"
   exit 1
 fi
 

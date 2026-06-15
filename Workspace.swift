@@ -1,37 +1,37 @@
 import ProjectDescription
 
 let workspace = Workspace(
-  name: "supacode",
+  name: "tty7",
   projects: [
     ".",
   ],
   schemes: [
     .scheme(
-      name: "supacode",
+      name: "tty7",
       buildAction: .buildAction(
         targets: [
-          .project(path: "supacode.xcodeproj", target: "supacode"),
+          .project(path: "tty7.xcodeproj", target: "tty7"),
         ],
         runPostActionsOnFailure: true
       ),
       testAction: .targets(
         [
           .testableTarget(
-            target: .project(path: "supacode.xcodeproj", target: "supacodeTests")
+            target: .project(path: "tty7.xcodeproj", target: "tty7Tests")
           ),
         ],
         configuration: .debug,
-        expandVariableFromTarget: .project(path: "supacode.xcodeproj", target: "supacode")
+        expandVariableFromTarget: .project(path: "tty7.xcodeproj", target: "tty7")
       ),
       runAction: .runAction(
         configuration: .debug,
-        executable: .executable(.project(path: "supacode.xcodeproj", target: "supacode")),
-        expandVariableFromTarget: .project(path: "supacode.xcodeproj", target: "supacode")
+        executable: .executable(.project(path: "tty7.xcodeproj", target: "tty7")),
+        expandVariableFromTarget: .project(path: "tty7.xcodeproj", target: "tty7")
       ),
       archiveAction: .archiveAction(configuration: .release),
       profileAction: .profileAction(
         configuration: .release,
-        executable: .project(path: "supacode.xcodeproj", target: "supacode")
+        executable: .project(path: "tty7.xcodeproj", target: "tty7")
       ),
       analyzeAction: .analyzeAction(configuration: .debug)
     ),
