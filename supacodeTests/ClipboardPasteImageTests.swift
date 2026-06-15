@@ -6,18 +6,18 @@ import Testing
 
 @MainActor
 struct ClipboardPasteImageTests {
-  /// PNG 数据应原样透传，不做任何转换。
+  /// PNG data passes through unchanged, with no conversion.
   @Test func pastedImagePNGDataPassesThroughPNG() {
     let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     #expect(NSPasteboard.pastedImagePNGData(png: png, tiff: nil) == png)
   }
 
-  /// 既没有 PNG 也没有 TIFF 时返回 nil，调用方据此回退到“无内容”。
+  /// Returns nil when there is neither PNG nor TIFF, so the caller falls back to "no content".
   @Test func pastedImagePNGDataReturnsNilWhenNoImage() {
     #expect(NSPasteboard.pastedImagePNGData(png: nil, tiff: nil) == nil)
   }
 
-  /// TIFF 数据应被转码为 PNG（以 PNG 魔数字节开头）。
+  /// TIFF data is transcoded to PNG (output starts with the PNG magic bytes).
   @Test func pastedImagePNGDataConvertsTIFFToPNG() throws {
     let image = NSImage(size: NSSize(width: 2, height: 2))
     image.lockFocus()
@@ -30,7 +30,8 @@ struct ClipboardPasteImageTests {
     #expect(png.prefix(4) == Data([0x89, 0x50, 0x4E, 0x47]))
   }
 
-  /// 写入临时文件后，返回的路径应真实存在、内容一致、且落在目标目录下、扩展名为 png。
+  /// After writing, the returned path exists, has matching content, sits under
+  /// the target directory, and ends in .png.
   @Test func writePastedImageWritesFileAndReturnsPath() throws {
     let directory = FileManager.default.temporaryDirectory
       .appending(path: "supacode-pasted-images-test-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -45,7 +46,7 @@ struct ClipboardPasteImageTests {
     #expect(try Data(contentsOf: URL(filePath: path)) == payload)
   }
 
-  /// 每次写入都生成唯一文件名，连续粘贴两张图片不会互相覆盖。
+  /// Each write gets a unique filename, so pasting two images in a row doesn't overwrite.
   @Test func writePastedImageProducesUniquePaths() throws {
     let directory = FileManager.default.temporaryDirectory
       .appending(path: "supacode-pasted-images-test-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -57,7 +58,32 @@ struct ClipboardPasteImageTests {
     #expect(first != second)
   }
 
-  /// 剪贴板只有图片数据时，粘贴内容应回退到落盘后的临时图片路径（经 ghostty 转义）。
+  /// Writing a new image also prunes files older than the threshold while keeping
+  /// recent files and the just-written one, so the temp dir doesn't grow unbounded.
+  @Test func writePastedImagePrunesStaleFiles() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: "supacode-pasted-images-test-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    let stale = directory.appending(path: "pasted-image-stale.png", directoryHint: .notDirectory)
+    let fresh = directory.appending(path: "pasted-image-fresh.png", directoryHint: .notDirectory)
+    try Data([0x89]).write(to: stale)
+    try Data([0x89]).write(to: fresh)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)],
+      ofItemAtPath: stale.path(percentEncoded: false),
+    )
+
+    let newPath = try #require(NSPasteboard.writePastedImage(Data([0x89, 0x50]), to: directory))
+
+    #expect(!FileManager.default.fileExists(atPath: stale.path(percentEncoded: false)))
+    #expect(FileManager.default.fileExists(atPath: fresh.path(percentEncoded: false)))
+    #expect(FileManager.default.fileExists(atPath: newPath))
+  }
+
+  /// When the clipboard holds only image data, the pasted content falls back to
+  /// the saved temp image path (ghostty-escaped).
   @Test func opinionatedContentsFallsBackToImagePath() throws {
     let pasteboard = NSPasteboard(name: .init("supacode.test.image.\(UUID().uuidString)"))
     pasteboard.clearContents()
@@ -69,7 +95,7 @@ struct ClipboardPasteImageTests {
     #expect(contents.hasSuffix(".png"))
   }
 
-  /// 文本优先于图片：同时存在文本和图片数据时返回文本，不会误把图片落盘。
+  /// Text takes precedence over image: with both present, return the text and don't write the image to disk.
   @Test func opinionatedContentsPrefersTextOverImage() {
     let pasteboard = NSPasteboard(name: .init("supacode.test.text.\(UUID().uuidString)"))
     pasteboard.clearContents()

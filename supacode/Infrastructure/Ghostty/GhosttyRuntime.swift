@@ -820,17 +820,19 @@ extension NSPasteboard {
     if let text = string(forType: .string) {
       return text
     }
-    // 剪贴板里只有原始图片数据（如截图、从网页或图片编辑器复制的图片），既没有
-    // 文件 URL 也没有文本。把图片落盘成临时文件并粘贴它的路径，这样运行在终端里
-    // 的 CLI（如 Claude Code）才能按路径读取图片，而不是粘贴失败、逼用户手动存盘
-    // 再复制路径。
+    // The clipboard holds only raw image data (a screenshot, an image copied from
+    // a browser or image editor) with no file URL and no text. Write it to a temp
+    // file and paste that path so a CLI running in the terminal (e.g. Claude Code)
+    // can read the image by path, instead of the paste silently failing and
+    // forcing the user to save the image and copy its path by hand.
     if let path = pastedImageFilePath() {
       return Self.ghosttyEscape(path)
     }
     return nil
   }
 
-  /// 读取剪贴板里的原始图片数据，落盘为临时 PNG，返回未转义的绝对路径。
+  /// Reads raw image data from the clipboard, writes it to a temp PNG, and
+  /// returns the unescaped absolute path.
   func pastedImageFilePath() -> String? {
     guard
       let png = Self.pastedImagePNGData(png: data(forType: .png), tiff: data(forType: .tiff))
@@ -840,7 +842,8 @@ extension NSPasteboard {
     return Self.writePastedImage(png, to: Self.pastedImagesDirectory)
   }
 
-  /// 把剪贴板的图片数据归一化为 PNG：优先直接用 PNG，否则把 TIFF 转成 PNG。
+  /// Normalizes clipboard image data to PNG: prefer the PNG representation,
+  /// otherwise transcode TIFF to PNG.
   static func pastedImagePNGData(png: Data?, tiff: Data?) -> Data? {
     if let png {
       return png
@@ -860,7 +863,8 @@ extension NSPasteboard {
       .appending(path: "supacode-pasted-images", directoryHint: .isDirectory)
   }
 
-  /// 把图片数据写到指定目录下的唯一 PNG 文件，返回未转义的绝对路径，失败返回 nil。
+  /// Writes the image data to a uniquely-named PNG under `directory` and returns
+  /// the unescaped absolute path, or nil on failure.
   static func writePastedImage(_ data: Data, to directory: URL) -> String? {
     let fileURL = directory.appending(
       path: "pasted-image-\(UUID().uuidString).png",
@@ -869,10 +873,40 @@ extension NSPasteboard {
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       try data.write(to: fileURL)
+      pruneStalePastedImages(in: directory)
       return fileURL.path(percentEncoded: false)
     } catch {
       logger.error("Failed to write pasted image to \(fileURL.path): \(error)")
       return nil
+    }
+  }
+
+  /// Best-effort prune of pasted images whose modification time is older than
+  /// `maxAge`, so repeated pastes don't grow the temp dir unbounded. Runs after
+  /// each successful write; a failed delete doesn't affect the current paste. The
+  /// default 24-hour window keeps a path handed to a terminal CLI valid until the
+  /// CLI consumes it.
+  static func pruneStalePastedImages(in directory: URL, olderThan maxAge: TimeInterval = 24 * 60 * 60) {
+    let fileManager = FileManager.default
+    guard
+      let entries = try? fileManager.contentsOfDirectory(
+        at: directory,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles],
+      )
+    else {
+      return
+    }
+    let cutoff = Date(timeIntervalSinceNow: -maxAge)
+    for url in entries {
+      guard
+        let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+          .contentModificationDate,
+        modified < cutoff
+      else {
+        continue
+      }
+      try? fileManager.removeItem(at: url)
     }
   }
 
