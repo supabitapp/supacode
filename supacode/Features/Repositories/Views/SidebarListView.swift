@@ -15,7 +15,6 @@ struct SidebarListView: View {
   /// below) when the menu writes a new value. The structure compute itself
   /// reads the toggles via local `@Shared` inside the reducer.
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
-  @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
 
   var body: some View {
@@ -69,9 +68,6 @@ struct SidebarListView: View {
       .focused($isSidebarFocused)
       .frame(minWidth: 220)
       .onChange(of: groupPinnedRows, initial: false) { _, _ in
-        store.send(.sidebarGroupingTogglesChanged)
-      }
-      .onChange(of: groupActiveRows, initial: false) { _, _ in
         store.send(.sidebarGroupingTogglesChanged)
       }
       .onChange(of: nestWorktreesByBranch, initial: false) { _, _ in

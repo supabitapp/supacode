@@ -236,12 +236,11 @@ struct RepositoriesFeature {
     case sidebarItems(IdentifiedActionOf<SidebarItemFeature>)
     case task
     /// Fired by `SidebarListView.onChange` whenever `@Shared(.sidebarGroupPinnedRows)`
-    /// or `@Shared(.sidebarGroupActiveRows)` mutates while the sidebar is mounted.
-    /// The post-reduce hook picks up the new toggle state and rebuilds the cached
-    /// structure; the explicit handler also fires the highlight-onboarding
-    /// auto-dismiss. Toggling from the menu while the sidebar column is collapsed
-    /// bypasses this action; the matching dismiss in `SidebarCommands` setters
-    /// covers that path.
+    /// mutates while the sidebar is mounted. The post-reduce hook picks up the new
+    /// toggle state and rebuilds the cached structure; the explicit handler also
+    /// fires the highlight-onboarding auto-dismiss. Toggling from the menu while
+    /// the sidebar column is collapsed bypasses this action; the matching dismiss
+    /// in `SidebarCommands` setters covers that path.
     case sidebarGroupingTogglesChanged
     /// Fired by `SidebarListView.onChange` whenever `@Shared(.sidebarNestWorktreesByBranch)`
     /// mutates. Triggers a structure recompute so the alphabetical per-bucket
@@ -489,12 +488,11 @@ struct RepositoriesFeature {
 
       case .sidebarGroupingTogglesChanged:
         // The post-reduce hook below picks up the toggle state and rebuilds.
-        // Auto-dismiss the highlight onboarding card when both toggles end up
+        // Auto-dismiss the highlight onboarding card when the toggle ends up
         // off; the `SidebarCommands` menu setters fire the same dismiss so
         // toggling while the sidebar column is collapsed is also covered.
         @Shared(.sidebarGroupPinnedRows) var groupPinned
-        @Shared(.sidebarGroupActiveRows) var groupActive
-        if !groupPinned, !groupActive {
+        if !groupPinned {
           @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
           var dismissedAt: Date = .distantPast
           if !HighlightRelevantOnboardingCardView.isDismissed(at: dismissedAt) {

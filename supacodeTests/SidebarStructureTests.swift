@@ -51,7 +51,7 @@ struct SidebarStructureTests {
     state.isInitialLoadComplete = false
     state.repositories = []
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
+    let structure = state.computeSidebarStructure(groupPinned: true)
 
     #expect(structure.sections == [.placeholder])
     #expect(structure.hoistedRowIDs.isEmpty)
@@ -61,9 +61,9 @@ struct SidebarStructureTests {
     #expect(structure.reorderableRepositoryIDs.isEmpty)
   }
 
-  // MARK: - Both toggles off → no hoisting.
+  // MARK: - Pinned toggle off → no hoisting.
 
-  @Test func bothTogglesOffProducesNoHighlights() {
+  @Test func pinnedToggleOffProducesNoHighlights() {
     let repoRoot = URL(fileURLWithPath: "/tmp/repo")
     let main = makeMainWorktree(repoRoot: repoRoot)
     let feature = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: repoRoot)
@@ -75,7 +75,7 @@ struct SidebarStructureTests {
     )
     let state = makeState(repositories: [repository])
 
-    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+    let structure = state.computeSidebarStructure(groupPinned: false)
 
     let highlightKinds = structure.sections.compactMap { section -> SidebarStructure.HighlightKind? in
       if case .highlight(let kind, _) = section { return kind }
@@ -106,7 +106,7 @@ struct SidebarStructureTests {
       sidebar.sections[repository.id] = section
     }
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
+    let structure = state.computeSidebarStructure(groupPinned: true)
 
     let pinnedIDs = structure.sections.compactMap { section -> [Worktree.ID]? in
       if case .highlight(.pinned, let ids) = section { return ids }
@@ -139,7 +139,7 @@ struct SidebarStructureTests {
       sidebar.sections[repository.id] = section
     }
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: false)
+    let structure = state.computeSidebarStructure(groupPinned: true)
 
     let hotkeyIDs = structure.hotkeySlots.map(\.id)
     #expect(hotkeyIDs.filter { $0 == pinned.id }.count == 1)
@@ -355,7 +355,7 @@ struct SidebarStructureTests {
     state.$sidebarNestWorktreesByBranch.withLock { $0 = true }
     state.reconcileSidebarForTesting()
 
-    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+    let structure = state.computeSidebarStructure(groupPinned: false)
 
     let expectedOrderAfterMain = [alpha.id, bravo.id, charlie.id]
     let mainSlot = structure.slotByID[main.id]
@@ -369,9 +369,9 @@ struct SidebarStructureTests {
     #expect(structure.hotkeySlots.map(\.id) == [main.id] + expectedOrderAfterMain)
   }
 
-  // MARK: - Active classification.
+  // MARK: - Activity never hoists a row (Active section removed).
 
-  @Test func qualifyingRowsLandInActiveAndNotInPerRepoTail() {
+  @Test func busyRowIsNotHoistedAndStaysInPerRepoTail() {
     let repoRoot = URL(fileURLWithPath: "/tmp/repo")
     let main = makeMainWorktree(repoRoot: repoRoot)
     let busy = makeWorktree(id: "/tmp/repo/busy", name: "busy", repoRoot: repoRoot)
@@ -383,31 +383,31 @@ struct SidebarStructureTests {
       worktrees: IdentifiedArray(uniqueElements: [main, busy, idle])
     )
     var state = makeState(repositories: [repository])
-    // `runningScripts` non-empty is the simplest single flag that classifies
-    // a row (unread alone returns nil, needs to be paired with another flag).
+    // A running script used to classify the row into the Active hoist. With
+    // Active removed, activity no longer pulls the row out of its repo.
     state.sidebarItems[id: busy.id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
+    let structure = state.computeSidebarStructure(groupPinned: true)
 
-    let activeIDs = structure.sections.compactMap { section -> [Worktree.ID]? in
-      if case .highlight(.active, let ids) = section { return ids }
+    let highlightIDs = structure.sections.compactMap { section -> [Worktree.ID]? in
+      if case .highlight(_, let ids) = section { return ids }
       return nil
     }.flatMap { $0 }
-    #expect(activeIDs == [busy.id])
-    #expect(structure.hoistedRowIDs.contains(busy.id))
-    // The hoisted row doesn't double-render in the repository section's tail.
+    #expect(highlightIDs.isEmpty)
+    #expect(!structure.hoistedRowIDs.contains(busy.id))
+    // The busy row renders in its repository section's unpinned tail.
     let perRepoTailIDs = structure.sections.compactMap { section -> [Worktree.ID]? in
       if case .repository(_, let groups) = section {
         return groups.flatMap(\.rowIDs)
       }
       return nil
     }.flatMap { $0 }
-    #expect(!perRepoTailIDs.contains(busy.id))
+    #expect(perRepoTailIDs.contains(busy.id))
   }
 
   // MARK: - Archived filter.
 
-  @Test func archivedRowsExcludedFromBothHighlights() {
+  @Test func archivedRowExcludedFromPinnedHighlight() {
     let repoRoot = URL(fileURLWithPath: "/tmp/repo")
     let main = makeMainWorktree(repoRoot: repoRoot)
     let archived = makeWorktree(id: "/tmp/repo/archived", name: "archived", repoRoot: repoRoot)
@@ -418,17 +418,19 @@ struct SidebarStructureTests {
       worktrees: IdentifiedArray(uniqueElements: [main, archived])
     )
     var state = makeState(repositories: [repository])
-    state.sidebarItems[id: archived.id]?.hasUnseenNotifications = true
-    // Mark the row as archived; structure must skip it from both highlights.
+    // Pin AND archive the same row; the pinned highlight must still skip it.
     state.$sidebar.withLock { sidebar in
       var section = sidebar.sections[repository.id] ?? .init()
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[archived.id] = .init()
+      section.buckets[.pinned] = pinnedBucket
       var archivedBucket = section.buckets[.archived] ?? .init()
       archivedBucket.items[archived.id] = .init(archivedAt: Date(timeIntervalSince1970: 0))
       section.buckets[.archived] = archivedBucket
       sidebar.sections[repository.id] = section
     }
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
+    let structure = state.computeSidebarStructure(groupPinned: true)
     #expect(!structure.hoistedRowIDs.contains(archived.id))
   }
 
@@ -449,7 +451,7 @@ struct SidebarStructureTests {
     state.repositoryRoots.append(failedRoot)
     state.loadFailuresByID[failedID] = "boom"
 
-    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+    let structure = state.computeSidebarStructure(groupPinned: false)
 
     let failedIndex = structure.sections.firstIndex {
       if case .failedRepository(let id, _, _, _) = $0 { return id == failedID }
@@ -477,13 +479,18 @@ struct SidebarStructureTests {
       worktrees: IdentifiedArray(uniqueElements: [main, busy])
     )
     var state = makeState(repositories: [repository])
-    state.sidebarItems[id: busy.id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
     state.$sidebar.withLock { sidebar in
-      sidebar.sections[repository.id, default: .init()].title = "  Pretty Name  "
-      sidebar.sections[repository.id, default: .init()].color = .purple
+      var section = sidebar.sections[repository.id] ?? .init()
+      // Pin `busy` so it lands in the Pinned highlight and yields a repo tag.
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[busy.id] = .init()
+      section.buckets[.pinned] = pinnedBucket
+      section.title = "  Pretty Name  "
+      section.color = .purple
+      sidebar.sections[repository.id] = section
     }
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
+    let structure = state.computeSidebarStructure(groupPinned: true)
 
     let tag = structure.repositoryHighlightByID[repository.id]
     #expect(tag?.repoName == "Pretty Name")
@@ -501,86 +508,19 @@ struct SidebarStructureTests {
       worktrees: IdentifiedArray(uniqueElements: [main, busy])
     )
     var state = makeState(repositories: [repository])
-    state.sidebarItems[id: busy.id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
     state.$sidebar.withLock { sidebar in
-      sidebar.sections[repository.id, default: .init()].title = "   "
+      var section = sidebar.sections[repository.id] ?? .init()
+      // Pin `busy` so it lands in the Pinned highlight and yields a repo tag.
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[busy.id] = .init()
+      section.buckets[.pinned] = pinnedBucket
+      section.title = "   "
+      sidebar.sections[repository.id] = section
     }
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
+    let structure = state.computeSidebarStructure(groupPinned: true)
 
     #expect(structure.repositoryHighlightByID[repository.id]?.repoName == "fallback-name")
-  }
-
-  // MARK: - Lifecycle filter excludes terminating rows from Active.
-
-  @Test func archivingRowIsExcludedFromActive() {
-    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
-    let main = makeMainWorktree(repoRoot: repoRoot)
-    let archiving = makeWorktree(id: "/tmp/repo/archiving", name: "archiving", repoRoot: repoRoot)
-    let repository = Repository(
-      id: repoRoot.path(percentEncoded: false),
-      rootURL: repoRoot,
-      name: "repo",
-      worktrees: IdentifiedArray(uniqueElements: [main, archiving])
-    )
-    var state = makeState(repositories: [repository])
-    state.sidebarItems[id: archiving.id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
-    state.sidebarItems[id: archiving.id]?.lifecycle = .archiving
-
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
-
-    let activeIDs = structure.sections.compactMap { section -> [Worktree.ID]? in
-      if case .highlight(.active, let ids) = section { return ids }
-      return nil
-    }.flatMap { $0 }
-    #expect(!activeIDs.contains(archiving.id))
-    #expect(!structure.hoistedRowIDs.contains(archiving.id))
-  }
-
-  @Test func deletingRowIsExcludedFromActive() {
-    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
-    let main = makeMainWorktree(repoRoot: repoRoot)
-    let deleting = makeWorktree(id: "/tmp/repo/deleting", name: "deleting", repoRoot: repoRoot)
-    let repository = Repository(
-      id: repoRoot.path(percentEncoded: false),
-      rootURL: repoRoot,
-      name: "repo",
-      worktrees: IdentifiedArray(uniqueElements: [main, deleting])
-    )
-    var state = makeState(repositories: [repository])
-    state.sidebarItems[id: deleting.id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
-    state.sidebarItems[id: deleting.id]?.lifecycle = .deleting
-
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
-
-    let activeIDs = structure.sections.compactMap { section -> [Worktree.ID]? in
-      if case .highlight(.active, let ids) = section { return ids }
-      return nil
-    }.flatMap { $0 }
-    #expect(!activeIDs.contains(deleting.id))
-  }
-
-  @Test func pendingRowWithRunningScriptStaysEligibleForActive() {
-    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
-    let main = makeMainWorktree(repoRoot: repoRoot)
-    let pending = makeWorktree(id: "/tmp/repo/pending", name: "pending", repoRoot: repoRoot)
-    let repository = Repository(
-      id: repoRoot.path(percentEncoded: false),
-      rootURL: repoRoot,
-      name: "repo",
-      worktrees: IdentifiedArray(uniqueElements: [main, pending])
-    )
-    var state = makeState(repositories: [repository])
-    state.sidebarItems[id: pending.id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
-    state.sidebarItems[id: pending.id]?.lifecycle = .pending
-
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: true)
-
-    let activeIDs = structure.sections.compactMap { section -> [Worktree.ID]? in
-      if case .highlight(.active, let ids) = section { return ids }
-      return nil
-    }.flatMap { $0 }
-    #expect(activeIDs.contains(pending.id))
   }
 
   // MARK: - Git main detected at any pinned-bucket position.
@@ -651,7 +591,7 @@ struct SidebarStructureTests {
       sidebar.sections[folderRepo.id] = section
     }
 
-    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: false)
+    let structure = state.computeSidebarStructure(groupPinned: true)
 
     let hasFolderSection = structure.sections.contains {
       if case .folder(_, let id) = $0 { return id == folderID }

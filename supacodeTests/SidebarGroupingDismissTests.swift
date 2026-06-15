@@ -22,11 +22,9 @@ struct SidebarGroupingDismissTests {
       $0.date = .constant(fixedDate)
     } operation: {
       @Shared(.sidebarGroupPinnedRows) var pinned
-      @Shared(.sidebarGroupActiveRows) var active
       @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
       var dismissedAt: Date = .distantPast
       $pinned.withLock { $0 = false }
-      $active.withLock { $0 = false }
 
       let store = TestStore(initialState: RepositoriesFeature.State()) {
         RepositoriesFeature()
@@ -44,11 +42,9 @@ struct SidebarGroupingDismissTests {
       $0.date = .constant(Date(timeIntervalSince1970: 1_800_000_000))
     } operation: {
       @Shared(.sidebarGroupPinnedRows) var pinned
-      @Shared(.sidebarGroupActiveRows) var active
       @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
       var dismissedAt: Date = .distantPast
       $pinned.withLock { $0 = true }
-      $active.withLock { $0 = false }
       $dismissedAt.withLock { $0 = originalDismissedAt }
 
       let store = TestStore(initialState: RepositoriesFeature.State()) {
@@ -68,11 +64,9 @@ struct SidebarGroupingDismissTests {
       $0.date = .constant(Date(timeIntervalSince1970: 1_900_000_000))
     } operation: {
       @Shared(.sidebarGroupPinnedRows) var pinned
-      @Shared(.sidebarGroupActiveRows) var active
       @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
       var dismissedAt: Date = .distantPast
       $pinned.withLock { $0 = false }
-      $active.withLock { $0 = false }
       $dismissedAt.withLock { $0 = preexistingDismissedAt }
 
       let store = TestStore(initialState: RepositoriesFeature.State()) {

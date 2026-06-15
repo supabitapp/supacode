@@ -12,20 +12,8 @@ struct SidebarHighlightOrderingTests {
     .init(id: id, branchName: branch, classification: classification)
   }
 
-  @Test func activeDropsUnclassifiedRows() {
+  @Test func keepsUnclassifiedAtBottomAlphabetically() {
     let ids = SidebarHighlightOrdering.orderedRowIDs(
-      forPinned: false,
-      candidates: [
-        candidate("a", branch: "alpha"),
-        candidate("b", branch: "beta", classification: .running),
-      ]
-    )
-    #expect(ids == ["b"])
-  }
-
-  @Test func pinnedKeepsUnclassifiedAtBottomAlphabetically() {
-    let ids = SidebarHighlightOrdering.orderedRowIDs(
-      forPinned: true,
       candidates: [
         candidate("c", branch: "charlie"),
         candidate("a", branch: "alpha"),
@@ -38,7 +26,6 @@ struct SidebarHighlightOrderingTests {
 
   @Test func priorityOrdersAcrossClassifications() {
     let ids = SidebarHighlightOrdering.orderedRowIDs(
-      forPinned: false,
       candidates: [
         candidate("running", branch: "running", classification: .running),
         candidate("unreadAwaiting", branch: "unread-awaiting", classification: .unreadAwaiting),
@@ -54,7 +41,6 @@ struct SidebarHighlightOrderingTests {
     // on branch name so "Bravo" and "bravo" don't flip when the user has
     // different system locales.
     let ids = SidebarHighlightOrdering.orderedRowIDs(
-      forPinned: false,
       candidates: [
         candidate("z", branch: "Zulu", classification: .running),
         candidate("a", branch: "alpha", classification: .running),
@@ -64,24 +50,7 @@ struct SidebarHighlightOrderingTests {
     #expect(ids == ["a", "b", "z"])
   }
 
-  @Test func pinnedAndActiveDoNotDuplicate() {
-    // Active section drops rows that are already in Pinned, so the same
-    // worktree never renders twice in the highlight region. The aggregator
-    // performs the dedup before calling this helper (via the `excluding`
-    // set on the view side); locking the pure helper's behavior here.
-    let candidates: [SidebarHighlightOrdering.Candidate] = [
-      candidate("shared", branch: "shared", classification: .running),
-      candidate("active-only", branch: "active", classification: .agent),
-    ]
-    let activeIDs = SidebarHighlightOrdering.orderedRowIDs(
-      forPinned: false,
-      candidates: candidates.filter { $0.id != "shared" }
-    )
-    #expect(activeIDs == ["active-only"])
-  }
-
   @Test func emptyCandidatesYieldEmptyOrder() {
-    #expect(SidebarHighlightOrdering.orderedRowIDs(forPinned: true, candidates: []) == [])
-    #expect(SidebarHighlightOrdering.orderedRowIDs(forPinned: false, candidates: []) == [])
+    #expect(SidebarHighlightOrdering.orderedRowIDs(candidates: []) == [])
   }
 }

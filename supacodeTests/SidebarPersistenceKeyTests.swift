@@ -10,14 +10,12 @@ import Testing
 
 @MainActor
 struct SidebarPersistenceKeyTests {
-  @Test func groupHighlightRowsDefaultsOn() {
-    // First-launch discoverability contract for the View-menu submenu: both
-    // Group Pinned Rows and Group Active Rows must be visible by default so
-    // users see the highlight feature without opening the menu.
+  @Test func groupPinnedRowsDefaultsOn() {
+    // First-launch discoverability contract for the View-menu toggle: Group
+    // Pinned Rows must be on by default so users see the feature without
+    // opening the menu.
     @Shared(.sidebarGroupPinnedRows) var groupPinned
-    @Shared(.sidebarGroupActiveRows) var groupActive
     #expect(groupPinned == true)
-    #expect(groupActive == true)
   }
 
   @Test func corruptFileIsRenamedBeforeFallback() async throws {

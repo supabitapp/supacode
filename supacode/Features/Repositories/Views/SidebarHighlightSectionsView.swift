@@ -2,9 +2,9 @@ import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Pinned / Active highlight section renderer. Receives an already-ordered
-/// row ID list from `SidebarStructure` and just lays it out; no per-leaf
-/// classification or sort runs here.
+/// Pinned highlight section renderer. Receives an already-ordered row ID list
+/// from `SidebarStructure` and just lays it out; no per-leaf classification or
+/// sort runs here.
 struct SidebarHighlightSection: View {
   let kind: SidebarStructure.HighlightKind
   let rowIDs: [Worktree.ID]
@@ -42,7 +42,6 @@ extension SidebarStructure.HighlightKind {
   fileprivate var indicatorColor: Color {
     switch self {
     case .pinned: .orange
-    case .active: .blue
     }
   }
 }

@@ -1,14 +1,13 @@
 import Sharing
 import SwiftUI
 
-/// Bottom-of-sidebar onboarding card surfacing the new "Highlight Relevant
-/// Sidebar Items" feature. Renders while the toggle is on and the user
-/// hasn't dismissed past the relevance date; the priority host
-/// (`SidebarBottomCardView`) owns the AppStorage reads so SwiftUI re-renders
-/// at that layer when state changes.
+/// Bottom-of-sidebar onboarding card surfacing the "Group Pinned Rows"
+/// feature. Renders while the toggle is on and the user hasn't dismissed past
+/// the relevance date; the priority host (`SidebarBottomCardView`) owns the
+/// AppStorage reads so SwiftUI re-renders at that layer when state changes.
 ///
 /// Sits above the nested-worktree onboarding card in the priority chain so a
-/// fresh install learns about Pinned / Active first.
+/// fresh install learns about Pinned first.
 struct HighlightRelevantOnboardingCardView: View {
   /// Bump on each material content change. Users who dismissed before this
   /// date see the prompt again. Must be on or before the ship date so a
@@ -20,17 +19,15 @@ struct HighlightRelevantOnboardingCardView: View {
     SidebarCardRelevance.isDismissed(at: dismissedAt, relevantSince: cardRelevantSinceDate)
   }
 
-  /// Pure resolver. Visible while either grouping toggle is on and the user
+  /// Pure resolver. Visible while the grouping toggle is on and the user
   /// hasn't dismissed past the relevance cutoff. The caller owns the
   /// AppStorage reads, keeping this resolver free of hidden global reads and
   /// SwiftUI re-rendering at the priority-host layer.
   static func resolveMode(
     groupPinnedRows: Bool,
-    groupActiveRows: Bool,
     dismissedAt: Date
   ) -> Mode {
-    let anyOn = groupPinnedRows || groupActiveRows
-    return anyOn && !Self.isDismissed(at: dismissedAt) ? .visible : .hidden
+    groupPinnedRows && !Self.isDismissed(at: dismissedAt) ? .visible : .hidden
   }
 
   var body: some View {
@@ -52,8 +49,8 @@ private struct HighlightRelevantOnboardingCardBody: View {
       onDismiss: { $dismissedAt.withLock { $0 = .now } },
       content: {
         VStack(alignment: .leading, spacing: 4) {
-          SidebarCardLabel(title: "Pinned and Active at a glance", description: description)
-          Text("Toggle in View → Group Relevant Sidebar Rows")
+          SidebarCardLabel(title: "Pinned rows at a glance", description: description)
+          Text("Toggle in View → Group Pinned Rows")
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .padding(.top, 2)
@@ -70,8 +67,8 @@ private struct HighlightRelevantOnboardingCardBody: View {
 
   private var description: LocalizedStringKey {
     """
-    Pinned worktrees float to the top, and rows with unread notifications, \
-    agents awaiting input, or running scripts surface in a new Active section.
+    Pinned worktrees from every repository float to the top of the sidebar in \
+    a single section so you can reach them at a glance.
     """
   }
 }

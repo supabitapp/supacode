@@ -178,13 +178,13 @@ struct AppFeatureArchivedSelectionTests {
     #expect(row?.hasAgentAwaitingInput == true)
     // Drained, so it won't re-fire on subsequent `repositoriesChanged`.
     #expect(store.state.repositories.pendingAgentRehydrateSurfaces.isEmpty)
-    // User-visible invariant: the row is in the Active hoist now.
-    let activeRowIDs = store.state.repositories.sidebarStructure.sections.flatMap {
+    // User-visible invariant: the row renders under its repository section.
+    let repoRowIDs = store.state.repositories.sidebarStructure.sections.flatMap {
       section -> [Worktree.ID] in
-      if case .highlight(let kind, let rowIDs) = section, kind == .active { return rowIDs }
+      if case .repository(_, let groups) = section { return groups.flatMap(\.rowIDs) }
       return []
     }
-    #expect(activeRowIDs.contains(worktree.id))
+    #expect(repoRowIDs.contains(worktree.id))
   }
 
   @Test(.dependencies) func agentPresenceDeltaPersistsLayoutsAfterDebounceWindow() async {

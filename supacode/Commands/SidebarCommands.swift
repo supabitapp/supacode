@@ -11,7 +11,6 @@ struct SidebarCommands: Commands {
   @Shared(.appStorage("nestedWorktreesOnboardingDismissedAt"))
   private var nestedOnboardingDismissedAt: Date = .distantPast
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
-  @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
   @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
   private var highlightOnboardingDismissedAt: Date = .distantPast
 
@@ -44,23 +43,13 @@ struct SidebarCommands: Commands {
       get: { groupPinnedRows },
       set: { newValue in
         $groupPinnedRows.withLock { $0 = newValue }
-        dismissHighlightOnboardingIfBothOff()
+        dismissHighlightOnboardingIfOff()
       }
     )
   }
 
-  private var groupActiveRowsToggle: Binding<Bool> {
-    Binding(
-      get: { groupActiveRows },
-      set: { newValue in
-        $groupActiveRows.withLock { $0 = newValue }
-        dismissHighlightOnboardingIfBothOff()
-      }
-    )
-  }
-
-  private func dismissHighlightOnboardingIfBothOff() {
-    guard !groupPinnedRows, !groupActiveRows,
+  private func dismissHighlightOnboardingIfOff() {
+    guard !groupPinnedRows,
       !HighlightRelevantOnboardingCardView.isDismissed(at: highlightOnboardingDismissedAt)
     else { return }
     $highlightOnboardingDismissedAt.withLock { $0 = .now }
@@ -84,10 +73,7 @@ struct SidebarCommands: Commands {
       .help("Reveal in Sidebar (\(revealInSidebar?.display ?? "none"))")
       .disabled(revealInSidebarAction?.isEnabled != true)
       Section {
-        Menu("Group Relevant Sidebar Rows") {
-          Toggle("Group Pinned Rows", isOn: groupPinnedRowsToggle)
-          Toggle("Group Active Rows", isOn: groupActiveRowsToggle)
-        }
+        Toggle("Group Pinned Rows", isOn: groupPinnedRowsToggle)
         Toggle("Nest Worktrees by Branch", isOn: nestWorktreesToggle)
         Toggle("Hide Worktree Name on Match", isOn: Binding($hideSubtitleOnMatch))
       }

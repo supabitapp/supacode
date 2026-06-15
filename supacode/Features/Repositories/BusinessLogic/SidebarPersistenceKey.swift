@@ -160,11 +160,4 @@ nonisolated extension SharedReaderKey where Self == AppStorageKey<Bool>.Default 
   static var sidebarGroupPinnedRows: Self {
     Self[.appStorage("sidebarGroupPinnedRows"), default: true]
   }
-
-  /// "Group Active Rows" view-menu toggle. When on, rows with unread
-  /// notifications / agents / awaiting input / running scripts are hoisted
-  /// into a single Active section at the top of the sidebar.
-  static var sidebarGroupActiveRows: Self {
-    Self[.appStorage("sidebarGroupActiveRows"), default: true]
-  }
 }

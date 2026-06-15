@@ -88,31 +88,19 @@ struct SidebarBottomCardTests {
     )
   }
 
-  @Test func highlightCardHiddenWhenBothTogglesOff() {
+  @Test func highlightCardHiddenWhenToggleOff() {
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
         groupPinnedRows: false,
-        groupActiveRows: false,
         dismissedAt: .distantPast
       ) == .hidden
     )
   }
 
-  @Test func highlightCardVisibleWhenOnlyPinnedOn() {
+  @Test func highlightCardVisibleWhenPinnedOn() {
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
         groupPinnedRows: true,
-        groupActiveRows: false,
-        dismissedAt: .distantPast
-      ) == .visible
-    )
-  }
-
-  @Test func highlightCardVisibleWhenOnlyActiveOn() {
-    #expect(
-      HighlightRelevantOnboardingCardView.resolveMode(
-        groupPinnedRows: false,
-        groupActiveRows: true,
         dismissedAt: .distantPast
       ) == .visible
     )
@@ -123,7 +111,6 @@ struct SidebarBottomCardTests {
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
         groupPinnedRows: true,
-        groupActiveRows: true,
         dismissedAt: afterRelevance
       ) == .hidden
     )
@@ -137,7 +124,6 @@ struct SidebarBottomCardTests {
     #expect(
       HighlightRelevantOnboardingCardView.resolveMode(
         groupPinnedRows: true,
-        groupActiveRows: true,
         dismissedAt: atBoundary
       ) == .hidden
     )

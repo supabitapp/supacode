@@ -21,10 +21,9 @@ extension DependencyValues {
   }
 }
 
-/// Classification buckets for the global Active section. Lower raw value =
-/// higher priority. Rows that don't classify into one of the ten buckets are
-/// excluded from Active and (when the Pinned section is in play) fall to the
-/// bottom of Pinned alphabetically.
+/// Activity-priority buckets used to order the Pinned section. Lower raw value
+/// = higher priority. Rows that don't classify into one of the ten buckets fall
+/// to the bottom of Pinned alphabetically.
 enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   case unreadAwaitingRunning = 1
   case unreadAwaiting = 2
@@ -40,7 +39,7 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
   /// Pure classifier driven by four leaf-local flags. Returns `nil` for rows
-  /// that don't belong in Active (no unread, no awaiting, no agent, no script).
+  /// with no activity (no unread, no awaiting, no agent, no script).
   static func classify(
     hasUnread: Bool,
     hasAwaiting: Bool,
@@ -61,9 +60,9 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   }
 
   /// `hasAgent` is keyed off agent badge presence (any tracked instance,
-  /// including `.idle`) so a row with a visible agent badge surfaces in
-  /// Active even when the agent isn't actively working; `state.agents` is
-  /// already empty when badges are disabled by the user.
+  /// including `.idle`) so a row with a visible agent badge ranks above an
+  /// idle one in Pinned even when the agent isn't actively working;
+  /// `state.agents` is already empty when badges are disabled by the user.
   static func classify(_ state: SidebarItemFeature.State) -> Self? {
     classify(
       hasUnread: state.hasUnseenNotifications,
@@ -74,9 +73,9 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   }
 }
 
-/// Pure ordering layer behind the highlight aggregator: priority sort over
-/// `SidebarActiveClassification`, alphabetical tie-break. Pinned keeps
-/// unclassified rows at the bottom; Active drops them.
+/// Pure ordering layer behind the Pinned section: priority sort over
+/// `SidebarActiveClassification`, alphabetical tie-break, with unclassified
+/// rows kept at the bottom.
 enum SidebarHighlightOrdering {
   struct Candidate: Equatable, Sendable {
     let id: SidebarItemID
@@ -84,10 +83,7 @@ enum SidebarHighlightOrdering {
     let classification: SidebarActiveClassification?
   }
 
-  static func orderedRowIDs(
-    forPinned: Bool,
-    candidates: [Candidate]
-  ) -> [SidebarItemID] {
+  static func orderedRowIDs(candidates: [Candidate]) -> [SidebarItemID] {
     struct Entry {
       let id: SidebarItemID
       let priority: Int
@@ -97,15 +93,8 @@ enum SidebarHighlightOrdering {
     var entries: [Entry] = []
     entries.reserveCapacity(candidates.count)
     for candidate in candidates {
-      if forPinned {
-        let priority = candidate.classification?.rawValue ?? unclassifiedPriority
-        entries.append(Entry(id: candidate.id, priority: priority, sortKey: candidate.branchName))
-      } else {
-        guard let classification = candidate.classification else { continue }
-        entries.append(
-          Entry(id: candidate.id, priority: classification.rawValue, sortKey: candidate.branchName)
-        )
-      }
+      let priority = candidate.classification?.rawValue ?? unclassifiedPriority
+      entries.append(Entry(id: candidate.id, priority: priority, sortKey: candidate.branchName))
     }
     entries.sort { lhs, rhs in
       if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
@@ -167,12 +156,10 @@ struct SidebarItemGroup: Identifiable, Equatable, Sendable {
 struct SidebarStructure: Equatable, Sendable {
   enum HighlightKind: String, Equatable, Sendable {
     case pinned
-    case active
 
     var title: String {
       switch self {
       case .pinned: "Pinned"
-      case .active: "Active"
       }
     }
   }
@@ -254,11 +241,7 @@ extension RepositoriesFeature.State {
   /// no-op rebuild doesn't invalidate SwiftUI observation.
   mutating func recomputeSidebarStructureIfChanged() {
     @Shared(.sidebarGroupPinnedRows) var groupPinned
-    @Shared(.sidebarGroupActiveRows) var groupActive
-    let new = computeSidebarStructure(
-      groupPinned: groupPinned,
-      groupActive: groupActive
-    )
+    let new = computeSidebarStructure(groupPinned: groupPinned)
     if new != sidebarStructure {
       sidebarStructure = new
     }
@@ -458,9 +441,8 @@ extension RepositoriesFeature.State {
   /// Git main worktrees are excluded (they belong to the per-repo main slot,
   /// not the user-curated pinned list). Folders seed into `.unpinned` by
   /// default and only appear here after an explicit pin. Archived rows are
-  /// filtered for parity with the Active candidate filter. The optional
-  /// `archived` parameter lets a caller share an already-computed set with
-  /// the aggregator so the O(R) walk runs once per call body, not twice.
+  /// filtered out. The optional `archived` parameter lets a caller share an
+  /// already-computed set so the O(R) walk runs once per call body, not twice.
   func orderedHighlightPinnedIDs(archived: Set<Worktree.ID>? = nil) -> [SidebarItemID] {
     let archivedSet = archived ?? archivedWorktreeIDSet
     var ids: [SidebarItemID] = []
@@ -483,8 +465,7 @@ extension RepositoriesFeature.State {
   /// body or the per-leaf reads here will observation-track every row at
   /// the parent and reintroduce the regression commit `0a1ed578` documents.
   func computeSidebarStructure(
-    groupPinned: Bool,
-    groupActive: Bool
+    groupPinned: Bool
   ) -> SidebarStructure {
     if !isInitialLoadComplete, repositories.isEmpty {
       return SidebarStructure(
@@ -497,21 +478,17 @@ extension RepositoriesFeature.State {
       )
     }
 
-    let hoists = computeHighlightHoists(groupPinned: groupPinned, groupActive: groupActive)
+    let hoists = computeHighlightHoists(groupPinned: groupPinned)
     let repoSections = buildRepositorySections(hoisted: hoists.hoistedSet)
 
     var sections: [SidebarStructure.Section] = []
     if !hoists.pinned.isEmpty {
       sections.append(.highlight(kind: .pinned, rowIDs: hoists.pinned))
     }
-    if !hoists.active.isEmpty {
-      sections.append(.highlight(kind: .active, rowIDs: hoists.active))
-    }
     sections.append(contentsOf: repoSections.sections)
 
     let hotkey = computeHotkeyOrdering(
       pinnedHoisted: hoists.pinned,
-      activeHoisted: hoists.active,
       hoisted: hoists.hoistedSet,
       sections: sections
     )
@@ -522,8 +499,7 @@ extension RepositoriesFeature.State {
       hotkeySlots: hotkey.slots,
       slotByID: hotkey.slotByID,
       repositoryHighlightByID: computeRepositoryHighlightTags(
-        pinnedHoisted: hoists.pinned,
-        activeHoisted: hoists.active
+        pinnedHoisted: hoists.pinned
       ),
       reorderableRepositoryIDs: repoSections.reorderableRepositoryIDs
     )
@@ -532,41 +508,14 @@ extension RepositoriesFeature.State {
   /// Hoisted-row payload for a single structure pass.
   private struct HighlightHoists {
     var pinned: [Worktree.ID]
-    var active: [Worktree.ID]
     var hoistedSet: Set<Worktree.ID>
   }
 
-  private func computeHighlightHoists(groupPinned: Bool, groupActive: Bool) -> HighlightHoists {
-    let archived = archivedWorktreeIDSet
-    let pinned: [Worktree.ID]
-    if groupPinned {
-      let pinnedIDs = orderedHighlightPinnedIDs(archived: archived)
-      pinned = orderedHighlightCandidates(forPinned: true, candidateIDs: pinnedIDs, excluding: [])
-    } else {
-      pinned = []
-    }
-    var hoistedSet: Set<Worktree.ID> = Set(pinned)
-
-    let active: [Worktree.ID]
-    if groupActive {
-      let candidateIDs = sidebarItems.ids.filter { id in
-        guard !archived.contains(id) else { return false }
-        guard let item = sidebarItems[id: id] else { return false }
-        // Terminating rows already signal their wind-down inline.
-        guard !item.lifecycle.isTerminating else { return false }
-        // Orphan rows have no working dir for the agent/script badge to act on.
-        return !item.isMissing
-      }
-      active = orderedHighlightCandidates(
-        forPinned: false,
-        candidateIDs: Array(candidateIDs),
-        excluding: hoistedSet
-      )
-      hoistedSet.formUnion(active)
-    } else {
-      active = []
-    }
-    return HighlightHoists(pinned: pinned, active: active, hoistedSet: hoistedSet)
+  private func computeHighlightHoists(groupPinned: Bool) -> HighlightHoists {
+    guard groupPinned else { return HighlightHoists(pinned: [], hoistedSet: []) }
+    let pinnedIDs = orderedHighlightPinnedIDs(archived: archivedWorktreeIDSet)
+    let pinned = orderedHighlightCandidates(candidateIDs: pinnedIDs)
+    return HighlightHoists(pinned: pinned, hoistedSet: Set(pinned))
   }
 
   /// Per-repo dispatch output.
@@ -627,15 +576,13 @@ extension RepositoriesFeature.State {
 
   private func computeHotkeyOrdering(
     pinnedHoisted: [Worktree.ID],
-    activeHoisted: [Worktree.ID],
     hoisted: Set<Worktree.ID>,
     sections: [SidebarStructure.Section]
   ) -> HotkeyOrdering {
     let perRepoVisibleIDs = hotkeyEligibleIDs(in: sections)
     var order: [Worktree.ID] = []
-    order.reserveCapacity(pinnedHoisted.count + activeHoisted.count + perRepoVisibleIDs.count)
+    order.reserveCapacity(pinnedHoisted.count + perRepoVisibleIDs.count)
     order.append(contentsOf: pinnedHoisted)
-    order.append(contentsOf: activeHoisted)
     for id in perRepoVisibleIDs where !hoisted.contains(id) {
       order.append(id)
     }
@@ -648,17 +595,11 @@ extension RepositoriesFeature.State {
   }
 
   private func computeRepositoryHighlightTags(
-    pinnedHoisted: [Worktree.ID],
-    activeHoisted: [Worktree.ID]
+    pinnedHoisted: [Worktree.ID]
   ) -> [Repository.ID: SidebarHighlightRepoTag] {
-    guard !pinnedHoisted.isEmpty || !activeHoisted.isEmpty else { return [:] }
+    guard !pinnedHoisted.isEmpty else { return [:] }
     var contributingRepoIDs: Set<Repository.ID> = []
     for id in pinnedHoisted {
-      if let repoID = sidebarItems[id: id]?.repositoryID {
-        contributingRepoIDs.insert(repoID)
-      }
-    }
-    for id in activeHoisted {
       if let repoID = sidebarItems[id: id]?.repositoryID {
         contributingRepoIDs.insert(repoID)
       }
@@ -705,15 +646,10 @@ extension RepositoriesFeature.State {
   /// Materialize candidates by reading branchName + classification flags
   /// from each leaf, then delegate to the pure `SidebarHighlightOrdering`
   /// sorter.
-  private func orderedHighlightCandidates(
-    forPinned: Bool,
-    candidateIDs: [SidebarItemID],
-    excluding: Set<Worktree.ID>
-  ) -> [Worktree.ID] {
+  private func orderedHighlightCandidates(candidateIDs: [SidebarItemID]) -> [Worktree.ID] {
     var candidates: [SidebarHighlightOrdering.Candidate] = []
     candidates.reserveCapacity(candidateIDs.count)
     for id in candidateIDs {
-      if excluding.contains(id) { continue }
       guard let state = sidebarItems[id: id] else { continue }
       candidates.append(
         SidebarHighlightOrdering.Candidate(
@@ -723,7 +659,7 @@ extension RepositoriesFeature.State {
         )
       )
     }
-    return SidebarHighlightOrdering.orderedRowIDs(forPinned: forPinned, candidates: candidates)
+    return SidebarHighlightOrdering.orderedRowIDs(candidates: candidates)
   }
 }
 
