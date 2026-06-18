@@ -4,15 +4,17 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   case kiro
   // swiftlint:disable:next identifier_name
   case pi
+  case opencode
 
   /// Path under the user's home where the agent stores its config
-  /// (e.g. `.claude`, `.codex`, `.kiro`, `.pi/agent`).
+  /// (e.g. `.claude`, `.codex`, `.kiro`, `.pi/agent`, `.config/opencode`).
   public var configDirectoryName: String {
     switch self {
     case .claude: ".claude"
     case .codex: ".codex"
     case .kiro: ".kiro"
     case .pi: ".pi/agent"
+    case .opencode: ".config/opencode"
     }
   }
 
@@ -23,6 +25,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .codex: "Codex"
     case .kiro: "Kiro"
     case .pi: "Pi"
+    case .opencode: "OpenCode"
     }
   }
 
@@ -33,6 +36,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .codex: "codex-mark"
     case .kiro: "kiro-mark"
     case .pi: "pi-mark"
+    case .opencode: "opencode-mark"
     }
   }
 }

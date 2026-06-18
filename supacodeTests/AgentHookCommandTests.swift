@@ -282,6 +282,21 @@ struct AgentHookCommandTests {
     #expect(composite == Self.snapshotKiroIdleAndNotify)
   }
 
+  @Test func compositeByteSnapshot_opencodeSessionEndAndIdle() {
+    // The plugin's `dispose` hook emits session_end + idle; lock its shape.
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .opencode
+    )
+    #expect(composite == Self.snapshotOpencodeSessionEndAndIdle)
+  }
+
+  @Test func compositeByteSnapshot_opencodeBusy() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .opencode
+    )
+    #expect(composite == Self.snapshotOpencodeBusy)
+  }
+
   /// Cross-check against a fully-inlined literal so a refactor that drifts both
   /// the production code AND the `presence` / `guardAndTTY` helpers cannot
   /// pass byte-stability. The other snapshots compose from helpers that mirror
@@ -317,7 +332,7 @@ struct AgentHookCommandTests {
   }
 
   @Test func sessionStartComposesOSCPresenceForClaudeAndCodex() {
-    for agent in [SkillAgent.claude, .codex] {
+    for agent in [SkillAgent.claude, .codex, .opencode] {
       let command = AgentHookSettingsCommand.compositeCommand(
         events: [.sessionStart], forwardStdinAsNotification: false, agent: agent)
       #expect(command.contains("]3008;start=\(agent.rawValue);event=session_start"))
@@ -589,6 +604,12 @@ struct AgentHookCommandTests {
 
   static let snapshotKiroIdleAndNotify =
     guardAndTTY + presence("start", "kiro", "idle") + notify("kiro") + suppressTail
+
+  static let snapshotOpencodeBusy =
+    guardAndTTY + presence("start", "opencode", "busy") + suppressTail
+
+  static let snapshotOpencodeSessionEndAndIdle =
+    guardAndTTY + presence("end", "opencode", "session_end") + presence("start", "opencode", "idle") + suppressTail
 
   /// Runs `command` with `/dev/tty` (the OSC sink) redirected to a capture file,
   /// optionally feeding `stdin`, and returns the text written to the fake tty.
