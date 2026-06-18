@@ -36,7 +36,9 @@ extension RepositoriesFeature.State {
   init(reconciledRepositories repositories: [Repository]) {
     self.init()
     self.repositories = IdentifiedArray(uniqueElements: repositories)
-    self.repositoryRoots = repositories.map(\.rootURL)
+    // Remote repos persist via the connections store, never `repositoryRoots`;
+    // only local roots belong here, matching production.
+    self.repositoryRoots = repositories.filter { $0.host == nil }.map(\.rootURL)
     reconcileSidebarForTesting()
   }
 

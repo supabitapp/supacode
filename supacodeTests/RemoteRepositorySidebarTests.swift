@@ -165,6 +165,80 @@ struct RemoteSidebarMergedListTests {
     #expect(ids.contains(RepositoriesFeature.remoteRepositoryID(for: config)))
   }
 
+  @Test func remoteRepositoriesAreReorderable() {
+    let config = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    let local = localRepository()
+    let remote = remoteRepository(config: config)
+    let state = makeState(repositories: [local, remote])
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    // A remote repo is a first-class drag target, not pinned below the locals.
+    #expect(structure.reorderableRepositoryIDs.contains(remote.id))
+    // `reorderableRepositoryIDs` mirrors `orderedRepositoryIDs()` 1:1 so the
+    // offset-based `.repositoriesMoved` maps cleanly.
+    #expect(structure.reorderableRepositoryIDs == state.orderedRepositoryIDs())
+  }
+
+  @Test func persistedSidebarOrderInterleavesRemoteAndLocal() {
+    let config = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    let local = localRepository()
+    let remote = remoteRepository(config: config)
+    var state = makeState(repositories: [local, remote])
+    // Simulate a drag that placed the remote repo above the local one.
+    state.$sidebar.withLock { sidebar in
+      var sections: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
+      sections[remote.id] = .init()
+      sections[local.id] = .init()
+      sidebar.sections = sections
+    }
+
+    #expect(state.orderedRepositoryIDs() == [remote.id, local.id])
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+    let repoIDs: [Repository.ID] = structure.sections.compactMap { section in
+      if case .repository(let repositoryID, _) = section { return repositoryID }
+      return nil
+    }
+    #expect(repoIDs == [remote.id, local.id])
+  }
+
+  @Test func repositoriesMovedReordersRemoteAboveLocal() async {
+    let config = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    let local = localRepository()
+    let remote = remoteRepository(config: config)
+    let state = makeState(repositories: [local, remote])
+    // Default order before any drag: local then remote.
+    #expect(state.orderedRepositoryIDs() == [local.id, remote.id])
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+    }
+    // The move rewrites the persisted `sidebar.sections` order plus derived
+    // caches; this test only asserts the resulting repository order.
+    store.exhaustivity = .off
+
+    // Drag the remote repo (index 1) to the top.
+    await store.send(.repositoriesMoved([1], 0))
+    #expect(store.state.orderedRepositoryIDs() == [remote.id, local.id])
+    let sectionOrder = Array(store.state.sidebar.sections.keys)
+    #expect(sectionOrder == [remote.id, local.id])
+  }
+
   @Test func localOnlySidebarRendersFlatRepositorySections() {
     let local = localRepository()
     let state = makeState(repositories: [local])

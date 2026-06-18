@@ -635,8 +635,12 @@ private struct SidebarItemContextMenu: View {
     let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
     let isAllFoldersBulk = isAllFoldersBulk
 
+    // Open actions resolve local paths through Finder / editors, which can't
+    // reach a remote SSH host, so they're disabled (but still shown, matching
+    // the toolbar and menu bar) for a remote row.
     if !isBulkSelection, !worktree.isMissing {
       openActions(overrides: overrides)
+        .disabled(worktree.host != nil)
       Divider()
     }
 
@@ -700,6 +704,23 @@ private struct SidebarItemContextMenu: View {
       }
     }
 
+    archiveAndDeleteActions(
+      contextRows: contextRows,
+      isBulkSelection: isBulkSelection,
+      isAllFoldersBulk: isAllFoldersBulk,
+      archiveShortcut: archiveShortcut,
+      deleteShortcut: deleteShortcut
+    )
+  }
+
+  @ViewBuilder
+  private func archiveAndDeleteActions(
+    contextRows: [SidebarItemFeature.State],
+    isBulkSelection: Bool,
+    isAllFoldersBulk: Bool,
+    archiveShortcut: AppShortcut?,
+    deleteShortcut: AppShortcut?
+  ) -> some View {
     let archiveTargets =
       contextRows
       .filter { !$0.isMainWorktree && $0.lifecycle == .idle }

@@ -1257,6 +1257,13 @@ struct AppFeature {
       appLogger.info("Ignoring open of missing worktree \(worktree.id) from \(source.rawValue)")
       return .none
     }
+    // Open / Reveal target local Finder / editors; a remote SSH path can't be
+    // reached, so reject it here regardless of the entry point (UI gates this
+    // too, but a hotkey can still reach the reducer).
+    if worktree.host != nil {
+      appLogger.info("Ignoring open of remote worktree \(worktree.id) from \(source.rawValue)")
+      return .none
+    }
     analyticsClient.capture("worktree_opened", ["action": action.settingsID, "source": source.rawValue])
     guard action == .editor else {
       return .run { send in

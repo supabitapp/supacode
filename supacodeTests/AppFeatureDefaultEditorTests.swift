@@ -147,6 +147,39 @@ struct AppFeatureDefaultEditorTests {
     #expect(watcherCommands.value == [.setSelectedWorktreeID(worktree.id)])
   }
 
+  @Test(.dependencies) func openAndRevealAreNoOpsForRemoteWorktree() async {
+    let config = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    let worktree = RepositoriesFeature.remoteMainWorktree(config: config)
+    let repository = Repository(
+      id: RepositoriesFeature.remoteRepositoryID(for: config),
+      rootURL: URL(fileURLWithPath: config.normalizedRemotePath),
+      name: config.resolvedDisplayName,
+      worktrees: IdentifiedArray(uniqueElements: [worktree]),
+      isGitRepository: true,
+      host: config.host
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktree.id)
+
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    }
+
+    // A remote path can't be reached by Finder / an editor, so both routes
+    // return before spawning any workspace effect: exhaustive sends with no
+    // trailing closure and a clean `finish()` prove the no-op.
+    await store.send(.openWorktree(.finder))
+    await store.send(.revealInFinder)
+    await store.finish()
+  }
+
   private func makeWorktree() -> Worktree {
     let repositoryRootURL = URL(fileURLWithPath: "/tmp/repo-\(UUID().uuidString)")
     let worktreeURL = repositoryRootURL.appending(path: "wt-1")

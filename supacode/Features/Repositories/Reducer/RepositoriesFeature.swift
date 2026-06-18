@@ -4657,19 +4657,25 @@ extension RepositoriesFeature.State {
     return ordered
   }
 
-  /// Repository ids in sidebar order: local roots first (the move/persist set),
-  /// then remote repos by their host-keyed id. Remote ids aren't local file
-  /// paths, so they never come through `orderedRepositoryRoots`; appending them
-  /// here is what lets the pinned hoist, hotkeys, and arrow-nav see remote rows.
+  /// Every repository id in sidebar order. The persisted `sidebar.sections`
+  /// order wins, so a drag sticks across recompute and reload; anything not yet
+  /// placed falls back to load order. Local roots and host-keyed remote ids are
+  /// treated alike: remote ids aren't in `repositoryRoots`, so the
+  /// `repositories` pass is what surfaces them.
   func orderedRepositoryIDs() -> [Repository.ID] {
-    var ids = orderedRepositoryRoots().map { RepositoryID($0.standardizedFileURL.path(percentEncoded: false)) }
-    var seen = Set(ids)
-    for repository in repositories where repository.host != nil {
-      if seen.insert(repository.id).inserted {
-        ids.append(repository.id)
-      }
+    let rootIDs = repositoryRoots.map {
+      RepositoryID($0.standardizedFileURL.path(percentEncoded: false))
     }
-    return ids
+    var ordered: [Repository.ID] = []
+    var seen: Set<Repository.ID> = []
+    for id in sidebar.sections.keys where repositories[id: id] != nil || rootIDs.contains(id) {
+      if seen.insert(id).inserted { ordered.append(id) }
+    }
+    for id in rootIDs where seen.insert(id).inserted { ordered.append(id) }
+    for repository in repositories where seen.insert(repository.id).inserted {
+      ordered.append(repository.id)
+    }
+    return ordered
   }
 
   func repositoryID(for worktreeID: Worktree.ID?) -> Repository.ID? {
