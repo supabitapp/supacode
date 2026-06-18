@@ -115,6 +115,7 @@ private struct WorktreeCreationFooter: View {
 
 private struct WorktreeBaseRefField: View {
   @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+  @State private var isPickerPresented = false
 
   var body: some View {
     LabeledContent {
@@ -123,12 +124,22 @@ private struct WorktreeBaseRefField: View {
           ProgressView()
             .controlSize(.small)
         }
-        Menu {
-          WorktreeBaseRefMenuContent(store: store)
+        Button {
+          isPickerPresented = true
         } label: {
-          Text(store.baseRefMenuLabel)
-            .lineLimit(1)
-            .truncationMode(.middle)
+          HStack(spacing: 4) {
+            Text(store.baseRefMenuLabel)
+              .lineLimit(1)
+              .truncationMode(.middle)
+            Image(systemName: "chevron.up.chevron.down")
+              .imageScale(.small)
+              .foregroundStyle(.secondary)
+              .accessibilityHidden(true)
+          }
+        }
+        .help("Choose the base ref to branch from. Type to filter local and remote branches.")
+        .popover(isPresented: $isPickerPresented, arrowEdge: .bottom) {
+          WorktreeBaseRefPicker(store: store) { isPickerPresented = false }
         }
       }
     } label: {
@@ -138,100 +149,108 @@ private struct WorktreeBaseRefField: View {
   }
 }
 
-private struct WorktreeBaseRefMenuContent: View {
+/// Searchable base-ref picker (#387): a filter field over a flat list of local
+/// and remote refs, replacing the old nested submenus so the user can type any
+/// fragment of a branch name instead of drilling namespaces.
+private struct WorktreeBaseRefPicker: View {
   @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+  let dismiss: () -> Void
+
+  @State private var query = ""
+  @FocusState private var filterFocused: Bool
 
   var body: some View {
-    WorktreeBaseRefMenuItem(
-      store: store,
-      ref: nil,
-      label: store.automaticBaseRef.isEmpty
-        ? Text("Auto")
-        : Text(store.automaticBaseRef) + Text(" Auto").foregroundStyle(.secondary)
-    )
-    if let defaultBranch = store.defaultBranch {
-      // Tagged "Local" to distinguish it from the remote-tracking Auto ref above.
-      WorktreeBaseRefMenuItem(
-        store: store,
-        ref: defaultBranch,
-        label: Text(defaultBranch) + Text(" Local").foregroundStyle(.secondary)
-      )
-    }
+    VStack(alignment: .leading, spacing: 0) {
+      TextField("Filter branches", text: $query)
+        .textFieldStyle(.roundedBorder)
+        .focused($filterFocused)
+        .padding(12)
+        .onAppear { filterFocused = true }
 
-    Divider()
+      Divider()
 
-    if let branchMenu = store.branchMenu {
-      if !branchMenu.localBranches.isEmpty {
-        Menu("Local") {
-          ForEach(branchMenu.localBranches) { node in
-            WorktreeBranchNodeMenu(store: store, node: node)
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 0) {
+          WorktreeBaseRefRow(
+            title: store.automaticBaseRef.isEmpty ? "Auto" : "\(store.automaticBaseRef) · Auto",
+            isSelected: store.selectedBaseRef == nil
+          ) { select(nil) }
+
+          if let defaultBranch = store.defaultBranch {
+            WorktreeBaseRefRow(
+              title: "\(defaultBranch) · Local",
+              isSelected: store.selectedBaseRef == defaultBranch
+            ) { select(defaultBranch) }
+          }
+
+          Divider()
+            .padding(.vertical, 4)
+
+          if let branchMenu = store.branchMenu {
+            let refs = branchMenu.refs(matching: query)
+            if refs.isEmpty {
+              WorktreeBaseRefPlaceholder(text: "No matching branches")
+            } else {
+              ForEach(refs, id: \.self) { ref in
+                WorktreeBaseRefRow(
+                  title: ref,
+                  isSelected: store.selectedBaseRef == ref,
+                  monospaced: true
+                ) { select(ref) }
+              }
+            }
+          } else {
+            WorktreeBaseRefPlaceholder(text: "Loading branches…")
           }
         }
+        .padding(.bottom, 8)
       }
-      ForEach(branchMenu.remotes) { remote in
-        WorktreeRemoteBranchMenu(store: store, remote: remote)
-      }
-    } else {
-      Text("Loading branches…")
     }
+    .frame(width: 340, height: 380)
+  }
+
+  private func select(_ ref: String?) {
+    store.send(.baseRefSelected(ref))
+    dismiss()
   }
 }
 
-private struct WorktreeRemoteBranchMenu: View {
-  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
-  let remote: BaseRefBranchMenu.Remote
+private struct WorktreeBaseRefRow: View {
+  let title: String
+  let isSelected: Bool
+  var monospaced = false
+  let action: () -> Void
 
   var body: some View {
-    Menu {
-      ForEach(remote.branches) { node in
-        WorktreeBranchNodeMenu(store: store, node: node)
+    Button(action: action) {
+      HStack(spacing: 6) {
+        Image(systemName: "checkmark")
+          .imageScale(.small)
+          .opacity(isSelected ? 1 : 0)
+          .accessibilityHidden(true)
+        Text(title)
+          .monospaced(monospaced)
+          .lineLimit(1)
+          .truncationMode(.middle)
+        Spacer(minLength: 0)
       }
-    } label: {
-      Text(remote.name) + Text(" Remote").foregroundStyle(.secondary)
+      .contentShape(.rect)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 5)
     }
+    .buttonStyle(.plain)
+    .help(title)
   }
 }
 
-private struct WorktreeBranchNodeMenu: View {
-  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
-  let node: BranchMenuNode
+private struct WorktreeBaseRefPlaceholder: View {
+  let text: String
 
   var body: some View {
-    if node.children.isEmpty {
-      WorktreeBaseRefMenuItem(store: store, ref: node.ref, label: Text(node.name))
-    } else {
-      Menu(node.name) {
-        // A namespace segment that is also a branch (rare) stays selectable.
-        if let ref = node.ref {
-          WorktreeBaseRefMenuItem(store: store, ref: ref, label: Text(node.name))
-        }
-        ForEach(node.children) { child in
-          WorktreeBranchNodeMenu(store: store, node: child)
-        }
-      }
-    }
-  }
-}
-
-private struct WorktreeBaseRefMenuItem: View {
-  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
-  let ref: String?
-  let label: Text
-
-  var body: some View {
-    Button {
-      store.send(.baseRefSelected(ref))
-    } label: {
-      if store.selectedBaseRef == ref {
-        Label {
-          label
-        } icon: {
-          Image(systemName: "checkmark")
-            .accessibilityHidden(true)
-        }
-      } else {
-        label
-      }
-    }
+    Text(text)
+      .font(.callout)
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 6)
   }
 }

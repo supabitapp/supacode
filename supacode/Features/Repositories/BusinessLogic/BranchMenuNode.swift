@@ -25,6 +25,23 @@ struct BaseRefBranchMenu: Equatable {
       )
     }
   }
+
+  /// Every selectable ref across local + remote branches, flattened out of the
+  /// display trie in sorted tree order. Backs the searchable base-ref picker (#387).
+  func allRefs() -> [String] {
+    BranchMenuNode.refs(in: localBranches) + remotes.flatMap { BranchMenuNode.refs(in: $0.branches) }
+  }
+
+  /// Refs containing `query` as a case/diacritic-insensitive substring, in tree
+  /// order. A blank query returns every ref. Matching the full ref (e.g.
+  /// `origin/feature/jira-1234/foo`) lets the user type any fragment — remote,
+  /// namespace, or leaf — instead of drilling submenus.
+  func refs(matching query: String) -> [String] {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    let all = allRefs()
+    guard !trimmed.isEmpty else { return all }
+    return all.filter { $0.localizedCaseInsensitiveContains(trimmed) }
+  }
 }
 
 /// A node in the base-ref selection menu. Branch names are split on `/`
@@ -37,6 +54,13 @@ struct BranchMenuNode: Equatable, Identifiable {
   /// for pure grouping segments.
   let ref: String?
   let children: [BranchMenuNode]
+
+  /// Depth-first selectable refs (nodes with a non-nil `ref`), in sorted tree
+  /// order. A namespace segment that is itself a branch contributes its own ref
+  /// before its children's.
+  static func refs(in nodes: [BranchMenuNode]) -> [String] {
+    nodes.flatMap { node in (node.ref.map { [$0] } ?? []) + refs(in: node.children) }
+  }
 
   /// Builds a sorted node tree from full branch names. `refPrefix` is
   /// prepended to each branch to form its ref (e.g. `origin/` for a remote).
