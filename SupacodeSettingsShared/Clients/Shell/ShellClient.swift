@@ -78,8 +78,8 @@ extension ShellClient: DependencyKey {
       )
     },
     runLoginImpl: { executableURL, arguments, currentDirectoryURL, log in
-      let shellURL = URL(fileURLWithPath: defaultShellPath())
-      let execCommand = shellExecCommand(for: shellURL)
+      let (shellURL, execCommand) = ShellClient.loginShellInvocation(
+        userShell: URL(fileURLWithPath: defaultShellPath()))
       let shellArguments =
         ["-l", "-c", execCommand, "--", executableURL.path(percentEncoded: false)] + arguments
       if log {
@@ -102,8 +102,8 @@ extension ShellClient: DependencyKey {
       )
     },
     runLoginStreamImpl: { executableURL, arguments, currentDirectoryURL, log in
-      let shellURL = URL(fileURLWithPath: defaultShellPath())
-      let execCommand = shellExecCommand(for: shellURL)
+      let (shellURL, execCommand) = ShellClient.loginShellInvocation(
+        userShell: URL(fileURLWithPath: defaultShellPath()))
       let shellArguments =
         ["-l", "-c", execCommand, "--", executableURL.path(percentEncoded: false)] + arguments
       if log {
@@ -250,14 +250,34 @@ nonisolated private func collectOutput(
   return finalOutput
 }
 
-nonisolated private func shellExecCommand(for shellURL: URL) -> String {
-  switch shellURL.lastPathComponent {
-  case "fish":
-    return "test -f ~/.config/fish/config.fish; and source ~/.config/fish/config.fish >/dev/null 2>&1; exec $argv"
-  case "bash":
-    return "[ -f ~/.bashrc ] && . ~/.bashrc >/dev/null 2>&1; exec \"$@\""
-  default:
-    return "[ -f ~/.zshrc ] && . ~/.zshrc >/dev/null 2>&1; exec \"$@\""
+extension ShellClient {
+  /// Builds the `(shell, -c command)` pair for running a one-shot command
+  /// through a login shell.
+  ///
+  /// We can only drive shells whose `-l -c` accepts our POSIX (or fish) snippet.
+  /// A non-POSIX login shell — nushell, pwsh, elvish, xonsh, csh/tcsh — chokes
+  /// on the POSIX rc-sourcing + `exec "$@"`, which surfaced as a bogus
+  /// "not a git repository" on Nushell setups (issue #100). For those we fall
+  /// back to /bin/zsh so the command still runs.
+  ///
+  /// This fallback is scoped to the one-shot command path only; the interactive
+  /// terminal keeps spawning the user's real shell via `defaultShellPath()`.
+  /// ponytail: allowlist of shells we know how to drive; unknown → zsh.
+  nonisolated static func loginShellInvocation(userShell: URL) -> (shell: URL, command: String) {
+    let drivable: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "ksh"]
+    let shell =
+      drivable.contains(userShell.lastPathComponent)
+      ? userShell : URL(fileURLWithPath: "/bin/zsh")
+    let command: String
+    switch shell.lastPathComponent {
+    case "fish":
+      command = "test -f ~/.config/fish/config.fish; and source ~/.config/fish/config.fish >/dev/null 2>&1; exec $argv"
+    case "bash":
+      command = "[ -f ~/.bashrc ] && . ~/.bashrc >/dev/null 2>&1; exec \"$@\""
+    default:
+      command = "[ -f ~/.zshrc ] && . ~/.zshrc >/dev/null 2>&1; exec \"$@\""
+    }
+    return (shell, command)
   }
 }
 
