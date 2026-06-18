@@ -3035,7 +3035,7 @@ struct RepositoriesFeature {
         if state.autoDeleteArchivedWorktreesAfterDays != nil {
           allEffects.append(.send(.autoDeleteExpiredArchivedWorktrees))
         }
-        if !mergedRemote.configs.isEmpty {
+        if mergedRemote.hasPersistedRemoteRepositories {
           allEffects.append(.send(.resolveRemoteRepositories))
         }
         return .merge(allEffects)
@@ -3193,7 +3193,9 @@ struct RepositoriesFeature {
         if state.autoDeleteArchivedWorktreesAfterDays != nil {
           allEffects.append(.send(.autoDeleteExpiredArchivedWorktrees))
         }
-        if !mergedRemote.configs.isEmpty {
+        // Opening a local repo should not re-probe every already-loaded remote;
+        // only resolve placeholders that were introduced or preserved by the merge.
+        if !mergedRemote.resolvingIDs.isEmpty {
           allEffects.append(.send(.resolveRemoteRepositories))
         }
         return .merge(allEffects)
@@ -4008,7 +4010,11 @@ struct RepositoriesFeature {
   private static func mergePersistedRemoteRepositories(
     into repositories: [Repository],
     existingState state: State
-  ) -> (repositories: [Repository], resolvingIDs: Set<Repository.ID>, configs: [RemoteRepositoryConfig]) {
+  ) -> (
+    repositories: [Repository],
+    resolvingIDs: Set<Repository.ID>,
+    hasPersistedRemoteRepositories: Bool
+  ) {
     let remoteConfigs = persistedRemoteRepositoryConfigs()
     var persistedRemoteIDs: Set<Repository.ID> = []
     for config in remoteConfigs {
@@ -4027,7 +4033,7 @@ struct RepositoriesFeature {
     }
 
     guard !remoteConfigs.isEmpty else {
-      return (mergedRepositories, [], [])
+      return (mergedRepositories, [], false)
     }
 
     var resolvingIDs: Set<Repository.ID> = []
@@ -4052,7 +4058,7 @@ struct RepositoriesFeature {
         resolvingIDs.insert(repoID)
       }
     }
-    return (mergedRepositories, resolvingIDs, remoteConfigs)
+    return (mergedRepositories, resolvingIDs, true)
   }
 
   private struct WorktreesFetchResult: Sendable {
