@@ -17,6 +17,7 @@ struct RenameBranchFeatureTests {
       worktreeID: "/tmp/rename-repo/feature-old",
       repositoryID: "/tmp/rename-repo",
       repositoryRootURL: repoRoot,
+      host: nil,
       currentName: currentName
     )
     if let newName {

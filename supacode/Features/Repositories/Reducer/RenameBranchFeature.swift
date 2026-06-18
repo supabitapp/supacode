@@ -9,6 +9,7 @@ struct RenameBranchFeature {
     let worktreeID: Worktree.ID
     let repositoryID: Repository.ID
     let repositoryRootURL: URL
+    let host: RemoteHost?
     let currentName: String
     var newName: String
     var isSubmitting = false
@@ -20,11 +21,13 @@ struct RenameBranchFeature {
       worktreeID: Worktree.ID,
       repositoryID: Repository.ID,
       repositoryRootURL: URL,
+      host: RemoteHost?,
       currentName: String
     ) {
       self.worktreeID = worktreeID
       self.repositoryID = repositoryID
       self.repositoryRootURL = repositoryRootURL
+      self.host = host
       self.currentName = currentName
       self.newName = currentName
     }
@@ -79,6 +82,7 @@ struct RenameBranchFeature {
         let repoRoot = state.repositoryRootURL
         let worktreeID = state.worktreeID
         let repositoryID = state.repositoryID
+        let gitClient = state.host.map { GitClientDependency.ssh(host: $0) } ?? gitClient
         state.isSubmitting = true
         state.validationMessage = nil
         return .run { send in

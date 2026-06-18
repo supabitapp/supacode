@@ -484,6 +484,7 @@ struct AppFeatureCommandPaletteTests {
         worktreeID: worktree.id,
         repositoryID: repository.id,
         repositoryRootURL: repository.rootURL,
+        host: nil,
         currentName: "feature/old"
       )
     }

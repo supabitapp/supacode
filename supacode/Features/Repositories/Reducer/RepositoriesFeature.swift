@@ -500,6 +500,16 @@ struct RepositoriesFeature {
     return .ssh(host: host)
   }
 
+  /// Host-aware git client for a repository: the SSH flavor for a remote repo
+  /// (so branch availability / inventory lookups run on the host), the injected
+  /// local client otherwise.
+  private func gitClient(for repository: Repository) -> GitClientDependency {
+    guard let host = repository.host else {
+      return gitClient
+    }
+    return .ssh(host: host)
+  }
+
   /// Present the connection form seeded from the existing config for `repositoryID`.
   /// Looked up by derived repo id so a failed / disconnected remote (which has
   /// no loaded `Repository`) is still editable.
@@ -3385,7 +3395,7 @@ struct RepositoriesFeature {
         // client); local uses the injected client. The dialog loads these in
         // the background, so the ssh round-trips (multiplexed over the warm
         // ControlMaster) don't block presentation.
-        let gitClient = repository.host.map { GitClientDependency.ssh(host: $0) } ?? gitClient
+        let gitClient = gitClient(for: repository)
         let rootURL = repository.rootURL
         // Resolve the cheap quick-picks (auto ref + matching local
         // branch) and present the prompt right away, then load the
@@ -3562,7 +3572,7 @@ struct RepositoriesFeature {
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
           return .none
         }
-        let gitClient = gitClient
+        let gitClient = gitClient(for: repository)
         let rootURL = repository.rootURL
         return .run { send in
           let localBranchNames = (try? await gitClient.localBranchNames(rootURL)) ?? []
@@ -3832,6 +3842,7 @@ struct RepositoriesFeature {
           worktreeID: worktreeID,
           repositoryID: repositoryID,
           repositoryRootURL: repository.rootURL,
+          host: worktree.host,
           currentName: worktree.name
         )
         return .none

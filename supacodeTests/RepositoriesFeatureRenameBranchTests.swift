@@ -60,9 +60,52 @@ struct RepositoriesFeatureRenameBranchTests {
         worktreeID: WorktreeID("\(self.repoID)/feature-old"),
         repositoryID: self.repoID,
         repositoryRootURL: URL(fileURLWithPath: self.repoID.rawValue),
+        host: nil,
         currentName: "feature/old"
       )
     }
+  }
+
+  @Test func requestRenameBranchSeedsHostForRemoteWorktree() async {
+    let config = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    let remoteRepoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    let main = RepositoriesFeature.remoteMainWorktree(config: config)
+    // An attached (renameable) remote worktree, unlike the detached main.
+    let feature = Worktree(
+      id: RepositoriesFeature.remoteWorktreeID(host: config.host, worktreePath: "/home/me/proj/feature"),
+      name: "feature",
+      detail: config.host.sshDestination,
+      workingDirectory: URL(fileURLWithPath: "/home/me/proj/feature"),
+      repositoryRootURL: URL(fileURLWithPath: config.normalizedRemotePath),
+      isAttached: true,
+      host: config.host
+    )
+    let repository = Repository(
+      id: remoteRepoID,
+      rootURL: URL(fileURLWithPath: config.normalizedRemotePath),
+      name: config.resolvedDisplayName,
+      worktrees: IdentifiedArray(uniqueElements: [main, feature]),
+      isGitRepository: true,
+      host: config.host
+    )
+    var initial = RepositoriesFeature.State()
+    initial.repositories = IdentifiedArray(uniqueElements: [repository])
+    initial.reconcileSidebarForTesting()
+
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    // The prompt must carry the host so validation / availability / rename run
+    // on the SSH host, not the local machine.
+    await store.send(.requestRenameBranch(feature.id, remoteRepoID))
+    #expect(store.state.renameBranchPrompt?.host == config.host)
+    #expect(store.state.renameBranchPrompt?.worktreeID == feature.id)
   }
 
   @Test func requestRenameBranchNoOpsForFolderRepo() async {
@@ -88,6 +131,7 @@ struct RepositoriesFeatureRenameBranchTests {
         worktreeID: WorktreeID("\(self.repoID)/main"),
         repositoryID: self.repoID,
         repositoryRootURL: URL(fileURLWithPath: self.repoID.rawValue),
+        host: nil,
         currentName: "main"
       )
     }
@@ -99,6 +143,7 @@ struct RepositoriesFeatureRenameBranchTests {
       worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
       repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
+      host: nil,
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {
@@ -141,6 +186,7 @@ struct RepositoriesFeatureRenameBranchTests {
       worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
       repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
+      host: nil,
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {
@@ -185,6 +231,7 @@ struct RepositoriesFeatureRenameBranchTests {
       worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
       repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
+      host: nil,
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {
@@ -207,6 +254,7 @@ struct RepositoriesFeatureRenameBranchTests {
       worktreeID: WorktreeID("\(repoID)/feature-old"),
       repositoryID: repoID,
       repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
+      host: nil,
       currentName: "feature/old"
     )
     let store = TestStore(initialState: initial) {
