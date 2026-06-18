@@ -41,7 +41,7 @@ struct AppShortcutsTests {
 
   @Test func tabSelectionGhosttyKeybindArgumentsMatchExpected() {
     expectNoDifference(
-      AppShortcuts.tabSelectionGhosttyKeybindArguments,
+      AppShortcuts.tabSelectionGhosttyKeybindArguments(from: [:]),
       [
         "--keybind=ctrl+1=goto_tab:1",
         "--keybind=ctrl+digit_1=goto_tab:1",
@@ -74,13 +74,51 @@ struct AppShortcutsTests {
       #expect(arguments.contains(shortcut.ghosttyUnbindArgument))
     }
 
-    for argument in AppShortcuts.tabSelectionGhosttyKeybindArguments {
+    for argument in AppShortcuts.tabSelectionGhosttyKeybindArguments(from: [:]) {
       #expect(arguments.contains(argument))
     }
 
     for argument in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map({ "--keybind=ctrl+digit_\($0)=unbind" }) {
       #expect(arguments.contains(argument) == false)
     }
+  }
+
+  // MARK: - Tab selection honors overrides.
+
+  @Test func tabSelectionOmitsDisabledWorktreeSelection() {
+    let arguments = AppShortcuts.tabSelectionGhosttyKeybindArguments(
+      from: [.selectWorktree(6): .disabled]
+    )
+    // The disabled slot contributes no goto_tab binding, so ⌃6 reaches the terminal.
+    #expect(arguments.contains("--keybind=ctrl+6=goto_tab:6") == false)
+    #expect(arguments.contains("--keybind=ctrl+digit_6=goto_tab:6") == false)
+    // Other slots are unaffected.
+    #expect(arguments.contains("--keybind=ctrl+5=goto_tab:5"))
+  }
+
+  @Test func tabSelectionFollowsRemappedWorktreeSelection() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_J), modifiers: [.command])
+    let arguments = AppShortcuts.tabSelectionGhosttyKeybindArguments(
+      from: [.selectWorktree(1): override]
+    )
+    // The goto_tab binding moves to the remapped chord; the default ⌃1 is released.
+    #expect(arguments.contains("--keybind=super+j=goto_tab:1"))
+    #expect(arguments.contains("--keybind=ctrl+1=goto_tab:1") == false)
+    #expect(arguments.contains("--keybind=ctrl+digit_1=goto_tab:1") == false)
+  }
+
+  @Test func ghosttyCLIArgumentsReleaseDisabledWorktreeChordToTerminal() {
+    let arguments = AppShortcuts.ghosttyCLIKeybindArguments(from: [.selectWorktree(6): .disabled])
+    // Neither a goto_tab binding nor an unbind remains, so ⌃6 is delivered to the terminal.
+    #expect(arguments.contains { $0.hasPrefix("--keybind=ctrl+6=") } == false)
+    #expect(arguments.contains(AppShortcuts.selectWorktree6.ghosttyUnbindArgument) == false)
+  }
+
+  @Test func ghosttyCLIArgumentsMoveRemappedWorktreeChord() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_J), modifiers: [.command])
+    let arguments = AppShortcuts.ghosttyCLIKeybindArguments(from: [.selectWorktree(1): override])
+    #expect(arguments.contains("--keybind=super+j=goto_tab:1"))
+    #expect(arguments.contains { $0.hasPrefix("--keybind=ctrl+1=") } == false)
   }
 
   // MARK: - Shortcut identity.

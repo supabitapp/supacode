@@ -268,25 +268,6 @@ public struct AppShortcutGroup: Identifiable {
 // MARK: - Registry.
 
 public enum AppShortcuts {
-  private struct TabSelectionBinding {
-    let unicode: String
-    let physical: String
-    let tabIndex: Int
-  }
-
-  private static let tabSelectionBindings: [TabSelectionBinding] = [
-    TabSelectionBinding(unicode: "1", physical: "digit_1", tabIndex: 1),
-    TabSelectionBinding(unicode: "2", physical: "digit_2", tabIndex: 2),
-    TabSelectionBinding(unicode: "3", physical: "digit_3", tabIndex: 3),
-    TabSelectionBinding(unicode: "4", physical: "digit_4", tabIndex: 4),
-    TabSelectionBinding(unicode: "5", physical: "digit_5", tabIndex: 5),
-    TabSelectionBinding(unicode: "6", physical: "digit_6", tabIndex: 6),
-    TabSelectionBinding(unicode: "7", physical: "digit_7", tabIndex: 7),
-    TabSelectionBinding(unicode: "8", physical: "digit_8", tabIndex: 8),
-    TabSelectionBinding(unicode: "9", physical: "digit_9", tabIndex: 9),
-    TabSelectionBinding(unicode: "0", physical: "digit_0", tabIndex: 10),
-  ]
-
   // MARK: - Shortcut definitions.
 
   public static let commandPalette = AppShortcut(id: .commandPalette, key: "p", modifiers: .command)
@@ -411,11 +392,28 @@ public enum AppShortcuts {
 
   // MARK: - Tab selection Ghostty bindings.
 
-  public static let tabSelectionGhosttyKeybindArguments: [String] = tabSelectionBindings.flatMap { binding in
-    [
-      "--keybind=ctrl+\(binding.unicode)=goto_tab:\(binding.tabIndex)",
-      "--keybind=ctrl+\(binding.physical)=goto_tab:\(binding.tabIndex)",
-    ]
+  // Ghostty `goto_tab` bindings for worktree selection, derived from the user's
+  // effective shortcuts instead of a fixed list. A disabled shortcut produces no
+  // binding, so its chord (e.g. ⌃6) reaches the terminal instead of being captured.
+  // A remapped shortcut moves the binding to the chosen key. The physical `digit_N`
+  // variant is emitted only while the binding stays the default Control+digit, so
+  // non-US keyboard layouts keep working.
+  public static func tabSelectionGhosttyKeybindArguments(
+    from overrides: [AppShortcutID: AppShortcutOverride]
+  ) -> [String] {
+    worktreeSelection.flatMap { shortcut -> [String] in
+      guard case let .selectWorktree(slot) = shortcut.id,
+        let effective = shortcut.effective(from: overrides)
+      else {
+        return []
+      }
+      let tabIndex = slot == 0 ? 10 : slot
+      var arguments = ["--keybind=\(effective.ghosttyKeybind)=goto_tab:\(tabIndex)"]
+      if effective.ghosttyKeybind == "ctrl+\(slot)" {
+        arguments.append("--keybind=ctrl+digit_\(slot)=goto_tab:\(tabIndex)")
+      }
+      return arguments
+    }
   }
 
   // MARK: - Ghostty CLI arguments.
@@ -426,7 +424,7 @@ public enum AppShortcuts {
 
   public static func ghosttyCLIKeybindArguments(from overrides: [AppShortcutID: AppShortcutOverride]) -> [String] {
     let effectiveShortcuts = all.compactMap { $0.effective(from: overrides) }
-    return effectiveShortcuts.map(\.ghosttyUnbindArgument) + tabSelectionGhosttyKeybindArguments
+    return effectiveShortcuts.map(\.ghosttyUnbindArgument) + tabSelectionGhosttyKeybindArguments(from: overrides)
   }
 
   // MARK: - Conflict detection.
