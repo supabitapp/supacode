@@ -518,6 +518,29 @@ struct WorktreeTerminalManagerTests {
     #expect(manager.hasUnseenNotifications(for: worktree.id) == false)
   }
 
+  /// Regression for #385: dismissing already-read notifications doesn't flip
+  /// `hasUnseenNotification` (it's already false), but the row projection must
+  /// still re-emit so the toolbar popover (which reads the mirrored
+  /// `notifications` array) clears. Previously gated on the flag flip, so the
+  /// popover kept showing dismissed notifications.
+  @Test func dismissAllReadNotificationsStillEmitsProjection() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    state.setNotificationsForTesting([
+      makeNotification(isRead: true),
+      makeNotification(isRead: true),
+    ])
+    #expect(state.hasUnseenNotification == false)
+
+    var emitCount = 0
+    state.onNotificationIndicatorChanged = { emitCount += 1 }
+    state.dismissAllNotifications()
+
+    #expect(state.notifications.isEmpty)
+    #expect(emitCount == 1)
+  }
+
   // MARK: - Per-surface unseen flag
 
   @Test func setNotificationsForTestingHydratesPerSurfaceFlag() {

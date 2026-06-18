@@ -906,17 +906,15 @@ final class WorktreeTerminalState {
   }
 
   func markAllNotificationsRead() {
-    let previousHasUnseen = hasUnseenNotification
     for index in notifications.indices {
       notifications[index].isRead = true
     }
     clearAllSurfaceUnseenFlags()
     emitAllTabProjections()
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   func markNotificationsRead(forSurfaceID surfaceID: UUID) {
-    let previousHasUnseen = hasUnseenNotification
     for index in notifications.indices where notifications[index].surfaceID == surfaceID {
       notifications[index].isRead = true
     }
@@ -924,12 +922,11 @@ final class WorktreeTerminalState {
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   /// Marks a single notification as read, leaving others untouched.
   func markNotificationRead(id: WorktreeTerminalNotification.ID) {
-    let previousHasUnseen = hasUnseenNotification
     guard let index = notifications.firstIndex(where: { $0.id == id }) else { return }
     guard !notifications[index].isRead else { return }
     let surfaceID = notifications[index].surfaceID
@@ -938,11 +935,10 @@ final class WorktreeTerminalState {
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   func dismissNotification(_ notificationID: WorktreeTerminalNotification.ID) {
-    let previousHasUnseen = hasUnseenNotification
     let affectedSurface = notifications.first(where: { $0.id == notificationID })?.surfaceID
     notifications.removeAll { $0.id == notificationID }
     if let affectedSurface {
@@ -951,15 +947,14 @@ final class WorktreeTerminalState {
         emitTabProjection(for: tabId)
       }
     }
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   func dismissAllNotifications() {
-    let previousHasUnseen = hasUnseenNotification
     notifications.removeAll()
     clearAllSurfaceUnseenFlags()
     emitAllTabProjections()
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   /// Recomputes the surface's unseen flag through the canonical predicate so a
@@ -1803,7 +1798,6 @@ final class WorktreeTerminalState {
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
     if notificationsEnabled {
-      let previousHasUnseen = hasUnseenNotification
       let isRead = isSelected() && isFocusedSurface(surfaceID)
       notifications.insert(
         WorktreeTerminalNotification(
@@ -1819,7 +1813,7 @@ final class WorktreeTerminalState {
       if let tabId = tabID(containing: surfaceID) {
         emitTabProjection(for: tabId)
       }
-      emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+      emitNotificationStateChanged()
     }
     onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody)
   }
@@ -1958,10 +1952,13 @@ final class WorktreeTerminalState {
     onFocusChanged?(surfaceID)
   }
 
-  private func emitNotificationIndicatorIfNeeded(previousHasUnseen: Bool) {
-    if previousHasUnseen != hasUnseenNotification {
-      onNotificationIndicatorChanged?()
-    }
+  /// `currentProjection()` already includes the full list and per-item `isRead`,
+  /// so the sidebar/popover must re-sync on every mutation, not just when
+  /// `hasUnseenNotification` flips. Gating here broke dismiss / mark-read of
+  /// already-read notifications (#385). Downstream emits self-dedupe, so keep
+  /// this ungated.
+  private func emitNotificationStateChanged() {
+    onNotificationIndicatorChanged?()
   }
 
   private func syncFocusIfNeeded() {
