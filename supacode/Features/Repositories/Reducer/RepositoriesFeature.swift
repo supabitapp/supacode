@@ -4010,11 +4010,7 @@ struct RepositoriesFeature {
   private static func mergePersistedRemoteRepositories(
     into repositories: [Repository],
     existingState state: State
-  ) -> (
-    repositories: [Repository],
-    resolvingIDs: Set<Repository.ID>,
-    hasPersistedRemoteRepositories: Bool
-  ) {
+  ) -> RemoteRepositoryMergeResult {
     let remoteConfigs = persistedRemoteRepositoryConfigs()
     var persistedRemoteIDs: Set<Repository.ID> = []
     for config in remoteConfigs {
@@ -4033,7 +4029,11 @@ struct RepositoriesFeature {
     }
 
     guard !remoteConfigs.isEmpty else {
-      return (mergedRepositories, [], false)
+      return RemoteRepositoryMergeResult(
+        repositories: mergedRepositories,
+        resolvingIDs: [],
+        hasPersistedRemoteRepositories: false
+      )
     }
 
     var resolvingIDs: Set<Repository.ID> = []
@@ -4058,7 +4058,17 @@ struct RepositoriesFeature {
         resolvingIDs.insert(repoID)
       }
     }
-    return (mergedRepositories, resolvingIDs, true)
+    return RemoteRepositoryMergeResult(
+      repositories: mergedRepositories,
+      resolvingIDs: resolvingIDs,
+      hasPersistedRemoteRepositories: true
+    )
+  }
+
+  private struct RemoteRepositoryMergeResult: Sendable {
+    let repositories: [Repository]
+    let resolvingIDs: Set<Repository.ID>
+    let hasPersistedRemoteRepositories: Bool
   }
 
   private struct WorktreesFetchResult: Sendable {
