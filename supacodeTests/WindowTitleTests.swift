@@ -4,6 +4,7 @@ import IdentifiedCollections
 import OrderedCollections
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -105,6 +106,31 @@ struct WindowTitleTests {
     }
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "My Project · Unavailable")
+  }
+
+  @Test func computeFailedRemoteRepositoryUsesPlaceholderNameNotFileURL() {
+    let config = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    let id = RepositoriesFeature.remoteRepositoryID(for: config)
+    // A disconnected remote keeps a placeholder repository plus a load failure.
+    let placeholder = Repository(
+      id: id,
+      rootURL: URL(fileURLWithPath: config.normalizedRemotePath),
+      name: config.resolvedDisplayName,
+      worktrees: [],
+      isGitRepository: true,
+      host: config.host
+    )
+    var state = RepositoriesFeature.State()
+    state.repositories = [placeholder]
+    state.loadFailuresByID = [id: "Can't reach devbox."]
+    state.selection = .failedRepository(id)
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    // Deriving from the `remote://` id as a file URL would mangle the name.
+    #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "proj · Unavailable")
   }
 
   // MARK: - helpers.
