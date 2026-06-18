@@ -10,6 +10,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.outdated),
       .kiro: .ready(.outdated),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     let mode = CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false)
@@ -25,6 +26,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .kiro: .ready(.installed),
+      .opencode: .ready(.installed),
       .pi: .ready(.installed),
     ]
     let mode = CodingAgentsSidebarCardView.mode(for: states, dismissed: true, autoUpdateEnabled: false)
@@ -36,6 +38,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
@@ -46,6 +49,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: true, autoUpdateEnabled: false) == .hidden)
@@ -56,6 +60,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .promptInstall)
@@ -66,6 +71,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .checking,
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
@@ -78,6 +84,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .installing,
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
@@ -90,6 +97,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .uninstalling,
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .hidden)
@@ -103,6 +111,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .failed("boom"),
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false, autoUpdateEnabled: false) == .promptInstall)
@@ -116,6 +125,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .kiro: .ready(.installed),
+      .opencode: .ready(.installed),
       .pi: .ready(.installed),
     ]
     #expect(
@@ -126,6 +136,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
     #expect(
