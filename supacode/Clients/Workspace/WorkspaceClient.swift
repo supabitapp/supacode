@@ -75,8 +75,12 @@ private func performOpenWorktreeAction(
       )
       return
     }
+    var targetURL = worktree.workingDirectory
+    if case .xcode = action {
+      targetURL = XcodeProjectLocator.findProject(in: worktree.workingDirectory) ?? worktree.workingDirectory
+    }
     NSWorkspace.shared.open(
-      [worktree.workingDirectory],
+      [targetURL],
       withApplicationAt: appURL,
       configuration: .init()
     ) { _, error in
@@ -92,5 +96,70 @@ private func performOpenWorktreeAction(
         )
       }
     }
+  }
+}
+
+private enum XcodeProjectLocator {
+  private static let skippedDirectoryNames = Set([
+    ".build",
+    ".dart_tool",
+    ".expo",
+    ".expo-shared",
+    ".git",
+    ".gradle",
+    ".pnpm-store",
+    ".swiftpm",
+    ".symlinks",
+    ".yarn",
+    "Carthage",
+    "DerivedData",
+    "Pods",
+    "build",
+    "node_modules",
+  ])
+
+  static func findProject(in directory: URL, maxDepth: Int = 5) -> URL? {
+    var directories = [directory.standardizedFileURL]
+
+    for _ in 0..<maxDepth {
+      var nextDirectories: [URL] = []
+      var project: URL?
+
+      for directory in directories.sorted(by: { $0.path < $1.path }) {
+        for child in children(in: directory) {
+          switch child.pathExtension {
+          case "xcworkspace":
+            return child
+          case "xcodeproj":
+            project = project ?? child
+          default:
+            guard (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+              continue
+            }
+            guard !skippedDirectoryNames.contains(child.lastPathComponent) else {
+              continue
+            }
+            nextDirectories.append(child)
+          }
+        }
+      }
+
+      if let project {
+        return project
+      }
+      directories = nextDirectories.sorted(by: { $0.path < $1.path })
+    }
+
+    return nil
+  }
+
+  private static func children(in directory: URL) -> [URL] {
+    ((try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.isDirectoryKey],
+      options: []
+    )) ?? [])
+    .map(\.standardizedFileURL)
+    .sorted(by: { $0.path < $1.path })
   }
 }
