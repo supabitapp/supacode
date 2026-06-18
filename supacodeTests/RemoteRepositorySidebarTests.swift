@@ -1125,6 +1125,23 @@ struct RemoteRepositoryResolutionTests {
     RemoteRepositoryConfig(host: host, remotePath: "/srv/repo", displayName: "")
   }
 
+  private func localRepository() -> Repository {
+    let root = URL(fileURLWithPath: "/tmp/localrepo")
+    let main = Worktree(
+      id: WorktreeID(root.path(percentEncoded: false)),
+      name: "main",
+      detail: "",
+      workingDirectory: root,
+      repositoryRootURL: root
+    )
+    return Repository(
+      id: RepositoryID(root.path(percentEncoded: false)),
+      rootURL: root,
+      name: "localrepo",
+      worktrees: IdentifiedArray(uniqueElements: [main])
+    )
+  }
+
   private func resolvedRepository(repoID: Repository.ID) -> Repository {
     let main = Worktree(
       location: .remote(host, workingDirectory: "/srv/repo", repositoryRoot: "/srv/repo"),
@@ -1217,6 +1234,51 @@ struct RemoteRepositoryResolutionTests {
       await store.finish()
     }
     _ = state
+  }
+
+  @Test(.dependencies) func openRepositoriesFinishedPreservesResolvedRemoteRepository() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    let local = localRepository()
+    var state = RepositoriesFeature.State()
+    state.isInitialLoadComplete = true
+    state.repositories = [resolvedRepository(repoID: repoID)]
+    await withStore(state) { store in
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+
+      await store.send(
+        .openRepositoriesFinished([local], failures: [], invalidRoots: [], roots: [local.rootURL])
+      )
+
+      #expect(store.state.repositories[id: local.id] != nil)
+      #expect(store.state.repositories[id: repoID]?.worktrees.isEmpty == false)
+      #expect(store.state.resolvingRemoteRepositoryIDs.contains(repoID) == false)
+      await store.finish()
+    }
+  }
+
+  @Test(.dependencies) func repositoriesLoadedDedupesIncomingRemoteRepository() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    let local = localRepository()
+    let remote = resolvedRepository(repoID: repoID)
+    var state = RepositoriesFeature.State()
+    state.isInitialLoadComplete = true
+    state.repositories = [remote]
+    await withStore(state) { store in
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+
+      await store.send(
+        .repositoriesLoaded([local, remote], failures: [], roots: [local.rootURL], animated: false)
+      )
+
+      let ids = store.state.repositories.map(\.id)
+      #expect(ids.filter { $0 == repoID }.count == 1)
+      #expect(ids.contains(local.id))
+      await store.finish()
+    }
   }
 
   @Test(.dependencies) func resolvedRemoteIgnoredWhenRepoAbsent() async {
