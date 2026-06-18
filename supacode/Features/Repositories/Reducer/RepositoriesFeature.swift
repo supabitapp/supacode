@@ -2993,26 +2993,8 @@ struct RepositoriesFeature {
         state.isRefreshingWorktrees = false
         let previousSelection = state.selectedWorktreeID
         let previousSelectedWorktree = state.worktree(for: previousSelection)
-        // Merge remote repositories as placeholders (resolved asynchronously by
-        // `.resolveRemoteRepositories`); reuse an already-resolved remote so a
-        // reload doesn't flash it back to the loading spinner.
-        let remoteConfigs = Self.persistedRemoteRepositoryConfigs()
-        var remoteRepositories: [Repository] = []
-        var resolvingIDs: Set<Repository.ID> = []
-        var seenRemoteIDs: Set<Repository.ID> = []
-        for config in remoteConfigs {
-          let repoID = Self.remoteRepositoryID(for: config)
-          // Two configs can derive the same host-keyed id (e.g. an edit made them
-          // collide); keep the first so the IdentifiedArray below can't trap.
-          guard seenRemoteIDs.insert(repoID).inserted else { continue }
-          if let existing = state.repositories[id: repoID], !existing.worktrees.isEmpty {
-            remoteRepositories.append(existing)
-          } else {
-            remoteRepositories.append(Self.remotePlaceholderRepository(config: config, repoID: repoID))
-            resolvingIDs.insert(repoID)
-          }
-        }
-        let mergedRepositories = repositories + remoteRepositories
+        let mergedRemote = Self.mergePersistedRemoteRepositories(into: repositories, existingState: state)
+        let mergedRepositories = mergedRemote.repositories
         let incomingRepositories = IdentifiedArray(uniqueElements: mergedRepositories)
         let repositoriesChanged = incomingRepositories != state.repositories
         _ = applyRepositories(
@@ -3020,13 +3002,13 @@ struct RepositoriesFeature {
           roots: roots,
           // Don't prune archived worktree ids while remotes are still resolving:
           // their worktrees aren't in the roster yet.
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty && resolvingIDs.isEmpty,
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
           state: &state,
           animated: animated
         )
         state.repositoryRoots = roots
         state.isInitialLoadComplete = true
-        state.resolvingRemoteRepositoryIDs = resolvingIDs
+        state.resolvingRemoteRepositoryIDs = mergedRemote.resolvingIDs
         // Local failures only; remote failures arrive via `.remoteRepositoryResolved`.
         state.loadFailuresByID = Dictionary(
           uniqueKeysWithValues: failures.map { ($0.rootID, $0.message) }
@@ -3053,7 +3035,7 @@ struct RepositoriesFeature {
         if state.autoDeleteArchivedWorktreesAfterDays != nil {
           allEffects.append(.send(.autoDeleteExpiredArchivedWorktrees))
         }
-        if !remoteConfigs.isEmpty {
+        if mergedRemote.hasPersistedRemoteRepositories {
           allEffects.append(.send(.resolveRemoteRepositories))
         }
         return .merge(allEffects)
@@ -3171,15 +3153,17 @@ struct RepositoriesFeature {
         state.isRefreshingWorktrees = false
         let previousSelection = state.selectedWorktreeID
         let previousSelectedWorktree = state.worktree(for: previousSelection)
+        let mergedRemote = Self.mergePersistedRemoteRepositories(into: repositories, existingState: state)
         _ = applyRepositories(
-          repositories,
+          mergedRemote.repositories,
           roots: roots,
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty,
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
           state: &state,
           animated: false
         )
         state.repositoryRoots = roots
         state.isInitialLoadComplete = true
+        state.resolvingRemoteRepositoryIDs = mergedRemote.resolvingIDs
         state.loadFailuresByID = Dictionary(
           uniqueKeysWithValues: failures.map { ($0.rootID, $0.message) }
         )
@@ -3208,6 +3192,11 @@ struct RepositoriesFeature {
         // effects run here; sidebar mutations already flushed.
         if state.autoDeleteArchivedWorktreesAfterDays != nil {
           allEffects.append(.send(.autoDeleteExpiredArchivedWorktrees))
+        }
+        // Opening a local repo should not re-probe every already-loaded remote;
+        // only resolve placeholders that were introduced or preserved by the merge.
+        if !mergedRemote.resolvingIDs.isEmpty {
+          allEffects.append(.send(.resolveRemoteRepositories))
         }
         return .merge(allEffects)
 
@@ -4016,6 +4005,70 @@ struct RepositoriesFeature {
       )
     }
     .cancellable(id: CancelID.load, cancelInFlight: true)
+  }
+
+  private static func mergePersistedRemoteRepositories(
+    into repositories: [Repository],
+    existingState state: State
+  ) -> RemoteRepositoryMergeResult {
+    let remoteConfigs = persistedRemoteRepositoryConfigs()
+    var persistedRemoteIDs: Set<Repository.ID> = []
+    for config in remoteConfigs {
+      persistedRemoteIDs.insert(remoteRepositoryID(for: config))
+    }
+
+    var mergedRepositories: [Repository] = []
+    var indexesByID: [Repository.ID: Int] = [:]
+    for repository in repositories {
+      if repository.host != nil, !persistedRemoteIDs.contains(repository.id) {
+        continue
+      }
+      guard indexesByID[repository.id] == nil else { continue }
+      indexesByID[repository.id] = mergedRepositories.count
+      mergedRepositories.append(repository)
+    }
+
+    guard !remoteConfigs.isEmpty else {
+      return RemoteRepositoryMergeResult(
+        repositories: mergedRepositories,
+        resolvingIDs: [],
+        hasPersistedRemoteRepositories: false
+      )
+    }
+
+    var resolvingIDs: Set<Repository.ID> = []
+    var seenRemoteIDs: Set<Repository.ID> = []
+    for config in remoteConfigs {
+      let repoID = remoteRepositoryID(for: config)
+      // Two configs can derive the same host-keyed id (e.g. an edit made them
+      // collide); keep the first so the IdentifiedArray below can't trap.
+      guard seenRemoteIDs.insert(repoID).inserted else { continue }
+      if let index = indexesByID[repoID] {
+        if mergedRepositories[index].worktrees.isEmpty {
+          resolvingIDs.insert(repoID)
+        }
+        continue
+      }
+      if let existing = state.repositories[id: repoID], !existing.worktrees.isEmpty {
+        indexesByID[repoID] = mergedRepositories.count
+        mergedRepositories.append(existing)
+      } else {
+        indexesByID[repoID] = mergedRepositories.count
+        mergedRepositories.append(remotePlaceholderRepository(config: config, repoID: repoID))
+        resolvingIDs.insert(repoID)
+      }
+    }
+    return RemoteRepositoryMergeResult(
+      repositories: mergedRepositories,
+      resolvingIDs: resolvingIDs,
+      hasPersistedRemoteRepositories: true
+    )
+  }
+
+  private struct RemoteRepositoryMergeResult: Sendable {
+    let repositories: [Repository]
+    let resolvingIDs: Set<Repository.ID>
+    let hasPersistedRemoteRepositories: Bool
   }
 
   private struct WorktreesFetchResult: Sendable {

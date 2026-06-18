@@ -181,6 +181,7 @@ extension SkillAgent {
       the badge appears once you send the first message.
       """
     case .kiro: "Hooks in `~/.kiro/agents/` and skill in `~/.kiro/skills/`."
+    case .opencode: "Plugin in `~/.config/opencode/plugins/` and skill in `~/.config/opencode/skills/`."
     case .pi: "Extension in `~/.pi/agent/extensions/` and skill in `~/.pi/agent/skills/`."
     }
   }

@@ -14,6 +14,7 @@ nonisolated enum AgentIntegrationFactory {
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .opencode: opencode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     }
   }
 
@@ -87,6 +88,24 @@ nonisolated enum AgentIntegrationFactory {
           uninstall: { try installer.uninstall() }
         ),
         skillComponent(agent: .pi, installer: skill),
+      ]
+    )
+  }
+
+  private static func opencode(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = OpenCodePluginInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    let skill = CLISkillInstaller()
+    return AgentIntegration(
+      agent: .opencode,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.install() },
+          uninstall: { try installer.uninstall() }
+        ),
+        skillComponent(agent: .opencode, installer: skill),
       ]
     )
   }

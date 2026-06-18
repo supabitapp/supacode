@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+    <g id="Group">
+        <path id="Path-copy" fill="#211e1e" fill-opacity="0.25" stroke="none" d="M 359 409.600006 L 154 409.600006 L 154 204.799988 L 359 204.799988 L 359 409.600006 Z"/>
+        <path id="Path" fill="#211e1e" stroke="none" d="M 358.399994 102.399994 L 153.600006 102.399994 L 153.600006 409.600006 L 358.399994 409.600006 L 358.399994 102.399994 Z M 460.799988 512 L 51.200001 512 L 51.200001 0 L 460.799988 0 L 460.799988 512 Z"/>
+    </g>
+</svg>
