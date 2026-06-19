@@ -51,9 +51,27 @@ struct OpenWorktreeActionTests {
       return
     }
     #expect(workspacePattern == #"\.xcworkspace$"#)
-    #expect(workspaceExclusions?.contains("Pods") == true)
-    #expect(workspaceExclusions?.contains(#"\.xcodeproj"#) == true)
-    #expect(workspaceExclusions?.contains(#"\.xcworkspace"#) == true)
+    for excludedDirectory in [
+      #"\.build"#,
+      #"\.dart_tool"#,
+      #"\.expo"#,
+      #"\.expo-shared"#,
+      #"\.git"#,
+      #"\.gradle"#,
+      #"\.pnpm-store"#,
+      #"\.swiftpm"#,
+      #"\.symlinks"#,
+      #"\.yarn"#,
+      "Carthage",
+      "DerivedData",
+      "Pods",
+      "build",
+      "node_modules",
+      #"\.xcodeproj"#,
+      #"\.xcworkspace"#,
+    ] {
+      #expect(workspaceExclusions?.contains(excludedDirectory) == true)
+    }
     #expect(workspaceMaxDepth == 3)
     #expect(projectPattern == #"\.xcodeproj$"#)
     #expect(projectExclusions == workspaceExclusions)

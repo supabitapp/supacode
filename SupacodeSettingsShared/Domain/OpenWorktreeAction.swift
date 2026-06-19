@@ -341,7 +341,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
 
   private static let xcodeSearchExcludedDirectories =
     #"(^|/)("#
-    + #"\.build|\.git|\.swiftpm|Carthage|DerivedData|Pods|build|node_modules"#
+    + #"\.build|\.dart_tool|\.expo|\.expo-shared|\.git|\.gradle|\.pnpm-store"#
+    + #"|\.swiftpm|\.symlinks|\.yarn|Carthage|DerivedData|Pods|build|node_modules"#
     + #"|[^/]+\.xcodeproj|[^/]+\.xcworkspace"#
     + #")(/|$)"#
 }
