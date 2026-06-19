@@ -124,6 +124,19 @@ struct OpenWorktreeActionTests {
     #expect(missing == nil)
   }
 
+  @MainActor
+  @Test func worktreeOpenerNoopsEditorAction() {
+    var errors: [OpenActionError] = []
+
+    WorktreeOpener.perform(
+      action: .editor,
+      worktree: Self.makeWorktree(at: URL(filePath: "/tmp/repo")),
+      onError: { errors.append($0) }
+    )
+
+    #expect(errors.isEmpty)
+  }
+
   @Test func resolverSkipsExcludedSearchDirectoriesAndFallsBackToNextTarget() throws {
     let rootURL = try Self.makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: rootURL) }

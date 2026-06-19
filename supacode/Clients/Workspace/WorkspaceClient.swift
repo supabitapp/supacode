@@ -33,6 +33,9 @@ enum WorktreeOpener {
     worktree: Worktree,
     onError: @escaping @MainActor @Sendable (OpenActionError) -> Void
   ) {
+    guard action != .editor else {
+      return
+    }
     guard let targetURL = WorkspaceOpenResolver.resolveFirstTarget(for: action.openTargets, worktree: worktree) else {
       onError(
         OpenActionError(
