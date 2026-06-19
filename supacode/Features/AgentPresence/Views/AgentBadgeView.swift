@@ -30,7 +30,7 @@ struct AgentBadgeView: View {
       .accessibilityLabel(agent.displayName)
       .padding(size * 0.18)
       .frame(width: size, height: size)
-      .foregroundStyle(.primary)
+      .foregroundStyle(resolvedScheme == .dark ? .white : .black)
       .background(.bar.shadow(Self.dropShadow), in: .circle)
       .overlay(Circle().strokeBorder(.separator, lineWidth: pixelLength))
       .environment(\.colorScheme, resolvedScheme)
