@@ -1,5 +1,45 @@
 import AppKit
 
+public enum OpenTarget: Equatable, Sendable {
+  case workingDirectory
+  case url(URL)
+  case search(String, excludeDirectories: String? = nil, maxDepth: Int = 3)
+
+  public static let `default`: Self = .workingDirectory
+}
+
+public enum OpenBehavior: Equatable, Sendable {
+  public struct WorkspaceConfiguration: Equatable, Sendable {
+    public var createsNewApplicationInstance: Bool
+    public var arguments: [Argument]
+
+    public init(
+      createsNewApplicationInstance: Bool = false,
+      arguments: [Argument] = []
+    ) {
+      self.createsNewApplicationInstance = createsNewApplicationInstance
+      self.arguments = arguments
+    }
+  }
+
+  public enum ProcessExecutable: Equatable, Sendable {
+    case path(String)
+    case appRelativePath(String)
+  }
+
+  public enum Argument: Equatable, Sendable {
+    case literal(String)
+    case appPath
+    case targetPath
+    case targetURL
+  }
+
+  case workspace(configuration: WorkspaceConfiguration? = nil)
+  case process(ProcessExecutable, args: [Argument])
+
+  public static let `default`: Self = .workspace(configuration: nil)
+}
+
 public enum OpenWorktreeAction: CaseIterable, Identifiable {
   public enum MenuIcon {
     case app(NSImage)
@@ -175,6 +215,49 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     }
   }
 
+  public var openTargets: [OpenTarget] {
+    switch self {
+    case .xcode:
+      [
+        .search(#"\.xcworkspace$"#, excludeDirectories: Self.xcodeSearchExcludedDirectories),
+        .search(#"\.xcodeproj$"#, excludeDirectories: Self.xcodeSearchExcludedDirectories),
+        .default,
+      ]
+    case .alacritty, .androidStudio, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop,
+      .gitkraken, .gitup, .ghostty, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
+      .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm,
+      .wezterm, .windsurf, .zed:
+      [.default]
+    }
+  }
+
+  public var openBehaviors: [OpenBehavior] {
+    switch self {
+    case .androidStudio, .intellij, .webstorm, .pycharm, .rubymine, .rustrover:
+      [
+        .workspace(
+          configuration:
+            .init(
+              createsNewApplicationInstance: true,
+              arguments: [.targetPath]
+            )
+        )
+      ]
+    case .zed:
+      [
+        .process(
+          .appRelativePath("Contents/MacOS/cli"),
+          args: [.targetPath]
+        ),
+        .default,
+      ]
+    case .alacritty, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop, .gitkraken, .gitup,
+      .ghostty, .kitty, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
+      .vscodium, .warp, .wezterm, .windsurf, .xcode:
+      [.default]
+    }
+  }
+
   public nonisolated static let automaticSettingsID = "auto"
 
   public static let editorPriority: [OpenWorktreeAction] = [
@@ -255,4 +338,10 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   public static func preferredDefault() -> OpenWorktreeAction {
     defaultPriority.first(where: \.isInstalled) ?? .finder
   }
+
+  private static let xcodeSearchExcludedDirectories =
+    #"(^|/)("#
+    + #"\.build|\.git|\.swiftpm|Carthage|DerivedData|Pods|build|node_modules"#
+    + #"|[^/]+\.xcodeproj|[^/]+\.xcworkspace"#
+    + #")(/|$)"#
 }
