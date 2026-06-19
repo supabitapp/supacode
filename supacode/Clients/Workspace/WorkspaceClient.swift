@@ -52,50 +52,39 @@ private func performOpenWorktreeAction(
         onError(.openFailed(action, error))
       }
     }
-  case .zed:
-    ZedLaunch.open(action: action, worktree: worktree, onError: onError)
   case .alacritty, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
     .kitty, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
-    .vscodium, .warp, .wezterm, .windsurf, .xcode:
-    guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.bundleIdentifier) else {
-      onError(.appNotFound(action))
-      return
-    }
-    NSWorkspace.shared.open(
-      [worktree.workingDirectory],
-      withApplicationAt: appURL,
-      configuration: .init()
-    ) { _, error in
-      guard let error else {
-        return
-      }
-      Task { @MainActor in
-        onError(.openFailed(action, error))
-      }
-    }
+    .vscodium, .warp, .wezterm, .windsurf, .xcode, .zed:
+    AppLauncher.open(action: action, worktree: worktree, onError: onError)
   }
 }
 
-enum ZedLaunch {
+/// Opens a worktree directory in an arbitrary macOS app, preferring the app's bundled
+/// command-line helper when it advertises one via `OpenWorktreeAction.cliLauncher`.
+///
+/// A CLI launch is preferred because it lets us pass flags/arguments the plain
+/// "open document" event (`NSWorkspace.open`) cannot — e.g. Zed honoring
+/// `cli_default_open_behavior` to give one window per worktree. Apps without a launcher,
+/// and any app whose helper is missing, fall back to `NSWorkspace.open`.
+enum AppLauncher {
   enum Plan: Equatable {
     case cli(executable: URL, arguments: [String])
     case workspaceOpen(url: URL)
   }
 
-  static func cliURL(appURL: URL) -> URL {
-    appURL.appending(path: "Contents/MacOS/cli")
-  }
-
-  /// Open the worktree through the bundled Zed CLI with the bare path (no `-n`), falling back
-  /// to `NSWorkspace.open` only when the CLI helper is missing. With Zed's
-  /// `cli_default_open_behavior` set to `new_window`, the bare path gives one window per
-  /// worktree: a new window when the worktree isn't open yet, focus of the existing window when
-  /// it is. `-n` is avoided because it forces a new window even for an already-open worktree,
-  /// producing duplicates; `NSWorkspace.open` instead stacks every worktree into one window.
-  static func plan(cliURL: URL, cliExists: Bool, workingDirectory: URL) -> Plan {
-    cliExists
-      ? .cli(executable: cliURL, arguments: [workingDirectory.path])
-      : .workspaceOpen(url: workingDirectory)
+  static func plan(
+    launcher: OpenWorktreeAction.CLILauncher?,
+    appURL: URL,
+    cliExists: Bool,
+    workingDirectory: URL
+  ) -> Plan {
+    guard let launcher, cliExists else {
+      return .workspaceOpen(url: workingDirectory)
+    }
+    return .cli(
+      executable: appURL.appending(path: launcher.relativeExecutablePath),
+      arguments: launcher.openArguments + [workingDirectory.path]
+    )
   }
 
   @MainActor static func open(
@@ -107,10 +96,14 @@ enum ZedLaunch {
       onError(.appNotFound(action))
       return
     }
-    let cliURL = cliURL(appURL: appURL)
+    let launcher = action.cliLauncher
+    let cliExists =
+      launcher.map { FileManager.default.fileExists(atPath: appURL.appending(path: $0.relativeExecutablePath).path) }
+      ?? false
     switch plan(
-      cliURL: cliURL,
-      cliExists: FileManager.default.fileExists(atPath: cliURL.path),
+      launcher: launcher,
+      appURL: appURL,
+      cliExists: cliExists,
       workingDirectory: worktree.workingDirectory
     ) {
     case .cli(let executable, let arguments):
@@ -131,6 +124,28 @@ enum ZedLaunch {
           onError(.openFailed(action, error))
         }
       }
+    }
+  }
+}
+
+extension OpenWorktreeAction {
+  /// Describes how to open a worktree through an app's bundled command-line helper.
+  struct CLILauncher: Equatable {
+    /// Path to the helper executable, relative to the app bundle root.
+    let relativeExecutablePath: String
+    /// Flags placed before the worktree path; the path is always appended last.
+    let openArguments: [String]
+  }
+
+  /// The bundled CLI used to open a worktree, or `nil` to fall back to `NSWorkspace.open`.
+  var cliLauncher: CLILauncher? {
+    switch self {
+    case .zed:
+      // The bare path (no `-n`) gives one window per worktree when Zed's
+      // `cli_default_open_behavior` is `new_window`, focusing an already-open worktree.
+      CLILauncher(relativeExecutablePath: "Contents/MacOS/cli", openArguments: [])
+    default:
+      nil
     }
   }
 }
