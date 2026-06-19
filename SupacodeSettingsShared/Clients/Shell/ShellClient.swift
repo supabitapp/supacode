@@ -251,20 +251,13 @@ nonisolated private func collectOutput(
 }
 
 extension ShellClient {
-  /// Builds the `(shell, -c command)` pair for running a one-shot command
-  /// through a login shell.
-  ///
-  /// We can only drive shells whose `-l -c` accepts our POSIX (or fish) snippet.
-  /// A non-POSIX login shell — nushell, pwsh, elvish, xonsh, csh/tcsh — chokes
-  /// on the POSIX rc-sourcing + `exec "$@"`, which surfaced as a bogus
-  /// "not a git repository" on Nushell setups (issue #100). For those we fall
-  /// back to /bin/zsh so the command still runs.
-  ///
-  /// This fallback is scoped to the one-shot command path only; the interactive
-  /// terminal keeps spawning the user's real shell via `defaultShellPath()`.
-  /// ponytail: allowlist of shells we know how to drive; unknown → zsh.
+  /// Builds the `(shell, -c command)` pair for a one-shot login-shell command.
+  /// We only drive shells we have a correct rc snippet for — zsh, bash, fish.
+  /// Anything else (nushell, sh/dash/ksh, pwsh, …) falls back to /bin/zsh, which
+  /// can actually parse the snippet, so the command runs instead of failing
+  /// (issue #100). The interactive terminal still uses the user's real shell.
   nonisolated static func loginShellInvocation(userShell: URL) -> (shell: URL, command: String) {
-    let drivable: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "ksh"]
+    let drivable: Set<String> = ["zsh", "bash", "fish"]
     let shell =
       drivable.contains(userShell.lastPathComponent)
       ? userShell : URL(fileURLWithPath: "/bin/zsh")
