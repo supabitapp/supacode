@@ -54,6 +54,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
   /// Scripts shared across every repository. Always `.custom` kind.
   public var globalScripts: [ScriptDefinition]
+  /// User-configured remote repositories reachable over SSH. Materialized at
+  /// load into folder-kind repositories whose terminals run on the remote host.
+  public var remoteRepositories: [RemoteRepositoryConfig]
   public var richAgentNotificationsEnabled: Bool
   public var agentPresenceBadgesEnabled: Bool
   /// When true, an agent integration that reports `.outdated` at launch /
@@ -94,6 +97,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoDeleteArchivedWorktreesAfterDays: nil,
     shortcutOverrides: [:],
     globalScripts: [],
+    remoteRepositories: [],
     richAgentNotificationsEnabled: true,
     agentPresenceBadgesEnabled: true,
     autoUpdateAgentIntegrationsEnabled: true,
@@ -128,6 +132,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
     shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:],
     globalScripts: [ScriptDefinition] = [],
+    remoteRepositories: [RemoteRepositoryConfig] = [],
     richAgentNotificationsEnabled: Bool = true,
     agentPresenceBadgesEnabled: Bool = true,
     autoUpdateAgentIntegrationsEnabled: Bool = true,
@@ -160,6 +165,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
     self.shortcutOverrides = shortcutOverrides
     self.globalScripts = globalScripts
+    self.remoteRepositories = remoteRepositories
     self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
     self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
@@ -285,6 +291,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       if script.name.isEmpty { script.name = ScriptKind.custom.defaultName }
       return script
     }
+    // Lossy: a malformed entry is dropped, a missing key collapses to `[]`.
+    remoteRepositories = container.decodeLossyArrayIfPresent(forKey: .remoteRepositories) ?? []
     richAgentNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .richAgentNotificationsEnabled)
       ?? Self.default.richAgentNotificationsEnabled

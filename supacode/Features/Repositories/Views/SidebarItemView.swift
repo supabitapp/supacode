@@ -15,6 +15,9 @@ enum SidebarNestLayout {
 struct SidebarHighlightRepoTag: Equatable, Hashable, Sendable {
   let repoName: String
   let repoColor: RepositoryColor?
+  /// `[user@]host[:port]` when the repo is remote, else nil; shown as `· host`
+  /// plus a `wifi` glyph in the subtitle.
+  let hostInfo: String?
 }
 
 struct SidebarItemView: View {
@@ -68,6 +71,7 @@ struct SidebarItemView: View {
     } icon: {
       IconView(
         isFolder: store.kind == .folder,
+        isRemote: store.isRemote,
         isMissing: store.isMissing,
         branchName: store.branchName,
         pullRequest: store.pullRequest,
@@ -87,10 +91,10 @@ struct ResolvedRowDisplay: Equatable {
     case none
     /// Standard per-repo subtitle. Rendered in the row's accent color.
     case plain(String)
-    /// Highlight-section subtitle: `repo · trail`. `repo` paints with
-    /// `repoColor`, `trail` with the row's accent. `trail == nil` collapses
-    /// to just the repo name.
-    case highlight(repo: String, repoColor: RepositoryColor?, trail: String?)
+    /// Highlight-section subtitle: `repo · host · trail`. `repo` paints with
+    /// `repoColor`, `trail` with the row's accent; `hostInfo` (when set) inserts
+    /// `· host` plus a `wifi` glyph. `trail == nil` collapses to just the repo.
+    case highlight(repo: String, repoColor: RepositoryColor?, trail: String?, hostInfo: String?)
   }
 
   let name: String
@@ -118,7 +122,8 @@ struct ResolvedRowDisplay: Equatable {
 
     if kind == .folder {
       self.name = resolvedCustom ?? branchName
-      // Folder rows ARE the repo, so a repo prefix would just repeat the title.
+      // Folder rows ARE the repo; a remote folder's `wifi` glyph rides the title
+      // line (via `TitleView`), so there's no subtitle.
       self.subtitle = .none
       return
     }
@@ -147,7 +152,8 @@ struct ResolvedRowDisplay: Equatable {
       self.subtitle = .highlight(
         repo: highlightSubtitle.repoName,
         repoColor: highlightSubtitle.repoColor,
-        trail: trail
+        trail: trail,
+        hostInfo: highlightSubtitle.hostInfo
       )
       return
     }
@@ -282,17 +288,26 @@ private struct TitleView: View, Equatable {
           .font(.footnote)
           .foregroundStyle(accentStyle)
           .lineLimit(1)
-      case .highlight(let repo, let repoColor, let trail):
+      case .highlight(let repo, let repoColor, let trail, let hostInfo):
         let repoStyle: AnyShapeStyle =
           isEmphasized
           ? AnyShapeStyle(.secondary)
           : repoColor.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.secondary)
-        // `.layoutPriority(1)` on the repo makes the trail yield first under a narrow sidebar.
+        // `.layoutPriority(1)` on the repo / host makes the trail yield first under a narrow sidebar.
         HStack(spacing: 0) {
           Text(repo)
             .foregroundStyle(repoStyle)
             .lineLimit(1)
             .layoutPriority(1)
+          if let hostInfo {
+            Image(systemName: "wifi")
+              .imageScale(.small)
+              .foregroundStyle(.secondary)
+              .help(hostInfo)
+              .accessibilityLabel("Remote host \(hostInfo)")
+              .padding(.leading, 3)
+              .layoutPriority(1)
+          }
           if let trail {
             Text(" · ")
               .foregroundStyle(.secondary)
@@ -312,6 +327,7 @@ private struct TitleView: View, Equatable {
 
 private struct IconView: View {
   let isFolder: Bool
+  let isRemote: Bool
   let isMissing: Bool
   let branchName: String
   let pullRequest: GithubPullRequest?
@@ -325,6 +341,7 @@ private struct IconView: View {
     )
     IconContent(
       isFolder: isFolder,
+      isRemote: isRemote,
       isMissing: isMissing,
       icon: SidebarPullRequestIcon.resolve(display.pullRequest),
       checkBadgeState: resolveCheckBadgeState(display.pullRequest),
@@ -352,6 +369,7 @@ enum IconRowState: Equatable {
 
 private struct IconContent: View, Equatable {
   let isFolder: Bool
+  let isRemote: Bool
   let isMissing: Bool
   let icon: SidebarPullRequestIcon
   let checkBadgeState: SidebarCheckBadgeState?
@@ -361,6 +379,7 @@ private struct IconContent: View, Equatable {
 
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.isFolder == rhs.isFolder
+      && lhs.isRemote == rhs.isRemote
       && lhs.isMissing == rhs.isMissing
       && lhs.icon == rhs.icon
       && lhs.checkBadgeState == rhs.checkBadgeState
@@ -472,6 +491,14 @@ private struct TrailingView: View {
     // Cross-fade via opacity so flipping ⌘ doesn't snap the row.
     ZStack(alignment: .trailing) {
       HStack(spacing: 6) {
+        if store.kind == .folder, let host = store.host {
+          Image(systemName: "wifi")
+            .imageScale(.small)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .help(host.displayAuthority)
+            .accessibilityLabel("Remote host \(host.displayAuthority)")
+        }
         if hasStats {
           DiffStatsContent(addedLines: added, removedLines: removed)
             .equatable()

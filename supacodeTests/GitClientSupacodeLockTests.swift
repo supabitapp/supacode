@@ -90,7 +90,7 @@ struct GitClientSupacodeLockTests {
     let adminDir = fixture.adminDirectory(for: "feature-remove")
     GitClient.writeSupacodeLock(at: adminDir)
     let worktree = Worktree(
-      id: worktreeURL.path(percentEncoded: false),
+      id: WorktreeID(worktreeURL.path(percentEncoded: false)),
       name: "feature-remove",
       detail: "feature-remove",
       workingDirectory: worktreeURL,
@@ -111,7 +111,7 @@ struct GitClientSupacodeLockTests {
     GitClient.writeSupacodeLock(at: adminDir)
     try FileManager.default.removeItem(at: worktreeURL)
     let worktree = Worktree(
-      id: worktreeURL.path(percentEncoded: false),
+      id: WorktreeID(worktreeURL.path(percentEncoded: false)),
       name: "feature-orphan-delete",
       detail: "feature-orphan-delete",
       workingDirectory: worktreeURL,
@@ -133,7 +133,7 @@ struct GitClientSupacodeLockTests {
     GitClient.writeSupacodeLock(at: adminDir)
     try FileManager.default.removeItem(at: worktreeURL)
     let worktree = Worktree(
-      id: worktreeURL.path(percentEncoded: false),
+      id: WorktreeID(worktreeURL.path(percentEncoded: false)),
       name: "feature-orphan-branch",
       detail: "feature-orphan-branch",
       workingDirectory: worktreeURL,

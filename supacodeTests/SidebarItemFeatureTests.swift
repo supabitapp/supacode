@@ -289,7 +289,7 @@ struct SidebarItemFeatureTests {
 
   private func makeState(name: String) -> SidebarItemFeature.State {
     SidebarItemFeature.State(
-      id: "/tmp/repo/wt-\(name)",
+      id: SidebarItemID("/tmp/repo/wt-\(name)"),
       repositoryID: "/tmp/repo",
       kind: .gitWorktree,
       name: name,

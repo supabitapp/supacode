@@ -320,6 +320,103 @@ struct RepositorySettingsKeyTests {
     #expect(localStorage.data(at: localURL) == nil)
   }
 
+  // MARK: - Remote keying
+
+  @Test(.dependencies) func remoteKeyBrandsByHostSoSamePathDoesNotCollide() throws {
+    let storage = SettingsTestStorage()
+    let path = "/srv/repo"
+    let rootURL = URL(fileURLWithPath: path)
+    let hostA = RemoteHost(alias: "box-a")
+    let hostB = RemoteHost(alias: "box-b")
+
+    var settingsA = RepositorySettings.default
+    settingsA.setupScript = "echo a"
+    var settingsB = RepositorySettings.default
+    settingsB.setupScript = "echo b"
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.repositorySettings(rootURL, host: hostA)) var forHostA: RepositorySettings
+      $forHostA.withLock { $0 = settingsA }
+      @Shared(.repositorySettings(rootURL, host: hostB)) var forHostB: RepositorySettings
+      $forHostB.withLock { $0 = settingsB }
+    }
+
+    let saved: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(saved.repositories["remote://box-a/srv/repo"] == settingsA)
+    #expect(saved.repositories["remote://box-b/srv/repo"] == settingsB)
+    // The bare path key (a local repo at the same path) stays untouched.
+    #expect(saved.repositories[path] == nil)
+  }
+
+  @Test(.dependencies) func remoteRepoIgnoresLocalSupacodeJSONOnLoad() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let path = "/srv/repo"
+    let rootURL = URL(fileURLWithPath: path)
+    let host = RemoteHost(alias: "box")
+
+    // A local supacode.json physically present at the same path must never be
+    // read for a remote repo (it would belong to a different local checkout).
+    var localSettings = RepositorySettings.default
+    localSettings.setupScript = "echo local-bleed"
+    try localStorage.save(encode(localSettings), at: SupacodePaths.repositorySettingsURL(for: rootURL))
+
+    let loaded = withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.repositorySettings(rootURL, host: host)) var repositorySettings: RepositorySettings
+      return repositorySettings
+    }
+
+    #expect(loaded == RepositorySettings.default)
+  }
+
+  @Test(.dependencies) func remoteRepoNeverWritesLocalSupacodeJSON() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let path = "/srv/repo"
+    let rootURL = URL(fileURLWithPath: path)
+    let host = RemoteHost(alias: "box")
+    let localURL = SupacodePaths.repositorySettingsURL(for: rootURL)
+
+    // Even with a pre-existing local file at the path, a remote save must route
+    // to the global settings file (keyed by branded id), not the local disk.
+    try localStorage.save(encode(.default), at: localURL)
+
+    var updated = RepositorySettings.default
+    updated.setupScript = "echo remote"
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.repositorySettings(rootURL, host: host)) var repositorySettings: RepositorySettings
+      $repositorySettings.withLock { $0 = updated }
+    }
+
+    let localData = try #require(localStorage.data(at: localURL))
+    let localDecoded = try JSONDecoder().decode(RepositorySettings.self, from: localData)
+    #expect(localDecoded == .default)
+
+    let globalSaved: SettingsFile = withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+    #expect(globalSaved.repositories["remote://box/srv/repo"] == updated)
+  }
+
   private func encode(_ settings: RepositorySettings) throws -> Data {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

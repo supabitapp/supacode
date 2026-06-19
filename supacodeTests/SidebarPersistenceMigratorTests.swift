@@ -94,8 +94,8 @@ struct SidebarPersistenceMigratorTests {
       let data = try storage.load(SupacodePaths.sidebarURL)
       let migrated = try JSONDecoder().decode(SidebarState.self, from: data)
 
-      let repoA = "/tmp/repo-a"
-      let repoB = "/tmp/repo-b"
+      let repoA: Repository.ID = "/tmp/repo-a"
+      let repoB: Repository.ID = "/tmp/repo-b"
       // Sections preserve the legacy repo-order.
       #expect(Array(migrated.sections.keys) == [repoA, repoB])
       // repo-b is collapsed; repo-a is not.
@@ -160,10 +160,10 @@ struct SidebarPersistenceMigratorTests {
     // both sides — route the raw paths through
     // `RepositoryPathNormalizer.normalize(_:)` first so the test
     // pins the canonical-in/canonical-out contract end to end.
-    let worktreeID = RepositoryPathNormalizer.normalize("/tmp/outer/inner/wt-1")!
+    let worktreeID = WorktreeID(RepositoryPathNormalizer.normalize("/tmp/outer/inner/wt-1")!)
     let outer = RepositoryPathNormalizer.normalize(["/tmp/outer", "/tmp/outer/inner"])
     let reversed = RepositoryPathNormalizer.normalize(["/tmp/outer/inner", "/tmp/outer"])
-    let expected = RepositoryPathNormalizer.normalize("/tmp/outer/inner")!
+    let expected = RepositoryID(RepositoryPathNormalizer.normalize("/tmp/outer/inner")!)
     for roots in [outer, reversed] {
       let candidates = roots.map { (candidate: $0, owningRoot: $0) }
       let resolved = SidebarPersistenceMigrator.repositoryID(
@@ -179,7 +179,7 @@ struct SidebarPersistenceMigratorTests {
     // parent directory — the trailing-slash guard must reject
     // this match. Pre-normalise both sides to match the new
     // canonical-input contract of `repositoryID(...)`.
-    let worktreeID = RepositoryPathNormalizer.normalize("/tmp/repo/wt-1")!
+    let worktreeID = WorktreeID(RepositoryPathNormalizer.normalize("/tmp/repo/wt-1")!)
     let roots = RepositoryPathNormalizer.normalize(["/tmp/rep"])
     let candidates = roots.map { (candidate: $0, owningRoot: $0) }
     let resolved = SidebarPersistenceMigrator.repositoryID(
@@ -199,14 +199,14 @@ struct SidebarPersistenceMigratorTests {
     // `owningRoot` as-is once a candidate matches — live callers
     // always pass the canonical `Repository.ID` there, so echoing
     // it unchanged keeps downstream section-key lookups honest.
-    let worktreeID = RepositoryPathNormalizer.normalize("/tmp/repo-a/wt-1")!
+    let worktreeID = WorktreeID(RepositoryPathNormalizer.normalize("/tmp/repo-a/wt-1")!)
     let roots = RepositoryPathNormalizer.normalize(["/tmp/repo-a/"])
     let candidates = roots.map { (candidate: $0, owningRoot: $0) }
     let resolved = SidebarPersistenceMigrator.repositoryID(
       owningWorktreeID: worktreeID,
       amongLegacyRoots: candidates
     )
-    #expect(resolved == roots.first)
+    #expect(resolved == roots.first.map(RepositoryID.init))
   }
 
   @Test func normalizerRejectsEmptyAndWhitespaceAndCollapsesDotComponents() {
@@ -582,15 +582,15 @@ struct SidebarPersistenceMigratorTests {
       // Section keyed on the canonical repo ID, and the pinned
       // worktree lives in that section's `.pinned` bucket under
       // its own canonical key.
-      #expect(Array(migrated.sections.keys) == [canonicalRoot])
-      let pinnedItems = migrated.sections[canonicalRoot]?.buckets[.pinned]?.items
-      #expect(pinnedItems?[canonicalWorktree] != nil)
+      #expect(Array(migrated.sections.keys) == [RepositoryID(canonicalRoot)])
+      let pinnedItems = migrated.sections[RepositoryID(canonicalRoot)]?.buckets[.pinned]?.items
+      #expect(pinnedItems?[WorktreeID(canonicalWorktree)] != nil)
       // Non-canonical spellings must NOT leak into the migrated
       // state — otherwise string comparisons against live
       // `Repository.ID` / `Worktree.ID` would drift depending on
       // which code path inserted the row.
-      #expect(migrated.sections[nonCanonicalRoot] == nil)
-      #expect(pinnedItems?[nonCanonicalWorktree] == nil)
+      #expect(migrated.sections[RepositoryID(nonCanonicalRoot)] == nil)
+      #expect(pinnedItems?[WorktreeID(nonCanonicalWorktree)] == nil)
     }
   }
 
@@ -603,9 +603,9 @@ struct SidebarPersistenceMigratorTests {
     // owning root so prefix-matching places the pin correctly.
     let storage = InMemorySettingsFileStorage()
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
-    let owningRootID = RepositoryPathNormalizer.normalize(
-      rootURL.path(percentEncoded: false)
-    )!
+    let owningRootID = RepositoryID(
+      RepositoryPathNormalizer.normalize(rootURL.path(percentEncoded: false))!
+    )
     // Pin lives under the default convention base — derive the
     // exact path from `SupacodePaths` so the expectation matches
     // whatever `worktreeBaseDirectory(...)` produces at runtime.
@@ -619,7 +619,7 @@ struct SidebarPersistenceMigratorTests {
       .appending(path: "sbertix", directoryHint: .isDirectory)
       .appending(path: "branch-a", directoryHint: .isDirectory)
       .path(percentEncoded: false)
-    let canonicalPinnedID = RepositoryPathNormalizer.normalize(pinnedPath)!
+    let canonicalPinnedID = WorktreeID(RepositoryPathNormalizer.normalize(pinnedPath)!)
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
@@ -656,9 +656,9 @@ struct SidebarPersistenceMigratorTests {
     // root.
     let storage = InMemorySettingsFileStorage()
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
-    let owningRootID = RepositoryPathNormalizer.normalize(
-      rootURL.path(percentEncoded: false)
-    )!
+    let owningRootID = RepositoryID(
+      RepositoryPathNormalizer.normalize(rootURL.path(percentEncoded: false))!
+    )
     let globalBase = "/tmp/shared-worktrees"
     let overrideBase = SupacodePaths.worktreeBaseDirectory(
       for: rootURL,
@@ -669,7 +669,7 @@ struct SidebarPersistenceMigratorTests {
       overrideBase
       .appending(path: "branch-a", directoryHint: .isDirectory)
       .path(percentEncoded: false)
-    let canonicalPinnedID = RepositoryPathNormalizer.normalize(pinnedPath)!
+    let canonicalPinnedID = WorktreeID(RepositoryPathNormalizer.normalize(pinnedPath)!)
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
@@ -708,14 +708,14 @@ struct SidebarPersistenceMigratorTests {
     let storage = InMemorySettingsFileStorage()
     let localSettingsStorage = RepositoryLocalSettingsTestStorage()
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
-    let owningRootID = RepositoryPathNormalizer.normalize(
-      rootURL.path(percentEncoded: false)
-    )!
+    let owningRootID = RepositoryID(
+      RepositoryPathNormalizer.normalize(rootURL.path(percentEncoded: false))!
+    )
     let overrideBase = "/Volumes/External/worktrees"
     let pinnedPath = URL(fileURLWithPath: overrideBase, isDirectory: true)
       .appending(path: "branch-a", directoryHint: .isDirectory)
       .path(percentEncoded: false)
-    let canonicalPinnedID = RepositoryPathNormalizer.normalize(pinnedPath)!
+    let canonicalPinnedID = WorktreeID(RepositoryPathNormalizer.normalize(pinnedPath)!)
 
     // Seed the per-repo `supacode.json` via the injected storage
     // so the migrator's synchronous load succeeds.
@@ -762,9 +762,9 @@ struct SidebarPersistenceMigratorTests {
     // `.archived` on the settings root it belongs to.
     let storage = InMemorySettingsFileStorage()
     let rootURL = URL(fileURLWithPath: "/Developer/X/foo", isDirectory: true)
-    let owningRootID = RepositoryPathNormalizer.normalize(
-      rootURL.path(percentEncoded: false)
-    )!
+    let owningRootID = RepositoryID(
+      RepositoryPathNormalizer.normalize(rootURL.path(percentEncoded: false))!
+    )
     let conventionBase = SupacodePaths.worktreeBaseDirectory(
       for: rootURL,
       globalDefaultPath: nil,
@@ -775,7 +775,7 @@ struct SidebarPersistenceMigratorTests {
       .appending(path: "sbertix", directoryHint: .isDirectory)
       .appending(path: "branch-a", directoryHint: .isDirectory)
       .path(percentEncoded: false)
-    let canonicalArchivedID = RepositoryPathNormalizer.normalize(archivedPath)!
+    let canonicalArchivedID = WorktreeID(RepositoryPathNormalizer.normalize(archivedPath)!)
     let archivedAt = Date(timeIntervalSince1970: 1_000_000)
 
     try withDependencies {

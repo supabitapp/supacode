@@ -4,6 +4,7 @@ import IdentifiedCollections
 import OrderedCollections
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -84,8 +85,8 @@ struct WindowTitleTests {
 
   @Test func computeFailedRepositoryUsesDirectoryName() {
     var state = RepositoriesFeature.State()
-    let id = "/tmp/missing-repo"
-    state.repositoryRoots = [URL(fileURLWithPath: id)]
+    let id: Repository.ID = "/tmp/missing-repo"
+    state.repositoryRoots = [URL(fileURLWithPath: id.rawValue)]
     state.loadFailuresByID = [id: "Not found"]
     state.selection = .failedRepository(id)
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
@@ -94,8 +95,8 @@ struct WindowTitleTests {
 
   @Test func computeFailedRepositoryPrefersCustomTitle() {
     var state = RepositoriesFeature.State()
-    let id = "/tmp/missing-repo"
-    state.repositoryRoots = [URL(fileURLWithPath: id)]
+    let id: Repository.ID = "/tmp/missing-repo"
+    state.repositoryRoots = [URL(fileURLWithPath: id.rawValue)]
     state.loadFailuresByID = [id: "Not found"]
     state.selection = .failedRepository(id)
     state.$sidebar.withLock { sidebar in
@@ -107,19 +108,44 @@ struct WindowTitleTests {
     #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "My Project · Unavailable")
   }
 
+  @Test func computeFailedRemoteRepositoryUsesPlaceholderNameNotFileURL() {
+    let config = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    let id = RepositoriesFeature.remoteRepositoryID(for: config)
+    // A disconnected remote keeps a placeholder repository plus a load failure.
+    let placeholder = Repository(
+      id: id,
+      rootURL: URL(fileURLWithPath: config.normalizedRemotePath),
+      name: config.resolvedDisplayName,
+      worktrees: [],
+      isGitRepository: true,
+      host: config.host
+    )
+    var state = RepositoriesFeature.State()
+    state.repositories = [placeholder]
+    state.loadFailuresByID = [id: "Can't reach devbox."]
+    state.selection = .failedRepository(id)
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    // Deriving from the `remote://` id as a file URL would mangle the name.
+    #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "proj · Unavailable")
+  }
+
   // MARK: - helpers.
 
   private func makeState(repoName: String, customTitle: String?) -> RepositoriesFeature.State {
     let rootURL = URL(fileURLWithPath: "/tmp/\(repoName)")
     let worktree = Worktree(
-      id: "/tmp/\(repoName)/main",
+      id: WorktreeID("/tmp/\(repoName)/main"),
       name: "main",
       detail: "",
       workingDirectory: URL(fileURLWithPath: "/tmp/\(repoName)/main"),
       repositoryRootURL: rootURL
     )
     let repository = Repository(
-      id: rootURL.path(percentEncoded: false),
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
       rootURL: rootURL,
       name: repoName,
       worktrees: IdentifiedArray(uniqueElements: [worktree])

@@ -46,7 +46,7 @@ struct AppFeatureSettingsChangedTests {
       repositoryRootURL: rootURL
     )
     let repository = Repository(
-      id: rootURL.path(percentEncoded: false),
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
       rootURL: rootURL,
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])

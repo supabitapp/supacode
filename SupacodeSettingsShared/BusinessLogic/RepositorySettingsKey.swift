@@ -13,10 +13,19 @@ public nonisolated struct RepositorySettingsKeyID: Hashable, Sendable {
 public nonisolated struct RepositorySettingsKey: SharedKey {
   public let repositoryID: String
   public let rootURL: URL
+  public let host: RemoteHost?
 
-  public init(rootURL: URL) {
+  public init(rootURL: URL, host: RemoteHost? = nil) {
     self.rootURL = rootURL.standardizedFileURL
-    repositoryID = self.rootURL.path(percentEncoded: false)
+    self.host = host
+    if let host {
+      // Brand remote keys with the host (matching `RepositoryLocation.id`) so
+      // two hosts at the same path can't share settings, and so a local repo
+      // at that path keeps its own bare-path key.
+      repositoryID = "remote://" + host.authority + self.rootURL.path(percentEncoded: false)
+    } else {
+      repositoryID = self.rootURL.path(percentEncoded: false)
+    }
   }
 
   public var id: RepositorySettingsKeyID {
@@ -27,18 +36,22 @@ public nonisolated struct RepositorySettingsKey: SharedKey {
     context: LoadContext<RepositorySettings>,
     continuation: LoadContinuation<RepositorySettings>
   ) {
-    @Dependency(\.repositoryLocalSettingsStorage) var repositoryLocalSettingsStorage
-    let repositorySettingsURL = SupacodePaths.repositorySettingsURL(for: rootURL)
-    if let localData = try? repositoryLocalSettingsStorage.load(repositorySettingsURL) {
-      let decoder = JSONDecoder()
-      if let settings = try? decoder.decode(RepositorySettings.self, from: localData) {
-        continuation.resume(returning: settings)
-        return
+    // Remote repos never own a local `supacode.json`; the synthetic `rootURL`
+    // points at the remote path, which must not be read off the local disk.
+    if host == nil {
+      @Dependency(\.repositoryLocalSettingsStorage) var repositoryLocalSettingsStorage
+      let repositorySettingsURL = SupacodePaths.repositorySettingsURL(for: rootURL)
+      if let localData = try? repositoryLocalSettingsStorage.load(repositorySettingsURL) {
+        let decoder = JSONDecoder()
+        if let settings = try? decoder.decode(RepositorySettings.self, from: localData) {
+          continuation.resume(returning: settings)
+          return
+        }
+        let path = repositorySettingsURL.path(percentEncoded: false)
+        SupaLogger("Settings").warning(
+          "Unable to decode repository settings at \(path); falling back to global settings."
+        )
       }
-      let path = repositorySettingsURL.path(percentEncoded: false)
-      SupaLogger("Settings").warning(
-        "Unable to decode repository settings at \(path); falling back to global settings."
-      )
     }
 
     @Shared(.settingsFile) var settingsFile: SettingsFile
@@ -65,19 +78,22 @@ public nonisolated struct RepositorySettingsKey: SharedKey {
     context _: SaveContext,
     continuation: SaveContinuation
   ) {
-    @Dependency(\.repositoryLocalSettingsStorage) var repositoryLocalSettingsStorage
-    let repositorySettingsURL = SupacodePaths.repositorySettingsURL(for: rootURL)
-    if (try? repositoryLocalSettingsStorage.load(repositorySettingsURL)) != nil {
-      do {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(value)
-        try repositoryLocalSettingsStorage.save(data, repositorySettingsURL)
-        continuation.resume()
-      } catch {
-        continuation.resume(throwing: error)
+    // Mirror `load`: only a local repo may persist to an on-disk `supacode.json`.
+    if host == nil {
+      @Dependency(\.repositoryLocalSettingsStorage) var repositoryLocalSettingsStorage
+      let repositorySettingsURL = SupacodePaths.repositorySettingsURL(for: rootURL)
+      if (try? repositoryLocalSettingsStorage.load(repositorySettingsURL)) != nil {
+        do {
+          let encoder = JSONEncoder()
+          encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+          let data = try encoder.encode(value)
+          try repositoryLocalSettingsStorage.save(data, repositorySettingsURL)
+          continuation.resume()
+        } catch {
+          continuation.resume(throwing: error)
+        }
+        return
       }
-      return
     }
 
     @Shared(.settingsFile) var settingsFile: SettingsFile
@@ -88,7 +104,7 @@ public nonisolated struct RepositorySettingsKey: SharedKey {
   }
 }
 nonisolated extension SharedReaderKey where Self == RepositorySettingsKey.Default {
-  public static func repositorySettings(_ rootURL: URL) -> Self {
-    Self[RepositorySettingsKey(rootURL: rootURL), default: .default]
+  public static func repositorySettings(_ rootURL: URL, host: RemoteHost? = nil) -> Self {
+    Self[RepositorySettingsKey(rootURL: rootURL, host: host), default: .default]
   }
 }

@@ -17,6 +17,7 @@ struct CommandPaletteFeatureTests {
       "global.check-for-updates",
       "global.open-settings",
       "global.open-repository",
+      "global.add-remote-repository",
       "global.new-worktree",
       "global.refresh-worktrees",
       "global.view-archived-worktrees",
@@ -43,7 +44,7 @@ struct CommandPaletteFeatureTests {
     state.sidebarItems[id: deleting.id]?.lifecycle = .deleting
     state.pendingWorktrees = [
       PendingWorktree(
-        id: "\(rootPath)/wt-pending",
+        id: WorktreeID("\(rootPath)/wt-pending"),
         repositoryID: repository.id,
         progress: WorktreeCreationProgress(
           stage: .creatingWorktree,
@@ -59,7 +60,7 @@ struct CommandPaletteFeatureTests {
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
     let ids = items.map(\.id)
     #expect(ids.contains("worktree.\(keep.id).select"))
-    #expect(ids.contains { $0.contains(deleting.id) } == false)
+    #expect(ids.contains { $0.contains(deleting.id.rawValue) } == false)
     #expect(ids.contains { $0.contains("wt-pending") } == false)
   }
 
@@ -129,7 +130,7 @@ struct CommandPaletteFeatureTests {
     let rootPath = "/tmp/repo-rename-detached"
     let main = makeWorktree(id: rootPath, name: "main", repoRoot: rootPath)
     let detached = Worktree(
-      id: "\(rootPath)/dt",
+      id: WorktreeID("\(rootPath)/dt"),
       name: "dt",
       detail: "dt",
       workingDirectory: URL(fileURLWithPath: "\(rootPath)/dt"),
@@ -1159,7 +1160,7 @@ private func makeWorktree(
   workingDirectory: String? = nil
 ) -> Worktree {
   Worktree(
-    id: id,
+    id: WorktreeID(id),
     name: name,
     detail: detail,
     workingDirectory: URL(fileURLWithPath: workingDirectory ?? id),
@@ -1174,7 +1175,7 @@ private func makeRepository(
 ) -> Repository {
   let rootURL = URL(fileURLWithPath: rootPath)
   return Repository(
-    id: rootURL.path(percentEncoded: false),
+    id: RepositoryID(rootURL.path(percentEncoded: false)),
     rootURL: rootURL,
     name: name,
     worktrees: IdentifiedArray(uniqueElements: worktrees)

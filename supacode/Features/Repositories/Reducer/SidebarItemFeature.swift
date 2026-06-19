@@ -50,6 +50,14 @@ struct SidebarItemFeature {
     var hasMergedBadge: Bool
     /// Mirror of `Worktree.isMissing`; drives the orphan row UI.
     var isMissing: Bool = false
+    /// Mirror of `Worktree.host`: `nil` for a local item, otherwise the SSH host
+    /// (carrying `<user>@<host>:<port>` via `sshDestination`). Together with
+    /// `kind` this is the unified local/remote + git/folder discriminator every
+    /// consumer branches on (icon, scripts, worktree creation, settings).
+    var host: RemoteHost?
+
+    /// Whether this item lives on a remote SSH host.
+    var isRemote: Bool { host != nil }
     /// Mirror of `SidebarState.Item.title`; reconcile fans this in from
     /// `@Shared(.sidebar)`. `nil` or whitespace-only means fall back to `name`.
     var customTitle: String?
@@ -241,8 +249,8 @@ enum SidebarDisplayName {
     branchName: String,
   ) -> String? {
     guard !isMainWorktree else { return nil }
-    if id.contains("/") {
-      let pathName = URL(fileURLWithPath: id).lastPathComponent
+    if id.rawValue.contains("/") {
+      let pathName = URL(fileURLWithPath: id.rawValue).lastPathComponent
       if !pathName.isEmpty { return pathName }
     }
     if let subtitle, !subtitle.isEmpty, subtitle != "." {

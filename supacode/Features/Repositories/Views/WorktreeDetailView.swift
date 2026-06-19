@@ -85,6 +85,7 @@ struct WorktreeDetailView: View {
           titleContent: titleContent,
           rootURL: selectedWorktree.repositoryRootURL,
           kind: toolbarKind(for: selectedWorktree, selectedRow: selectedRow),
+          isRemote: selectedWorktree.host != nil,
           statusToast: repositories.statusToast,
           openActionSelection: openActionSelection,
           repoScripts: repoScripts,
@@ -120,11 +121,15 @@ struct WorktreeDetailView: View {
       }
     }
     let hasRunningRunScript = state.hasRunningRunScript
+    // Open / Reveal in Finder reach local paths only; the terminal and search
+    // commands stay enabled for a remote worktree (they work over SSH).
+    let canOpenLocally = hasActiveWorktree && selectedWorktree?.host == nil
     let resolvedSelection: OpenWorktreeAction? =
-      hasActiveWorktree ? OpenWorktreeAction.availableSelection(store.openActionSelection) : nil
+      canOpenLocally ? OpenWorktreeAction.availableSelection(store.openActionSelection) : nil
     return applyFocusedActions(
       content: content,
       hasActiveWorktree: hasActiveWorktree,
+      canOpenLocally: canOpenLocally,
       hasRunningRunScript: hasRunningRunScript,
       resolvedSelection: resolvedSelection
     )
@@ -260,14 +265,15 @@ struct WorktreeDetailView: View {
   private func applyFocusedActions<Content: View>(
     content: Content,
     hasActiveWorktree: Bool,
+    canOpenLocally: Bool,
     hasRunningRunScript: Bool,
     resolvedSelection: OpenWorktreeAction?
   ) -> some View {
     content
-      .focusedSceneAction(\.openSelectedWorktreeAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.openSelectedWorktreeAction, enabled: canOpenLocally) {
         store.send(.openSelectedWorktree)
       }
-      .focusedSceneAction(\.revealInFinderAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.revealInFinderAction, enabled: canOpenLocally) {
         store.send(.revealInFinder)
       }
       .focusedSceneValue(\.openActionSelection, resolvedSelection)
@@ -379,6 +385,9 @@ struct WorktreeDetailView: View {
     let titleContent: WorktreeToolbarTitleContent
     let rootURL: URL
     let kind: Kind
+    // Open actions reach local paths only, so the toolbar Open menu is hidden
+    // for a remote worktree.
+    let isRemote: Bool
     let statusToast: RepositoriesFeature.StatusToast?
     let openActionSelection: OpenWorktreeAction
     let repoScripts: [ScriptDefinition]
@@ -481,6 +490,7 @@ struct WorktreeDetailView: View {
 
       ToolbarItem {
         openMenu(openActionSelection: toolbarState.openActionSelection)
+          .disabled(toolbarState.isRemote)
       }
       ToolbarSpacer(.fixed)
 
@@ -556,7 +566,7 @@ struct WorktreeDetailView: View {
       // Folders use the per-row custom title (matches the sidebar's folder title position).
       let folderName =
         SidebarDisplayName.resolved(custom: selectedRow?.customTitle, fallback: repositoryName) ?? repositoryName
-      return .folder(name: folderName, tint: selectedRow?.customTint)
+      return .folder(name: folderName, tint: selectedRow?.customTint, hostInfo: repository?.host?.displayAuthority)
     }
 
     let worktreeSubtitle: String? = {
@@ -596,7 +606,8 @@ struct WorktreeDetailView: View {
         worktreeSubtitle: worktreeSubtitle,
         worktreeTint: selectedRow?.customTint,
         accent: selectedRow?.accent ?? .default,
-        rootURL: selectedWorktree.repositoryRootURL
+        rootURL: selectedWorktree.repositoryRootURL,
+        hostInfo: repository?.host?.displayAuthority
       )
     )
   }
@@ -674,7 +685,7 @@ private struct FailedRepositoryDetailView: View {
   let requestRemove: () -> Void
 
   var body: some View {
-    let path = URL(fileURLWithPath: repositoryID).standardizedFileURL.path(percentEncoded: false)
+    let path = URL(fileURLWithPath: repositoryID.rawValue).standardizedFileURL.path(percentEncoded: false)
     ContentUnavailableView {
       Label("Repository unavailable", systemImage: "exclamationmark.triangle.fill")
         .foregroundStyle(.pink)
@@ -1097,11 +1108,13 @@ private struct WorktreeToolbarPreview: View {
           worktreeSubtitle: "toolbar-preview",
           worktreeTint: nil,
           accent: .pinned,
-          rootURL: URL(fileURLWithPath: "/tmp/preview")
+          rootURL: URL(fileURLWithPath: "/tmp/preview"),
+          hostInfo: nil
         )
       ),
       rootURL: URL(fileURLWithPath: "/tmp/preview"),
       kind: .git(pullRequest: nil),
+      isRemote: false,
       statusToast: nil,
       openActionSelection: .finder,
       repoScripts: [ScriptDefinition(kind: .run, command: "npm run dev")],

@@ -336,7 +336,8 @@ private struct CommandPaletteRowView: View {
 
   private var badge: String? {
     switch row.kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .viewArchivedWorktrees,
+    case .checkForUpdates, .openRepository, .addRemoteRepository, .openSettings, .newWorktree,
+      .viewArchivedWorktrees,
       .refreshWorktrees,
       .ghosttyCommand,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
@@ -366,6 +367,8 @@ private struct CommandPaletteRowView: View {
       return "arrow.down.circle"
     case .openRepository:
       return "folder"
+    case .addRemoteRepository:
+      return "wifi"
     case .openSettings:
       return "gearshape"
     case .newWorktree:
@@ -413,7 +416,8 @@ private struct CommandPaletteRowView: View {
 
   private var emphasis: Bool {
     switch row.kind {
-    case .checkForUpdates, .openRepository, .openSettings, .newWorktree, .viewArchivedWorktrees,
+    case .checkForUpdates, .openRepository, .addRemoteRepository, .openSettings, .newWorktree,
+      .viewArchivedWorktrees,
       .refreshWorktrees,
       .ghosttyCommand,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
@@ -510,6 +514,8 @@ private struct CommandPaletteRowView: View {
       base = "Check for Updates"
     case .openRepository:
       base = "Open Repository or Folder"
+    case .addRemoteRepository:
+      base = "Add Remote Repository"
     case .openSettings:
       base = "Open Settings"
     case .newWorktree:

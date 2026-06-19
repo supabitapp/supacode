@@ -99,8 +99,8 @@ enum SidebarBranchNesting {
     // by the caller when grouping is off and is restored verbatim once the user
     // toggles grouping back off.
     let sortedIDs = itemIDs.sorted { lhs, rhs in
-      let lhsKey = branchNames[lhs] ?? lhs
-      let rhsKey = branchNames[rhs] ?? rhs
+      let lhsKey = branchNames[lhs] ?? lhs.rawValue
+      let rhsKey = branchNames[rhs] ?? rhs.rawValue
       return lhsKey.localizedCaseInsensitiveCompare(rhsKey) == .orderedAscending
     }
 

@@ -53,11 +53,12 @@ private nonisolated enum DeeplinkParser {
       // settings/repo/<encoded-repo-id>[/scripts] → open repository settings.
       if pathSegments.first == "repo" {
         guard pathSegments.count >= 2,
-          let repositoryID = pathSegments[1].removingPercentEncoding, !repositoryID.isEmpty
+          let rawRepositoryID = pathSegments[1].removingPercentEncoding, !rawRepositoryID.isEmpty
         else {
           logger.warning("Settings repo deeplink missing or invalid repository ID.")
           return nil
         }
+        let repositoryID = RepositoryID(rawRepositoryID)
         if pathSegments.count >= 3 {
           guard pathSegments[2] == "scripts" else {
             logger.warning("Unrecognized settings repo subsection: \(pathSegments[2]).")
@@ -100,7 +101,7 @@ private nonisolated enum DeeplinkParser {
     }
     // Normalize trailing slashes so that IDs with and without a trailing
     // slash resolve to the same worktree.
-    let worktreeID = rawWorktreeID.hasSuffix("/") ? String(rawWorktreeID.dropLast()) : rawWorktreeID
+    let worktreeID = WorktreeID(rawWorktreeID.hasSuffix("/") ? String(rawWorktreeID.dropLast()) : rawWorktreeID)
     guard pathSegments.count >= 2 else {
       return .worktree(id: worktreeID, action: .select)
     }
@@ -267,10 +268,11 @@ private nonisolated enum DeeplinkParser {
       return .repoOpen(path: URL(fileURLWithPath: pathValue))
     }
 
-    guard let repositoryID = first.removingPercentEncoding, !repositoryID.isEmpty else {
+    guard let rawRepositoryID = first.removingPercentEncoding, !rawRepositoryID.isEmpty else {
       logger.warning("Failed to percent-decode repository ID")
       return nil
     }
+    let repositoryID = RepositoryID(rawRepositoryID)
     guard pathSegments.count >= 3,
       pathSegments[1] == "worktree",
       pathSegments[2] == "new"

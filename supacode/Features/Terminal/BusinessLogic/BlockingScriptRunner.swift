@@ -1,4 +1,5 @@
 import Foundation
+import SupacodeSettingsShared
 
 /// Pure helpers for the blocking-script wrapper: temp-dir layout, shell-script
 /// generation, and shell single-quote escaping.
@@ -111,5 +112,55 @@ enum BlockingScriptRunner {
 
   static func shellSingleQuoted(_ value: String) -> String {
     "'\(value.replacing("'", with: "'\"'\"'"))'"
+  }
+
+  /// Full local surface command for a blocking script on a *remote* worktree:
+  /// an `ssh -tt <host> …` line (no local zmx wrapping, so it dies with the
+  /// app like a local blocking script) that runs the same OSC 133 framing on
+  /// the host. The user script rides as `$1`, so arbitrary script text needs no
+  /// remote temp file. Returns nil for an empty script.
+  static func remoteCommand(host: RemoteHost, script: String, remoteWorktreePath: String) -> String? {
+    let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    return SSHCommand.commandLine(
+      host: host,
+      remoteScript: remoteRunnerScript(remoteWorktreePath: remoteWorktreePath),
+      positionalArguments: ["supacode-blocking", trimmed]
+    )
+  }
+
+  /// The script the *remote* login shell runs for a blocking script. Mirrors
+  /// `runnerScript` (OSC 133 begin/end framing, read-only `tail -f /dev/null`
+  /// on completion) but runs on the host: it `cd`s into the remote worktree,
+  /// prints the remote beta banner, and runs the user script (`$1`) as a login
+  /// shell child so a `exit` in the script can't skip the completion emit.
+  static func remoteRunnerScript(remoteWorktreePath: String) -> String {
+    let trimmedPath = remoteWorktreePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Abort on a failed `cd` so a blocking script (user / delete / archive)
+    // never runs in the login shell's `$HOME` when the worktree directory was
+    // removed or renamed on the host after it was loaded.
+    let cdLine =
+      (trimmedPath.isEmpty || trimmedPath == "/")
+      ? ""
+      : "if ! cd -- \(shellSingleQuoted(trimmedPath)) 2>/dev/null; then "
+        + "printf '\\r\\n\\033[2m── Could not enter the worktree directory; script not run. ──\\033[0m\\r\\n'; "
+        + "SUPACODE_EXIT=1; exit 1; fi\n"
+    return """
+      set -u
+      SUPACODE_EXIT=127
+      trap 'printf "\\033]133;D;%d\\007" "$SUPACODE_EXIT"' EXIT
+      trap 'exit 127' INT TERM HUP QUIT PIPE
+      printf '\\033]133;C\\007'
+      \(ZmxAttach.betaBanner)
+      \(cdLine)"$SHELL" -l -c "$1"
+      SUPACODE_EXIT=$?
+      trap - EXIT
+      printf '\\033]133;D;%d\\007' "$SUPACODE_EXIT"
+      if [ -t 0 ]; then
+        printf '\\r\\n\\033[2m── Script finished (exit code: %d). Tab is read-only. ──\\033[0m\\r\\n' "$SUPACODE_EXIT"
+        exec tail -f /dev/null
+      fi
+      exit "$SUPACODE_EXIT"
+      """
   }
 }

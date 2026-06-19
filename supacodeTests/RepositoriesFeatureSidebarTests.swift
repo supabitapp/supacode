@@ -12,19 +12,19 @@ import Testing
 @MainActor
 struct RepositoriesFeatureSidebarTests {
   @Test func reconcileClearsPullRequestWatermarkOnBranchRename() {
-    let worktreeID = "/tmp/repo/wt-feature"
-    let repoID = "/tmp/repo/"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo/"
     let original = Worktree(
       id: worktreeID,
       name: "feature",
       detail: "",
-      workingDirectory: URL(fileURLWithPath: worktreeID),
-      repositoryRootURL: URL(fileURLWithPath: repoID)
+      workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
     )
     var state = makeState(
       repository: Repository(
         id: repoID,
-        rootURL: URL(fileURLWithPath: repoID),
+        rootURL: URL(fileURLWithPath: repoID.rawValue),
         name: "repo",
         worktrees: IdentifiedArray(uniqueElements: [original])
       ))
@@ -35,12 +35,12 @@ struct RepositoriesFeatureSidebarTests {
       id: worktreeID,
       name: "feature-renamed",
       detail: "",
-      workingDirectory: URL(fileURLWithPath: worktreeID),
-      repositoryRootURL: URL(fileURLWithPath: repoID)
+      workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
     )
     state.repositories[id: repoID] = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [renamed])
     )
@@ -51,19 +51,19 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test func runningScriptsSurviveReconcile() {
-    let worktreeID = "/tmp/repo/wt-feature"
-    let repoID = "/tmp/repo/"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo/"
     let worktree = Worktree(
       id: worktreeID,
       name: "feature",
       detail: "",
-      workingDirectory: URL(fileURLWithPath: worktreeID),
-      repositoryRootURL: URL(fileURLWithPath: repoID)
+      workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
     )
     var state = makeState(
       repository: Repository(
         id: repoID,
-        rootURL: URL(fileURLWithPath: repoID),
+        rootURL: URL(fileURLWithPath: repoID.rawValue),
         name: "repo",
         worktrees: IdentifiedArray(uniqueElements: [worktree])
       ))
@@ -89,19 +89,19 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test func inFlightRowSurvivesTransientRosterDrop() {
-    let worktreeID = "/tmp/repo/wt-feature"
-    let repoID = "/tmp/repo/"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo/"
     let worktree = Worktree(
       id: worktreeID,
       name: "feature",
       detail: "",
-      workingDirectory: URL(fileURLWithPath: worktreeID),
-      repositoryRootURL: URL(fileURLWithPath: repoID)
+      workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
     )
     var state = makeState(
       repository: Repository(
         id: repoID,
-        rootURL: URL(fileURLWithPath: repoID),
+        rootURL: URL(fileURLWithPath: repoID.rawValue),
         name: "repo",
         worktrees: IdentifiedArray(uniqueElements: [worktree])
       ))
@@ -113,7 +113,7 @@ struct RepositoriesFeatureSidebarTests {
     // worktree from the live roster mid-flight).
     state.repositories[id: repoID] = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "repo",
       worktrees: []
     )
@@ -126,7 +126,7 @@ struct RepositoriesFeatureSidebarTests {
     // Roster restores the worktree.
     state.repositories[id: repoID] = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])
     )
@@ -138,18 +138,18 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test func pullRequestsLoadedClearsWatermarkOnIdenticalPullRequest() async {
-    let repoID = "/tmp/repo"
-    let worktreeID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
     let worktree = Worktree(
       id: worktreeID,
       name: "feature",
       detail: "",
-      workingDirectory: URL(fileURLWithPath: worktreeID),
-      repositoryRootURL: URL(fileURLWithPath: repoID)
+      workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
     )
     let repository = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])
     )
@@ -198,18 +198,18 @@ struct RepositoriesFeatureSidebarTests {
     // Worktree was included in the request snapshot but absent from the response
     // (e.g. branch deleted upstream); the row must still receive
     // `pullRequestChanged` so its watermark clears and the next refresh is eligible.
-    let repoID = "/tmp/repo"
-    let worktreeID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
     let worktree = Worktree(
       id: worktreeID,
       name: "feature",
       detail: "",
-      workingDirectory: URL(fileURLWithPath: worktreeID),
-      repositoryRootURL: URL(fileURLWithPath: repoID)
+      workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
     )
     let repository = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])
     )
@@ -232,8 +232,8 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test(.dependencies) func reconcileSeedsSurfaceIDsFromPersistedLayout() throws {
-    let worktreeID = "/tmp/repo/wt-feature"
-    let repoID = "/tmp/repo/"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo/"
     let surfaceA = UUID()
     let surfaceB = UUID()
     let layout = TerminalLayoutSnapshot(
@@ -258,7 +258,7 @@ struct RepositoriesFeatureSidebarTests {
       selectedTabIndex: 0
     )
     let storage = InMemorySettingsFileStorage()
-    let payload = try JSONEncoder().encode([worktreeID: layout])
+    let payload = try JSONEncoder().encode([worktreeID.rawValue: layout])
     try storage.save(payload, SupacodePaths.layoutsURL)
 
     try withDependencies {
@@ -272,15 +272,15 @@ struct RepositoriesFeatureSidebarTests {
         id: worktreeID,
         name: "feature",
         detail: "",
-        workingDirectory: URL(fileURLWithPath: worktreeID),
-        repositoryRootURL: URL(fileURLWithPath: repoID)
+        workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+        repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
       )
       var state = RepositoriesFeature.State()
       state.repositories = IdentifiedArray(
         uniqueElements: [
           Repository(
             id: repoID,
-            rootURL: URL(fileURLWithPath: repoID),
+            rootURL: URL(fileURLWithPath: repoID.rawValue),
             name: "repo",
             worktrees: IdentifiedArray(uniqueElements: [worktree])
           )
@@ -315,7 +315,7 @@ struct RepositoriesFeatureSidebarTests {
       selectedTabIndex: 0
     )
     let storage = InMemorySettingsFileStorage()
-    let payload = try JSONEncoder().encode([folderID: layout])
+    let payload = try JSONEncoder().encode([folderID.rawValue: layout])
     try storage.save(payload, SupacodePaths.layoutsURL)
 
     try withDependencies {
@@ -326,7 +326,7 @@ struct RepositoriesFeatureSidebarTests {
       $0.defaultAppStorage = .inMemory
     } operation: {
       let folderRepository = Repository(
-        id: rootURL.path(percentEncoded: false) + "/",
+        id: RepositoryID(rootURL.path(percentEncoded: false) + "/"),
         rootURL: rootURL,
         name: "folder",
         worktrees: IdentifiedArray(
@@ -352,8 +352,8 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test(.dependencies) func reconcileDoesNotOverwriteExistingSurfaceIDsWithStaleLayout() throws {
-    let worktreeID = "/tmp/repo/wt-feature"
-    let repoID = "/tmp/repo/"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo/"
     let liveSurface = UUID()
     let staleSurface = UUID()
     let staleLayout = TerminalLayoutSnapshot(
@@ -371,7 +371,7 @@ struct RepositoriesFeatureSidebarTests {
       selectedTabIndex: 0
     )
     let storage = InMemorySettingsFileStorage()
-    try storage.save(try JSONEncoder().encode([worktreeID: staleLayout]), SupacodePaths.layoutsURL)
+    try storage.save(try JSONEncoder().encode([worktreeID.rawValue: staleLayout]), SupacodePaths.layoutsURL)
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
@@ -384,15 +384,15 @@ struct RepositoriesFeatureSidebarTests {
         id: worktreeID,
         name: "feature",
         detail: "",
-        workingDirectory: URL(fileURLWithPath: worktreeID),
-        repositoryRootURL: URL(fileURLWithPath: repoID)
+        workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+        repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
       )
       var state = RepositoriesFeature.State()
       state.repositories = IdentifiedArray(
         uniqueElements: [
           Repository(
             id: repoID,
-            rootURL: URL(fileURLWithPath: repoID),
+            rootURL: URL(fileURLWithPath: repoID.rawValue),
             name: "repo",
             worktrees: IdentifiedArray(uniqueElements: [worktree])
           )
@@ -412,8 +412,8 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test(.dependencies) func reconcileDoesNotReSeedAfterUserClosedEveryTab() throws {
-    let worktreeID = "/tmp/repo/wt-feature"
-    let repoID = "/tmp/repo/"
+    let worktreeID: Worktree.ID = "/tmp/repo/wt-feature"
+    let repoID: Repository.ID = "/tmp/repo/"
     let staleSurface = UUID()
     let staleLayout = TerminalLayoutSnapshot(
       tabs: [
@@ -430,7 +430,7 @@ struct RepositoriesFeatureSidebarTests {
       selectedTabIndex: 0
     )
     let storage = InMemorySettingsFileStorage()
-    try storage.save(try JSONEncoder().encode([worktreeID: staleLayout]), SupacodePaths.layoutsURL)
+    try storage.save(try JSONEncoder().encode([worktreeID.rawValue: staleLayout]), SupacodePaths.layoutsURL)
 
     try withDependencies {
       $0.settingsFileStorage = SettingsFileStorage(
@@ -443,15 +443,15 @@ struct RepositoriesFeatureSidebarTests {
         id: worktreeID,
         name: "feature",
         detail: "",
-        workingDirectory: URL(fileURLWithPath: worktreeID),
-        repositoryRootURL: URL(fileURLWithPath: repoID)
+        workingDirectory: URL(fileURLWithPath: worktreeID.rawValue),
+        repositoryRootURL: URL(fileURLWithPath: repoID.rawValue)
       )
       var state = RepositoriesFeature.State()
       state.repositories = IdentifiedArray(
         uniqueElements: [
           Repository(
             id: repoID,
-            rootURL: URL(fileURLWithPath: repoID),
+            rootURL: URL(fileURLWithPath: repoID.rawValue),
             name: "repo",
             worktrees: IdentifiedArray(uniqueElements: [worktree])
           )
@@ -487,12 +487,12 @@ struct RepositoriesFeatureSidebarTests {
   // MARK: - branchNestExpansionChanged
 
   @Test func branchNestExpansionChangedInsertsPrefix() async {
-    let repoID = "/tmp/repo/"
+    let repoID: Repository.ID = "/tmp/repo/"
     let store = TestStore(
       initialState: makeState(
         repository: Repository(
           id: repoID,
-          rootURL: URL(fileURLWithPath: repoID),
+          rootURL: URL(fileURLWithPath: repoID.rawValue),
           name: "repo",
           worktrees: []
         )
@@ -516,11 +516,11 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test func branchNestExpansionChangedRemovesPrefix() async {
-    let repoID = "/tmp/repo/"
+    let repoID: Repository.ID = "/tmp/repo/"
     var initialState = makeState(
       repository: Repository(
         id: repoID,
-        rootURL: URL(fileURLWithPath: repoID),
+        rootURL: URL(fileURLWithPath: repoID.rawValue),
         name: "repo",
         worktrees: []
       )
@@ -553,11 +553,11 @@ struct RepositoriesFeatureSidebarTests {
     // The toggle is read-only AppStorage outside the reducer; this test guards the
     // related invariant that the only sidebar mutation that exists touches the field
     // additively, never clearing the set on unrelated transitions.
-    let repoID = "/tmp/repo/"
+    let repoID: Repository.ID = "/tmp/repo/"
     var initialState = makeState(
       repository: Repository(
         id: repoID,
-        rootURL: URL(fileURLWithPath: repoID),
+        rootURL: URL(fileURLWithPath: repoID.rawValue),
         name: "repo",
         worktrees: []
       )
@@ -596,12 +596,12 @@ struct RepositoriesFeatureSidebarTests {
   @Test func branchNestExpansionChangedRejectsArchivedBucket() async {
     // `.archived` never renders nested rows; the action must refuse to write
     // collapse state into a bucket that has no chevron to drive it.
-    let repoID = "/tmp/repo/"
+    let repoID: Repository.ID = "/tmp/repo/"
     let store = TestStore(
       initialState: makeState(
         repository: Repository(
           id: repoID,
-          rootURL: URL(fileURLWithPath: repoID),
+          rootURL: URL(fileURLWithPath: repoID.rawValue),
           name: "repo",
           worktrees: []
         )
@@ -626,13 +626,13 @@ struct RepositoriesFeatureSidebarTests {
     // hitting this path for an unknown repo is stale UI / deeplink noise.
     // Writing through anyway would materialize a phantom section in
     // `sidebar.json` that nothing else cleans up.
-    let knownRepoID = "/tmp/repo/"
-    let unknownRepoID = "/tmp/other/"
+    let knownRepoID: Repository.ID = "/tmp/repo/"
+    let unknownRepoID: Repository.ID = "/tmp/other/"
     let store = TestStore(
       initialState: makeState(
         repository: Repository(
           id: knownRepoID,
-          rootURL: URL(fileURLWithPath: knownRepoID),
+          rootURL: URL(fileURLWithPath: knownRepoID.rawValue),
           name: "repo",
           worktrees: []
         )
@@ -653,12 +653,12 @@ struct RepositoriesFeatureSidebarTests {
   }
 
   @Test func branchNestExpansionPinnedAndUnpinnedAreIndependent() async {
-    let repoID = "/tmp/repo/"
+    let repoID: Repository.ID = "/tmp/repo/"
     let store = TestStore(
       initialState: makeState(
         repository: Repository(
           id: repoID,
-          rootURL: URL(fileURLWithPath: repoID),
+          rootURL: URL(fileURLWithPath: repoID.rawValue),
           name: "repo",
           worktrees: []
         )

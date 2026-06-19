@@ -31,6 +31,11 @@ struct EmptyStateView: View {
       }
       .appKeyboardShortcut(openRepo)
       .help("Open Repository or Folder (\(openRepo?.display ?? "none"))")
+      Button("Add Remote Repository…") {
+        store.send(.requestAddRemoteRepository)
+      }
+      .buttonStyle(.link)
+      .help("Add a repository or folder on an SSH host")
     }
     .multilineTextAlignment(.center)
     .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -85,7 +85,7 @@ struct RepositoriesFeatureTests {
     // finally dropped.
     let repoRoot = "/tmp/repo"
     let mainWorktree = Worktree(
-      id: repoRoot,
+      id: WorktreeID(repoRoot),
       name: "main",
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: repoRoot),
@@ -106,7 +106,7 @@ struct RepositoriesFeatureTests {
     initialState.repositoryRoots = [mainOnlyRepository.rootURL]
     initialState.isInitialLoadComplete = false
     initialState.$sidebar.withLock { sidebar in
-      sidebar.sections[repoRoot] = .init(
+      sidebar.sections[RepositoryID(repoRoot)] = .init(
         buckets: [.pinned: .init(items: [featureWorktree.id: .init()])]
       )
     }
@@ -128,7 +128,7 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     #expect(
-      store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] != nil
+      store.state.sidebar.sections[RepositoryID(repoRoot)]?.buckets[.pinned]?.items[featureWorktree.id] != nil
     )
 
     // Second tick with `isInitialLoadComplete == true`: the
@@ -145,12 +145,12 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.$sidebar.withLock { sidebar in
-        sidebar.sections[repoRoot] = .init(buckets: [.pinned: .init(items: [:])])
+        sidebar.sections[RepositoryID(repoRoot)] = .init(buckets: [.pinned: .init(items: [:])])
       }
       $0.reconcileSidebarForTesting()
     }
     #expect(
-      store.state.sidebar.sections[repoRoot]?.buckets[.pinned]?.items[featureWorktree.id] == nil
+      store.state.sidebar.sections[RepositoryID(repoRoot)]?.buckets[.pinned]?.items[featureWorktree.id] == nil
     )
   }
 
@@ -1183,7 +1183,7 @@ struct RepositoriesFeatureTests {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
-    let pendingID = "pending:00000000-0000-0000-0000-000000000001"
+    let pendingID: Worktree.ID = "pending:00000000-0000-0000-0000-000000000001"
     let validationClock = TestClock()
     let store = TestStore(initialState: makeState(repositories: [repository])) {
       RepositoriesFeature()
@@ -1900,7 +1900,7 @@ struct RepositoriesFeatureTests {
       id: repoRoot,
       worktrees: [makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)]
     )
-    let pendingID = "pending:test"
+    let pendingID: Worktree.ID = "pending:test"
     var state = makeState(repositories: [repository])
     state.selection = .worktree(pendingID)
     state.pendingWorktrees = [
@@ -1937,7 +1937,7 @@ struct RepositoriesFeatureTests {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
-    let pendingID = "pending:test"
+    let pendingID: Worktree.ID = "pending:test"
     var state = makeState(repositories: [repository])
     state.pendingWorktrees = [
       PendingWorktree(
@@ -1968,7 +1968,7 @@ struct RepositoriesFeatureTests {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
-    let pendingID = "pending:test"
+    let pendingID: Worktree.ID = "pending:test"
     var state = makeState(repositories: [repository])
     state.pendingWorktrees = [
       PendingWorktree(
@@ -1990,7 +1990,7 @@ struct RepositoriesFeatureTests {
   @Test func pendingProgressUpdateIsIgnoredAfterCreateFailureRemovesPendingWorktree() async {
     let repoRoot = "/tmp/repo"
     let repository = makeRepository(id: repoRoot, worktrees: [makeWorktree(id: repoRoot, name: "main")])
-    let pendingID = "pending:test"
+    let pendingID: Worktree.ID = "pending:test"
     var state = makeState(repositories: [repository])
     state.selection = .worktree(pendingID)
     state.pendingWorktrees = [
@@ -2216,7 +2216,7 @@ struct RepositoriesFeatureTests {
       workingDirectory: folderURL, repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+      id: RepositoryID(folderRoot), rootURL: folderURL, name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
       isGitRepository: false
     )
@@ -2437,7 +2437,7 @@ struct RepositoriesFeatureTests {
       workingDirectory: folderURL, repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+      id: RepositoryID(folderRoot), rootURL: folderURL, name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
       isGitRepository: false
     )
@@ -3374,7 +3374,7 @@ struct RepositoriesFeatureTests {
     state.sidebarItems.append(
       SidebarItemFeature.State(
         id: "/tmp/repo/gone",
-        repositoryID: repoRoot,
+        repositoryID: RepositoryID(repoRoot),
         kind: .gitWorktree,
         name: "gone",
         branchName: "gone",
@@ -3716,7 +3716,7 @@ struct RepositoriesFeatureTests {
     state.pendingWorktrees = [
       PendingWorktree(
         id: "/tmp/repo/wip",
-        repositoryID: repoRoot,
+        repositoryID: RepositoryID(repoRoot),
         progress: WorktreeCreationProgress(stage: .choosingWorktreeName)
       )
     ]
@@ -3725,12 +3725,12 @@ struct RepositoriesFeatureTests {
     // Pending row renders before non-pending unpinned, so the bucket must too. Otherwise
     // Cmd+N hint and target diverge while a worktree is creating.
     expectNoDifference(
-      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
-      [repoRoot, "/tmp/repo/wip", "/tmp/repo/feature"]
+      state.orderedSidebarItemIDs(includingRepositoryIDs: [RepositoryID(repoRoot)]),
+      [WorktreeID(repoRoot), "/tmp/repo/wip", "/tmp/repo/feature"]
     )
 
     // ID flavor and heavy flavor must agree for every filter the render path can pass.
-    for filter: Set<Repository.ID> in [[repoRoot], [other.id], [repoRoot, other.id], []] {
+    for filter: Set<Repository.ID> in [[RepositoryID(repoRoot)], [other.id], [RepositoryID(repoRoot), other.id], []] {
       expectNoDifference(
         state.orderedSidebarItemIDs(includingRepositoryIDs: filter),
         state.orderedSidebarItems(includingRepositoryIDs: filter).map(\.id)
@@ -3800,14 +3800,14 @@ struct RepositoriesFeatureTests {
     state.pendingWorktrees = [
       PendingWorktree(
         id: "/tmp/repo/wip",
-        repositoryID: repoRoot,
+        repositoryID: RepositoryID(repoRoot),
         progress: WorktreeCreationProgress(stage: .choosingWorktreeName)
       )
     ]
     state.reconcileSidebarForTesting()
 
     expectNoDifference(
-      state.orderedSidebarItemIDs(includingRepositoryIDs: [repoRoot]),
+      state.orderedSidebarItemIDs(includingRepositoryIDs: [RepositoryID(repoRoot)]),
       ["/tmp/repo", "/tmp/repo/wip", "/tmp/repo/feature-a", "/tmp/repo/feature-b"]
     )
   }
@@ -3841,14 +3841,14 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [makeRepository(id: repoRoot, worktrees: [main, alpha, bravo])])
     // Pin bravo so it hoists to the Pinned section at the top.
     state.$sidebar.withLock { sidebar in
-      var section = sidebar.sections[repoRoot] ?? .init()
+      var section = sidebar.sections[RepositoryID(repoRoot)] ?? .init()
       var pinnedBucket = section.buckets[.pinned] ?? .init()
       pinnedBucket.items[bravo.id] = .init()
       section.buckets[.pinned] = pinnedBucket
       var unpinnedBucket = section.buckets[.unpinned] ?? .init()
       unpinnedBucket.items.removeValue(forKey: bravo.id)
       section.buckets[.unpinned] = unpinnedBucket
-      sidebar.sections[repoRoot] = section
+      sidebar.sections[RepositoryID(repoRoot)] = section
     }
     state.reconcileSidebarForTesting()
 
@@ -3874,8 +3874,8 @@ struct RepositoriesFeatureTests {
     expectNoDifference(
       state.orderedRepositoryRoots().map { $0.path(percentEncoded: false) },
       [
-        repoB.id,
-        repoA.id,
+        repoB.id.rawValue,
+        repoA.id.rawValue,
       ]
     )
   }
@@ -3917,7 +3917,7 @@ struct RepositoriesFeatureTests {
     )
     var state = makeState(repositories: [repository])
     state.$sidebar.withLock { sidebar in
-      sidebar.sections[repoRoot] = .init(
+      sidebar.sections[RepositoryID(repoRoot)] = .init(
         buckets: [
           .unpinned: .init(
             items: [worktree1.id: .init(), worktree2.id: .init(), worktree3.id: .init()]
@@ -3930,11 +3930,11 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.unpinnedWorktreesMoved(repositoryID: repoRoot, IndexSet(integer: 0), 3)) {
+    await store.send(.unpinnedWorktreesMoved(repositoryID: RepositoryID(repoRoot), IndexSet(integer: 0), 3)) {
       $0.$sidebar.withLock { sidebar in
         sidebar.reorder(
           bucket: .unpinned,
-          in: repoRoot,
+          in: RepositoryID(repoRoot),
           to: [worktree2.id, worktree3.id, worktree1.id]
         )
       }
@@ -3952,12 +3952,12 @@ struct RepositoriesFeatureTests {
     let repositoryB = makeRepository(id: repoB, worktrees: [worktreeB1])
     var state = makeState(repositories: [repositoryA, repositoryB])
     state.$sidebar.withLock { sidebar in
-      sidebar.sections[repoA] = .init(
+      sidebar.sections[RepositoryID(repoA)] = .init(
         buckets: [
           .pinned: .init(items: [worktreeA1.id: .init(), worktreeA2.id: .init()])
         ]
       )
-      sidebar.sections[repoB] = .init(
+      sidebar.sections[RepositoryID(repoB)] = .init(
         buckets: [.pinned: .init(items: [worktreeB1.id: .init()])]
       )
     }
@@ -3966,9 +3966,9 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
-    await store.send(.pinnedWorktreesMoved(repositoryID: repoA, IndexSet(integer: 1), 0)) {
+    await store.send(.pinnedWorktreesMoved(repositoryID: RepositoryID(repoA), IndexSet(integer: 1), 0)) {
       $0.$sidebar.withLock { sidebar in
-        sidebar.reorder(bucket: .pinned, in: repoA, to: [worktreeA2.id, worktreeA1.id])
+        sidebar.reorder(bucket: .pinned, in: RepositoryID(repoA), to: [worktreeA2.id, worktreeA1.id])
       }
       RepositoriesFeature.syncSidebar(&$0)
     }
@@ -4006,7 +4006,7 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [worktree1, worktree2])
     var initialState = makeState(repositories: [repository])
     initialState.$sidebar.withLock { sidebar in
-      sidebar.sections[repoRoot] = .init(
+      sidebar.sections[RepositoryID(repoRoot)] = .init(
         buckets: [
           .unpinned: .init(items: [worktree1.id: .init(), worktree2.id: .init()])
         ]
@@ -4034,7 +4034,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.repositoriesChanged)
     expectNoDifference(
       Array(
-        store.state.sidebar.sections[repoRoot]?.buckets[.unpinned]?.items.keys ?? []
+        store.state.sidebar.sections[RepositoryID(repoRoot)]?.buckets[.unpinned]?.items.keys ?? []
       ),
       [worktree1.id, worktree2.id]
     )
@@ -4234,7 +4234,7 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [existingWorktree])
     let newWorktree = makeWorktree(id: "/tmp/repo/wt-new", name: "new", repoRoot: repoRoot)
     let updatedRepository = makeRepository(id: repoRoot, worktrees: [newWorktree, existingWorktree])
-    let pendingID = "pending:\(UUID().uuidString)"
+    let pendingID = WorktreeID("pending:\(UUID().uuidString)")
     var initialState = makeState(repositories: [repository])
     initialState.pendingWorktrees = [
       PendingWorktree(
@@ -5713,7 +5713,7 @@ struct RepositoriesFeatureTests {
     // becomes [bugfix (hoist), main, feature]. Arrow nav from main lands on
     // feature, not on bugfix's per-repo bucket position.
     state.$sidebar.withLock { sidebar in
-      sidebar.sections[repoRoot] = .init(buckets: [.pinned: .init(items: [bugfix.id: .init()])])
+      sidebar.sections[RepositoryID(repoRoot)] = .init(buckets: [.pinned: .init(items: [bugfix.id: .init()])])
     }
     state.reconcileSidebarForTesting()
     let store = TestStore(initialState: state) {
@@ -6057,7 +6057,7 @@ struct RepositoriesFeatureTests {
     let mainWorktree = makeWorktree(id: "/tmp/repo/wt-main", name: "main", repoRoot: repoRoot)
     let newWorktree = makeWorktree(id: "/tmp/repo/wt-new", name: "new", repoRoot: repoRoot)
     let updatedRepository = makeRepository(id: repoRoot, worktrees: [newWorktree, mainWorktree])
-    let pendingID = "pending:\(UUID().uuidString)"
+    let pendingID = WorktreeID("pending:\(UUID().uuidString)")
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
     var initialState = makeState(repositories: [repository])
     initialState.pendingWorktrees = [
@@ -6117,7 +6117,7 @@ struct RepositoriesFeatureTests {
     // the user's expectation that the failed create was a no-op.
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
-    let pendingID = "pending:\(UUID().uuidString)"
+    let pendingID = WorktreeID("pending:\(UUID().uuidString)")
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
     var initialState = makeState(repositories: [repository])
     initialState.pendingWorktrees = [
@@ -6299,14 +6299,14 @@ struct RepositoriesFeatureTests {
     let repoID = "/tmp/missing-repo"
     var state = RepositoriesFeature.State()
     state.repositoryRoots = [URL(fileURLWithPath: repoID)]
-    state.loadFailuresByID = [repoID: "Not found"]
+    state.loadFailuresByID = [RepositoryID(repoID): "Not found"]
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("Remove missing-repo?")
     } actions: {
-      ButtonState(role: .destructive, action: .confirmRemoveFailedRepository(repoID)) {
+      ButtonState(role: .destructive, action: .confirmRemoveFailedRepository(RepositoryID(repoID))) {
         TextState("Remove Repository")
       }
       ButtonState(role: .cancel) {
@@ -6315,7 +6315,7 @@ struct RepositoriesFeatureTests {
     } message: {
       TextState("Removes the repository from Supacode. Nothing on disk is changed.")
     }
-    await store.send(.requestRemoveFailedRepository(repoID)) {
+    await store.send(.requestRemoveFailedRepository(RepositoryID(repoID))) {
       $0.alert = expectedAlert
     }
   }
@@ -6350,7 +6350,7 @@ struct RepositoriesFeatureTests {
     createdAt: Date? = nil
   ) -> Worktree {
     Worktree(
-      id: id,
+      id: WorktreeID(id),
       name: name,
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: id),
@@ -6391,7 +6391,7 @@ struct RepositoriesFeatureTests {
     worktrees: [Worktree]
   ) -> Repository {
     Repository(
-      id: id,
+      id: RepositoryID(id),
       rootURL: URL(fileURLWithPath: id),
       name: name,
       worktrees: IdentifiedArray(uniqueElements: worktrees)
@@ -6453,7 +6453,7 @@ struct RepositoriesFeatureTests {
     isMainWorktree: Bool = false
   ) -> SidebarItemFeature.State {
     SidebarItemFeature.State(
-      id: id,
+      id: WorktreeID(id),
       repositoryID: repositoryID,
       kind: kind,
       name: name,
@@ -6516,7 +6516,7 @@ struct RepositoriesFeatureTests {
       hideSubtitleOnMatch: true
     )
 
-    guard case .folder(let name, _) = content else {
+    guard case .folder(let name, _, _) = content else {
       Issue.record("Expected .folder content, got \(content)")
       return
     }
@@ -6912,7 +6912,7 @@ struct RepositoriesFeatureTests {
       isAttached: false
     )
     let folderRepo = Repository(
-      id: repoRoot,
+      id: RepositoryID(repoRoot),
       rootURL: rootURL,
       name: Repository.name(for: rootURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -6958,7 +6958,7 @@ struct RepositoriesFeatureTests {
       $0.repositoryRoots = [URL(fileURLWithPath: repoRoot)]
       $0.isInitialLoadComplete = true
       $0.loadFailuresByID = [
-        repoRoot: "Directory not found at \(repoRoot). It may have been moved or deleted."
+        RepositoryID(repoRoot): "Directory not found at \(repoRoot). It may have been moved or deleted."
       ]
       $0.reconcileSidebarForTesting()
     }
@@ -6985,7 +6985,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.repositoriesLoaded) {
       $0.repositories = [
         Repository(
-          id: gitRoot,
+          id: RepositoryID(gitRoot),
           rootURL: URL(fileURLWithPath: gitRoot),
           name: URL(fileURLWithPath: gitRoot).lastPathComponent,
           worktrees: [gitWorktree],
@@ -7002,7 +7002,7 @@ struct RepositoriesFeatureTests {
             isAttached: false
           )
           return Repository(
-            id: folderRoot,
+            id: RepositoryID(folderRoot),
             rootURL: url,
             name: Repository.name(for: url),
             worktrees: [synthetic],
@@ -7055,7 +7055,7 @@ struct RepositoriesFeatureTests {
       isAttached: false
     )
     let folderRepo = Repository(
-      id: rootID,
+      id: RepositoryID(rootID),
       rootURL: standardizedURL,
       name: Repository.name(for: standardizedURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7122,7 +7122,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7207,7 +7207,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7266,7 +7266,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7329,7 +7329,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7365,7 +7365,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7413,7 +7413,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let flippedRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7463,7 +7463,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7514,7 +7514,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7565,7 +7565,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: standardized
     )
     let folderRepo = Repository(
-      id: rootID,
+      id: RepositoryID(rootID),
       rootURL: standardized,
       name: Repository.name(for: standardized),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -7639,7 +7639,7 @@ struct RepositoriesFeatureTests {
       workingDirectory: missingURL, repositoryRootURL: missingURL
     )
     let folderRepo = Repository(
-      id: rootID, rootURL: missingURL, name: Repository.name(for: missingURL),
+      id: RepositoryID(rootID), rootURL: missingURL, name: Repository.name(for: missingURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
       isGitRepository: false
     )
@@ -7711,7 +7711,7 @@ struct RepositoriesFeatureTests {
         workingDirectory: url, repositoryRootURL: url
       )
       let repo = Repository(
-        id: id, rootURL: url, name: Repository.name(for: url),
+        id: RepositoryID(id), rootURL: url, name: Repository.name(for: url),
         worktrees: IdentifiedArray(uniqueElements: [worktree]),
         isGitRepository: false
       )
@@ -7779,21 +7779,21 @@ struct RepositoriesFeatureTests {
     let gitRoot = "/tmp/alert-clobber-\(UUID().uuidString)-repo"
     let gitURL = URL(fileURLWithPath: gitRoot)
     let worktree = Worktree(
-      id: "\(gitRoot)/wt-1",
+      id: WorktreeID("\(gitRoot)/wt-1"),
       name: "wt-1",
       detail: "",
       workingDirectory: URL(fileURLWithPath: "\(gitRoot)/wt-1"),
       repositoryRootURL: gitURL
     )
     let mainWorktree = Worktree(
-      id: gitRoot,
+      id: WorktreeID(gitRoot),
       name: "repo",
       detail: "",
       workingDirectory: gitURL,
       repositoryRootURL: gitURL
     )
     let gitRepo = Repository(
-      id: gitRoot, rootURL: gitURL, name: "repo",
+      id: RepositoryID(gitRoot), rootURL: gitURL, name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [mainWorktree, worktree]),
       isGitRepository: true
     )
@@ -7866,7 +7866,7 @@ struct RepositoriesFeatureTests {
     state.sidebarItems.append(
       SidebarItemFeature.State(
         id: folderWorktreeID,
-        repositoryID: folderRoot,
+        repositoryID: RepositoryID(folderRoot),
         kind: .folder,
         name: "vanished",
         branchName: "vanished",
@@ -7879,7 +7879,7 @@ struct RepositoriesFeatureTests {
       )
     )
     state.sidebarItems[id: folderWorktreeID]?.lifecycle = .deletingScript
-    let batchID = state.seedRemovalBatch(pending: [folderRoot: .folderUnlink])
+    let batchID = state.seedRemovalBatch(pending: [RepositoryID(folderRoot): .folderUnlink])
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -7899,7 +7899,7 @@ struct RepositoriesFeatureTests {
     await store.skipReceivedActions()
 
     #expect(
-      store.state.removingRepositoryIDs[folderRoot] == nil,
+      store.state.removingRepositoryIDs[RepositoryID(folderRoot)] == nil,
       "record must drain even when owning repo vanished mid-script"
     )
     #expect(
@@ -7931,7 +7931,7 @@ struct RepositoriesFeatureTests {
         repositoryRootURL: url
       )
       let repo = Repository(
-        id: id, rootURL: url, name: Repository.name(for: url),
+        id: RepositoryID(id), rootURL: url, name: Repository.name(for: url),
         worktrees: IdentifiedArray(uniqueElements: [worktree]), isGitRepository: false)
       return (worktree, repo)
     }
@@ -7991,7 +7991,7 @@ struct RepositoriesFeatureTests {
       workingDirectory: urlA, repositoryRootURL: urlA
     )
     let folderA = Repository(
-      id: idA, rootURL: urlA, name: Repository.name(for: urlA),
+      id: RepositoryID(idA), rootURL: urlA, name: Repository.name(for: urlA),
       worktrees: IdentifiedArray(uniqueElements: [worktreeA]),
       isGitRepository: false
     )
@@ -8001,7 +8001,7 @@ struct RepositoriesFeatureTests {
       workingDirectory: urlB, repositoryRootURL: urlB
     )
     let folderB = Repository(
-      id: idB, rootURL: urlB, name: Repository.name(for: urlB),
+      id: RepositoryID(idB), rootURL: urlB, name: Repository.name(for: urlB),
       worktrees: IdentifiedArray(uniqueElements: [worktreeB]),
       isGitRepository: false
     )
@@ -8043,7 +8043,7 @@ struct RepositoriesFeatureTests {
       prunedIDs.value.flatMap { $0 } == [idA],
       "pruneRepositoryConfigs must drop the removed repo's config entry"
     )
-    #expect(store.state.repositories.map(\.id) == [idB])
+    #expect(store.state.repositories.map(\.id) == [RepositoryID(idB)])
     #expect(store.state.repositoryRoots.map { $0.path(percentEncoded: false) } == [idB])
   }
 
@@ -8073,14 +8073,14 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: urlB
     )
     let folderA = Repository(
-      id: rootA,
+      id: RepositoryID(rootA),
       rootURL: urlA,
       name: Repository.name(for: urlA),
       worktrees: IdentifiedArray(uniqueElements: [worktreeA]),
       isGitRepository: false
     )
     let folderB = Repository(
-      id: rootB,
+      id: RepositoryID(rootB),
       rootURL: urlB,
       name: Repository.name(for: urlB),
       worktrees: IdentifiedArray(uniqueElements: [worktreeB]),
@@ -8136,21 +8136,21 @@ struct RepositoriesFeatureTests {
     let gitRoot = "/tmp/\(UUID().uuidString)-git"
     let gitURL = URL(fileURLWithPath: gitRoot)
     let gitMain = Worktree(
-      id: "\(gitRoot)/main",
+      id: WorktreeID("\(gitRoot)/main"),
       name: "main",
       detail: "",
       workingDirectory: gitURL,
       repositoryRootURL: gitURL
     )
     let gitFeature = Worktree(
-      id: "\(gitRoot)/feature",
+      id: WorktreeID("\(gitRoot)/feature"),
       name: "feature",
       detail: "",
       workingDirectory: gitURL.appending(path: "feature"),
       repositoryRootURL: gitURL
     )
     let gitRepo = Repository(
-      id: gitRoot,
+      id: RepositoryID(gitRoot),
       rootURL: gitURL,
       name: "git-repo",
       worktrees: IdentifiedArray(uniqueElements: [gitMain, gitFeature]),
@@ -8166,7 +8166,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderMain]),
@@ -8208,7 +8208,7 @@ struct RepositoriesFeatureTests {
     let featureWorktree = makeWorktree(
       id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let gitRepo = Repository(
-      id: repoRoot,
+      id: RepositoryID(repoRoot),
       rootURL: repoURL,
       name: URL(fileURLWithPath: repoRoot).lastPathComponent,
       worktrees: IdentifiedArray(uniqueElements: [mainWorktree, featureWorktree]),
@@ -8261,7 +8261,7 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot,
+      id: RepositoryID(folderRoot),
       rootURL: folderURL,
       name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
@@ -8307,18 +8307,18 @@ struct RepositoriesFeatureTests {
       repositoryRootURL: folderURL
     )
     let folderRepo = Repository(
-      id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+      id: RepositoryID(folderRoot), rootURL: folderURL, name: Repository.name(for: folderURL),
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
       isGitRepository: false
     )
     let gitRoot = "/tmp/\(UUID().uuidString)-repo"
     let gitURL = URL(fileURLWithPath: gitRoot)
     let gitMain = Worktree(
-      id: gitRoot, name: Repository.name(for: gitURL), detail: "",
+      id: WorktreeID(gitRoot), name: Repository.name(for: gitURL), detail: "",
       workingDirectory: gitURL, repositoryRootURL: gitURL
     )
     let gitRepo = Repository(
-      id: gitRoot, rootURL: gitURL, name: Repository.name(for: gitURL),
+      id: RepositoryID(gitRoot), rootURL: gitURL, name: Repository.name(for: gitURL),
       worktrees: IdentifiedArray(uniqueElements: [gitMain]),
       isGitRepository: true
     )
@@ -8380,7 +8380,7 @@ struct RepositoriesFeatureTests {
         workingDirectory: folderURL, repositoryRootURL: folderURL
       )
       let folderRepo = Repository(
-        id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+        id: RepositoryID(folderRoot), rootURL: folderURL, name: Repository.name(for: folderURL),
         worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
         isGitRepository: false
       )
@@ -8435,7 +8435,7 @@ struct RepositoriesFeatureTests {
         workingDirectory: folderURL, repositoryRootURL: folderURL
       )
       let folderRepo = Repository(
-        id: folderRoot, rootURL: folderURL, name: Repository.name(for: folderURL),
+        id: RepositoryID(folderRoot), rootURL: folderURL, name: Repository.name(for: folderURL),
         worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
         isGitRepository: false
       )

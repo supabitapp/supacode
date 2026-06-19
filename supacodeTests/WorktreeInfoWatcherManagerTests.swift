@@ -2,6 +2,7 @@ import Clocks
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -57,6 +58,75 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.stop)
     await task.value
     try FileManager.default.removeItem(at: tempRepository.tempRoot)
+  }
+
+  @Test func emitsBranchChangedForRemoteWorktreeWhenHeadChanges() async throws {
+    let clock = TestClock()
+    let stub = RemoteBranchPollStub(responses: ["main", "feature"])
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .milliseconds(500),
+      unfocusedInterval: .milliseconds(500),
+      clock: clock,
+      pollRemoteBranch: { _ in await stub.next() }
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+    let remote = makeRemoteWorktree(name: "remote-eagle")
+
+    manager.handleCommand(.setPullRequestTrackingEnabled(false))
+    manager.handleCommand(.setWorktrees([remote]))
+    // The immediate first poll observes "main"; the 200ms branch debounce emits.
+    await drainAsyncEvents(200)
+    await clock.advance(by: .milliseconds(200))
+    await drainAsyncEvents(200)
+    #expect(await collector.branchChangedCount(worktreeID: remote.id) == 1)
+
+    // The next interval tick polls "feature" -> change -> debounce -> emit.
+    await clock.advance(by: .milliseconds(300))
+    await drainAsyncEvents(200)
+    await clock.advance(by: .milliseconds(200))
+    await drainAsyncEvents(200)
+    #expect(await collector.branchChangedCount(worktreeID: remote.id) == 2)
+
+    // Subsequent polls keep returning "feature", so no further branch changes.
+    await clock.advance(by: .milliseconds(500))
+    await drainAsyncEvents(200)
+    await clock.advance(by: .milliseconds(200))
+    await drainAsyncEvents(200)
+    #expect(await collector.branchChangedCount(worktreeID: remote.id) == 2)
+
+    manager.handleCommand(.stop)
+    await task.value
+  }
+
+  @Test func remoteHeadPollStopsAfterWorktreeRemoval() async throws {
+    let clock = TestClock()
+    let stub = RemoteBranchPollStub(responses: ["main"])
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .milliseconds(500),
+      unfocusedInterval: .milliseconds(500),
+      clock: clock,
+      pollRemoteBranch: { _ in await stub.next() }
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+    let remote = makeRemoteWorktree(name: "remote-eagle")
+
+    manager.handleCommand(.setPullRequestTrackingEnabled(false))
+    manager.handleCommand(.setWorktrees([remote]))
+    await drainAsyncEvents(200)
+    #expect(await stub.callCount >= 1)
+
+    // Removing the worktree must cancel the poll loop.
+    manager.handleCommand(.setWorktrees([]))
+    await drainAsyncEvents(200)
+    let callsAfterRemoval = await stub.callCount
+
+    await clock.advance(by: .seconds(2))
+    await drainAsyncEvents(200)
+    #expect(await stub.callCount == callsAfterRemoval)
+    _ = collector
+
+    manager.handleCommand(.stop)
+    await task.value
   }
 
   @Test func selectionRefreshUsesCooldownWithinRepository() async throws {
@@ -186,6 +256,14 @@ actor EventCollector {
     }
   }
 
+  func branchChangedCount(worktreeID: Worktree.ID) -> Int {
+    events.reduce(into: 0) { result, event in
+      if case .branchChanged(let id) = event, id == worktreeID {
+        result += 1
+      }
+    }
+  }
+
   func pullRequestRefreshCount(repositoryRootURL: URL) -> Int {
     events.reduce(into: 0) { result, event in
       if case .repositoryPullRequestRefresh(let rootURL, _) = event, rootURL == repositoryRootURL {
@@ -193,6 +271,37 @@ actor EventCollector {
       }
     }
   }
+}
+
+/// Stubs the remote-branch SSH poll: returns each queued value once, then
+/// repeats the last value for every subsequent poll. Tracks call count so a
+/// test can assert the poll loop stopped.
+actor RemoteBranchPollStub {
+  private var responses: [String?]
+  private(set) var callCount = 0
+
+  init(responses: [String?]) {
+    self.responses = responses
+  }
+
+  func next() -> String? {
+    callCount += 1
+    if responses.count > 1 {
+      return responses.removeFirst()
+    }
+    return responses.first ?? nil
+  }
+}
+
+private func makeRemoteWorktree(name: String) -> Worktree {
+  Worktree(
+    id: WorktreeID("devbox:/home/me/\(name)"),
+    name: name,
+    detail: "devbox",
+    workingDirectory: URL(fileURLWithPath: "/home/me/\(name)"),
+    repositoryRootURL: URL(fileURLWithPath: "/home/me/repo"),
+    host: RemoteHost(alias: "devbox")
+  )
 }
 
 private struct TempWorktree {
@@ -215,7 +324,7 @@ private func makeTempWorktree() throws -> TempWorktree {
   let headURL = gitDirectory.appending(path: "HEAD")
   try "ref: refs/heads/main\n".write(to: headURL, atomically: true, encoding: .utf8)
   let worktree = Worktree(
-    id: worktreeDirectory.path(percentEncoded: false),
+    id: WorktreeID(worktreeDirectory.path(percentEncoded: false)),
     name: "eagle",
     detail: "detail",
     workingDirectory: worktreeDirectory,
@@ -235,7 +344,7 @@ private func makeTempRepository(worktreeNames: [String]) throws -> TempRepositor
     let headURL = gitDirectory.appending(path: "HEAD")
     try "ref: refs/heads/\(name)\n".write(to: headURL, atomically: true, encoding: .utf8)
     let worktree = Worktree(
-      id: worktreeDirectory.path(percentEncoded: false),
+      id: WorktreeID(worktreeDirectory.path(percentEncoded: false)),
       name: name,
       detail: "detail",
       workingDirectory: worktreeDirectory,

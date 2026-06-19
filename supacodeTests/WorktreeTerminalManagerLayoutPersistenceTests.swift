@@ -97,7 +97,7 @@ struct LayoutPersistenceManagerTests {
 
   private func makeWorktree(id: String = "/tmp/repo/wt-1") -> Worktree {
     Worktree(
-      id: id,
+      id: WorktreeID(id),
       name: URL(fileURLWithPath: id).lastPathComponent,
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: id),
@@ -119,7 +119,7 @@ struct LayoutPersistenceManagerTests {
     await settleThenAdvance(harness.clock)
     await waitUntil { harness.saveCount.value == 1 }
     #expect(harness.saveCount.value == 1)
-    #expect(readDict(harness)[worktree.id] != nil)
+    #expect(readDict(harness)[worktree.id.rawValue] != nil)
   }
 
   @Test func pruneDeletesAndCancelsQueuedSave() async {
@@ -130,12 +130,12 @@ struct LayoutPersistenceManagerTests {
 
     // Seed disk with a prior snapshot so the delete has something to remove.
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[worktree.id] != nil }
+    await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }
 
     // Queue a positive save, then prune before the window elapses.
     _ = state.createTab(focusing: false)
     harness.manager.prune(keeping: [])
-    await waitUntil { readDict(harness)[worktree.id] == nil }
+    await waitUntil { readDict(harness)[worktree.id.rawValue] == nil }
 
     // Pin the save count once the delete has flushed; a resurrecting positive
     // write would bump it, so gating on a positive increment proves whether the
@@ -144,7 +144,7 @@ struct LayoutPersistenceManagerTests {
     await harness.clock.advance(by: .seconds(1))
     await waitUntil { harness.saveCount.value > savesAfterDelete }
     #expect(harness.saveCount.value == savesAfterDelete)
-    #expect(readDict(harness)[worktree.id] == nil)
+    #expect(readDict(harness)[worktree.id.rawValue] == nil)
   }
 
   @Test func pruneAfterDebounceFiresDoesNotResurrect() async {
@@ -155,12 +155,12 @@ struct LayoutPersistenceManagerTests {
 
     // Seed disk with a prior snapshot so the delete has something to remove.
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[worktree.id] != nil }
+    await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }
 
     // Arm the gate so the positive snapshot write blocks mid-flush, pinning the
     // flush Task in-flight. Then queue the positive save and fire the debounce.
     let release = DispatchSemaphore(value: 0)
-    let gatedID = worktree.id
+    let gatedID = worktree.id.rawValue
     harness.gate.setValue((worktreeID: gatedID, semaphore: release))
     _ = state.createTab(focusing: false)
     await settleThenAdvance(harness.clock)
@@ -174,8 +174,8 @@ struct LayoutPersistenceManagerTests {
 
     // Release the positive flush; the delete chained behind it must win.
     release.signal()
-    await waitUntil { readDict(harness)[worktree.id] == nil }
-    #expect(readDict(harness)[worktree.id] == nil)
+    await waitUntil { readDict(harness)[worktree.id.rawValue] == nil }
+    #expect(readDict(harness)[worktree.id.rawValue] == nil)
   }
 
   @Test func cancelPendingLayoutSavesDropsQueuedFlush() async {
@@ -195,11 +195,11 @@ struct LayoutPersistenceManagerTests {
     let controlState = harness.manager.state(for: control)
     _ = controlState.createTab(focusing: false)
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[control.id] != nil }
+    await waitUntil { readDict(harness)[control.id.rawValue] != nil }
 
-    #expect(readDict(harness)[control.id] != nil)
+    #expect(readDict(harness)[control.id.rawValue] != nil)
     #expect(harness.saveCount.value == 1)
-    #expect(readDict(harness)[worktree.id] == nil)
+    #expect(readDict(harness)[worktree.id.rawValue] == nil)
   }
 
   @Test func mergePreservesSiblingKeyWrittenByAnotherFlush() async {
@@ -210,15 +210,15 @@ struct LayoutPersistenceManagerTests {
     let state1 = harness.manager.state(for: wt1)
     _ = state1.createTab(focusing: false)
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[wt1.id] != nil }
+    await waitUntil { readDict(harness)[wt1.id.rawValue] != nil }
 
     let state2 = harness.manager.state(for: wt2)
     _ = state2.createTab(focusing: false)
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[wt2.id] != nil }
+    await waitUntil { readDict(harness)[wt2.id.rawValue] != nil }
 
     let dict = readDict(harness)
-    #expect(Set(dict.keys) == [wt1.id, wt2.id])
+    #expect(Set(dict.keys) == [wt1.id.rawValue, wt2.id.rawValue])
   }
 
   @Test func incrementalCaptureEmbedsLiveAgentRecords() async {
@@ -237,9 +237,9 @@ struct LayoutPersistenceManagerTests {
     harness.manager.markLayoutDirty(worktreeID: worktree.id)
 
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[worktree.id]?.tabs.first?.layout != nil }
+    await waitUntil { readDict(harness)[worktree.id.rawValue]?.tabs.first?.layout != nil }
 
-    let leaf = readDict(harness)[worktree.id]?.tabs.first?.layout
+    let leaf = readDict(harness)[worktree.id.rawValue]?.tabs.first?.layout
     guard case .leaf(let persisted) = leaf else {
       Issue.record("Expected a leaf layout")
       return
@@ -284,13 +284,13 @@ struct LayoutPersistenceManagerTests {
     _ = state1.createTab(focusing: false)
     await Task.megaYield()
     await clock.advance(by: .seconds(1))
-    await waitUntil { readRaw()[wt1.id] != nil }
+    await waitUntil { readRaw()[wt1.id.rawValue] != nil }
     let state2 = manager.state(for: wt2)
     _ = state2.createTab(focusing: false)
     await Task.megaYield()
     await clock.advance(by: .seconds(1))
-    await waitUntil { readRaw()[wt2.id] != nil }
-    #expect(Set(readRaw().keys) == [wt1.id, wt2.id])
+    await waitUntil { readRaw()[wt2.id.rawValue] != nil }
+    #expect(Set(readRaw().keys) == [wt1.id.rawValue, wt2.id.rawValue])
 
     // Make the merge read fail, then flush a third key. The writer must abort
     // rather than splice into an empty dict and clobber the two siblings.
@@ -304,8 +304,8 @@ struct LayoutPersistenceManagerTests {
     #expect(loadFailCount.value > 0)
 
     let dict = readRaw()
-    #expect(Set(dict.keys) == [wt1.id, wt2.id])
-    #expect(dict[wt3.id] == nil)
+    #expect(Set(dict.keys) == [wt1.id.rawValue, wt2.id.rawValue])
+    #expect(dict[wt3.id.rawValue] == nil)
   }
 
   @Test func renamePersistsCustomTitleIncrementally() async {
@@ -317,13 +317,13 @@ struct LayoutPersistenceManagerTests {
       return
     }
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[worktree.id] != nil }
+    await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }
 
     state.renameTab(tabID, title: "Renamed")
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[worktree.id]?.tabs.first?.customTitle == "Renamed" }
+    await waitUntil { readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == "Renamed" }
 
-    #expect(readDict(harness)[worktree.id]?.tabs.first?.customTitle == "Renamed")
+    #expect(readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == "Renamed")
   }
 
   @Test func onQuitFlushSyncPersistsLiveStatesAsTerminalWrite() {
@@ -338,7 +338,7 @@ struct LayoutPersistenceManagerTests {
     harness.manager.cancelPendingLayoutSaves()
     harness.manager.saveAllLayoutSnapshots()
 
-    #expect(Set(readDict(harness).keys) == [wt1.id, wt2.id])
+    #expect(Set(readDict(harness).keys) == [wt1.id.rawValue, wt2.id.rawValue])
   }
 
   @Test func capturedSnapshotRoundTripsThroughDisk() async {
@@ -349,9 +349,9 @@ struct LayoutPersistenceManagerTests {
     _ = state.createTab(focusing: false)
 
     await settleThenAdvance(harness.clock)
-    await waitUntil { readDict(harness)[worktree.id] != nil }
+    await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }
 
-    let persisted = readDict(harness)[worktree.id]
+    let persisted = readDict(harness)[worktree.id.rawValue]
     let inMemory = state.captureLayoutSnapshot()
     #expect(persisted == inMemory)
   }

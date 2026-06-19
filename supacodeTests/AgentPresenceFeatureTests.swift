@@ -36,6 +36,47 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.records[key]?.pids.isEmpty == true)
   }
 
+  @Test func awaitingInputWithoutPidLazilyCreatesAwaitingRecord() {
+    // A remote agent's awaiting-input OSC arrives with no pid and possibly no
+    // prior session_start; it must still light the badge.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+
+    let instances = harness.state.agents(across: [surfaceID], badgesEnabled: true)
+    #expect(instances.count == 1)
+    #expect(instances.first?.awaitingInput == true)
+  }
+
+  @Test func pidlessActivityIsIdempotent() {
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID)))
+
+    #expect(harness.state.records.count == 1)
+    #expect(harness.state.agents(across: [surfaceID], badgesEnabled: true).first?.awaitingInput == true)
+  }
+
+  @Test func pidlessSessionEndClearsOnlyPidlessRecord() {
+    var harness = Harness()
+    let pidlessSurface = UUID()
+    let pidSurface = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: pidlessSurface)))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: pidSurface, pid: pid)))
+
+    // Pid-less session_end clears the pid-less (OSC-origin) record...
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: pidlessSurface)))
+    #expect(harness.state.agents(forSurface: pidlessSurface, badgesEnabled: true).isEmpty)
+    // ...but never a local pid-bearing record.
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: pidSurface)))
+    #expect(harness.state.agents(forSurface: pidSurface, badgesEnabled: true) == Set([.claude]))
+  }
+
   @Test func sessionEndRemovesAgentForSurface() {
     var harness = Harness()
     let surfaceID = UUID()

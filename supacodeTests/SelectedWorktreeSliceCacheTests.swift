@@ -106,7 +106,7 @@ struct SelectedWorktreeSliceCacheTests {
 
   private func makeWorktree(id: String, repoRoot: String) -> Worktree {
     Worktree(
-      id: id,
+      id: WorktreeID(id),
       name: "wt",
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: id),
@@ -116,7 +116,7 @@ struct SelectedWorktreeSliceCacheTests {
 
   private func makeRepository(id: String, worktrees: [Worktree]) -> Repository {
     Repository(
-      id: id,
+      id: RepositoryID(id),
       rootURL: URL(fileURLWithPath: id),
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: worktrees)

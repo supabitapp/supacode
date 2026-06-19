@@ -369,4 +369,54 @@ nonisolated enum ZmxAttach {
     let escaped = value.replacing("'", with: "'\\''")
     return "'\(escaped)'"
   }
+
+  /// Remote surface command: a *local* zmx session whose child process is the
+  /// SSH connection to `host`. Session persistence (detach / reattach) lives on
+  /// the client; the remote just runs a plain login shell, so nothing has to be
+  /// installed on the host. `localZmxExecutablePath` is the budget-gated bundle
+  /// path (nil when zmx is unbundled or over budget), in which case the surface
+  /// is the bare ssh line with no persistence. The ssh line is single-quoted by
+  /// `buildCommand` for the local zmx-wrapping `/bin/sh -c`; its own inner
+  /// quoting (from `SSHCommand.commandLine`) survives that outer level.
+  static func buildRemoteCommand(
+    host: RemoteHost,
+    localZmxExecutablePath: String?,
+    sessionID: String,
+    userCommand: String?,
+    surfaceID: UUID
+  ) -> String {
+    let sshLine = SSHCommand.commandLine(
+      host: host,
+      remoteCommand: remoteShellCommand(userCommand: userCommand, surfaceID: surfaceID)
+    )
+    guard let localZmxExecutablePath else { return sshLine }
+    return buildCommand(executablePath: localZmxExecutablePath, sessionID: sessionID, userCommand: sshLine)
+  }
+
+  /// The command the *remote* shell runs over SSH: exports the surface id (so the
+  /// agent hook's in-band presence OSC is gated to a Supacode surface, see
+  /// `AgentPresenceOSC.emitShell`), prints the beta banner once at connection,
+  /// then runs the user command, or a login shell when there is none. No zmx on
+  /// the remote: persistence is the local zmx wrapping the whole ssh line. The
+  /// awaiting-input signal rides the terminal stream (OSC 3008), not a socket, so
+  /// no reverse forward / remote `SUPACODE_SOCKET_PATH` is needed (the pid suffix
+  /// is dropped over SSH).
+  static func remoteShellCommand(
+    userCommand: String?,
+    surfaceID: UUID
+  ) -> String {
+    let prelude = "export SUPACODE_SURFACE_ID=\(shellQuote(surfaceID.uuidString)); " + betaBanner
+    guard let command = userCommand?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty else {
+      return prelude + "exec \"$SHELL\" -l"
+    }
+    return prelude + command
+  }
+
+  /// Dim banner printed at the top of a remote surface on connection, matching
+  /// the blocking-script read-only banner style. Remote surfaces are in beta and
+  /// some local-only features (Unix-socket agent hooks, worktree HEAD watching)
+  /// are unavailable, so the user gets an up-front heads-up. The session persists
+  /// across reattach, so this only prints on the first connect.
+  static let betaBanner =
+    #"printf '\033[2m── Remote Supacode surfaces are in beta and may have reduced functionality. ──\033[0m\r\n'; "#
 }

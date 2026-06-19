@@ -11,21 +11,21 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct RepositoriesFeatureCustomizationTests {
-  private let repoID = "/tmp/customize-repo"
+  private let repoID: RepositoryID = "/tmp/customize-repo"
 
   private func makeInitialState(
     isGitRepository: Bool = true,
   ) -> RepositoriesFeature.State {
     let worktree = Worktree(
-      id: "\(repoID)/main",
+      id: WorktreeID("\(repoID)/main"),
       name: "main",
       detail: "detail",
-      workingDirectory: URL(fileURLWithPath: repoID),
-      repositoryRootURL: URL(fileURLWithPath: repoID),
+      workingDirectory: URL(fileURLWithPath: repoID.rawValue),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
     )
     let repository = Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: repoID),
+      rootURL: URL(fileURLWithPath: repoID.rawValue),
       name: "customize-repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree]),
       isGitRepository: isGitRepository,

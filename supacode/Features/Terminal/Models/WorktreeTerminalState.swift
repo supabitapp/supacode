@@ -194,7 +194,7 @@ final class WorktreeTerminalState {
     self.tabManager = TerminalTabManager()
     _repositorySettings = SharedReader(
       wrappedValue: RepositorySettings.default,
-      .repositorySettings(worktree.repositoryRootURL)
+      .repositorySettings(worktree.repositoryRootURL, host: worktree.host)
     )
     // Pre-hide the tab bar before the first tab is created to
     // avoid a visible flash. updateShouldHideTabBar() handles
@@ -357,14 +357,36 @@ final class WorktreeTerminalState {
 
   @discardableResult
   func runBlockingScript(kind: BlockingScriptKind, _ script: String) -> TerminalTabID? {
-    let launch: BlockingScriptRunner.LaunchArtifacts
-    do {
-      guard let prepared = try blockingScriptLaunch(script) else { return nil }
-      launch = prepared
-    } catch {
-      blockingScriptLogger.warning("Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): \(error)")
-      onBlockingScriptCompleted?(kind, 1, nil)
-      return nil
+    // Resolve the surface command per host. A remote worktree runs the same
+    // OSC 133 framing on the host over ssh (no local temp files, no zmx wrap),
+    // so the script executes on the remote and not on a same-path local dir.
+    let command: String
+    let initialInput: String?
+    let launchDirectory: URL?
+    if let host = worktree.host {
+      guard
+        let remote = BlockingScriptRunner.remoteCommand(
+          host: host,
+          script: script,
+          remoteWorktreePath: worktree.workingDirectory.path(percentEncoded: false)
+        )
+      else { return nil }
+      command = remote
+      initialInput = nil
+      launchDirectory = nil
+    } else {
+      let launch: BlockingScriptRunner.LaunchArtifacts
+      do {
+        guard let prepared = try blockingScriptLaunch(script) else { return nil }
+        launch = prepared
+      } catch {
+        blockingScriptLogger.warning("Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): \(error)")
+        onBlockingScriptCompleted?(kind, 1, nil)
+        return nil
+      }
+      command = defaultShellPath()
+      initialInput = launch.commandInput
+      launchDirectory = launch.directoryURL
     }
     // Close any previous tab of the same kind (active or lingering
     // from a completed/cancelled run). Clear tracking state first
@@ -382,8 +404,8 @@ final class WorktreeTerminalState {
         icon: kind.tabIcon,
         isTitleLocked: true,
         tintColor: kind.tabColor,
-        command: defaultShellPath(),
-        initialInput: launch.commandInput,
+        command: command,
+        initialInput: initialInput,
         focusing: true,
         inheritingFromSurfaceId: currentFocusedSurfaceId(),
         context: GHOSTTY_SURFACE_CONTEXT_TAB,
@@ -393,13 +415,17 @@ final class WorktreeTerminalState {
       )
     )
     guard let tabId else {
-      cleanupBlockingScriptLaunchDirectory(at: launch.directoryURL)
+      if let launchDirectory {
+        cleanupBlockingScriptLaunchDirectory(at: launchDirectory)
+      }
       blockingScriptLogger.warning("Failed to create \(kind.tabTitle) tab for worktree \(worktree.id)")
       onBlockingScriptCompleted?(kind, 1, nil)
       return nil
     }
     blockingScripts[tabId] = kind
-    blockingScriptLaunchDirectories[tabId] = launch.directoryURL
+    if let launchDirectory {
+      blockingScriptLaunchDirectories[tabId] = launchDirectory
+    }
     lastBlockingScriptTabByKind[kind] = tabId
     tabManager.updateDirty(tabId, isDirty: true)
     emitTaskStatusIfChanged()
@@ -906,17 +932,15 @@ final class WorktreeTerminalState {
   }
 
   func markAllNotificationsRead() {
-    let previousHasUnseen = hasUnseenNotification
     for index in notifications.indices {
       notifications[index].isRead = true
     }
     clearAllSurfaceUnseenFlags()
     emitAllTabProjections()
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   func markNotificationsRead(forSurfaceID surfaceID: UUID) {
-    let previousHasUnseen = hasUnseenNotification
     for index in notifications.indices where notifications[index].surfaceID == surfaceID {
       notifications[index].isRead = true
     }
@@ -924,12 +948,11 @@ final class WorktreeTerminalState {
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   /// Marks a single notification as read, leaving others untouched.
   func markNotificationRead(id: WorktreeTerminalNotification.ID) {
-    let previousHasUnseen = hasUnseenNotification
     guard let index = notifications.firstIndex(where: { $0.id == id }) else { return }
     guard !notifications[index].isRead else { return }
     let surfaceID = notifications[index].surfaceID
@@ -938,11 +961,10 @@ final class WorktreeTerminalState {
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   func dismissNotification(_ notificationID: WorktreeTerminalNotification.ID) {
-    let previousHasUnseen = hasUnseenNotification
     let affectedSurface = notifications.first(where: { $0.id == notificationID })?.surfaceID
     notifications.removeAll { $0.id == notificationID }
     if let affectedSurface {
@@ -951,15 +973,14 @@ final class WorktreeTerminalState {
         emitTabProjection(for: tabId)
       }
     }
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   func dismissAllNotifications() {
-    let previousHasUnseen = hasUnseenNotification
     notifications.removeAll()
     clearAllSurfaceUnseenFlags()
     emitAllTabProjections()
-    emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    emitNotificationStateChanged()
   }
 
   /// Recomputes the surface's unseen flag through the canonical predicate so a
@@ -1320,7 +1341,7 @@ final class WorktreeTerminalState {
     let repoPath = worktree.repositoryRootURL.path(percentEncoded: false)
     env["SUPACODE_REPO_ID"] = percentEncode(repoPath, allowedCharacters: percentEncodingSet, label: "SUPACODE_REPO_ID")
     env["SUPACODE_WORKTREE_ID"] = percentEncode(
-      worktree.id, allowedCharacters: percentEncodingSet, label: "SUPACODE_WORKTREE_ID")
+      worktree.id.rawValue, allowedCharacters: percentEncodingSet, label: "SUPACODE_WORKTREE_ID")
     env["SUPACODE_TAB_ID"] = tabId.rawValue.uuidString
     env["SUPACODE_SURFACE_ID"] = surfaceID.uuidString
     if let socketPath {
@@ -1381,10 +1402,17 @@ final class WorktreeTerminalState {
       initialInput: initialInput,
       bypassZmx: bypassZmx
     )
+    // Remote worktrees have no local working directory: the surface command is
+    // an `ssh …` line (see `resolveLaunch`) and the cwd lives on the
+    // remote, so leave `working_directory` nil and let the remote shell `cd`.
+    let resolvedWorkingDirectory: URL? =
+      worktree.host == nil
+      ? (workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory)
+      : nil
     let view = GhosttySurfaceView(
       id: surfaceID,
       runtime: runtime,
-      workingDirectory: workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory,
+      workingDirectory: resolvedWorkingDirectory,
       command: launch.command,
       initialInput: launch.initialInput,
       environmentVariables: surfaceEnvironment(tabId: tabId, surfaceID: surfaceID),
@@ -1653,9 +1681,32 @@ final class WorktreeTerminalState {
     if bypassZmx {
       return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [])
     }
+    let sessionID = ZmxSessionID.make(surfaceID: surfaceID)
+    // Remote worktree: a *local* zmx session wraps the SSH connection, so zmx
+    // only needs to exist on the client. The remote runs a plain login shell
+    // (no zmx installed there). The surface command is always the wrapped ssh
+    // line (no command-wrapper, since Ghostty wraps the local argv, not the ssh
+    // line). When the caller has no explicit command, default to
+    // cd-into-the-remote-dir so a freshly created session lands in the project.
+    if let host = worktree.host {
+      let userCommand =
+        command
+        ?? Self.remoteDefaultShellCommand(remotePath: worktree.workingDirectory.path(percentEncoded: false))
+      return ResolvedLaunch(
+        command: ZmxAttach.buildRemoteCommand(
+          host: host,
+          localZmxExecutablePath: zmxClient.executableURL()?.path(percentEncoded: false),
+          sessionID: sessionID,
+          userCommand: userCommand,
+          surfaceID: surfaceID
+        ),
+        initialInput: initialInput,
+        commandWrapper: []
+      )
+    }
     let resolved = ZmxAttach.resolveLaunch(
       executablePath: zmxClient.executableURL()?.path(percentEncoded: false),
-      sessionID: ZmxSessionID.make(surfaceID: surfaceID),
+      sessionID: sessionID,
       command: command
     )
     return ResolvedLaunch(
@@ -1663,6 +1714,18 @@ final class WorktreeTerminalState {
       initialInput: initialInput,
       commandWrapper: resolved.commandWrapper
     )
+  }
+
+  /// Default command for a remote worktree surface with no explicit command:
+  /// `cd` into the remote project dir, then exec a login shell. The `cd` failure
+  /// is swallowed so a stale path still drops the user into a usable shell. Nil
+  /// for an empty/root path so we just attach the default shell. The path is
+  /// single-quoted for the remote shell (which re-parses the attach string).
+  static func remoteDefaultShellCommand(remotePath: String) -> String? {
+    let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed != "/" else { return nil }
+    let quoted = "'" + trimmed.replacing("'", with: "'\\''") + "'"
+    return "cd \(quoted) 2>/dev/null; exec \"$SHELL\" -l"
   }
 
   private struct InheritedSurfaceConfig: Equatable {
@@ -1803,7 +1866,6 @@ final class WorktreeTerminalState {
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
     if notificationsEnabled {
-      let previousHasUnseen = hasUnseenNotification
       let isRead = isSelected() && isFocusedSurface(surfaceID)
       notifications.insert(
         WorktreeTerminalNotification(
@@ -1819,7 +1881,7 @@ final class WorktreeTerminalState {
       if let tabId = tabID(containing: surfaceID) {
         emitTabProjection(for: tabId)
       }
-      emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+      emitNotificationStateChanged()
     }
     onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody)
   }
@@ -1958,10 +2020,13 @@ final class WorktreeTerminalState {
     onFocusChanged?(surfaceID)
   }
 
-  private func emitNotificationIndicatorIfNeeded(previousHasUnseen: Bool) {
-    if previousHasUnseen != hasUnseenNotification {
-      onNotificationIndicatorChanged?()
-    }
+  /// `currentProjection()` already includes the full list and per-item `isRead`,
+  /// so the sidebar/popover must re-sync on every mutation, not just when
+  /// `hasUnseenNotification` flips. Gating here broke dismiss / mark-read of
+  /// already-read notifications (#385). Downstream emits self-dedupe, so keep
+  /// this ungated.
+  private func emitNotificationStateChanged() {
+    onNotificationIndicatorChanged?()
   }
 
   private func syncFocusIfNeeded() {

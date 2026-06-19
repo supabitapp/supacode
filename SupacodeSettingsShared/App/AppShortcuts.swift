@@ -12,7 +12,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectNextWorktree, selectPreviousWorktree
   case worktreeHistoryBack, worktreeHistoryForward
   case selectWorktree(Int)
-  case openWorktree, revealInFinder, openRepository, openPullRequest, copyPath
+  case openWorktree, revealInFinder, openRepository, addRemoteRepository, openPullRequest, copyPath
   case runScript, stopRunScript
   case jumpToLatestUnread
 
@@ -55,6 +55,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .openWorktree: "openWorktree"
     case .revealInFinder: "revealInFinder"
     case .openRepository: "openRepository"
+    case .addRemoteRepository: "addRemoteRepository"
     case .openPullRequest: "openPullRequest"
     case .copyPath: "copyPath"
     case .runScript: "runScript"
@@ -84,6 +85,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "openFinder": .openWorktree,
     "revealInFinder": .revealInFinder,
     "openRepository": .openRepository,
+    "addRemoteRepository": .addRemoteRepository,
     "openPullRequest": .openPullRequest,
     "copyPath": .copyPath,
     "runScript": .runScript,
@@ -125,6 +127,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .openWorktree: "Open Worktree"
     case .revealInFinder: "Reveal in Finder"
     case .openRepository: "Open Repository or Folder"
+    case .addRemoteRepository: "Add Remote Repository or Folder"
     case .openPullRequest: "Open Pull Request"
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
@@ -340,6 +343,9 @@ public enum AppShortcuts {
   public static let openWorktree = AppShortcut(id: .openWorktree, key: "o", modifiers: .command)
   public static let revealInFinder = AppShortcut(id: .revealInFinder, key: "r", modifiers: [.command, .option])
   public static let openRepository = AppShortcut(id: .openRepository, key: "o", modifiers: [.command, .shift])
+  public static let addRemoteRepository = AppShortcut(
+    id: .addRemoteRepository, key: "k", modifiers: [.command, .shift]
+  )
   public static let openPullRequest = AppShortcut(id: .openPullRequest, key: "g", modifiers: [.command, .control])
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
@@ -393,8 +399,8 @@ public enum AppShortcuts {
     AppShortcutGroup(
       category: .actions,
       shortcuts: [
-        openWorktree, revealInFinder, openRepository, openPullRequest, copyPath, runScript, stopRunScript,
-        jumpToLatestUnread,
+        openWorktree, revealInFinder, openRepository, addRemoteRepository, openPullRequest,
+        copyPath, runScript, stopRunScript, jumpToLatestUnread,
       ]
     ),
   ]

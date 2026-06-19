@@ -45,8 +45,17 @@ final class WorktreeInfoWatcherManager {
   private let pullRequestSelectionRefreshCooldown: Duration
   private let refreshTiming: RefreshTiming
   private let sleep: @Sendable (Duration) async throws -> Void
+  /// Resolves a remote worktree's current branch over SSH. Injected so tests
+  /// can drive the poll loop without a real connection (real-host SSH is
+  /// verified separately). Returns `nil` for a local worktree or on error.
+  private let pollRemoteBranch: @Sendable (Worktree) async -> String?
   private var worktrees: [Worktree.ID: Worktree] = [:]
   private var headWatchers: [Worktree.ID: HeadWatcher] = [:]
+  /// Remote worktrees can't kqueue their `.git/HEAD` (it lives on another
+  /// host), so they poll `git rev-parse` over SSH on the same focused /
+  /// unfocused cadence as line-changes / PR refresh.
+  private var remoteHeadPollTasks: [Worktree.ID: RefreshTask] = [:]
+  private var lastKnownRemoteBranch: [Worktree.ID: String] = [:]
   private var branchDebounceTasks: [Worktree.ID: Task<Void, Never>] = [:]
   private var filesDebounceTasks: [Worktree.ID: Task<Void, Never>] = [:]
   private var restartTasks: [Worktree.ID: Task<Void, Never>] = [:]
@@ -64,7 +73,11 @@ final class WorktreeInfoWatcherManager {
     unfocusedInterval: Duration = .seconds(60),
     filesChangedDebounceInterval: Duration = .seconds(5),
     pullRequestSelectionRefreshCooldown: Duration = .seconds(5),
-    clock: C = ContinuousClock()
+    clock: C = ContinuousClock(),
+    pollRemoteBranch: @escaping @Sendable (Worktree) async -> String? = { worktree in
+      guard let host = worktree.host else { return nil }
+      return await GitClient(shell: .ssh(host: host)).symbolicHeadBranch(at: worktree.workingDirectory)
+    }
   ) {
     refreshTiming = RefreshTiming(focused: focusedInterval, unfocused: unfocusedInterval)
     self.filesChangedDebounceInterval = filesChangedDebounceInterval
@@ -72,6 +85,7 @@ final class WorktreeInfoWatcherManager {
     self.sleep = { duration in
       try await clock.sleep(for: duration)
     }
+    self.pollRemoteBranch = pollRemoteBranch
   }
 
   func handleCommand(_ command: WorktreeInfoWatcherClient.Command) {
@@ -150,9 +164,15 @@ final class WorktreeInfoWatcherManager {
     let nextRepository = worktreeID.flatMap { worktrees[$0]?.repositoryRootURL }
     if let previousWorktreeID {
       updateLineChangeSchedule(worktreeID: previousWorktreeID, immediate: false)
+      if let worktree = worktrees[previousWorktreeID] {
+        configureRemoteHeadPoll(for: worktree)
+      }
     }
     if let worktreeID {
       updateLineChangeSchedule(worktreeID: worktreeID, immediate: true)
+      if let worktree = worktrees[worktreeID] {
+        configureRemoteHeadPoll(for: worktree)
+      }
     }
     if let previousRepository, previousRepository == nextRepository {
       updatePullRequestSchedule(
@@ -173,6 +193,13 @@ final class WorktreeInfoWatcherManager {
   }
 
   private func configureWatcher(for worktree: Worktree) {
+    // Remote worktrees live on another host; their HEAD can't be kqueue'd, so
+    // route them to the SSH poll loop and skip the local head-file resolver
+    // (which would return nil for a non-local path and silently drop the row).
+    if worktree.host != nil {
+      configureRemoteHeadPoll(for: worktree)
+      return
+    }
     guard
       let headURL = GitWorktreeHeadResolver.headURL(
         for: worktree.workingDirectory,
@@ -285,6 +312,57 @@ final class WorktreeInfoWatcherManager {
     scheduleBranchChanged(worktreeID: worktreeID)
   }
 
+  /// (Re)start the SSH HEAD poll for a remote worktree at the focused /
+  /// unfocused cadence. No-op for a local worktree, and idempotent when the
+  /// interval is unchanged so a selection change that doesn't flip focus won't
+  /// restart the loop. The loop polls immediately, then on the interval.
+  private func configureRemoteHeadPoll(for worktree: Worktree) {
+    guard worktree.host != nil else {
+      return
+    }
+    let worktreeID = worktree.id
+    let interval = worktreeID == selectedWorktreeID ? refreshTiming.focused : refreshTiming.unfocused
+    if let existing = remoteHeadPollTasks[worktreeID], existing.interval == interval {
+      return
+    }
+    remoteHeadPollTasks[worktreeID]?.task.cancel()
+    let sleep = self.sleep
+    let pollRemoteBranch = self.pollRemoteBranch
+    let task = Task { [weak self, sleep, pollRemoteBranch] in
+      while !Task.isCancelled {
+        guard let worktree = await MainActor.run(body: { self?.worktrees[worktreeID] }) else {
+          break
+        }
+        let branch = await pollRemoteBranch(worktree)
+        await MainActor.run {
+          self?.handleRemoteBranch(worktreeID: worktreeID, branch: branch)
+        }
+        do {
+          try await sleep(interval)
+        } catch {
+          break
+        }
+      }
+    }
+    remoteHeadPollTasks[worktreeID] = RefreshTask(interval: interval, task: task)
+  }
+
+  private func handleRemoteBranch(worktreeID: Worktree.ID, branch: String?) {
+    guard let branch, lastKnownRemoteBranch[worktreeID] != branch else {
+      return
+    }
+    lastKnownRemoteBranch[worktreeID] = branch
+    // Reuse the kqueue debounce + `.branchChanged` emit so downstream behavior
+    // is identical. The first non-nil observation also emits, populating the
+    // row's branch from the live remote HEAD.
+    scheduleBranchChanged(worktreeID: worktreeID)
+  }
+
+  private func stopRemoteHeadPoll(for worktreeID: Worktree.ID) {
+    remoteHeadPollTasks.removeValue(forKey: worktreeID)?.task.cancel()
+    lastKnownRemoteBranch.removeValue(forKey: worktreeID)
+  }
+
   private func stopHeadWatcher(for worktreeID: Worktree.ID) {
     if let watcher = headWatchers.removeValue(forKey: worktreeID) {
       watcher.source.cancel()
@@ -293,6 +371,7 @@ final class WorktreeInfoWatcherManager {
 
   private func stopWatcher(for worktreeID: Worktree.ID) {
     stopHeadWatcher(for: worktreeID)
+    stopRemoteHeadPoll(for: worktreeID)
     branchDebounceTasks.removeValue(forKey: worktreeID)?.cancel()
     filesDebounceTasks.removeValue(forKey: worktreeID)?.cancel()
     restartTasks.removeValue(forKey: worktreeID)?.cancel()
@@ -318,12 +397,17 @@ final class WorktreeInfoWatcherManager {
     for task in lineChangeTasks.values {
       task.task.cancel()
     }
+    for task in remoteHeadPollTasks.values {
+      task.task.cancel()
+    }
     headWatchers.removeAll()
     branchDebounceTasks.removeAll()
     filesDebounceTasks.removeAll()
     restartTasks.removeAll()
     pullRequestTasks.removeAll()
     lineChangeTasks.removeAll()
+    remoteHeadPollTasks.removeAll()
+    lastKnownRemoteBranch.removeAll()
     deferredLineChangeIDs.removeAll()
     hasCompletedInitialWorktreeLoad = false
     cancelAllPullRequestSelectionCooldownTasks()
@@ -395,7 +479,7 @@ final class WorktreeInfoWatcherManager {
       .values
       .filter { $0.repositoryRootURL == repositoryRootURL }
       .map(\.id)
-      .sorted()
+      .sorted { $0.rawValue < $1.rawValue }
   }
 
   private func emitPullRequestRefresh(repositoryRootURL: URL) {

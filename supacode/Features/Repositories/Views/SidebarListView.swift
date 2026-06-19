@@ -140,7 +140,7 @@ struct SidebarListView: View {
       switch section {
       case .repository(let repositoryID, _),
         .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _):
+        .failedRepository(let repositoryID, _, _, _, _):
         if let repoIndex = repoIDs.firstIndex(of: repositoryID) {
           repoOffsets.insert(repoIndex)
         }
@@ -158,7 +158,7 @@ struct SidebarListView: View {
       switch section {
       case .repository(let repositoryID, _),
         .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _):
+        .failedRepository(let repositoryID, _, _, _, _):
         repoDestination = repoIDs.firstIndex(of: repositoryID) ?? repoIDs.count
       case .highlight, .placeholder:
         // Dropping above the highlight prefix collapses to "before the first repo".
@@ -212,12 +212,13 @@ private struct SidebarSectionDispatcher: View {
         shortcutHintByID: shortcutHintByID
       )
       .moveDisabled(true)
-    case .failedRepository(let repositoryID, let rootURL, let customTitle, let color):
+    case .failedRepository(let repositoryID, let rootURL, let customTitle, let color, let isRemote):
       SidebarFailedRepositorySection(
         repositoryID: repositoryID,
         rootURL: rootURL,
         customTitle: customTitle,
         color: color,
+        isRemote: isRemote,
         store: store
       )
     case .folder(let repositoryID, let rowID):
@@ -261,6 +262,7 @@ private struct SidebarGitRepositorySection: View {
   let terminalManager: WorktreeTerminalManager
   var body: some View {
     let isRemovingRepository = store.state.isRemovingRepository(repository)
+    let isResolvingRemote = store.state.resolvingRemoteRepositoryIDs.contains(repository.id)
     let section = store.state.sidebar.sections[repository.id]
     Section(isExpanded: repositoryExpansionBinding) {
       SidebarItemsView(
@@ -276,13 +278,16 @@ private struct SidebarGitRepositorySection: View {
         name: repository.name,
         customTitle: section?.title,
         color: section?.color,
-        isRemoving: isRemovingRepository
+        isRemoving: isRemovingRepository,
+        hostInfo: repository.host?.displayAuthority,
+        isResolving: isResolvingRemote
       )
     }
     .sectionActions {
       SidebarSectionActionsView(
         repositoryID: repository.id,
         isRemovingRepository: isRemovingRepository,
+        isRemote: repository.host != nil,
         store: store
       )
     }
@@ -301,6 +306,10 @@ private struct SidebarGitRepositorySection: View {
 private struct SidebarSectionActionsView: View {
   let repositoryID: Repository.ID
   let isRemovingRepository: Bool
+  /// Remote (SSH) repositories hide the local-only "Repository Settings…" and
+  /// route Remove to `removeRemoteRepository` (drops the config; remote files
+  /// untouched). Worktree creation (`+`) works for remote repos too.
+  var isRemote: Bool = false
   let store: StoreOf<RepositoriesFeature>
 
   var body: some View {
@@ -310,15 +319,27 @@ private struct SidebarSectionActionsView: View {
       }
       .help("Set a custom title or color")
       .disabled(isRemovingRepository)
-      Button("Repository Settings…", systemImage: "gear") {
-        store.send(.openRepositorySettings(repositoryID))
+      if isRemote {
+        Button("Edit Connection…", systemImage: "wifi") {
+          store.send(.requestEditRemoteRepository(repositoryID))
+        }
+        .help("Edit the SSH server, port, user, or path")
+        .disabled(isRemovingRepository)
+      } else {
+        Button("Repository Settings…", systemImage: "gear") {
+          store.send(.openRepositorySettings(repositoryID))
+        }
+        .help("Repository Settings")
       }
-      .help("Repository Settings")
       Divider()
-      Button("Remove Repository…", systemImage: "folder.badge.minus", role: .destructive) {
+      Button(
+        isRemote ? "Remove Remote Repository…" : "Remove Repository…",
+        systemImage: "folder.badge.minus",
+        role: .destructive
+      ) {
         store.send(.requestDeleteRepository(repositoryID))
       }
-      .help("Remove Repository")
+      .help(isRemote ? "Remove this remote repository (remote files are untouched)" : "Remove Repository")
       .disabled(isRemovingRepository)
     } label: {
       Image(systemName: "ellipsis")
@@ -349,7 +370,14 @@ private struct SidebarFailedRepositorySection: View {
   let rootURL: URL
   let customTitle: String?
   let color: RepositoryColor?
+  /// A disconnected SSH repo: route Remove to the remote config store and offer
+  /// "Edit Connection…" to fix a bad host/path, rather than the local-roots flow.
+  let isRemote: Bool
   let store: StoreOf<RepositoriesFeature>
+
+  private func removeFailedRepository() {
+    store.send(isRemote ? .requestDeleteRepository(repositoryID) : .requestRemoveFailedRepository(repositoryID))
+  }
 
   var body: some View {
     let standardizedRootURL = rootURL.standardizedFileURL
@@ -360,7 +388,7 @@ private struct SidebarFailedRepositorySection: View {
       FailedRepositoryRow(
         name: displayName,
         path: path,
-        removeRepository: { store.send(.requestRemoveFailedRepository(repositoryID)) }
+        removeRepository: removeFailedRepository
       )
       .tag(SidebarSelection.failedRepository(repositoryID))
       .moveDisabled(true)
@@ -369,16 +397,31 @@ private struct SidebarFailedRepositorySection: View {
         name: fallbackName,
         customTitle: customTitle,
         color: color,
-        isRemoving: false
+        isRemoving: false,
+        hostInfo: store.state.repositories[id: repositoryID]?.host?.displayAuthority
       )
     }
     .sectionActions {
       // No `+`: the repo isn't loadable, so worktree create is meaningless.
       Menu {
-        Button("Remove Repository…", systemImage: "folder.badge.minus", role: .destructive) {
-          store.send(.requestRemoveFailedRepository(repositoryID))
+        if isRemote {
+          Button("Edit Connection…", systemImage: "wifi") {
+            store.send(.requestEditRemoteRepository(repositoryID))
+          }
+          .help("Edit the SSH server, port, user, or path")
         }
-        .help("Remove this repository from Supacode. Files on disk are untouched.")
+        Button(
+          isRemote ? "Remove Remote Repository…" : "Remove Repository…",
+          systemImage: "folder.badge.minus",
+          role: .destructive
+        ) {
+          removeFailedRepository()
+        }
+        .help(
+          isRemote
+            ? "Remove this remote repository (remote files are untouched)"
+            : "Remove this repository from Supacode. Files on disk are untouched."
+        )
       } label: {
         Image(systemName: "ellipsis")
           .accessibilityLabel("Options")

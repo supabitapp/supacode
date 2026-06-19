@@ -9,7 +9,7 @@ struct SidebarHighlightOrderingTests {
     branch: String,
     classification: SidebarActiveClassification? = nil
   ) -> SidebarHighlightOrdering.Candidate {
-    .init(id: id, branchName: branch, classification: classification)
+    .init(id: WorktreeID(id), branchName: branch, classification: classification)
   }
 
   @Test func activeDropsUnclassifiedRows() {

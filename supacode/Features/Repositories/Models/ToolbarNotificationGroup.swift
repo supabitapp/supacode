@@ -35,7 +35,17 @@ extension RepositoriesFeature.State {
     let repositoriesByID = Dictionary(uniqueKeysWithValues: repositories.map { ($0.id, $0) })
     var groups: [ToolbarNotificationRepositoryGroup] = []
 
-    for repositoryID in orderedRepositoryIDs() {
+    // `orderedRepositoryIDs()` is local-only (keyed off `repositoryRoots`); append
+    // remote repositories (host-keyed ids) so their worktree notifications also
+    // surface in the toolbar bell. Mirrors the sidebar grouping in
+    // `RepositoriesFeature+Sidebar`.
+    var orderedIDs = orderedRepositoryIDs()
+    let coveredIDs = Set(orderedIDs)
+    for repository in repositories where repository.host != nil && !coveredIDs.contains(repository.id) {
+      orderedIDs.append(repository.id)
+    }
+
+    for repositoryID in orderedIDs {
       guard let repository = repositoriesByID[repositoryID] else {
         continue
       }

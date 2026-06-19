@@ -12,13 +12,13 @@ struct PendingWorktree: Identifiable, Hashable {
     let color: RepositoryColor?
   }
 
-  let id: String
+  let id: Worktree.ID
   let repositoryID: Repository.ID
   var progress: WorktreeCreationProgress
   var customization: Customization?
 
   init(
-    id: String,
+    id: Worktree.ID,
     repositoryID: Repository.ID,
     progress: WorktreeCreationProgress,
     customization: Customization? = nil

@@ -134,6 +134,60 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.systemNotificationsEnabled == true)
   }
 
+  @Test(.dependencies) func settingsPersistPreservesRemoteRepositories() async {
+    let remote = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    var initialSettings = GlobalSettings.default
+    initialSettings.remoteRepositories = [remote]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.appearanceMode, .light))) {
+      $0.appearanceMode = .light
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.appearanceMode == .light)
+    #expect(settingsFile.global.remoteRepositories == [remote])
+  }
+
+  @Test(.dependencies) func settingsLoadedNormalizationPreservesRemoteRepositories() async {
+    let remote = RemoteRepositoryConfig(
+      host: RemoteHost(alias: "devbox"),
+      remotePath: "/home/me/proj",
+      displayName: "proj"
+    )
+    var currentSettings = GlobalSettings.default
+    currentSettings.remoteRepositories = [remote]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = currentSettings }
+
+    var loaded = GlobalSettings.default
+    loaded.defaultWorktreeBaseDirectoryPath = " ~/worktrees "
+    let expectedPath = FileManager.default.homeDirectoryForCurrentUser
+      .appending(path: "worktrees", directoryHint: .isDirectory)
+      .standardizedFileURL
+      .path(percentEncoded: false)
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.settingsLoaded(loaded)) {
+      $0.defaultWorktreeBaseDirectoryPath = expectedPath
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.defaultWorktreeBaseDirectoryPath == expectedPath)
+    #expect(settingsFile.global.remoteRepositories == [remote])
+  }
+
   @Test(.dependencies) func selectionBuildsRepositorySettingsFromRepositorySummary() async {
     let summary = SettingsRepositorySummary(id: "/tmp/repo", name: "Repo")
     let store = TestStore(initialState: SettingsFeature.State()) {

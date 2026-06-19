@@ -43,14 +43,15 @@ extension RepositoriesFeature {
             isMainWorktree: isMain,
             isPinned: isPinned,
             hasMergedBadge: false,
-            isMissing: worktree.isMissing
+            isMissing: worktree.isMissing,
+            host: worktree.host
           )
         // Seed (or re-seed) only until the row's first live projection lands.
         // The `!hasTerminalProjection` half lets a layout that wasn't present
         // at the row's first reconcile still seed when it shows up; the same
         // gate prevents stale UUIDs from being re-injected after the user
         // closes every tab (which emits an empty projection).
-        if !item.hasTerminalProjection, item.surfaceIDs.isEmpty, let snapshot = layouts[id] {
+        if !item.hasTerminalProjection, item.surfaceIDs.isEmpty, let snapshot = layouts[id.rawValue] {
           let ids = snapshot.allSurfaceIDs
           if !ids.isEmpty {
             item.surfaceIDs = ids
@@ -101,7 +102,8 @@ extension RepositoriesFeature {
             repositoryAccent: nil,
             isMainWorktree: false,
             isPinned: false,
-            hasMergedBadge: false
+            hasMergedBadge: false,
+            host: repository.host
           )
         item.name = pendingName
         item.branchName = pendingName
@@ -154,7 +156,16 @@ extension RepositoriesFeature {
   static func rebuildSidebarGrouping(_ state: inout State) {
     var buckets: OrderedDictionary<Repository.ID, SidebarGrouping.BucketGrouping> = [:]
 
-    for repositoryID in state.orderedRepositoryIDs() {
+    // `orderedRepositoryIDs()` already appends remote repos; this loop is a
+    // defensive backstop for any it might miss, so every repo gets a grouping
+    // bucket for `computeSlots`. Lookup is by id, so order here doesn't affect
+    // rendering.
+    var orderedIDs = state.orderedRepositoryIDs()
+    let coveredIDs = Set(orderedIDs)
+    for repository in state.repositories where repository.host != nil && !coveredIDs.contains(repository.id) {
+      orderedIDs.append(repository.id)
+    }
+    for repositoryID in orderedIDs {
       guard let repository = state.repositories[id: repositoryID] else { continue }
       var bucket = SidebarGrouping.BucketGrouping()
       var pinned: [SidebarItemID] = []

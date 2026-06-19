@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
@@ -93,6 +94,41 @@ struct WorktreeEnvironmentTests {
         shellPath: "/bin/zsh"
       ) == nil
     )
+  }
+
+  @Test func remoteRunnerScriptFramesCdsAndRunsUserScriptAsChild() {
+    let runner = BlockingScriptRunner.remoteRunnerScript(remoteWorktreePath: "/home/me/wt")
+    // Same OSC 133 framing + read-only tail as the local runner, but on the host.
+    #expect(runner.contains("133;C"))
+    #expect(runner.contains("133;D"))
+    #expect(runner.contains("exec tail -f /dev/null"))
+    // cd into the remote worktree, then run the user script (`$1`) as a login-shell child.
+    #expect(runner.contains("cd -- '/home/me/wt'"))
+    #expect(runner.contains("\"$SHELL\" -l -c \"$1\""))
+    // Beta banner present (remote surfaces are in beta).
+    #expect(runner.contains("beta"))
+  }
+
+  @Test func remoteRunnerScriptSkipsCdForRootOrEmptyPath() {
+    #expect(!BlockingScriptRunner.remoteRunnerScript(remoteWorktreePath: "/").contains("cd -- "))
+    #expect(!BlockingScriptRunner.remoteRunnerScript(remoteWorktreePath: "  ").contains("cd -- "))
+  }
+
+  @Test func remoteCommandWrapsRunnerInSSHWithUserScriptPositional() {
+    let host = RemoteHost(alias: "devbox", username: "alice", port: 2222)
+    let line = BlockingScriptRunner.remoteCommand(host: host, script: "echo hi", remoteWorktreePath: "/home/me/wt")
+    #expect(line?.hasPrefix("/usr/bin/ssh ") == true)
+    #expect(line?.contains("-p 2222 alice@devbox ") == true)
+    #expect(line?.contains("133;C") == true)
+    // The user script rides as a positional argument to the remote `-c` script.
+    #expect(line?.contains("'echo hi'") == true)
+    // No local blocking-script temp dir is referenced for the remote path.
+    #expect(line?.contains("supacode-blocking-script-") == false)
+  }
+
+  @Test func remoteCommandReturnsNilForEmptyScript() {
+    let host = RemoteHost(alias: "devbox")
+    #expect(BlockingScriptRunner.remoteCommand(host: host, script: "   ", remoteWorktreePath: "/p") == nil)
   }
 
   @Test func blockingScriptLaunchPropagatesNonZeroExitCodeInZsh() throws {
