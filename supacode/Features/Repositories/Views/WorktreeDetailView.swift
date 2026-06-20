@@ -337,6 +337,12 @@ struct WorktreeDetailView: View {
       .focusedAction(\.closeTabAction, enabled: hasActiveWorktree) {
         store.send(.closeTab)
       }
+      .focusedAction(\.showNextTabAction, enabled: hasActiveWorktree) {
+        store.send(.showNextTab)
+      }
+      .focusedAction(\.showPreviousTabAction, enabled: hasActiveWorktree) {
+        store.send(.showPreviousTab)
+      }
       .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree) {
         store.send(.closeSurface)
       }

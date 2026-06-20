@@ -311,6 +311,8 @@ struct AppFeature {
     case renameSelectedTerminalTab
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
+    case showNextTab
+    case showPreviousTab
     case jumpToLatestUnread
     case menuBarWorktreeSelected(worktreeID: Worktree.ID)
     case markAllNotificationsRead
@@ -928,6 +930,28 @@ struct AppFeature {
         }
         return .run { _ in
           await terminalClient.send(.performBindingAction(worktree, action: direction.ghosttyBinding))
+        }
+
+      // Route through the same Ghostty binding the keybinding uses, so custom
+      // `next_tab` / `previous_tab` bindings are honored (see issue #418).
+      case .showNextTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.performBindingAction(worktree, action: "next_tab"))
+        }
+
+      case .showPreviousTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.performBindingAction(worktree, action: "previous_tab"))
         }
 
       case .jumpToLatestUnread:
