@@ -38,6 +38,8 @@ private struct TerminalTabBarAccessoryButton: View {
     Button(action: action) {
       Label(title, systemImage: systemImage)
         .labelStyle(.iconOnly)
+        .frame(minWidth: TerminalTabBarMetrics.barHeight, minHeight: TerminalTabBarMetrics.barHeight)
+        .contentShape(.rect)
     }
     .buttonStyle(.plain)
     .foregroundStyle(.secondary)
@@ -73,6 +75,8 @@ private struct TerminalTabBarSplitMenu: View {
     } label: {
       Label(primary.title, systemImage: primary.systemImage)
         .labelStyle(.iconOnly)
+        .frame(minWidth: TerminalTabBarMetrics.barHeight, minHeight: TerminalTabBarMetrics.barHeight)
+        .contentShape(.rect)
     } primaryAction: {
       split(primary)
     }

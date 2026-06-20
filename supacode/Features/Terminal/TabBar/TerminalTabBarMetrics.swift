@@ -10,7 +10,7 @@ enum TerminalTabBarMetrics {
   static let tabSpacing: CGFloat = 0
   static let tabHorizontalPadding: CGFloat = 12
   static let contentSpacing: CGFloat = 6
-  static let contentTrailingSpacing: CGFloat = 4
+  static let contentTrailingSpacing: CGFloat = 0
   static let activeIndicatorHeight: CGFloat = 2
   static let activeTabOffset: CGFloat = 0.5
   static let activeTabBottomPadding: CGFloat = 1
