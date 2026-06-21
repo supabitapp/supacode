@@ -66,6 +66,11 @@ public struct SettingsFeature {
     public var defaultWorktreeBaseDirectoryPath: String
     public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+    /// Mirror of `GlobalSettings.leaderKey`. `nil` means no leader is configured
+    /// (the additive, opt-in default); a value carries the leader chord and its
+    /// sequences. Kept separate from `shortcutOverrides` so single chords are
+    /// untouched.
+    public var leaderKey: LeaderKeyConfig?
     public var globalScripts: [ScriptDefinition]
     public var richAgentNotificationsEnabled: Bool
     public var agentPresenceBadgesEnabled: Bool
@@ -107,6 +112,7 @@ public struct SettingsFeature {
       automatedActionPolicy = settings.automatedActionPolicy
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
       shortcutOverrides = settings.shortcutOverrides
+      leaderKey = settings.leaderKey
       globalScripts = settings.globalScripts
       richAgentNotificationsEnabled = settings.richAgentNotificationsEnabled
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
@@ -146,6 +152,7 @@ public struct SettingsFeature {
         ),
         autoDeleteArchivedWorktreesAfterDays: autoDeleteArchivedWorktreesAfterDays,
         shortcutOverrides: shortcutOverrides,
+        leaderKey: leaderKey,
         globalScripts: globalScripts,
         richAgentNotificationsEnabled: richAgentNotificationsEnabled,
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
@@ -167,6 +174,10 @@ public struct SettingsFeature {
     case updateShortcut(id: AppShortcutID, override: AppShortcutOverride?)
     case toggleShortcutEnabled(id: AppShortcutID, enabled: Bool)
     case resetAllShortcuts
+    case updateLeaderChord(AppShortcutOverride)
+    case updateLeaderSequence(LeaderKeySequence)
+    case removeLeaderSequence(LeaderKeySequence.ID)
+    case resetLeaderKey
     case requestAutoDeleteDaysChange(AutoDeletePeriod?)
     case resolvedAutoDeleteAffectedCount(AutoDeletePeriod, affectedCount: Int)
     case cliInstallChecked(installed: Bool)
@@ -281,6 +292,7 @@ public struct SettingsFeature {
         state.automatedActionPolicy = normalizedSettings.automatedActionPolicy
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
         state.shortcutOverrides = normalizedSettings.shortcutOverrides
+        state.leaderKey = normalizedSettings.leaderKey
         state.globalScripts = normalizedSettings.globalScripts
         state.richAgentNotificationsEnabled = normalizedSettings.richAgentNotificationsEnabled
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
@@ -456,6 +468,43 @@ public struct SettingsFeature {
 
       case .resetAllShortcuts:
         state.shortcutOverrides = [:]
+        return persist(state)
+
+      case .updateLeaderChord(let chord):
+        // The leader chord owns its sequences, so changing it must preserve them:
+        // existing sequences re-home onto the new leader rather than being lost
+        // (REQ-001 AC3). With no config yet, this is the first leader the user picks.
+        if state.leaderKey != nil {
+          state.leaderKey?.leaderChord = chord
+        } else {
+          state.leaderKey = LeaderKeyConfig(leaderChord: chord)
+        }
+        return persist(state)
+
+      case .updateLeaderSequence(let sequence):
+        // A sequence is anchored to a leader, so there is nothing to attach it to
+        // until one exists (the Settings leader row is set first). Guard-then-`.none`
+        // matches the other id-keyed arms (e.g. `removeGlobalScript`). Upsert by id
+        // so the same action both adds a new sequence and edits an existing one.
+        guard state.leaderKey != nil else { return .none }
+        if let index = state.leaderKey?.sequences.firstIndex(where: { $0.id == sequence.id }) {
+          state.leaderKey?.sequences[index] = sequence
+        } else {
+          state.leaderKey?.sequences.append(sequence)
+        }
+        return persist(state)
+
+      case .removeLeaderSequence(let id):
+        // Removing a sequence keeps the leader chord and any other sequences; the
+        // explicit clear-everything path is `.resetLeaderKey`.
+        guard state.leaderKey != nil else { return .none }
+        state.leaderKey?.sequences.removeAll { $0.id == id }
+        return persist(state)
+
+      case .resetLeaderKey:
+        // Restore-defaults for the leader slice: no leader, no sequences. Mirrors
+        // `.resetAllShortcuts` clearing `shortcutOverrides`.
+        state.leaderKey = nil
         return persist(state)
 
       case .requestAutoDeleteDaysChange(let newPeriod):

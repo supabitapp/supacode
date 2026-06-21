@@ -24,6 +24,11 @@ private enum GhosttyCLI {
     for keybindArgument in AppShortcuts.ghosttyCLIKeybindArguments(from: overrides) {
       args.append(strdup(keybindArgument))
     }
+    // Leader-key sequence binds are appended after the single-chord args so they
+    // stay first and unchanged; empty unless a leader is configured.
+    for keybindArgument in AppShortcuts.leaderKeyGhosttyKeybindArguments(from: settingsFile.global.leaderKey) {
+      args.append(strdup(keybindArgument))
+    }
     args.append(nil)
     return args
   }()

@@ -52,6 +52,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+  /// Optional leader chord plus multi-key sequences, additive and fully
+  /// separate from `shortcutOverrides` (single chords are untouched). `nil`
+  /// means no leader is configured; old files without this key decode to `nil`.
+  public var leaderKey: LeaderKeyConfig?
   /// Scripts shared across every repository. Always `.custom` kind.
   public var globalScripts: [ScriptDefinition]
   /// User-configured remote repositories reachable over SSH. Materialized at
@@ -96,13 +100,14 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     defaultWorktreeBaseDirectoryPath: nil,
     autoDeleteArchivedWorktreesAfterDays: nil,
     shortcutOverrides: [:],
+    leaderKey: nil,
     globalScripts: [],
     remoteRepositories: [],
     richAgentNotificationsEnabled: true,
     agentPresenceBadgesEnabled: true,
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
-    terminateSessionsOnQuit: false
+    terminateSessionsOnQuit: false,
   )
 
   public init(
@@ -131,13 +136,14 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     defaultWorktreeBaseDirectoryPath: String? = nil,
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
     shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:],
+    leaderKey: LeaderKeyConfig? = nil,
     globalScripts: [ScriptDefinition] = [],
     remoteRepositories: [RemoteRepositoryConfig] = [],
     richAgentNotificationsEnabled: Bool = true,
     agentPresenceBadgesEnabled: Bool = true,
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
-    terminateSessionsOnQuit: Bool = false
+    terminateSessionsOnQuit: Bool = false,
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -164,6 +170,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
     self.shortcutOverrides = shortcutOverrides
+    self.leaderKey = leaderKey
     self.globalScripts = globalScripts
     self.remoteRepositories = remoteRepositories
     self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
@@ -278,6 +285,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     shortcutOverrides =
       try container.decodeIfPresent([AppShortcutID: AppShortcutOverride].self, forKey: .shortcutOverrides)
       ?? Self.default.shortcutOverrides
+    // Additive: a missing key decodes to `nil` (no leader), so existing files
+    // are unaffected. `LeaderKeyConfig.init(from:)` already drops a malformed
+    // `sequences` entry (bad stroke list or unknown target) via
+    // `decodeLossyArrayIfPresent` while keeping the valid ones.
+    leaderKey = try container.decodeIfPresent(LeaderKeyConfig.self, forKey: .leaderKey) ?? nil
     // Force `.custom` so a forged `kind` can't hijack the primary toolbar slot.
     // No legacy migration here, so missing-key and corrupt-array both collapse
     // to `[]` (unlike `RepositorySettings.scripts` which distinguishes them).

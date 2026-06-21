@@ -298,4 +298,132 @@ struct AppShortcutsTests {
     #expect(effective != nil)
     #expect(effective?.ghosttyKeybind == override.ghosttyKeybind)
   }
+
+  // MARK: - Leader-key sequence lowering.
+
+  // ⌘K leader, reused across the lowering cases. Its Ghostty token is `super+k`.
+  private static let leaderChord = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+
+  @Test func leaderKeyLoweringEmitsSequencesAndExactlyOneCancelBind() {
+    let config = LeaderKeyConfig(
+      leaderChord: Self.leaderChord,
+      sequences: [
+        LeaderKeySequence(
+          keyStrokes: [
+            SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_W)),
+            SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_C)),
+          ],
+          target: .ghostty(.toggleCommandPalette),
+        ),
+        LeaderKeySequence(
+          keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_G))],
+          target: .ghostty(.gotoTab(index: 3)),
+        ),
+      ],
+    )
+
+    // The full emitted argument list, pinned exactly: each sequence lowers to
+    // `<leader>>k1>k2=<action>` (leader token first, `>` separator), and a single
+    // cancel bind is appended last.
+    expectNoDifference(
+      AppShortcuts.leaderKeyGhosttyKeybindArguments(from: config),
+      [
+        "--keybind=super+k>w>c=toggle_command_palette",
+        "--keybind=super+k>g=goto_tab:3",
+        "--keybind=super+k>escape=end_key_sequence",
+      ],
+    )
+  }
+
+  @Test func leaderKeyLoweringCancelBindUsesSequenceSeparatorBeforeEscape() {
+    let config = LeaderKeyConfig(
+      leaderChord: Self.leaderChord,
+      sequences: [
+        LeaderKeySequence(
+          keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_T))],
+          target: .ghostty(.newTab),
+        )
+      ],
+    )
+
+    let arguments = AppShortcuts.leaderKeyGhosttyKeybindArguments(from: config)
+
+    // REQ-004: the cancel bind is the leader token, then the `>` sequence
+    // separator, then `escape` — NOT a single `<leader>escape` chord. There must
+    // be exactly one regardless of how many sequences are present.
+    #expect(arguments.contains("--keybind=super+k>escape=end_key_sequence"))
+    #expect(arguments.filter { $0.hasSuffix("=end_key_sequence") }.count == 1)
+    // Guard against the wrong form (no separator before escape).
+    #expect(arguments.contains("--keybind=super+kescape=end_key_sequence") == false)
+  }
+
+  @Test func leaderKeyLoweringEmitsSingleCancelBindAcrossManySequences() {
+    let config = LeaderKeyConfig(
+      leaderChord: Self.leaderChord,
+      sequences: [
+        LeaderKeySequence(keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_T))], target: .ghostty(.newTab)),
+        LeaderKeySequence(keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_X))], target: .ghostty(.closeTab)),
+        LeaderKeySequence(
+          keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_E))],
+          target: .ghostty(.equalizeSplits),
+        ),
+      ],
+    )
+
+    let arguments = AppShortcuts.leaderKeyGhosttyKeybindArguments(from: config)
+    #expect(arguments.filter { $0.hasSuffix("=end_key_sequence") }.count == 1)
+    #expect(arguments.count == 4)
+  }
+
+  @Test func leaderKeyLoweringPinsParameterizedActionStrings() {
+    let config = LeaderKeyConfig(
+      leaderChord: Self.leaderChord,
+      sequences: [
+        LeaderKeySequence(
+          keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_G))],
+          target: .ghostty(.gotoTab(index: 4)),
+        ),
+        LeaderKeySequence(
+          keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_M))],
+          target: .ghostty(.moveTab(offset: -1)),
+        ),
+        LeaderKeySequence(
+          keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_R))],
+          target: .ghostty(.resizeSplit(direction: .down, amount: 10)),
+        ),
+        LeaderKeySequence(
+          keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_S))],
+          target: .ghostty(.newSplit(direction: .right)),
+        ),
+      ],
+    )
+
+    let arguments = AppShortcuts.leaderKeyGhosttyKeybindArguments(from: config)
+    #expect(arguments.contains("--keybind=super+k>g=goto_tab:4"))
+    #expect(arguments.contains("--keybind=super+k>m=move_tab:-1"))
+    #expect(arguments.contains("--keybind=super+k>r=resize_split:down,10"))
+    #expect(arguments.contains("--keybind=super+k>s=new_split:right"))
+  }
+
+  @Test func leaderKeyLoweringIsEmptyWhenNoLeaderConfigured() {
+    // No leader configured at all -> no leader args, so the single-chord
+    // arguments stay byte-for-byte unchanged (REQ-003).
+    expectNoDifference(AppShortcuts.leaderKeyGhosttyKeybindArguments(from: nil), [])
+  }
+
+  @Test func leaderKeyLoweringIsEmptyWhenLeaderHasNoSequences() {
+    let config = LeaderKeyConfig(leaderChord: Self.leaderChord, sequences: [])
+    // A leader with no sequences emits nothing — not even a lone cancel bind that
+    // would shadow the leader chord.
+    expectNoDifference(AppShortcuts.leaderKeyGhosttyKeybindArguments(from: config), [])
+  }
+
+  @Test func ghosttyCLIArgumentsUnchangedWhenLeaderIsNil() {
+    // The leader output is appended after the single-chord arguments, so with no
+    // leader the existing argument list is identical (REQ-003).
+    let overrides: [AppShortcutID: AppShortcutOverride] = [:]
+    let singleChordArguments = AppShortcuts.ghosttyCLIKeybindArguments(from: overrides)
+    let leaderArguments = AppShortcuts.leaderKeyGhosttyKeybindArguments(from: nil)
+    expectNoDifference(singleChordArguments + leaderArguments, singleChordArguments)
+  }
 }
