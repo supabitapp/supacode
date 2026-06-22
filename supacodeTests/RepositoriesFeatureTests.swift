@@ -633,6 +633,21 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func revealHoistedWorktreeInSidebarRevealsTheGivenWorktree() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "wt")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+
+    // No selection and no uncollapse: the target lives in a highlight section,
+    // and the action reveals the id it is handed directly.
+    await store.send(.revealHoistedWorktreeInSidebar(worktree.id)) {
+      $0.nextPendingSidebarRevealID = 1
+      $0.pendingSidebarReveal = .init(id: 1, worktreeID: worktree.id)
+    }
+  }
+
   @Test func consumePendingSidebarRevealClearsMatchingRequest() async {
     let worktree = makeWorktree(id: "/tmp/repo/wt", name: "wt")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
