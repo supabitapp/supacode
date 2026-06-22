@@ -32,7 +32,7 @@ enum WindowTitle {
       )
     case .failedRepository(let repositoryID):
       // A failed remote keeps a placeholder repository whose `name` is the
-      // resolved display name; its id is a `remote://` authority, not a local
+      // resolved display name; its id is a `user@host` authority, not a local
       // path, so deriving a name from a file URL would be garbage. Fall back to
       // the file-URL leaf only for a local failure with no placeholder.
       let fallback =

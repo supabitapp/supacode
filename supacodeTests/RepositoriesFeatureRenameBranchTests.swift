@@ -67,7 +67,7 @@ struct RepositoriesFeatureRenameBranchTests {
   }
 
   @Test func requestRenameBranchSeedsHostForRemoteWorktree() async {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"

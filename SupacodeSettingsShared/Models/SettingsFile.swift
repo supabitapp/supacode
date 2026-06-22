@@ -2,12 +2,14 @@ public nonisolated struct SettingsFile: Codable, Equatable, Sendable {
   public var global: GlobalSettings
   public var repositories: [String: RepositorySettings]
   public var repositoryRoots: [String]
+  public var remoteRepositoryRoots: [String]
   public var pinnedWorktreeIDs: [String]
 
   enum CodingKeys: String, CodingKey {
     case global
     case repositories
     case repositoryRoots
+    case remoteRepositoryRoots
     case pinnedWorktreeIDs
   }
 
@@ -15,6 +17,7 @@ public nonisolated struct SettingsFile: Codable, Equatable, Sendable {
     global: .default,
     repositories: [:],
     repositoryRoots: [],
+    remoteRepositoryRoots: [],
     pinnedWorktreeIDs: []
   )
 
@@ -22,11 +25,13 @@ public nonisolated struct SettingsFile: Codable, Equatable, Sendable {
     global: GlobalSettings = .default,
     repositories: [String: RepositorySettings] = [:],
     repositoryRoots: [String] = [],
+    remoteRepositoryRoots: [String] = [],
     pinnedWorktreeIDs: [String] = []
   ) {
     self.global = global
     self.repositories = repositories
     self.repositoryRoots = repositoryRoots
+    self.remoteRepositoryRoots = remoteRepositoryRoots
     self.pinnedWorktreeIDs = pinnedWorktreeIDs
   }
 
@@ -37,6 +42,8 @@ public nonisolated struct SettingsFile: Codable, Equatable, Sendable {
       try container.decodeIfPresent([String: RepositorySettings].self, forKey: .repositories)
       ?? [:]
     repositoryRoots = try container.decodeIfPresent([String].self, forKey: .repositoryRoots) ?? []
+    remoteRepositoryRoots =
+      try container.decodeIfPresent([String].self, forKey: .remoteRepositoryRoots) ?? []
     pinnedWorktreeIDs = try container.decodeIfPresent([String].self, forKey: .pinnedWorktreeIDs) ?? []
   }
 
@@ -45,6 +52,7 @@ public nonisolated struct SettingsFile: Codable, Equatable, Sendable {
     try container.encode(global, forKey: .global)
     try container.encode(repositories, forKey: .repositories)
     try container.encode(repositoryRoots, forKey: .repositoryRoots)
+    try container.encode(remoteRepositoryRoots, forKey: .remoteRepositoryRoots)
     try container.encode(pinnedWorktreeIDs, forKey: .pinnedWorktreeIDs)
   }
 }

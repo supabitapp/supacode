@@ -350,8 +350,8 @@ struct RepositorySettingsKeyTests {
       return settings
     }
 
-    #expect(saved.repositories["remote://box-a/srv/repo"] == settingsA)
-    #expect(saved.repositories["remote://box-b/srv/repo"] == settingsB)
+    #expect(saved.repositories["box-a/srv/repo"] == settingsA)
+    #expect(saved.repositories["box-b/srv/repo"] == settingsB)
     // The bare path key (a local repo at the same path) stays untouched.
     #expect(saved.repositories[path] == nil)
   }
@@ -414,7 +414,7 @@ struct RepositorySettingsKeyTests {
       @Shared(.settingsFile) var settings: SettingsFile
       return settings
     }
-    #expect(globalSaved.repositories["remote://box/srv/repo"] == updated)
+    #expect(globalSaved.repositories["box/srv/repo"] == updated)
   }
 
   private func encode(_ settings: RepositorySettings) throws -> Data {

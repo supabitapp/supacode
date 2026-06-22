@@ -92,13 +92,39 @@ nonisolated enum RepositoryLocation: Hashable, Sendable {
   }
 
   /// The branded id derived from the location. Local repos keep their bare
-  /// absolute path (preserving persisted ids); remote repos use the
-  /// unambiguous `remote://<user@host:port><absolutePath>` scheme.
+  /// absolute path; remote repos use the self-descriptive
+  /// `<user@host:port><absolutePath>` form. The two never collide: a local id
+  /// is always an absolute path (leading `/`), a remote authority never starts
+  /// with `/`.
   var id: RepositoryID {
     switch self {
     case .local(let url): RepositoryID(url.path(percentEncoded: false))
-    case .remote(let host, let path): RepositoryID("remote://" + host.authority + path)
+    case .remote(let host, let path): RepositoryID(host.authority + path)
     }
+  }
+
+  /// Trailing-slash-trimmed remote path, kept stable so a cosmetic edit doesn't
+  /// churn the derived id.
+  static func normalizedRemotePath(_ path: String) -> String {
+    var trimmed = Substring(path.trimmingCharacters(in: .whitespaces))
+    while trimmed.count > 1, trimmed.hasSuffix("/") {
+      trimmed = trimmed.dropLast()
+    }
+    return String(trimmed)
+  }
+
+  /// Parse a persisted repository id back into a location. A leading `/` is a
+  /// local absolute path; anything else is a remote `[user@]host[:port]<path>`
+  /// authority. Returns `nil` for a remote id whose authority can't be parsed.
+  static func parse(persistedID: String) -> RepositoryLocation? {
+    if persistedID.hasPrefix("/") {
+      return .local(URL(fileURLWithPath: persistedID))
+    }
+    guard let slash = persistedID.firstIndex(of: "/") else { return nil }
+    let authority = String(persistedID[..<slash])
+    let path = String(persistedID[slash...])
+    guard let host = RemoteHost(authority: authority) else { return nil }
+    return .remote(host, path: path)
   }
 }
 
@@ -157,41 +183,16 @@ nonisolated enum WorktreeLocation: Hashable, Sendable {
     }
   }
 
-  /// The branded worktree id derived from the location and kind. Folder
-  /// synthetics derive from the owning repo id (so the row round-trips to its
-  /// repository); git worktrees brand their working directory.
-  func id(kind: RepositoryKind) -> WorktreeID {
-    if kind == .folder {
-      return WorktreeID.folder(repositoryID: repositoryLocation.id)
-    }
+  /// The branded worktree id derived from the location. Independent of
+  /// git-vs-folder: a folder synthetic and a git main worktree at the same path
+  /// share the id (they're mutually exclusive per path at any moment), and
+  /// `Worktree.kind` carries the runtime classification.
+  var id: WorktreeID {
     switch self {
     case .local(let workingDirectory, _):
       return WorktreeID(workingDirectory.path(percentEncoded: false))
     case .remote(let host, let workingDirectory, _):
-      return WorktreeID("remote://" + host.authority + workingDirectory)
+      return WorktreeID(host.authority + workingDirectory)
     }
-  }
-}
-
-nonisolated extension WorktreeID {
-  /// Folder-synthetic worktree id: the `folder:` marker composed with the
-  /// owning repository's id. Composes with the `remote://` scheme for remote
-  /// folders, so `folder:` is the single git-vs-folder discriminator at the id
-  /// level for both local and remote.
-  static let folderPrefix = "folder:"
-
-  static func folder(repositoryID: RepositoryID) -> WorktreeID {
-    WorktreeID(folderPrefix + repositoryID.rawValue)
-  }
-
-  /// Whether this is a folder-synthetic worktree id.
-  var isFolder: Bool { rawValue.hasPrefix(Self.folderPrefix) }
-
-  /// The owning `RepositoryID` recovered from a folder-synthetic id, or `nil`
-  /// when this isn't a folder id (a git worktree id doesn't round-trip to its
-  /// repo by string transform; callers locate it by scanning state).
-  var folderRepositoryID: RepositoryID? {
-    guard isFolder else { return nil }
-    return RepositoryID(String(rawValue.dropFirst(Self.folderPrefix.count)))
   }
 }

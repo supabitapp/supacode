@@ -8,52 +8,67 @@ import Testing
 @testable import SupacodeSettingsShared
 @testable import supacode
 
-struct RemoteRepositoryConfigTests {
-  @Test func normalizedRemotePathTrimsTrailingSlashesAndWhitespace() {
-    let config = RemoteRepositoryConfig(
-      host: RemoteHost(alias: "devbox"),
-      remotePath: "  /home/me/proj//  ",
-      displayName: ""
-    )
-    #expect(config.normalizedRemotePath == "/home/me/proj")
+/// Test-only convenience mirroring the dissolved `RemoteRepositoryConfig`: a
+/// remote host + path with the derived helpers the old type exposed. Production
+/// stores remotes as self-descriptive id strings in `remoteRepositoryRoots`.
+struct TestRemoteRepo {
+  var host: RemoteHost
+  var remotePath: String
+
+  init(host: RemoteHost, remotePath: String, displayName: String = "") {
+    self.host = host
+    self.remotePath = remotePath
   }
 
-  @Test func normalizedRemotePathKeepsRootSlash() {
-    let config = RemoteRepositoryConfig(host: RemoteHost(alias: "devbox"), remotePath: "/", displayName: "")
-    #expect(config.normalizedRemotePath == "/")
+  var normalizedRemotePath: String { RepositoryLocation.normalizedRemotePath(remotePath) }
+  var resolvedDisplayName: String { RepositoriesFeature.remoteRepositoryName(host: host, remotePath: remotePath) }
+  var id: Repository.ID { RepositoriesFeature.remoteRepositoryID(host: host, remotePath: remotePath) }
+}
+
+extension RepositoriesFeature {
+  static func remoteRepositoryID(for config: TestRemoteRepo) -> Repository.ID {
+    remoteRepositoryID(host: config.host, remotePath: config.remotePath)
   }
 
-  @Test func resolvedDisplayNameFallsBackToRemoteLeaf() {
-    let config = RemoteRepositoryConfig(
-      host: RemoteHost(alias: "devbox"),
-      remotePath: "/home/me/proj",
-      displayName: "  "
-    )
-    #expect(config.resolvedDisplayName == "proj")
+  static func remoteMainWorktree(config: TestRemoteRepo) -> Worktree {
+    remoteMainWorktree(host: config.host, remotePath: config.remotePath)
   }
 
-  @Test func resolvedDisplayNamePrefersExplicitName() {
-    let config = RemoteRepositoryConfig(
-      host: RemoteHost(alias: "devbox"),
-      remotePath: "/home/me/proj",
-      displayName: "My Proj"
-    )
-    #expect(config.resolvedDisplayName == "My Proj")
+  static func remoteFolderRepository(config: TestRemoteRepo, repoID: Repository.ID) -> Repository {
+    remoteFolderRepository(host: config.host, remotePath: config.remotePath, repoID: repoID)
+  }
+
+  static func remotePlaceholderRepository(config: TestRemoteRepo, repoID: Repository.ID) -> Repository {
+    remotePlaceholderRepository(host: config.host, remotePath: config.remotePath, repoID: repoID)
+  }
+
+  static func loadRemoteRepository(
+    _ config: TestRemoteRepo,
+    repoID: Repository.ID,
+    shell: ShellClient? = nil
+  ) async -> (repository: Repository, failure: LoadFailure?) {
+    await loadRemoteRepository(host: config.host, remotePath: config.remotePath, repoID: repoID, shell: shell)
   }
 }
 
 struct RemoteRepositoryHelpersTests {
-  @Test func remoteRepositoryIDIsHostKeyedAndPrefixed() {
-    let config = RemoteRepositoryConfig(host: RemoteHost(alias: "devbox"), remotePath: "/tmp/repo", displayName: "repo")
-    let id = RepositoriesFeature.remoteRepositoryID(for: config)
-    #expect(id == "remote://devbox/tmp/repo")
+  @Test func remoteRepositoryNameFallsBackToRemoteLeaf() {
+    #expect(
+      RepositoriesFeature.remoteRepositoryName(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj") == "proj"
+    )
+    #expect(RepositoriesFeature.remoteRepositoryName(host: RemoteHost(alias: "devbox"), remotePath: "/") == "devbox")
+  }
+
+  @Test func remoteRepositoryIDIsHostKeyed() {
+    let id = RepositoriesFeature.remoteRepositoryID(host: RemoteHost(alias: "devbox"), remotePath: "/tmp/repo")
+    #expect(id == "devbox/tmp/repo")
     // Never collides with a local repository id (an absolute filesystem path).
     #expect(id != "/tmp/repo")
   }
 
   @Test func remoteWorktreeIDIsHostKeyed() {
     let id = RepositoriesFeature.remoteWorktreeID(host: RemoteHost(alias: "devbox"), worktreePath: "/tmp/repo/wt")
-    #expect(id == "remote://devbox/tmp/repo/wt")
+    #expect(id == "devbox/tmp/repo/wt")
   }
 
   @Test func remoteWorktreeInjectsHostAndHostKeyedID() {
@@ -67,22 +82,17 @@ struct RemoteRepositoryHelpersTests {
     )
     let rekeyed = RepositoriesFeature.remoteWorktree(from: base, host: host)
     #expect(rekeyed.host?.sshDestination == "alice@devbox")
-    #expect(rekeyed.id == "remote://alice@devbox/home/alice/proj/feature")
+    #expect(rekeyed.id == "alice@devbox/home/alice/proj/feature")
     #expect(rekeyed.name == "feature")
     #expect(rekeyed.workingDirectory == base.workingDirectory)
   }
 
   @Test func remoteMainWorktreeIsGitMainWithHost() {
-    let config = RemoteRepositoryConfig(
-      host: RemoteHost(alias: "devbox"),
-      remotePath: "/home/me/proj",
-      displayName: "proj"
-    )
-    let main = RepositoriesFeature.remoteMainWorktree(config: config)
+    let main = RepositoriesFeature.remoteMainWorktree(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
     #expect(main.host?.sshDestination == "devbox")
     // workingDirectory == repositoryRootURL → classifies as the git main worktree.
     #expect(main.workingDirectory == main.repositoryRootURL)
-    #expect(main.id == "remote://devbox/home/me/proj")
+    #expect(main.id == "devbox/home/me/proj")
   }
 }
 
@@ -105,7 +115,7 @@ struct RemoteSidebarMergedListTests {
     )
   }
 
-  private func remoteRepository(config: RemoteRepositoryConfig) -> Repository {
+  private func remoteRepository(config: TestRemoteRepo) -> Repository {
     Repository(
       id: RepositoriesFeature.remoteRepositoryID(for: config),
       rootURL: URL(fileURLWithPath: config.normalizedRemotePath),
@@ -123,7 +133,7 @@ struct RemoteSidebarMergedListTests {
   }
 
   @Test func remoteRepoRendersInlineAfterLocalWithoutPartitionHeaders() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -151,7 +161,7 @@ struct RemoteSidebarMergedListTests {
   }
 
   @Test func orderedRepositoryIDsIncludesRemoteRepos() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -166,7 +176,7 @@ struct RemoteSidebarMergedListTests {
   }
 
   @Test func remoteRepositoriesAreReorderable() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -185,7 +195,7 @@ struct RemoteSidebarMergedListTests {
   }
 
   @Test func persistedSidebarOrderInterleavesRemoteAndLocal() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -212,7 +222,7 @@ struct RemoteSidebarMergedListTests {
   }
 
   @Test func repositoriesMovedReordersRemoteAboveLocal() async {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -252,7 +262,7 @@ struct RemoteSidebarMergedListTests {
   }
 
   @Test func nonGitRemoteRendersAsFolderSection() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/docs",
       displayName: "docs"
@@ -262,9 +272,9 @@ struct RemoteSidebarMergedListTests {
     let state = makeState(repositories: [folderRepo])
 
     let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
-    // Folder-synthetic id (`folder:` + host-keyed remote repo id) so a remote folder
-    // never collides with a local one at the same path.
-    let folderRowID = WorktreeID.folder(repositoryID: repoID)
+    // A remote folder's synthetic worktree id is its host-keyed repo id; git-vs-folder
+    // is carried by `Worktree.kind`, so it never collides with a local folder at the same path.
+    let folderRowID = WorktreeID(repoID.rawValue)
     let rendersFolder = structure.sections.contains { section in
       if case .folder(let id, let rowID) = section { return id == repoID && rowID == folderRowID }
       return false
@@ -279,7 +289,7 @@ struct RemoteSidebarMergedListTests {
   }
 
   @Test func disconnectedRemoteRendersAsFailedPlaceholderNotPruned() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -336,7 +346,7 @@ struct RemoteDefaultShellCommandTests {
 
 @MainActor
 struct RemoteWorktreeInfoTests {
-  private func remoteRepository(config: RemoteRepositoryConfig) -> (Repository, Worktree) {
+  private func remoteRepository(config: TestRemoteRepo) -> (Repository, Worktree) {
     let worktree = RepositoriesFeature.remoteMainWorktree(config: config)
     let repository = Repository(
       id: RepositoriesFeature.remoteRepositoryID(for: config),
@@ -352,7 +362,7 @@ struct RemoteWorktreeInfoTests {
   /// PR refresh runs `gh` against a local checkout, which a remote-only repo
   /// doesn't have, so the reducer must short-circuit to `.none`.
   @Test func pullRequestRefreshSkippedForRemoteRepository() async {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -468,14 +478,17 @@ struct SaveRemoteConnectionTests {
     }
   }
 
-  private func remoteRepositories() -> [RemoteRepositoryConfig] {
-    @Shared(.settingsFile) var settingsFile
-    return settingsFile.global.remoteRepositories
+  private func remoteRepositories() -> [TestRemoteRepo] {
+    @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+    return remoteRepositoryRoots.compactMap { id in
+      guard let (host, path) = RepositoriesFeature.parseRemoteRoot(id) else { return nil }
+      return TestRemoteRepo(host: host, remotePath: path)
+    }
   }
 
   @Test(.dependencies) func addAppendsNewConfig() async {
     await withRemoteStore { store in
-      let config = RemoteRepositoryConfig(
+      let config = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/proj",
         displayName: ""
@@ -484,7 +497,8 @@ struct SaveRemoteConnectionTests {
       await store.send(.requestAddRemoteRepository) {
         $0.remoteConnectionForm = RemoteConnectionFormFeature.State(mode: .add)
       }
-      await store.send(.remoteConnectionForm(.presented(.delegate(.save(config)))))
+      await store.send(
+        .remoteConnectionForm(.presented(.delegate(.save(host: config.host, remotePath: config.remotePath)))))
       await store.finish()
 
       let configs = remoteRepositories()
@@ -495,7 +509,7 @@ struct SaveRemoteConnectionTests {
 
   @Test(.dependencies) func editReplacesConfigByIDInPlace() async {
     await withRemoteStore { store in
-      let original = RemoteRepositoryConfig(
+      let original = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/proj",
         displayName: "old"
@@ -503,11 +517,10 @@ struct SaveRemoteConnectionTests {
       let originalRepositoryID = RepositoriesFeature.remoteRepositoryID(for: original)
 
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [original] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [original.id.rawValue] }
 
       // Same host/path (so the id is unchanged) but a new display name.
-      let edited = RemoteRepositoryConfig(
-        id: original.id,
+      let edited = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/proj",
         displayName: "new"
@@ -515,22 +528,22 @@ struct SaveRemoteConnectionTests {
 
       await store.send(.requestEditRemoteRepository(originalRepositoryID)) {
         $0.remoteConnectionForm = RemoteConnectionFormFeature.State.editing(
-          original, repositoryID: originalRepositoryID)
+          host: original.host, remotePath: original.remotePath, repositoryID: originalRepositoryID)
       }
-      await store.send(.remoteConnectionForm(.presented(.delegate(.save(edited)))))
+      await store.send(
+        .remoteConnectionForm(.presented(.delegate(.save(host: edited.host, remotePath: edited.remotePath)))))
       await store.finish()
 
       let configs = remoteRepositories()
-      // Replaced in place by id: still a single entry, now carrying the new name.
+      // Same host/path means the same derived id: replaced in place, still one entry.
       #expect(configs.count == 1)
       #expect(configs.first?.id == original.id)
-      #expect(configs.first?.displayName == "new")
     }
   }
 
   @Test(.dependencies) func editReKeyingHostOrPathDropsOrphanedCustomization() async {
     await withRemoteStore { store in
-      let original = RemoteRepositoryConfig(
+      let original = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/proj",
         displayName: ""
@@ -538,7 +551,7 @@ struct SaveRemoteConnectionTests {
       let originalRepositoryID = RepositoriesFeature.remoteRepositoryID(for: original)
 
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [original] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [original.id.rawValue] }
       // Seed per-repo customization under the original id; the re-key must drop it.
       @Shared(.sidebar) var sidebar
       $sidebar.withLock {
@@ -547,8 +560,7 @@ struct SaveRemoteConnectionTests {
       #expect(store.state.sidebar.sections[originalRepositoryID] != nil)
 
       // Re-key by editing the path; the derived id changes.
-      let edited = RemoteRepositoryConfig(
-        id: original.id,
+      let edited = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/other",
         displayName: ""
@@ -557,9 +569,10 @@ struct SaveRemoteConnectionTests {
 
       await store.send(.requestEditRemoteRepository(originalRepositoryID)) {
         $0.remoteConnectionForm = RemoteConnectionFormFeature.State.editing(
-          original, repositoryID: originalRepositoryID)
+          host: original.host, remotePath: original.remotePath, repositoryID: originalRepositoryID)
       }
-      await store.send(.remoteConnectionForm(.presented(.delegate(.save(edited)))))
+      await store.send(
+        .remoteConnectionForm(.presented(.delegate(.save(host: edited.host, remotePath: edited.remotePath)))))
       await store.finish()
 
       // The orphaned customization under the old id is dropped.
@@ -571,28 +584,29 @@ struct SaveRemoteConnectionTests {
 
   @Test(.dependencies) func addOfDuplicateHostAndPathIsDeduped() async {
     await withRemoteStore { store in
-      let existing = RemoteRepositoryConfig(
+      let existing = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/proj",
         displayName: ""
       )
 
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [existing] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [existing.id.rawValue] }
 
-      // A different config id, but the same (host, normalizedRemotePath); a
-      // trailing slash normalizes to the same path so it must not append twice.
-      let duplicate = RemoteRepositoryConfig(
+      // Same host + path but with a trailing slash: it normalizes to the same
+      // derived id, so the add must dedupe instead of appending a second entry.
+      let duplicate = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/proj/",
         displayName: "dupe"
       )
-      #expect(duplicate.id != existing.id)
+      #expect(duplicate.id == existing.id)
 
       await store.send(.requestAddRemoteRepository) {
         $0.remoteConnectionForm = RemoteConnectionFormFeature.State(mode: .add)
       }
-      await store.send(.remoteConnectionForm(.presented(.delegate(.save(duplicate)))))
+      await store.send(
+        .remoteConnectionForm(.presented(.delegate(.save(host: duplicate.host, remotePath: duplicate.remotePath)))))
       await store.finish()
 
       let configs = remoteRepositories()
@@ -603,18 +617,18 @@ struct SaveRemoteConnectionTests {
 
   @Test(.dependencies) func addOfPortDistinctConnectionAppendsSeparately() async {
     await withRemoteStore { store in
-      let existing = RemoteRepositoryConfig(
+      let existing = TestRemoteRepo(
         host: RemoteHost(alias: "devbox", port: 22),
         remotePath: "/home/me/proj",
         displayName: ""
       )
 
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [existing] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [existing.id.rawValue] }
 
       // Same host alias and path, different SSH port: a distinct repository id,
       // so it must be kept rather than deduped against the port-22 connection.
-      let otherPort = RemoteRepositoryConfig(
+      let otherPort = TestRemoteRepo(
         host: RemoteHost(alias: "devbox", port: 2222),
         remotePath: "/home/me/proj",
         displayName: ""
@@ -627,7 +641,8 @@ struct SaveRemoteConnectionTests {
       await store.send(.requestAddRemoteRepository) {
         $0.remoteConnectionForm = RemoteConnectionFormFeature.State(mode: .add)
       }
-      await store.send(.remoteConnectionForm(.presented(.delegate(.save(otherPort)))))
+      await store.send(
+        .remoteConnectionForm(.presented(.delegate(.save(host: otherPort.host, remotePath: otherPort.remotePath)))))
       await store.finish()
 
       #expect(remoteRepositories().count == 2)
@@ -636,12 +651,12 @@ struct SaveRemoteConnectionTests {
 
   @Test(.dependencies) func removeRemoteRepositoryDropsMatchingConfigAndCustomization() async {
     await withRemoteStore { store in
-      let target = RemoteRepositoryConfig(
+      let target = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/proj",
         displayName: ""
       )
-      let other = RemoteRepositoryConfig(
+      let other = TestRemoteRepo(
         host: RemoteHost(alias: "devbox"),
         remotePath: "/home/me/other",
         displayName: ""
@@ -649,7 +664,7 @@ struct SaveRemoteConnectionTests {
       let targetID = RepositoriesFeature.remoteRepositoryID(for: target)
 
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [target, other] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [target.id.rawValue, other.id.rawValue] }
       @Shared(.sidebar) var sidebar
       $sidebar.withLock { $0.sections[targetID, default: .init()].title = "Custom Title" }
 
@@ -698,8 +713,8 @@ struct RemotePathClassificationTests {
     )
   }
 
-  private func resolveConfig(path: String = "/srv/repo") -> RemoteRepositoryConfig {
-    RemoteRepositoryConfig(host: RemoteHost(alias: "devbox"), remotePath: path, displayName: "repo")
+  private func resolveConfig(path: String = "/srv/repo") -> TestRemoteRepo {
+    TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: path, displayName: "repo")
   }
 
   @Test func listingThrowOnGitRepoSurfacesFailureInsteadOfFakeMain() async {
@@ -831,7 +846,7 @@ struct RemotePathClassificationTests {
   }
 
   @Test func remoteFolderRepositoryIsNonGitFolderCarryingHost() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/docs",
       displayName: ""
@@ -843,9 +858,10 @@ struct RemotePathClassificationTests {
     #expect(repo.host?.sshDestination == "devbox")
     #expect(repo.worktrees.count == 1)
     let folder = repo.worktrees.elements.first
-    // Folder-synthetic id: the `folder:` marker composed with the host-keyed remote repo id,
-    // so it round-trips to the repo and never collides with a local folder.
-    #expect(folder?.id == WorktreeID.folder(repositoryID: repoID))
+    // The folder synthetic shares the host-keyed repo id; `Worktree.kind` carries the
+    // folder classification, so it round-trips to the repo and never collides with a local folder.
+    #expect(folder?.id == WorktreeID(repoID.rawValue))
+    #expect(folder?.kind == .folder)
     #expect(folder?.host?.sshDestination == "devbox")
     #expect(folder?.workingDirectory == URL(fileURLWithPath: "/home/me/docs"))
   }
@@ -1121,8 +1137,8 @@ struct RemoteRepositoryStateMutationTests {
 struct RemoteRepositoryResolutionTests {
   private let host = RemoteHost(alias: "devbox")
 
-  private func config() -> RemoteRepositoryConfig {
-    RemoteRepositoryConfig(host: host, remotePath: "/srv/repo", displayName: "")
+  private func config() -> TestRemoteRepo {
+    TestRemoteRepo(host: host, remotePath: "/srv/repo", displayName: "")
   }
 
   private func localRepository() -> Repository {
@@ -1157,7 +1173,7 @@ struct RemoteRepositoryResolutionTests {
     )
   }
 
-  private func placeholderState(repoID: Repository.ID, config: RemoteRepositoryConfig) -> RepositoriesFeature.State {
+  private func placeholderState(repoID: Repository.ID, config: TestRemoteRepo) -> RepositoriesFeature.State {
     var state = RepositoriesFeature.State()
     state.isInitialLoadComplete = true
     state.repositories = [RepositoriesFeature.remotePlaceholderRepository(config: config, repoID: repoID)]
@@ -1318,7 +1334,7 @@ struct RemoteRepositoryResolutionTests {
     state.loadFailuresByID = [repoID: "Can't reach devbox."]
     await withStore(state) { store in
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [cfg.id.rawValue] }
 
       await store.send(.repositoriesLoaded([], failures: [], roots: [], animated: false))
       // An unreachable remote keeps its empty placeholder, so the next load retries it.
@@ -1333,7 +1349,7 @@ struct RemoteRepositoryResolutionTests {
     var state = RepositoriesFeature.State()
     await withStore(state) { store in
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [cfg.id.rawValue] }
 
       await store.send(.repositoriesLoaded([], failures: [], roots: [], animated: false))
       // The remote shows up immediately as a resolving placeholder, before SSH.
@@ -1356,7 +1372,7 @@ struct RemoteRepositoryResolutionTests {
     state.reconcileSidebarForTesting()
     await withStore(state) { store in
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [cfg.id.rawValue] }
 
       await store.send(.repositoriesLoaded([], failures: [], roots: [], animated: false))
       // A reload re-probes without marking the remote resolving, so the row stays put.
@@ -1380,7 +1396,7 @@ struct RemoteRepositoryResolutionTests {
     state.reconcileSidebarForTesting()
     await withExhaustiveStore(state) { store in
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [cfg.id.rawValue] }
 
       await store.send(
         .openRepositoriesFinished([local], failures: [], invalidRoots: [], roots: [local.rootURL])
@@ -1405,7 +1421,7 @@ struct RemoteRepositoryResolutionTests {
     state.repositories = [resolvedRepository(repoID: repoID)]
     await withStore(state) { store in
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [cfg.id.rawValue] }
 
       await store.send(
         .openRepositoriesFinished([local], failures: [], invalidRoots: [], roots: [local.rootURL])
@@ -1428,7 +1444,7 @@ struct RemoteRepositoryResolutionTests {
     state.repositories = [remote]
     await withStore(state) { store in
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [cfg.id.rawValue] }
 
       await store.send(
         .repositoriesLoaded([local, remote], failures: [], roots: [local.rootURL], animated: false)
@@ -1471,7 +1487,7 @@ struct RemoteRepositoryResolutionTests {
     state.repositories = [resolvedRepository(repoID: repoID)]
     await withStore(state) { store in
       @Shared(.settingsFile) var settingsFile
-      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [cfg.id.rawValue] }
 
       await store.send(.repositoriesLoaded([], failures: [], roots: [], animated: false))
       // The already-resolved remote keeps its worktrees and is not re-spun.

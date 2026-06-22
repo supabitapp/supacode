@@ -37,7 +37,7 @@ struct AppFeatureSettingsSelectionTests {
   /// carry the real remote root URL, otherwise the settings pane keys per-repo
   /// settings off a bogus URL and the worktree never sees its scripts.
   @Test func repositoriesChangedForwardsRemoteSummaryWithRealRootURL() async {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"

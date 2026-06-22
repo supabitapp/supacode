@@ -830,4 +830,84 @@ struct SidebarPersistenceMigratorTests {
       #expect(migrated.focusedWorktreeID == nil)
     }
   }
+
+  // MARK: - Remote-identity migration (schema v1 -> v2).
+
+  @Test func stripLegacyIDPrefixesRemovesFolderAndRemoteMarkers() {
+    #expect(SidebarPersistenceMigrator.stripLegacyIDPrefixes("/tmp/repo") == "/tmp/repo")
+    #expect(SidebarPersistenceMigrator.stripLegacyIDPrefixes("remote://me@box/srv") == "me@box/srv")
+    #expect(SidebarPersistenceMigrator.stripLegacyIDPrefixes("folder:/tmp/notes") == "/tmp/notes")
+    // A folder-remote id collapses both retired markers in one pass.
+    #expect(SidebarPersistenceMigrator.stripLegacyIDPrefixes("folder:remote://box/srv") == "box/srv")
+  }
+
+  @Test(.dependencies) func remoteIdentityMigrationDrainsLegacyConfigsAndRekeysIds() throws {
+    let storage = InMemorySettingsFileStorage()
+    // A schema-v1 sidebar carrying the retired prefixes: a remote git section and
+    // a local folder row, plus a remote-keyed focus.
+    var legacySidebar = SidebarState()
+    legacySidebar.schemaVersion = 1
+    legacySidebar.sections[RepositoryID("remote://me@box/srv/repo")] = SidebarState.Section(
+      buckets: [.pinned: SidebarState.Bucket(items: [WorktreeID("remote://me@box/srv/repo"): .init()])]
+    )
+    legacySidebar.sections[RepositoryID("/tmp/notes")] = SidebarState.Section(
+      buckets: [.unpinned: SidebarState.Bucket(items: [WorktreeID("folder:/tmp/notes"): .init()])]
+    )
+    legacySidebar.focusedWorktreeID = WorktreeID("folder:/tmp/notes")
+    try storage.save(JSONEncoder().encode(legacySidebar), SupacodePaths.sidebarURL)
+
+    // Raw legacy settings.json with the retired `global.remoteRepositories`. Fed to
+    // the drain via `readFile` so a later settings save can't erase it mid-test.
+    let legacySettings = Data(
+      #"{"global":{"remoteRepositories":[{"host":{"alias":"box","username":"me"},"remotePath":"/srv/repo/"}]}}"#.utf8
+    )
+
+    try withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { try storage.load($0) },
+        save: { try storage.save($0, $1) }
+      )
+      $0.defaultAppStorage = .inMemory
+      $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
+    } operation: {
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock {
+        $0.repositories = ["remote://me@box/srv/repo": .default]
+        $0.pinnedWorktreeIDs = ["remote://me@box/srv/repo"]
+      }
+      let readFile: (URL) -> Data? = { url in
+        url == SupacodePaths.settingsURL ? legacySettings : (try? storage.load(url))
+      }
+
+      SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(fileExists: { _ in true }, readFile: readFile)
+
+      // 1. Legacy config drained into `remoteRepositoryRoots` (trailing slash normalized).
+      @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+      #expect(remoteRepositoryRoots == ["me@box/srv/repo"])
+      // 2. Per-repo settings + pins re-keyed off the retired prefixes.
+      #expect(settingsFile.repositories["me@box/srv/repo"] != nil)
+      #expect(settingsFile.repositories["remote://me@box/srv/repo"] == nil)
+      #expect(settingsFile.pinnedWorktreeIDs == ["me@box/srv/repo"])
+
+      // 3. sidebar.json re-keyed and stamped v2.
+      let migrated = try JSONDecoder().decode(SidebarState.self, from: storage.load(SupacodePaths.sidebarURL))
+      #expect(migrated.schemaVersion == 2)
+      #expect(migrated.sections[RepositoryID("me@box/srv/repo")] != nil)
+      #expect(migrated.sections[RepositoryID("remote://me@box/srv/repo")] == nil)
+      #expect(
+        migrated.sections[RepositoryID("me@box/srv/repo")]?.buckets[.pinned]?
+          .items[WorktreeID("me@box/srv/repo")] != nil)
+      #expect(
+        migrated.sections[RepositoryID("/tmp/notes")]?.buckets[.unpinned]?
+          .items[WorktreeID("/tmp/notes")] != nil)
+      #expect(migrated.focusedWorktreeID == WorktreeID("/tmp/notes"))
+
+      // 4. Idempotent: a second pass is a no-op (the v2 gate short-circuits).
+      SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(fileExists: { _ in true }, readFile: readFile)
+      #expect(remoteRepositoryRoots == ["me@box/srv/repo"])
+      let again = try JSONDecoder().decode(SidebarState.self, from: storage.load(SupacodePaths.sidebarURL))
+      #expect(again.schemaVersion == 2)
+      #expect(again.sections.count == 2)
+    }
+  }
 }

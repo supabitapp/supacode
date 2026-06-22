@@ -255,7 +255,7 @@ public struct SettingsFeature {
           var updatedSettings = settings
           updatedSettings.defaultEditorID = normalizedDefaultEditorID
           updatedSettings.defaultWorktreeBaseDirectoryPath = normalizedWorktreeBaseDirPath
-          normalizedSettings = persistGlobalSettingsPreservingRemoteRepositories(updatedSettings)
+          normalizedSettings = persistGlobalSettings(updatedSettings)
         }
         state.appearanceMode = normalizedSettings.appearanceMode
         state.defaultEditorID = normalizedSettings.defaultEditorID
@@ -578,7 +578,7 @@ public struct SettingsFeature {
   }
 
   private func persist(_ state: State) -> Effect<Action> {
-    let settings = persistGlobalSettingsPreservingRemoteRepositories(state.globalSettings)
+    let settings = persistGlobalSettings(state.globalSettings)
     if settings.analyticsEnabled {
       analyticsClient.capture("settings_changed", nil)
     }
@@ -586,14 +586,12 @@ public struct SettingsFeature {
   }
 
   @discardableResult
-  private func persistGlobalSettingsPreservingRemoteRepositories(_ settings: GlobalSettings) -> GlobalSettings {
-    var updatedSettings = settings
+  private func persistGlobalSettings(_ settings: GlobalSettings) -> GlobalSettings {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock {
-      updatedSettings.remoteRepositories = $0.global.remoteRepositories
-      $0.global = updatedSettings
+      $0.global = settings
     }
-    return updatedSettings
+    return settings
   }
 
   private func synchronizeRepositorySelection(for state: inout State) {

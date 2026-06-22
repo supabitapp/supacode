@@ -109,7 +109,7 @@ struct WindowTitleTests {
   }
 
   @Test func computeFailedRemoteRepositoryUsesPlaceholderNameNotFileURL() {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"
@@ -129,7 +129,7 @@ struct WindowTitleTests {
     state.loadFailuresByID = [id: "Can't reach devbox."]
     state.selection = .failedRepository(id)
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-    // Deriving from the `remote://` id as a file URL would mangle the name.
+    // Deriving from the `user@host` authority id as a file URL would mangle the name.
     #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "proj · Unavailable")
   }
 

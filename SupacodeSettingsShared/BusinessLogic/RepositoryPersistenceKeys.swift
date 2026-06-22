@@ -48,6 +48,69 @@ public nonisolated struct RepositoryRootsKey: SharedKey {
   }
 }
 
+public nonisolated struct RemoteRepositoryRootsKeyID: Hashable, Sendable {
+  public init() {}
+}
+
+/// Persists the self-descriptive remote repository ids. Kept apart from the
+/// local-path `RepositoryPathNormalizer` (which would mangle a `user@host/path`
+/// authority through `URL(fileURLWithPath:)`); remote ids only need a trim +
+/// order-preserving dedupe.
+public nonisolated struct RemoteRepositoryRootsKey: SharedKey {
+  public init() {}
+
+  public var id: RemoteRepositoryRootsKeyID {
+    RemoteRepositoryRootsKeyID()
+  }
+
+  static func normalize(_ ids: [String]) -> [String] {
+    var seen = Set<String>()
+    var normalized: [String] = []
+    normalized.reserveCapacity(ids.count)
+    for id in ids {
+      let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+      normalized.append(trimmed)
+    }
+    return normalized
+  }
+
+  public func load(
+    context _: LoadContext<[String]>,
+    continuation: LoadContinuation<[String]>
+  ) {
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    let roots = $settingsFile.withLock { settings in
+      let normalized = Self.normalize(settings.remoteRepositoryRoots)
+      if normalized != settings.remoteRepositoryRoots {
+        settings.remoteRepositoryRoots = normalized
+      }
+      return normalized
+    }
+    continuation.resume(returning: roots)
+  }
+
+  public func subscribe(
+    context _: LoadContext<[String]>,
+    subscriber _: SharedSubscriber<[String]>
+  ) -> SharedSubscription {
+    SharedSubscription {}
+  }
+
+  public func save(
+    _ value: [String],
+    context _: SaveContext,
+    continuation: SaveContinuation
+  ) {
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    let normalized = Self.normalize(value)
+    $settingsFile.withLock {
+      $0.remoteRepositoryRoots = normalized
+    }
+    continuation.resume()
+  }
+}
+
 public nonisolated struct PinnedWorktreeIDsKeyID: Hashable, Sendable {
   public init() {}
 }
@@ -100,6 +163,12 @@ nonisolated extension SharedReaderKey where Self == RepositoryRootsKey.Default {
   }
 }
 
+nonisolated extension SharedReaderKey where Self == RemoteRepositoryRootsKey.Default {
+  public static var remoteRepositoryRoots: Self {
+    Self[RemoteRepositoryRootsKey(), default: []]
+  }
+}
+
 nonisolated extension SharedReaderKey where Self == PinnedWorktreeIDsKey.Default {
   public static var pinnedWorktreeIDs: Self {
     Self[PinnedWorktreeIDsKey(), default: []]
@@ -116,6 +185,11 @@ public nonisolated enum RepositoryPathNormalizer {
   public static func normalize(_ path: String) -> String? {
     let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
+    // A remote id (`[user@]host[:port]<path>`) is not a filesystem path; routing
+    // it through `URL(fileURLWithPath:)` would prepend the cwd and mangle it. A
+    // local id is always an absolute path, so the leading slash is the
+    // discriminator: only those get filesystem standardization.
+    guard trimmed.hasPrefix("/") else { return trimmed }
     return URL(fileURLWithPath: trimmed)
       .standardizedFileURL
       .path(percentEncoded: false)
@@ -140,11 +214,7 @@ public nonisolated enum RepositoryPathNormalizer {
     var normalized: [String: Date] = [:]
     normalized.reserveCapacity(dictionary.count)
     for (key, value) in dictionary {
-      let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty else { continue }
-      let resolved = URL(fileURLWithPath: trimmed)
-        .standardizedFileURL
-        .path(percentEncoded: false)
+      guard let resolved = normalize(key) else { continue }
       // On collision, keep the more recent (greater) date.
       if let existing = normalized[resolved], existing > value {
         continue

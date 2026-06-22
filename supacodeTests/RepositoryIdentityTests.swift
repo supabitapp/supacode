@@ -4,6 +4,35 @@ import Testing
 @testable import SupacodeSettingsShared
 @testable import supacode
 
+extension Worktree {
+  /// Test convenience: a git worktree without the explicit `kind` the production
+  /// initializers now require. Folder tests pass `kind: .folder` directly.
+  init(
+    id: WorktreeID,
+    name: String,
+    detail: String,
+    workingDirectory: URL,
+    repositoryRootURL: URL,
+    createdAt: Date? = nil,
+    isMissing: Bool = false,
+    isAttached: Bool = true,
+    host: RemoteHost? = nil
+  ) {
+    self.init(
+      id: id,
+      kind: .git,
+      name: name,
+      detail: detail,
+      workingDirectory: workingDirectory,
+      repositoryRootURL: repositoryRootURL,
+      createdAt: createdAt,
+      isMissing: isMissing,
+      isAttached: isAttached,
+      host: host
+    )
+  }
+}
+
 struct RepositoryIdentityTests {
   // MARK: - Branded id codable shape
 
@@ -15,7 +44,7 @@ struct RepositoryIdentityTests {
   }
 
   @Test func worktreeIDEncodesAsBareString() throws {
-    let id = WorktreeID("folder:/Users/me/repo/")
+    let id = WorktreeID("/Users/me/repo/wt")
     let data = try JSONEncoder().encode(id)
     #expect(try JSONDecoder().decode(WorktreeID.self, from: data) == id)
   }
@@ -61,13 +90,60 @@ struct RepositoryIdentityTests {
     #expect(location.host == host)
     // The danger this whole refactor removes: a remote location yields no local URL.
     #expect(location.localRootURL == nil)
-    #expect(location.id == RepositoryID("remote://me@box:2222/srv/repo"))
+    #expect(location.id == RepositoryID("me@box:2222/srv/repo"))
     #expect(location.path == "/srv/repo")
   }
 
   @Test func remoteWithoutPortOmitsPort() {
     let host = RemoteHost(alias: "box")
-    #expect(RepositoryLocation.remote(host, path: "/srv/repo").id == RepositoryID("remote://box/srv/repo"))
+    #expect(RepositoryLocation.remote(host, path: "/srv/repo").id == RepositoryID("box/srv/repo"))
+  }
+
+  // MARK: - RemoteHost authority round-trip
+
+  @Test func authorityParsesBackToHost() {
+    for host in [
+      RemoteHost(alias: "box"),
+      RemoteHost(alias: "box", username: "me"),
+      RemoteHost(alias: "box", port: 2222),
+      RemoteHost(alias: "box", username: "me", port: 2222),
+    ] {
+      #expect(RemoteHost(authority: host.authority) == host)
+    }
+  }
+
+  @Test func authorityParserHandlesBracketedIPv6() {
+    let host = RemoteHost(authority: "me@[fe80::1]:2222")
+    #expect(host == RemoteHost(alias: "fe80::1", username: "me", port: 2222))
+  }
+
+  @Test func authorityParserRejectsEmptyHost() {
+    #expect(RemoteHost(authority: "") == nil)
+    #expect(RemoteHost(authority: "me@") == nil)
+  }
+
+  // MARK: - RepositoryLocation persisted-id parsing
+
+  @Test func parsesLocalAndRemotePersistedIDs() {
+    #expect(RepositoryLocation.parse(persistedID: "/Users/me/repo") == .local(URL(fileURLWithPath: "/Users/me/repo")))
+    #expect(
+      RepositoryLocation.parse(persistedID: "me@box:2222/srv/repo")
+        == .remote(RemoteHost(alias: "box", username: "me", port: 2222), path: "/srv/repo"))
+    #expect(
+      RepositoryLocation.parse(persistedID: "box/srv/repo")
+        == .remote(RemoteHost(alias: "box"), path: "/srv/repo"))
+  }
+
+  @Test func remoteIDRoundTripsThroughParse() {
+    let host = RemoteHost(alias: "box", username: "me", port: 2222)
+    let id = RepositoryLocation.remote(host, path: "/srv/repo").id
+    #expect(RepositoryLocation.parse(persistedID: id.rawValue) == .remote(host, path: "/srv/repo"))
+  }
+
+  @Test func normalizedRemotePathTrimsTrailingSlashes() {
+    #expect(RepositoryLocation.normalizedRemotePath("/srv/repo/") == "/srv/repo")
+    #expect(RepositoryLocation.normalizedRemotePath("  /srv/repo  ") == "/srv/repo")
+    #expect(RepositoryLocation.normalizedRemotePath("/") == "/")
   }
 
   // MARK: - WorktreeLocation id derivation
@@ -77,48 +153,46 @@ struct RepositoryIdentityTests {
       workingDirectory: URL(fileURLWithPath: "/repo/wt"),
       repositoryRoot: URL(fileURLWithPath: "/repo")
     )
-    #expect(location.id(kind: .git) == WorktreeID("/repo/wt"))
+    #expect(location.id == WorktreeID("/repo/wt"))
     #expect(location.localWorkingDirectory == URL(fileURLWithPath: "/repo/wt"))
   }
 
   @Test func remoteGitWorktreeIDBrandsHost() {
     let host = RemoteHost(alias: "box", port: 22)
     let location = WorktreeLocation.remote(host, workingDirectory: "/repo/wt", repositoryRoot: "/repo")
-    #expect(location.id(kind: .git) == WorktreeID("remote://box:22/repo/wt"))
+    #expect(location.id == WorktreeID("box:22/repo/wt"))
     #expect(location.localWorkingDirectory == nil)
     #expect(location.host == host)
   }
 
-  // MARK: - Folder synthetic round-trip
+  // MARK: - Folder synthetic id (kind lives on Worktree, not the id)
 
-  @Test func localFolderWorktreeIDRoundTripsToRepositoryID() {
+  @Test func localFolderWorktreeIDIsTheRepositoryPath() {
     let repoURL = URL(fileURLWithPath: "/Users/me/notes", isDirectory: true)
-    let location = WorktreeLocation.local(workingDirectory: repoURL, repositoryRoot: repoURL)
-    let id = location.id(kind: .folder)
-    #expect(id == WorktreeID("folder:/Users/me/notes/"))
-    #expect(id.isFolder)
-    #expect(id.folderRepositoryID == RepositoryID("/Users/me/notes/"))
+    // The folder synthetic shares the path-derived id with its repo; git-vs-folder
+    // is carried by `Worktree.kind`, not baked into the id.
+    let id = Repository.folderWorktreeID(for: repoURL)
+    #expect(id == WorktreeID("/Users/me/notes/"))
+    #expect(id.rawValue == RepositoryLocation.local(repoURL).id.rawValue)
   }
 
-  @Test func remoteFolderWorktreeIDRoundTripsToRemoteRepositoryID() {
-    let host = RemoteHost(alias: "box", username: "me")
-    let location = WorktreeLocation.remote(host, workingDirectory: "/srv/notes", repositoryRoot: "/srv/notes")
-    let id = location.id(kind: .folder)
-    #expect(id == WorktreeID("folder:remote://me@box/srv/notes"))
-    #expect(id.isFolder)
-    #expect(id.folderRepositoryID == RepositoryID("remote://me@box/srv/notes"))
-  }
-
-  @Test func gitWorktreeIDIsNotAFolder() {
-    #expect(WorktreeID("/repo/wt").isFolder == false)
-    #expect(WorktreeID("/repo/wt").folderRepositoryID == nil)
-    #expect(WorktreeID("remote://box/repo/wt").folderRepositoryID == nil)
+  @Test func worktreeKindDrivesIsFolder() {
+    let location = WorktreeLocation.local(
+      workingDirectory: URL(fileURLWithPath: "/repo"),
+      repositoryRoot: URL(fileURLWithPath: "/repo")
+    )
+    let folder = Worktree(location: location, kind: .folder, name: "repo", detail: "")
+    let git = Worktree(location: location, kind: .git, name: "repo", detail: "")
+    #expect(folder.isFolder)
+    #expect(!git.isFolder)
+    // Same location yields the same id regardless of kind.
+    #expect(folder.id == git.id)
   }
 
   @Test func worktreeLocationExposesOwningRepositoryLocation() {
     let host = RemoteHost(alias: "box")
     let remote = WorktreeLocation.remote(host, workingDirectory: "/repo/wt", repositoryRoot: "/repo")
-    #expect(remote.repositoryLocation.id == RepositoryID("remote://box/repo"))
+    #expect(remote.repositoryLocation.id == RepositoryID("box/repo"))
     let local = WorktreeLocation.local(
       workingDirectory: URL(fileURLWithPath: "/repo/wt"),
       repositoryRoot: URL(fileURLWithPath: "/repo", isDirectory: true)

@@ -8,6 +8,18 @@ import Testing
 @testable import supacode
 
 struct RepositoryPersistenceClientTests {
+  // MARK: - normalize (shape-aware)
+
+  @Test func normalizeStandardizesLocalPathsButPassesRemoteIdsVerbatim() {
+    // Local ids (absolute paths) are filesystem-standardized as before.
+    #expect(RepositoryPathNormalizer.normalize("/tmp/repo/../repo") == "/tmp/repo")
+    // Remote ids (`[user@]host[:port]<path>`) must NOT hit `URL(fileURLWithPath:)`,
+    // which would prepend the cwd and mangle them; they pass through trimmed.
+    #expect(RepositoryPathNormalizer.normalize("me@box:2222/srv/repo") == "me@box:2222/srv/repo")
+    #expect(RepositoryPathNormalizer.normalize("  box/srv/repo  ") == "box/srv/repo")
+    #expect(RepositoryPathNormalizer.normalize("   ") == nil)
+  }
+
   // MARK: - normalizeDictionaryKeys
 
   @Test func normalizeDictionaryKeysResolvesPaths() {

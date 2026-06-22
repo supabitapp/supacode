@@ -22,7 +22,7 @@ public nonisolated struct RepositorySettingsKey: SharedKey {
       // Brand remote keys with the host (matching `RepositoryLocation.id`) so
       // two hosts at the same path can't share settings, and so a local repo
       // at that path keeps its own bare-path key.
-      repositoryID = "remote://" + host.authority + self.rootURL.path(percentEncoded: false)
+      repositoryID = host.authority + self.rootURL.path(percentEncoded: false)
     } else {
       repositoryID = self.rootURL.path(percentEncoded: false)
     }

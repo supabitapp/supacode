@@ -122,6 +122,7 @@ struct GitClient {
       return WorktreeSortEntry(
         worktree: Worktree(
           location: .local(workingDirectory: worktreeURL, repositoryRoot: repositoryRootURL),
+          kind: .git,
           name: name,
           detail: detail,
           createdAt: createdAt,
@@ -192,6 +193,7 @@ struct GitClient {
       worktrees.append(
         Worktree(
           location: .local(workingDirectory: worktreeURL, repositoryRoot: repositoryRootURL),
+          kind: .git,
           name: name,
           detail: relativePath(from: repositoryRootURL, to: worktreeURL),
           createdAt: nil,
@@ -608,6 +610,7 @@ struct GitClient {
                 let createdAt = resourceValues?.creationDate ?? resourceValues?.contentModificationDate
                 let worktree = Worktree(
                   location: .local(workingDirectory: worktreeURL, repositoryRoot: repositoryRootURL),
+                  kind: .git,
                   name: name,
                   detail: detail,
                   createdAt: createdAt

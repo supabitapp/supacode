@@ -5,26 +5,56 @@ import Foundation
 ///
 /// `alias` is whatever `ssh` itself accepts as a host: a `~/.ssh/config` alias
 /// or a bare hostname. `username` / `port` are optional overrides for callers
-/// that don't want to encode them in ssh config. `worktreeBasePath` is the
-/// remote directory new worktrees are created under (expanded by the remote
-/// shell, so a leading `~` is fine); `nil` lets the caller fall back to a
-/// remote default.
+/// that don't want to encode them in ssh config.
 public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
   public var alias: String
   public var username: String?
   public var port: Int?
-  public var worktreeBasePath: String?
 
   public init(
     alias: String,
     username: String? = nil,
-    port: Int? = nil,
-    worktreeBasePath: String? = nil
+    port: Int? = nil
   ) {
     self.alias = alias
     self.username = username
     self.port = port
-    self.worktreeBasePath = worktreeBasePath
+  }
+
+  /// Parse an `[user@]host[:port]` authority back into a host: the inverse of
+  /// `authority`. A bracketed IPv6 host (`[::1]:22`) keeps its colons inside the
+  /// brackets; otherwise a trailing `:<digits>` is the port and the last `@`
+  /// splits the username. Returns `nil` when the host component is empty.
+  public init?(authority: String) {
+    let trimmed = authority.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else { return nil }
+    let user: String?
+    let hostPort: Substring
+    if let atIndex = trimmed.lastIndex(of: "@") {
+      user = String(trimmed[..<atIndex])
+      hostPort = trimmed[trimmed.index(after: atIndex)...]
+    } else {
+      user = nil
+      hostPort = trimmed[...]
+    }
+    guard !hostPort.isEmpty else { return nil }
+    let host: String
+    let port: Int?
+    if hostPort.hasPrefix("["), let close = hostPort.firstIndex(of: "]") {
+      host = String(hostPort[hostPort.index(after: hostPort.startIndex)..<close])
+      let after = hostPort[hostPort.index(after: close)...]
+      port = after.hasPrefix(":") ? Int(after.dropFirst()) : nil
+    } else if let colon = hostPort.lastIndex(of: ":"),
+      let parsed = Int(hostPort[hostPort.index(after: colon)...])
+    {
+      host = String(hostPort[..<colon])
+      port = parsed
+    } else {
+      host = String(hostPort)
+      port = nil
+    }
+    guard !host.isEmpty else { return nil }
+    self.init(alias: host, username: (user?.isEmpty ?? true) ? nil : user, port: port)
   }
 
   /// The `user@host` (or bare `host`) token passed to `ssh`.

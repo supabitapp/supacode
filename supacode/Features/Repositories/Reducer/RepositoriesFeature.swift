@@ -511,47 +511,39 @@ struct RepositoriesFeature {
     return .ssh(host: host)
   }
 
-  /// Present the connection form seeded from the existing config for `repositoryID`.
-  /// Looked up by derived repo id so a failed / disconnected remote (which has
-  /// no loaded `Repository`) is still editable.
+  /// Present the connection form seeded from the existing remote for `repositoryID`.
+  /// The id is self-descriptive, so it parses straight back into host + path; a
+  /// failed / disconnected remote (which has no loaded `Repository`) is still
+  /// editable.
   static func presentRemoteConnectionEditForm(_ repositoryID: Repository.ID, state: inout State) {
-    @Shared(.settingsFile) var settingsFile
-    guard
-      let config = settingsFile.global.remoteRepositories.first(where: {
-        Self.remoteRepositoryID(for: $0) == repositoryID
-      })
-    else { return }
-    state.remoteConnectionForm = RemoteConnectionFormFeature.State.editing(config, repositoryID: repositoryID)
+    guard let (host, remotePath) = Self.parseRemoteRoot(repositoryID.rawValue) else { return }
+    state.remoteConnectionForm = RemoteConnectionFormFeature.State.editing(
+      host: host, remotePath: remotePath, repositoryID: repositoryID)
   }
 
-  /// Persist a validated remote connection (add or replace-by-id), dropping the
+  /// Persist a validated remote connection (add or replace), dropping the
   /// now-orphaned per-repo customization when a host/path edit re-keys the id,
   /// then dismiss the form and reload.
-  static func saveRemoteConnection(_ config: RemoteRepositoryConfig, state: inout State) -> Effect<Action> {
+  static func saveRemoteConnection(host: RemoteHost, remotePath: String, state: inout State) -> Effect<Action> {
     let originalRepositoryID: Repository.ID?
-    if case .edit(_, let editedID) = state.remoteConnectionForm?.mode {
+    if case .edit(let editedID) = state.remoteConnectionForm?.mode {
       originalRepositoryID = editedID
     } else {
       originalRepositoryID = nil
     }
-    @Shared(.settingsFile) var settingsFile
-    $settingsFile.withLock { settings in
-      if let index = settings.global.remoteRepositories.firstIndex(where: { $0.id == config.id }) {
-        settings.global.remoteRepositories[index] = config
-      } else {
-        // Dedupe on the derived repository id (host authority, port included,
-        // plus path) so port-distinct connections to the same host/path stay
-        // separate instead of the second one being silently dropped.
-        let newID = Self.remoteRepositoryID(for: config)
-        let exists = settings.global.remoteRepositories.contains {
-          Self.remoteRepositoryID(for: $0) == newID
-        }
-        if !exists {
-          settings.global.remoteRepositories.append(config)
-        }
+    let newID = Self.remoteRepositoryID(host: host, remotePath: remotePath)
+    @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+    $remoteRepositoryRoots.withLock { roots in
+      // Replace the edited entry in place; for an add, dedupe on the derived id
+      // (host authority + port + path) so a second identical connection isn't a
+      // duplicate row while a port-distinct one stays separate.
+      if let originalRepositoryID, let index = roots.firstIndex(of: originalRepositoryID.rawValue) {
+        roots[index] = newID.rawValue
+      } else if !roots.contains(newID.rawValue) {
+        roots.append(newID.rawValue)
       }
     }
-    if let originalRepositoryID, originalRepositoryID != Self.remoteRepositoryID(for: config) {
+    if let originalRepositoryID, originalRepositoryID != newID {
       state.$sidebar.withLock { $0.sections[originalRepositoryID] = nil }
     }
     state.remoteConnectionForm = nil
@@ -1158,9 +1150,9 @@ struct RepositoriesFeature {
             }
           } else if let repositoryID = state.repositoryID(containing: worktreeID) {
             followupEffect = .send(.deleteWorktreeApply(worktreeID, repositoryID))
-          } else if let syntheticRepoID = Repository.repositoryID(
-            fromFolderWorktreeID: worktreeID
-          ), state.removingRepositoryIDs[syntheticRepoID]?.disposition.isFolder == true {
+          } else if state.removingRepositoryIDs[RepositoryID(worktreeID.rawValue)]?.disposition.isFolder
+            == true
+          {
             // Synthetic folder id + open folder record: drain the aggregator
             // so siblings don't hang. Only surface the alert when no folder
             // record exists.
@@ -2553,7 +2545,7 @@ struct RepositoriesFeature {
         // re-fire `reportIssue` forever.
         var strayFolderArchives: [(Worktree.ID, Repository.ID)] = []
         for archived in state.sidebar.archivedWorktrees
-        where Repository.isFolderWorktreeID(archived.worktreeID) {
+        where state.repositories[id: archived.repositoryID]?.kind == .folder {
           strayFolderArchives.append((archived.worktreeID, archived.repositoryID))
         }
         if !strayFolderArchives.isEmpty {
@@ -2574,7 +2566,7 @@ struct RepositoriesFeature {
         for archived in state.sidebar.archivedWorktrees {
           let worktreeID = archived.worktreeID
           guard archived.archivedAt <= cutoff else { continue }
-          if Repository.isFolderWorktreeID(worktreeID) {
+          if state.repositories[id: archived.repositoryID]?.kind == .folder {
             // Already purged above, defensive skip.
             continue
           }
@@ -2936,11 +2928,9 @@ struct RepositoriesFeature {
         return .none
 
       case .removeRemoteRepository(let repositoryID):
-        @Shared(.settingsFile) var settingsFile
-        $settingsFile.withLock { settings in
-          settings.global.remoteRepositories.removeAll {
-            Self.remoteRepositoryID(for: $0) == repositoryID
-          }
+        @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+        $remoteRepositoryRoots.withLock { roots in
+          roots.removeAll { $0 == repositoryID.rawValue }
         }
         // Drop persisted customization so re-adding the same host/path doesn't
         // silently restore the old title/color, matching the other removal paths.
@@ -2984,7 +2974,7 @@ struct RepositoriesFeature {
         let roots = state.repositoryRoots
         // A remote-only setup has no local roots, but the load path still
         // appends persisted remote configs, so a refresh must run for it.
-        guard !roots.isEmpty || !Self.persistedRemoteRepositoryConfigs().isEmpty else {
+        guard !roots.isEmpty || !Self.persistedRemoteRepositoryRoots().isEmpty else {
           state.isRefreshingWorktrees = false
           return .none
         }
@@ -3043,19 +3033,20 @@ struct RepositoriesFeature {
         return .merge(allEffects)
 
       case .resolveRemoteRepositories:
-        let configs = Self.persistedRemoteRepositoryConfigs()
-        guard !configs.isEmpty else { return .none }
+        let roots = Self.persistedRemoteRepositoryRoots()
+        guard !roots.isEmpty else { return .none }
         return .run { send in
           // Resolve concurrently so one slow host doesn't gate the others; each
           // streams its own result. The background-probe ssh profile bounds a
           // dead host, so a stuck connection never spins forever.
           await withTaskGroup(of: Void.self) { group in
             var seen: Set<Repository.ID> = []
-            for config in configs {
-              let repoID = Self.remoteRepositoryID(for: config)
+            for root in roots {
+              guard let (host, remotePath) = Self.parseRemoteRoot(root) else { continue }
+              let repoID = Self.remoteRepositoryID(host: host, remotePath: remotePath)
               guard seen.insert(repoID).inserted else { continue }
               group.addTask {
-                let loaded = await Self.loadRemoteRepository(config, repoID: repoID)
+                let loaded = await Self.loadRemoteRepository(host: host, remotePath: remotePath, repoID: repoID)
                 await send(
                   .remoteRepositoryResolved(
                     repositoryID: repoID,
@@ -4023,10 +4014,17 @@ struct RepositoriesFeature {
     into repositories: [Repository],
     existingState state: State
   ) -> RemoteRepositoryMergeResult {
-    let remoteConfigs = persistedRemoteRepositoryConfigs()
+    // Parse persisted remote ids once into (repoID, host, path), dropping any
+    // that don't parse as a remote authority.
+    let remoteRoots: [ParsedRemoteRoot] =
+      persistedRemoteRepositoryRoots().compactMap { root in
+        guard let (host, remotePath) = parseRemoteRoot(root) else { return nil }
+        return ParsedRemoteRoot(
+          repoID: remoteRepositoryID(host: host, remotePath: remotePath), host: host, remotePath: remotePath)
+      }
     var persistedRemoteIDs: Set<Repository.ID> = []
-    for config in remoteConfigs {
-      persistedRemoteIDs.insert(remoteRepositoryID(for: config))
+    for root in remoteRoots {
+      persistedRemoteIDs.insert(root.repoID)
     }
 
     var mergedRepositories: [Repository] = []
@@ -4040,7 +4038,7 @@ struct RepositoriesFeature {
       mergedRepositories.append(repository)
     }
 
-    guard !remoteConfigs.isEmpty else {
+    guard !remoteRoots.isEmpty else {
       return RemoteRepositoryMergeResult(
         repositories: mergedRepositories,
         resolvingIDs: []
@@ -4049,10 +4047,10 @@ struct RepositoriesFeature {
 
     var resolvingIDs: Set<Repository.ID> = []
     var seenRemoteIDs: Set<Repository.ID> = []
-    for config in remoteConfigs {
-      let repoID = remoteRepositoryID(for: config)
-      // Two configs can derive the same host-keyed id (e.g. an edit made them
-      // collide); keep the first so the IdentifiedArray below can't trap.
+    for root in remoteRoots {
+      let repoID = root.repoID
+      // Two ids can collide (e.g. an edit made them match); keep the first so
+      // the IdentifiedArray below can't trap.
       guard seenRemoteIDs.insert(repoID).inserted else { continue }
       if let index = indexesByID[repoID] {
         if mergedRepositories[index].worktrees.isEmpty {
@@ -4065,7 +4063,8 @@ struct RepositoriesFeature {
         mergedRepositories.append(existing)
       } else {
         indexesByID[repoID] = mergedRepositories.count
-        mergedRepositories.append(remotePlaceholderRepository(config: config, repoID: repoID))
+        mergedRepositories.append(
+          remotePlaceholderRepository(host: root.host, remotePath: root.remotePath, repoID: repoID))
         resolvingIDs.insert(repoID)
       }
     }
@@ -4078,6 +4077,13 @@ struct RepositoriesFeature {
   private struct RemoteRepositoryMergeResult: Sendable {
     let repositories: [Repository]
     let resolvingIDs: Set<Repository.ID>
+  }
+
+  /// A persisted remote root parsed into its derived repo id, host, and path.
+  private struct ParsedRemoteRoot {
+    let repoID: Repository.ID
+    let host: RemoteHost
+    let remotePath: String
   }
 
   private struct WorktreesFetchResult: Sendable {
@@ -4191,6 +4197,7 @@ struct RepositoriesFeature {
         // working without new entity types.
         let synthetic = Worktree(
           id: Repository.folderWorktreeID(for: normalizedRoot),
+          kind: .folder,
           name: name,
           detail: "",
           workingDirectory: normalizedRoot,
@@ -5119,6 +5126,7 @@ extension RepositoriesFeature.State {
       repositories[id: repositoryID]?.worktrees[id: worktreeID]
       ?? Worktree(
         id: worktreeID,
+        kind: .git,
         name: name,
         detail: "",
         workingDirectory: worktreeURL,

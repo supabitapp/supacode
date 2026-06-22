@@ -209,6 +209,7 @@ struct AppFeatureDeeplinkTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -995,6 +996,7 @@ struct AppFeatureDeeplinkTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,

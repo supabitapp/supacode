@@ -467,6 +467,139 @@ enum SidebarPersistenceMigrator {
     }
   }
 
+  // MARK: - Remote-identity migration (schema v1 -> v2).
+
+  /// Target sidebar schema for the remote-identity refactor.
+  private static let remoteIdentitySchemaVersion = 2
+
+  /// Decode-only view of the retired `global.remoteRepositories` array. The
+  /// stored property is gone from `GlobalSettings`, so the legacy entries are
+  /// read straight from the raw `settings.json`; `id` / `displayName` are dropped.
+  private struct LegacyRemoteRepositoriesFile: Decodable {
+    struct Global: Decodable { var remoteRepositories: [LegacyRemoteRepository]? }
+    var global: Global?
+  }
+
+  private struct LegacyRemoteRepository: Decodable {
+    var host: RemoteHost
+    var remotePath: String
+  }
+
+  /// One-shot migration for the remote-identity refactor. Drains the retired
+  /// `global.remoteRepositories` into `remoteRepositoryRoots`, then strips the
+  /// retired `remote://` / `folder:` prefixes from every persisted id
+  /// (`repositories` keys, `pinnedWorktreeIDs`, and `sidebar.json`). Gated on the
+  /// sidebar `schemaVersion`; once it reaches `2` this is a no-op. Runs after
+  /// `migrateIfNeeded` so the v0 -> v1 build has already landed.
+  @MainActor
+  static func migrateRemoteIdentityIfNeeded(
+    fileExists: (URL) -> Bool = { url in
+      FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    },
+    readFile: (URL) -> Data? = { url in
+      try? Data(contentsOf: url)
+    }
+  ) {
+    let sidebarURL = SupacodePaths.sidebarURL
+    let existing: SidebarState? = {
+      guard fileExists(sidebarURL), let data = readFile(sidebarURL) else { return nil }
+      return try? JSONDecoder().decode(SidebarState.self, from: data)
+    }()
+    guard (existing?.schemaVersion ?? 0) < remoteIdentitySchemaVersion else { return }
+
+    drainLegacyRemoteRepositories(readFile: readFile)
+
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { settings in
+      // Re-key per-repo settings (color / custom name) and any leftover pins off
+      // the retired prefixes so they keep matching the live ids.
+      var rekeyedRepositories: [String: RepositorySettings] = [:]
+      for (key, value) in settings.repositories {
+        let migrated = stripLegacyIDPrefixes(key)
+        if rekeyedRepositories[migrated] == nil {
+          rekeyedRepositories[migrated] = value
+        }
+      }
+      settings.repositories = rekeyedRepositories
+      settings.pinnedWorktreeIDs = settings.pinnedWorktreeIDs.map(stripLegacyIDPrefixes)
+    }
+
+    var state = existing ?? SidebarState()
+    rekeyToRemoteIdentitySchema(&state)
+    guard persist(state: state, to: sidebarURL) else { return }
+    logger.info("Migrated remote/folder ids to schema v\(remoteIdentitySchemaVersion).")
+  }
+
+  /// Read the retired remote configs from the raw `settings.json` (the field no
+  /// longer decodes through `GlobalSettings`) and append their self-descriptive
+  /// ids to `remoteRepositoryRoots`. Idempotent: the first `settings.json` save
+  /// drops the legacy array, so a re-run finds nothing.
+  @MainActor
+  private static func drainLegacyRemoteRepositories(readFile: (URL) -> Data?) {
+    guard let data = readFile(SupacodePaths.settingsURL),
+      let legacy = try? JSONDecoder().decode(LegacyRemoteRepositoriesFile.self, from: data),
+      let configs = legacy.global?.remoteRepositories, !configs.isEmpty
+    else { return }
+
+    let migratedIDs = configs.map { config in
+      RepositoryLocation.remote(
+        config.host, path: RepositoryLocation.normalizedRemotePath(config.remotePath)
+      ).id.rawValue
+    }
+    @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+    $remoteRepositoryRoots.withLock { roots in
+      for id in migratedIDs where !roots.contains(id) {
+        roots.append(id)
+      }
+    }
+  }
+
+  /// Strip the retired `folder:` then `remote://` prefixes from an id. Composed
+  /// folder-remote ids (`folder:remote://…`) collapse in one pass.
+  static func stripLegacyIDPrefixes(_ id: String) -> String {
+    var result = id
+    if result.hasPrefix("folder:") {
+      result = String(result.dropFirst("folder:".count))
+    }
+    if result.hasPrefix("remote://") {
+      result = String(result.dropFirst("remote://".count))
+    }
+    return result
+  }
+
+  /// Rewrite every persisted id in `state` off the retired prefixes and stamp
+  /// the remote-identity schema version. Section keys (repo ids) and item keys
+  /// (worktree ids) both pass through `stripLegacyIDPrefixes`; collisions keep
+  /// the first entry (a folder synthetic and a git worktree can't legitimately
+  /// share a bucket).
+  private static func rekeyToRemoteIdentitySchema(_ state: inout SidebarState) {
+    var rekeyedSections: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
+    for (repoID, section) in state.sections {
+      var rekeyedSection = section
+      var rekeyedBuckets: OrderedDictionary<SidebarState.BucketID, SidebarState.Bucket> = [:]
+      for (bucketID, bucket) in section.buckets {
+        var rekeyedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
+        for (worktreeID, item) in bucket.items {
+          let migrated = WorktreeID(stripLegacyIDPrefixes(worktreeID.rawValue))
+          if rekeyedItems[migrated] == nil {
+            rekeyedItems[migrated] = item
+          }
+        }
+        var rekeyedBucket = bucket
+        rekeyedBucket.items = rekeyedItems
+        rekeyedBuckets[bucketID] = rekeyedBucket
+      }
+      rekeyedSection.buckets = rekeyedBuckets
+      let migratedRepoID = RepositoryID(stripLegacyIDPrefixes(repoID.rawValue))
+      if rekeyedSections[migratedRepoID] == nil {
+        rekeyedSections[migratedRepoID] = rekeyedSection
+      }
+    }
+    state.sections = rekeyedSections
+    state.focusedWorktreeID = state.focusedWorktreeID.map { WorktreeID(stripLegacyIDPrefixes($0.rawValue)) }
+    state.schemaVersion = remoteIdentitySchemaVersion
+  }
+
   /// Pool of (candidate-prefix → owning-root) pairs used by the
   /// longest-prefix resolver. Covers every filesystem location a
   /// worktree may sit under:

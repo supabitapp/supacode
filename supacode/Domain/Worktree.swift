@@ -2,14 +2,18 @@ import Foundation
 import SupacodeSettingsShared
 
 nonisolated struct Worktree: Identifiable, Hashable, Sendable {
-  /// Branded id derived from the location and kind (local git: working-dir
-  /// path; local folder: `folder:<repoID>`; remote: `remote://…`). Stored so
+  /// Branded id derived from the location (local: working-dir path; remote:
+  /// `<user@host:port><path>`). Independent of git-vs-folder, which is a runtime
+  /// classification carried in `kind`, not baked into the id. Stored so
   /// legacy/test call sites can pass it explicitly; production derives it.
   let id: WorktreeID
   /// Where the worktree lives. Single source of truth for `host`,
   /// `workingDirectory`, `repositoryRootURL`, and the FileManager-safe
   /// `localWorkingDirectory`.
   let location: WorktreeLocation
+  /// Git worktree vs folder synthetic. Runtime classification (a directory can
+  /// be (un)initialized as a git repo), so it lives here, not in the id.
+  let kind: RepositoryKind
   let name: String
   let detail: String
   let createdAt: Date?
@@ -33,13 +37,13 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
   /// one. Use this for any FileManager work.
   var localWorkingDirectory: URL? { location.localWorkingDirectory }
 
-  /// Whether this is a folder-synthetic worktree (derived from the id).
-  var isFolder: Bool { id.isFolder }
+  /// Whether this is a folder-synthetic worktree.
+  var isFolder: Bool { kind == .folder }
 
-  /// Designated initializer: id is derived from the location and kind.
+  /// Designated initializer: id is derived from the location.
   nonisolated init(
     location: WorktreeLocation,
-    kind: RepositoryKind = .git,
+    kind: RepositoryKind,
     name: String,
     detail: String,
     createdAt: Date? = nil,
@@ -47,12 +51,13 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     isAttached: Bool = true
   ) {
     self.location = location
+    self.kind = kind
     self.name = name
     self.detail = detail
     self.createdAt = createdAt
     self.isMissing = isMissing
     self.isAttached = isAttached
-    self.id = location.id(kind: kind)
+    self.id = location.id
   }
 
   /// Back-compat initializer: builds the location from `workingDirectory` +
@@ -60,6 +65,7 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
   /// compile while the model migrates.
   nonisolated init(
     id: WorktreeID,
+    kind: RepositoryKind,
     name: String,
     detail: String,
     workingDirectory: URL,
@@ -78,6 +84,7 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     } else {
       self.location = .local(workingDirectory: workingDirectory, repositoryRoot: repositoryRootURL)
     }
+    self.kind = kind
     self.name = name
     self.detail = detail
     self.createdAt = createdAt
@@ -91,7 +98,7 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
   func renamed(_ newName: String) -> Worktree {
     Worktree(
       location: location,
-      kind: id.isFolder ? .folder : .git,
+      kind: kind,
       name: newName,
       detail: detail,
       createdAt: createdAt,

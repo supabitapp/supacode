@@ -14,8 +14,8 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
   let worktrees: IdentifiedArrayOf<Worktree>
 
   /// Branded id derived from the location (local: absolute path; remote:
-  /// `remote://<user@host:port><path>`). Stored so legacy/test call sites can
-  /// pass it explicitly, but production construction always derives it.
+  /// `<user@host:port><path>`). Stored so legacy/test call sites can pass it
+  /// explicitly, but production construction always derives it.
   let id: RepositoryID
 
   /// SSH host this repository lives on, or `nil` for a local repository.
@@ -117,23 +117,12 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
       && fileManager.fileExists(atPath: refsPath)
   }
 
-  /// Stable synthetic worktree id for a local folder repository, derived from
-  /// the owning repo id so it round-trips through `WorktreeID.folderRepositoryID`.
+  /// Synthetic worktree id for a local folder repository: the repo root path.
+  /// Equals the owning repo id, so it round-trips back via `RepositoryID(_:)`;
+  /// it can't collide with a git worktree because a path is git or folder, never
+  /// both at once.
   nonisolated static func folderWorktreeID(for rootURL: URL) -> Worktree.ID {
-    WorktreeID.folder(repositoryID: RepositoryLocation.local(rootURL.standardizedFileURL).id)
-  }
-
-  /// Recover the owning `Repository.ID` from a folder-synthetic worktree id.
-  /// `nil` for non-folder ids.
-  nonisolated static func repositoryID(
-    fromFolderWorktreeID worktreeID: Worktree.ID
-  ) -> Repository.ID? {
-    worktreeID.folderRepositoryID
-  }
-
-  /// Whether `worktreeID` is a folder-synthetic worktree id.
-  nonisolated static func isFolderWorktreeID(_ worktreeID: Worktree.ID) -> Bool {
-    worktreeID.isFolder
+    WorktreeID(RepositoryLocation.local(rootURL.standardizedFileURL).id.rawValue)
   }
 
   /// Shared trim + fallback for the sidebar header and the highlight-row tag.

@@ -141,6 +141,11 @@ struct SupacodeApp: App {
     // half-finished migration that left a `schemaVersion == 0` file
     // still gets retried.
     SidebarPersistenceMigrator.migrateIfNeeded()
+    // Second one-shot pass (schema v2): drains the retired
+    // `global.remoteRepositories` into `remoteRepositoryRoots` and strips the
+    // `remote://` / `folder:` prefixes from persisted ids. Runs after the v0->v1
+    // build so it always sees a populated sidebar.
+    SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded()
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
     let infoDictionary = Bundle.main.infoDictionary ?? [:]

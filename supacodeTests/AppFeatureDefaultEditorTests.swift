@@ -148,7 +148,7 @@ struct AppFeatureDefaultEditorTests {
   }
 
   @Test(.dependencies) func openAndRevealAreNoOpsForRemoteWorktree() async {
-    let config = RemoteRepositoryConfig(
+    let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
       displayName: "proj"

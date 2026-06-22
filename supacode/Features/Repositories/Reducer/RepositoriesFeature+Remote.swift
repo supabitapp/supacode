@@ -25,8 +25,8 @@ extension RepositoriesFeature {
         state.remoteConnectionForm = nil
         return .none
 
-      case .remoteConnectionForm(.presented(.delegate(.save(let config)))):
-        return saveRemoteConnection(config, state: &state)
+      case .remoteConnectionForm(.presented(.delegate(.save(let host, let remotePath)))):
+        return saveRemoteConnection(host: host, remotePath: remotePath, state: &state)
 
       default:
         return .none
@@ -34,44 +34,56 @@ extension RepositoriesFeature {
     }
   }
 
-  /// Repository.ID for a remote config. Host-keyed and prefixed so it can never
-  /// collide with a local repository's id (an absolute filesystem path) nor
-  /// with another host pointing at the same remote path. Because this is not a
-  /// filesystem path, the local-only `buildRepositorySections` loop (which keys
-  /// `repositories[id:]` off `rootURL.path`) never matches a remote repo, so
-  /// remote repos are rendered solely by the dedicated remote loop.
-  nonisolated static func remoteRepositoryID(for config: RemoteRepositoryConfig) -> Repository.ID {
-    RepositoryLocation.remote(config.host, path: config.normalizedRemotePath).id
+  /// Self-descriptive Repository.ID for a remote host + path:
+  /// `<user@host:port><path>`. Never collides with a local id (an absolute
+  /// filesystem path starting with `/`) nor with another host at the same path.
+  /// This string is also the persisted `remoteRepositoryRoots` entry.
+  nonisolated static func remoteRepositoryID(host: RemoteHost, remotePath: String) -> Repository.ID {
+    RepositoryLocation.remote(host, path: RepositoryLocation.normalizedRemotePath(remotePath)).id
   }
 
-  /// Host-keyed git worktree id `remote://<user@host:port><remotePath>` so
-  /// worktrees at the same path on different hosts (or matching a local path)
-  /// never collide.
+  /// Sidebar title for a remote repo: the remote path's last component, falling
+  /// back to the host alias when the path has no leaf.
+  nonisolated static func remoteRepositoryName(host: RemoteHost, remotePath: String) -> String {
+    let leaf = RepositoryLocation.normalizedRemotePath(remotePath).split(separator: "/").last.map(String.init)
+    return leaf?.isEmpty == false ? leaf! : host.alias
+  }
+
+  /// Host-keyed git worktree id `<user@host:port><remotePath>` so worktrees at
+  /// the same path on different hosts (or matching a local path) never collide.
   nonisolated static func remoteWorktreeID(host: RemoteHost, worktreePath: String) -> Worktree.ID {
-    WorktreeID("remote://" + host.authority + worktreePath)
+    WorktreeID(host.authority + worktreePath)
   }
 
-  /// The persisted remote-repository configs. Read through `@Shared` so every
-  /// load path (initial, reload, open, removal) sees the same source of truth.
-  static func persistedRemoteRepositoryConfigs() -> [RemoteRepositoryConfig] {
-    @Shared(.settingsFile) var settingsFile
-    return settingsFile.global.remoteRepositories
+  /// The persisted remote-repository ids. Read through `@Shared` so every load
+  /// path (initial, reload, open, removal) sees the same source of truth.
+  static func persistedRemoteRepositoryRoots() -> [String] {
+    @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+    return remoteRepositoryRoots
+  }
+
+  /// Parse a persisted remote id into its host + path, or `nil` when it isn't a
+  /// parseable remote authority.
+  nonisolated static func parseRemoteRoot(_ id: String) -> (host: RemoteHost, remotePath: String)? {
+    guard case .remote(let host, let path) = RepositoryLocation.parse(persistedID: id) else { return nil }
+    return (host, path)
   }
 
   /// An empty placeholder for a remote repository, rendered immediately while
   /// the real listing resolves asynchronously over SSH (and when the host is
   /// unreachable). Carries the host so selection / terminal attach still work.
   nonisolated static func remotePlaceholderRepository(
-    config: RemoteRepositoryConfig,
+    host: RemoteHost,
+    remotePath: String,
     repoID: Repository.ID
   ) -> Repository {
     Repository(
       id: repoID,
-      rootURL: URL(fileURLWithPath: config.normalizedRemotePath),
-      name: config.resolvedDisplayName,
+      rootURL: URL(fileURLWithPath: remotePath),
+      name: remoteRepositoryName(host: host, remotePath: remotePath),
       worktrees: [],
       isGitRepository: true,
-      host: config.host
+      host: host
     )
   }
 
@@ -88,7 +100,8 @@ extension RepositoriesFeature {
   /// in-flight ssh (which terminates the process), so a stalled host can't keep
   /// the row spinning forever.
   nonisolated static func loadRemoteRepository(
-    _ config: RemoteRepositoryConfig,
+    host: RemoteHost,
+    remotePath: String,
     repoID: Repository.ID,
     shell: ShellClient? = nil
   ) async -> (repository: Repository, failure: LoadFailure?) {
@@ -98,7 +111,7 @@ extension RepositoriesFeature {
     }
     let outcome = await withTaskGroup(of: Outcome.self) { group in
       group.addTask {
-        let loaded = await resolveRemoteRepository(config, repoID: repoID, shell: shell)
+        let loaded = await resolveRemoteRepository(host: host, remotePath: remotePath, repoID: repoID, shell: shell)
         return .resolved(loaded.repository, loaded.failure)
       }
       group.addTask {
@@ -113,13 +126,13 @@ extension RepositoriesFeature {
     case .resolved(let repository, let failure):
       return (repository, failure)
     case .timedOut:
-      repositoriesLogger.warning("loadRemoteRepository: timed out reaching \(config.host.sshDestination)")
+      repositoriesLogger.warning("loadRemoteRepository: timed out reaching \(host.sshDestination)")
       let failure = LoadFailure(
         rootID: repoID,
         message:
-          "Can't reach \(config.host.sshDestination). The repository will reappear when the host is reachable."
+          "Can't reach \(host.sshDestination). The repository will reappear when the host is reachable."
       )
-      return (remotePlaceholderRepository(config: config, repoID: repoID), failure)
+      return (remotePlaceholderRepository(host: host, remotePath: remotePath, repoID: repoID), failure)
     }
   }
 
@@ -127,12 +140,12 @@ extension RepositoriesFeature {
   /// non-interactive background-probe profile (`BatchMode` + `ConnectTimeout` +
   /// `ServerAlive*`); any failure becomes a placeholder + `LoadFailure`.
   nonisolated private static func resolveRemoteRepository(
-    _ config: RemoteRepositoryConfig,
+    host: RemoteHost,
+    remotePath: String,
     repoID: Repository.ID,
     shell: ShellClient? = nil
   ) async -> (repository: Repository, failure: LoadFailure?) {
-    let host = config.host
-    let rootURL = URL(fileURLWithPath: config.normalizedRemotePath)
+    let rootURL = URL(fileURLWithPath: remotePath)
     let shell = shell ?? .ssh(host: host, extraOptions: SSHCommand.backgroundProbeOptions)
     let client = GitClient(shell: shell)
 
@@ -145,7 +158,7 @@ extension RepositoriesFeature {
         let repository = Repository(
           id: repoID,
           rootURL: rootURL,
-          name: config.resolvedDisplayName,
+          name: remoteRepositoryName(host: host, remotePath: remotePath),
           worktrees: IdentifiedArray(uniqueElements: loaded.map { remoteWorktree(from: $0, host: host) }),
           isGitRepository: true,
           host: host
@@ -162,9 +175,9 @@ extension RepositoriesFeature {
 
     // Empty or failed listing: classify so a plain directory renders as a folder
     // and an unreachable host renders as a placeholder rather than a fake repo.
-    switch await classifyRemotePath(config.normalizedRemotePath, shell: shell) {
+    switch await classifyRemotePath(remotePath, shell: shell) {
     case .folder:
-      return (remoteFolderRepository(config: config, repoID: repoID), nil)
+      return (remoteFolderRepository(host: host, remotePath: remotePath, repoID: repoID), nil)
     case .git where listingThrew:
       // It's a git repo, but the worktree listing threw: collapsing to a single
       // synthetic main would silently hide the repo's other worktrees. Surface a
@@ -173,17 +186,17 @@ extension RepositoriesFeature {
         rootID: repoID,
         message:
           "Connected to \(host.sshDestination) but couldn't list worktrees for "
-          + "\(config.normalizedRemotePath). Supacode will retry."
+          + "\(remotePath). Supacode will retry."
       )
-      return (remotePlaceholderRepository(config: config, repoID: repoID), failure)
+      return (remotePlaceholderRepository(host: host, remotePath: remotePath, repoID: repoID), failure)
     case .git:
       // Listing succeeded but was empty: a single synthetic main is the best
       // representation of a git repo with nothing else to show.
       let repository = Repository(
         id: repoID,
         rootURL: rootURL,
-        name: config.resolvedDisplayName,
-        worktrees: IdentifiedArray(uniqueElements: [remoteMainWorktree(config: config)]),
+        name: remoteRepositoryName(host: host, remotePath: remotePath),
+        worktrees: IdentifiedArray(uniqueElements: [remoteMainWorktree(host: host, remotePath: remotePath)]),
         isGitRepository: true,
         host: host
       )
@@ -194,10 +207,10 @@ extension RepositoriesFeature {
       let failure = LoadFailure(
         rootID: repoID,
         message:
-          "\(config.normalizedRemotePath) was not found on \(host.sshDestination). "
+          "\(remotePath) was not found on \(host.sshDestination). "
           + "The repository will reappear when the path exists."
       )
-      return (remotePlaceholderRepository(config: config, repoID: repoID), failure)
+      return (remotePlaceholderRepository(host: host, remotePath: remotePath, repoID: repoID), failure)
     case .unknown:
       // Unreachable host / ambiguous probe: keep an empty placeholder (so the
       // config isn't pruned and removal / edit still resolve it) and record a
@@ -207,7 +220,7 @@ extension RepositoriesFeature {
         message:
           "Can't reach \(host.sshDestination). The repository will reappear when the host is reachable."
       )
-      return (remotePlaceholderRepository(config: config, repoID: repoID), failure)
+      return (remotePlaceholderRepository(host: host, remotePath: remotePath, repoID: repoID), failure)
     }
   }
 
@@ -336,21 +349,22 @@ extension RepositoriesFeature {
   /// id is host-keyed (the same `remoteWorktreeID` scheme as remote git
   /// worktrees), so a remote `~` never collides with a local `~` folder.
   nonisolated static func remoteFolderRepository(
-    config: RemoteRepositoryConfig,
+    host: RemoteHost,
+    remotePath: String,
     repoID: Repository.ID
   ) -> Repository {
     let folder = Worktree(
       location: .remote(
-        config.host, workingDirectory: config.normalizedRemotePath, repositoryRoot: config.normalizedRemotePath),
+        host, workingDirectory: remotePath, repositoryRoot: remotePath),
       kind: .folder,
-      name: config.resolvedDisplayName,
-      detail: config.host.sshDestination,
+      name: remoteRepositoryName(host: host, remotePath: remotePath),
+      detail: host.sshDestination,
       isAttached: false
     )
     return Repository(
-      location: .remote(config.host, path: config.normalizedRemotePath),
+      location: .remote(host, path: remotePath),
       kind: .folder,
-      name: config.resolvedDisplayName,
+      name: remoteRepositoryName(host: host, remotePath: remotePath),
       worktrees: IdentifiedArray(uniqueElements: [folder])
     )
   }
@@ -360,6 +374,7 @@ extension RepositoriesFeature {
   nonisolated static func remoteWorktree(from base: Worktree, host: RemoteHost) -> Worktree {
     Worktree(
       id: remoteWorktreeID(host: host, worktreePath: base.workingDirectory.path(percentEncoded: false)),
+      kind: base.kind,
       name: base.name,
       detail: base.detail,
       workingDirectory: base.workingDirectory,
@@ -373,16 +388,17 @@ extension RepositoriesFeature {
 
   /// Synthetic main worktree used when the remote git listing is unavailable.
   /// `workingDirectory == repositoryRootURL` so it classifies as the git main.
-  nonisolated static func remoteMainWorktree(config: RemoteRepositoryConfig) -> Worktree {
-    let rootURL = URL(fileURLWithPath: config.normalizedRemotePath)
+  nonisolated static func remoteMainWorktree(host: RemoteHost, remotePath: String) -> Worktree {
+    let rootURL = URL(fileURLWithPath: remotePath)
     return Worktree(
-      id: remoteWorktreeID(host: config.host, worktreePath: config.normalizedRemotePath),
-      name: config.resolvedDisplayName,
-      detail: config.host.sshDestination,
+      id: remoteWorktreeID(host: host, worktreePath: remotePath),
+      kind: .git,
+      name: remoteRepositoryName(host: host, remotePath: remotePath),
+      detail: host.sshDestination,
       workingDirectory: rootURL,
       repositoryRootURL: rootURL,
       isAttached: false,
-      host: config.host
+      host: host
     )
   }
 

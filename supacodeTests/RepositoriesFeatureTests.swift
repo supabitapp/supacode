@@ -2227,6 +2227,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL), detail: "",
       workingDirectory: folderURL, repositoryRootURL: folderURL
     )
@@ -2448,6 +2449,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL), detail: "",
       workingDirectory: folderURL, repositoryRootURL: folderURL
     )
@@ -6512,7 +6514,7 @@ struct RepositoriesFeatureTests {
   }
 
   @Test func makeToolbarTitleContentForFolderUsesFolderName() {
-    let folderID = "folder:/tmp/Documents"
+    let folderID = "/tmp/Documents"
     let folderRow = makeSidebarItem(
       id: folderID,
       name: "Documents",
@@ -6920,6 +6922,7 @@ struct RepositoriesFeatureTests {
     await store.send(.loadPersistedRepositories)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: rootURL),
+      kind: .folder,
       name: Repository.name(for: rootURL),
       detail: "",
       workingDirectory: rootURL,
@@ -7010,6 +7013,7 @@ struct RepositoriesFeatureTests {
           let url = URL(fileURLWithPath: folderRoot)
           let synthetic = Worktree(
             id: Repository.folderWorktreeID(for: url),
+            kind: .folder,
             name: Repository.name(for: url),
             detail: "",
             workingDirectory: url,
@@ -7063,6 +7067,7 @@ struct RepositoriesFeatureTests {
 
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: standardizedURL),
+      kind: .folder,
       name: Repository.name(for: standardizedURL),
       detail: "",
       workingDirectory: standardizedURL,
@@ -7100,6 +7105,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: "/tmp/folder")
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: "folder",
       detail: "",
       workingDirectory: folderURL,
@@ -7131,6 +7137,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7216,6 +7223,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7275,6 +7283,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7338,6 +7347,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7374,6 +7384,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7422,6 +7433,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7472,6 +7484,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7523,6 +7536,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -7574,6 +7588,7 @@ struct RepositoriesFeatureTests {
     let rootID = standardized.path(percentEncoded: false)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: standardized),
+      kind: .folder,
       name: Repository.name(for: standardized),
       detail: "",
       workingDirectory: standardized,
@@ -7650,6 +7665,7 @@ struct RepositoriesFeatureTests {
     let rootID = missingURL.standardizedFileURL.path(percentEncoded: false)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: missingURL),
+      kind: .folder,
       name: Repository.name(for: missingURL), detail: "",
       workingDirectory: missingURL, repositoryRootURL: missingURL
     )
@@ -7722,6 +7738,7 @@ struct RepositoriesFeatureTests {
     func makeFolderRepo(url: URL, id: String) -> (Worktree, Repository) {
       let worktree = Worktree(
         id: Repository.folderWorktreeID(for: url),
+        kind: .folder,
         name: Repository.name(for: url), detail: "",
         workingDirectory: url, repositoryRootURL: url
       )
@@ -7940,6 +7957,7 @@ struct RepositoriesFeatureTests {
     func makeFolderRepo(url: URL, id: String) -> (Worktree, Repository) {
       let worktree = Worktree(
         id: Repository.folderWorktreeID(for: url),
+        kind: .folder,
         name: Repository.name(for: url),
         detail: "",
         workingDirectory: url,
@@ -8002,6 +8020,7 @@ struct RepositoriesFeatureTests {
     let idB = urlB.path(percentEncoded: false)
     let worktreeA = Worktree(
       id: Repository.folderWorktreeID(for: urlA),
+      kind: .folder,
       name: Repository.name(for: urlA), detail: "",
       workingDirectory: urlA, repositoryRootURL: urlA
     )
@@ -8012,6 +8031,7 @@ struct RepositoriesFeatureTests {
     )
     let worktreeB = Worktree(
       id: Repository.folderWorktreeID(for: urlB),
+      kind: .folder,
       name: Repository.name(for: urlB), detail: "",
       workingDirectory: urlB, repositoryRootURL: urlB
     )
@@ -8075,6 +8095,7 @@ struct RepositoriesFeatureTests {
     let urlB = URL(fileURLWithPath: rootB)
     let worktreeA = Worktree(
       id: Repository.folderWorktreeID(for: urlA),
+      kind: .folder,
       name: Repository.name(for: urlA),
       detail: "",
       workingDirectory: urlA,
@@ -8082,6 +8103,7 @@ struct RepositoriesFeatureTests {
     )
     let worktreeB = Worktree(
       id: Repository.folderWorktreeID(for: urlB),
+      kind: .folder,
       name: Repository.name(for: urlB),
       detail: "",
       workingDirectory: urlB,
@@ -8175,6 +8197,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderMain = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -8270,6 +8293,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -8316,6 +8340,7 @@ struct RepositoriesFeatureTests {
     let folderURL = URL(fileURLWithPath: folderRoot)
     let folderWorktree = Worktree(
       id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
       name: Repository.name(for: folderURL),
       detail: "",
       workingDirectory: folderURL,
@@ -8391,6 +8416,7 @@ struct RepositoriesFeatureTests {
       let folderURL = URL(fileURLWithPath: folderRoot)
       let folderWorktree = Worktree(
         id: Repository.folderWorktreeID(for: folderURL),
+        kind: .folder,
         name: Repository.name(for: folderURL), detail: "",
         workingDirectory: folderURL, repositoryRootURL: folderURL
       )
@@ -8446,6 +8472,7 @@ struct RepositoriesFeatureTests {
       let folderURL = URL(fileURLWithPath: folderRoot)
       let folderWorktree = Worktree(
         id: Repository.folderWorktreeID(for: folderURL),
+        kind: .folder,
         name: Repository.name(for: folderURL), detail: "",
         workingDirectory: folderURL, repositoryRootURL: folderURL
       )

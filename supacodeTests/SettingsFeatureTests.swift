@@ -134,18 +134,12 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.systemNotificationsEnabled == true)
   }
 
-  @Test(.dependencies) func settingsPersistPreservesRemoteRepositories() async {
-    let remote = RemoteRepositoryConfig(
-      host: RemoteHost(alias: "devbox"),
-      remotePath: "/home/me/proj",
-      displayName: "proj"
-    )
-    var initialSettings = GlobalSettings.default
-    initialSettings.remoteRepositories = [remote]
+  @Test(.dependencies) func settingsPersistDoesNotTouchRemoteRepositoryRoots() async {
+    let remote = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
     @Shared(.settingsFile) var settingsFile
-    $settingsFile.withLock { $0.global = initialSettings }
+    $settingsFile.withLock { $0.remoteRepositoryRoots = [remote.id.rawValue] }
 
-    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+    let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
     }
 
@@ -155,19 +149,13 @@ struct SettingsFeatureTests {
     await store.receive(\.delegate.settingsChanged)
 
     #expect(settingsFile.global.appearanceMode == .light)
-    #expect(settingsFile.global.remoteRepositories == [remote])
+    #expect(settingsFile.remoteRepositoryRoots == [remote.id.rawValue])
   }
 
-  @Test(.dependencies) func settingsLoadedNormalizationPreservesRemoteRepositories() async {
-    let remote = RemoteRepositoryConfig(
-      host: RemoteHost(alias: "devbox"),
-      remotePath: "/home/me/proj",
-      displayName: "proj"
-    )
-    var currentSettings = GlobalSettings.default
-    currentSettings.remoteRepositories = [remote]
+  @Test(.dependencies) func settingsLoadedNormalizationDoesNotTouchRemoteRepositoryRoots() async {
+    let remote = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
     @Shared(.settingsFile) var settingsFile
-    $settingsFile.withLock { $0.global = currentSettings }
+    $settingsFile.withLock { $0.remoteRepositoryRoots = [remote.id.rawValue] }
 
     var loaded = GlobalSettings.default
     loaded.defaultWorktreeBaseDirectoryPath = " ~/worktrees "
@@ -185,7 +173,7 @@ struct SettingsFeatureTests {
     await store.receive(\.delegate.settingsChanged)
 
     #expect(settingsFile.global.defaultWorktreeBaseDirectoryPath == expectedPath)
-    #expect(settingsFile.global.remoteRepositories == [remote])
+    #expect(settingsFile.remoteRepositoryRoots == [remote.id.rawValue])
   }
 
   @Test(.dependencies) func selectionBuildsRepositorySettingsFromRepositorySummary() async {

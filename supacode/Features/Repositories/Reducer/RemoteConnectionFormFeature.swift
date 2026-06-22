@@ -13,10 +13,10 @@ struct RemoteConnectionFormFeature {
   struct State: Equatable {
     enum Mode: Equatable {
       case add
-      /// Editing an existing config, matched by its stable `UUID`. The original
-      /// repository id is kept so the parent can drop stale per-repo
-      /// customization when host/path changes re-key the repo.
-      case edit(configID: UUID, originalRepositoryID: Repository.ID)
+      /// Editing an existing remote, keyed by its self-descriptive repository id.
+      /// The original id is kept so the parent can replace it and drop stale
+      /// per-repo customization when a host/path change re-keys the repo.
+      case edit(originalRepositoryID: Repository.ID)
     }
 
     var mode: Mode
@@ -41,14 +41,14 @@ struct RemoteConnectionFormFeature {
       self.remotePath = remotePath
     }
 
-    /// Seed an edit form from an existing config.
-    static func editing(_ config: RemoteRepositoryConfig, repositoryID: Repository.ID) -> State {
+    /// Seed an edit form from an existing remote host + path.
+    static func editing(host: RemoteHost, remotePath: String, repositoryID: Repository.ID) -> State {
       State(
-        mode: .edit(configID: config.id, originalRepositoryID: repositoryID),
-        server: config.host.alias,
-        port: config.host.port.map(String.init) ?? "",
-        username: config.host.username ?? "",
-        remotePath: config.remotePath
+        mode: .edit(originalRepositoryID: repositoryID),
+        server: host.alias,
+        port: host.port.map(String.init) ?? "",
+        username: host.username ?? "",
+        remotePath: remotePath
       )
     }
 
@@ -77,9 +77,9 @@ struct RemoteConnectionFormFeature {
     case delegate(Delegate)
 
     enum Delegate: Equatable {
-      /// A validated config carrying the resolved absolute path; the parent
-      /// persists it (add or replace by id) and dismisses.
-      case save(RemoteRepositoryConfig)
+      /// A validated host + resolved absolute path; the parent derives the id,
+      /// persists it (add or replace), and dismisses.
+      case save(host: RemoteHost, remotePath: String)
       case cancel
     }
   }
@@ -115,17 +115,7 @@ struct RemoteConnectionFormFeature {
             + "Check the server, port, user, and path."
           return .none
         }
-        let id: UUID = {
-          if case .edit(let configID, _) = state.mode { return configID }
-          return UUID()
-        }()
-        let config = RemoteRepositoryConfig(
-          id: id,
-          host: state.makeHost(),
-          remotePath: absolutePath,
-          displayName: ""
-        )
-        return .send(.delegate(.save(config)))
+        return .send(.delegate(.save(host: state.makeHost(), remotePath: absolutePath)))
 
       case .delegate:
         return .none
