@@ -45,8 +45,9 @@ extension RepositoriesFeature {
   /// Sidebar title for a remote repo: the remote path's last component, falling
   /// back to the host alias when the path has no leaf.
   nonisolated static func remoteRepositoryName(host: RemoteHost, remotePath: String) -> String {
+    // `split` omits empty subsequences, so a non-nil leaf is never empty.
     let leaf = RepositoryLocation.normalizedRemotePath(remotePath).split(separator: "/").last.map(String.init)
-    return leaf?.isEmpty == false ? leaf! : host.alias
+    return leaf ?? host.alias
   }
 
   /// Host-keyed git worktree id `<user@host:port><remotePath>` so worktrees at
