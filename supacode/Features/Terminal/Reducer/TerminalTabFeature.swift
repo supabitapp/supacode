@@ -26,6 +26,8 @@ struct TerminalTabFeature {
     /// True when the tab's split tree has a zoomed pane. The tab-bar leaf swaps
     /// its close button for a dismiss-zoom button while this is set.
     var isSplitZoomed: Bool = false
+    /// Monotonic invalidation token for same-UUID surface view replacement.
+    var surfaceGeneration = 0
     /// Per-tab agent snapshot pushed by `AppFeature.agentPresenceFanOutEffect`.
     /// Leaf reads `state.agents` instead of iterating worktree-wide presence on
     /// every storm tick.
@@ -57,6 +59,9 @@ struct TerminalTabFeature {
         }
         if state.isSplitZoomed != projection.isSplitZoomed {
           state.isSplitZoomed = projection.isSplitZoomed
+        }
+        if state.surfaceGeneration != projection.surfaceGeneration {
+          state.surfaceGeneration = projection.surfaceGeneration
         }
         return .none
 

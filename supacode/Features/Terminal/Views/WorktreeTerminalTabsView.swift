@@ -126,6 +126,8 @@ private struct TerminalSplitTreePane: View {
     let projection = terminalsStore.terminalTabs[id: tabId]
     let _ = projection?.surfaceIDs
     let _ = projection?.activeSurfaceID
+    // Touch generation so SwiftUI rebuilds the tree when a same-UUID surface view is swapped under it.
+    let _ = projection?.surfaceGeneration
     TerminalSplitTreeAXContainer(
       tree: terminalState.splitTree(for: tabId),
       terminalState: terminalState,

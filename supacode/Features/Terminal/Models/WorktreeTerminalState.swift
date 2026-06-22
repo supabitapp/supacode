@@ -22,19 +22,23 @@ struct WorktreeTabProjection: Equatable, Sendable {
   let activeSurfaceID: UUID?
   let unseenNotificationCount: Int
   let isSplitZoomed: Bool
+  /// Per-tab repaint epoch, bumped on same-UUID surface replacement so the view rebuilds.
+  let surfaceGeneration: Int
 
   init(
     tabID: TerminalTabID,
     surfaceIDs: [UUID],
     activeSurfaceID: UUID?,
     unseenNotificationCount: Int,
-    isSplitZoomed: Bool = false
+    isSplitZoomed: Bool = false,
+    surfaceGeneration: Int = 0,
   ) {
     self.tabID = tabID
     self.surfaceIDs = surfaceIDs
     self.activeSurfaceID = activeSurfaceID
     self.unseenNotificationCount = unseenNotificationCount
     self.isSplitZoomed = isSplitZoomed
+    self.surfaceGeneration = surfaceGeneration
   }
 }
 
@@ -44,6 +48,11 @@ final class WorktreeTerminalState {
   struct SurfaceActivity: Equatable {
     let isVisible: Bool
     let isFocused: Bool
+  }
+
+  private struct SurfaceLaunchMetadata {
+    let usesZmx: Bool
+    let context: ghostty_surface_context_e
   }
 
   let tabManager: TerminalTabManager
@@ -57,6 +66,11 @@ final class WorktreeTerminalState {
   // `surfaceStates` / `WorktreeTabProjection` to keep agent storms cold.
   private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
   @ObservationIgnored private var surfaces: [UUID: GhosttySurfaceView] = [:]
+  // `usesZmx` + `context` retained per surface so an unexpected zmx exit can recreate it on reattach.
+  @ObservationIgnored private var surfaceLaunchMetadata: [UUID: SurfaceLaunchMetadata] = [:]
+  // Surfaces the user explicitly closed, so an unexpected zmx exit isn't mistaken for one and reattached.
+  @ObservationIgnored private var pendingExplicitSurfaceCloseIDs: Set<UUID> = []
+  @ObservationIgnored private var surfaceGenerationByTab: [TerminalTabID: Int] = [:]
   @ObservationIgnored private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   /// Per-tab projection cache. `WorktreeTerminalState` recomputes from `trees`
   /// / `notifications` / `focusedSurfaceIdByTab`, compares to the cached value,
@@ -506,6 +520,17 @@ final class WorktreeTerminalState {
     trees.values.flatMap { $0.leaves().map(\.id) }
   }
 
+  // Standardized to match `loadFailuresByID` keys (built from `standardizedFileURL.path`)
+  // so prune protection lines up.
+  var repositoryID: Repository.ID {
+    switch worktree.location.repositoryLocation {
+    case .local(let url):
+      RepositoryID(url.standardizedFileURL.path(percentEncoded: false))
+    case .remote:
+      worktree.location.repositoryLocation.id
+    }
+  }
+
   /// O(1) emptiness check that skips the split-tree walk in `allSurfaceIDs`.
   var hasAnySurface: Bool { !surfaces.isEmpty }
 
@@ -629,7 +654,7 @@ final class WorktreeTerminalState {
     else {
       return false
     }
-    surface.performBindingAction("close_surface")
+    requestExplicitSurfaceClose(surface)
     return true
   }
 
@@ -640,8 +665,12 @@ final class WorktreeTerminalState {
         "closeSurface: surface \(surfaceID) not found. Known: \(surfaces.keys.map(\.uuidString))")
       return false
     }
-    surface.performBindingAction("close_surface")
+    requestExplicitSurfaceClose(surface)
     return true
+  }
+
+  private func requestExplicitSurfaceClose(_ surface: GhosttySurfaceView) {
+    performBindingAction("close_surface", on: surface)
   }
 
   @discardableResult
@@ -652,15 +681,22 @@ final class WorktreeTerminalState {
     else {
       return false
     }
-    surface.performBindingAction(action)
+    performBindingAction(action, on: surface)
     return true
   }
 
   @discardableResult
   func performBindingAction(_ action: String, onSurfaceID surfaceID: UUID) -> Bool {
     guard let surface = surfaces[surfaceID] else { return false }
-    surface.performBindingAction(action)
+    performBindingAction(action, on: surface)
     return true
+  }
+
+  private func performBindingAction(_ action: String, on surface: GhosttySurfaceView) {
+    if action == "close_surface" {
+      pendingExplicitSurfaceCloseIDs.insert(surface.id)
+    }
+    surface.performBindingAction(action)
   }
 
   @discardableResult
@@ -795,7 +831,7 @@ final class WorktreeTerminalState {
         terminalStateLogger.warning(
           "performSplitAction: failed to insert split for surface \(surfaceID) in tab \(tabId.rawValue): \(error)")
         newSurface.closeSurface()
-        surfaces.removeValue(forKey: newSurface.id)
+        discardSurfaceBookkeeping(for: newSurface.id)
         return false
       }
 
@@ -893,13 +929,17 @@ final class WorktreeTerminalState {
   }
 
   func closeAllSurfaces() {
-    let closingSurfaceIDs = Array(surfaces.keys)
-    for surface in surfaces.values {
+    let closingSurfaces = Array(surfaces.values)
+    let closingSurfaceIDs = closingSurfaces.map(\.id)
+    for surface in closingSurfaces {
       surface.closeSurface()
     }
+    for surfaceID in closingSurfaceIDs {
+      discardSurfaceBookkeeping(for: surfaceID)
+    }
     cleanupBlockingScriptLaunchDirectories()
-    surfaces.removeAll()
     trees.removeAll()
+    surfaceGenerationByTab.removeAll()
     focusedSurfaceIdByTab.removeAll()
     onSurfacesClosed?(Set(closingSurfaceIDs))
     let pendingKinds = Set(blockingScripts.values)
@@ -1225,7 +1265,7 @@ final class WorktreeTerminalState {
     } catch {
       layoutLogger.warning("Failed to restore split for tab \(tabId.rawValue): \(error)")
       newSurface.closeSurface()
-      surfaces.removeValue(forKey: newSurface.id)
+      discardSurfaceBookkeeping(for: newSurface.id)
       return nil
     }
   }
@@ -1380,11 +1420,12 @@ final class WorktreeTerminalState {
     inheritingFromSurfaceId: UUID?,
     context: ghostty_surface_context_e,
     surfaceID: UUID? = nil,
-    bypassZmx: Bool = false
+    bypassZmx: Bool = false,
+    replacingExistingSurfaceID: Bool = false,
   ) -> GhosttySurfaceView {
     let resolvedID: UUID
     if let requested = surfaceID {
-      if surfaces[requested] != nil {
+      if surfaces[requested] != nil, !replacingExistingSurfaceID {
         terminalStateLogger.warning("Duplicate surface ID \(requested), generating a new one.")
         resolvedID = UUID()
       } else {
@@ -1400,7 +1441,7 @@ final class WorktreeTerminalState {
       surfaceID: surfaceID,
       command: command,
       initialInput: initialInput,
-      bypassZmx: bypassZmx
+      bypassZmx: bypassZmx,
     )
     // Remote worktrees have no local working directory: the surface command is
     // an `ssh …` line (see `resolveLaunch`) and the cwd lives on the
@@ -1423,8 +1464,9 @@ final class WorktreeTerminalState {
       fontSize: inherited.fontSize,
       context: context
     )
-    wireSurfaceCallbacks(view: view, tabId: tabId, surfaceID: surfaceID)
+    wireSurfaceCallbacks(view: view, tabId: tabId)
     surfaces[view.id] = view
+    surfaceLaunchMetadata[view.id] = SurfaceLaunchMetadata(usesZmx: launch.usesZmx, context: context)
     surfaceStates[view.id] = WorktreeSurfaceState()
     return view
   }
@@ -1434,58 +1476,80 @@ final class WorktreeTerminalState {
   /// weak view]` so the count adds up fast.
   private func wireSurfaceCallbacks(
     view: GhosttySurfaceView,
-    tabId: TerminalTabID,
-    surfaceID: UUID
+    tabId: TerminalTabID
+  ) {
+    wireSurfaceTabCallbacks(view: view, tabId: tabId)
+    wireSurfaceLifecycleCallbacks(view: view, tabId: tabId)
+  }
+
+  /// Tab / title / split callbacks. Split from `wireSurfaceLifecycleCallbacks`
+  /// so each stays under swiftlint's cyclomatic-complexity cap.
+  private func wireSurfaceTabCallbacks(
+    view: GhosttySurfaceView,
+    tabId: TerminalTabID
   ) {
     view.bridge.onTitleChange = { [weak self, weak view] title in
       guard let self, let view else { return }
+      guard self.isLiveSurface(view) else { return }
       if self.focusedSurfaceIdByTab[tabId] == view.id {
         self.tabManager.updateTitle(tabId, title: title)
       }
     }
-    view.bridge.onPromptTitle = { [weak self] in
-      self?.tabManager.beginTabRename(tabId)
+    view.bridge.onPromptTitle = { [weak self, weak view] in
+      guard let self, let view, self.isLiveSurface(view) else { return }
+      self.tabManager.beginTabRename(tabId)
     }
     view.bridge.onSplitAction = { [weak self, weak view] action in
       guard let self, let view else { return false }
+      guard self.isLiveSurface(view) else { return false }
       return self.performSplitAction(action, for: view.id)
     }
     view.bridge.onNewTab = { [weak self, weak view] in
       guard let self, let view else { return false }
+      guard self.isLiveSurface(view) else { return false }
       return self.createTab(inheritingFromSurfaceId: view.id) != nil
     }
-    view.bridge.onCloseTab = { [weak self] _ in
-      guard let self else { return false }
+    view.bridge.onCloseTab = { [weak self, weak view] _ in
+      guard let self, let view, self.isLiveSurface(view) else { return false }
       self.closeTab(tabId)
       return true
     }
-    view.bridge.onGotoTab = { [weak self] target in
-      guard let self else { return false }
+    view.bridge.onGotoTab = { [weak self, weak view] target in
+      guard let self, let view, self.isLiveSurface(view) else { return false }
       return self.handleGotoTabRequest(target)
     }
-    view.bridge.onCommandPaletteToggle = { [weak self] in
-      guard let self else { return false }
+    view.bridge.onCommandPaletteToggle = { [weak self, weak view] in
+      guard let self, let view, self.isLiveSurface(view) else { return false }
       self.onCommandPaletteToggle?()
       return true
     }
-    view.bridge.onProgressReport = { [weak self] _ in
-      guard let self else { return }
+  }
+
+  /// Progress / exit / notification / focus callbacks.
+  private func wireSurfaceLifecycleCallbacks(
+    view: GhosttySurfaceView,
+    tabId: TerminalTabID
+  ) {
+    view.bridge.onProgressReport = { [weak self, weak view] _ in
+      guard let self, let view, self.isLiveSurface(view) else { return }
       self.updateRunningState(for: tabId)
     }
-    view.bridge.onCommandFinished = { [weak self] exitCode in
-      guard let self else { return }
+    view.bridge.onCommandFinished = { [weak self, weak view] exitCode in
+      guard let self, let view, self.isLiveSurface(view) else { return }
       self.handleBlockingScriptCommandFinished(tabId: tabId, exitCode: exitCode)
     }
-    view.bridge.onChildExited = { [weak self] exitCode in
-      guard let self else { return }
+    view.bridge.onChildExited = { [weak self, weak view] exitCode in
+      guard let self, let view, self.isLiveSurface(view) else { return }
       self.handleBlockingScriptChildExited(tabId: tabId, exitCode: exitCode)
     }
     view.bridge.onDesktopNotification = { [weak self, weak view] title, body in
       guard let self, let view else { return }
+      guard self.isLiveSurface(view) else { return }
       self.handleAgentOSCNotification(title: title, body: body, surfaceID: view.id)
     }
     view.bridge.onContextSignal = { [weak self, weak view] _, id, metadata in
       guard let self, let view else { return }
+      guard self.isLiveSurface(view) else { return }
       self.handleContextSignal(surfaceID: view.id, id: id, metadata: metadata)
     }
     view.bridge.onCloseRequest = { [weak self, weak view] processAlive in
@@ -1494,13 +1558,19 @@ final class WorktreeTerminalState {
     }
     view.onFocusChange = { [weak self, weak view] focused in
       guard let self, let view, focused else { return }
+      guard self.isLiveSurface(view) else { return }
       self.recordActiveSurface(view, in: tabId)
       self.emitTaskStatusIfChanged()
     }
-    view.shouldClaimFocus = { [weak self] in
-      guard let self else { return false }
-      return self.focusedSurfaceIdByTab[tabId] == surfaceID
+    view.shouldClaimFocus = { [weak self, weak view] in
+      guard let self, let view, self.isLiveSurface(view) else { return false }
+      return self.focusedSurfaceIdByTab[tabId] == view.id
     }
+  }
+
+  // Identity, not key presence: a reattached surface keeps its UUID, so stale closures from the old view must no-op.
+  private func isLiveSurface(_ view: GhosttySurfaceView) -> Bool {
+    surfaces[view.id] === view
   }
 
   /// Routes an OSC 3008 context signal to the presence or notify handler.
@@ -1660,6 +1730,7 @@ final class WorktreeTerminalState {
     var command: String?
     var initialInput: String?
     var commandWrapper: [String]
+    var usesZmx: Bool
   }
 
   /// Routes a surface through zmx so the underlying shell survives app quit.
@@ -1679,9 +1750,10 @@ final class WorktreeTerminalState {
     bypassZmx: Bool
   ) -> ResolvedLaunch {
     if bypassZmx {
-      return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [])
+      return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [], usesZmx: false)
     }
     let sessionID = ZmxSessionID.make(surfaceID: surfaceID)
+    let zmxExecutablePath = zmxClient.executableURL()?.path(percentEncoded: false)
     // Remote worktree: a *local* zmx session wraps the SSH connection, so zmx
     // only needs to exist on the client. The remote runs a plain login shell
     // (no zmx installed there). The surface command is always the wrapped ssh
@@ -1695,24 +1767,26 @@ final class WorktreeTerminalState {
       return ResolvedLaunch(
         command: ZmxAttach.buildRemoteCommand(
           host: host,
-          localZmxExecutablePath: zmxClient.executableURL()?.path(percentEncoded: false),
+          localZmxExecutablePath: zmxExecutablePath,
           sessionID: sessionID,
           userCommand: userCommand,
-          surfaceID: surfaceID
+          surfaceID: surfaceID,
         ),
         initialInput: initialInput,
-        commandWrapper: []
+        commandWrapper: [],
+        usesZmx: zmxExecutablePath != nil,
       )
     }
     let resolved = ZmxAttach.resolveLaunch(
-      executablePath: zmxClient.executableURL()?.path(percentEncoded: false),
+      executablePath: zmxExecutablePath,
       sessionID: sessionID,
-      command: command
+      command: command,
     )
     return ResolvedLaunch(
       command: resolved.command,
       initialInput: initialInput,
-      commandWrapper: resolved.commandWrapper
+      commandWrapper: resolved.commandWrapper,
+      usesZmx: zmxExecutablePath != nil,
     )
   }
 
@@ -1892,11 +1966,17 @@ final class WorktreeTerminalState {
   /// `withTaskGroup` instead of N events and N detached Tasks.
   /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
   /// instant so a future surface ID can't reuse stale dedupe state.
-  private func cleanupSurfaceState(for surfaceID: UUID) {
+  private func discardSurfaceBookkeeping(for surfaceID: UUID) {
     pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
     lastCustomNotificationAt.removeValue(forKey: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
+    surfaceLaunchMetadata.removeValue(forKey: surfaceID)
+    pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     surfaceStates.removeValue(forKey: surfaceID)
+  }
+
+  private func cleanupSurfaceState(for surfaceID: UUID) {
+    discardSurfaceBookkeeping(for: surfaceID)
     onSurfacesClosed?([surfaceID])
   }
 
@@ -1923,6 +2003,7 @@ final class WorktreeTerminalState {
 
   private func removeTree(for tabId: TerminalTabID) {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
+    surfaceGenerationByTab.removeValue(forKey: tabId)
     let leafIDs = tree.leaves().map(\.id)
     for surface in tree.leaves() {
       surface.closeSurface()
@@ -2067,6 +2148,7 @@ final class WorktreeTerminalState {
   /// not fire the callback.
   private func emitTabProjection(for tabId: TerminalTabID) {
     guard let tree = trees[tabId] else {
+      surfaceGenerationByTab.removeValue(forKey: tabId)
       if lastTabProjections.removeValue(forKey: tabId) != nil {
         onTabRemoved?(tabId)
       }
@@ -2084,7 +2166,8 @@ final class WorktreeTerminalState {
       surfaceIDs: surfaceIDs,
       activeSurfaceID: focusedSurfaceIdByTab[tabId],
       unseenNotificationCount: unseenCount,
-      isSplitZoomed: tree.zoomed != nil
+      isSplitZoomed: tree.zoomed != nil,
+      surfaceGeneration: surfaceGenerationByTab[tabId, default: 0],
     )
     guard lastTabProjections[tabId] != projection else { return }
     lastTabProjections[tabId] = projection
@@ -2175,17 +2258,126 @@ final class WorktreeTerminalState {
   }
 
   private func handleCloseRequest(for view: GhosttySurfaceView, processAlive _: Bool) {
-    guard surfaces[view.id] != nil else { return }
+    guard surfaces[view.id] === view else { return }
+    let isExplicitClose = pendingExplicitSurfaceCloseIDs.remove(view.id) != nil
+    if shouldHandleAsUnexpectedZmxClose(
+      surfaceID: view.id,
+      isExplicitClose: isExplicitClose
+    ) {
+      handleUnexpectedZmxClose(for: view)
+      return
+    }
+    closeSurfaceAndUpdateTabs(view, killZmxSession: true)
+  }
+
+  private func shouldHandleAsUnexpectedZmxClose(
+    surfaceID: UUID,
+    isExplicitClose: Bool
+  ) -> Bool {
+    guard !isExplicitClose else { return false }
+    return surfaceLaunchMetadata[surfaceID]?.usesZmx == true
+  }
+
+  private func handleUnexpectedZmxClose(for view: GhosttySurfaceView) {
+    let surfaceID = view.id
+    let sessionID = ZmxSessionID.make(surfaceID: surfaceID)
+    let client = zmxClient
+    Task { @MainActor [weak self, weak view] in
+      let sessions = await client.listSessionsWithClients()
+      guard let self, let view, self.surfaces[surfaceID] === view else { return }
+      guard let sessions else {
+        terminalStateLogger.info(
+          "Closing unexpectedly exited zmx surface \(surfaceID) without killing session: probe failed."
+        )
+        self.closeSurfaceAndUpdateTabs(view, killZmxSession: false)
+        return
+      }
+      guard let session = sessions.first(where: { $0.name == sessionID }) else {
+        self.closeSurfaceAndUpdateTabs(view, killZmxSession: true)
+        return
+      }
+      // Reattach only an idle session we positively own (0 clients). A session
+      // with another attached client (clients > 0) or an unknown count (nil) must
+      // never be destroyed, matching the orphan reaper's spare-on-in-use rule.
+      guard let clients = session.clients, clients == 0 else {
+        self.closeSurfaceAndUpdateTabs(view, killZmxSession: false)
+        return
+      }
+      if !self.replaceUnexpectedZmxSurface(view) {
+        self.closeSurfaceAndUpdateTabs(view, killZmxSession: false)
+      }
+    }
+  }
+
+  @discardableResult
+  private func replaceUnexpectedZmxSurface(_ view: GhosttySurfaceView) -> Bool {
+    guard let metadata = surfaceLaunchMetadata[view.id], metadata.usesZmx else { return false }
+    guard zmxClient.executableURL() != nil else {
+      terminalStateLogger.info(
+        "Cannot replace unexpectedly exited zmx surface \(view.id): zmx executable unavailable."
+      )
+      return false
+    }
+    guard let tabId = tabID(containing: view.id), let tree = trees[tabId], let node = tree.find(id: view.id) else {
+      return false
+    }
+    let previousState = surfaceStates[view.id]
+    let replacement = createSurface(
+      tabId: tabId,
+      initialInput: nil,
+      inheritingFromSurfaceId: view.id,
+      context: metadata.context,
+      surfaceID: view.id,
+      bypassZmx: false,
+      replacingExistingSurfaceID: true,
+    )
+    if let previousState {
+      surfaceStates[view.id] = previousState
+    }
+    surfaceLaunchMetadata[view.id] = metadata
+    do {
+      let newTree = try tree.replacing(node: node, with: .leaf(view: replacement))
+      view.closeSurface()
+      bumpSurfaceGeneration(for: tabId)
+      updateTree(newTree, for: tabId)
+      updateRunningState(for: tabId)
+      if focusedSurfaceIdByTab[tabId] == view.id {
+        focusSurface(replacement, in: tabId)
+      }
+      terminalStateLogger.info("Reattached unexpectedly exited zmx surface \(view.id).")
+      return true
+    } catch {
+      terminalStateLogger.warning("Failed to replace unexpectedly exited zmx surface \(view.id): \(error).")
+      replacement.closeSurface()
+      discardSurfaceBookkeeping(for: replacement.id)
+      surfaces[view.id] = view
+      if let previousState {
+        surfaceStates[view.id] = previousState
+      }
+      surfaceLaunchMetadata[view.id] = metadata
+      return false
+    }
+  }
+
+  private func bumpSurfaceGeneration(for tabId: TerminalTabID) {
+    surfaceGenerationByTab[tabId, default: 0] += 1
+  }
+
+  private func closeSurfaceAndUpdateTabs(_ view: GhosttySurfaceView, killZmxSession: Bool) {
     guard let tabId = tabID(containing: view.id), let tree = trees[tabId] else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
-      killZmxSessions(forSurfaceIDs: [view.id])
+      if killZmxSession {
+        killZmxSessions(forSurfaceIDs: [view.id])
+      }
       return
     }
     guard let node = tree.find(id: view.id) else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
-      killZmxSessions(forSurfaceIDs: [view.id])
+      if killZmxSession {
+        killZmxSessions(forSurfaceIDs: [view.id])
+      }
       return
     }
     let nextSurface =
@@ -2195,7 +2387,9 @@ final class WorktreeTerminalState {
     let newTree = tree.removing(node)
     view.closeSurface()
     cleanupSurfaceState(for: view.id)
-    killZmxSessions(forSurfaceIDs: [view.id])
+    if killZmxSession {
+      killZmxSessions(forSurfaceIDs: [view.id])
+    }
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
@@ -2316,5 +2510,6 @@ final class WorktreeTerminalState {
     func installSurfaceStateForTesting(_ state: WorktreeSurfaceState, forSurfaceID surfaceID: UUID) {
       surfaceStates[surfaceID] = state
     }
+
   #endif
 }

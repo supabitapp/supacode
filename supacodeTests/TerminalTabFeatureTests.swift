@@ -56,6 +56,36 @@ struct TerminalTabFeatureTests {
     }
   }
 
+  @Test func projectionChangedPropagatesSurfaceGeneration() async {
+    let tabID = TerminalTabID(rawValue: UUID())
+    let surface = UUID()
+    let store = TestStore(
+      initialState: TerminalTabFeature.State(
+        id: tabID,
+        worktreeID: "/tmp/repo",
+        surfaceIDs: [surface],
+        activeSurfaceID: surface,
+        unseenNotificationCount: 0
+      )
+    ) { TerminalTabFeature() }
+
+    // A same-UUID surface swap bumps only the generation; the leaf must mirror it
+    // so the view rebuilds.
+    await store.send(
+      .projectionChanged(
+        WorktreeTabProjection(
+          tabID: tabID,
+          surfaceIDs: [surface],
+          activeSurfaceID: surface,
+          unseenNotificationCount: 0,
+          surfaceGeneration: 1
+        )
+      )
+    ) {
+      $0.surfaceGeneration = 1
+    }
+  }
+
   @Test func projectionChangedTogglesSplitZoomedIndependently() async {
     let tabID = TerminalTabID(rawValue: UUID())
     let surface = UUID()

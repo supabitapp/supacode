@@ -343,9 +343,13 @@ struct AppFeature {
         // their placeholders have no rows yet, so pruning would delete restored
         // remote layouts and kill their zmx sessions before resolution lands.
         if state.repositories.resolvingRemoteRepositoryIDs.isEmpty {
+          // Failed/loading repos have no worktree rows yet, so shield their restored zmx sessions from prune.
+          let protectedRepositoryIDs = Set(state.repositories.loadFailuresByID.keys)
           effects.append(
-            .run { [allowed] _ in
-              await terminalClient.send(.prune(allowed))
+            .run { [allowed, protectedRepositoryIDs] _ in
+              await terminalClient.send(
+                .prune(keeping: allowed, protectingRepositoryIDs: protectedRepositoryIDs)
+              )
             }
           )
         }

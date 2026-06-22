@@ -355,8 +355,8 @@ final class WorktreeTerminalManager {
 
   private func handleManagementCommand(_ command: TerminalClient.Command) {
     switch command {
-    case .prune(let ids):
-      prune(keeping: ids)
+    case .prune(let ids, let protectedRepositoryIDs):
+      prune(keeping: ids, protectingRepositoryIDs: protectedRepositoryIDs)
     case .setNotificationsEnabled(let enabled):
       setNotificationsEnabled(enabled)
     case .refreshTabBarVisibility:
@@ -558,9 +558,15 @@ final class WorktreeTerminalManager {
     return state.closeFocusedSurface()
   }
 
-  func prune(keeping worktreeIDs: Set<Worktree.ID>) {
+  func prune(
+    keeping worktreeIDs: Set<Worktree.ID>,
+    protectingRepositoryIDs protectedRepositoryIDs: Set<Repository.ID> = []
+  ) {
+    let shouldKeep: (Worktree.ID, WorktreeTerminalState) -> Bool = { id, state in
+      worktreeIDs.contains(id) || protectedRepositoryIDs.contains(state.repositoryID)
+    }
     var removed: [(Worktree.ID, WorktreeTerminalState)] = []
-    for (id, state) in states where !worktreeIDs.contains(id) {
+    for (id, state) in states where !shouldKeep(id, state) {
       removed.append((id, state))
     }
     let prunedSurfaceIDs = Set(removed.flatMap { _, state in state.allSurfaceIDs })
@@ -582,7 +588,7 @@ final class WorktreeTerminalManager {
     if !removed.isEmpty {
       terminalLogger.info("Pruned \(removed.count) terminal state(s)")
     }
-    states = states.filter { worktreeIDs.contains($0.key) }
+    states = states.filter { shouldKeep($0.key, $0.value) }
     cancelPendingIdleHooks(forSurfaceIDs: prunedSurfaceIDs)
     for (id, _) in removed { invalidateCaches(forPrunedWorktree: id) }
     emitNotificationIndicatorCountIfNeeded()

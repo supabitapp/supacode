@@ -119,7 +119,36 @@ struct AppFeatureArchivedSelectionTests {
 
     #expect(
       sentCommands.value == [
-        .prune([activeWorktree.id])
+        .prune(keeping: [activeWorktree.id], protectingRepositoryIDs: [])
+      ]
+    )
+  }
+
+  @Test(.dependencies) func repositoriesChangedProtectsFailedRepositoriesDuringTerminalPrune() async {
+    var repositoriesState = RepositoriesFeature.State()
+    let failedRepositoryID = RepositoryID("/tmp/repo")
+    repositoriesState.loadFailuresByID = [failedRepositoryID: "boom"]
+    let appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+      $0.worktreeInfoWatcher.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.delegate(.repositoriesChanged([]))))
+    await store.finish()
+
+    #expect(
+      sentCommands.value == [
+        .prune(keeping: [], protectingRepositoryIDs: [failedRepositoryID])
       ]
     )
   }
