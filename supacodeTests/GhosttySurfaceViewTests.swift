@@ -188,6 +188,65 @@ struct GhosttySurfaceViewTests {
     #expect(GhosttySurfaceView.forwardableMenuItem(for: event, in: menu) === appOwned)
   }
 
+  @Test func menuHasSystemManagedConflictDetectsBuiltInSharingChord() {
+    // A custom `close_surface` remapped onto ⌘M collides with Minimize, so the chord must
+    // stay with Ghostty instead of forwarding (which could fire Minimize).
+    let event = Self.keyEvent(chars: "m", ignoringModifiers: "m", modifiers: [.command])
+    let menu = NSMenu()
+    menu.addItem(Self.item(action: Selector(("appOwnedAction:")), keyEquivalent: "m", mask: [.command]))
+    menu.addItem(Self.item(action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m", mask: [.command]))
+
+    #expect(GhosttySurfaceView.menuHasSystemManagedConflict(for: event, in: menu))
+  }
+
+  @Test func menuHasSystemManagedConflictIgnoresAppOwnedOnlyChord() {
+    let event = Self.keyEvent(chars: "w", ignoringModifiers: "w", modifiers: [.command])
+    let menu = Self.menu(action: Selector(("appOwnedAction:")), keyEquivalent: "w", mask: [.command])
+
+    #expect(!GhosttySurfaceView.menuHasSystemManagedConflict(for: event, in: menu))
+  }
+
+  @Test func menuHasSystemManagedConflictRecursesIntoSubmenus() {
+    let submenu = NSMenu()
+    submenu.addItem(Self.hideOthersItem())
+    let root = NSMenu()
+    root.addItem(withTitle: "App", action: nil, keyEquivalent: "").submenu = submenu
+
+    #expect(GhosttySurfaceView.menuHasSystemManagedConflict(for: Self.optionCommandH(), in: root))
+  }
+
+  @Test func menuItemMatchesExactCommandChord() {
+    let event = Self.keyEvent(chars: "w", ignoringModifiers: "w", modifiers: [.command])
+    let item = Self.item(action: Selector(("appOwnedAction:")), keyEquivalent: "w", mask: [.command])
+
+    #expect(GhosttySurfaceView.menuItem(item, matches: event))
+  }
+
+  @Test func menuItemRejectsSupersetModifierChord() {
+    // `⌘,` (Settings) must not match `⌘⇧,` (Ghostty's reload_config).
+    let event = Self.keyEvent(chars: ",", ignoringModifiers: ",", modifiers: [.command, .shift])
+    let item = Self.item(action: Selector(("appOwnedAction:")), keyEquivalent: ",", mask: [.command])
+
+    #expect(!GhosttySurfaceView.menuItem(item, matches: event))
+  }
+
+  @Test func menuItemRejectsEmptyKeyEquivalent() {
+    let event = Self.keyEvent(chars: "w", ignoringModifiers: "w", modifiers: [.command])
+    let item = Self.item(action: Selector(("appOwnedAction:")), keyEquivalent: "", mask: [.command])
+
+    #expect(!GhosttySurfaceView.menuItem(item, matches: event))
+  }
+
+  @Test func menuItemHonorsImplicitShiftBothDirections() {
+    // An uppercase `keyEquivalent` encodes shift: it matches ⌘⇧A but not plain ⌘a.
+    let shiftEvent = Self.keyEvent(chars: "A", ignoringModifiers: "a", modifiers: [.command, .shift])
+    let plainEvent = Self.keyEvent(chars: "a", ignoringModifiers: "a", modifiers: [.command])
+    let item = Self.item(action: Selector(("appOwnedAction:")), keyEquivalent: "A", mask: [.command])
+
+    #expect(GhosttySurfaceView.menuItem(item, matches: shiftEvent))
+    #expect(!GhosttySurfaceView.menuItem(item, matches: plainEvent))
+  }
+
   private final class MenuActionTarget: NSObject {
     var fired = false
     @objc func fire(_ sender: Any?) { fired = true }
@@ -195,31 +254,48 @@ struct GhosttySurfaceViewTests {
 
   @Test func performMenuItemDispatchesEnabledItem() {
     let target = MenuActionTarget()
-    let menu = NSMenu()
-    menu.autoenablesItems = false
     let item = NSMenuItem(title: "Go", action: #selector(MenuActionTarget.fire(_:)), keyEquivalent: "")
     item.target = target
     item.isEnabled = true
-    menu.addItem(item)
 
     #expect(GhosttySurfaceView.performMenuItem(item))
     #expect(target.fired)
   }
 
-  @Test func performMenuItemRejectsDetachedItem() {
-    let item = NSMenuItem(title: "Orphan", action: Selector(("fire:")), keyEquivalent: "")
+  @Test func performMenuItemRejectsDisabledItem() {
+    let target = MenuActionTarget()
+    let item = NSMenuItem(title: "Off", action: #selector(MenuActionTarget.fire(_:)), keyEquivalent: "")
+    item.target = target
+    item.isEnabled = false
+
+    #expect(!GhosttySurfaceView.performMenuItem(item))
+    #expect(!target.fired)
+  }
+
+  @Test func performMenuItemRejectsItemWithoutAction() {
+    let item = NSMenuItem(title: "Inert", action: nil, keyEquivalent: "")
+    item.isEnabled = true
 
     #expect(!GhosttySurfaceView.performMenuItem(item))
   }
 
-  @Test func performMenuItemRejectsDisabledItem() {
+  @Test func dispatchForwardableChordFiresResolvedItemDirectlyOnConflict() {
+    // A custom `close_surface` on ⌘M shares the chord with Minimize: dispatch must fire the resolved
+    // app item directly (so its explicit-close action runs) instead of the native path, which could
+    // fire Minimize.
+    let target = MenuActionTarget()
+    let event = Self.keyEvent(chars: "m", ignoringModifiers: "m", modifiers: [.command])
     let menu = NSMenu()
     menu.autoenablesItems = false
-    let item = NSMenuItem(title: "Off", action: Selector(("fire:")), keyEquivalent: "")
-    item.isEnabled = false
-    menu.addItem(item)
+    let appItem = NSMenuItem(title: "Close", action: #selector(MenuActionTarget.fire(_:)), keyEquivalent: "m")
+    appItem.keyEquivalentModifierMask = [.command]
+    appItem.target = target
+    appItem.isEnabled = true
+    menu.addItem(appItem)
+    menu.addItem(Self.item(action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m", mask: [.command]))
 
-    #expect(!GhosttySurfaceView.performMenuItem(item))
+    #expect(GhosttySurfaceView.dispatchForwardableChord(appItem, for: event, in: menu))
+    #expect(target.fired)
   }
 
   @Test func isSystemManagedMenuItemClassifiesActions() {

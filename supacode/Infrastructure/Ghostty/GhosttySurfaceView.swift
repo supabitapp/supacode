@@ -1105,14 +1105,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
     guard focused, window?.firstResponder === self else { return false }
 
     if let bindingFlags = bindingFlags(for: event, surface: surface) {
-      // Only forward to a specific app-owned menu item, never the whole menu. Dispatching the
-      // resolved item directly stops AppKit from instead firing a non-remappable built-in that
-      // shares the chord (e.g. `⌘⌥H` Hide Others) and keeps Ghostty-only shortcuts (e.g.
-      // `⌘⇧,` → reload_config) from being eaten by built-in menu matching quirks.
+      // Forward to the menu only when the chord resolves to an app-owned item, so Ghostty-only
+      // shortcuts like `⌘⇧,` aren't eaten by AppKit's menu-matching quirks. A chord with no
+      // forwardable item (e.g. `⌘⌥H` Hide Others vs a `goto_split` binding) falls through to
+      // Ghostty so the terminal binding wins.
       if shouldAttemptMenu(for: bindingFlags),
         let menu = NSApp.mainMenu,
         let item = Self.forwardableMenuItem(for: event, in: menu),
-        Self.performMenuItem(item)
+        Self.dispatchForwardableChord(item, for: event, in: menu)
       {
         return true
       }
@@ -1322,45 +1322,61 @@ final class GhosttySurfaceView: NSView, Identifiable {
     return systemManagedMenuActions.contains(action)
   }
 
-  /// Recursively walks the main menu for the item whose key equivalent and modifier mask
-  /// match `event` exactly, returning it so the caller can dispatch that exact item. We
-  /// require an exact modifier match so that a shortcut like `⌘,` (Settings) doesn't eat
-  /// `⌘⇧,` (Ghostty's `reload_config`).
-  ///
-  /// An uppercase `keyEquivalent` encodes shift implicitly (AppKit convention), so we
-  /// fold that into the item's effective mask before comparing.
-  ///
-  /// Non-remappable macOS built-ins are skipped so a terminal binding wins over them.
-  static func forwardableMenuItem(for event: NSEvent, in menu: NSMenu) -> NSMenuItem? {
-    guard let characters = event.charactersIgnoringModifiers?.lowercased(), !characters.isEmpty else { return nil }
+  /// True when `item`'s key equivalent and modifier mask match `event` exactly. An exact
+  /// modifier match keeps a shortcut like `⌘,` (Settings) from eating `⌘⇧,` (Ghostty's
+  /// `reload_config`). An uppercase `keyEquivalent` encodes shift implicitly (AppKit
+  /// convention), so we fold that into the item's effective mask before comparing.
+  static func menuItem(_ item: NSMenuItem, matches event: NSEvent) -> Bool {
+    guard !item.keyEquivalent.isEmpty else { return false }
+    guard let characters = event.charactersIgnoringModifiers?.lowercased(), !characters.isEmpty else { return false }
+    let itemKey = item.keyEquivalent
+    guard itemKey.lowercased() == characters else { return false }
     let shortcutMask: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
-    let eventModifiers = event.modifierFlags.intersection(shortcutMask)
+    var itemMask = item.keyEquivalentModifierMask.intersection(shortcutMask)
+    if itemKey != itemKey.lowercased() { itemMask.insert(.shift) }
+    return itemMask == event.modifierFlags.intersection(shortcutMask)
+  }
+
+  /// Recursively walks the main menu for the first app-owned item matching `event`, returning
+  /// it so the caller knows the chord resolves to an app shortcut worth forwarding. Non-remappable
+  /// macOS built-ins are skipped so a terminal binding wins over them instead of being suppressed.
+  static func forwardableMenuItem(for event: NSEvent, in menu: NSMenu) -> NSMenuItem? {
     for item in menu.items {
       if let submenu = item.submenu, let match = forwardableMenuItem(for: event, in: submenu) { return match }
-      guard !item.keyEquivalent.isEmpty else { continue }
-      let itemKey = item.keyEquivalent
-      guard itemKey.lowercased() == characters else { continue }
-      var itemMask = item.keyEquivalentModifierMask.intersection(shortcutMask)
-      if itemKey != itemKey.lowercased() { itemMask.insert(.shift) }
-      guard itemMask == eventModifiers else { continue }
-      guard !isSystemManagedMenuItem(item) else { continue }
+      guard menuItem(item, matches: event), !isSystemManagedMenuItem(item) else { continue }
       return item
     }
     return nil
   }
 
-  /// Dispatches `item` through its parent menu so only the resolved item fires, never a
-  /// built-in that shares the chord. Returns false (caller falls back to Ghostty) when the
-  /// item is detached or disabled.
+  /// True when `event`'s chord also matches a non-remappable macOS built-in (Hide, Minimize, ...),
+  /// even when an app-owned item shares the same chord (e.g. a custom `close_surface` on `⌘M`).
+  static func menuHasSystemManagedConflict(for event: NSEvent, in menu: NSMenu) -> Bool {
+    for item in menu.items {
+      if let submenu = item.submenu, menuHasSystemManagedConflict(for: event, in: submenu) { return true }
+      if isSystemManagedMenuItem(item), menuItem(item, matches: event) { return true }
+    }
+    return false
+  }
+
+  /// Dispatches the resolved app-owned `item` for `event`. When the chord also matches a
+  /// non-remappable built-in, fires `item` directly so the built-in can't fire too and the app
+  /// action's own side effects still run (e.g. `close_surface`'s explicit-close bookkeeping, which
+  /// a fall-through to Ghostty would skip and so reattach a zmx surface instead of closing it).
+  /// Otherwise uses the native key-equivalent path, which drives SwiftUI command items like `⌘W`.
+  static func dispatchForwardableChord(_ item: NSMenuItem, for event: NSEvent, in menu: NSMenu) -> Bool {
+    guard menuHasSystemManagedConflict(for: event, in: menu) else { return menu.performKeyEquivalent(with: event) }
+    return performMenuItem(item)
+  }
+
+  /// Fires `item`'s action through the responder chain so only that item runs, never a built-in
+  /// that shares the chord. `NSApp.sendAction` is the same dispatch the native key-equivalent path
+  /// ends in, so SwiftUI command items fire without `update()` rebuilding and detaching the menu.
+  /// Returns false when the item is disabled or unhandled so the caller falls back to Ghostty.
   @discardableResult
   static func performMenuItem(_ item: NSMenuItem) -> Bool {
-    guard let parent = item.menu else { return false }
-    parent.update()
-    guard item.isEnabled else { return false }
-    let index = parent.index(of: item)
-    guard index >= 0 else { return false }
-    parent.performActionForItem(at: index)
-    return true
+    guard item.isEnabled, let action = item.action else { return false }
+    return NSApp.sendAction(action, to: item.target, from: item)
   }
 
   private func shouldAttemptMenu(for flags: ghostty_binding_flags_e) -> Bool {
