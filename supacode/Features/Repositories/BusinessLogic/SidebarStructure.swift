@@ -160,6 +160,33 @@ struct SidebarItemGroup: Identifiable, Equatable, Sendable {
   }
 }
 
+/// Per-repo tally of rows hoisted into the highlight sections, surfaced as a
+/// muted summary line at the bottom of the repo section so a hoisted row stays
+/// discoverable from its origin repo without rendering a duplicate. `revealTarget`
+/// is the row a click scrolls to: the repo's first pinned hoist, else its first
+/// active hoist.
+struct SidebarHoistSummary: Equatable, Sendable {
+  let pinnedCount: Int
+  let activeCount: Int
+  let revealTarget: Worktree.ID
+
+  /// Nil when neither bucket has a row, so a `(0, 0)` summary is unrepresentable.
+  init?(pinnedCount: Int, activeCount: Int, revealTarget: Worktree.ID) {
+    guard pinnedCount > 0 || activeCount > 0 else { return nil }
+    self.pinnedCount = pinnedCount
+    self.activeCount = activeCount
+    self.revealTarget = revealTarget
+  }
+
+  /// Spoken VoiceOver form, pinned before active, omitting a zero bucket.
+  var label: String {
+    var parts: [String] = []
+    if pinnedCount > 0 { parts.append("+\(pinnedCount) \(SidebarStructure.HighlightKind.pinned.summaryNoun)") }
+    if activeCount > 0 { parts.append("+\(activeCount) \(SidebarStructure.HighlightKind.active.summaryNoun)") }
+    return parts.joined(separator: ", ")
+  }
+}
+
 /// Single source of truth for what the sidebar List renders. The reducer
 /// builds it once per `recomputeSidebarStructure()` and caches it on
 /// `RepositoriesFeature.State.sidebarStructure`; the view walks `sections`
@@ -173,6 +200,14 @@ struct SidebarStructure: Equatable, Sendable {
       switch self {
       case .pinned: "Pinned"
       case .active: "Active"
+      }
+    }
+
+    /// Lowercase noun used in the per-repo hoist summary line.
+    var summaryNoun: String {
+      switch self {
+      case .pinned: "pinned"
+      case .active: "active"
       }
     }
   }
@@ -223,6 +258,9 @@ struct SidebarStructure: Equatable, Sendable {
   /// subtitle on highlight rows. Built only for repos that contributed at
   /// least one row to the highlight sections.
   var repositoryHighlightByID: [Repository.ID: SidebarHighlightRepoTag]
+  /// Per-repo hoisted-row tally; git repos only, built only for repos that
+  /// contributed at least one highlight row.
+  var hoistSummaryByRepositoryID: [Repository.ID: SidebarHoistSummary]
   /// Outer-ForEach data ordering for repository sections. The view uses
   /// this to translate `.onMove` flat offsets into the index space the
   /// `.repositoriesMoved` reducer action expects.
@@ -234,6 +272,7 @@ struct SidebarStructure: Equatable, Sendable {
     hotkeySlots: [],
     slotByID: [:],
     repositoryHighlightByID: [:],
+    hoistSummaryByRepositoryID: [:],
     reorderableRepositoryIDs: []
   )
 
@@ -246,6 +285,7 @@ struct SidebarStructure: Equatable, Sendable {
     hotkeySlots: [],
     slotByID: [:],
     repositoryHighlightByID: [:],
+    hoistSummaryByRepositoryID: [:],
     reorderableRepositoryIDs: []
   )
 }
@@ -412,7 +452,8 @@ extension RepositoriesFeature.Action {
       .refreshWorktrees, .reloadRepositories,
       .setSidebarSelectedWorktreeIDs,
       .openRepositories,
-      .revealSelectedWorktreeInSidebar, .consumePendingSidebarReveal,
+      .revealSelectedWorktreeInSidebar, .revealHoistedWorktreeInSidebar,
+      .consumePendingSidebarReveal,
       .createRandomWorktree,
       .promptedWorktreeCreationDataLoaded, .promptedWorktreeBranchesLoaded,
       .startPromptedWorktreeCreation,
@@ -502,6 +543,7 @@ extension RepositoriesFeature.State {
         hotkeySlots: [],
         slotByID: [:],
         repositoryHighlightByID: [:],
+        hoistSummaryByRepositoryID: [:],
         reorderableRepositoryIDs: []
       )
     }
@@ -525,15 +567,18 @@ extension RepositoriesFeature.State {
       sections: sections
     )
 
+    let highlightProjections = computeRepositoryHighlightProjections(
+      pinnedHoisted: hoists.pinned,
+      activeHoisted: hoists.active
+    )
+
     return SidebarStructure(
       sections: sections,
       hoistedRowIDs: hoists.hoistedSet,
       hotkeySlots: hotkey.slots,
       slotByID: hotkey.slotByID,
-      repositoryHighlightByID: computeRepositoryHighlightTags(
-        pinnedHoisted: hoists.pinned,
-        activeHoisted: hoists.active
-      ),
+      repositoryHighlightByID: highlightProjections.tags,
+      hoistSummaryByRepositoryID: highlightProjections.summaries,
       reorderableRepositoryIDs: repoSections.reorderableRepositoryIDs
     )
   }
@@ -685,23 +730,47 @@ extension RepositoriesFeature.State {
     return HotkeyOrdering(slots: hotkeyWorktreeSlots(for: order), slotByID: slotByID)
   }
 
-  private func computeRepositoryHighlightTags(
+  /// Per-repo highlight projections derived in a single walk of the hoisted
+  /// arrays.
+  private struct HighlightProjections {
+    var tags: [Repository.ID: SidebarHighlightRepoTag]
+    var summaries: [Repository.ID: SidebarHoistSummary]
+  }
+
+  /// Resolve the highlight tags (every contributing repo) and the hoist
+  /// summaries (git repos only) in one pass. Walks the ordered arrays, not
+  /// `hoistedSet`, so `revealTarget` is deterministic: a repo's first pinned
+  /// hoist, else its first active.
+  private func computeRepositoryHighlightProjections(
     pinnedHoisted: [Worktree.ID],
     activeHoisted: [Worktree.ID]
-  ) -> [Repository.ID: SidebarHighlightRepoTag] {
-    guard !pinnedHoisted.isEmpty || !activeHoisted.isEmpty else { return [:] }
+  ) -> HighlightProjections {
+    guard !pinnedHoisted.isEmpty || !activeHoisted.isEmpty else {
+      return HighlightProjections(tags: [:], summaries: [:])
+    }
+
     var contributingRepoIDs: Set<Repository.ID> = []
+    var pinnedCounts: [Repository.ID: Int] = [:]
+    var activeCounts: [Repository.ID: Int] = [:]
+    var firstPinned: [Repository.ID: Worktree.ID] = [:]
+    var firstActive: [Repository.ID: Worktree.ID] = [:]
+
     for id in pinnedHoisted {
-      if let repoID = sidebarItems[id: id]?.repositoryID {
-        contributingRepoIDs.insert(repoID)
-      }
+      guard let repoID = sidebarItems[id: id]?.repositoryID else { continue }
+      contributingRepoIDs.insert(repoID)
+      pinnedCounts[repoID, default: 0] += 1
+      if firstPinned[repoID] == nil { firstPinned[repoID] = id }
     }
     for id in activeHoisted {
-      if let repoID = sidebarItems[id: id]?.repositoryID {
-        contributingRepoIDs.insert(repoID)
-      }
+      guard let repoID = sidebarItems[id: id]?.repositoryID else { continue }
+      contributingRepoIDs.insert(repoID)
+      activeCounts[repoID, default: 0] += 1
+      if firstActive[repoID] == nil { firstActive[repoID] = id }
     }
+
+    // Output is keyed by repo id, so build order is irrelevant.
     var tags: [Repository.ID: SidebarHighlightRepoTag] = [:]
+    var summaries: [Repository.ID: SidebarHoistSummary] = [:]
     for repoID in contributingRepoIDs {
       guard let repository = repositories[id: repoID] else { continue }
       let section = sidebar.sections[repoID]
@@ -710,8 +779,16 @@ extension RepositoriesFeature.State {
         repoColor: section?.color,
         hostInfo: repository.host?.displayAuthority
       )
+      guard repository.isGitRepository, let revealTarget = firstPinned[repoID] ?? firstActive[repoID] else {
+        continue
+      }
+      summaries[repoID] = SidebarHoistSummary(
+        pinnedCount: pinnedCounts[repoID] ?? 0,
+        activeCount: activeCounts[repoID] ?? 0,
+        revealTarget: revealTarget
+      )  // Non-nil: `revealTarget` exists only when a bucket contributed a row.
     }
-    return tags
+    return HighlightProjections(tags: tags, summaries: summaries)
   }
 
   /// Walk the freshly-built sections to extract visible per-repo row IDs in

@@ -292,6 +292,7 @@ struct RepositoriesFeature {
     case worktreeHistoryBack
     case worktreeHistoryForward
     case revealSelectedWorktreeInSidebar
+    case revealHoistedWorktreeInSidebar(Worktree.ID)
     case consumePendingSidebarReveal(Int)
     case createRandomWorktree
     case createRandomWorktreeInRepository(Repository.ID)
@@ -3317,6 +3318,13 @@ struct RepositoriesFeature {
           bucket.collapsedBranchPrefixes = next
           sidebar.sections[repositoryID]?.buckets[bucketID] = bucket
         }
+        state.nextPendingSidebarRevealID += 1
+        state.pendingSidebarReveal = .init(id: state.nextPendingSidebarRevealID, worktreeID: worktreeID)
+        return .none
+
+      case .revealHoistedWorktreeInSidebar(let worktreeID):
+        // The target lives in a highlight section, which is never collapsed,
+        // so no section / branch-prefix uncollapse is needed.
         state.nextPendingSidebarRevealID += 1
         state.pendingSidebarReveal = .init(id: state.nextPendingSidebarRevealID, worktreeID: worktreeID)
         return .none
