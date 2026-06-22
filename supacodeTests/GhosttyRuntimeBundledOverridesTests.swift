@@ -25,4 +25,37 @@ struct GhosttyRuntimeBundledOverridesTests {
       #expect(line.contains("="), "Override line missing `=`: \(line)")
     }
   }
+
+  /// `TERM_PROGRAM` reports Supacode with its version (issue #440).
+  @Test func terminalProgramOverridesIdentifySupacode() {
+    let overrides = GhosttyRuntime.terminalProgramOverrides(version: "1.2.3")
+    #expect(overrides.contains("env = TERM_PROGRAM=supacode"))
+    #expect(overrides.contains("env = TERM_PROGRAM_VERSION=1.2.3"))
+  }
+
+  /// A missing or blank version still emits a placeholder, never Ghostty's.
+  @Test func terminalProgramOverridesFallBackWhenVersionUnavailable() {
+    for version: String? in [nil, "", "   "] {
+      let overrides = GhosttyRuntime.terminalProgramOverrides(version: version)
+      #expect(overrides.contains("env = TERM_PROGRAM=supacode"))
+      #expect(overrides.contains("env = TERM_PROGRAM_VERSION=unknown"))
+    }
+  }
+
+  /// Surrounding whitespace is trimmed from the emitted version.
+  @Test func terminalProgramOverridesTrimVersionWhitespace() {
+    let overrides = GhosttyRuntime.terminalProgramOverrides(version: " 1.2.3 ")
+    #expect(overrides.contains("env = TERM_PROGRAM_VERSION=1.2.3"))
+  }
+
+  @Test func terminalProgramOverridesAreKeyValueDirectives() {
+    let lines = GhosttyRuntime.terminalProgramOverrides(version: "9.9.9")
+      .split(whereSeparator: \.isNewline)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
+    #expect(!lines.isEmpty)
+    for line in lines {
+      #expect(line.contains("="), "Override line missing `=`: \(line)")
+    }
+  }
 }

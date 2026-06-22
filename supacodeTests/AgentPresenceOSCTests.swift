@@ -363,4 +363,20 @@ struct AgentPresenceOSCTests {
     #expect(value.body.count == 1000)
     #expect(value.body.allSatisfy { $0 == "y" })
   }
+
+  // MARK: - emitNotifyShell stdin capture.
+
+  @Test func emitNotifyShellCapturesStdinByDefault() {
+    let shell = AgentPresenceOSC.emitNotifyShell(agent: .copilot)
+    #expect(shell.hasPrefix("__in=$(cat); "))
+    #expect(shell.contains("start=copilot"))
+  }
+
+  @Test func emitNotifyShellSkipsStdinCaptureWhenCallerOwnsIt() {
+    // The notification hook reads `$__in` once itself, so the notify leg must
+    // not re-run `$(cat)` (stdin is already drained).
+    let shell = AgentPresenceOSC.emitNotifyShell(agent: .copilot, readsStdin: false)
+    #expect(!shell.contains("$(cat)"))
+    #expect(shell.contains("start=copilot"))
+  }
 }
