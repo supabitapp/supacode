@@ -116,6 +116,27 @@ struct OpenWorktreeActionTests {
     #expect(OpenBehavior.default == .workspace(configuration: nil))
   }
 
+  @Test func zedPreviewUsesPreviewBundleIdentifierAndMirrorsZedOpenBehavior() {
+    #expect(OpenWorktreeAction.zedPreview.bundleIdentifier == "dev.zed.Zed-Preview")
+    #expect(OpenWorktreeAction.zedPreview.settingsID == "zed-preview")
+    #expect(OpenWorktreeAction.zedPreview.title == "Zed Preview")
+    #expect(OpenWorktreeAction.zedPreview.openBehaviors == OpenWorktreeAction.zed.openBehaviors)
+  }
+
+  @Test func zedPreviewIsAnEditorListedAfterZed() {
+    let editors = OpenWorktreeAction.editorPriority
+    #expect(editors.contains(.zedPreview))
+
+    guard let zedIndex = editors.firstIndex(of: .zed),
+      let previewIndex = editors.firstIndex(of: .zedPreview)
+    else {
+      #expect(Bool(false), "Both Zed channels should be in editor priority.")
+      return
+    }
+    #expect(previewIndex == zedIndex + 1)
+    #expect(OpenWorktreeAction.menuOrder.map(\.settingsID).contains("zed-preview"))
+  }
+
   @MainActor
   @Test func appRelativeProcessExecutableResolvesOnlyWhenPresent() throws {
     let rootURL = try Self.makeTemporaryDirectory()

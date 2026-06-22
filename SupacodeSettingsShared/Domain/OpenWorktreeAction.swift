@@ -75,6 +75,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   case windsurf
   case xcode
   case zed
+  case zedPreview
 
   public var id: String { title }
 
@@ -109,6 +110,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .xcode: "Xcode"
     case .fork: "Fork"
     case .zed: "Zed"
+    case .zedPreview: "Zed Preview"
     }
   }
 
@@ -119,7 +121,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
       .gitup, .ghostty, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
       .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp,
-      .webstorm, .wezterm, .windsurf, .xcode, .zed:
+      .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
       title
     }
   }
@@ -142,7 +144,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
       .gitup, .ghostty, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
       .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp,
-      .webstorm, .wezterm, .windsurf, .xcode, .zed:
+      .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
       return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
     }
   }
@@ -178,6 +180,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .windsurf: "windsurf"
     case .xcode: "xcode"
     case .zed: "zed"
+    case .zedPreview: "zed-preview"
     }
   }
 
@@ -212,6 +215,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .windsurf: "com.exafunction.windsurf"
     case .xcode: "com.apple.dt.Xcode"
     case .zed: "dev.zed.Zed"
+    case .zedPreview: "dev.zed.Zed-Preview"
     }
   }
 
@@ -226,7 +230,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .alacritty, .androidStudio, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop,
       .gitkraken, .gitup, .ghostty, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
       .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm,
-      .wezterm, .windsurf, .zed:
+      .wezterm, .windsurf, .zed, .zedPreview:
       [.default]
     }
   }
@@ -243,7 +247,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
             )
         )
       ]
-    case .zed:
+    case .zed, .zedPreview:
       [
         .process(
           .appRelativePath("Contents/MacOS/cli"),
@@ -263,6 +267,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   public static let editorPriority: [OpenWorktreeAction] = [
     .cursor,
     .zed,
+    .zedPreview,
     .vscode,
     .windsurf,
     .vscodeInsiders,
