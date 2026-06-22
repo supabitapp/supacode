@@ -12,10 +12,10 @@ nonisolated enum AgentIntegrationFactory {
     switch agent {
     case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .opencode: opencode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     }
   }
 

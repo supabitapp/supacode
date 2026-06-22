@@ -22,7 +22,7 @@ nonisolated struct CopilotHooksInstaller {
     guard let contents = try? String(contentsOf: hookFileURL, encoding: .utf8) else {
       return .notInstalled
     }
-    if contents == CopilotHookSettings.source() { return .installed }
+    if let source = try? CopilotHookSettings.source(), contents == source { return .installed }
     return contents.contains(CopilotHookSettings.ownershipMarker) ? .outdated : .notInstalled
   }
 
@@ -68,11 +68,14 @@ nonisolated struct CopilotHooksInstaller {
 
 nonisolated enum CopilotHooksInstallerError: Error, Equatable, LocalizedError {
   case fileNotManaged
+  case encodingFailed
 
   var errorDescription: String? {
     switch self {
     case .fileNotManaged:
       "The Copilot hook file at ~/.copilot/hooks/supacode.json is not managed by Supacode."
+    case .encodingFailed:
+      "Failed to encode the Copilot hook payload."
     }
   }
 }

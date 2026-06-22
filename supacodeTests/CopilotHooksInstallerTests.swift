@@ -7,6 +7,15 @@ import Testing
 struct CopilotHooksInstallerTests {
   private let fileManager = FileManager.default
 
+  // MARK: - Ordering.
+
+  /// `allCases` drives the agent order in Settings and the sidebar card, so it
+  /// must stay alphabetical by raw value; a new case appended at the end regresses it.
+  @Test func allCasesStayAlphabeticalByRawValue() {
+    let raws = SkillAgent.allCases.map(\.rawValue)
+    #expect(raws == raws.sorted())
+  }
+
   private func makeTempHomeURL() -> URL {
     URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("supacode-copilot-hooks-\(UUID().uuidString)", isDirectory: true)
@@ -23,7 +32,7 @@ struct CopilotHooksInstallerTests {
 
     #expect(fileManager.fileExists(atPath: installer.hookFileURL.path))
     let contents = try String(contentsOf: installer.hookFileURL, encoding: .utf8)
-    #expect(contents == CopilotHookSettings.source())
+    #expect(try contents == CopilotHookSettings.source())
   }
 
   @Test func installIsIdempotent() throws {
@@ -168,7 +177,7 @@ struct CopilotHooksInstallerTests {
   // MARK: - Generated source.
 
   @Test func sourceIsValidJSONWithVersionAndEvents() throws {
-    let data = Data(CopilotHookSettings.source().utf8)
+    let data = Data(try CopilotHookSettings.source().utf8)
     let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     #expect(root["version"] as? Int == 1)
     let hooks = try #require(root["hooks"] as? [String: Any])
@@ -179,23 +188,53 @@ struct CopilotHooksInstallerTests {
       ])
   }
 
-  @Test func sourceCarriesOwnershipMarker() {
-    #expect(CopilotHookSettings.source().contains(CopilotHookSettings.ownershipMarker))
+  @Test func sourceCarriesOwnershipMarker() throws {
+    #expect(try CopilotHookSettings.source().contains(CopilotHookSettings.ownershipMarker))
   }
 
-  @Test func sourceEmbedsCopilotScopedOSCForEveryState() {
-    let source = CopilotHookSettings.source()
+  @Test func sourceEmbedsCopilotScopedOSCForEveryState() throws {
+    let source = try CopilotHookSettings.source()
     #expect(source.contains("start=copilot;event=session_start"))
     #expect(source.contains("start=copilot;event=busy"))
     #expect(source.contains("start=copilot;event=idle"))
     #expect(source.contains("end=copilot;event=session_end"))
   }
 
-  @Test func sourceForwardsNotificationsAndFlagsAwaitingInput() {
-    let source = CopilotHookSettings.source()
+  @Test func sourceForwardsNotificationsAndFlagsAwaitingInput() throws {
+    let source = try CopilotHookSettings.source()
     #expect(source.contains("kind=notify"))
     #expect(source.contains("start=copilot;event=awaiting_input"))
     #expect(source.contains("permission_prompt"))
     #expect(source.contains("elicitation_dialog"))
+  }
+
+  /// Guards the hand-composed notification shell: the awaiting-input + notify
+  /// legs must stay gated behind the permission / elicitation `case` branch so
+  /// other notification types stay no-ops (a widened glob would alert on every
+  /// notification).
+  @Test func notificationCommandGatesAwaitingInputBehindPromptCase() throws {
+    let data = Data(try CopilotHookSettings.source().utf8)
+    let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let hooks = try #require(root["hooks"] as? [String: [[String: Any]]])
+    let bash = try #require(hooks["notification"]?.first?["bash"] as? String)
+
+    let caseStart = try #require(bash.range(of: "case \"$__in\" in *permission_prompt*|*elicitation_dialog*)"))
+    // Backwards: `ttyResolveSnippet` nests its own `case … esac`, so the outer one is last.
+    let caseEnd = try #require(bash.range(of: "esac", options: .backwards))
+    let branch = bash[caseStart.upperBound..<caseEnd.lowerBound]
+    #expect(branch.contains("event=awaiting_input"))
+    #expect(branch.contains("kind=notify"))
+  }
+
+  @Test func installStateNotInstalledForNonUTF8File() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = CopilotHooksInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try fileManager.createDirectory(
+      at: installer.hookFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data([0xFF, 0xFE, 0xFD]).write(to: installer.hookFileURL)
+
+    #expect(installer.installState() == .notInstalled)
   }
 }

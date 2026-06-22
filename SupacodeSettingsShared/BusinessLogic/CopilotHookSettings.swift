@@ -10,15 +10,14 @@ nonisolated enum CopilotHookSettings {
   static let ownershipMarker = AgentHookSettingsCommand.ownershipMarker
 
   /// Deterministic, so `installState` can detect drift by a byte-for-byte compare.
-  static func source() -> String {
+  /// Throws rather than returning a sentinel: an empty string would be written as a
+  /// valid-looking but marker-less file the installer could no longer recognize.
+  static func source() throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    guard
-      let data = try? encoder.encode(Payload()),
-      let string = String(data: data, encoding: .utf8)
-    else {
-      assertionFailure("Copilot hook payload failed to encode")
-      return ""
+    let data = try encoder.encode(Payload())
+    guard let string = String(data: data, encoding: .utf8) else {
+      throw CopilotHooksInstallerError.encodingFailed
     }
     return string
   }
