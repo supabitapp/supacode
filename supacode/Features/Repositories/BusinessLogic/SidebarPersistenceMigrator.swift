@@ -540,6 +540,44 @@ enum SidebarPersistenceMigrator {
     )
   }
 
+  /// Suffix for the one-shot pre-migration snapshot.
+  static let preMigrationBackupSuffix = ".pre-remote-id-migration.bak"
+
+  /// Snapshot `settings.json` + `sidebar.json` (raw) once before any migration or
+  /// `@Shared(.settingsFile)` hydration can rewrite them, so a botched migration or
+  /// a downgrade is recoverable by hand. No-op once migrated or a snapshot exists.
+  @MainActor
+  static func backupBeforeRemoteIdentityMigration(
+    fileExists: (URL) -> Bool = { url in
+      FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    },
+    readFile: (URL) -> Data? = { url in
+      try? Data(contentsOf: url)
+    }
+  ) {
+    let sidebarURL = SupacodePaths.sidebarURL
+    // Already migrated: nothing pre-migration left to snapshot. An unreadable /
+    // absent sidebar is treated as "pending" so the snapshot still runs.
+    if let data = readFile(sidebarURL),
+      let sidebar = try? JSONDecoder().decode(SidebarState.self, from: data),
+      sidebar.schemaVersion >= remoteIdentitySchemaVersion
+    {
+      return
+    }
+    @Dependency(\.settingsFileStorage) var storage
+    for url in [SupacodePaths.settingsURL, sidebarURL] {
+      let backupURL = url.deletingLastPathComponent()
+        .appendingPathComponent(url.lastPathComponent + preMigrationBackupSuffix)
+      // Snapshot once: never overwrite an existing snapshot with post-migration data.
+      guard !fileExists(backupURL), let data = readFile(url) else { continue }
+      do {
+        try storage.save(data, backupURL)
+      } catch {
+        logger.warning("Failed to write pre-migration backup \(backupURL.lastPathComponent): \(error)")
+      }
+    }
+  }
+
   /// One-shot migration for the remote-identity refactor. Drains the legacy
   /// remotes captured by `captureLegacyRemoteRoots` into `remoteRepositoryRoots`,
   /// then strips the retired `remote://` / `folder:` prefixes from every
@@ -560,6 +598,17 @@ enum SidebarPersistenceMigrator {
     // would gate the migration out forever) before the legacy field is drained.
     if capturedLegacy == .unreadable { return }
 
+    // Drain before any sidebar gate: the captured remotes live only in the
+    // soon-stripped settings.json. Idempotent; capture returns `.none` once saved.
+    if case .roots(let ids) = capturedLegacy {
+      @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+      $remoteRepositoryRoots.withLock { roots in
+        for id in ids where !roots.contains(id) {
+          roots.append(id)
+        }
+      }
+    }
+
     let sidebarURL = SupacodePaths.sidebarURL
     let sidebarPresent = fileExists(sidebarURL)
     let sidebarData = sidebarPresent ? readFile(sidebarURL) : nil
@@ -569,15 +618,6 @@ enum SidebarPersistenceMigrator {
     let existing = sidebarData.flatMap { try? JSONDecoder().decode(SidebarState.self, from: $0) }
     if sidebarData != nil, existing == nil { return }
     guard (existing?.schemaVersion ?? 0) < remoteIdentitySchemaVersion else { return }
-
-    if case .roots(let ids) = capturedLegacy {
-      @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
-      $remoteRepositoryRoots.withLock { roots in
-        for id in ids where !roots.contains(id) {
-          roots.append(id)
-        }
-      }
-    }
 
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { settings in
@@ -594,7 +634,9 @@ enum SidebarPersistenceMigrator {
       settings.pinnedWorktreeIDs = settings.pinnedWorktreeIDs.map(stripLegacyIDPrefixes)
     }
 
-    rekeyLegacyLayouts(fileExists: fileExists, readFile: readFile)
+    // A present-but-unreadable layouts.json would orphan its keys; bail so the
+    // whole pass retries next launch rather than stamping the schema past it.
+    guard rekeyLegacyLayouts(fileExists: fileExists, readFile: readFile) else { return }
 
     var state = existing ?? SidebarState()
     rekeyToRemoteIdentitySchema(&state)
@@ -602,20 +644,19 @@ enum SidebarPersistenceMigrator {
     logger.info("Migrated remote/folder ids to schema v\(remoteIdentitySchemaVersion).")
   }
 
-  /// Re-key `layouts.json` (terminal snapshots keyed by worktree id) off the
-  /// retired prefixes so a remote/folder worktree's tabs still restore. Best
-  /// effort: layouts are regenerable, so an unreadable file is logged and skipped
-  /// rather than aborting the migration. Written directly because `LayoutsKey.save`
-  /// is a no-op (the incremental writer owns the file at runtime).
+  /// Re-key `layouts.json` (terminal snapshots keyed by worktree id) off the retired
+  /// prefixes so remote/folder tabs still restore. Returns `false` when a present file
+  /// can't be read/written, so the caller bails and retries. Written directly because
+  /// `LayoutsKey.save` is a no-op.
   @MainActor
-  private static func rekeyLegacyLayouts(fileExists: (URL) -> Bool, readFile: (URL) -> Data?) {
+  private static func rekeyLegacyLayouts(fileExists: (URL) -> Bool, readFile: (URL) -> Data?) -> Bool {
     let layoutsURL = SupacodePaths.layoutsURL
-    guard fileExists(layoutsURL) else { return }
+    guard fileExists(layoutsURL) else { return true }
     guard let data = readFile(layoutsURL),
       let layouts = try? JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data)
     else {
-      logger.warning("Skipping layout re-key: layouts.json present but unreadable.")
-      return
+      logger.warning("Layout re-key deferred: layouts.json present but unreadable.")
+      return false
     }
     var rekeyed: [String: TerminalLayoutSnapshot] = [:]
     var changed = false
@@ -624,14 +665,16 @@ enum SidebarPersistenceMigrator {
       if migrated != key { changed = true }
       if rekeyed[migrated] == nil { rekeyed[migrated] = value }
     }
-    guard changed else { return }
+    guard changed else { return true }
     do {
       @Dependency(\.settingsFileStorage) var storage
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       try storage.save(try encoder.encode(rekeyed), layoutsURL)
+      return true
     } catch {
-      logger.warning("Failed to write re-keyed layouts.json during migration: \(error)")
+      logger.warning("Layout re-key deferred: failed to write layouts.json: \(error)")
+      return false
     }
   }
 
