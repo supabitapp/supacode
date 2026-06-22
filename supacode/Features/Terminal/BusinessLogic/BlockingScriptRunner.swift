@@ -119,13 +119,19 @@ enum BlockingScriptRunner {
   /// app like a local blocking script) that runs the same OSC 133 framing on
   /// the host. The user script rides as `$1`, so arbitrary script text needs no
   /// remote temp file. Returns nil for an empty script.
-  static func remoteCommand(host: RemoteHost, script: String, remoteWorktreePath: String) -> String? {
+  static func remoteCommand(
+    host: RemoteHost,
+    script: String,
+    remoteWorktreePath: String,
+    environment: [String: String] = [:]
+  ) -> String? {
     let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     return SSHCommand.commandLine(
       host: host,
       remoteScript: remoteRunnerScript(remoteWorktreePath: remoteWorktreePath),
-      positionalArguments: ["supacode-blocking", trimmed]
+      positionalArguments: ["supacode-blocking", trimmed],
+      environment: environment
     )
   }
 
@@ -134,6 +140,10 @@ enum BlockingScriptRunner {
   /// on completion) but runs on the host: it `cd`s into the remote worktree,
   /// prints the remote beta banner, and runs the user script (`$1`) as a login
   /// shell child so a `exit` in the script can't skip the completion emit.
+  ///
+  /// Blocking-script marker env vars are applied by the caller via the
+  /// `SSHCommand` `env` prefix so the login shell inherits them before sourcing
+  /// its profile, not exported here (which would run after the profile loads).
   static func remoteRunnerScript(remoteWorktreePath: String) -> String {
     let trimmedPath = remoteWorktreePath.trimmingCharacters(in: .whitespacesAndNewlines)
     // Abort on a failed `cd` so a blocking script (user / delete / archive)

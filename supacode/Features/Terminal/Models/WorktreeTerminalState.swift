@@ -368,7 +368,8 @@ final class WorktreeTerminalState {
         let remote = BlockingScriptRunner.remoteCommand(
           host: host,
           script: script,
-          remoteWorktreePath: worktree.workingDirectory.path(percentEncoded: false)
+          remoteWorktreePath: worktree.workingDirectory.path(percentEncoded: false),
+          environment: blockingScriptEnvironment(for: kind)
         )
       else { return nil }
       command = remote
@@ -1358,8 +1359,7 @@ final class WorktreeTerminalState {
     // Mark blocking-script surfaces so the user's shell profile can skip its
     // interactive init (prompt, plugins, banners) for these transient tabs.
     if let blockingScriptKind = blockingScripts[tabId] {
-      let scope = blockingScriptKind.scriptDefinitionID.flatMap(scriptScope(forDefinitionID:))
-      env.merge(blockingScriptKind.surfaceEnvironmentVariables(scope: scope)) { _, new in new }
+      env.merge(blockingScriptEnvironment(for: blockingScriptKind)) { _, new in new }
     }
     // Lock ZMX_DIR to the value the app's probe used so the shell can't
     // re-export a different value from .zshrc / .zprofile and silently
@@ -1375,6 +1375,14 @@ final class WorktreeTerminalState {
       env["PATH"] = currentPath.isEmpty ? cliBinDir : "\(cliBinDir):\(currentPath)"
     }
     return env
+  }
+
+  /// Blocking-script marker env vars for a kind, with scope resolved against
+  /// this worktree's settings. Shared by the local surface environment and the
+  /// remote runner export so both hosts expose the same signal.
+  private func blockingScriptEnvironment(for kind: BlockingScriptKind) -> [String: String] {
+    let scope = kind.scriptDefinitionID.flatMap(scriptScope(forDefinitionID:))
+    return kind.surfaceEnvironmentVariables(scope: scope)
   }
 
   /// Resolves whether a user-defined script is repo- or global-owned, mirroring

@@ -61,6 +61,25 @@ struct SSHCommandTests {
     )
   }
 
+  @Test func loginShellWrappedPrefixesEnvironmentBeforeLoginShell() {
+    // Sorted, each value quoted; the `env` prefix sets the vars before `$SHELL`
+    // so the login shell inherits them before sourcing its profile.
+    #expect(
+      SSHCommand.loginShellWrapped(
+        "$0 \"$@\"",
+        positionalArguments: ["claude"],
+        environment: ["SUPACODE_SCRIPT_KIND": "run", "SUPACODE_BLOCKING_SCRIPT": "1"]
+      ) == "exec env SUPACODE_BLOCKING_SCRIPT='1' SUPACODE_SCRIPT_KIND='run' \"$SHELL\" -l -c '$0 \"$@\"' 'claude'"
+    )
+  }
+
+  @Test func loginShellWrappedWithEmptyEnvironmentHasNoEnvPrefix() {
+    #expect(
+      SSHCommand.loginShellWrapped("$0", positionalArguments: ["x"], environment: [:])
+        == "exec \"$SHELL\" -l -c '$0' 'x'"
+    )
+  }
+
   @Test func invocationWrapsRemoteCommandInLoginShellAfterMultiplexingOptions() {
     let result = SSHCommand.invocation(
       host: RemoteHost(alias: "devbox"),

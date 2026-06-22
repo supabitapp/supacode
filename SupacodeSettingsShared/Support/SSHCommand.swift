@@ -83,13 +83,34 @@ public nonisolated enum SSHCommand {
   /// Login-shell-wrapped remote command that also forwards positional arguments
   /// (`$0`, `$1`, …) to the `-c` script, so an arbitrary payload (e.g. a user
   /// script) rides as `$1` instead of being concatenated into the script text.
-  /// `exec "$SHELL" -l -c '<script>' <arg0> <arg1> …`.
-  public static func loginShellWrapped(_ remoteScript: String, positionalArguments: [String]) -> String {
-    var line = "exec \"$SHELL\" -l -c " + shellQuote(remoteScript)
+  /// `exec [env NAME=…] "$SHELL" -l -c '<script>' <arg0> <arg1> …`.
+  ///
+  /// `environment` is applied via an `env` prefix so the login shell inherits
+  /// the vars *before* it sources its profile (a plain `export` inside the `-c`
+  /// script would run only after the profile had already loaded).
+  public static func loginShellWrapped(
+    _ remoteScript: String,
+    positionalArguments: [String],
+    environment: [String: String] = [:]
+  ) -> String {
+    var line = "exec " + environmentPrefix(environment) + "\"$SHELL\" -l -c " + shellQuote(remoteScript)
     for argument in positionalArguments {
       line += " " + shellQuote(argument)
     }
     return line
+  }
+
+  /// An `env NAME='value' …` prefix (sorted, each value shell-quoted) or `""`
+  /// when there is nothing to set. Names are fixed identifiers so they stay
+  /// unquoted; values are quoted, so the prefix can't inject extra tokens.
+  private static func environmentPrefix(_ environment: [String: String]) -> String {
+    guard !environment.isEmpty else { return "" }
+    let assignments =
+      environment
+      .sorted { $0.key < $1.key }
+      .map { "\($0.key)=\(shellQuote($0.value))" }
+      .joined(separator: " ")
+    return "env \(assignments) "
   }
 
   /// Full local `ssh` argv for `Process` / `ShellClient`. The remote command is
@@ -146,6 +167,7 @@ public nonisolated enum SSHCommand {
     host: RemoteHost,
     remoteScript: String,
     positionalArguments: [String],
+    environment: [String: String] = [:],
     allocateTTY: Bool = true,
     controlPath: String = defaultControlPath
   ) -> String {
@@ -156,7 +178,9 @@ public nonisolated enum SSHCommand {
     }
     tokens += host.sshOptionArguments
     tokens.append(host.sshDestination)
-    tokens.append(shellQuote(loginShellWrapped(remoteScript, positionalArguments: positionalArguments)))
+    tokens.append(
+      shellQuote(
+        loginShellWrapped(remoteScript, positionalArguments: positionalArguments, environment: environment)))
     return tokens.joined(separator: " ")
   }
 }

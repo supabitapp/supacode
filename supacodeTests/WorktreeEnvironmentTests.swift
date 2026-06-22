@@ -154,6 +154,31 @@ struct WorktreeEnvironmentTests {
     #expect(!BlockingScriptRunner.remoteRunnerScript(remoteWorktreePath: "  ").contains("cd -- "))
   }
 
+  @Test func remoteCommandAppliesEnvironmentBeforeLoginShell() throws {
+    let host = RemoteHost(alias: "devbox")
+    let line = try #require(
+      BlockingScriptRunner.remoteCommand(
+        host: host,
+        script: "echo hi",
+        remoteWorktreePath: "/home/me/wt",
+        environment: ["SUPACODE_BLOCKING_SCRIPT": "1", "SUPACODE_SCRIPT_KIND": "run"]
+      )
+    )
+    #expect(line.contains("env SUPACODE_BLOCKING_SCRIPT="))
+    #expect(line.contains("SUPACODE_SCRIPT_KIND="))
+    // The env prefix precedes the login shell so its profile inherits the markers.
+    let envIndex = try #require(line.range(of: "env SUPACODE_BLOCKING_SCRIPT="))
+    let shellIndex = try #require(line.range(of: "\"$SHELL\" -l -c"))
+    #expect(envIndex.lowerBound < shellIndex.lowerBound)
+  }
+
+  @Test func remoteCommandOmitsEnvPrefixWhenEnvironmentEmpty() {
+    let host = RemoteHost(alias: "devbox")
+    let line = BlockingScriptRunner.remoteCommand(host: host, script: "echo hi", remoteWorktreePath: "/p")
+    #expect(line?.contains("exec \"$SHELL\" -l -c") == true)
+    #expect(line?.contains("env SUPACODE") == false)
+  }
+
   @Test func remoteCommandWrapsRunnerInSSHWithUserScriptPositional() {
     let host = RemoteHost(alias: "devbox", username: "alice", port: 2222)
     let line = BlockingScriptRunner.remoteCommand(host: host, script: "echo hi", remoteWorktreePath: "/home/me/wt")
