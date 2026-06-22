@@ -638,6 +638,15 @@ final class GhosttyRuntime {
     return value & (1 << 0) != 0
   }
 
+  /// Whether new surfaces inherit the spawning surface's font size; defaults on.
+  func windowInheritsFontSize() -> Bool {
+    guard let config else { return true }
+    var value: CUnsignedInt = 0
+    let key = "window-inherit-font-size"
+    guard ghostty_config_get(config, &value, key, UInt(key.count)) else { return true }
+    return value & (1 << 0) != 0
+  }
+
   // The user's intended opacity, applied at the window level. The Ghostty
   // surface itself is forced to `background-opacity = 0` so the tint
   // doesn't double up.

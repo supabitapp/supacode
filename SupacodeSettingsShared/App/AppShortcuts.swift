@@ -273,7 +273,7 @@ public enum AppShortcuts {
   public static let commandPalette = AppShortcut(id: .commandPalette, key: "p", modifiers: .command)
   public static let openSettings = AppShortcut(id: .openSettings, key: ",", modifiers: .command)
   public static let checkForUpdates = AppShortcut(id: .checkForUpdates, key: "u", modifiers: .command)
-  public static let showMainWindow = AppShortcut(id: .showMainWindow, key: "0", modifiers: .command)
+  public static let showMainWindow = AppShortcut(id: .showMainWindow, key: "0", modifiers: [.command, .shift])
 
   public static let toggleLeftSidebar = AppShortcut(id: .toggleLeftSidebar, key: "[", modifiers: .command)
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
@@ -319,7 +319,6 @@ public enum AppShortcuts {
   public static let selectWorktree7 = AppShortcut(id: .selectWorktree(7), key: "7", modifiers: [.control])
   public static let selectWorktree8 = AppShortcut(id: .selectWorktree(8), key: "8", modifiers: [.control])
   public static let selectWorktree9 = AppShortcut(id: .selectWorktree(9), key: "9", modifiers: [.control])
-  public static let selectWorktree0 = AppShortcut(id: .selectWorktree(0), key: "0", modifiers: [.control])
 
   public static let openWorktree = AppShortcut(id: .openWorktree, key: "o", modifiers: .command)
   public static let revealInFinder = AppShortcut(id: .revealInFinder, key: "r", modifiers: [.command, .option])
@@ -337,7 +336,7 @@ public enum AppShortcuts {
 
   public static let worktreeSelection: [AppShortcut] = [
     selectWorktree1, selectWorktree2, selectWorktree3, selectWorktree4, selectWorktree5,
-    selectWorktree6, selectWorktree7, selectWorktree8, selectWorktree9, selectWorktree0,
+    selectWorktree6, selectWorktree7, selectWorktree8, selectWorktree9,
   ]
 
   public static func worktreeSelectionShortcutDisplay(
@@ -402,7 +401,7 @@ public enum AppShortcuts {
     from overrides: [AppShortcutID: AppShortcutOverride]
   ) -> [String] {
     worktreeSelection.flatMap { shortcut -> [String] in
-      guard case let .selectWorktree(slot) = shortcut.id,
+      guard case .selectWorktree(let slot) = shortcut.id,
         let effective = shortcut.effective(from: overrides)
       else {
         return []

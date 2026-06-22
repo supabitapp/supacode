@@ -1,0 +1,31 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 3c4002abc..a0227b97b 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1082,6 +1082,7 @@ void ghostty_surface_free(ghostty_surface_t);
+ void* ghostty_surface_userdata(ghostty_surface_t);
+ ghostty_app_t ghostty_surface_app(ghostty_surface_t);
+ ghostty_surface_config_s ghostty_surface_inherited_config(ghostty_surface_t, ghostty_surface_context_e);
++float ghostty_surface_font_size(ghostty_surface_t);
+ void ghostty_surface_update_config(ghostty_surface_t, ghostty_config_t);
+ bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
+ bool ghostty_surface_process_exited(ghostty_surface_t);
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 0d5a4f8da..1def0339a 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1577,6 +1577,14 @@ pub const CAPI = struct {
+         return surface.newSurfaceOptions(source);
+     }
+ 
++    /// The surface's manually-zoomed font size in points, or 0 when it is at the
++    /// configured default (never zoomed, or reset). Mirrors the "0 means default"
++    /// config convention and allocates nothing, unlike inherited config.
++    export fn ghostty_surface_font_size(surface: *Surface) f32 {
++        if (!surface.core_surface.font_size_adjusted) return 0;
++        return surface.core_surface.font_size.points;
++    }
++
+     /// Update the configuration to the provided config for only this surface.
+     export fn ghostty_surface_update_config(
+         surface: *Surface,

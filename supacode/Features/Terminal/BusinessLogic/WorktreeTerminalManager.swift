@@ -366,6 +366,7 @@ final class WorktreeTerminalManager {
     case .setSelectedWorktreeID(let id):
       guard id != selectedWorktreeID else { return }
       if let previousID = selectedWorktreeID, let previousState = states[previousID] {
+        previousState.rememberFocusedZoom()
         previousState.setAllSurfacesOccluded()
         markLayoutDirty(worktreeID: previousID)
       }
@@ -862,6 +863,12 @@ final class WorktreeTerminalManager {
       changes[id.rawValue] = snapshot.map { .snapshot($0) } ?? .delete
     }
     layoutsWriter.flushSync(changes)
+  }
+
+  /// Capture the selected worktree's zoom at quit (no switch fires then).
+  func rememberSelectedWorktreeZoomOnQuit() {
+    guard let selectedWorktreeID, let state = states[selectedWorktreeID] else { return }
+    state.rememberFocusedZoom()
   }
 
   func surfaceBackgroundColorScheme() -> ColorScheme {

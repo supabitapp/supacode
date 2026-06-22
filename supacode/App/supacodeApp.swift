@@ -60,6 +60,7 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     terminalManager?.cancelPendingLayoutSaves()
     let agentsBySurface = appStore?.state.agentPresence.agentsBySurface() ?? [:]
     terminalManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
+    terminalManager?.rememberSelectedWorktreeZoomOnQuit()
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {

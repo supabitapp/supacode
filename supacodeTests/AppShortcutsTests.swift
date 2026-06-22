@@ -31,7 +31,7 @@ struct AppShortcutsTests {
   @Test func worktreeSelectionUsesControlNumberShortcuts() {
     expectNoDifference(
       AppShortcuts.worktreeSelection.map(\.display),
-      ["⌃1", "⌃2", "⌃3", "⌃4", "⌃5", "⌃6", "⌃7", "⌃8", "⌃9", "⌃0"]
+      ["⌃1", "⌃2", "⌃3", "⌃4", "⌃5", "⌃6", "⌃7", "⌃8", "⌃9"]
     )
 
     for shortcut in AppShortcuts.worktreeSelection {
@@ -61,8 +61,6 @@ struct AppShortcutsTests {
         "--keybind=ctrl+digit_8=goto_tab:8",
         "--keybind=ctrl+9=goto_tab:9",
         "--keybind=ctrl+digit_9=goto_tab:9",
-        "--keybind=ctrl+0=goto_tab:10",
-        "--keybind=ctrl+digit_0=goto_tab:10",
       ]
     )
   }
@@ -133,7 +131,8 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.openPullRequest.displayName == "Open Pull Request")
     #expect(AppShortcuts.toggleLeftSidebar.displayName == "Toggle Left Sidebar")
     #expect(AppShortcuts.selectWorktree1.displayName == "Select Worktree 1")
-    #expect(AppShortcuts.selectWorktree0.displayName == "Select Worktree 10")
+    #expect(AppShortcuts.selectWorktree9.displayName == "Select Worktree 9")
+    #expect(AppShortcutID.selectWorktree(0).displayName == "Select Worktree 10")
   }
 
   // MARK: - Effective shortcut resolution.
@@ -191,17 +190,17 @@ struct AppShortcutsTests {
   // MARK: - Active worktree selection slots.
 
   @Test func activeSlotsIncludeAllWhenNoOverrideAndRowsMatch() {
-    let slots = AppShortcuts.activeWorktreeSelectionSlots(overrides: [:], orderedRowsCount: 10)
-    #expect(slots.map(\.index) == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    let slots = AppShortcuts.activeWorktreeSelectionSlots(overrides: [:], orderedRowsCount: 9)
+    #expect(slots.map(\.index) == [0, 1, 2, 3, 4, 5, 6, 7, 8])
     expectNoDifference(slots.map(\.shortcut.display), AppShortcuts.worktreeSelection.map(\.display))
   }
 
   @Test func activeSlotsDropDisabledOverridePreservingOtherIndices() {
     let slots = AppShortcuts.activeWorktreeSelectionSlots(
       overrides: [.selectWorktree(6): .disabled],
-      orderedRowsCount: 10
+      orderedRowsCount: 9
     )
-    #expect(slots.map(\.index) == [0, 1, 2, 3, 4, 6, 7, 8, 9])
+    #expect(slots.map(\.index) == [0, 1, 2, 3, 4, 6, 7, 8])
     #expect(slots.allSatisfy { $0.index != 5 })
   }
 

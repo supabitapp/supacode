@@ -1420,7 +1420,7 @@ final class WorktreeTerminalState {
       // Blocking-script runners (bypassZmx) emit their own OSC 133/7 and must
       // not get Ghostty's shell integration injected into the host shell.
       disableShellIntegration: bypassZmx,
-      fontSize: inherited.fontSize,
+      fontSize: inherited.fontSize ?? rememberedZoomFontSize,
       context: context
     )
     wireSurfaceCallbacks(view: view, tabId: tabId, surfaceID: surfaceID)
@@ -1754,6 +1754,28 @@ final class WorktreeTerminalState {
       return URL(fileURLWithPath: path, isDirectory: true)
     }
     return InheritedSurfaceConfig(workingDirectory: workingDirectory, fontSize: fontSize)
+  }
+
+  private static let rememberedZoomFontSizeKey = "terminalRememberedFontSize"
+
+  /// Seed for a sourceless surface, gated on `window-inherit-font-size`.
+  private var rememberedZoomFontSize: Float32? {
+    guard runtime.windowInheritsFontSize() else { return nil }
+    @Shared(.appStorage(Self.rememberedZoomFontSizeKey)) var stored: Double = 0
+    return stored > 0 ? Float32(stored) : nil
+  }
+
+  /// Sample and persist the focused surface's zoom (worktree switch, quit).
+  func rememberFocusedZoom() {
+    guard let id = currentFocusedSurfaceId(), let surface = surfaces[id]?.surface else { return }
+    persistZoomFontSize(ghostty_surface_font_size(surface))
+  }
+
+  /// 0 clears a prior zoom, matching Ghostty dropping the override on reset.
+  private func persistZoomFontSize(_ size: Float32) {
+    guard runtime.windowInheritsFontSize() else { return }
+    @Shared(.appStorage(Self.rememberedZoomFontSizeKey)) var stored: Double = 0
+    $stored.withLock { $0 = Double(max(size, 0)) }
   }
 
   private func currentFocusedSurfaceId() -> UUID? {
