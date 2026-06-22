@@ -322,6 +322,120 @@ struct RemoteSidebarMergedListTests {
   }
 }
 
+/// A disconnected remote keeps an empty placeholder in the roster; reconcile
+/// must not read that as "worktrees gone" and prune the user's curation.
+@MainActor
+struct RemoteDisconnectCurationTests {
+  private func makeState(repositories: [Repository]) -> RepositoriesFeature.State {
+    var state = RepositoriesFeature.State(reconciledRepositories: repositories)
+    state.isInitialLoadComplete = true
+    return state
+  }
+
+  @Test func disconnectPreservesRemoteGitPinAndCustomization() {
+    let config = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    let pinnedID = RepositoriesFeature.remoteWorktreeID(host: config.host, worktreePath: "/home/me/proj-feature")
+    // The loader builds an empty placeholder for an unreachable host.
+    let placeholder = RepositoriesFeature.remotePlaceholderRepository(config: config, repoID: repoID)
+    var state = makeState(repositories: [placeholder])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoID] = .init(
+        buckets: [.pinned: .init(items: [pinnedID: .init()])],
+        title: "Custom",
+        color: .red
+      )
+    }
+
+    // A non-initial reload while still disconnected (the destructive prune is on).
+    state.reconcileSidebarState(roots: [], pruneLivenessAgainstRoster: true)
+
+    #expect(state.sidebar.sections[repoID]?.buckets[.pinned]?.items[pinnedID] != nil)
+    #expect(state.sidebar.sections[repoID]?.title == "Custom")
+    #expect(state.sidebar.sections[repoID]?.color == .red)
+  }
+
+  @Test func disconnectPreservesRemoteFolderPin() {
+    let config = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/notes")
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    // A folder's pinnable unit is its synthetic worktree, host-keyed off its path.
+    let folderWorktreeID = RepositoriesFeature.remoteWorktreeID(host: config.host, worktreePath: "/home/me/notes")
+    let placeholder = RepositoriesFeature.remotePlaceholderRepository(config: config, repoID: repoID)
+    var state = makeState(repositories: [placeholder])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoID] = .init(buckets: [.pinned: .init(items: [folderWorktreeID: .init()])])
+    }
+
+    state.reconcileSidebarState(roots: [], pruneLivenessAgainstRoster: true)
+
+    #expect(state.sidebar.sections[repoID]?.buckets[.pinned]?.items[folderWorktreeID] != nil)
+  }
+
+  @Test func resolvedRemoteStillPrunesStaleCuration() {
+    // A reachable remote with a real roster must keep pruning vanished worktrees,
+    // so the disconnect carve-out doesn't leak stale pins once the host is back.
+    let config = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    let liveID = RepositoriesFeature.remoteWorktreeID(host: config.host, worktreePath: "/home/me/proj")
+    let staleID = RepositoriesFeature.remoteWorktreeID(host: config.host, worktreePath: "/home/me/proj-gone")
+    let resolved = Repository(
+      id: repoID,
+      rootURL: URL(fileURLWithPath: "/home/me/proj"),
+      name: "proj",
+      worktrees: [RepositoriesFeature.remoteMainWorktree(config: config)],
+      isGitRepository: true,
+      host: config.host
+    )
+    var state = makeState(repositories: [resolved])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoID] = .init(buckets: [.pinned: .init(items: [liveID: .init(), staleID: .init()])])
+    }
+
+    state.reconcileSidebarState(roots: [], pruneLivenessAgainstRoster: true)
+
+    #expect(state.sidebar.sections[repoID]?.buckets[.pinned]?.items[staleID] == nil)
+  }
+
+  @Test func disconnectPreservesCollapsedBranchPrefixes() {
+    let config = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    let placeholder = RepositoriesFeature.remotePlaceholderRepository(config: config, repoID: repoID)
+    var state = makeState(repositories: [placeholder])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoID] = .init(buckets: [.unpinned: .init(collapsedBranchPrefixes: ["feature"])])
+    }
+
+    state.reconcileSidebarState(roots: [], pruneLivenessAgainstRoster: true)
+
+    // The empty placeholder roster must not wipe the user's branch-collapse state.
+    #expect(state.sidebar.sections[repoID]?.buckets[.unpinned]?.collapsedBranchPrefixes == ["feature"])
+  }
+
+  @Test func disconnectedRemoteFolderErrorRowKeepsFolderCustomization() {
+    let config = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/notes")
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    // A folder's custom name / color live on the synthetic folder-worktree item.
+    let folderWorktreeID = RepositoriesFeature.remoteWorktreeID(host: config.host, worktreePath: "/home/me/notes")
+    let placeholder = RepositoriesFeature.remotePlaceholderRepository(config: config, repoID: repoID)
+    var state = makeState(repositories: [placeholder])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[repoID] = .init(
+        buckets: [.unpinned: .init(items: [folderWorktreeID: .init(title: "My Notes", color: .teal)])]
+      )
+    }
+    state.loadFailuresByID[repoID] = "Can't reach devbox."
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+    let failed = structure.sections.compactMap { section -> (String?, RepositoryColor?)? in
+      guard case .failedRepository(let id, _, let title, let color, _) = section, id == repoID else { return nil }
+      return (title, color)
+    }.first
+    // The "can't reach" header surfaces the folder's custom name / color, like the live row.
+    #expect(failed?.0 == "My Notes")
+    #expect(failed?.1 == .teal)
+  }
+}
+
 @MainActor
 struct RemoteDefaultShellCommandTests {
   @Test func buildsCdIntoRemotePathThenExecLoginShell() {

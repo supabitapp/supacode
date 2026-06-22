@@ -661,12 +661,15 @@ extension RepositoriesFeature.State {
       if loadFailuresByID[repositoryID] != nil {
         guard let rootURL = localRootsByID[repositoryID] ?? repository?.rootURL else { continue }
         let sectionEntry = sidebar.sections[repositoryID]
+        // A folder's custom name / color live on its synthetic folder-worktree
+        // item (the row is a worktree row), not the section, so fall back to it.
+        let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
         sections.append(
           .failedRepository(
             repositoryID: repositoryID,
             rootURL: rootURL,
-            customTitle: sectionEntry?.title,
-            color: sectionEntry?.color,
+            customTitle: sectionEntry?.title ?? folderItem?.title,
+            color: sectionEntry?.color ?? folderItem?.color,
             isRemote: isRemote
           )
         )
@@ -998,5 +1001,14 @@ extension SidebarItemGroup {
       return nil
     }
     return (translatedOffsets, translatedDestination)
+  }
+}
+
+extension SidebarState.Section {
+  /// A folder repo's custom title / color live on its synthetic folder-worktree
+  /// item (the row is a worktree row), keyed by the repo id string.
+  fileprivate func folderWorktreeItem(for repositoryID: Repository.ID) -> SidebarState.Item? {
+    let folderID = WorktreeID(repositoryID.rawValue)
+    return buckets[.pinned]?.items[folderID] ?? buckets[.unpinned]?.items[folderID]
   }
 }

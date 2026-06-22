@@ -5552,6 +5552,10 @@ extension RepositoriesFeature.State {
       let mainID =
         repository.isGitRepository ? repository.worktrees.first(where: { isMainWorktree($0) })?.id : nil
       let worktreeIDs = Set(repository.worktrees.map(\.id))
+      // A disconnected remote is an empty placeholder (resolved remotes always have
+      // >=1 worktree); skip its prune so a pin survives the disconnect.
+      let isUnresolvedRemotePlaceholder = repository.host != nil && repository.worktrees.isEmpty
+      let pruneAgainstRoster = pruneLivenessAgainstRoster && !isUnresolvedRemotePlaceholder
       var copy = section
       var seenInCuratedBuckets: Set<Worktree.ID> = []
       for (bucketID, bucket) in copy.buckets {
@@ -5559,7 +5563,7 @@ extension RepositoriesFeature.State {
         var prunedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
         for (worktreeID, item) in bucket.items {
           if let mainID, worktreeID == mainID { continue }
-          if pruneLivenessAgainstRoster, !worktreeIDs.contains(worktreeID) { continue }
+          if pruneAgainstRoster, !worktreeIDs.contains(worktreeID) { continue }
           prunedItems[worktreeID] = item
           seenInCuratedBuckets.insert(worktreeID)
         }
@@ -5580,7 +5584,11 @@ extension RepositoriesFeature.State {
         unpinned.items[worktree.id] = .init()
         copy.buckets[.unpinned] = unpinned
       }
-      Self.pruneCollapsedBranchPrefixes(in: &copy, worktrees: repository.worktrees)
+      // Same carve-out: a disconnected remote's empty roster would otherwise drop
+      // every stored branch-collapse prefix.
+      if !isUnresolvedRemotePlaceholder {
+        Self.pruneCollapsedBranchPrefixes(in: &copy, worktrees: repository.worktrees)
+      }
       rebuilt[repoID] = copy
     }
 
