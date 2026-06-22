@@ -248,10 +248,11 @@ public nonisolated enum AgentPresenceOSC {
   /// portable `awk` pass (no `jq`/`python`, so it works over SSH), base64s each,
   /// and emits the OSC 3008 notify. Sending only the display fields keeps the wire
   /// under libghostty's 2048-byte OSC ceiling. Locked to STANDARD base64.
-  static func emitNotifyShell(agent: SkillAgent) -> String {
+  /// `readsStdin: false` skips the `__in=$(cat)` capture when the caller already set `$__in`.
+  static func emitNotifyShell(agent: SkillAgent, readsStdin: Bool = true) -> String {
     let payload = #"\033]3008;start=\#(agent.rawValue);\#(notifyMetadata(title: "%s", body: "%s"))\033\\"#
     let bodyKeys = notifyBodyKeys.joined(separator: ",")
-    return #"__in=$(cat); "#
+    return (readsStdin ? #"__in=$(cat); "# : "")
       + #"__t=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(titleField)" "#
       + #"-v budget=\#(notifyTitleByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
       + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
