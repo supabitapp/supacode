@@ -475,24 +475,80 @@ enum SidebarPersistenceMigrator {
   /// Decode-only view of the retired `global.remoteRepositories` array. The
   /// stored property is gone from `GlobalSettings`, so the legacy entries are
   /// read straight from the raw `settings.json`; `id` / `displayName` are dropped.
-  private struct LegacyRemoteRepositoriesFile: Decodable {
-    struct Global: Decodable { var remoteRepositories: [LegacyRemoteRepository]? }
-    var global: Global?
+  private nonisolated struct LegacyRemoteRepositoriesFile: Decodable {
+    var remoteRepositories: [LegacyRemoteRepository]?
+
+    enum RootKeys: String, CodingKey { case global }
+    enum GlobalKeys: String, CodingKey { case remoteRepositories }
+
+    init(from decoder: any Decoder) throws {
+      let root = try decoder.container(keyedBy: RootKeys.self)
+      guard root.contains(.global) else {
+        remoteRepositories = nil
+        return
+      }
+      let global = try root.nestedContainer(keyedBy: GlobalKeys.self, forKey: .global)
+      // Per-element lossy so one malformed entry doesn't strand every other remote
+      // repo on this one-shot drain.
+      remoteRepositories = global.decodeLossyArrayIfPresent(forKey: .remoteRepositories)
+    }
   }
 
-  private struct LegacyRemoteRepository: Decodable {
+  private nonisolated struct LegacyRemoteRepository: Decodable, Sendable {
     var host: RemoteHost
     var remotePath: String
   }
 
-  /// One-shot migration for the remote-identity refactor. Drains the retired
-  /// `global.remoteRepositories` into `remoteRepositoryRoots`, then strips the
-  /// retired `remote://` / `folder:` prefixes from every persisted id
-  /// (`repositories` keys, `pinnedWorktreeIDs`, and `sidebar.json`). Gated on the
-  /// sidebar `schemaVersion`; once it reaches `2` this is a no-op. Runs after
-  /// `migrateIfNeeded` so the v0 -> v1 build has already landed.
+  /// Outcome of reading the retired `global.remoteRepositories` from the raw
+  /// `settings.json` before any settings save can drop the field.
+  enum LegacyRemoteCapture: Equatable {
+    /// Nothing to migrate: `settings.json` is absent or decoded with no legacy
+    /// remotes.
+    case none
+    /// Self-descriptive ids derived from the legacy configs, ready to drain.
+    case roots([String])
+    /// `settings.json` is present but unreadable / undecodable. A transient
+    /// error, NOT "no data": the caller must abort and retry next launch so a
+    /// later save can't strip the field before it is drained.
+    case unreadable
+  }
+
+  /// Read and derive the retired remote ids from the raw `settings.json`. MUST
+  /// run before `migrateIfNeeded` (or any settings save): the first save drops
+  /// `remoteRepositories`, so it's only recoverable off disk until then.
+  static func captureLegacyRemoteRoots(
+    fileExists: (URL) -> Bool = { url in
+      FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    },
+    readFile: (URL) -> Data? = { url in
+      try? Data(contentsOf: url)
+    }
+  ) -> LegacyRemoteCapture {
+    guard fileExists(SupacodePaths.settingsURL) else { return .none }
+    guard let data = readFile(SupacodePaths.settingsURL),
+      let legacy = try? JSONDecoder().decode(LegacyRemoteRepositoriesFile.self, from: data)
+    else {
+      return .unreadable
+    }
+    guard let configs = legacy.remoteRepositories, !configs.isEmpty else { return .none }
+    return .roots(
+      configs.map { config in
+        RepositoryLocation.remote(
+          config.host, path: RepositoryLocation.normalizedRemotePath(config.remotePath)
+        ).id.rawValue
+      }
+    )
+  }
+
+  /// One-shot migration for the remote-identity refactor. Drains the legacy
+  /// remotes captured by `captureLegacyRemoteRoots` into `remoteRepositoryRoots`,
+  /// then strips the retired `remote://` / `folder:` prefixes from every
+  /// persisted id (`repositories` keys, `pinnedWorktreeIDs`, and `sidebar.json`).
+  /// Gated on the sidebar `schemaVersion`; once it reaches `2` this is a no-op.
+  /// Runs after `migrateIfNeeded` so the v0 -> v1 build has already landed.
   @MainActor
   static func migrateRemoteIdentityIfNeeded(
+    capturedLegacy: LegacyRemoteCapture,
     fileExists: (URL) -> Bool = { url in
       FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
     },
@@ -500,14 +556,28 @@ enum SidebarPersistenceMigrator {
       try? Data(contentsOf: url)
     }
   ) {
+    // Couldn't read settings.json this launch: don't stamp the schema (which
+    // would gate the migration out forever) before the legacy field is drained.
+    if capturedLegacy == .unreadable { return }
+
     let sidebarURL = SupacodePaths.sidebarURL
-    let existing: SidebarState? = {
-      guard fileExists(sidebarURL), let data = readFile(sidebarURL) else { return nil }
-      return try? JSONDecoder().decode(SidebarState.self, from: data)
-    }()
+    let sidebarPresent = fileExists(sidebarURL)
+    let sidebarData = sidebarPresent ? readFile(sidebarURL) : nil
+    // Present but unreadable / undecodable: overwriting with empty would drop the
+    // layout and stamp the schema so it never retries. Only a truly absent file proceeds.
+    if sidebarPresent, sidebarData == nil { return }
+    let existing = sidebarData.flatMap { try? JSONDecoder().decode(SidebarState.self, from: $0) }
+    if sidebarData != nil, existing == nil { return }
     guard (existing?.schemaVersion ?? 0) < remoteIdentitySchemaVersion else { return }
 
-    drainLegacyRemoteRepositories(readFile: readFile)
+    if case .roots(let ids) = capturedLegacy {
+      @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+      $remoteRepositoryRoots.withLock { roots in
+        for id in ids where !roots.contains(id) {
+          roots.append(id)
+        }
+      }
+    }
 
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { settings in
@@ -524,33 +594,44 @@ enum SidebarPersistenceMigrator {
       settings.pinnedWorktreeIDs = settings.pinnedWorktreeIDs.map(stripLegacyIDPrefixes)
     }
 
+    rekeyLegacyLayouts(fileExists: fileExists, readFile: readFile)
+
     var state = existing ?? SidebarState()
     rekeyToRemoteIdentitySchema(&state)
     guard persist(state: state, to: sidebarURL) else { return }
     logger.info("Migrated remote/folder ids to schema v\(remoteIdentitySchemaVersion).")
   }
 
-  /// Read the retired remote configs from the raw `settings.json` (the field no
-  /// longer decodes through `GlobalSettings`) and append their self-descriptive
-  /// ids to `remoteRepositoryRoots`. Idempotent: the first `settings.json` save
-  /// drops the legacy array, so a re-run finds nothing.
+  /// Re-key `layouts.json` (terminal snapshots keyed by worktree id) off the
+  /// retired prefixes so a remote/folder worktree's tabs still restore. Best
+  /// effort: layouts are regenerable, so an unreadable file is logged and skipped
+  /// rather than aborting the migration. Written directly because `LayoutsKey.save`
+  /// is a no-op (the incremental writer owns the file at runtime).
   @MainActor
-  private static func drainLegacyRemoteRepositories(readFile: (URL) -> Data?) {
-    guard let data = readFile(SupacodePaths.settingsURL),
-      let legacy = try? JSONDecoder().decode(LegacyRemoteRepositoriesFile.self, from: data),
-      let configs = legacy.global?.remoteRepositories, !configs.isEmpty
-    else { return }
-
-    let migratedIDs = configs.map { config in
-      RepositoryLocation.remote(
-        config.host, path: RepositoryLocation.normalizedRemotePath(config.remotePath)
-      ).id.rawValue
+  private static func rekeyLegacyLayouts(fileExists: (URL) -> Bool, readFile: (URL) -> Data?) {
+    let layoutsURL = SupacodePaths.layoutsURL
+    guard fileExists(layoutsURL) else { return }
+    guard let data = readFile(layoutsURL),
+      let layouts = try? JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data)
+    else {
+      logger.warning("Skipping layout re-key: layouts.json present but unreadable.")
+      return
     }
-    @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
-    $remoteRepositoryRoots.withLock { roots in
-      for id in migratedIDs where !roots.contains(id) {
-        roots.append(id)
-      }
+    var rekeyed: [String: TerminalLayoutSnapshot] = [:]
+    var changed = false
+    for (key, value) in layouts {
+      let migrated = stripLegacyIDPrefixes(key)
+      if migrated != key { changed = true }
+      if rekeyed[migrated] == nil { rekeyed[migrated] = value }
+    }
+    guard changed else { return }
+    do {
+      @Dependency(\.settingsFileStorage) var storage
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      try storage.save(try encoder.encode(rekeyed), layoutsURL)
+    } catch {
+      logger.warning("Failed to write re-keyed layouts.json during migration: \(error)")
     }
   }
 

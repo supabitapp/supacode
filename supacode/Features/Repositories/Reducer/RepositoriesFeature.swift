@@ -3042,7 +3042,10 @@ struct RepositoriesFeature {
           await withTaskGroup(of: Void.self) { group in
             var seen: Set<Repository.ID> = []
             for root in roots {
-              guard let (host, remotePath) = Self.parseRemoteRoot(root) else { continue }
+              guard let (host, remotePath) = Self.parseRemoteRoot(root) else {
+                repositoriesLogger.warning("Skipping unparseable persisted remote id: \(root).")
+                continue
+              }
               let repoID = Self.remoteRepositoryID(host: host, remotePath: remotePath)
               guard seen.insert(repoID).inserted else { continue }
               group.addTask {
@@ -4018,7 +4021,10 @@ struct RepositoriesFeature {
     // that don't parse as a remote authority.
     let remoteRoots: [ParsedRemoteRoot] =
       persistedRemoteRepositoryRoots().compactMap { root in
-        guard let (host, remotePath) = parseRemoteRoot(root) else { return nil }
+        guard let (host, remotePath) = parseRemoteRoot(root) else {
+          repositoriesLogger.warning("Skipping unparseable persisted remote id: \(root).")
+          return nil
+        }
         return ParsedRemoteRoot(
           repoID: remoteRepositoryID(host: host, remotePath: remotePath), host: host, remotePath: remotePath)
       }

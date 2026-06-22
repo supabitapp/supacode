@@ -21,10 +21,8 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     self.port = port
   }
 
-  /// Parse an `[user@]host[:port]` authority back into a host: the inverse of
-  /// `authority`. A bracketed IPv6 host (`[::1]:22`) keeps its colons inside the
-  /// brackets; otherwise a trailing `:<digits>` is the port and the last `@`
-  /// splits the username. Returns `nil` when the host component is empty.
+  /// Inverse of `authority`: parse `[user@]host[:port]` back into a host. A
+  /// bracketed IPv6 host keeps its colons inside the brackets. `nil` if host empty.
   public init?(authority: String) {
     let trimmed = authority.trimmingCharacters(in: .whitespaces)
     guard !trimmed.isEmpty else { return nil }
@@ -57,7 +55,9 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     self.init(alias: host, username: (user?.isEmpty ?? true) ? nil : user, port: port)
   }
 
-  /// The `user@host` (or bare `host`) token passed to `ssh`.
+  /// The `user@host` (or bare `host`) token passed to `ssh`. The host is left
+  /// bare even for an IPv6 literal, since the ssh CLI wants `user@::1`, not the
+  /// bracketed URL form.
   public var sshDestination: String {
     if let username, !username.isEmpty {
       return "\(username)@\(alias)"
@@ -65,20 +65,32 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     return alias
   }
 
+  /// `[user@]host` with an IPv6 literal host bracketed, so a following `:port`
+  /// is unambiguous. Backs the id-bearing `authority` / `displayAuthority`, which
+  /// must round-trip through `init?(authority:)`; `sshDestination` stays bare for
+  /// the ssh CLI.
+  private var bracketedDestination: String {
+    let host = alias.contains(":") ? "[\(alias)]" : alias
+    if let username, !username.isEmpty {
+      return "\(username)@\(host)"
+    }
+    return host
+  }
+
   /// Friendly `[user@]host[:port]` for display: username only when the user set
   /// it, port only when non-default (not 22). The id-bearing `authority` always
   /// includes the port; this is the human-facing variant.
   public var displayAuthority: String {
-    guard let port, port != 22 else { return sshDestination }
-    return "\(sshDestination):\(port)"
+    guard let port, port != 22 else { return bracketedDestination }
+    return "\(bracketedDestination):\(port)"
   }
 
   /// `[user@]host[:port]` token used to brand remote ids and settings keys.
   /// Always folds in the port (unlike `displayAuthority`), so two hosts that
   /// differ only by port get distinct ids. Always shell/url safe.
   public var authority: String {
-    guard let port else { return sshDestination }
-    return "\(sshDestination):\(port)"
+    guard let port else { return bracketedDestination }
+    return "\(bracketedDestination):\(port)"
   }
 
   /// Extra `ssh` option arguments derived from the host (currently just the

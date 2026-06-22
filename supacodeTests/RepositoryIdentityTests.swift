@@ -107,8 +107,25 @@ struct RepositoryIdentityTests {
       RemoteHost(alias: "box", username: "me"),
       RemoteHost(alias: "box", port: 2222),
       RemoteHost(alias: "box", username: "me", port: 2222),
+      // IPv6 literals must round-trip too: `authority` brackets the host so the
+      // `:port` (and the colons in the address) stay unambiguous.
+      RemoteHost(alias: "fe80::1"),
+      RemoteHost(alias: "fe80::1", port: 2222),
+      RemoteHost(alias: "::1", username: "me", port: 22),
     ] {
       #expect(RemoteHost(authority: host.authority) == host)
+    }
+  }
+
+  @Test func remoteIDRoundTripsForEveryHostShape() {
+    for host in [
+      RemoteHost(alias: "box"),
+      RemoteHost(alias: "box", username: "me", port: 2222),
+      RemoteHost(alias: "fe80::1"),
+      RemoteHost(alias: "fe80::1", username: "me", port: 2222),
+    ] {
+      let location = RepositoryLocation.remote(host, path: "/srv/repo")
+      #expect(RepositoryLocation.parse(persistedID: location.id.rawValue) == location)
     }
   }
 

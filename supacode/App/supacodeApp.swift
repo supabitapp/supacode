@@ -140,12 +140,14 @@ struct SupacodeApp: App {
     // re-upgrade path can't double-migrate, while a prior
     // half-finished migration that left a `schemaVersion == 0` file
     // still gets retried.
-    SidebarPersistenceMigrator.migrateIfNeeded()
-    // Second one-shot pass (schema v2): drains the retired
-    // `global.remoteRepositories` into `remoteRepositoryRoots` and strips the
-    // `remote://` / `folder:` prefixes from persisted ids. Runs after the v0->v1
-    // build so it always sees a populated sidebar.
-    SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded()
+    // Capture the retired `global.remoteRepositories` before any migration can
+    // re-encode settings and drop the field. An unreadable settings.json skips
+    // both passes this launch (a save would strip it first); they retry next launch.
+    let capturedLegacyRemotes = SidebarPersistenceMigrator.captureLegacyRemoteRoots()
+    if capturedLegacyRemotes != .unreadable {
+      SidebarPersistenceMigrator.migrateIfNeeded()
+      SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(capturedLegacy: capturedLegacyRemotes)
+    }
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
     let infoDictionary = Bundle.main.infoDictionary ?? [:]
