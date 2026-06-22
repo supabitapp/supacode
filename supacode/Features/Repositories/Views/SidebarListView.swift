@@ -243,6 +243,7 @@ private struct SidebarSectionDispatcher: View {
         SidebarGitRepositorySection(
           repository: repository,
           groups: groups,
+          hoistSummary: structure.hoistSummaryByRepositoryID[repositoryID],
           shortcutHintByID: shortcutHintByID,
           selectedWorktreeIDs: selectedWorktreeIDs,
           store: store,
@@ -256,6 +257,9 @@ private struct SidebarSectionDispatcher: View {
 private struct SidebarGitRepositorySection: View {
   let repository: Repository
   let groups: [SidebarItemGroup]
+  /// Non-nil when one or more of this repo's rows were hoisted into the
+  /// highlight sections; rendered as a muted summary line under the rows.
+  let hoistSummary: SidebarHoistSummary?
   let shortcutHintByID: [Worktree.ID: String]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
@@ -273,6 +277,13 @@ private struct SidebarGitRepositorySection: View {
         store: store,
         terminalManager: terminalManager
       )
+      if let hoistSummary {
+        SidebarHoistSummaryRow(
+          repositoryName: Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
+          summary: hoistSummary,
+          store: store
+        )
+      }
     } header: {
       RepoSectionHeaderView(
         name: repository.name,
@@ -300,6 +311,58 @@ private struct SidebarGitRepositorySection: View {
         store.send(.repositoryExpansionChanged(repository.id, isExpanded: isExpanded))
       }
     )
+  }
+}
+
+/// Muted, unselectable line under a repo's rows summarizing how many were
+/// hoisted into the Pinned / Active sections, with a click that scrolls up to
+/// them. Carries no `.tag`, so it stays out of selection and arrow-key
+/// navigation; lives inside the `Section` body so it folds away when the repo
+/// section is collapsed.
+private struct SidebarHoistSummaryRow: View {
+  let repositoryName: String
+  let summary: SidebarHoistSummary
+  let store: StoreOf<RepositoriesFeature>
+
+  var body: some View {
+    Button {
+      store.send(.revealHoistedWorktreeInSidebar(summary.revealTarget))
+    } label: {
+      HStack(spacing: 8) {
+        if summary.pinnedCount > 0 {
+          SidebarHoistSummarySegment(kind: .pinned, count: summary.pinnedCount)
+        }
+        if summary.activeCount > 0 {
+          SidebarHoistSummarySegment(kind: .active, count: summary.activeCount)
+        }
+        Spacer(minLength: 0)
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+      .contentShape(.interaction, .rect)
+    }
+    .buttonStyle(.plain)
+    .listRowInsets(.leading, 0)
+    .listRowInsets(.trailing, 4)
+    .listRowInsets(.vertical, 4)
+    .moveDisabled(true)
+    .help("Show \(repositoryName)'s pinned and active worktrees")
+    .accessibilityLabel("\(summary.label) above. Scroll to them.")
+  }
+}
+
+/// One bucket of the hoist summary: its count followed by the same colored dot
+/// the matching highlight section header shows.
+private struct SidebarHoistSummarySegment: View {
+  let kind: SidebarStructure.HighlightKind
+  let count: Int
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Text("+\(count) \(kind.summaryNoun)")
+      SidebarHighlightHeaderDot(color: kind.indicatorColor)
+    }
   }
 }
 

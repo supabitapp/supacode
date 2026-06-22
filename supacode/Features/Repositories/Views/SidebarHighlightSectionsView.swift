@@ -39,7 +39,7 @@ struct SidebarHighlightSection: View {
 }
 
 extension SidebarStructure.HighlightKind {
-  fileprivate var indicatorColor: Color {
+  var indicatorColor: Color {
     switch self {
     case .pinned: .orange
     case .active: .blue
@@ -47,7 +47,9 @@ extension SidebarStructure.HighlightKind {
   }
 }
 
-private struct SidebarHighlightHeaderDot: View {
+/// Colored dot shown after a highlight section title and reused after each
+/// bucket label in the per-repo hoist summary line.
+struct SidebarHighlightHeaderDot: View {
   let color: Color
   @Environment(\.pixelLength) private var pixelLength
 
