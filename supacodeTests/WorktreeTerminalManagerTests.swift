@@ -791,9 +791,8 @@ struct WorktreeTerminalManagerTests {
     #expect(manager.stateIfExists(for: failedRepoWorktree.id) != nil)
     #expect(manager.stateIfExists(for: removedWorktree.id) == nil)
     #expect(failedState.hasSurface(failedSurfaceID, in: failedTabID))
-    await waitUntilAsync("removed zmx session kill") {
-      await probe.killedSessions().contains(session(for: removedSurfaceID))
-    }
+    let removedSession = session(for: removedSurfaceID)
+    await probe.waitForKill { $0.contains(removedSession) }
     let killed = await probe.killedSessions()
     #expect(killed.contains(session(for: removedSurfaceID)))
     #expect(!killed.contains(session(for: failedSurfaceID)))
@@ -818,7 +817,7 @@ struct WorktreeTerminalManagerTests {
     await probe.setListing([.init(name: session(for: surfaceID), clients: 0)])
 
     surface.bridge.closeSurface(processAlive: false)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface replacement") {
       guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else { return false }
       return replacement.id == surfaceID && replacement !== surface
@@ -852,7 +851,7 @@ struct WorktreeTerminalManagerTests {
     await probe.setListing([.init(name: session(for: surfaceID), clients: 0)])
 
     surface.bridge.closeSurface(processAlive: true)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
     await waitUntil("detached zmx surface replacement") {
       guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else { return false }
       return replacement.id == surfaceID && replacement !== surface
@@ -891,7 +890,7 @@ struct WorktreeTerminalManagerTests {
     await probe.setListing([.init(name: session(for: targetID), clients: 0)])
 
     target.bridge.closeSurface(processAlive: true)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
     await waitUntil("split zmx surface replacement") {
       let leaves = state.splitTree(for: tabId).leaves()
       guard leaves.count == 2 else { return false }
@@ -932,7 +931,7 @@ struct WorktreeTerminalManagerTests {
     await probe.setListing([.init(name: session(for: targetID), clients: 1)])
 
     target.bridge.closeSurface(processAlive: true)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
     await waitUntil("split pane closes") {
       let leaves = state.splitTree(for: tabId).leaves()
       return leaves.count == 1 && leaves.first.map { $0 === sibling } == true
@@ -964,7 +963,7 @@ struct WorktreeTerminalManagerTests {
     await probe.setListing([.init(name: session(for: surfaceID), clients: 0)])
 
     surface.bridge.closeSurface(processAlive: false)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface replacement") {
       guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else { return false }
       return replacement !== surface
@@ -986,9 +985,10 @@ struct WorktreeTerminalManagerTests {
     }
     let surfaceID = surface.id
 
+    let expectedKill = session(for: surfaceID)
     surface.bridge.closeSurface(processAlive: false)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
-    await waitUntilAsync("zmx session kill") { await probe.killedSessions().count >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
+    await probe.waitForKill { $0.contains(expectedKill) }
     let killed = await probe.killedSessions()
     await waitUntil("zmx surface tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
@@ -1012,7 +1012,7 @@ struct WorktreeTerminalManagerTests {
     let surfaceID = surface.id
 
     surface.bridge.closeSurface(processAlive: false)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
     }
@@ -1036,7 +1036,7 @@ struct WorktreeTerminalManagerTests {
     await probe.setListing([.init(name: session(for: surfaceID), clients: nil)])
 
     surface.bridge.closeSurface(processAlive: false)
-    await waitUntilAsync("zmx list probe") { await probe.listCallCount() >= 1 }
+    await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
     }
@@ -1059,9 +1059,10 @@ struct WorktreeTerminalManagerTests {
     let surfaceID = surface.id
     await probe.setListing([.init(name: session(for: surfaceID), clients: 1)])
 
+    let expectedKill = session(for: surfaceID)
     #expect(state.closeSurface(id: surfaceID))
     surface.bridge.closeSurface(processAlive: false)
-    await waitUntilAsync("zmx session kill") { await probe.killedSessions().count >= 1 }
+    await probe.waitForKill { $0.contains(expectedKill) }
     let killed = await probe.killedSessions()
     await waitUntil("explicit zmx surface tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
@@ -1086,9 +1087,10 @@ struct WorktreeTerminalManagerTests {
     let surfaceID = surface.id
     await probe.setListing([.init(name: session(for: surfaceID), clients: 1)])
 
+    let expectedKill = session(for: surfaceID)
     #expect(state.performBindingAction("close_surface", onSurfaceID: surfaceID))
     surface.bridge.closeSurface(processAlive: false)
-    await waitUntilAsync("zmx session kill") { await probe.killedSessions().count >= 1 }
+    await probe.waitForKill { $0.contains(expectedKill) }
     let killed = await probe.killedSessions()
     await waitUntil("binding-closed zmx surface tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
@@ -2133,35 +2135,43 @@ struct WorktreeTerminalManagerTests {
     ZmxSessionID.make(surfaceID: surfaceID)
   }
 
+  // MainActor work schedules cooperatively, so yield-poll it; the deadline guards CI load.
   private func waitUntil(
     _ description: String,
+    sourceLocation: SourceLocation = #_sourceLocation,
     condition: @MainActor () -> Bool
   ) async {
-    for _ in 0..<100 where !condition() {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: ZmxTestProbe.waitTimeout)
+    while !condition() && clock.now < deadline {
       await Task.yield()
     }
     if !condition() {
-      Issue.record("Timed out waiting for \(description)")
-    }
-  }
-
-  private func waitUntilAsync(
-    _ description: String,
-    condition: () async -> Bool
-  ) async {
-    for _ in 0..<100 {
-      if await condition() { return }
-      await Task.yield()
-    }
-    if !(await condition()) {
-      Issue.record("Timed out waiting for \(description)")
+      Issue.record("Timed out waiting for \(description)", sourceLocation: sourceLocation)
     }
   }
 
   private actor ZmxTestProbe {
+    // Backstop so a never-firing kill or probe fails fast instead of hanging.
+    static let waitTimeout: Duration = .seconds(10)
+
+    private enum Trigger {
+      case kill(@Sendable ([String]) -> Bool)
+      case list(threshold: Int)
+    }
+
+    // Resumed exactly once: by the event or the timeout.
+    private struct Waiter {
+      let id: UUID
+      let trigger: Trigger
+      let continuation: CheckedContinuation<Bool, Never>
+      let timeout: Task<Void, Never>
+    }
+
     private var listing: [ZmxSessionListParser.Entry]?
     private var killed: [String] = []
     private var listCalls = 0
+    private var waiters: [Waiter] = []
 
     init(listing: [ZmxSessionListParser.Entry]?) {
       self.listing = listing
@@ -2173,11 +2183,13 @@ struct WorktreeTerminalManagerTests {
 
     func listSessionsWithClients() -> [ZmxSessionListParser.Entry]? {
       listCalls += 1
+      resumeWaiters()
       return listing
     }
 
     func killSession(_ sessionID: String) {
       killed.append(sessionID)
+      resumeWaiters()
     }
 
     func killedSessions() -> [String] {
@@ -2186,6 +2198,65 @@ struct WorktreeTerminalManagerTests {
 
     func listCallCount() -> Int {
       listCalls
+    }
+
+    @discardableResult
+    func waitForKill(
+      where predicate: @escaping @Sendable ([String]) -> Bool,
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) async -> Bool {
+      await wait(for: .kill(predicate), description: "zmx session kill", sourceLocation: sourceLocation)
+    }
+
+    @discardableResult
+    func waitForListCalls(
+      atLeast threshold: Int,
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) async -> Bool {
+      await wait(for: .list(threshold: threshold), description: "zmx list probe call", sourceLocation: sourceLocation)
+    }
+
+    // The event resumes the waiter; the timeout only guards a regression.
+    private func wait(
+      for trigger: Trigger,
+      description: String,
+      sourceLocation: SourceLocation
+    ) async -> Bool {
+      if isSatisfied(trigger) { return true }
+      let id = UUID()
+      let satisfied = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+        // Strong capture: bounded and cancelled on the event path, so the continuation always resumes.
+        let timeout = Task { [self] in
+          try? await Task.sleep(for: Self.waitTimeout)
+          await expireWaiter(id)
+        }
+        waiters.append(Waiter(id: id, trigger: trigger, continuation: continuation, timeout: timeout))
+      }
+      if !satisfied {
+        Issue.record("Timed out waiting for \(description)", sourceLocation: sourceLocation)
+      }
+      return satisfied
+    }
+
+    private func isSatisfied(_ trigger: Trigger) -> Bool {
+      switch trigger {
+      case .kill(let predicate): predicate(killed)
+      case .list(let threshold): listCalls >= threshold
+      }
+    }
+
+    private func resumeWaiters() {
+      waiters.removeAll { waiter in
+        guard isSatisfied(waiter.trigger) else { return false }
+        waiter.timeout.cancel()
+        waiter.continuation.resume(returning: true)
+        return true
+      }
+    }
+
+    private func expireWaiter(_ id: UUID) {
+      guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+      waiters.remove(at: index).continuation.resume(returning: false)
     }
   }
 
