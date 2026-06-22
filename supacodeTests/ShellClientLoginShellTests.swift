@@ -15,12 +15,14 @@ struct ShellClientLoginShellTests {
     let result = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: "/opt/homebrew/bin/fish"))
     #expect(result.shell.lastPathComponent == "fish")
     #expect(result.command.contains("exec $argv"))
+    // fish scopes argv across source, so it must NOT get the zsh/bash capture (which isn't valid fish).
+    #expect(!result.command.contains("__supacode_login_argv"))
   }
 
   @Test func bashSourcesBashrc() {
     let result = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: "/bin/bash"))
     #expect(result.command.contains("~/.bashrc"))
-    #expect(result.command.contains("exec \"$@\""))
+    #expect(result.command.contains("exec \"${__supacode_login_argv[@]}\""))
   }
 
   /// Regression for #100: any shell we don't have a correct rc snippet for must
@@ -35,7 +37,24 @@ struct ShellClientLoginShellTests {
     for path in shells {
       let result = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: path))
       #expect(result.shell.path == "/bin/zsh")
-      #expect(result.command.contains("exec \"$@\""))
+      #expect(result.command.contains("exec \"${__supacode_login_argv[@]}\""))
+    }
+  }
+
+  /// Regression for #441: the zsh/bash snippet must capture the positional parameters into the
+  /// saved array BEFORE sourcing the rc file. Sourcing shares `$@` with the caller, so an rc that
+  /// runs `set --` would otherwise wipe the command (`/usr/bin/which gh`) before `exec`.
+  @Test func zshAndBashCaptureArgsBeforeSourcingRc() {
+    for path in ["/bin/zsh", "/bin/bash"] {
+      let command = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: path)).command
+      guard let captureRange = command.range(of: "__supacode_login_argv=(\"$@\")"),
+        let sourceRange = command.range(of: "~/.")
+      else {
+        Issue.record("\(path) snippet missing capture or source: \(command)")
+        continue
+      }
+      #expect(captureRange.lowerBound < sourceRange.lowerBound)
+      #expect(command.contains("exec \"${__supacode_login_argv[@]}\""))
     }
   }
 }

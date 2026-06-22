@@ -281,11 +281,20 @@ extension ShellClient {
     case "fish":
       command = "test -f ~/.config/fish/config.fish; and source ~/.config/fish/config.fish >/dev/null 2>&1; exec $argv"
     case "bash":
-      command = "[ -f ~/.bashrc ] && . ~/.bashrc >/dev/null 2>&1; exec \"$@\""
+      command = posixLoginCommand(rcFile: "~/.bashrc")
     default:
-      command = "[ -f ~/.zshrc ] && . ~/.zshrc >/dev/null 2>&1; exec \"$@\""
+      command = posixLoginCommand(rcFile: "~/.zshrc")
     }
     return (shell, command)
+  }
+
+  /// Builds the zsh/bash one-shot command: capture the positional parameters before sourcing the rc
+  /// file, then exec from the saved array. Sourcing shares `$@` with the caller, so an rc that resets
+  /// the positional parameters (e.g. `set --`) would otherwise wipe the command before `exec` (#441).
+  nonisolated private static func posixLoginCommand(rcFile: String) -> String {
+    let capture = "__supacode_login_argv=(\"$@\")"
+    let source = "[ -f \(rcFile) ] && . \(rcFile) >/dev/null 2>&1"
+    return "\(capture); \(source); exec \"${__supacode_login_argv[@]}\""
   }
 }
 

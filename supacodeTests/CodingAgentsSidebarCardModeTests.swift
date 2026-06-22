@@ -9,6 +9,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.installed),
       .codex: .ready(.outdated),
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.outdated),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -25,6 +26,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
+      .copilot: .ready(.installed),
       .kiro: .ready(.installed),
       .opencode: .ready(.installed),
       .pi: .ready(.installed),
@@ -37,6 +39,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.installed),
       .codex: .ready(.notInstalled),
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -48,6 +51,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -59,6 +63,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -70,6 +75,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .checking,
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -83,6 +89,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .installing,
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -96,6 +103,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.installed),
       .codex: .uninstalling,
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -110,6 +118,7 @@ struct CodingAgentsSidebarCardModeTests {
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .failed("boom"),
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -124,6 +133,7 @@ struct CodingAgentsSidebarCardModeTests {
     let outdated: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
+      .copilot: .ready(.installed),
       .kiro: .ready(.installed),
       .opencode: .ready(.installed),
       .pi: .ready(.installed),
@@ -135,6 +145,7 @@ struct CodingAgentsSidebarCardModeTests {
     let untouched: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
+      .copilot: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),

@@ -12,6 +12,7 @@ nonisolated enum AgentIntegrationFactory {
     switch agent {
     case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .opencode: opencode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
@@ -106,6 +107,24 @@ nonisolated enum AgentIntegrationFactory {
           uninstall: { try installer.uninstall() }
         ),
         skillComponent(agent: .opencode, installer: skill),
+      ]
+    )
+  }
+
+  private static func copilot(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = CopilotHooksInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    let skill = CLISkillInstaller()
+    return AgentIntegration(
+      agent: .copilot,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.install() },
+          uninstall: { try installer.uninstall() }
+        ),
+        skillComponent(agent: .copilot, installer: skill),
       ]
     )
   }
