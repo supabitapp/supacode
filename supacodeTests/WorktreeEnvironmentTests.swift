@@ -96,6 +96,46 @@ struct WorktreeEnvironmentTests {
     )
   }
 
+  @Test func userScriptSurfaceEnvironmentCarriesIDKindAndScope() {
+    let definition = ScriptDefinition(id: UUID(), kind: .test, name: "Unit", command: "make test")
+    let env = BlockingScriptKind.script(definition).surfaceEnvironmentVariables(scope: .repo)
+    #expect(env["SUPACODE_BLOCKING_SCRIPT"] == "1")
+    #expect(env["SUPACODE_SCRIPT_ID"] == definition.id.uuidString)
+    #expect(env["SUPACODE_SCRIPT_KIND"] == "test")
+    #expect(env["SUPACODE_SCRIPT_SCOPE"] == "repo")
+    #expect(env.count == 4)
+  }
+
+  @Test func userScriptSurfaceEnvironmentOmitsScopeWhenUnresolved() {
+    let definition = ScriptDefinition(id: UUID(), kind: .run, name: "Run", command: "make run")
+    let env = BlockingScriptKind.script(definition).surfaceEnvironmentVariables(scope: nil)
+    #expect(env["SUPACODE_BLOCKING_SCRIPT"] == "1")
+    #expect(env["SUPACODE_SCRIPT_KIND"] == "run")
+    #expect(env["SUPACODE_SCRIPT_SCOPE"] == nil)
+    #expect(env.count == 3)
+  }
+
+  @Test func globalScriptSurfaceEnvironmentReportsGlobalScope() {
+    let definition = ScriptDefinition(id: UUID(), kind: .custom, name: "Deploy", command: "./deploy")
+    let env = BlockingScriptKind.script(definition).surfaceEnvironmentVariables(scope: .global)
+    #expect(env["SUPACODE_SCRIPT_KIND"] == "custom")
+    #expect(env["SUPACODE_SCRIPT_SCOPE"] == "global")
+  }
+
+  @Test func lifecycleSurfaceEnvironmentTagsKindWithoutIDOrScope() {
+    let archive = BlockingScriptKind.archive.surfaceEnvironmentVariables(scope: nil)
+    #expect(archive["SUPACODE_BLOCKING_SCRIPT"] == "1")
+    #expect(archive["SUPACODE_SCRIPT_KIND"] == "archive")
+    #expect(archive["SUPACODE_SCRIPT_ID"] == nil)
+    #expect(archive["SUPACODE_SCRIPT_SCOPE"] == nil)
+    #expect(archive.count == 2)
+
+    let delete = BlockingScriptKind.delete.surfaceEnvironmentVariables(scope: nil)
+    #expect(delete["SUPACODE_SCRIPT_KIND"] == "delete")
+    #expect(delete["SUPACODE_SCRIPT_ID"] == nil)
+    #expect(delete.count == 2)
+  }
+
   @Test func remoteRunnerScriptFramesCdsAndRunsUserScriptAsChild() {
     let runner = BlockingScriptRunner.remoteRunnerScript(remoteWorktreePath: "/home/me/wt")
     // Same OSC 133 framing + read-only tail as the local runner, but on the host.

@@ -55,6 +55,24 @@ enum BlockingScriptKind: Sendable {
     case .archive, .delete: false
     }
   }
+
+  /// Surface env vars that let the user's shell profile detect a blocking-script
+  /// tab and skip its interactive init (prompt, plugins, banners). `scope` is
+  /// resolved by the caller and only emitted for user-defined scripts.
+  func surfaceEnvironmentVariables(scope: ScriptScope?) -> [String: String] {
+    var env = ["SUPACODE_BLOCKING_SCRIPT": "1"]
+    switch self {
+    case .script(let definition):
+      env["SUPACODE_SCRIPT_ID"] = definition.id.uuidString
+      env["SUPACODE_SCRIPT_KIND"] = definition.kind.rawValue
+      if let scope { env["SUPACODE_SCRIPT_SCOPE"] = scope.rawValue }
+    case .archive:
+      env["SUPACODE_SCRIPT_KIND"] = "archive"
+    case .delete:
+      env["SUPACODE_SCRIPT_KIND"] = "delete"
+    }
+    return env
+  }
 }
 
 // MARK: - Hashable / Equatable

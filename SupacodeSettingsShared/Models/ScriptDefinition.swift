@@ -65,6 +65,14 @@ public nonisolated struct ScriptDefinition: Identifiable, Codable, Equatable, Ha
   }
 }
 
+/// Where a `ScriptDefinition` is owned. Repo scripts shadow globals on ID
+/// collisions (see `merged`), so a definition resolves to `.repo` whenever
+/// it lives in the repository's settings, otherwise `.global`.
+public enum ScriptScope: String, Codable, Hashable, Sendable {
+  case repo
+  case global
+}
+
 // MARK: - Collection helpers
 
 extension [ScriptDefinition] {

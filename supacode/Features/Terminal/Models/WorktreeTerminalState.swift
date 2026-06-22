@@ -411,6 +411,7 @@ final class WorktreeTerminalState {
         context: GHOSTTY_SURFACE_CONTEXT_TAB,
         tabID: nil,
         isBlockingScript: true,
+        blockingScriptKind: kind,
         bypassZmx: true,
       )
     )
@@ -422,7 +423,6 @@ final class WorktreeTerminalState {
       onBlockingScriptCompleted?(kind, 1, nil)
       return nil
     }
-    blockingScripts[tabId] = kind
     if let launchDirectory {
       blockingScriptLaunchDirectories[tabId] = launchDirectory
     }
@@ -448,6 +448,9 @@ final class WorktreeTerminalState {
     /// Marks the tab as a blocking-script tab so the no-split / no-rename
     /// / readonly-after-completion guardrails apply.
     var isBlockingScript: Bool = false
+    /// The blocking-script kind, recorded into `blockingScripts` before the
+    /// surface is built so `surfaceEnvironment` can emit its env markers.
+    var blockingScriptKind: BlockingScriptKind?
     /// Skip zmx session wrapping for transactional surfaces (blocking setup/archive/delete scripts)
     /// that must die with the app rather than survive.
     var bypassZmx: Bool = false
@@ -462,6 +465,11 @@ final class WorktreeTerminalState {
       isBlockingScript: creation.isBlockingScript,
       id: creation.tabID,
     )
+    // Record the kind before the surface is built so `surfaceEnvironment`
+    // can read it when emitting the blocking-script env markers.
+    if let blockingScriptKind = creation.blockingScriptKind {
+      blockingScripts[tabId] = blockingScriptKind
+    }
     // When a tab ID is explicitly provided, use it as the initial surface ID
     // so the CLI can reference the surface immediately after creation.
     let tree = splitTree(
@@ -1347,6 +1355,12 @@ final class WorktreeTerminalState {
     if let socketPath {
       env["SUPACODE_SOCKET_PATH"] = socketPath
     }
+    // Mark blocking-script surfaces so the user's shell profile can skip its
+    // interactive init (prompt, plugins, banners) for these transient tabs.
+    if let blockingScriptKind = blockingScripts[tabId] {
+      let scope = blockingScriptKind.scriptDefinitionID.flatMap(scriptScope(forDefinitionID:))
+      env.merge(blockingScriptKind.surfaceEnvironmentVariables(scope: scope)) { _, new in new }
+    }
     // Lock ZMX_DIR to the value the app's probe used so the shell can't
     // re-export a different value from .zshrc / .zprofile and silently
     // overflow `sockaddr_un.sun_path` past the probe's check.
@@ -1361,6 +1375,17 @@ final class WorktreeTerminalState {
       env["PATH"] = currentPath.isEmpty ? cliBinDir : "\(cliBinDir):\(currentPath)"
     }
     return env
+  }
+
+  /// Resolves whether a user-defined script is repo- or global-owned, mirroring
+  /// the repo-wins merge: an ID present in repo settings is `.repo`, otherwise
+  /// `.global`. Returns `nil` for a script that resolves to neither (e.g. a
+  /// since-deleted deeplink target).
+  private func scriptScope(forDefinitionID id: UUID) -> ScriptScope? {
+    if repositorySettings.scripts.contains(where: { $0.id == id }) { return .repo }
+    @Shared(.settingsFile) var settingsFile
+    if settingsFile.global.globalScripts.contains(where: { $0.id == id }) { return .global }
+    return nil
   }
 
   private func percentEncode(_ value: String, allowedCharacters: CharacterSet, label: String) -> String {
