@@ -1181,6 +1181,21 @@ struct RemoteRepositoryResolutionTests {
     }
   }
 
+  private func withExhaustiveStore(
+    _ state: RepositoriesFeature.State,
+    _ body: (TestStoreOf<RepositoriesFeature>) async -> Void
+  ) async {
+    let storage = SettingsTestStorage()
+    await withDependencies {
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-remote-resolve-\(UUID().uuidString).json")
+      $0.sidebarStructureAutoRecompute = false
+    } operation: {
+      let store = TestStore(initialState: state) { RepositoriesFeature() }
+      await body(store)
+    }
+  }
+
   @Test(.dependencies) func resolvedRemoteReplacesPlaceholderAndClearsResolving() async {
     let cfg = config()
     let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
@@ -1217,6 +1232,101 @@ struct RemoteRepositoryResolutionTests {
     }
   }
 
+  @Test(.dependencies) func staleRemoteResolutionDoesNotReplaceNonResolvingRemote() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    let resolved = resolvedRepository(repoID: repoID)
+    var state = RepositoriesFeature.State()
+    state.isInitialLoadComplete = true
+    state.repositories = [resolved]
+    await withExhaustiveStore(state) { store in
+      await store.send(
+        .remoteRepositoryResolved(
+          repositoryID: repoID,
+          repository: RepositoriesFeature.remotePlaceholderRepository(config: cfg, repoID: repoID),
+          failureMessage: "Can't reach devbox."
+        )
+      )
+      await store.finish()
+      #expect(store.state.repositories[id: repoID] == resolved)
+      #expect(store.state.loadFailuresByID[repoID] == nil)
+      #expect(store.state.resolvingRemoteRepositoryIDs.contains(repoID) == false)
+    }
+  }
+
+  @Test(.dependencies) func freshSuccessSurvivesLateStaleFailureInSameIdRace() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    await withStore(placeholderState(repoID: repoID, config: cfg)) { store in
+      // The fresh probe wins first and resolves the placeholder.
+      await store.send(
+        .remoteRepositoryResolved(
+          repositoryID: repoID,
+          repository: resolvedRepository(repoID: repoID),
+          failureMessage: nil
+        )
+      )
+      // A superseded "can't reach" lands late; it must not drop the resolved remote.
+      await store.send(
+        .remoteRepositoryResolved(
+          repositoryID: repoID,
+          repository: RepositoriesFeature.remotePlaceholderRepository(config: cfg, repoID: repoID),
+          failureMessage: "Can't reach devbox."
+        )
+      )
+      await store.finish()
+      #expect(store.state.repositories[id: repoID]?.worktrees.isEmpty == false)
+      #expect(store.state.loadFailuresByID[repoID] == nil)
+      #expect(store.state.resolvingRemoteRepositoryIDs.contains(repoID) == false)
+    }
+  }
+
+  @Test(.dependencies) func staleFailureThenFreshSuccessResolvesRemote() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    await withStore(placeholderState(repoID: repoID, config: cfg)) { store in
+      // An early probe fails while resolving: the placeholder records the failure.
+      await store.send(
+        .remoteRepositoryResolved(
+          repositoryID: repoID,
+          repository: RepositoriesFeature.remotePlaceholderRepository(config: cfg, repoID: repoID),
+          failureMessage: "Can't reach devbox."
+        )
+      )
+      #expect(store.state.loadFailuresByID[repoID] == "Can't reach devbox.")
+      // The guard only blocks empty-over-non-empty, so a later success still resolves.
+      await store.send(
+        .remoteRepositoryResolved(
+          repositoryID: repoID,
+          repository: resolvedRepository(repoID: repoID),
+          failureMessage: nil
+        )
+      )
+      await store.finish()
+      #expect(store.state.repositories[id: repoID]?.worktrees.isEmpty == false)
+      #expect(store.state.loadFailuresByID[repoID] == nil)
+      #expect(store.state.resolvingRemoteRepositoryIDs.contains(repoID) == false)
+    }
+  }
+
+  @Test(.dependencies) func previouslyFailedRemoteIsRetriedOnNextLoad() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    var state = RepositoriesFeature.State()
+    state.isInitialLoadComplete = true
+    state.repositories = [RepositoriesFeature.remotePlaceholderRepository(config: cfg, repoID: repoID)]
+    state.loadFailuresByID = [repoID: "Can't reach devbox."]
+    await withStore(state) { store in
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+
+      await store.send(.repositoriesLoaded([], failures: [], roots: [], animated: false))
+      // An unreachable remote keeps its empty placeholder, so the next load retries it.
+      #expect(store.state.resolvingRemoteRepositoryIDs.contains(repoID))
+      await store.finish()
+    }
+  }
+
   @Test(.dependencies) func repositoriesLoadedSeedsPlaceholderAndMarksResolving() async {
     let cfg = config()
     let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
@@ -1234,6 +1344,56 @@ struct RemoteRepositoryResolutionTests {
       await store.finish()
     }
     _ = state
+  }
+
+  @Test(.dependencies) func repositoriesLoadedReprobesResolvedRemoteWithoutDropping() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    let resolved = resolvedRepository(repoID: repoID)
+    var state = RepositoriesFeature.State()
+    state.isInitialLoadComplete = true
+    state.repositories = [resolved]
+    state.reconcileSidebarForTesting()
+    await withStore(state) { store in
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+
+      await store.send(.repositoriesLoaded([], failures: [], roots: [], animated: false))
+      // A reload re-probes without marking the remote resolving, so the row stays put.
+      #expect(store.state.repositories[id: repoID] == resolved)
+      #expect(store.state.resolvingRemoteRepositoryIDs.contains(repoID) == false)
+      // The fake host probe fails fast; the guard keeps the resolved repo.
+      await store.finish()
+      #expect(store.state.repositories[id: repoID] == resolved)
+      #expect(store.state.loadFailuresByID[repoID] == nil)
+    }
+  }
+
+  @Test(.dependencies) func openRepositoriesFinishedDoesNotResolveAlreadyResolvedRemote() async {
+    let cfg = config()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: cfg)
+    let local = localRepository()
+    let resolved = resolvedRepository(repoID: repoID)
+    var state = RepositoriesFeature.State()
+    state.isInitialLoadComplete = true
+    state.repositories = [resolved]
+    state.reconcileSidebarForTesting()
+    await withExhaustiveStore(state) { store in
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.global.remoteRepositories = [cfg] }
+
+      await store.send(
+        .openRepositoriesFinished([local], failures: [], invalidRoots: [], roots: [local.rootURL])
+      ) {
+        $0.repositories = [local, resolved]
+        $0.repositoryRoots = [local.rootURL]
+        $0.reconcileSidebarState(roots: [local.rootURL], pruneLivenessAgainstRoster: true)
+        RepositoriesFeature.syncSidebar(&$0)
+      }
+      await store.receive(\.delegate.repositoriesChanged)
+      await store.finish()
+      #expect(store.state.resolvingRemoteRepositoryIDs.contains(repoID) == false)
+    }
   }
 
   @Test(.dependencies) func openRepositoriesFinishedPreservesResolvedRemoteRepository() async {

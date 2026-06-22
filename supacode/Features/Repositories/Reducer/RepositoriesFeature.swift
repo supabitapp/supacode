@@ -3035,7 +3035,8 @@ struct RepositoriesFeature {
         if state.autoDeleteArchivedWorktreesAfterDays != nil {
           allEffects.append(.send(.autoDeleteExpiredArchivedWorktrees))
         }
-        if mergedRemote.hasPersistedRemoteRepositories {
+        // Re-probe remotes on every reload so refreshes re-list them.
+        if mergedRemote.repositories.contains(where: { $0.host != nil }) {
           allEffects.append(.send(.resolveRemoteRepositories))
         }
         return .merge(allEffects)
@@ -3068,10 +3069,14 @@ struct RepositoriesFeature {
         .cancellable(id: CancelID.resolveRemoteRepositories, cancelInFlight: true)
 
       case .remoteRepositoryResolved(let repositoryID, let repository, let failureMessage):
-        state.resolvingRemoteRepositoryIDs.remove(repositoryID)
-        // Ignore a result whose config was removed (or edited to a new id) while
-        // the probe was in flight.
+        let wasResolving = state.resolvingRemoteRepositoryIDs.remove(repositoryID) != nil
+        // Drop a result whose config was removed or re-keyed mid-probe.
         guard let existing = state.repositories[id: repositoryID] else { return .none }
+        // A superseded probe must not downgrade a resolved remote to a placeholder.
+        if !wasResolving, repository.worktrees.isEmpty, !existing.worktrees.isEmpty {
+          repositoriesLogger.debug("Ignoring stale remote resolution for \(repositoryID).")
+          return .none
+        }
         if let failureMessage {
           state.loadFailuresByID[repositoryID] = failureMessage
         } else {
@@ -3193,8 +3198,7 @@ struct RepositoriesFeature {
         if state.autoDeleteArchivedWorktreesAfterDays != nil {
           allEffects.append(.send(.autoDeleteExpiredArchivedWorktrees))
         }
-        // Opening a local repo should not re-probe every already-loaded remote;
-        // only resolve placeholders that were introduced or preserved by the merge.
+        // Adding a local repo resolves only new placeholders; reload refreshes resolved remotes.
         if !mergedRemote.resolvingIDs.isEmpty {
           allEffects.append(.send(.resolveRemoteRepositories))
         }
@@ -4031,8 +4035,7 @@ struct RepositoriesFeature {
     guard !remoteConfigs.isEmpty else {
       return RemoteRepositoryMergeResult(
         repositories: mergedRepositories,
-        resolvingIDs: [],
-        hasPersistedRemoteRepositories: false
+        resolvingIDs: []
       )
     }
 
@@ -4060,15 +4063,13 @@ struct RepositoriesFeature {
     }
     return RemoteRepositoryMergeResult(
       repositories: mergedRepositories,
-      resolvingIDs: resolvingIDs,
-      hasPersistedRemoteRepositories: true
+      resolvingIDs: resolvingIDs
     )
   }
 
   private struct RemoteRepositoryMergeResult: Sendable {
     let repositories: [Repository]
     let resolvingIDs: Set<Repository.ID>
-    let hasPersistedRemoteRepositories: Bool
   }
 
   private struct WorktreesFetchResult: Sendable {
