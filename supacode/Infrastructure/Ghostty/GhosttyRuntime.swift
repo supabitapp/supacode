@@ -552,10 +552,33 @@ final class GhosttyRuntime {
     background-opacity = 0
     """
 
+  /// Reports Supacode in `TERM_PROGRAM` so programs detect the real host
+  /// terminal (issue #440); loaded after the user config so it wins. The version
+  /// is always emitted because Ghostty's `env` map can override a key but not
+  /// clear its seeded version, so a blank value falls back to a placeholder.
+  internal static func terminalProgramOverrides(version: String?) -> String {
+    // Trim like Ghostty's `env` parser, which strips whitespace then drops a
+    // now-empty value, leaving its seeded version.
+    let trimmed = version?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolved = trimmed.flatMap { $0.isEmpty ? nil : $0 } ?? "unknown"
+    return """
+      env = TERM_PROGRAM=supacode
+      env = TERM_PROGRAM_VERSION=\(resolved)
+      """
+  }
+
+  private static var appVersion: String? {
+    let info = Bundle.main.infoDictionary
+    let candidates = [info?["CFBundleShortVersionString"], info?["CFBundleVersion"]]
+    return candidates.lazy.compactMap { $0 as? String }.first { !$0.isEmpty }
+  }
+
   private static func loadBundledOverrides(into config: ghostty_config_t) {
     let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-defaults.conf")
+    let contents = [bundledOverridesString, terminalProgramOverrides(version: appVersion)]
+      .joined(separator: "\n")
     do {
-      try bundledOverridesString.write(to: tempURL, atomically: true, encoding: .utf8)
+      try contents.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {
       logger.warning("Failed to write bundled defaults: \(error.localizedDescription)")
       return
