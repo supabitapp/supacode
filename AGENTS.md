@@ -1,6 +1,7 @@
 ## Build Commands
 
 ```bash
+make doctor                      # Diagnose build prerequisites (run this first on a new machine)
 make build-ghostty-xcframework  # Rebuild GhosttyKit from Zig source (requires mise)
 make build-app                   # Build macOS app (Debug) via xcodebuild
 make run-app                     # Build and launch Debug app
@@ -25,7 +26,9 @@ Requires [mise](https://mise.jdx.dev/) for zig, swiftlint, swift-format, xcbeaut
 
 ## Building on macOS 26.4+ (Tahoe)
 
-On macOS 26.4+ the GhosttyKit build fails to link with a wall of `undefined symbol: _malloc, _free, _sigaction, …` in `build_zcu.o`. **The fix is to build against Xcode 26.3, not the toolchain version.** First-time setup, in order:
+On macOS 26.4+ the GhosttyKit build fails to link with a wall of `undefined symbol: _malloc, _free, _sigaction, …` in `build_zcu.o`. **The fix is to build against Xcode 26.3, not the toolchain version.**
+
+**Run `make doctor` first** — it verifies every prerequisite below (mise on PATH, submodules, a Zig-linkable Xcode, license/first-launch, Metal Toolchain, pinned mise tools) and prints the exact command to fix each failure. The build targets also run it automatically as a quiet preflight (skip with `SUPACODE_SKIP_PREFLIGHT=1`). First-time setup, in order:
 
 1. **mise on PATH.** `make` targets call `mise exec`, but mise installs at `~/.local/bin/mise`, which non-login shells don't pick up. Activate it: `echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc` (or add `~/.local/bin` to `PATH`), then `mise install`.
 2. **Submodules.** `git submodule update --init --recursive` (ghostty, zmx, git-wt).

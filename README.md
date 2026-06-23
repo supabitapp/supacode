@@ -41,10 +41,13 @@ make mac-warm-cache
 ```
 
 ```bash
+make doctor                      # Diagnose build prerequisites and print fixes
 make build-ghostty-xcframework   # Build GhosttyKit from Zig source
 make build-app                   # Build macOS app (Debug)
 make run-app                     # Build and launch
 ```
+
+`make doctor` checks every prerequisite (mise, submodules, a Zig-linkable Xcode, the Metal Toolchain, pinned tools) and prints the exact fix for anything missing. The build targets run it automatically as a quiet preflight.
 
 ## Development
 

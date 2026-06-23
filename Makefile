@@ -23,6 +23,7 @@ TUIST_CACHE_CONFIGURATION ?= Debug
 VERSION ?=
 BUILD ?=
 XCODEBUILD_FLAGS ?=
+SUPACODE_SKIP_PREFLIGHT ?=
 
 # Resolve and export a Zig-linkable Xcode for the recipe's shell, so the app and
 # its ghostty foreignBuild share one toolchain without a global xcode-select -s.
@@ -34,7 +35,7 @@ XCODEBUILD_FLAGS ?=
 SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; export DEVELOPER_DIR
 
 .DEFAULT_GOAL := help
-.PHONY: build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
+.PHONY: doctor preflight build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
 
 ifdef CI
 TUIST_INSTALL_FLAGS := --force-resolved-versions
@@ -79,10 +80,19 @@ $(TUIST_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_ST
 	mise exec -- tuist generate --no-open --cache-profile development --configuration Release
 	touch "$@"
 
-build-ghostty-xcframework: # Build ghostty framework
+doctor: # Diagnose build prerequisites and print the fix for each failure
+	@./scripts/doctor.sh
+
+# Quiet preflight wired as an order-only prerequisite of the build targets, so a
+# missing prerequisite fails fast with an actionable message instead of a Zig
+# linker dump. Order-only (never forces a rebuild). Skip with SUPACODE_SKIP_PREFLIGHT=1.
+preflight:
+	@[ -n "$(SUPACODE_SKIP_PREFLIGHT)" ] || ./scripts/doctor.sh --quiet
+
+build-ghostty-xcframework: | preflight # Build ghostty framework
 	./scripts/build-ghostty.sh
 
-build-zmx: # Build bundled zmx binary from ThirdParty/zmx submodule
+build-zmx: | preflight # Build bundled zmx binary from ThirdParty/zmx submodule
 	./scripts/build-zmx.sh
 
 inspect-dependencies: $(TUIST_INSTALL_STAMP) # Check for implicit Tuist dependencies
@@ -91,7 +101,7 @@ inspect-dependencies: $(TUIST_INSTALL_STAMP) # Check for implicit Tuist dependen
 warm-cache: $(TUIST_INSTALL_STAMP) # Warm the full Tuist cacheable graph
 	mise exec -- tuist cache warm --configuration $(TUIST_CACHE_CONFIGURATION)
 
-build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the macOS app (Debug)
+build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) | preflight # Build the macOS app (Debug)
 	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
 
@@ -128,7 +138,7 @@ export-archive: # Export xarchive
 	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
 
-test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
+test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) | preflight # Run all tests
 	@$(SELECT_DEVELOPER_DIR); \
 	if [ -t 1 ]; then \
 		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \
