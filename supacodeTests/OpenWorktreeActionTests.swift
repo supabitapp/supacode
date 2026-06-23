@@ -173,6 +173,119 @@ struct OpenWorktreeActionTests {
     #expect(invocation?.arguments == ["ssh://host/home/me/my%20project/src"])
   }
 
+  @Test(
+    arguments: [
+      (OpenWorktreeAction.vscode, "code"),
+      (.vscodeInsiders, "code-insiders"),
+      (.vscodium, "codium"),
+      (.cursor, "cursor"),
+      (.windsurf, "windsurf"),
+    ]
+  )
+  func vscodeFamilyRemoteOpenInvocationUsesBundledCLIAndPositionalRemoteForm(
+    action: OpenWorktreeAction,
+    cliName: String
+  ) {
+    let invocation = action.remoteOpenInvocation(host: RemoteHost(alias: "host"), remotePath: "/path")
+    #expect(invocation?.executable == .appRelativePath("Contents/Resources/app/bin/\(cliName)"))
+    #expect(invocation?.arguments == ["--remote", "ssh-remote+host", "/path"])
+  }
+
+  @Test(
+    arguments: [
+      OpenWorktreeAction.vscode,
+      .vscodeInsiders,
+      .vscodium,
+      .cursor,
+      .windsurf,
+    ]
+  )
+  func vscodeFamilyRemoteOpenInvocationIncludesUsernameInHostToken(action: OpenWorktreeAction) {
+    let invocation = action.remoteOpenInvocation(
+      host: RemoteHost(alias: "host", username: "me"),
+      remotePath: "/path"
+    )
+    #expect(invocation?.arguments == ["--remote", "ssh-remote+me@host", "/path"])
+  }
+
+  @Test(
+    arguments: [
+      OpenWorktreeAction.vscode,
+      .vscodeInsiders,
+      .vscodium,
+      .cursor,
+      .windsurf,
+    ]
+  )
+  func vscodeFamilyRemoteOpenInvocationRejectsNonDefaultPort(action: OpenWorktreeAction) {
+    // `ssh-remote+host:2222` is parsed as a literal hostname, so a non-default
+    // port can't be expressed — the editor is treated as incapable for the host.
+    let invocation = action.remoteOpenInvocation(
+      host: RemoteHost(alias: "host", port: 2222),
+      remotePath: "/path"
+    )
+    #expect(invocation == nil)
+  }
+
+  @Test func vscodeFamilyRemoteOpenInvocationAllowsDefaultAndNilPort() {
+    let defaultPort = OpenWorktreeAction.vscode.remoteOpenInvocation(
+      host: RemoteHost(alias: "host", port: 22),
+      remotePath: "/path"
+    )
+    let nilPort = OpenWorktreeAction.vscode.remoteOpenInvocation(
+      host: RemoteHost(alias: "host", port: nil),
+      remotePath: "/path"
+    )
+    #expect(defaultPort?.arguments == ["--remote", "ssh-remote+host", "/path"])
+    #expect(nilPort?.arguments == ["--remote", "ssh-remote+host", "/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationStillIncludesNonDefaultPort() {
+    // Regression guard: the VS Code port rule must not bleed into Zed, whose
+    // `ssh://` URL carries the port inline.
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(
+      host: RemoteHost(alias: "host", port: 2222),
+      remotePath: "/path"
+    )
+    #expect(invocation != nil)
+    #expect(invocation?.arguments.first?.contains(":2222") == true)
+  }
+
+  @Test(
+    arguments: [
+      OpenWorktreeAction.vscode,
+      .vscodeInsiders,
+      .vscodium,
+      .cursor,
+      .windsurf,
+    ]
+  )
+  func vscodeFamilyHasDisabledReasonForNonDefaultPort(action: OpenWorktreeAction) {
+    let reason = action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 2222))
+    #expect(reason == "Opening \(action.title) over SSH needs the port in ~/.ssh/config")
+  }
+
+  @Test(
+    arguments: [
+      OpenWorktreeAction.vscode,
+      .vscodeInsiders,
+      .vscodium,
+      .cursor,
+      .windsurf,
+    ]
+  )
+  func vscodeFamilyHasNoDisabledReasonForDefaultPort(action: OpenWorktreeAction) {
+    #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 22)) == nil)
+    #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host")) == nil)
+  }
+
+  @Test func nonVSCodeEditorsHaveNoDisabledReasonEvenOnNonDefaultPort() {
+    // A non-remote / non-VS-Code editor must not get a misleading port reason.
+    for action in [OpenWorktreeAction.intellij, .zed, .finder, .terminal] {
+      #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 2222)) == nil)
+    }
+  }
+
   @Test func nonRemoteEditorsHaveNoRemoteOpenInvocation() {
     let host = RemoteHost(alias: "host")
 

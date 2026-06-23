@@ -55,6 +55,12 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     self.init(alias: host, username: (user?.isEmpty ?? true) ? nil : user, port: port)
   }
 
+  /// Whether this host carries a non-default SSH port. 22 is the default SSH
+  /// port and `nil` means unspecified/default, so both fold to `false`. Single
+  /// source of truth for the "VS Code family can't express an inline port" rule
+  /// in `OpenWorktreeAction`.
+  public var hasNonDefaultPort: Bool { port != nil && port != 22 }
+
   /// The `user@host` (or bare `host`) token passed to `ssh`. The host is left
   /// bare even for an IPv6 literal, since the ssh CLI wants `user@::1`, not the
   /// bracketed URL form.

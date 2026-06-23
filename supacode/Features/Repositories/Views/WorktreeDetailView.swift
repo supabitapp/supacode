@@ -432,6 +432,15 @@ struct WorktreeDetailView: View {
       return action.remoteOpenInvocation(host: remoteOpenHost, remotePath: remoteOpenPath) != nil
     }
 
+    /// A dedicated reason `action` is disabled for this worktree's host, or
+    /// `nil` if none applies — currently the VS Code family + non-default-port
+    /// case, surfaced as an "Open With" tooltip. Delegates to the shared
+    /// capability model so the predicate isn't duplicated.
+    func remoteOpenDisabledReason(_ action: OpenWorktreeAction) -> String? {
+      guard let remoteOpenHost else { return nil }
+      return action.remoteOpenDisabledReason(host: remoteOpenHost)
+    }
+
     var pullRequest: GithubPullRequest? {
       if case .git(let pullRequest) = kind { pullRequest } else { nil }
     }
@@ -567,6 +576,11 @@ struct WorktreeDetailView: View {
               OpenWorktreeActionMenuLabelView(action: action)
             }
             .buttonStyle(.plain)
+            // A disabled VS Code family entry on a non-default-port host
+            // explains the `~/.ssh/config` requirement; otherwise the plain
+            // action tooltip. A future non-blocking toast (e.g. a `StatusToast`
+            // warning variant) would surface this more discoverably than a
+            // disabled item — intentionally deferred per product decision.
             .help(openActionHelpText(for: action, isDefault: isDefault))
             .disabled(!toolbarState.canOpen(action))
           }
@@ -592,6 +606,7 @@ struct WorktreeDetailView: View {
     }
 
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
+      if let reason = toolbarState.remoteOpenDisabledReason(action) { return reason }
       guard isDefault else { return action.title }
       return "\(action.title) (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
     }

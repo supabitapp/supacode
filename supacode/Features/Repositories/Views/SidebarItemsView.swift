@@ -825,7 +825,12 @@ private struct SidebarItemContextMenu: View {
         } label: {
           OpenWorktreeActionMenuLabelView(action: action)
         }
-        .help("Open with \(action.labelTitle)")
+        // A non-default-port remote host gets the specific "needs the port in
+        // ~/.ssh/config" reason for the VS Code family; everything else keeps
+        // the plain action tooltip. A future non-blocking toast (e.g. a
+        // `StatusToast` warning variant) would surface this more discoverably
+        // than a disabled item — intentionally deferred per product decision.
+        .help(openActionHelp(for: action))
         .disabled(!canOpen(action))
       }
     }
@@ -844,6 +849,16 @@ private struct SidebarItemContextMenu: View {
   private func canOpen(_ action: OpenWorktreeAction) -> Bool {
     guard let host = worktree.host else { return true }
     return action.remoteOpenInvocation(host: host, remotePath: worktree.location.workingDirectoryPath) != nil
+  }
+
+  /// Tooltip for an "Open With" entry. A disabled VS Code family row on a
+  /// non-default-port host explains the `~/.ssh/config` requirement; otherwise
+  /// falls back to the plain action label.
+  private func openActionHelp(for action: OpenWorktreeAction) -> String {
+    if let host = worktree.host, let reason = action.remoteOpenDisabledReason(host: host) {
+      return reason
+    }
+    return "Open with \(action.labelTitle)"
   }
 
   private func togglePin(for worktreeID: Worktree.ID, isPinned: Bool) {

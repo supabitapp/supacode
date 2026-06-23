@@ -21,6 +21,12 @@ struct RemoteHostTests {
     let host = RemoteHost(alias: "box", username: "")
     #expect(host.sshDestination == "box")
   }
+
+  @Test func hasNonDefaultPortFoldsDefaultAndUnspecifiedToFalse() {
+    #expect(RemoteHost(alias: "box", port: 22).hasNonDefaultPort == false)
+    #expect(RemoteHost(alias: "box", port: nil).hasNonDefaultPort == false)
+    #expect(RemoteHost(alias: "box", port: 2222).hasNonDefaultPort == true)
+  }
 }
 
 struct SSHCommandTests {

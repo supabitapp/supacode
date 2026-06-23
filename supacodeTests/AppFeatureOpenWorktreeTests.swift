@@ -144,6 +144,32 @@ struct AppFeatureOpenWorktreeTests {
     await store.finish()
   }
 
+  @Test(.dependencies) func openRemoteWorktreeWithVSCodeRoutesThroughWorkspaceClient() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+
+    await store.send(.openWorktree(.vscode))
+    #expect(context.openedActions.value == [.vscode])
+    #expect(
+      context.capturedEvents.value == [
+        CapturedEvent(name: "worktree_opened", source: "toolbar", remote: "true")
+      ]
+    )
+    await store.finish()
+  }
+
+  @Test(.dependencies) func openRemoteWorktreeWithVSCodeOnNonDefaultPortIsIgnored() async {
+    // A non-default-port host can't be expressed as `ssh-remote+host:port`, so
+    // `remoteOpenInvocation` is `nil` and the reducer rejects the open.
+    let worktree = Self.makeRemoteWorktree(port: 2222)
+    let (store, context) = makeStore(worktree: worktree)
+
+    await store.send(.openWorktree(.vscode))
+    #expect(context.openedActions.value.isEmpty)
+    #expect(context.capturedEvents.value.isEmpty)
+    await store.finish()
+  }
+
   @Test(.dependencies) func openRemoteWorktreeWithNonCapableEditorIsIgnored() async {
     let worktree = Self.makeRemoteWorktree()
     let (store, context) = makeStore(worktree: worktree)
@@ -274,8 +300,8 @@ struct AppFeatureOpenWorktreeTests {
     )
   }
 
-  private static func makeRemoteWorktree(isMissing: Bool = false) -> Worktree {
-    let host = RemoteHost(alias: "devbox")
+  private static func makeRemoteWorktree(isMissing: Bool = false, port: Int? = nil) -> Worktree {
+    let host = RemoteHost(alias: "devbox", port: port)
     return Worktree(
       location: .remote(host, workingDirectory: "/home/me/proj", repositoryRoot: "/home/me/proj"),
       kind: .git,

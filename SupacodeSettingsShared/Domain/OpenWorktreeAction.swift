@@ -291,9 +291,57 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         executable: .appRelativePath("Contents/MacOS/cli"),
         arguments: [Self.zedSSHURL(host: host, remotePath: remotePath)]
       )
+    case .vscode, .vscodeInsiders, .vscodium, .cursor, .windsurf:
+      // VS Code family Remote-SSH: launch the bundled CLI with the positional
+      // `--remote ssh-remote+<host> <path>` form. The `<host>` token is the
+      // bare `user@host` (`sshDestination`), NOT `authority`/`displayAuthority`:
+      // `ssh-remote+host:2222` is parsed as a literal hostname, so VS Code has
+      // no inline port syntax (microsoft/vscode-remote-release #515). A
+      // non-default port can therefore only come from `~/.ssh/config`, so a host
+      // that carries one is (correctly) inexpressible — return `nil` and let the
+      // shared capability gate disable the editor for that host. (Zed is
+      // unaffected; it keeps the port in its `ssh://` URL.) The remote path is a
+      // plain positional argv string (Process passes argv literally, no shell
+      // parsing), so it is NOT percent-encoded — that's only needed for the
+      // `--folder-uri` form, which this does not use.
+      guard !host.hasNonDefaultPort else { return nil }
+      guard let cliName = vscodeFamilyCLIName else { return nil }
+      return RemoteOpenInvocation(
+        executable: .appRelativePath("Contents/Resources/app/bin/\(cliName)"),
+        arguments: ["--remote", "ssh-remote+\(host.sshDestination)", remotePath]
+      )
     default:
       return nil
     }
+  }
+
+  /// The bundled CLI binary name (under `Contents/Resources/app/bin/`) for the
+  /// VS Code family, or `nil` for any other editor. Single source of truth for
+  /// both the invocation builder and the membership test that backs the
+  /// disabled-reason tooltip, so the two never drift.
+  private var vscodeFamilyCLIName: String? {
+    switch self {
+    case .vscode: "code"
+    case .vscodeInsiders: "code-insiders"
+    case .vscodium: "codium"
+    case .cursor: "cursor"
+    case .windsurf: "windsurf"
+    default: nil
+    }
+  }
+
+  /// A human-facing reason this editor is disabled for `host`, or `nil` if no
+  /// dedicated explanation applies. Currently non-`nil` ONLY for the VS Code
+  /// family when the host carries a non-default port — the one case where the
+  /// editor otherwise supports remote but can't express the port inline (it must
+  /// live in `~/.ssh/config`). Editors disabled for other reasons (e.g.
+  /// JetBrains, Finder) return `nil` so they don't get a misleading port
+  /// tooltip. This is presentation-only; the reducer / launcher keep gating on
+  /// `remoteOpenInvocation` directly.
+  public func remoteOpenDisabledReason(host: RemoteHost) -> String? {
+    guard vscodeFamilyCLIName != nil else { return nil }
+    guard host.hasNonDefaultPort else { return nil }
+    return "Opening \(title) over SSH needs the port in ~/.ssh/config"
   }
 
   /// `ssh://[user@]host[:port]<remotePath>` for Zed's Remote-SSH CLI. The
