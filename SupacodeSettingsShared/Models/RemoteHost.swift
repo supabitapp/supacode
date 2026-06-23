@@ -63,7 +63,10 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
 
   /// The `user@host` (or bare `host`) token passed to `ssh`. The host is left
   /// bare even for an IPv6 literal, since the ssh CLI wants `user@::1`, not the
-  /// bracketed URL form.
+  /// bracketed URL form. This is a LITERAL argv destination (e.g. VS Code's
+  /// `ssh-remote+<sshDestination>`), NOT a URL: ssh does not percent-decode it,
+  /// so it must stay unencoded — do not "fix" it with percent-encoding. The
+  /// URL-bound counterpart is `sshURLAuthority`.
   public var sshDestination: String {
     if let username, !username.isEmpty {
       return "\(username)@\(alias)"
@@ -91,11 +94,33 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     return "\(bracketedDestination):\(port)"
   }
 
-  /// Authority for an `ssh://` URL (e.g. Zed's Remote-SSH CLI): username only
-  /// when set, port only when non-default (not 22), IPv6 host bracketed. Same
-  /// elision rules as `displayAuthority` — aliased here so URL call sites read
-  /// functionally rather than borrowing a "display" name.
-  public var sshURLAuthority: String { displayAuthority }
+  /// Percent-encoded authority for an `ssh://` URL (e.g. Zed's Remote-SSH CLI):
+  /// username only when set, port only when non-default (not 22), IPv6 host
+  /// bracketed. Mirrors `displayAuthority`'s structure / elision but encodes the
+  /// userinfo and host with the URL component allow-sets so a special character
+  /// (space, `@`, `:`, `/`, `?`, `#`) can't produce a malformed `ssh://` URL.
+  /// `.urlHostAllowed` keeps `[`, `]`, and `:` so an already-bracketed IPv6
+  /// literal round-trips unchanged. Zed (like any RFC 3986 reader) percent-
+  /// DECODES the userinfo / host before invoking ssh, so encoding here is the
+  /// URI-compliant choice — unlike the bare `sshDestination` token, which is a
+  /// literal argv string and must stay unencoded.
+  public var sshURLAuthority: String {
+    // Bracket an IPv6 literal BEFORE encoding: `.urlHostAllowed` keeps `[`, `]`,
+    // and `:`, so `[::1]` round-trips unchanged, while a regular hostname's
+    // genuinely-special characters still get encoded. (Encoding the bare literal
+    // first would escape its structural colons into `%3A`, corrupting the host.)
+    let bracketedHost = alias.contains(":") ? "[\(alias)]" : alias
+    let encodedHost = bracketedHost.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? bracketedHost
+    let destination: String
+    if let username, !username.isEmpty {
+      let encodedUser = username.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? username
+      destination = "\(encodedUser)@\(encodedHost)"
+    } else {
+      destination = encodedHost
+    }
+    guard hasNonDefaultPort, let port else { return destination }
+    return "\(destination):\(port)"
+  }
 
   /// `[user@]host[:port]` token used to brand remote ids and settings keys.
   /// Always folds in the port (unlike `displayAuthority`), so two hosts that

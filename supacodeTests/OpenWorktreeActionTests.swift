@@ -165,6 +165,69 @@ struct OpenWorktreeActionTests {
     #expect(invocation?.arguments == ["ssh://me@[::1]:2200/srv/app"])
   }
 
+  @Test func zedRemoteOpenInvocationPercentEncodesUsernameWithSpace() {
+    let host = RemoteHost(alias: "host", username: "a b")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://a%20b@host/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationPercentEncodesUsernameSpecialCharacters() {
+    let host = RemoteHost(alias: "host", username: "a@b:c")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://a%40b%3Ac@host/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationPercentEncodesHostSpecialCharacters() {
+    let host = RemoteHost(alias: "ho st", username: "me")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://me@ho%20st/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationKeepsIPv6BracketsUnencoded() {
+    let host = RemoteHost(alias: "::1")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://[::1]/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationLeavesPlainUserAndHostUnchanged() {
+    let host = RemoteHost(alias: "host", username: "me")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://me@host/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationAppendsNonDefaultPortAfterEncodingUserAndHost() {
+    let host = RemoteHost(alias: "ho st", username: "a b", port: 2222)
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://a%20b@ho%20st:2222/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationEncodesEmbeddedAtInUsername() {
+    let host = RemoteHost(alias: "host", username: "me@evil")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://me%40evil@host/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationEncodesHostWhenUserIsAbsent() {
+    let host = RemoteHost(alias: "ho st")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://ho%20st/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationEncodesStructurallyDangerousUsernameCharacters() {
+    let host = RemoteHost(alias: "host", username: "a/b?c#d")
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://a%2Fb%3Fc%23d@host/path"])
+  }
+
   @Test func zedRemoteOpenInvocationPercentEncodesPathButKeepsSeparators() {
     let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(
       host: RemoteHost(alias: "host"),
