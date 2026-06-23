@@ -23,6 +23,20 @@ xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platf
 
 Requires [mise](https://mise.jdx.dev/) for zig, swiftlint, swift-format, xcbeautify, and xcsift tooling. Run `mise install` once to fetch the pinned versions.
 
+## Building on macOS 26.4+ (Tahoe)
+
+On macOS 26.4+ the GhosttyKit build fails to link with a wall of `undefined symbol: _malloc, _free, _sigaction, …` in `build_zcu.o`. **The fix is to build against Xcode 26.3, not the toolchain version.** First-time setup, in order:
+
+1. **mise on PATH.** `make` targets call `mise exec`, but mise installs at `~/.local/bin/mise`, which non-login shells don't pick up. Activate it: `echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc` (or add `~/.local/bin` to `PATH`), then `mise install`.
+2. **Submodules.** `git submodule update --init --recursive` (ghostty, zmx, git-wt).
+3. **Xcode 26.3.** The pinned Zig (`0.15.2`, required exactly by ghostty's `build.zig` `requireZig`, and it uses 0.15.2-only stdlib APIs, so bumping Zig is not an option) cannot link the macOS 26.4+ SDK: that SDK's `usr/lib/libSystem.tbd` dropped the plain `arm64-macos` target (keeping only `arm64e-macos`), and Zig 0.15.2's linker won't match — [ziglang/zig#31658](https://github.com/ziglang/zig/issues/31658), fixed only in Zig 0.16+. Install [Xcode 26.3](https://developer.apple.com/download/all/?q=Xcode%2026.3), which ships the macOS 26.2 SDK whose `.tbd` still has `arm64-macos`. **You do not need to `sudo xcode-select -s` it globally** — keep your newer Xcode as the default for other projects. The build auto-detects a Zig-linkable Xcode via `scripts/select-developer-dir.sh` and pins `DEVELOPER_DIR` for just that build (override with `DEVELOPER_DIR=… make build-app` if you want a specific one).
+4. **License + first launch.** A freshly installed Xcode 26.3 must complete these before `DEVELOPER_DIR` works (we observed `DEVELOPER_DIR` alone is insufficient until then): `sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -license accept` and `… -runFirstLaunch`.
+5. **Metal Toolchain.** A fresh Xcode 26.3 ships it uninstalled, and ghostty compiles Metal shaders → `cannot execute tool 'metal' due to missing Metal Toolchain`. Install it: `sudo xcodebuild -downloadComponent MetalToolchain`.
+
+**Verification quirk:** to check whether an SDK is Zig-linkable, use the form Zig uses — `xcrun --sdk macosx --show-sdk-path` — not bare `xcrun --show-sdk-path` (which can resolve to the CommandLineTools SDK and mislead you). Then confirm `arm64-macos` appears in `<sdk>/usr/lib/libSystem.tbd`.
+
+**Why no `patches/` entry:** the link failure is in Zig's own self-hosted linker (`build_zcu.o`, the build runner itself), not in ghostty source, so the `patches/*.patch` mechanism — which only patches the ghostty submodule working tree — cannot fix it; and ghostty pins Zig to exactly 0.15.2, so bumping Zig is out. The older-SDK + auto-`DEVELOPER_DIR` approach is the long-term fix until ghostty supports Zig 0.16+.
+
 ## Architecture
 
 Supacode is a macOS orchestrator for running multiple coding agents in parallel, using GhosttyKit as the underlying terminal.

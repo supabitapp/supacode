@@ -24,6 +24,15 @@ VERSION ?=
 BUILD ?=
 XCODEBUILD_FLAGS ?=
 
+# Resolve and export a Zig-linkable Xcode for the recipe's shell, so the app and
+# its ghostty foreignBuild share one toolchain without a global xcode-select -s.
+# The plain assignment (not `export X=...`) propagates the script's exit status,
+# so a missing Xcode aborts the recipe under pipefail/-e with the script's
+# actionable message instead of silently building against the wrong SDK.
+# Recursively expanded and referenced only inside build recipes, so `make help` /
+# `make format` never run the scan.
+SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; export DEVELOPER_DIR
+
 .DEFAULT_GOAL := help
 .PHONY: build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
 
@@ -83,17 +92,20 @@ warm-cache: $(TUIST_INSTALL_STAMP) # Warm the full Tuist cacheable graph
 	mise exec -- tuist cache warm --configuration $(TUIST_CACHE_CONFIGURATION)
 
 build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the macOS app (Debug)
+	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
 
 run-app: build-app # Build then launch (Debug) with log streaming
-	@settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	@$(SELECT_DEVELOPER_DIR); \
+	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
 	"$$build_dir/$$product/Contents/MacOS/$$exec_name"
 
 install-dev-build: build-app # install dev build to /Applications
-	@settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	@$(SELECT_DEVELOPER_DIR); \
+	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	src="$$build_dir/$$product"; \
@@ -109,13 +121,16 @@ install-dev-build: build-app # install dev build to /Applications
 
 archive: $(TUIST_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
 	mkdir -p build
+	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
 
 export-archive: # Export xarchive
+	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
 
 test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
-	@if [ -t 1 ]; then \
+	@$(SELECT_DEVELOPER_DIR); \
+	if [ -t 1 ]; then \
 		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \
 	else \
 		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO; \

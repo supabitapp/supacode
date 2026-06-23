@@ -4,6 +4,12 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_path="${script_dir}/$(basename "${BASH_SOURCE[0]}")"
 srcroot="${SRCROOT:-$(cd "${script_dir}/.." && pwd)}"
+
+# Pin a Zig-linkable Xcode for the SDK lookups `zig build` performs. The pinned
+# Zig 0.15.2 can't link the macOS 26.4+ SDK (see select-developer-dir.sh). Honor
+# an inherited DEVELOPER_DIR (Makefile build targets, or Xcode's pre-action when
+# this runs under `make build-app`), else auto-detect. No global switch.
+export DEVELOPER_DIR="${DEVELOPER_DIR:-$("${script_dir}/select-developer-dir.sh")}"
 repo_root="${srcroot}"
 zmx_dir="${srcroot}/ThirdParty/zmx"
 zmx_submodule_path="${zmx_dir#"${repo_root}/"}"
