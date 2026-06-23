@@ -1261,12 +1261,29 @@ struct AppFeature {
       appLogger.info("Ignoring open of missing worktree \(worktree.id) from \(source.rawValue)")
       return .none
     }
-    // Open / Reveal target local Finder / editors; a remote SSH path can't be
-    // reached, so reject it here regardless of the entry point (UI gates this
-    // too, but a hotkey can still reach the reducer).
-    if worktree.host != nil {
-      appLogger.info("Ignoring open of remote worktree \(worktree.id) from \(source.rawValue)")
-      return .none
+    // A remote SSH worktree can only be opened by an editor whose Remote-SSH CLI
+    // can express this host (capability is the single `remoteOpenInvocation`
+    // predicate, shared with the UI gates). The local `$EDITOR` terminal path
+    // and Finder / non-capable editors don't apply remotely, so reject them here
+    // regardless of the entry point (a hotkey can still reach the reducer).
+    if let host = worktree.host {
+      guard action != .editor,
+        action.remoteOpenInvocation(host: host, remotePath: worktree.location.workingDirectoryPath) != nil
+      else {
+        appLogger.info(
+          "Ignoring open of remote worktree \(worktree.id) in \(action.settingsID) from \(source.rawValue)"
+        )
+        return .none
+      }
+      analyticsClient.capture(
+        "worktree_opened",
+        ["action": action.settingsID, "source": source.rawValue, "remote": "true"]
+      )
+      return .run { send in
+        await workspaceClient.open(action, worktree) { error in
+          send(.openWorktreeFailed(error))
+        }
+      }
     }
     analyticsClient.capture("worktree_opened", ["action": action.settingsID, "source": source.rawValue])
     guard action == .editor else {

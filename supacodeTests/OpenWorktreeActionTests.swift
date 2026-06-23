@@ -141,6 +141,69 @@ struct OpenWorktreeActionTests {
     #expect(OpenWorktreeAction.menuOrder.map(\.settingsID).contains("zed-preview"))
   }
 
+  @Test func zedRemoteOpenInvocationBuildsSSHURLWithUserAndCustomPort() {
+    let host = RemoteHost(alias: "host", username: "me", port: 2222)
+
+    for action in [OpenWorktreeAction.zed, .zedPreview] {
+      let invocation = action.remoteOpenInvocation(host: host, remotePath: "/path")
+      #expect(invocation?.executable == .appRelativePath("Contents/MacOS/cli"))
+      #expect(invocation?.arguments == ["ssh://me@host:2222/path"])
+    }
+  }
+
+  @Test func zedRemoteOpenInvocationElidesDefaultPortAndAbsentUser() {
+    let host = RemoteHost(alias: "host", port: 22)
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://host/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationBracketsIPv6Host() {
+    let host = RemoteHost(alias: "::1", username: "me", port: 2200)
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/srv/app")
+    #expect(invocation?.arguments == ["ssh://me@[::1]:2200/srv/app"])
+  }
+
+  @Test func zedRemoteOpenInvocationPercentEncodesPathButKeepsSeparators() {
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(
+      host: RemoteHost(alias: "host"),
+      remotePath: "/home/me/my project/src"
+    )
+    #expect(invocation?.arguments == ["ssh://host/home/me/my%20project/src"])
+  }
+
+  @Test func nonRemoteEditorsHaveNoRemoteOpenInvocation() {
+    let host = RemoteHost(alias: "host")
+
+    for action in [OpenWorktreeAction.finder, .intellij, .terminal, .editor] {
+      #expect(action.remoteOpenInvocation(host: host, remotePath: "/path") == nil)
+    }
+  }
+
+  @Test func zedRemoteOpenInvocationElidesNilPort() {
+    let host = RemoteHost(alias: "host", username: "me", port: nil)
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://me@host/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationTreatsEmptyUsernameAsAbsent() {
+    let host = RemoteHost(alias: "host", username: "", port: nil)
+
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
+    #expect(invocation?.arguments == ["ssh://host/path"])
+  }
+
+  @Test func zedRemoteOpenInvocationNormalizesNonAbsolutePath() {
+    let host = RemoteHost(alias: "host")
+
+    // A non-`/`-prefixed path (e.g. a future `~`-relative form) must still
+    // produce a well-formed authority/path boundary, not `ssh://host~/proj`.
+    let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "~/proj")
+    #expect(invocation?.arguments == ["ssh://host/~/proj"])
+  }
+
   @MainActor
   @Test func appRelativeProcessExecutableResolvesOnlyWhenPresent() throws {
     let rootURL = try Self.makeTemporaryDirectory()
@@ -178,6 +241,109 @@ struct OpenWorktreeActionTests {
     )
 
     #expect(errors.isEmpty)
+  }
+
+  @MainActor
+  @Test func performRemoteNonCapableEditorReportsUnsupported() {
+    var errors: [OpenActionError] = []
+
+    // `.intellij` has a `nil` remoteOpenInvocation, so `performRemote` rejects
+    // it before any Process / NSWorkspace work — a deterministic pure branch.
+    WorktreeOpener.performRemote(
+      action: .intellij,
+      worktree: Self.makeRemoteWorktree(),
+      onError: { errors.append($0) }
+    )
+
+    #expect(errors.count == 1)
+    #expect(errors.first?.title == "Can't open in IntelliJ IDEA")
+    #expect(errors.first?.message == "IntelliJ IDEA doesn't support opening remote SSH worktrees.")
+  }
+
+  @Test func remoteLaunchPlanFailsForNonCapableEditor() {
+    let host = RemoteHost(alias: "host")
+
+    let plan = WorktreeOpener.remoteLaunchPlan(
+      action: .intellij,
+      host: host,
+      remotePath: "/home/me/proj",
+      appURL: URL(fileURLWithPath: "/Applications/Whatever.app")
+    )
+
+    #expect(
+      plan
+        == .failure(
+          OpenActionError(
+            title: "Can't open in IntelliJ IDEA",
+            message: "IntelliJ IDEA doesn't support opening remote SSH worktrees."
+          )
+        )
+    )
+  }
+
+  @Test func remoteLaunchPlanReportsAppNotFoundWhenAppMissing() {
+    let host = RemoteHost(alias: "host")
+
+    let plan = WorktreeOpener.remoteLaunchPlan(
+      action: .zed,
+      host: host,
+      remotePath: "/home/me/proj",
+      appURL: nil
+    )
+
+    #expect(plan == .failure(.appNotFound(.zed)))
+  }
+
+  @Test func remoteLaunchPlanReportsMissingCLIWhenBundleHasNoCLI() throws {
+    let rootURL = try Self.makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    // A real bundle directory, but with no `Contents/MacOS/cli`, drives the
+    // missing-CLI branch deterministically without depending on an installed Zed.
+    let appURL = rootURL.appending(path: "Zed.app")
+    try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+
+    let plan = WorktreeOpener.remoteLaunchPlan(
+      action: .zed,
+      host: RemoteHost(alias: "host"),
+      remotePath: "/home/me/proj",
+      appURL: appURL
+    )
+
+    #expect(
+      plan
+        == .failure(
+          OpenActionError(
+            title: "Unable to open in Zed",
+            message: "Zed's command-line tool is required to open remote worktrees but wasn't found."
+          )
+        )
+    )
+  }
+
+  @Test func remoteLaunchPlanResolvesRunWhenCLIPresent() throws {
+    let rootURL = try Self.makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    let appURL = rootURL.appending(path: "Zed.app")
+    let cliURL = appURL.appending(path: "Contents/MacOS/cli")
+    try FileManager.default.createDirectory(
+      at: cliURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    #expect(FileManager.default.createFile(atPath: cliURL.path(percentEncoded: false), contents: Data()))
+
+    let plan = WorktreeOpener.remoteLaunchPlan(
+      action: .zed,
+      host: RemoteHost(alias: "host", username: "me", port: 2222),
+      remotePath: "/home/me/proj",
+      appURL: appURL
+    )
+
+    guard case .run(let executableURL, let arguments) = plan else {
+      Issue.record("Expected .run, got \(plan)")
+      return
+    }
+    #expect(Self.standardizedPath(executableURL) == Self.standardizedPath(cliURL))
+    #expect(arguments == ["ssh://me@host:2222/home/me/proj"])
   }
 
   @Test func resolverSkipsExcludedSearchDirectoriesAndFallsBackToNextTarget() throws {
@@ -289,6 +455,16 @@ struct OpenWorktreeActionTests {
       detail: "detail",
       workingDirectory: rootURL,
       repositoryRootURL: rootURL
+    )
+  }
+
+  private static func makeRemoteWorktree() -> Worktree {
+    let host = RemoteHost(alias: "devbox")
+    return Worktree(
+      location: .remote(host, workingDirectory: "/home/me/proj", repositoryRoot: "/home/me/proj"),
+      kind: .git,
+      name: "proj",
+      detail: host.sshDestination
     )
   }
 

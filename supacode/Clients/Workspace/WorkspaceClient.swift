@@ -13,7 +13,11 @@ struct WorkspaceClient {
 
 extension WorkspaceClient: DependencyKey {
   static let liveValue = WorkspaceClient { action, worktree, onError in
-    WorktreeOpener.perform(action: action, worktree: worktree, onError: onError)
+    if worktree.host != nil {
+      WorktreeOpener.performRemote(action: action, worktree: worktree, onError: onError)
+    } else {
+      WorktreeOpener.perform(action: action, worktree: worktree, onError: onError)
+    }
   }
 
   static let testValue = WorkspaceClient { _, _, _ in }
@@ -82,6 +86,83 @@ enum WorktreeOpener {
         message: "No supported open behavior was available for this worktree."
       )
     )
+  }
+
+  /// The pre-launch outcome for a remote open: either the resolved process to
+  /// run, or the error to surface. Pure (no `Process` / AppKit), so the guard
+  /// decisions are unit-testable.
+  enum RemoteLaunchPlan: Equatable {
+    case run(executableURL: URL, arguments: [String])
+    case failure(OpenActionError)
+  }
+
+  /// Decides how to open `action` on `host` at `remotePath` for the resolved
+  /// `appURL` (`nil` means the app isn't installed). Mirrors `perform`'s shape
+  /// but never touches the local filesystem — the editor's Remote-SSH CLI is
+  /// required, so there is no NSWorkspace fallback. The reducer pre-gates
+  /// capability; the invocation / app guards here are defensive.
+  static func remoteLaunchPlan(
+    action: OpenWorktreeAction,
+    host: RemoteHost,
+    remotePath: String,
+    appURL: URL?,
+    fileManager: FileManager = .default
+  ) -> RemoteLaunchPlan {
+    guard let invocation = action.remoteOpenInvocation(host: host, remotePath: remotePath) else {
+      return .failure(
+        OpenActionError(
+          title: "Can't open in \(action.title)",
+          message: "\(action.title) doesn't support opening remote SSH worktrees."
+        )
+      )
+    }
+    guard let appURL else {
+      return .failure(.appNotFound(action))
+    }
+    guard let resolved = processInvocation(executable: invocation.executable, appURL: appURL, fileManager: fileManager)
+    else {
+      return .failure(
+        OpenActionError(
+          title: "Unable to open in \(action.title)",
+          message:
+            "\(action.title)'s command-line tool is required to open remote worktrees but wasn't found."
+        )
+      )
+    }
+    return .run(executableURL: resolved.executableURL, arguments: resolved.argumentPrefix + invocation.arguments)
+  }
+
+  /// Opens a remote SSH worktree against its host via the editor's Remote-SSH
+  /// CLI. Resolves the app via NSWorkspace, then defers the open decision to the
+  /// pure `remoteLaunchPlan`, and either launches the resolved process or
+  /// surfaces its error.
+  static func performRemote(
+    action: OpenWorktreeAction,
+    worktree: Worktree,
+    onError: @escaping @MainActor @Sendable (OpenActionError) -> Void
+  ) {
+    guard let host = worktree.host else {
+      return
+    }
+    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.bundleIdentifier)
+    switch remoteLaunchPlan(
+      action: action,
+      host: host,
+      remotePath: worktree.location.workingDirectoryPath,
+      appURL: appURL
+    ) {
+    case .failure(let error):
+      onError(error)
+    case .run(let executableURL, let arguments):
+      let process = Process()
+      process.executableURL = executableURL
+      process.arguments = arguments
+      do {
+        try process.run()
+      } catch {
+        onError(.remoteLaunchFailed(action, error))
+      }
+    }
   }
 
   private enum BehaviorOpenResult {
@@ -236,6 +317,17 @@ extension OpenActionError {
     OpenActionError(
       title: "Unable to open in \(action.title)",
       message: error.localizedDescription
+    )
+  }
+
+  /// Remote opens shell out to the editor's CLI; a launch failure here is almost
+  /// always the CLI being un-runnable rather than a target problem, so name the
+  /// editor and surface the underlying error for context.
+  static func remoteLaunchFailed(_ action: OpenWorktreeAction, _ error: Error) -> OpenActionError {
+    OpenActionError(
+      title: "Unable to open in \(action.title)",
+      message: "Couldn't launch \(action.title)'s command-line tool to open the remote worktree. "
+        + error.localizedDescription
     )
   }
 }

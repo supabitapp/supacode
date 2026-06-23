@@ -40,6 +40,20 @@ public enum OpenBehavior: Equatable, Sendable {
   public static let `default`: Self = .workspace(configuration: nil)
 }
 
+/// How to open a remote SSH worktree through an editor's Remote-SSH CLI. Built
+/// eagerly so a `nil` `remoteOpenInvocation(host:remotePath:)` is the single
+/// capability signal consulted by both the reducer guard and the UI enablement.
+public struct RemoteOpenInvocation: Equatable, Sendable {
+  public var executable: OpenBehavior.ProcessExecutable
+  /// Fully-resolved argv that follows the resolved executable (and its prefix).
+  public var arguments: [String]
+
+  public init(executable: OpenBehavior.ProcessExecutable, arguments: [String]) {
+    self.executable = executable
+    self.arguments = arguments
+  }
+}
+
 public enum OpenWorktreeAction: CaseIterable, Identifiable {
   public enum MenuIcon {
     case app(NSImage)
@@ -264,6 +278,39 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
       .vscodium, .warp, .wezterm, .windsurf, .xcode:
       [.default]
     }
+  }
+
+  /// How to open this worktree on `host` at `remotePath` via the editor's
+  /// Remote-SSH CLI, or `nil` if the editor can't express this host. `nil` is
+  /// the single capability signal consulted by both the reducer guard and the
+  /// UI enablement — never duplicate this switch.
+  public func remoteOpenInvocation(host: RemoteHost, remotePath: String) -> RemoteOpenInvocation? {
+    switch self {
+    case .zed, .zedPreview:
+      return RemoteOpenInvocation(
+        executable: .appRelativePath("Contents/MacOS/cli"),
+        arguments: [Self.zedSSHURL(host: host, remotePath: remotePath)]
+      )
+    default:
+      return nil
+    }
+  }
+
+  /// `ssh://[user@]host[:port]<remotePath>` for Zed's Remote-SSH CLI. The
+  /// authority carries the username and a non-default port but elides the
+  /// default SSH port (22) and an absent user (Zed reads `~/.ssh/config`
+  /// itself, so no alias lookup is needed), and the path is percent-encoded for
+  /// URI validity (e.g. spaces) without touching the `/` separators
+  /// (`CharacterSet.urlPathAllowed` already permits `/`). Pure and testable.
+  ///
+  /// Invariant: the path component is normalized to be `/`-prefixed so the
+  /// authority and path never fuse into a malformed `ssh://host~/proj`. An
+  /// already-absolute path is left untouched (no double slash).
+  private static func zedSSHURL(host: RemoteHost, remotePath: String) -> String {
+    let normalizedPath = remotePath.hasPrefix("/") ? remotePath : "/" + remotePath
+    let encodedPath =
+      normalizedPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? normalizedPath
+    return "ssh://\(host.sshURLAuthority)\(encodedPath)"
   }
 
   public nonisolated static let automaticSettingsID = "auto"

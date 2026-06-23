@@ -85,7 +85,8 @@ struct WorktreeDetailView: View {
           titleContent: titleContent,
           rootURL: selectedWorktree.repositoryRootURL,
           kind: toolbarKind(for: selectedWorktree, selectedRow: selectedRow),
-          isRemote: selectedWorktree.host != nil,
+          remoteOpenHost: selectedWorktree.host,
+          remoteOpenPath: selectedWorktree.location.workingDirectoryPath,
           statusToast: repositories.statusToast,
           openActionSelection: openActionSelection,
           repoScripts: repoScripts,
@@ -121,18 +122,38 @@ struct WorktreeDetailView: View {
       }
     }
     let hasRunningRunScript = state.hasRunningRunScript
-    // Open / Reveal in Finder reach local paths only; the terminal and search
-    // commands stay enabled for a remote worktree (they work over SSH).
-    let canOpenLocally = hasActiveWorktree && selectedWorktree?.host == nil
-    let resolvedSelection: OpenWorktreeAction? =
-      canOpenLocally ? OpenWorktreeAction.availableSelection(store.openActionSelection) : nil
+    // Reveal in Finder reaches local paths only; Open can target a remote
+    // worktree when the resolved editor's Remote-SSH CLI can express the host.
+    // The resolved editor (surfaced only when it can open the possibly-remote
+    // selection) drives both the focused-action enablement and the menu label.
+    let resolvedSelection = Self.resolvedOpenSelection(
+      hasActiveWorktree: hasActiveWorktree,
+      selectedWorktree: selectedWorktree,
+      openActionSelection: store.openActionSelection
+    )
     return applyFocusedActions(
       content: content,
       hasActiveWorktree: hasActiveWorktree,
-      canOpenLocally: canOpenLocally,
+      canRevealLocally: hasActiveWorktree && selectedWorktree?.host == nil,
       hasRunningRunScript: hasRunningRunScript,
       resolvedSelection: resolvedSelection
     )
+  }
+
+  /// The editor the primary Open command would launch, surfaced only when it can
+  /// open the (possibly remote) selected worktree — `nil` disables the Open
+  /// command and clears the menu-bar label. Mirrors the shared
+  /// `remoteOpenInvocation` capability predicate.
+  private static func resolvedOpenSelection(
+    hasActiveWorktree: Bool,
+    selectedWorktree: Worktree?,
+    openActionSelection: OpenWorktreeAction
+  ) -> OpenWorktreeAction? {
+    guard hasActiveWorktree, let selectedWorktree else { return nil }
+    let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
+    guard let host = selectedWorktree.host else { return resolved }
+    let remotePath = selectedWorktree.location.workingDirectoryPath
+    return resolved.remoteOpenInvocation(host: host, remotePath: remotePath) != nil ? resolved : nil
   }
 
   private func selectedWorktreeSummaries(
@@ -265,15 +286,17 @@ struct WorktreeDetailView: View {
   private func applyFocusedActions<Content: View>(
     content: Content,
     hasActiveWorktree: Bool,
-    canOpenLocally: Bool,
+    canRevealLocally: Bool,
     hasRunningRunScript: Bool,
     resolvedSelection: OpenWorktreeAction?
   ) -> some View {
     content
-      .focusedSceneAction(\.openSelectedWorktreeAction, enabled: canOpenLocally) {
+      // Open is enabled only when the resolved editor can open the selection
+      // (`resolvedSelection != nil`), which already folds in remote capability.
+      .focusedSceneAction(\.openSelectedWorktreeAction, enabled: resolvedSelection != nil) {
         store.send(.openSelectedWorktree)
       }
-      .focusedSceneAction(\.revealInFinderAction, enabled: canOpenLocally) {
+      .focusedSceneAction(\.revealInFinderAction, enabled: canRevealLocally) {
         store.send(.revealInFinder)
       }
       .focusedSceneValue(\.openActionSelection, resolvedSelection)
@@ -385,9 +408,12 @@ struct WorktreeDetailView: View {
     let titleContent: WorktreeToolbarTitleContent
     let rootURL: URL
     let kind: Kind
-    // Open actions reach local paths only, so the toolbar Open menu is hidden
-    // for a remote worktree.
-    let isRemote: Bool
+    // For a remote worktree, the open host + path. Each editor in the toolbar
+    // Open menu is enabled only when its Remote-SSH CLI can express the host
+    // (the shared `remoteOpenInvocation` predicate); a local worktree opens
+    // everywhere. `nil` host means local.
+    let remoteOpenHost: RemoteHost?
+    let remoteOpenPath: String
     let statusToast: RepositoriesFeature.StatusToast?
     let openActionSelection: OpenWorktreeAction
     let repoScripts: [ScriptDefinition]
@@ -396,6 +422,14 @@ struct WorktreeDetailView: View {
 
     var isFolder: Bool {
       if case .folder = kind { true } else { false }
+    }
+
+    /// Whether `action` can open this worktree. Local opens everywhere; a remote
+    /// worktree opens only via an editor whose Remote-SSH CLI can express the
+    /// host — the same predicate the reducer gate consults.
+    func canOpen(_ action: OpenWorktreeAction) -> Bool {
+      guard let remoteOpenHost else { return true }
+      return action.remoteOpenInvocation(host: remoteOpenHost, remotePath: remoteOpenPath) != nil
     }
 
     var pullRequest: GithubPullRequest? {
@@ -490,7 +524,6 @@ struct WorktreeDetailView: View {
 
       ToolbarItem {
         openMenu(openActionSelection: toolbarState.openActionSelection)
-          .disabled(toolbarState.isRemote)
       }
       ToolbarSpacer(.fixed)
 
@@ -514,8 +547,16 @@ struct WorktreeDetailView: View {
     private func openMenu(openActionSelection: OpenWorktreeAction) -> some View {
       let availableActions = OpenWorktreeAction.availableCases.filter { $0 != .finder }
       let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
-      let primarySelection = resolved == .finder ? availableActions.first : resolved
+      // The primary (single-click) action is the resolved *selected* editor
+      // (Finder selection falls back to the first available editor). It is NOT
+      // substituted for a different editor when it can't open the worktree —
+      // that would diverge from ⌘O / the menu bar, which open the same selected
+      // editor. When the selected editor can't open a remote worktree the
+      // primary action is disabled and the user picks a capable editor from the
+      // submenu (each gated by `canOpen`), matching the focused-action policy.
+      let primarySelection: OpenWorktreeAction? = resolved == .finder ? availableActions.first : resolved
       if let primarySelection {
+        let canOpenPrimary = toolbarState.canOpen(primarySelection)
         Menu {
           ForEach(availableActions) { action in
             let isDefault = action == primarySelection
@@ -527,6 +568,7 @@ struct WorktreeDetailView: View {
             }
             .buttonStyle(.plain)
             .help(openActionHelpText(for: action, isDefault: isDefault))
+            .disabled(!toolbarState.canOpen(action))
           }
           Divider()
           Button {
@@ -535,9 +577,14 @@ struct WorktreeDetailView: View {
             OpenWorktreeActionMenuLabelView(action: .finder)
           }
           .help("Reveal in Finder (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
+          .disabled(toolbarState.remoteOpenHost != nil)
         } label: {
           OpenWorktreeActionMenuLabelView(action: primarySelection)
         } primaryAction: {
+          // Guard so the single-click never opens an editor that can't reach the
+          // worktree; ⌘O / the menu bar are disabled in the same case, so all
+          // three agree. The submenu stays open for the "Open With" path.
+          guard canOpenPrimary else { return }
           onOpenWorktree(primarySelection)
         }
         .help(openActionHelpText(for: primarySelection, isDefault: true))
@@ -1114,7 +1161,8 @@ private struct WorktreeToolbarPreview: View {
       ),
       rootURL: URL(fileURLWithPath: "/tmp/preview"),
       kind: .git(pullRequest: nil),
-      isRemote: false,
+      remoteOpenHost: nil,
+      remoteOpenPath: "/tmp/preview",
       statusToast: nil,
       openActionSelection: .finder,
       repoScripts: [ScriptDefinition(kind: .run, command: "npm run dev")],

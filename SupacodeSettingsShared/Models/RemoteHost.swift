@@ -85,6 +85,12 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     return "\(bracketedDestination):\(port)"
   }
 
+  /// Authority for an `ssh://` URL (e.g. Zed's Remote-SSH CLI): username only
+  /// when set, port only when non-default (not 22), IPv6 host bracketed. Same
+  /// elision rules as `displayAuthority` — aliased here so URL call sites read
+  /// functionally rather than borrowing a "display" name.
+  public var sshURLAuthority: String { displayAuthority }
+
   /// `[user@]host[:port]` token used to brand remote ids and settings keys.
   /// Always folds in the port (unlike `displayAuthority`), so two hosts that
   /// differ only by port get distinct ids. Always shell/url safe.

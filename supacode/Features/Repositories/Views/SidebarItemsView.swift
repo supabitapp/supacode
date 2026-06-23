@@ -635,12 +635,12 @@ private struct SidebarItemContextMenu: View {
     let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
     let isAllFoldersBulk = isAllFoldersBulk
 
-    // Open actions resolve local paths through Finder / editors, which can't
-    // reach a remote SSH host, so they're disabled (but still shown, matching
-    // the toolbar and menu bar) for a remote row.
+    // Open actions stay shown for a remote row (matching the toolbar and menu
+    // bar) but each editor is enabled only when its Remote-SSH CLI can express
+    // the host; Reveal in Finder is local-only. `openActions` gates per-item via
+    // `canOpen`, so there is no blanket disable here.
     if !isBulkSelection, !worktree.isMissing {
       openActions(overrides: overrides)
-        .disabled(worktree.host != nil)
       Divider()
     }
 
@@ -815,6 +815,7 @@ private struct SidebarItemContextMenu: View {
       }
       .appKeyboardShortcut(openShortcut)
       .help("Open with \(primarySelection.labelTitle) (\(openShortcut?.display ?? "none"))")
+      .disabled(!canOpen(primarySelection))
     }
 
     Menu("Open With") {
@@ -825,6 +826,7 @@ private struct SidebarItemContextMenu: View {
           OpenWorktreeActionMenuLabelView(action: action)
         }
         .help("Open with \(action.labelTitle)")
+        .disabled(!canOpen(action))
       }
     }
 
@@ -833,6 +835,15 @@ private struct SidebarItemContextMenu: View {
     }
     .appKeyboardShortcut(revealShortcut)
     .help("Reveal in Finder (\(revealShortcut?.display ?? "none"))")
+    .disabled(worktree.host != nil)
+  }
+
+  /// Whether `action` can open this row. Local rows open everywhere; a remote
+  /// row opens only via an editor whose Remote-SSH CLI can express the host —
+  /// the same `remoteOpenInvocation` predicate the reducer gate consults.
+  private func canOpen(_ action: OpenWorktreeAction) -> Bool {
+    guard let host = worktree.host else { return true }
+    return action.remoteOpenInvocation(host: host, remotePath: worktree.location.workingDirectoryPath) != nil
   }
 
   private func togglePin(for worktreeID: Worktree.ID, isPinned: Bool) {
