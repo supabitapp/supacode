@@ -21,7 +21,7 @@ xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platf
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation
 ```
 
-Requires [mise](https://mise.jdx.dev/) for zig, swiftlint, and xcsift tooling.
+Requires [mise](https://mise.jdx.dev/) for zig, swiftlint, swift-format, xcbeautify, and xcsift tooling. Run `mise install` once to fetch the pinned versions.
 
 ## Architecture
 
@@ -112,6 +112,7 @@ Reducer ← .repositories(.worktreeInfoEvent(Event)) ← AsyncStream<Event>
 ### Formatting & Linting
 
 - 2-space indentation, 120 character line length (enforced by `.swift-format.json`)
+- `make format` runs the mise-pinned `swift-format` (`spm:swiftlang/swift-format` in `mise.toml`), NOT the Xcode toolchain's built-in `swift format`. The pin keeps formatting reproducible across contributors' Xcodes — an unpinned toolchain formatter rewrites the whole tree (e.g. Swift call-site trailing commas) and produces spurious churn. Bump the pin in lockstep with the Swift toolchain (tag `60X.x` ↔ Swift 6.X).
 - Trailing commas are mandatory (enforced by `.swiftlint.yml`)
 - SwiftLint runs in strict mode; never disable lint rules without permission
 - Custom SwiftLint rule: `store_state_mutation_in_views` — do not mutate `store.*` directly in view files; send actions instead
