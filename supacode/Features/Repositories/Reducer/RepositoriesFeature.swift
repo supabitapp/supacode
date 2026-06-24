@@ -4099,60 +4099,89 @@ struct RepositoriesFeature {
     let errorMessage: String?
   }
 
+  /// The id (working-directory path) of the first worktree that repeats one
+  /// already seen, or `nil` when every id is unique. A healthy repository never
+  /// repeats a path; a non-nil result signals a corrupt repo. Shared by the
+  /// local and remote load paths.
+  nonisolated static func firstDuplicateWorktreeID(in worktrees: [Worktree]) -> Worktree.ID? {
+    var seen: Set<Worktree.ID> = []
+    return worktrees.first(where: { !seen.insert($0.id).inserted })?.id
+  }
+
+  /// Failure-row copy for a repository whose worktree listing names the same
+  /// path more than once. Shared by the local and remote load paths so the
+  /// message can't drift between them (or from its test).
+  nonisolated static func duplicateWorktreePathMessage(path: String) -> String {
+    "This repository lists more than one worktree at the same path (\(path)). "
+      + "Its git configuration may be corrupt (for example a stale core.worktree). "
+      + "Repair the repository and reopen it."
+  }
+
+  /// Fetch one root's worktree listing and classify the outcome for the loader:
+  /// missing directory, non-git folder, a corrupt repo (duplicate worktree
+  /// paths), a listing error, or a healthy git repo. Static + `gitClient`-passed
+  /// so it runs off-main inside the load task group.
+  nonisolated private static func worktreesFetchResult(
+    for root: URL,
+    gitClient: GitClientDependency
+  ) async -> WorktreesFetchResult {
+    // Directory-existence check first — if the root is gone (user trashed it
+    // from Finder while Supacode was running, external tooling removed it, the
+    // volume is unmounted), surface a load failure so the sidebar shows the
+    // error row. Otherwise `gitClient.isGitRepository` returns `false` for the
+    // missing path and the loader silently synthesizes an empty folder
+    // repository, which hides the real problem from the user. Routed through
+    // the dependency so tests with fake `/tmp/...` paths don't trip the check —
+    // they override it explicitly.
+    let exists = await gitClient.rootDirectoryExists(root)
+    guard exists else {
+      return WorktreesFetchResult(
+        root: root,
+        isGitRepository: false,
+        worktrees: nil,
+        errorMessage:
+          "Directory not found at \(root.standardizedFileURL.path(percentEncoded: false)). "
+          + "It may have been moved or deleted."
+      )
+    }
+    // Classify through the git client so tests can override without touching the
+    // filesystem — non-git folders skip the worktrees subprocess entirely.
+    let isGit = await gitClient.isGitRepository(root)
+    guard isGit else {
+      return WorktreesFetchResult(root: root, isGitRepository: false, worktrees: [], errorMessage: nil)
+    }
+    do {
+      let worktrees = try await gitClient.worktrees(root)
+      // A healthy repository never lists two worktrees at the same path. When
+      // it does, the repo's git config is corrupt (e.g. a stale `core.worktree`
+      // redirect resolves the bare root onto a linked worktree's directory).
+      // Refuse to open it and surface the failure row rather than guess which
+      // of the colliding entries is real.
+      if let duplicate = firstDuplicateWorktreeID(in: worktrees) {
+        return WorktreesFetchResult(
+          root: root,
+          isGitRepository: true,
+          worktrees: nil,
+          errorMessage: duplicateWorktreePathMessage(path: duplicate.rawValue)
+        )
+      }
+      return WorktreesFetchResult(root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
+    } catch {
+      return WorktreesFetchResult(
+        root: root,
+        isGitRepository: true,
+        worktrees: nil,
+        errorMessage: error.localizedDescription
+      )
+    }
+  }
+
   private func loadRepositoriesData(_ roots: [URL]) async -> ([Repository], [LoadFailure]) {
     let fetchResults = await withTaskGroup(of: WorktreesFetchResult.self) { group in
       for root in roots {
         let gitClient = self.gitClient
         group.addTask {
-          // Directory-existence check first — if the root is gone
-          // (user trashed it from Finder while Supacode was
-          // running, external tooling removed it, the volume is
-          // unmounted), surface a load failure so the sidebar
-          // shows the error row. Otherwise `gitClient.isGitRepository`
-          // returns `false` for the missing path and the loader
-          // silently synthesizes an empty folder repository, which
-          // hides the real problem from the user. Routed through
-          // the dependency so tests with fake `/tmp/...` paths
-          // don't trip the check — they override it explicitly.
-          let exists = await gitClient.rootDirectoryExists(root)
-          guard exists else {
-            return WorktreesFetchResult(
-              root: root,
-              isGitRepository: false,
-              worktrees: nil,
-              errorMessage:
-                "Directory not found at \(root.standardizedFileURL.path(percentEncoded: false)). "
-                + "It may have been moved or deleted."
-            )
-          }
-          // Classify through the git client so tests can override
-          // without touching the filesystem — non-git folders skip
-          // the worktrees subprocess entirely.
-          let isGit = await gitClient.isGitRepository(root)
-          guard isGit else {
-            return WorktreesFetchResult(
-              root: root,
-              isGitRepository: false,
-              worktrees: [],
-              errorMessage: nil
-            )
-          }
-          do {
-            let worktrees = try await gitClient.worktrees(root)
-            return WorktreesFetchResult(
-              root: root,
-              isGitRepository: true,
-              worktrees: worktrees,
-              errorMessage: nil
-            )
-          } catch {
-            return WorktreesFetchResult(
-              root: root,
-              isGitRepository: true,
-              worktrees: nil,
-              errorMessage: error.localizedDescription
-            )
-          }
+          await Self.worktreesFetchResult(for: root, gitClient: gitClient)
         }
       }
 
