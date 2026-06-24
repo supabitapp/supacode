@@ -28,19 +28,22 @@ if [ -n "${DEVELOPER_DIR:-}" ] && is_zig_linkable "${DEVELOPER_DIR}"; then
 fi
 
 candidates=()
-# Currently-selected first, so a linkable default needs zero config.
-if current="$(xcode-select -p 2>/dev/null)" && [ -n "${current}" ]; then
-  candidates+=("${current}")
-fi
-# Versioned Xcodes newest-first (underscore and hyphen naming), then the default.
+# Known-good versioned Xcodes first (newest <= 26.3, underscore and hyphen
+# naming), so a machine whose default is a newer non-linkable Xcode (CI on 26.5)
+# still finds a linkable one instead of stopping at the default.
 for app in \
   /Applications/Xcode_26.3*.app /Applications/Xcode-26.3*.app \
   /Applications/Xcode_26.2*.app /Applications/Xcode-26.2*.app \
   /Applications/Xcode_26.1*.app /Applications/Xcode-26.1*.app \
-  /Applications/Xcode_26.0*.app /Applications/Xcode-26.0*.app \
-  /Applications/Xcode.app; do
+  /Applications/Xcode_26.0*.app /Applications/Xcode-26.0*.app; do
   [ -d "${app}" ] && candidates+=("${app}/Contents/Developer")
 done
+# Then the currently-selected and unversioned default, covering a linkable Xcode
+# at a non-standard path.
+if current="$(xcode-select -p 2>/dev/null)" && [ -n "${current}" ]; then
+  candidates+=("${current}")
+fi
+[ -d /Applications/Xcode.app ] && candidates+=("/Applications/Xcode.app/Contents/Developer")
 
 # Guard the empty case: bash 3.2 errors on `"${arr[@]}"` under `set -u`.
 for dir in ${candidates[@]+"${candidates[@]}"}; do
