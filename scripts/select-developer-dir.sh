@@ -4,21 +4,19 @@
 # an actionable message when none is installed.
 set -euo pipefail
 
-# True if the dir's macOS SDK still exports the plain `arm64-macos` target Zig
-# 0.15.2 needs; macOS 26.4+ SDKs dropped it (ziglang/zig#31658). Probe with the
-# `--sdk macosx` form Zig uses, not bare `xcrun --show-sdk-path`.
+# Linkable when the dir is a full Xcode whose macOS SDK predates the zig-breaking
+# change. macOS 26.4+ SDKs can't link with Zig 0.15.2 (ziglang/zig#31658, fixed in
+# 0.16+) even though their libSystem.tbd may still list arm64-macos, so gate on the
+# SDK version, not that string (which is present on broken SDKs too).
 is_zig_linkable() {
-  local dir="$1" sdk tbd
+  local dir="$1" ver
   [ -d "$dir" ] || return 1
-  # Require a full Xcode, not CommandLineTools (whose SDK can also carry
-  # arm64-macos but has no xcodebuild).
+  # Require a full Xcode, not CommandLineTools (no xcodebuild).
   [ -x "${dir}/usr/bin/xcodebuild" ] || return 1
-  sdk="$(DEVELOPER_DIR="$dir" xcrun --sdk macosx --show-sdk-path 2>/dev/null)" || return 1
-  [ -n "$sdk" ] || return 1
-  tbd="$sdk/usr/lib/libSystem.tbd"
-  [ -f "$tbd" ] || return 1
-  # `arm64-macos` is not a substring of `arm64e-macos` (the broken SDK).
-  grep -q 'arm64-macos' "$tbd"
+  ver="$(DEVELOPER_DIR="$dir" xcrun --sdk macosx --show-sdk-version 2>/dev/null)" || return 1
+  [ -n "$ver" ] || return 1
+  # Reject SDKs newer than 26.3 (the 26.4+ break); sort -V keeps 26.10 above 26.3.
+  [ "$(printf '%s\n26.3\n' "$ver" | sort -V | tail -1)" = "26.3" ]
 }
 
 # Honor an explicit DEVELOPER_DIR when it is itself linkable.
