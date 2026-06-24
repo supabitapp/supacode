@@ -359,6 +359,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
           // window appearance + Ghostty blur API.
           self?.lastAppliedWindowAppearance = nil
           self?.applyWindowBackgroundAppearance()
+          self?.updateBackgroundTint()
         }
       })
   }
