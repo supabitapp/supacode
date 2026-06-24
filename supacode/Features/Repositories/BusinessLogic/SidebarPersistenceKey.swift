@@ -102,7 +102,7 @@ nonisolated struct SidebarKey: SharedKey {
         directoryHint: .notDirectory
       )
     do {
-      try fileManager.moveItem(at: url, to: destination)
+      try SymlinkPreservingFileWriter.moveAside(at: url, to: destination)
     } catch {
       Self.logger.warning(
         """
@@ -134,6 +134,12 @@ nonisolated struct SidebarKey: SharedKey {
       try storage.save(data, url)
       continuation.resume()
     } catch {
+      // The Sharing save path does not surface this to the UI, so log it:
+      // a symlinked sidebar.json into a cycle or missing dir would otherwise
+      // fail every save silently.
+      Self.logger.error(
+        "Failed to persist sidebar state to \(url.path(percentEncoded: false)): \(error)"
+      )
       continuation.resume(throwing: error)
     }
   }

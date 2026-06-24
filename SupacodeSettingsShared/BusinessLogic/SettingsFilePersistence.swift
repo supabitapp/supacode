@@ -19,11 +19,7 @@ public nonisolated enum SettingsFileStorageKey: DependencyKey {
   public static var liveValue: SettingsFileStorage {
     SettingsFileStorage(
       load: { try Data(contentsOf: $0) },
-      save: { data, url in
-        let directory = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try data.write(to: url, options: [.atomic])
-      }
+      save: { data, url in try SymlinkPreservingFileWriter.write(data, to: url) }
     )
   }
   public static var previewValue: SettingsFileStorage { .inMemory() }

@@ -125,7 +125,7 @@ actor LayoutsIncrementalWriter {
     let destination = url.deletingLastPathComponent()
       .appending(path: "\(url.lastPathComponent).corrupt-\(timestamp)", directoryHint: .notDirectory)
     do {
-      try fileManager.moveItem(at: url, to: destination)
+      try SymlinkPreservingFileWriter.moveAside(at: url, to: destination)
     } catch {
       Self.logger.warning(
         "Failed to rename corrupt layouts file to \(destination.lastPathComponent): \(error).")
