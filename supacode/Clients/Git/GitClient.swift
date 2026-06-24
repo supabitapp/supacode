@@ -133,7 +133,7 @@ struct GitClient {
         index: index
       )
     }
-    return
+    let sorted =
       worktreeEntries
       .sorted { lhs, rhs in
         if lhs.createdAt != rhs.createdAt {
@@ -142,6 +142,7 @@ struct GitClient {
         return lhs.index < rhs.index
       }
       .map(\.worktree)
+    return Self.deduplicatedByID(sorted)
   }
 
   /// Worktrees via standard `git worktree list --porcelain`. Used for remote
@@ -202,7 +203,31 @@ struct GitClient {
         )
       )
     }
-    return worktrees
+    return deduplicatedByID(worktrees)
+  }
+
+  /// Drop any worktree whose id (working-directory path) duplicates an earlier
+  /// entry, keeping the first occurrence. `git` / `wt` can list two worktrees at
+  /// the same path when a repo's config is corrupt -- e.g. a stale
+  /// `core.worktree` redirect makes the bare root resolve onto a linked
+  /// worktree's path, so the same directory is reported twice. Returning
+  /// duplicate ids traps the `IdentifiedArray(uniqueElements:)` the caller
+  /// builds, which crash-loops the app on every load; dropping the duplicate
+  /// lets a malformed repo degrade gracefully instead.
+  nonisolated private static func deduplicatedByID(_ worktrees: [Worktree]) -> [Worktree] {
+    var seen: Set<Worktree.ID> = []
+    var result: [Worktree] = []
+    result.reserveCapacity(worktrees.count)
+    for worktree in worktrees where seen.insert(worktree.id).inserted {
+      result.append(worktree)
+    }
+    let dropped = worktrees.count - result.count
+    if dropped > 0 {
+      gitLogger.warning(
+        "Dropped \(dropped) duplicate-path worktree(s); repository git config may be corrupt"
+      )
+    }
+    return result
   }
 
   /// Create a worktree via standard `git worktree add` (for remote repos where

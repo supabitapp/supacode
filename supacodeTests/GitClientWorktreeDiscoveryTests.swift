@@ -141,6 +141,32 @@ struct GitClientWorktreeDiscoveryTests {
     #expect(recorder.loginInvocations().isEmpty)
   }
 
+  @Test func worktreesDeduplicateEntriesSharingAPath() async throws {
+    // A corrupt repo (e.g. a stale `core.worktree` redirect) can make `wt`
+    // report the same directory twice under different branches. The duplicate
+    // ids would trap `IdentifiedArray(uniqueElements:)` downstream, so the
+    // client must drop the duplicate and keep the first occurrence.
+    let output = """
+      [
+        {"branch":"main","path":"/tmp/repo/feature","head":"aaa","is_bare":false},
+        {"branch":"feature","path":"/tmp/repo/feature","head":"bbb","is_bare":false},
+        {"branch":"main","path":"/tmp/repo/main","head":"aaa","is_bare":false}
+      ]
+      """
+    let shell = ShellClient(
+      run: { _, _, _ in ShellOutput(stdout: output, stderr: "", exitCode: 0) },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) }
+    )
+    let client = GitClient(shell: shell)
+
+    let worktrees = try await client.worktrees(for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(worktrees.count == 2)
+    #expect(Set(worktrees.map(\.id)) == [WorktreeID("/tmp/repo/feature"), WorktreeID("/tmp/repo/main")])
+    // First occurrence wins, so the kept `/tmp/repo/feature` row is the `main` one.
+    #expect(worktrees.first(where: { $0.id == "/tmp/repo/feature" })?.name == "main")
+  }
+
   @Test func worktreesFlagMissingWorkingDirectoryAsOrphan() async throws {
     let tempRoot = URL(filePath: "/tmp", directoryHint: .isDirectory)
       .appending(path: "wt-missing-\(UUID().uuidString)", directoryHint: .isDirectory)

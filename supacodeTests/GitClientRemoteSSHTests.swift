@@ -262,6 +262,30 @@ struct GitClientRemoteSSHTests {
     #expect(worktrees.allSatisfy { !$0.isMissing })
   }
 
+  @Test func parsePorcelainDeduplicatesEntriesSharingAPath() {
+    // `git worktree list --porcelain` against a corrupt repo can report the
+    // same path twice; the parse must drop the duplicate so the caller's
+    // `IdentifiedArray(uniqueElements:)` doesn't trap.
+    let output = """
+      worktree /repo/wt-feature
+      HEAD aaa
+      branch refs/heads/main
+
+      worktree /repo/wt-feature
+      HEAD bbb
+      branch refs/heads/feature
+
+      worktree /repo/wt-main
+      HEAD ccc
+      branch refs/heads/trunk
+      """
+    let worktrees = GitClient.parseWorktreePorcelain(output, repositoryRootURL: URL(fileURLWithPath: "/repo"))
+    #expect(worktrees.count == 2)
+    #expect(Set(worktrees.map(\.id)) == [WorktreeID("/repo/wt-feature"), WorktreeID("/repo/wt-main")])
+    // First occurrence wins.
+    #expect(worktrees.first(where: { $0.id == "/repo/wt-feature" })?.name == "main")
+  }
+
   @Test func gitWorktreesOverSSHRunsPorcelainListAndParses() async throws {
     let recorder = GitShellInvocationRecorder()
     let base = ShellClient(
