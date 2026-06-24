@@ -21,11 +21,11 @@ Native terminal coding agents command center.
 The GhosttyKit build uses a pinned Zig (`0.15.2`, required exactly by ghostty) whose linker can't link the macOS 26.4+ SDK — that SDK dropped the `arm64-macos` slice from `libSystem.tbd` ([ziglang/zig#31658](https://github.com/ziglang/zig/issues/31658)), so the build fails with a wall of `undefined symbol` errors. Install [Xcode 26.3](https://developer.apple.com/download/all/?q=Xcode%2026.3) (it ships the macOS 26.2 SDK, which still has `arm64-macos`). You **don't** need to switch it globally — the build auto-detects a Zig-linkable Xcode and pins it for just that build, so a newer Xcode can stay your default. After installing it once:
 
 ```bash
-# finish first launch (required before the build can use it)
+# accept the license and finish first launch (required before the build can use it)
 sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -license accept
 sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -runFirstLaunch
-# install the Metal Toolchain (ghostty compiles Metal shaders; a fresh Xcode ships it uninstalled)
-sudo xcodebuild -downloadComponent MetalToolchain
+# install the Metal Toolchain into that Xcode (ghostty compiles Metal shaders; a fresh Xcode ships it uninstalled)
+sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -downloadComponent MetalToolchain
 ```
 
 See [AGENTS.md](AGENTS.md) for the full rationale.

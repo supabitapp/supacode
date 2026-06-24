@@ -25,13 +25,8 @@ BUILD ?=
 XCODEBUILD_FLAGS ?=
 SUPACODE_SKIP_PREFLIGHT ?=
 
-# Resolve and export a Zig-linkable Xcode for the recipe's shell, so the app and
-# its ghostty foreignBuild share one toolchain without a global xcode-select -s.
-# The plain assignment (not `export X=...`) propagates the script's exit status,
-# so a missing Xcode aborts the recipe under pipefail/-e with the script's
-# actionable message instead of silently building against the wrong SDK.
-# Recursively expanded and referenced only inside build recipes, so `make help` /
-# `make format` never run the scan.
+# Export a Zig-linkable Xcode per build recipe (no global xcode-select -s). Plain
+# assignment so a missing Xcode aborts the recipe under -e.
 SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; export DEVELOPER_DIR
 
 .DEFAULT_GOAL := help
@@ -39,6 +34,7 @@ SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; ex
 
 ifdef CI
 TUIST_INSTALL_FLAGS := --force-resolved-versions
+SUPACODE_SKIP_PREFLIGHT := 1
 else
 TUIST_INSTALL_FLAGS :=
 endif
@@ -52,7 +48,7 @@ generate-project: $(TUIST_GENERATION_STAMP_DIR)/$(TUIST_GENERATE_CACHE_PROFILE) 
 
 generate-project-sources: $(TUIST_SOURCE_GENERATION_STAMP) # Resolve packages and generate a source-only Xcode workspace
 
-$(TUIST_INSTALL_STAMP): $(TUIST_GENERATION_INPUTS)
+$(TUIST_INSTALL_STAMP): $(TUIST_GENERATION_INPUTS) | preflight
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	mise exec -- tuist install $(TUIST_INSTALL_FLAGS)
 	touch "$@"
@@ -83,9 +79,9 @@ $(TUIST_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_ST
 doctor: # Diagnose build prerequisites and print the fix for each failure
 	@./scripts/doctor.sh
 
-# Quiet preflight wired as an order-only prerequisite of the build targets, so a
-# missing prerequisite fails fast with an actionable message instead of a Zig
-# linker dump. Order-only (never forces a rebuild). Skip with SUPACODE_SKIP_PREFLIGHT=1.
+# Order-only preflight on the install stamp, so every build flow fails fast with
+# doctor's actionable message before tuist / xcodebuild / zig run. Never forces a
+# rebuild. Skipped when SUPACODE_SKIP_PREFLIGHT is set (CI sets it above).
 preflight:
 	@[ -n "$(SUPACODE_SKIP_PREFLIGHT)" ] || ./scripts/doctor.sh --quiet
 
@@ -101,7 +97,7 @@ inspect-dependencies: $(TUIST_INSTALL_STAMP) # Check for implicit Tuist dependen
 warm-cache: $(TUIST_INSTALL_STAMP) # Warm the full Tuist cacheable graph
 	mise exec -- tuist cache warm --configuration $(TUIST_CACHE_CONFIGURATION)
 
-build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) | preflight # Build the macOS app (Debug)
+build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the macOS app (Debug)
 	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
 
@@ -138,7 +134,7 @@ export-archive: # Export xarchive
 	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
 
-test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) | preflight # Run all tests
+test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	@$(SELECT_DEVELOPER_DIR); \
 	if [ -t 1 ]; then \
 		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \

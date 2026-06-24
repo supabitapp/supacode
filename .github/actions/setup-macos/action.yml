@@ -1,14 +1,21 @@
 name: Setup macOS build deps
 description: Install + cache mise tools and ThirdParty build outputs (Ghostty, zmx)
 
+inputs:
+  disable-tools:
+    description: Comma-separated mise tools to skip, so CI installs only what it needs.
+    default: spm:swiftlang/swift-format,npm:create-dmg
+
 runs:
   using: composite
   steps:
-    # The bundled zig (0.15.2) self-hosted linker can't link the macOS 26.4+ SDK
-    # (it dropped arm64-macos from libSystem.tbd; ziglang/zig#31658), which breaks
-    # `make build-ghostty-xcframework`. Reuse the same selector the local build and
-    # `make doctor` use so CI and local agree on which Xcode is Zig-linkable. A
-    # global xcode-select is fine on an ephemeral runner.
+    # Job-wide so every later mise call (install, plus auto-install during the
+    # build steps under MISE_YES) skips the unneeded tools, not just this step.
+    - name: Limit mise to the tools CI needs
+      shell: bash
+      run: echo "MISE_DISABLE_TOOLS=${{ inputs.disable-tools }}" >> "$GITHUB_ENV"
+    # The bundled zig 0.15.2 linker can't link the macOS 26.4+ SDK (ziglang/zig#31658).
+    # Reuse the shared selector so CI and local agree on the Zig-linkable Xcode.
     - name: Select a Zig-linkable Xcode
       shell: bash
       run: |

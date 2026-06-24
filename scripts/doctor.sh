@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# Self-diagnosing preflight for the supacode build. Verifies every prerequisite
-# that bites a first-time / returning contributor on macOS 26.4+, in the order
-# the failures surface, and prints the exact command to fix each one — so you get
-# an actionable error instead of a 200-line Zig linker dump.
+# Verifies the build prerequisites on macOS 26.4+ and prints the fix for each
+# failure, instead of a 200-line Zig linker dump.
 #
-# Usage: scripts/doctor.sh [--quiet]
-#   --quiet  print only failures (used by the Makefile's `preflight` prerequisite)
-#
-# Exits 0 when everything passes, 1 otherwise.
+# Usage: scripts/doctor.sh [--quiet]   (--quiet prints only failures). Exit 1 on any.
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,8 +13,7 @@ quiet=0
 
 failures=0
 
-# mise installs at ~/.local/bin/mise and is often missing from non-login shells.
-# Fall back to the absolute path so the doctor (and its tool checks) still run.
+# Fall back to the absolute path; mise is often missing from non-login shells.
 mise_bin="mise"
 command -v mise >/dev/null 2>&1 || mise_bin="${HOME}/.local/bin/mise"
 has_mise() { command -v "${mise_bin}" >/dev/null 2>&1 || [ -x "${mise_bin}" ]; }
@@ -33,7 +27,7 @@ fail() {
 
 [ "${quiet}" -eq 1 ] || printf '\033[1msupacode doctor\033[0m\n'
 
-# 1. mise on PATH ------------------------------------------------------------
+# 1. mise on PATH
 if command -v mise >/dev/null 2>&1; then
   pass "mise on PATH"
 elif [ -x "${HOME}/.local/bin/mise" ]; then
@@ -43,7 +37,7 @@ else
   fail "mise not installed" "curl https://mise.run | sh"
 fi
 
-# 2. submodules initialized --------------------------------------------------
+# 2. submodules
 missing_sub=()
 [ -f "${repo_root}/ThirdParty/ghostty/build.zig" ] || missing_sub+=("ThirdParty/ghostty")
 [ -f "${repo_root}/ThirdParty/zmx/build.zig" ] || missing_sub+=("ThirdParty/zmx")
@@ -54,19 +48,19 @@ else
   fail "git submodules missing: ${missing_sub[*]}" "git submodule update --init --recursive"
 fi
 
-# 3. Zig-linkable Xcode ------------------------------------------------------
+# 3. Zig-linkable Xcode
 developer_dir="$("${script_dir}/select-developer-dir.sh" 2>/dev/null)" || developer_dir=""
 if [ -n "${developer_dir}" ]; then
   sdk="$(DEVELOPER_DIR="${developer_dir}" xcrun --sdk macosx --show-sdk-path 2>/dev/null)"
   pass "Zig-linkable Xcode: ${developer_dir} ($(basename "${sdk:-unknown}"))"
 else
-  fail "no Zig-linkable Xcode — macOS 26.4+ SDK dropped arm64-macos (ziglang/zig#31658)" \
+  fail "no Zig-linkable Xcode: macOS 26.4+ SDK dropped arm64-macos (ziglang/zig#31658)" \
     "install Xcode 26.3 (ships the macOS 26.2 SDK): https://developer.apple.com/download/all/?q=Xcode%2026.3"
 fi
 
-# 4 + 5 only make sense once we have an Xcode to point at.
+# 4 and 5 need an Xcode to point at.
 if [ -n "${developer_dir}" ]; then
-  # 4. license / first launch ------------------------------------------------
+  # 4. license / first launch
   if DEVELOPER_DIR="${developer_dir}" xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1; then
     pass "Xcode license accepted & first launch complete"
   else
@@ -74,16 +68,16 @@ if [ -n "${developer_dir}" ]; then
       "sudo DEVELOPER_DIR=${developer_dir} xcodebuild -license accept && sudo DEVELOPER_DIR=${developer_dir} xcodebuild -runFirstLaunch"
   fi
 
-  # 5. Metal Toolchain -------------------------------------------------------
+  # 5. Metal Toolchain
   if DEVELOPER_DIR="${developer_dir}" xcrun metal --version >/dev/null 2>&1; then
     pass "Metal Toolchain installed"
   else
     fail "Metal Toolchain missing (ghostty compiles Metal shaders)" \
-      "sudo xcodebuild -downloadComponent MetalToolchain"
+      "sudo DEVELOPER_DIR=${developer_dir} xcodebuild -downloadComponent MetalToolchain"
   fi
 fi
 
-# 6. pinned mise tools installed ---------------------------------------------
+# 6. pinned mise tools
 if has_mise; then
   missing_tools=()
   for tool in zig tuist swiftlint xcbeautify swift-format; do

@@ -97,6 +97,8 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
+        with:
+          disable-tools: spm:swiftlang/swift-format
       - name: Prepare build overrides
         env:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
