@@ -371,6 +371,73 @@ struct GhosttySurfaceBridgeTests {
     #expect(lastState == GHOSTTY_PROGRESS_STATE_REMOVE)
   }
 
+  @Test func colorChangeBackgroundStoresKindAndRGB() {
+    let bridge = GhosttySurfaceBridge()
+    let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
+
+    var action = ghostty_action_s()
+    action.tag = GHOSTTY_ACTION_COLOR_CHANGE
+    action.action.color_change = ghostty_action_color_change_s(
+      kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      r: 26,
+      g: 42,
+      b: 58
+    )
+    _ = bridge.handleAction(target: target, action: action)
+
+    #expect(bridge.state.colorChangeKind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND)
+    #expect(bridge.state.colorChangeR == 26)
+    #expect(bridge.state.colorChangeG == 42)
+    #expect(bridge.state.colorChangeB == 58)
+  }
+
+  @Test func colorChangeForegroundDoesNotMatchBackground() {
+    let bridge = GhosttySurfaceBridge()
+    let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
+
+    var action = ghostty_action_s()
+    action.tag = GHOSTTY_ACTION_COLOR_CHANGE
+    action.action.color_change = ghostty_action_color_change_s(
+      kind: GHOSTTY_ACTION_COLOR_KIND_FOREGROUND,
+      r: 255,
+      g: 255,
+      b: 255
+    )
+    _ = bridge.handleAction(target: target, action: action)
+
+    #expect(bridge.state.colorChangeKind == GHOSTTY_ACTION_COLOR_KIND_FOREGROUND)
+    #expect(bridge.state.colorChangeKind != GHOSTTY_ACTION_COLOR_KIND_BACKGROUND)
+  }
+
+  @Test func colorChangeOverwritesPreviousKind() {
+    let bridge = GhosttySurfaceBridge()
+    let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
+
+    var bg = ghostty_action_s()
+    bg.tag = GHOSTTY_ACTION_COLOR_CHANGE
+    bg.action.color_change = ghostty_action_color_change_s(
+      kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      r: 10,
+      g: 20,
+      b: 30
+    )
+    _ = bridge.handleAction(target: target, action: bg)
+
+    var fg = ghostty_action_s()
+    fg.tag = GHOSTTY_ACTION_COLOR_CHANGE
+    fg.action.color_change = ghostty_action_color_change_s(
+      kind: GHOSTTY_ACTION_COLOR_KIND_FOREGROUND,
+      r: 200,
+      g: 200,
+      b: 200
+    )
+    _ = bridge.handleAction(target: target, action: fg)
+
+    // State reflects the most recent action regardless of kind.
+    #expect(bridge.state.colorChangeKind == GHOSTTY_ACTION_COLOR_KIND_FOREGROUND)
+    #expect(bridge.state.colorChangeR == 200)
+  }
+
   private func withOpenURLAction<T>(
     url: String,
     kind: ghostty_action_open_url_kind_e = GHOSTTY_ACTION_OPEN_URL_KIND_UNKNOWN,

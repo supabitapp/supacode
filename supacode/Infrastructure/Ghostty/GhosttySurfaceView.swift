@@ -2,6 +2,7 @@ import AppKit
 import Carbon
 import CoreText
 import GhosttyKit
+import Observation
 import QuartzCore
 import SupacodeSettingsShared
 
@@ -249,6 +250,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       [weak self] event in
       self?.localEventHandler(event)
     }
+    scheduleBackgroundTintObservation()
   }
 
   required init?(coder: NSCoder) {
@@ -484,6 +486,40 @@ final class GhosttySurfaceView: NSView, Identifiable {
     )
   }
 
+  // Re-subscribes on every change so each OSC 11 update triggers a fresh layer paint.
+  private func scheduleBackgroundTintObservation() {
+    withObservationTracking {
+      _ = bridge.state.colorChangeKind
+      _ = bridge.state.colorChangeR
+      _ = bridge.state.colorChangeG
+      _ = bridge.state.colorChangeB
+    } onChange: { [weak self] in
+      Task { @MainActor [weak self] in
+        self?.updateBackgroundTint()
+        self?.scheduleBackgroundTintObservation()
+      }
+    }
+  }
+
+  private func updateBackgroundTint() {
+    guard bridge.state.colorChangeKind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      let r = bridge.state.colorChangeR,
+      let g = bridge.state.colorChangeG,
+      let b = bridge.state.colorChangeB
+    else {
+      layer?.backgroundColor = nil
+      return
+    }
+    let opacity = runtime.isBackgroundOpaque ? 1.0 : runtime.backgroundOpacity()
+    let color = NSColor(
+      red: CGFloat(r) / 255,
+      green: CGFloat(g) / 255,
+      blue: CGFloat(b) / 255,
+      alpha: CGFloat(opacity)
+    )
+    layer?.backgroundColor = color.cgColor
+  }
+
   func toggleBackgroundOpacity() -> Bool {
     // Skip toggling when it would have no visible effect: config is fully
     // opaque, no window is available, or window is in fullscreen mode.
@@ -501,6 +537,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     runtime.toggleIsBackgroundOpaque()
     applyWindowBackgroundAppearance()
+    updateBackgroundTint()
     return true
   }
 

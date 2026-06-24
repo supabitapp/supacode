@@ -72,3 +72,6 @@ fastlane/test_output
 *.profraw
 .env
 .DS_Store
+
+# Personal session scaffolding — not part of the PR
+ho-process/
