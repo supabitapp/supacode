@@ -157,9 +157,8 @@ extension RepositoriesFeature {
       let loaded = try await client.gitWorktrees(for: rootURL)
       if !loaded.isEmpty {
         let worktrees = loaded.map { remoteWorktree(from: $0, host: host) }
-        // Same corruption guard as the local path: a healthy repo never lists
-        // two worktrees at one path. Refuse it (keep the placeholder + surface a
-        // failure) instead of trapping `IdentifiedArray(uniqueElements:)`.
+        // A duplicate path signals a corrupt repo; keep the placeholder and
+        // surface a failure instead of trapping `IdentifiedArray(uniqueElements:)`.
         if let duplicate = firstDuplicateWorktreeID(in: worktrees) {
           let failure = LoadFailure(
             rootID: repoID,
