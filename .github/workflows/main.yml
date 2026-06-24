@@ -352,6 +352,9 @@ jobs:
       TAG: ${{ needs.detect.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/download-artifact@v7
         with:
           name: build-artifacts
@@ -367,6 +370,24 @@ jobs:
           else
             gh api "repos/$RELEASE_REPO/releases/generate-notes" -f tag_name="$TAG" --jq '.body' > build/release-notes.md
           fi
+          # Prepend the tag's headline ahead of "## What's Changed". Gate on an
+          # annotated tag, else a lightweight tag reads the commit subject.
+          HEADLINE=""
+          if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = tag ]; then
+            # Strip any signature defensively; these notes also feed the Sparkle appcast.
+            HEADLINE=$(git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG" | sed '/-----BEGIN .*SIGNATURE-----/,$d')
+          fi
+          # Prepend only a well-formed headline: a `## ` subject with a non-empty body.
+          SUBJECT=$(printf '%s\n' "$HEADLINE" | sed -n '1p')
+          BODY=$(printf '%s\n' "$HEADLINE" | sed '1,2d')
+          case "$SUBJECT" in
+            '## '*)
+              if [ -n "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+                { printf '%s\n\n' "$HEADLINE"; cat build/release-notes.md; } > build/release-notes.md.new
+                mv build/release-notes.md.new build/release-notes.md
+              fi
+              ;;
+          esac
       - name: Generate appcast with history and deltas
         run: |
           set -euo pipefail
