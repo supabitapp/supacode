@@ -313,6 +313,86 @@ struct GhosttySurfaceViewTests {
     #expect(!GhosttySurfaceView.isSystemManagedMenuItem(noAction))
   }
 
+  @Test func backgroundTintColorReturnsNilForNonBackgroundKind() {
+    #expect(
+      GhosttySurfaceView.backgroundTintColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_FOREGROUND,
+        r: 255, g: 0, b: 0,
+        opacity: 1.0
+      ) == nil
+    )
+    #expect(
+      GhosttySurfaceView.backgroundTintColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_CURSOR,
+        r: 255, g: 255, b: 255,
+        opacity: 1.0
+      ) == nil
+    )
+  }
+
+  @Test func backgroundTintColorReturnsNilForNilKind() {
+    #expect(
+      GhosttySurfaceView.backgroundTintColor(
+        kind: nil, r: 100, g: 100, b: 100, opacity: 1.0
+      ) == nil
+    )
+  }
+
+  @Test func backgroundTintColorReturnsNilForMissingComponents() {
+    #expect(
+      GhosttySurfaceView.backgroundTintColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+        r: nil, g: 0, b: 0, opacity: 1.0
+      ) == nil
+    )
+    #expect(
+      GhosttySurfaceView.backgroundTintColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+        r: 0, g: nil, b: 0, opacity: 1.0
+      ) == nil
+    )
+    #expect(
+      GhosttySurfaceView.backgroundTintColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+        r: 0, g: 0, b: nil, opacity: 1.0
+      ) == nil
+    )
+  }
+
+  @Test func backgroundTintColorProducesCorrectRGB() {
+    let color = GhosttySurfaceView.backgroundTintColor(
+      kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      r: 26, g: 42, b: 58,
+      opacity: 1.0
+    )
+    let ns = color.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB) }
+    #expect(ns != nil)
+    #expect(abs((ns?.redComponent ?? 0) - CGFloat(26) / 255) < 0.001)
+    #expect(abs((ns?.greenComponent ?? 0) - CGFloat(42) / 255) < 0.001)
+    #expect(abs((ns?.blueComponent ?? 0) - CGFloat(58) / 255) < 0.001)
+    #expect(abs((ns?.alphaComponent ?? 0) - 1.0) < 0.001)
+  }
+
+  @Test func backgroundTintColorAppliesOpacity() {
+    let color = GhosttySurfaceView.backgroundTintColor(
+      kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      r: 255, g: 255, b: 255,
+      opacity: 0.9
+    )
+    let ns = color.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB) }
+    #expect(abs((ns?.alphaComponent ?? 0) - 0.9) < 0.001)
+  }
+
+  @Test func backgroundTintColorIsOpaqueWhenOpacityIsOne() {
+    let color = GhosttySurfaceView.backgroundTintColor(
+      kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      r: 0, g: 0, b: 0,
+      opacity: 1.0
+    )
+    let ns = color.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB) }
+    #expect(abs((ns?.alphaComponent ?? 0) - 1.0) < 0.001)
+  }
+
   @Test func reportedSurfaceSizeUsesScrollContentWidth() {
     #expect(
       GhosttySurfaceScrollView.reportedSurfaceSize(

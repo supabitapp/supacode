@@ -503,26 +503,34 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private func updateBackgroundTint() {
-    let cgColor: CGColor?
-    if bridge.state.colorChangeKind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
-      let r = bridge.state.colorChangeR,
-      let g = bridge.state.colorChangeG,
-      let b = bridge.state.colorChangeB
-    {
-      let opacity = runtime.isBackgroundOpaque ? 1.0 : runtime.backgroundOpacity()
-      cgColor = NSColor(
-        red: CGFloat(r) / 255,
-        green: CGFloat(g) / 255,
-        blue: CGFloat(b) / 255,
-        alpha: CGFloat(opacity)
-      ).cgColor
-    } else {
-      cgColor = nil
-    }
+    let opacity = runtime.isBackgroundOpaque ? 1.0 : runtime.backgroundOpacity()
+    let cgColor = Self.backgroundTintColor(
+      kind: bridge.state.colorChangeKind,
+      r: bridge.state.colorChangeR,
+      g: bridge.state.colorChangeG,
+      b: bridge.state.colorChangeB,
+      opacity: CGFloat(opacity)
+    )
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     layer?.backgroundColor = cgColor
     CATransaction.commit()
+  }
+
+  static func backgroundTintColor(
+    kind: ghostty_action_color_kind_e?,
+    r: UInt8?,
+    g: UInt8?,
+    b: UInt8?,
+    opacity: CGFloat
+  ) -> CGColor? {
+    guard kind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, let r, let g, let b else { return nil }
+    return NSColor(
+      red: CGFloat(r) / 255,
+      green: CGFloat(g) / 255,
+      blue: CGFloat(b) / 255,
+      alpha: opacity
+    ).cgColor
   }
 
   func toggleBackgroundOpacity() -> Bool {
