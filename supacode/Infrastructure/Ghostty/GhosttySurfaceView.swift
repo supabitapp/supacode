@@ -482,9 +482,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   // AppKit's event-routing for the view (setting it on the host layer breaks
   // drag-and-drop by changing how AppKit composites the view hierarchy).
   private let backgroundTintLayer: CALayer = {
-    let l = CALayer()
-    l.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
-    return l
+    let tintLayer = CALayer()
+    tintLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+    return tintLayer
   }()
 
   private func setupBackgroundTintLayer() {
@@ -509,10 +509,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   // Re-subscribes on every change so each OSC 11 update triggers a fresh layer paint.
   private func scheduleBackgroundTintObservation() {
     withObservationTracking {
-      _ = bridge.state.colorChangeKind
-      _ = bridge.state.colorChangeR
-      _ = bridge.state.colorChangeG
-      _ = bridge.state.colorChangeB
+      _ = bridge.state.backgroundColorR
+      _ = bridge.state.backgroundColorG
+      _ = bridge.state.backgroundColorB
     } onChange: { [weak self] in
       Task { @MainActor [weak self] in
         self?.updateBackgroundTint()
@@ -527,10 +526,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
       backgroundOpacity: runtime.backgroundOpacity()
     )
     let cgColor = Self.backgroundTintColor(
-      kind: bridge.state.colorChangeKind,
-      r: bridge.state.colorChangeR,
-      g: bridge.state.colorChangeG,
-      b: bridge.state.colorChangeB,
+      red: bridge.state.backgroundColorR,
+      green: bridge.state.backgroundColorG,
+      blue: bridge.state.backgroundColorB,
       opacity: opacity
     )
     CATransaction.begin()
@@ -562,17 +560,16 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   static func backgroundTintColor(
-    kind: ghostty_action_color_kind_e?,
-    r: UInt8?,
-    g: UInt8?,
-    b: UInt8?,
+    red: UInt8?,
+    green: UInt8?,
+    blue: UInt8?,
     opacity: CGFloat
   ) -> CGColor? {
-    guard kind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, let r, let g, let b else { return nil }
+    guard let red, let green, let blue else { return nil }
     return NSColor(
-      red: CGFloat(r) / 255,
-      green: CGFloat(g) / 255,
-      blue: CGFloat(b) / 255,
+      red: CGFloat(red) / 255,
+      green: CGFloat(green) / 255,
+      blue: CGFloat(blue) / 255,
       alpha: opacity
     ).cgColor
   }

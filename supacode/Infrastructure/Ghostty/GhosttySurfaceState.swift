@@ -20,10 +20,15 @@ final class GhosttySurfaceState {
   var rendererHealth: ghostty_action_renderer_health_e?
   var openUrl: String?
   var openUrlKind: ghostty_action_open_url_kind_e?
-  var colorChangeKind: ghostty_action_color_kind_e?
-  var colorChangeR: UInt8?
-  var colorChangeG: UInt8?
-  var colorChangeB: UInt8?
+  var backgroundColorR: UInt8?
+  var backgroundColorG: UInt8?
+  var backgroundColorB: UInt8?
+  var foregroundColorR: UInt8?
+  var foregroundColorG: UInt8?
+  var foregroundColorB: UInt8?
+  var cursorColorR: UInt8?
+  var cursorColorG: UInt8?
+  var cursorColorB: UInt8?
   var searchNeedle: String?
   var searchTotal: Int?
   var searchSelected: Int?

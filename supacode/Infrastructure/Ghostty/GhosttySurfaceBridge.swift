@@ -464,10 +464,22 @@ final class GhosttySurfaceBridge {
 
     case GHOSTTY_ACTION_COLOR_CHANGE:
       let change = action.action.color_change
-      state.colorChangeKind = change.kind
-      state.colorChangeR = change.r
-      state.colorChangeG = change.g
-      state.colorChangeB = change.b
+      switch change.kind {
+      case GHOSTTY_ACTION_COLOR_KIND_BACKGROUND:
+        state.backgroundColorR = change.r
+        state.backgroundColorG = change.g
+        state.backgroundColorB = change.b
+      case GHOSTTY_ACTION_COLOR_KIND_FOREGROUND:
+        state.foregroundColorR = change.r
+        state.foregroundColorG = change.g
+        state.foregroundColorB = change.b
+      case GHOSTTY_ACTION_COLOR_KIND_CURSOR:
+        state.cursorColorR = change.r
+        state.cursorColorG = change.g
+        state.cursorColorB = change.b
+      default:
+        break
+      }
       return true
 
     default:
