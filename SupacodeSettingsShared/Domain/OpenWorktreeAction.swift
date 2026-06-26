@@ -40,12 +40,10 @@ public enum OpenBehavior: Equatable, Sendable {
   public static let `default`: Self = .workspace(configuration: nil)
 }
 
-/// How to open a remote SSH worktree through an editor's Remote-SSH CLI. Built
-/// eagerly so a `nil` `remoteOpenInvocation(host:remotePath:)` is the single
-/// capability signal consulted by both the reducer guard and the UI enablement.
+/// How to open a remote SSH worktree through an editor's Remote-SSH CLI.
 public struct RemoteOpenInvocation: Equatable, Sendable {
   public var executable: OpenBehavior.ProcessExecutable
-  /// Fully-resolved argv that follows the resolved executable (and its prefix).
+  /// argv following the resolved executable (and its prefix).
   public var arguments: [String]
 
   public init(executable: OpenBehavior.ProcessExecutable, arguments: [String]) {
@@ -281,9 +279,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   }
 
   /// How to open this worktree on `host` at `remotePath` via the editor's
-  /// Remote-SSH CLI, or `nil` if the editor can't express this host. `nil` is
-  /// the single capability signal consulted by both the reducer guard and the
-  /// UI enablement — never duplicate this switch.
+  /// Remote-SSH CLI, or `nil` if the editor can't express this host. The single
+  /// capability signal shared by the reducer guard and the UI enablement.
   public func remoteOpenInvocation(host: RemoteHost, remotePath: String) -> RemoteOpenInvocation? {
     switch self {
     case .zed, .zedPreview:
@@ -292,18 +289,12 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         arguments: [Self.zedSSHURL(host: host, remotePath: remotePath)]
       )
     case .vscode, .vscodeInsiders, .vscodium, .cursor, .windsurf, .antigravity:
-      // VS Code family Remote-SSH: launch the bundled CLI with the positional
-      // `--remote ssh-remote+<host> <path>` form. The `<host>` token is the
-      // bare `user@host` (`sshDestination`), NOT `authority`/`displayAuthority`:
-      // `ssh-remote+host:2222` is parsed as a literal hostname, so VS Code has
-      // no inline port syntax (microsoft/vscode-remote-release #515). A
-      // non-default port can therefore only come from `~/.ssh/config`, so a host
-      // that carries one is (correctly) inexpressible — return `nil` and let the
-      // shared capability gate disable the editor for that host. (Zed is
-      // unaffected; it keeps the port in its `ssh://` URL.) The remote path is a
-      // plain positional argv string (Process passes argv literally, no shell
-      // parsing), so it is NOT percent-encoded — that's only needed for the
-      // `--folder-uri` form, which this does not use.
+      // The `<host>` token is the bare `user@host` (`sshDestination`): VS Code
+      // parses `ssh-remote+host:2222` as a literal hostname, so it has no inline
+      // port syntax (microsoft/vscode-remote-release #515). A non-default port
+      // can only come from `~/.ssh/config`, so a host carrying one is
+      // inexpressible here — return `nil`. The path is a literal positional argv
+      // (no shell, no URL), so it is NOT percent-encoded.
       guard !host.hasNonDefaultPort else { return nil }
       guard let cliName = vscodeFamilyCLIName else { return nil }
       return RemoteOpenInvocation(
@@ -316,9 +307,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   }
 
   /// The bundled CLI binary name (under `Contents/Resources/app/bin/`) for the
-  /// VS Code family, or `nil` for any other editor. Single source of truth for
-  /// both the invocation builder and the membership test that backs the
-  /// disabled-reason tooltip, so the two never drift.
+  /// VS Code family, or `nil` for any other editor. Doubles as the family
+  /// membership test backing the disabled-reason tooltip.
   private var vscodeFamilyCLIName: String? {
     switch self {
     case .vscode: "code"
@@ -331,30 +321,20 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     }
   }
 
-  /// A human-facing reason this editor is disabled for `host`, or `nil` if no
-  /// dedicated explanation applies. Currently non-`nil` ONLY for the VS Code
-  /// family when the host carries a non-default port — the one case where the
-  /// editor otherwise supports remote but can't express the port inline (it must
-  /// live in `~/.ssh/config`). Editors disabled for other reasons (e.g.
-  /// JetBrains, Finder) return `nil` so they don't get a misleading port
-  /// tooltip. This is presentation-only; the reducer / launcher keep gating on
-  /// `remoteOpenInvocation` directly.
+  /// A human-facing reason this editor is disabled for `host`, or `nil` if none
+  /// applies. Non-`nil` only for the VS Code family on a non-default port (the
+  /// one case where remote is supported but the port can't be expressed inline).
+  /// Presentation-only — gating stays on `remoteOpenInvocation`.
   public func remoteOpenDisabledReason(host: RemoteHost) -> String? {
     guard vscodeFamilyCLIName != nil else { return nil }
     guard host.hasNonDefaultPort else { return nil }
     return "Opening \(title) over SSH needs the port in ~/.ssh/config"
   }
 
-  /// `ssh://[user@]host[:port]<remotePath>` for Zed's Remote-SSH CLI. The
-  /// authority carries the username and a non-default port but elides the
-  /// default SSH port (22) and an absent user (Zed reads `~/.ssh/config`
-  /// itself, so no alias lookup is needed), and the path is percent-encoded for
-  /// URI validity (e.g. spaces) without touching the `/` separators
-  /// (`CharacterSet.urlPathAllowed` already permits `/`). Pure and testable.
-  ///
-  /// Invariant: the path component is normalized to be `/`-prefixed so the
-  /// authority and path never fuse into a malformed `ssh://host~/proj`. An
-  /// already-absolute path is left untouched (no double slash).
+  /// `ssh://[user@]host[:port]<remotePath>` for Zed's Remote-SSH CLI. The path
+  /// is normalized to a leading `/` so it can't fuse with the authority into a
+  /// malformed `ssh://host~/proj`, then percent-encoded for URI validity (e.g.
+  /// spaces); `.urlPathAllowed` keeps the `/` separators intact.
   private static func zedSSHURL(host: RemoteHost, remotePath: String) -> String {
     let normalizedPath = remotePath.hasPrefix("/") ? remotePath : "/" + remotePath
     let encodedPath =

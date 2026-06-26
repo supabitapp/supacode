@@ -635,10 +635,9 @@ private struct SidebarItemContextMenu: View {
     let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
     let isAllFoldersBulk = isAllFoldersBulk
 
-    // Open actions stay shown for a remote row (matching the toolbar and menu
-    // bar) but each editor is enabled only when its Remote-SSH CLI can express
-    // the host; Reveal in Finder is local-only. `openActions` gates per-item via
-    // `canOpen`, so there is no blanket disable here.
+    // Open actions stay shown for a remote row but `openActions` gates each
+    // editor per-item via `canOpen` (Reveal in Finder is local-only), so no
+    // blanket disable here.
     if !isBulkSelection, !worktree.isMissing {
       openActions(overrides: overrides)
       Divider()
@@ -825,11 +824,6 @@ private struct SidebarItemContextMenu: View {
         } label: {
           OpenWorktreeActionMenuLabelView(action: action)
         }
-        // A non-default-port remote host gets the specific "needs the port in
-        // ~/.ssh/config" reason for the VS Code family; everything else keeps
-        // the plain action tooltip. A future non-blocking toast (e.g. a
-        // `StatusToast` warning variant) would surface this more discoverably
-        // than a disabled item — intentionally deferred per product decision.
         .help(openActionHelp(for: action))
         .disabled(!canOpen(action))
       }
@@ -843,9 +837,8 @@ private struct SidebarItemContextMenu: View {
     .disabled(worktree.host != nil)
   }
 
-  /// Whether `action` can open this row. Local rows open everywhere; a remote
-  /// row opens only via an editor whose Remote-SSH CLI can express the host —
-  /// the same `remoteOpenInvocation` predicate the reducer gate consults.
+  /// Whether `action` can open this row — local opens everywhere, remote only
+  /// via an editor whose Remote-SSH CLI can express the host.
   private func canOpen(_ action: OpenWorktreeAction) -> Bool {
     guard let host = worktree.host else { return true }
     return action.remoteOpenInvocation(host: host, remotePath: worktree.location.workingDirectoryPath) != nil

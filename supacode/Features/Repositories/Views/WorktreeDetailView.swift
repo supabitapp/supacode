@@ -122,10 +122,9 @@ struct WorktreeDetailView: View {
       }
     }
     let hasRunningRunScript = state.hasRunningRunScript
-    // Reveal in Finder reaches local paths only; Open can target a remote
-    // worktree when the resolved editor's Remote-SSH CLI can express the host.
-    // The resolved editor (surfaced only when it can open the possibly-remote
-    // selection) drives both the focused-action enablement and the menu label.
+    // Reveal in Finder is local-only; Open can target a remote worktree when the
+    // resolved editor can express the host. `resolvedSelection` (nil when it
+    // can't) drives both the focused-action enablement and the menu label.
     let resolvedSelection = Self.resolvedOpenSelection(
       hasActiveWorktree: hasActiveWorktree,
       selectedWorktree: selectedWorktree,
@@ -140,10 +139,9 @@ struct WorktreeDetailView: View {
     )
   }
 
-  /// The editor the primary Open command would launch, surfaced only when it can
-  /// open the (possibly remote) selected worktree — `nil` disables the Open
-  /// command and clears the menu-bar label. Mirrors the shared
-  /// `remoteOpenInvocation` capability predicate.
+  /// The editor the primary Open command would launch, or `nil` when it can't
+  /// open the (possibly remote) selection — which disables the Open command and
+  /// clears the menu-bar label.
   private static func resolvedOpenSelection(
     hasActiveWorktree: Bool,
     selectedWorktree: Worktree?,
@@ -383,10 +381,8 @@ struct WorktreeDetailView: View {
 
   // NSMenu cache key for the Open menu, mirroring `ScriptMenuIdentity`. AppKit
   // caches a toolbar Menu's item state, so without a fresh identity the per-item
-  // `.disabled` gates go stale when the selection changes — switching from a
-  // remote worktree to a local one (or between two hosts) would otherwise leave
-  // Ghostty / Terminal / Finder / … disabled. Covers `host` (drives `canOpen` +
-  // the Finder gate) and `selection` (drives the primary item's label/disabled).
+  // `.disabled` gates go stale on a worktree switch. Keyed on `host` (drives
+  // `canOpen` + the Finder gate) and `selection` (the primary item's state).
   fileprivate struct OpenMenuIdentity: Hashable {
     let host: RemoteHost?
     let selection: OpenWorktreeAction
@@ -419,10 +415,8 @@ struct WorktreeDetailView: View {
     let titleContent: WorktreeToolbarTitleContent
     let rootURL: URL
     let kind: Kind
-    // For a remote worktree, the open host + path. Each editor in the toolbar
-    // Open menu is enabled only when its Remote-SSH CLI can express the host
-    // (the shared `remoteOpenInvocation` predicate); a local worktree opens
-    // everywhere. `nil` host means local.
+    // The remote open host + path; `nil` host means local. Each toolbar Open
+    // menu editor is enabled only when it can express the host (`canOpen`).
     let remoteOpenHost: RemoteHost?
     let remoteOpenPath: String
     let statusToast: RepositoriesFeature.StatusToast?
@@ -435,18 +429,15 @@ struct WorktreeDetailView: View {
       if case .folder = kind { true } else { false }
     }
 
-    /// Whether `action` can open this worktree. Local opens everywhere; a remote
-    /// worktree opens only via an editor whose Remote-SSH CLI can express the
-    /// host — the same predicate the reducer gate consults.
+    /// Whether `action` can open this worktree — local everywhere, remote only
+    /// via an editor whose Remote-SSH CLI can express the host.
     func canOpen(_ action: OpenWorktreeAction) -> Bool {
       guard let remoteOpenHost else { return true }
       return action.remoteOpenInvocation(host: remoteOpenHost, remotePath: remoteOpenPath) != nil
     }
 
-    /// A dedicated reason `action` is disabled for this worktree's host, or
-    /// `nil` if none applies — currently the VS Code family + non-default-port
-    /// case, surfaced as an "Open With" tooltip. Delegates to the shared
-    /// capability model so the predicate isn't duplicated.
+    /// A dedicated "Open With" tooltip reason `action` is disabled for this
+    /// host, or `nil` if none applies. Delegates to the shared capability model.
     func remoteOpenDisabledReason(_ action: OpenWorktreeAction) -> String? {
       guard let remoteOpenHost else { return nil }
       return action.remoteOpenDisabledReason(host: remoteOpenHost)
@@ -478,9 +469,7 @@ struct WorktreeDetailView: View {
       )
     }
 
-    // NSMenu cache key for the Open menu — see `OpenMenuIdentity`. Keyed on the
-    // worktree host and the selected action, the two inputs the per-item
-    // enabled state depends on, so a worktree switch rebuilds the menu.
+    // NSMenu cache key for the Open menu — see `OpenMenuIdentity`.
     var openMenuIdentity: OpenMenuIdentity {
       OpenMenuIdentity(host: remoteOpenHost, selection: openActionSelection)
     }
@@ -578,13 +567,11 @@ struct WorktreeDetailView: View {
     private func openMenu(openActionSelection: OpenWorktreeAction) -> some View {
       let availableActions = OpenWorktreeAction.availableCases.filter { $0 != .finder }
       let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
-      // The primary (single-click) action is the resolved *selected* editor
-      // (Finder selection falls back to the first available editor). It is NOT
-      // substituted for a different editor when it can't open the worktree —
-      // that would diverge from ⌘O / the menu bar, which open the same selected
-      // editor. When the selected editor can't open a remote worktree the
-      // primary action is disabled and the user picks a capable editor from the
-      // submenu (each gated by `canOpen`), matching the focused-action policy.
+      // The primary (single-click) action is the resolved selected editor
+      // (Finder falls back to the first available editor). It is NOT substituted
+      // when it can't open the worktree — that would diverge from ⌘O / the menu
+      // bar; instead it's disabled and the user picks a capable editor from the
+      // submenu.
       let primarySelection: OpenWorktreeAction? = resolved == .finder ? availableActions.first : resolved
       if let primarySelection {
         let canOpenPrimary = toolbarState.canOpen(primarySelection)
@@ -598,11 +585,6 @@ struct WorktreeDetailView: View {
               OpenWorktreeActionMenuLabelView(action: action)
             }
             .buttonStyle(.plain)
-            // A disabled VS Code family entry on a non-default-port host
-            // explains the `~/.ssh/config` requirement; otherwise the plain
-            // action tooltip. A future non-blocking toast (e.g. a `StatusToast`
-            // warning variant) would surface this more discoverably than a
-            // disabled item — intentionally deferred per product decision.
             .help(openActionHelpText(for: action, isDefault: isDefault))
             .disabled(!toolbarState.canOpen(action))
           }
@@ -617,9 +599,8 @@ struct WorktreeDetailView: View {
         } label: {
           OpenWorktreeActionMenuLabelView(action: primarySelection)
         } primaryAction: {
-          // Guard so the single-click never opens an editor that can't reach the
-          // worktree; ⌘O / the menu bar are disabled in the same case, so all
-          // three agree. The submenu stays open for the "Open With" path.
+          // Single-click never opens an editor that can't reach the worktree;
+          // the submenu stays available for picking a capable one.
           guard canOpenPrimary else { return }
           onOpenWorktree(primarySelection)
         }

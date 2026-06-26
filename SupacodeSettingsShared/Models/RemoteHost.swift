@@ -55,18 +55,14 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     self.init(alias: host, username: (user?.isEmpty ?? true) ? nil : user, port: port)
   }
 
-  /// Whether this host carries a non-default SSH port. 22 is the default SSH
-  /// port and `nil` means unspecified/default, so both fold to `false`. Single
-  /// source of truth for the "VS Code family can't express an inline port" rule
-  /// in `OpenWorktreeAction`.
+  /// Whether this host carries a non-default SSH port (22 and `nil` both fold to
+  /// `false`). Backs the "VS Code family can't express an inline port" rule.
   public var hasNonDefaultPort: Bool { port != nil && port != 22 }
 
-  /// The `user@host` (or bare `host`) token passed to `ssh`. The host is left
-  /// bare even for an IPv6 literal, since the ssh CLI wants `user@::1`, not the
-  /// bracketed URL form. This is a LITERAL argv destination (e.g. VS Code's
-  /// `ssh-remote+<sshDestination>`), NOT a URL: ssh does not percent-decode it,
-  /// so it must stay unencoded — do not "fix" it with percent-encoding. The
-  /// URL-bound counterpart is `sshURLAuthority`.
+  /// The `user@host` (or bare `host`) token passed to `ssh`. The host stays bare
+  /// even for an IPv6 literal (the ssh CLI wants `user@::1`, not the bracketed
+  /// form). A literal argv destination (e.g. VS Code's `ssh-remote+<…>`), NOT a
+  /// URL — must stay unencoded. The URL-bound counterpart is `sshURLAuthority`.
   public var sshDestination: String {
     if let username, !username.isEmpty {
       return "\(username)@\(alias)"
@@ -95,20 +91,14 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
   }
 
   /// Percent-encoded authority for an `ssh://` URL (e.g. Zed's Remote-SSH CLI):
-  /// username only when set, port only when non-default (not 22), IPv6 host
-  /// bracketed. Mirrors `displayAuthority`'s structure / elision but encodes the
-  /// userinfo and host with the URL component allow-sets so a special character
-  /// (space, `@`, `:`, `/`, `?`, `#`) can't produce a malformed `ssh://` URL.
-  /// `.urlHostAllowed` keeps `[`, `]`, and `:` so an already-bracketed IPv6
-  /// literal round-trips unchanged. Zed (like any RFC 3986 reader) percent-
-  /// DECODES the userinfo / host before invoking ssh, so encoding here is the
-  /// URI-compliant choice — unlike the bare `sshDestination` token, which is a
-  /// literal argv string and must stay unencoded.
+  /// username only when set, port only when non-default, IPv6 host bracketed.
+  /// Mirrors `displayAuthority`'s elision but encodes userinfo / host so a
+  /// special character can't produce a malformed URL. Zed percent-decodes before
+  /// invoking ssh, so encoding here is correct — unlike the bare argv
+  /// `sshDestination`, which must stay unencoded.
   public var sshURLAuthority: String {
     // Bracket an IPv6 literal BEFORE encoding: `.urlHostAllowed` keeps `[`, `]`,
-    // and `:`, so `[::1]` round-trips unchanged, while a regular hostname's
-    // genuinely-special characters still get encoded. (Encoding the bare literal
-    // first would escape its structural colons into `%3A`, corrupting the host.)
+    // `:`, so `[::1]` round-trips while a hostname's special chars still encode.
     let bracketedHost = alias.contains(":") ? "[\(alias)]" : alias
     let encodedHost = bracketedHost.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? bracketedHost
     let destination: String

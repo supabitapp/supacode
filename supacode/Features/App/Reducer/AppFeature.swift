@@ -1261,11 +1261,10 @@ struct AppFeature {
       appLogger.info("Ignoring open of missing worktree \(worktree.id) from \(source.rawValue)")
       return .none
     }
-    // A remote SSH worktree can only be opened by an editor whose Remote-SSH CLI
-    // can express this host (capability is the single `remoteOpenInvocation`
-    // predicate, shared with the UI gates). The local `$EDITOR` terminal path
-    // and Finder / non-capable editors don't apply remotely, so reject them here
-    // regardless of the entry point (a hotkey can still reach the reducer).
+    // A remote SSH worktree opens only via an editor whose Remote-SSH CLI can
+    // express the host (`remoteOpenInvocation`, shared with the UI gates). The
+    // local `$EDITOR` terminal path and Finder don't apply remotely. Gated here
+    // too since a hotkey can reach the reducer without the UI.
     if let host = worktree.host {
       guard action != .editor,
         action.remoteOpenInvocation(host: host, remotePath: worktree.location.workingDirectoryPath) != nil

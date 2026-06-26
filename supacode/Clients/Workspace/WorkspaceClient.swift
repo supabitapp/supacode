@@ -88,19 +88,17 @@ enum WorktreeOpener {
     )
   }
 
-  /// The pre-launch outcome for a remote open: either the resolved process to
-  /// run, or the error to surface. Pure (no `Process` / AppKit), so the guard
-  /// decisions are unit-testable.
+  /// The pre-launch outcome for a remote open: the process to run, or the error
+  /// to surface. Pure (no `Process` / AppKit), so the guards are unit-testable.
   enum RemoteLaunchPlan: Equatable {
     case run(executableURL: URL, arguments: [String])
     case failure(OpenActionError)
   }
 
   /// Decides how to open `action` on `host` at `remotePath` for the resolved
-  /// `appURL` (`nil` means the app isn't installed). Mirrors `perform`'s shape
-  /// but never touches the local filesystem — the editor's Remote-SSH CLI is
-  /// required, so there is no NSWorkspace fallback. The reducer pre-gates
-  /// capability; the invocation / app guards here are defensive.
+  /// `appURL` (`nil` means not installed). Unlike `perform`, there is no local
+  /// fallback — the editor's Remote-SSH CLI is required. The reducer pre-gates
+  /// capability; the guards here are defensive.
   static func remoteLaunchPlan(
     action: OpenWorktreeAction,
     host: RemoteHost,
@@ -132,10 +130,9 @@ enum WorktreeOpener {
     return .run(executableURL: resolved.executableURL, arguments: resolved.argumentPrefix + invocation.arguments)
   }
 
-  /// Opens a remote SSH worktree against its host via the editor's Remote-SSH
-  /// CLI. Resolves the app via NSWorkspace, then defers the open decision to the
-  /// pure `remoteLaunchPlan`, and either launches the resolved process or
-  /// surfaces its error.
+  /// Opens a remote SSH worktree via the editor's Remote-SSH CLI: resolve the
+  /// app, defer the decision to the pure `remoteLaunchPlan`, then launch or
+  /// surface its error.
   static func performRemote(
     action: OpenWorktreeAction,
     worktree: Worktree,
@@ -320,8 +317,7 @@ extension OpenActionError {
     )
   }
 
-  /// Remote opens shell out to the editor's CLI; a launch failure here is almost
-  /// always the CLI being un-runnable rather than a target problem, so name the
+  /// A launch failure is almost always the CLI being un-runnable, so name the
   /// editor and surface the underlying error for context.
   static func remoteLaunchFailed(_ action: OpenWorktreeAction, _ error: Error) -> OpenActionError {
     OpenActionError(
