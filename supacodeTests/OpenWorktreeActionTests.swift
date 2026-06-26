@@ -24,6 +24,7 @@ struct OpenWorktreeActionTests {
     #expect(OpenWorktreeAction.androidStudio.bundleIdentifier == "com.google.android.studio")
     #expect(OpenWorktreeAction.goland.bundleIdentifier == "com.jetbrains.goland")
     #expect(OpenWorktreeAction.intellij.bundleIdentifier == "com.jetbrains.intellij")
+    #expect(OpenWorktreeAction.intellijEAP.bundleIdentifier == "com.jetbrains.intellij-EAP")
     #expect(OpenWorktreeAction.webstorm.bundleIdentifier == "com.jetbrains.WebStorm")
     #expect(OpenWorktreeAction.pycharm.bundleIdentifier == "com.jetbrains.pycharm")
     #expect(OpenWorktreeAction.rubymine.bundleIdentifier == "com.jetbrains.rubymine")
