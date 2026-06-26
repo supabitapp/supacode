@@ -241,6 +241,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     wantsLayer = true
     bridge.surfaceView = self
     createSurface()
+    setupBackgroundTintLayer()
     if let surface {
       surfaceRef = runtime.registerSurface(surface)
     }
@@ -476,6 +477,24 @@ final class GhosttySurfaceView: NSView, Identifiable {
     addCursorRect(bounds, cursor: currentCursor)
   }
 
+  // Dedicated sublayer that carries the OSC 11 background tint. Kept separate
+  // from the host layer so that setting backgroundColor here does not affect
+  // AppKit's event-routing for the view (setting it on the host layer breaks
+  // drag-and-drop by changing how AppKit composites the view hierarchy).
+  private let backgroundTintLayer: CALayer = {
+    let l = CALayer()
+    l.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+    return l
+  }()
+
+  private func setupBackgroundTintLayer() {
+    guard let layer else { return }
+    backgroundTintLayer.frame = layer.bounds
+    // Insert at index 0 so the tint sits behind Ghostty's CAMetalLayer,
+    // which is added as a sublayer by ghostty_surface_new above.
+    layer.insertSublayer(backgroundTintLayer, at: 0)
+  }
+
   private var lastAppliedWindowAppearance: WindowAppearanceState?
 
   private func applyWindowBackgroundAppearance() {
@@ -516,7 +535,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     )
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    layer?.backgroundColor = cgColor
+    backgroundTintLayer.backgroundColor = cgColor
     CATransaction.commit()
   }
 
