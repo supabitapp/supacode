@@ -381,6 +381,17 @@ struct WorktreeDetailView: View {
     let globalFingerprints: [ScriptFingerprint]
   }
 
+  // NSMenu cache key for the Open menu, mirroring `ScriptMenuIdentity`. AppKit
+  // caches a toolbar Menu's item state, so without a fresh identity the per-item
+  // `.disabled` gates go stale when the selection changes — switching from a
+  // remote worktree to a local one (or between two hosts) would otherwise leave
+  // Ghostty / Terminal / Finder / … disabled. Covers `host` (drives `canOpen` +
+  // the Finder gate) and `selection` (drives the primary item's label/disabled).
+  fileprivate struct OpenMenuIdentity: Hashable {
+    let host: RemoteHost?
+    let selection: OpenWorktreeAction
+  }
+
   fileprivate struct ScriptFingerprint: Hashable {
     let id: UUID
     let displayName: String
@@ -467,6 +478,13 @@ struct WorktreeDetailView: View {
       )
     }
 
+    // NSMenu cache key for the Open menu — see `OpenMenuIdentity`. Keyed on the
+    // worktree host and the selected action, the two inputs the per-item
+    // enabled state depends on, so a worktree switch rebuilds the menu.
+    var openMenuIdentity: OpenMenuIdentity {
+      OpenMenuIdentity(host: remoteOpenHost, selection: openActionSelection)
+    }
+
     /// The first `.run`-kind script, if any.
     var primaryScript: ScriptDefinition? {
       allScripts.primaryScript
@@ -533,6 +551,10 @@ struct WorktreeDetailView: View {
 
       ToolbarItem {
         openMenu(openActionSelection: toolbarState.openActionSelection)
+          // Rebuild the NSMenu when the host/selection changes so per-item
+          // `.disabled` gates don't go stale across a worktree switch.
+          .id(toolbarState.openMenuIdentity)
+          .transaction { $0.animation = nil }
       }
       ToolbarSpacer(.fixed)
 
