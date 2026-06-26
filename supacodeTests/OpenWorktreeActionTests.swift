@@ -243,6 +243,7 @@ struct OpenWorktreeActionTests {
       (.vscodium, "codium"),
       (.cursor, "cursor"),
       (.windsurf, "windsurf"),
+      (.antigravity, "antigravity"),
     ]
   )
   func vscodeFamilyRemoteOpenInvocationUsesBundledCLIAndPositionalRemoteForm(
@@ -261,6 +262,7 @@ struct OpenWorktreeActionTests {
       .vscodium,
       .cursor,
       .windsurf,
+      .antigravity,
     ]
   )
   func vscodeFamilyRemoteOpenInvocationIncludesUsernameInHostToken(action: OpenWorktreeAction) {
@@ -278,6 +280,7 @@ struct OpenWorktreeActionTests {
       .vscodium,
       .cursor,
       .windsurf,
+      .antigravity,
     ]
   )
   func vscodeFamilyRemoteOpenInvocationRejectsNonDefaultPort(action: OpenWorktreeAction) {
@@ -321,6 +324,7 @@ struct OpenWorktreeActionTests {
       .vscodium,
       .cursor,
       .windsurf,
+      .antigravity,
     ]
   )
   func vscodeFamilyHasDisabledReasonForNonDefaultPort(action: OpenWorktreeAction) {
@@ -335,6 +339,7 @@ struct OpenWorktreeActionTests {
       .vscodium,
       .cursor,
       .windsurf,
+      .antigravity,
     ]
   )
   func vscodeFamilyHasNoDisabledReasonForDefaultPort(action: OpenWorktreeAction) {

@@ -291,7 +291,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         executable: .appRelativePath("Contents/MacOS/cli"),
         arguments: [Self.zedSSHURL(host: host, remotePath: remotePath)]
       )
-    case .vscode, .vscodeInsiders, .vscodium, .cursor, .windsurf:
+    case .vscode, .vscodeInsiders, .vscodium, .cursor, .windsurf, .antigravity:
       // VS Code family Remote-SSH: launch the bundled CLI with the positional
       // `--remote ssh-remote+<host> <path>` form. The `<host>` token is the
       // bare `user@host` (`sshDestination`), NOT `authority`/`displayAuthority`:
@@ -326,6 +326,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .vscodium: "codium"
     case .cursor: "cursor"
     case .windsurf: "windsurf"
+    case .antigravity: "antigravity"
     default: nil
     }
   }
