@@ -371,7 +371,15 @@ struct GhosttySurfaceBridgeTests {
     #expect(lastState == GHOSTTY_PROGRESS_STATE_REMOVE)
   }
 
-  @Test func colorChangeBackgroundStoresKindAndRGB() {
+  // OSC 11 (`\033]11;#rrggbb\007`) asks the terminal to change its background color.
+  // Ghostty decodes this into a GHOSTTY_ACTION_COLOR_CHANGE action with
+  // kind = GHOSTTY_ACTION_COLOR_KIND_BACKGROUND and the requested RGB values.
+  // GhosttySurfaceBridge stores those fields in GhosttySurfaceState so that
+  // GhosttySurfaceView can read them and paint a per-surface CALayer tint.
+
+  @Test func osc11BackgroundActionStoresKindAndRGB() {
+    // Ghostty fires COLOR_CHANGE with kind=BACKGROUND when a shell emits OSC 11.
+    // Verify that the bridge stores all four fields so the tint layer can read them.
     let bridge = GhosttySurfaceBridge()
     let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
 
@@ -391,7 +399,11 @@ struct GhosttySurfaceBridgeTests {
     #expect(bridge.state.colorChangeB == 58)
   }
 
-  @Test func colorChangeForegroundDoesNotMatchBackground() {
+  @Test func osc10ForegroundActionStoresKindWithoutAffectingTintLogic() {
+    // OSC 10 changes the foreground color (kind=FOREGROUND). The bridge stores it
+    // faithfully, and the tint layer ignores it because only BACKGROUND maps to
+    // a visible CALayer change. Confirm the stored kind is not BACKGROUND so the
+    // observation-tracking path in GhosttySurfaceView will clear any active tint.
     let bridge = GhosttySurfaceBridge()
     let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
 
@@ -406,10 +418,14 @@ struct GhosttySurfaceBridgeTests {
     _ = bridge.handleAction(target: target, action: action)
 
     #expect(bridge.state.colorChangeKind == GHOSTTY_ACTION_COLOR_KIND_FOREGROUND)
+    // A non-background kind must not be mistaken for a tintable background change.
     #expect(bridge.state.colorChangeKind != GHOSTTY_ACTION_COLOR_KIND_BACKGROUND)
   }
 
-  @Test func colorChangeOverwritesPreviousKind() {
+  @Test func subsequentColorChangeOverwritesPreviousKindAndRGB() {
+    // When multiple OSC sequences arrive in sequence (e.g. OSC 11 then OSC 10),
+    // each action overwrites the previous state. The tint layer re-evaluates on
+    // every change, so whatever arrived last is what gets painted (or cleared).
     let bridge = GhosttySurfaceBridge()
     let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
 
@@ -433,7 +449,6 @@ struct GhosttySurfaceBridgeTests {
     )
     _ = bridge.handleAction(target: target, action: fg)
 
-    // State reflects the most recent action regardless of kind.
     #expect(bridge.state.colorChangeKind == GHOSTTY_ACTION_COLOR_KIND_FOREGROUND)
     #expect(bridge.state.colorChangeR == 200)
   }

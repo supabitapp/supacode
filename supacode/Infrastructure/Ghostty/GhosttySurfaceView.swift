@@ -503,18 +503,43 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private func updateBackgroundTint() {
-    let opacity = runtime.isBackgroundOpaque ? 1.0 : runtime.backgroundOpacity()
+    let opacity = Self.backgroundTintOpacity(
+      isBackgroundOpaque: runtime.isBackgroundOpaque,
+      backgroundOpacity: runtime.backgroundOpacity()
+    )
     let cgColor = Self.backgroundTintColor(
       kind: bridge.state.colorChangeKind,
       r: bridge.state.colorChangeR,
       g: bridge.state.colorChangeG,
       b: bridge.state.colorChangeB,
-      opacity: CGFloat(opacity)
+      opacity: opacity
     )
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     layer?.backgroundColor = cgColor
     CATransaction.commit()
+  }
+
+  // Computes the alpha for the per-surface OSC 11 tint CALayer.
+  //
+  // The tint sits above the window's blurred backdrop, so opacity governs how
+  // much blur remains visible through the tint colour:
+  //
+  // • Blur active (backgroundOpacity < 1.0): 0.3 — blur dominates, colour reads
+  //   as a wash over the glassy backdrop. Matches the Supacode theme aesthetic
+  //   and any Ghostty config with background-opacity + background-blur set.
+  //   The value is not currently user-configurable; a settings control exposing
+  //   this knob is a natural follow-up.
+  //
+  // • No blur (backgroundOpacity == 1.0): 1.0 — colour is fully opaque against
+  //   the flat background. A mid-range value here produces a washed-out look
+  //   with nothing behind it to justify the transparency.
+  //
+  // • isBackgroundOpaque toggled on: 1.0 regardless of blur state, consistent
+  //   with how WindowChromeApplier treats the toggle.
+  static func backgroundTintOpacity(isBackgroundOpaque: Bool, backgroundOpacity: Double) -> CGFloat {
+    if isBackgroundOpaque { return 1.0 }
+    return backgroundOpacity < 1.0 ? 0.3 : 1.0
   }
 
   static func backgroundTintColor(

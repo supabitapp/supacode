@@ -313,7 +313,88 @@ struct GhosttySurfaceViewTests {
     #expect(!GhosttySurfaceView.isSystemManagedMenuItem(noAction))
   }
 
-  @Test func backgroundTintColorReturnsNilForNonBackgroundKind() {
+  // backgroundTintColor(_:) is the pure color-computation kernel for per-surface
+  // OSC 11 tinting. It converts a (kind, r, g, b, opacity) tuple into a CGColor
+  // for the surface's CALayer.backgroundColor, or nil when no tint should be shown.
+  //
+  // The Ghostty C API uses ghostty_action_color_kind_e with three named values:
+  //   BACKGROUND = -2  (OSC 11 — what we act on)
+  //   FOREGROUND = -1  (OSC 10 — ignored for tinting)
+  //   CURSOR     = -3  (OSC 12 — ignored for tinting)
+  // Positive values are palette indices (OSC 4) and are also ignored.
+  //
+  // Returning nil clears the CALayer.backgroundColor so the window's global
+  // tint shows through — the correct visual result for any non-background change.
+
+  // backgroundTintOpacity(_:) selects the CALayer alpha for the tint based on
+  // whether the window is running with blur active. The 0.3 / 1.0 split exists
+  // because the tint sits on top of the blurred backdrop rather than being part
+  // of it: at 0.3 the blur is prominent, at 1.0 the colour is prominent. There
+  // is nothing useful in between when no blur is present — a mid-range alpha over
+  // a flat opaque background just produces a washed-out colour.
+  //
+  // The concrete value 0.3 is not user-configurable in this release. A settings
+  // control is a follow-up once the maintainer has validated the default feels right
+  // across different themes and wallpapers.
+
+  @Test func backgroundTintOpacityIsLowWhenBlurIsActive() {
+    // Supacode theme and any Ghostty config with background-opacity < 1 both
+    // indicate blur is running. The tint must be semi-transparent so blur
+    // remains clearly visible through the coloured pane.
+    let opacity = GhosttySurfaceView.backgroundTintOpacity(
+      isBackgroundOpaque: false,
+      backgroundOpacity: 0.85
+    )
+    #expect(opacity < 1.0)
+    #expect(abs(opacity - 0.3) < 0.001)
+  }
+
+  @Test func backgroundTintOpacityIsLowAtMinimumBlurOpacity() {
+    // Any value strictly below 1.0 counts as "blur active", including very low
+    // opacity values (e.g. 0.1). The tint alpha must be 0.3 in all such cases.
+    let opacity = GhosttySurfaceView.backgroundTintOpacity(
+      isBackgroundOpaque: false,
+      backgroundOpacity: 0.1
+    )
+    #expect(abs(opacity - 0.3) < 0.001)
+  }
+
+  @Test func backgroundTintOpacityIsFullWhenNoBlurConfigured() {
+    // When background-opacity is 1.0 (Ghostty's default — no blur), the tint
+    // must be fully opaque so the OSC 11 colour reads strongly against the flat
+    // window background rather than washing out.
+    let opacity = GhosttySurfaceView.backgroundTintOpacity(
+      isBackgroundOpaque: false,
+      backgroundOpacity: 1.0
+    )
+    #expect(abs(opacity - 1.0) < 0.001)
+  }
+
+  @Test func backgroundTintOpacityIsFullWhenOpaqueOverrideIsOn() {
+    // The user's "Toggle Background Opacity" action forces the window fully
+    // opaque (isBackgroundOpaque = true). The tint must match — fully opaque —
+    // regardless of what backgroundOpacity() returns.
+    #expect(
+      abs(
+        GhosttySurfaceView.backgroundTintOpacity(
+          isBackgroundOpaque: true,
+          backgroundOpacity: 0.85
+        ) - 1.0
+      ) < 0.001
+    )
+    #expect(
+      abs(
+        GhosttySurfaceView.backgroundTintOpacity(
+          isBackgroundOpaque: true,
+          backgroundOpacity: 1.0
+        ) - 1.0
+      ) < 0.001
+    )
+  }
+
+  @Test func backgroundTintColorIgnoresOSC10ForegroundKind() {
+    // OSC 10 (FOREGROUND) changes the text color, not the background.
+    // The tint layer must not activate for this kind.
     #expect(
       GhosttySurfaceView.backgroundTintColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_FOREGROUND,
@@ -321,6 +402,10 @@ struct GhosttySurfaceViewTests {
         opacity: 1.0
       ) == nil
     )
+  }
+
+  @Test func backgroundTintColorIgnoresOSC12CursorKind() {
+    // OSC 12 (CURSOR) changes the cursor color, not the background.
     #expect(
       GhosttySurfaceView.backgroundTintColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_CURSOR,
@@ -330,7 +415,23 @@ struct GhosttySurfaceViewTests {
     )
   }
 
-  @Test func backgroundTintColorReturnsNilForNilKind() {
+  @Test func backgroundTintColorIgnoresPaletteIndexKind() {
+    // Positive kind values are OSC 4 palette-index changes (e.g. ANSI color 0–255).
+    // These must not trigger a background tint.
+    let paletteKind = ghostty_action_color_kind_e(rawValue: 0)  // palette index 0
+    #expect(
+      GhosttySurfaceView.backgroundTintColor(
+        kind: paletteKind,
+        r: 255, g: 0, b: 0,
+        opacity: 1.0
+      ) == nil
+    )
+  }
+
+  @Test func backgroundTintColorReturnsNilWhenKindIsAbsent() {
+    // GhosttySurfaceState initialises colorChangeKind to nil (no OSC sequence
+    // received yet). The tint layer must stay transparent until a BACKGROUND
+    // change actually arrives.
     #expect(
       GhosttySurfaceView.backgroundTintColor(
         kind: nil, r: 100, g: 100, b: 100, opacity: 1.0
@@ -338,7 +439,10 @@ struct GhosttySurfaceViewTests {
     )
   }
 
-  @Test func backgroundTintColorReturnsNilForMissingComponents() {
+  @Test func backgroundTintColorReturnsNilWhenAnyRGBComponentIsAbsent() {
+    // All four state fields (kind, r, g, b) are set atomically by the bridge,
+    // but they are independently optional in GhosttySurfaceState. Guard against
+    // a partially-set state producing a nonsense color.
     #expect(
       GhosttySurfaceView.backgroundTintColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
@@ -359,7 +463,10 @@ struct GhosttySurfaceViewTests {
     )
   }
 
-  @Test func backgroundTintColorProducesCorrectRGB() {
+  @Test func backgroundTintColorConvertsOSC11RGBBytesToSRGBComponents() {
+    // OSC 11 delivers color as 8-bit RGB (0–255 per channel). Verify the
+    // conversion to normalised sRGB (0.0–1.0) is exact to floating-point limits.
+    // Using 26/42/58 so each channel has a distinct non-trivial value.
     let color = GhosttySurfaceView.backgroundTintColor(
       kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
       r: 26, g: 42, b: 58,
@@ -373,7 +480,9 @@ struct GhosttySurfaceViewTests {
     #expect(abs((ns?.alphaComponent ?? 0) - 1.0) < 0.001)
   }
 
-  @Test func backgroundTintColorAppliesOpacity() {
+  @Test func backgroundTintColorAppliesConfiguredBackgroundOpacity() {
+    // The user's background-opacity config value becomes the alpha of the tint
+    // layer, preserving blur visibility through the surface at partial opacity.
     let color = GhosttySurfaceView.backgroundTintColor(
       kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
       r: 255, g: 255, b: 255,
@@ -383,7 +492,9 @@ struct GhosttySurfaceViewTests {
     #expect(abs((ns?.alphaComponent ?? 0) - 0.9) < 0.001)
   }
 
-  @Test func backgroundTintColorIsOpaqueWhenOpacityIsOne() {
+  @Test func backgroundTintColorIsFullyOpaqueAtOpacityOne() {
+    // When background-opacity is 1.0 (or isBackgroundOpaque is toggled on),
+    // the tint must be fully opaque so it completely covers the window backdrop.
     let color = GhosttySurfaceView.backgroundTintColor(
       kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
       r: 0, g: 0, b: 0,
