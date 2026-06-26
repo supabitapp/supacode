@@ -123,8 +123,28 @@ private struct SettingsRepositoryRow: View {
 private struct SettingsSidebarView: View {
   @Bindable var settingsStore: StoreOf<SettingsFeature>
   @Binding var expandedRepositories: Set<String>
+  let orderedRepoIDs: [String]
 
   var body: some View {
+    let allSummaries = settingsStore.repositorySummaries
+    let (localRepositories, remoteRepositories):
+      (
+        [SettingsRepositorySummary],
+        [SettingsRepositorySummary]
+      ) = {
+        let summaryByID = Dictionary(uniqueKeysWithValues: allSummaries.map { ($0.id, $0) })
+        let orderedSet = Set(orderedRepoIDs)
+
+        let orderedSummaries = orderedRepoIDs.compactMap { summaryByID[$0] }
+        let remainingSummaries = allSummaries.filter { !orderedSet.contains($0.id) }
+        let allInRequestedOrder = orderedSummaries + remainingSummaries
+
+        return (
+          allInRequestedOrder.filter { !$0.isRemote },
+          allInRequestedOrder.filter { $0.isRemote }
+        )
+      }()
+
     List(selection: $settingsStore.selection.sending(\.setSelection)) {
       Label("General", systemImage: "gearshape")
         .tag(SettingsSection.general)
@@ -143,8 +163,6 @@ private struct SettingsSidebarView: View {
       Label("Updates", systemImage: "arrow.down.circle")
         .tag(SettingsSection.updates)
 
-      let localRepositories = settingsStore.repositorySummaries.filter { !$0.isRemote }
-      let remoteRepositories = settingsStore.repositorySummaries.filter(\.isRemote)
       if !localRepositories.isEmpty {
         Section("Local") {
           ForEach(localRepositories, id: \.id) { repository in
@@ -272,7 +290,8 @@ struct SettingsView: View {
     NavigationSplitView(columnVisibility: .constant(.all)) {
       SettingsSidebarView(
         settingsStore: settingsStore,
-        expandedRepositories: $expandedRepositories
+        expandedRepositories: $expandedRepositories,
+        orderedRepoIDs: store.repositories.sidebarStructure.reorderableRepositoryIDs.map { $0.rawValue }
       )
       .onChange(of: selection, initial: true) { _, newSelection in
         guard let repositoryID = newSelection.repositoryID else { return }
