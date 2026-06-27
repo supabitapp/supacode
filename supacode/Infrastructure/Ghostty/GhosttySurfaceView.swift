@@ -535,7 +535,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private func updateBackgroundTint() {
     let opacity = Self.backgroundTintOpacity(
       isBackgroundOpaque: runtime.isBackgroundOpaque,
-      backgroundOpacity: runtime.backgroundOpacity()
+      isBackgroundBlurEnabled: runtime.backgroundBlurEnabled()
     )
     let cgColor = Self.backgroundTintColor(
       red: bridge.state.backgroundColorR,
@@ -551,24 +551,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   // Computes the alpha for the per-surface OSC 11 tint CALayer.
   //
-  // The tint sits above the window's blurred backdrop, so opacity governs how
-  // much blur remains visible through the tint colour:
-  //
-  // • Blur active (backgroundOpacity < 1.0): 0.3 — blur dominates, colour reads
-  //   as a wash over the glassy backdrop. Matches the Supacode theme aesthetic
-  //   and any Ghostty config with background-opacity + background-blur set.
-  //   The value is not currently user-configurable; a settings control exposing
-  //   this knob is a natural follow-up.
-  //
-  // • No blur (backgroundOpacity == 1.0): 1.0 — colour is fully opaque against
-  //   the flat background. A mid-range value here produces a washed-out look
-  //   with nothing behind it to justify the transparency.
-  //
-  // • isBackgroundOpaque toggled on: 1.0 regardless of blur state, consistent
-  //   with how WindowChromeApplier treats the toggle.
-  static func backgroundTintOpacity(isBackgroundOpaque: Bool, backgroundOpacity: Double) -> CGFloat {
+  // • blur on, opaque off: 0.3 — blur dominates, colour reads as a wash over
+  //   the glassy backdrop. The value is not user-configurable in this release.
+  // • blur off, opaque off: 1.0 — flat background, colour must be fully opaque.
+  // • isBackgroundOpaque on: 1.0 regardless of blur, consistent with
+  //   how WindowChromeApplier treats the opaque toggle.
+  static func backgroundTintOpacity(isBackgroundOpaque: Bool, isBackgroundBlurEnabled: Bool) -> CGFloat {
     if isBackgroundOpaque { return 1.0 }
-    return backgroundOpacity < 1.0 ? 0.3 : 1.0
+    return isBackgroundBlurEnabled ? 0.3 : 1.0
   }
 
   static func backgroundTintColor(

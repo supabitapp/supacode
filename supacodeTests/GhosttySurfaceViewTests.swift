@@ -332,57 +332,38 @@ struct GhosttySurfaceViewTests {
   // control is a follow-up once the maintainer has validated the default feels right
   // across different themes and wallpapers.
 
-  @Test func backgroundTintOpacityIsLowWhenBlurIsActive() {
-    // Supacode theme and any Ghostty config with background-opacity < 1 both
-    // indicate blur is running. The tint must be semi-transparent so blur
-    // remains clearly visible through the coloured pane.
-    let opacity = GhosttySurfaceView.backgroundTintOpacity(
-      isBackgroundOpaque: false,
-      backgroundOpacity: 0.85
-    )
-    #expect(opacity < 1.0)
-    #expect(abs(opacity - 0.3) < 0.001)
-  }
-
-  @Test func backgroundTintOpacityIsLowAtMinimumBlurOpacity() {
-    // Any value strictly below 1.0 counts as "blur active", including very low
-    // opacity values (e.g. 0.1). The tint alpha must be 0.3 in all such cases.
-    let opacity = GhosttySurfaceView.backgroundTintOpacity(
-      isBackgroundOpaque: false,
-      backgroundOpacity: 0.1
-    )
-    #expect(abs(opacity - 0.3) < 0.001)
-  }
-
-  @Test func backgroundTintOpacityIsFullWhenNoBlurConfigured() {
-    // When background-opacity is 1.0 (Ghostty's default — no blur), the tint
-    // must be fully opaque so the OSC 11 colour reads strongly against the flat
-    // window background rather than washing out.
-    let opacity = GhosttySurfaceView.backgroundTintOpacity(
-      isBackgroundOpaque: false,
-      backgroundOpacity: 1.0
-    )
-    #expect(abs(opacity - 1.0) < 0.001)
-  }
-
-  @Test func backgroundTintOpacityIsFullWhenOpaqueOverrideIsOn() {
-    // The user's "Toggle Background Opacity" action forces the window fully
-    // opaque (isBackgroundOpaque = true). The tint must match — fully opaque —
-    // regardless of what backgroundOpacity() returns.
+  @Test func backgroundTintOpacityOpaqueOnBlurOff() {
+    // Opaque toggle wins regardless of blur state.
     #expect(
       abs(
-        GhosttySurfaceView.backgroundTintOpacity(
-          isBackgroundOpaque: true,
-          backgroundOpacity: 0.85
-        ) - 1.0
+        GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: true, isBackgroundBlurEnabled: false) - 1.0
       ) < 0.001
     )
+  }
+
+  @Test func backgroundTintOpacityOpaqueOnBlurOn() {
+    // Opaque toggle wins even when blur is configured.
     #expect(
       abs(
-        GhosttySurfaceView.backgroundTintOpacity(
-          isBackgroundOpaque: true,
-          backgroundOpacity: 1.0
-        ) - 1.0
+        GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: true, isBackgroundBlurEnabled: true) - 1.0
+      ) < 0.001
+    )
+  }
+
+  @Test func backgroundTintOpacityOpaqueOffBlurOn() {
+    // Blur active and opaque off: tint is semi-transparent so blur shows through.
+    #expect(
+      abs(
+        GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: false, isBackgroundBlurEnabled: true) - 0.3
+      ) < 0.001
+    )
+  }
+
+  @Test func backgroundTintOpacityOpaqueOffBlurOff() {
+    // No blur, no opaque override: tint is fully opaque against the flat background.
+    #expect(
+      abs(
+        GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: false, isBackgroundBlurEnabled: false) - 1.0
       ) < 0.001
     )
   }

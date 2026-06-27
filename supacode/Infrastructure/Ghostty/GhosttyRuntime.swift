@@ -677,6 +677,16 @@ final class GhosttyRuntime {
     userBackgroundOpacity
   }
 
+  // Non-zero cval means blur is active: covers true (20), positive radii,
+  // and the negative sentinels -1 (macos-glass-regular) / -2 (macos-glass-clear).
+  func backgroundBlurEnabled() -> Bool {
+    guard let config else { return false }
+    var value: Int16 = 0
+    let key = "background-blur"
+    _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+    return value != 0
+  }
+
   // The `unfocused-split-opacity` config value is the *visible* opacity of
   // the unfocused pane, so the dimming overlay uses `1 - value`.
   func unfocusedSplitOverlayOpacity() -> Double {
