@@ -34,7 +34,7 @@ SUPACODE_SKIP_PREFLIGHT ?=
 SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; export DEVELOPER_DIR
 
 .DEFAULT_GOAL := help
-.PHONY: doctor preflight build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
+.PHONY: build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app package-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
 
 ifdef CI
 TUIST_INSTALL_FLAGS := --force-resolved-versions
@@ -104,6 +104,17 @@ warm-cache: $(TUIST_INSTALL_STAMP) # Warm the full Tuist cacheable graph
 build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the macOS app (Debug)
 	$(SELECT_DEVELOPER_DIR); \
 	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
+
+package-app: build-app # Zip the Debug build to build/supacode.app.zip (for CI artifacts)
+	@mkdir -p build
+	@settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
+	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
+	src="$$build_dir/$$product"; \
+	if [ ! -d "$$src" ]; then echo "app not found: $$src"; exit 1; fi; \
+	rm -f build/supacode.app.zip; \
+	ditto -c -k --sequesterRsrc --keepParent "$$src" build/supacode.app.zip; \
+	echo "packaged build/supacode.app.zip"
 
 run-app: build-app # Build then launch (Debug) with log streaming
 	@$(SELECT_DEVELOPER_DIR); \
