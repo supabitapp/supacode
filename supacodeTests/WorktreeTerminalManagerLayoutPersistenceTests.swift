@@ -226,7 +226,7 @@ struct LayoutPersistenceManagerTests {
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
     guard let tabID = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return

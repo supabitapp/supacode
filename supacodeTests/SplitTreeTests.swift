@@ -216,14 +216,14 @@ struct SplitTreeTests {
       splitPreserveZoomOnNavigation: { preserveZoomOnNavigation }
     )
     let tabId = state.createTab()!
-    let first = state.splitTree(for: tabId).root!.leftmostLeaf()
+    let first = state.splitTree(for: tabId).root!.leftmostLeaf().terminalForTesting
     _ = state.performSplitAction(.newSplit(direction: .right), for: first.id)
     let leaves = state.splitTree(for: tabId).leaves()
     return WorktreeFixture(
       state: state,
       tabId: tabId,
       first: first,
-      second: leaves.first { $0.id != first.id }
+      second: leaves.first { $0.id != first.id }?.terminalForTesting
     )
   }
 

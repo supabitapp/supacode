@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct TerminalSplitTreeView: View {
-  let tree: SplitTree<GhosttySurfaceView>
+  let tree: SplitTree<SurfaceView>
   // Owns the per-surface `WorktreeSurfaceState` map; leaves resolve their
   // notification flag through `terminalState.surfaceStates[id]`.
   let terminalState: WorktreeTerminalState
@@ -46,13 +46,13 @@ struct TerminalSplitTreeView: View {
   }
 
   enum Operation {
-    case resize(node: SplitTree<GhosttySurfaceView>.Node, ratio: Double)
+    case resize(node: SplitTree<SurfaceView>.Node, ratio: Double)
     case drop(payloadId: UUID, destinationId: UUID, zone: DropZone)
     case equalize
   }
 
   struct SubtreeView: View {
-    let node: SplitTree<GhosttySurfaceView>.Node
+    let node: SplitTree<SurfaceView>.Node
     var isRoot: Bool = false
     let terminalState: WorktreeTerminalState
     let activeSurfaceID: UUID?
@@ -62,14 +62,17 @@ struct TerminalSplitTreeView: View {
     var body: some View {
       switch node {
       case .leaf(let leafView):
-        LeafView(
-          surfaceView: leafView,
-          surfaceState: terminalState.surfaceStates[leafView.id],
-          isSplit: !isRoot,
-          activeSurfaceID: activeSurfaceID,
-          unfocusedSplitOverlay: unfocusedSplitOverlay,
-          action: action
-        )
+        switch leafView.content {
+        case .terminal(let surfaceView):
+          LeafView(
+            surfaceView: surfaceView,
+            surfaceState: terminalState.surfaceStates[leafView.id],
+            isSplit: !isRoot,
+            activeSurfaceID: activeSurfaceID,
+            unfocusedSplitOverlay: unfocusedSplitOverlay,
+            action: action
+          )
+        }
       case .split(let split):
         let splitViewDirection: SplitView<SubtreeView, SubtreeView>.Direction =
           switch split.direction {
@@ -370,7 +373,7 @@ private struct SurfaceNotificationDot: View {
 /// Wraps the SwiftUI split tree in an AppKit view so we can expose an ordered
 /// list of terminal panes to assistive technologies.
 struct TerminalSplitTreeAXContainer: NSViewRepresentable {
-  let tree: SplitTree<GhosttySurfaceView>
+  let tree: SplitTree<SurfaceView>
   let terminalState: WorktreeTerminalState
   let activeSurfaceID: UUID?
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
@@ -400,11 +403,11 @@ final class TerminalSplitAXContainerView: NSView {
   // `rootView` on every update lets SwiftUI diff against a stable concrete view
   // type instead of re-walking an erased tree.
   private var hostingView: NSHostingView<TerminalSplitTreeView>?
-  private var panes: [GhosttySurfaceView] = []
+  private var panes: [SurfaceView] = []
   private var panesLabel: String = "Terminal split: 0 panes"
   private var lastPaneIDs: [UUID] = []
 
-  func update(rootView: TerminalSplitTreeView, panes: [GhosttySurfaceView]) {
+  func update(rootView: TerminalSplitTreeView, panes: [SurfaceView]) {
     if let hostingView {
       hostingView.rootView = rootView
     } else {
@@ -425,9 +428,12 @@ final class TerminalSplitAXContainerView: NSView {
     panesLabel = "Terminal split: \(panes.count) pane" + (panes.count == 1 ? "" : "s")
 
     for (index, pane) in panes.enumerated() {
-      pane.setAccessibilityPaneIndex(index: index + 1, total: panes.count)
-      // Expose panes as direct children of this split group for predictable navigation.
-      pane.setAccessibilityParent(self)
+      switch pane.content {
+      case .terminal(let surface):
+        surface.setAccessibilityPaneIndex(index: index + 1, total: panes.count)
+        // Expose panes as direct children of this split group for predictable navigation.
+        surface.setAccessibilityParent(self)
+      }
     }
 
     if newPaneIDs != lastPaneIDs {
