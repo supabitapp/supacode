@@ -421,10 +421,19 @@ struct CommandPaletteFeature {
       .map(\.element)
 
     return ordered.enumerated().map { index, row in
-      CommandPaletteItem(
+      let repositoryName = repositories.repositoryName(for: row.repositoryID) ?? "Repository"
+      // Worktree name is the prominent title; the repo rides as a quieter
+      // subtitle so the two read as a hierarchy instead of one `repo / wt`
+      // blur. The fuzzy scorer matches title AND subtitle, so a query still
+      // hits either the worktree name or the project name. Folder rows have a
+      // synthetic "main" worktree whose name matches the repo, so they show
+      // the repo name alone with no redundant subtitle.
+      let title = row.isFolder ? repositoryName : row.name
+      let subtitle = row.isFolder ? nil : repositoryName
+      return CommandPaletteItem(
         id: CommandPaletteItemID.worktreeSelect(row.id),
-        title: worktreeRowTitle(for: row, in: repositories),
-        subtitle: nil,
+        title: title,
+        subtitle: subtitle,
         kind: .worktreeSelect(row.id),
         priorityTier: index,
         isCurrentWorktree: row.id == currentWorktreeID
@@ -432,10 +441,10 @@ struct CommandPaletteFeature {
     }
   }
 
-  /// `repo / worktree` row title shared by the commands palette and the
-  /// worktree switcher. Folder rows only have a synthetic "main" worktree
-  /// whose name matches the repository, so they render as the repository
-  /// name alone to avoid a `Foo / Foo` label.
+  /// `repo / worktree` row title used by the commands palette (⌘⇧P), where
+  /// worktree rows sit in one flat list alongside actions. Folder rows only
+  /// have a synthetic "main" worktree whose name matches the repository, so
+  /// they render as the repository name alone to avoid a `Foo / Foo` label.
   static func worktreeRowTitle(
     for row: SidebarItemFeature.State,
     in repositories: RepositoriesFeature.State

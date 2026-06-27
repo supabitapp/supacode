@@ -1255,15 +1255,17 @@ struct CommandPaletteFeatureTests {
     ])
   }
 
-  @Test func worktreeSwitcherItems_titleCombinesRepoAndWorktree() {
+  @Test func worktreeSwitcherItems_titleIsWorktreeWithRepoSubtitle() {
     let wtFeat = makeWorktree(id: "/tmp/repo/feat", name: "feature/x", repoRoot: "/tmp/repo")
     let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wtFeat])
     let state = RepositoriesFeature.State(reconciledRepositories: [repo])
 
     let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
-    // `repo / worktree` so a fuzzy query hits either the project name or the
-    // worktree name.
-    #expect(items.first?.title == "Repo / feature/x")
+    // Worktree name is the prominent title; repo is the secondary subtitle so
+    // the two read as a hierarchy. The fuzzy scorer matches both, so a query
+    // still hits either the worktree name or the project name.
+    #expect(items.first?.title == "feature/x")
+    #expect(items.first?.subtitle == "Repo")
   }
 
   @Test func items_dispatchByMode() {
@@ -1291,16 +1293,16 @@ struct CommandPaletteFeatureTests {
     #expect(switcher == [
       CommandPaletteItem(
         id: "worktree.\(wtOther.id).select",
-        title: "Other / wt",
-        subtitle: nil,
+        title: "wt",
+        subtitle: "Other",
         kind: .worktreeSelect(wtOther.id),
         priorityTier: 0,
         isCurrentWorktree: true
       ),
       CommandPaletteItem(
         id: "worktree.\(wtMain.id).select",
-        title: "Repo / main",
-        subtitle: nil,
+        title: "main",
+        subtitle: "Repo",
         kind: .worktreeSelect(wtMain.id),
         priorityTier: 1
       ),

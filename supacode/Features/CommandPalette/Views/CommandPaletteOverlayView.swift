@@ -35,6 +35,7 @@ struct CommandPaletteOverlayView: View {
                 query: $store.query,
                 selectedIndex: $store.selectedIndex,
                 items: filteredItems,
+                placeholder: queryPlaceholder,
                 hoveredID: $hoveredID,
                 isQueryFocused: _isQueryFocused,
                 onEvent: { event in
@@ -100,6 +101,19 @@ struct CommandPaletteOverlayView: View {
 
   private func resetSelection(rows: [CommandPaletteItem]) {
     store.send(.resetSelection(itemsCount: rows.count, defaultIndex: defaultSelectionIndex(rows: rows)))
+  }
+
+  /// Query-field placeholder, matched to the active surface. The worktree
+  /// switcher (⌘P) only navigates to worktrees, so it must not promise
+  /// "actions"; the full command palette (⌘⇧P) keeps the actions-and-branches
+  /// wording.
+  private var queryPlaceholder: String {
+    switch store.mode {
+    case .worktreeSwitcher:
+      return "Go to worktree…"
+    case .commands:
+      return "Search for actions or branches…"
+    }
   }
 
   /// Where the cursor lands when there's no prior selection. Normally the
@@ -168,6 +182,7 @@ private struct CommandPaletteCard: View {
   @Binding var query: String
   @Binding var selectedIndex: Int?
   let items: [CommandPaletteItem]
+  let placeholder: String
   @Binding var hoveredID: CommandPaletteItem.ID?
   let isQueryFocused: FocusState<Bool>
   let onEvent: (CommandPaletteKeyboardEvent) -> Void
@@ -179,7 +194,7 @@ private struct CommandPaletteCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      CommandPaletteQuery(query: $query, isTextFieldFocused: isQueryFocused) { event in
+      CommandPaletteQuery(query: $query, placeholder: placeholder, isTextFieldFocused: isQueryFocused) { event in
         onEvent(event)
       }
 
@@ -227,15 +242,18 @@ private struct CommandPaletteQuery: View {
   static let fieldHeight: CGFloat = 48
 
   @Binding var query: String
+  let placeholder: String
   var onEvent: ((CommandPaletteKeyboardEvent) -> Void)?
   @FocusState private var isTextFieldFocused: Bool
 
   init(
     query: Binding<String>,
+    placeholder: String,
     isTextFieldFocused: FocusState<Bool>,
     onEvent: ((CommandPaletteKeyboardEvent) -> Void)? = nil
   ) {
     _query = query
+    self.placeholder = placeholder
     self.onEvent = onEvent
     _isTextFieldFocused = isTextFieldFocused
   }
@@ -276,7 +294,7 @@ private struct CommandPaletteQuery: View {
       .frame(width: 0, height: 0)
       .accessibilityHidden(true)
 
-      TextField("Search for actions or branches...", text: $query)
+      TextField(placeholder, text: $query)
         .padding()
         .font(.title3.weight(.light))
         .frame(height: Self.fieldHeight)
