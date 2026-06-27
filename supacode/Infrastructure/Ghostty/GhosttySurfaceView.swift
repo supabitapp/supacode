@@ -8,10 +8,8 @@ import SupacodeSettingsShared
 
 private let surfaceLogger = SupaLogger("Surface")
 
-// Hosts Ghostty's IOSurfaceLayer. Receives no input — every mouse/key/drag
-// event reaches GhosttySurfaceView (the parent container), which forwards to
-// Ghostty via the C API. This separation lets the container layer hold the OSC
-// 11 tint behind the IOSurface without fighting AppKit's event routing.
+// Hosts Ghostty's IOSurfaceLayer. Input stays on GhosttySurfaceView, which
+// forwards events through Ghostty's C API.
 private final class GhosttyRenderView: NSView {
   override var isFlipped: Bool { false }
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -462,6 +460,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   override func layout() {
     super.layout()
     renderView.frame = bounds
+    syncBackgroundTintLayer()
     notifySizeChanged()
   }
 
@@ -491,10 +490,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     addCursorRect(bounds, cursor: currentCursor)
   }
 
-  // Tint sublayer on the container (self). Ghostty's IOSurfaceLayer lives in
-  // renderView's layer tree and composites above the container via AppKit's
-  // view hierarchy, so the tint sits visually behind the terminal render without
-  // needing to be at sublayer index 0.
+  // Tint sublayer on the container, ordered behind Ghostty's render view.
   private let backgroundTintLayer: CALayer = {
     let tintLayer = CALayer()
     tintLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
@@ -502,9 +498,20 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }()
 
   private func setupBackgroundTintLayer() {
+    syncBackgroundTintLayer()
+  }
+
+  private func syncBackgroundTintLayer() {
     guard let layer else { return }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
     backgroundTintLayer.frame = layer.bounds
-    layer.addSublayer(backgroundTintLayer)
+    if let renderLayer = renderView.layer, renderLayer.superlayer === layer {
+      layer.insertSublayer(backgroundTintLayer, below: renderLayer)
+    } else {
+      layer.insertSublayer(backgroundTintLayer, at: 0)
+    }
+    CATransaction.commit()
   }
 
   private var lastAppliedWindowAppearance: WindowAppearanceState?
@@ -549,13 +556,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     CATransaction.commit()
   }
 
-  // Computes the alpha for the per-surface OSC 11 tint CALayer.
-  //
-  // • blur on, opaque off: 0.3 — blur dominates, colour reads as a wash over
-  //   the glassy backdrop. The value is not user-configurable in this release.
-  // • blur off, opaque off: 1.0 — flat background, colour must be fully opaque.
-  // • isBackgroundOpaque on: 1.0 regardless of blur, consistent with
-  //   how WindowChromeApplier treats the opaque toggle.
+  // Keep blur visible when glass is active; otherwise paint OSC 11 as an opaque pane background.
   static func backgroundTintOpacity(isBackgroundOpaque: Bool, isBackgroundBlurEnabled: Bool) -> CGFloat {
     if isBackgroundOpaque { return 1.0 }
     return isBackgroundBlurEnabled ? 0.3 : 1.0

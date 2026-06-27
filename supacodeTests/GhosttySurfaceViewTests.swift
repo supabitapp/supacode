@@ -313,27 +313,7 @@ struct GhosttySurfaceViewTests {
     #expect(!GhosttySurfaceView.isSystemManagedMenuItem(noAction))
   }
 
-  // backgroundTintColor(_:) is the pure color-computation kernel for per-surface
-  // OSC 11 tinting. It converts an (r, g, b, opacity) tuple into a CGColor
-  // for the surface's CALayer.backgroundColor, or nil when no tint should be shown.
-  //
-  // Kind-routing is done upstream in GhosttySurfaceBridge: OSC 10 / OSC 12 /
-  // palette writes go to separate state fields and never reach the background triple.
-  // This function only receives background state, so it guards only nil r/g/b.
-
-  // backgroundTintOpacity(_:) selects the CALayer alpha for the tint based on
-  // whether the window is running with blur active. The 0.3 / 1.0 split exists
-  // because the tint sits on top of the blurred backdrop rather than being part
-  // of it: at 0.3 the blur is prominent, at 1.0 the colour is prominent. There
-  // is nothing useful in between when no blur is present — a mid-range alpha over
-  // a flat opaque background just produces a washed-out colour.
-  //
-  // The concrete value 0.3 is not user-configurable in this release. A settings
-  // control is a follow-up once the maintainer has validated the default feels right
-  // across different themes and wallpapers.
-
   @Test func backgroundTintOpacityOpaqueOnBlurOff() {
-    // Opaque toggle wins regardless of blur state.
     #expect(
       abs(
         GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: true, isBackgroundBlurEnabled: false) - 1.0
@@ -342,7 +322,6 @@ struct GhosttySurfaceViewTests {
   }
 
   @Test func backgroundTintOpacityOpaqueOnBlurOn() {
-    // Opaque toggle wins even when blur is configured.
     #expect(
       abs(
         GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: true, isBackgroundBlurEnabled: true) - 1.0
@@ -351,7 +330,6 @@ struct GhosttySurfaceViewTests {
   }
 
   @Test func backgroundTintOpacityOpaqueOffBlurOn() {
-    // Blur active and opaque off: tint is semi-transparent so blur shows through.
     #expect(
       abs(
         GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: false, isBackgroundBlurEnabled: true) - 0.3
@@ -360,7 +338,6 @@ struct GhosttySurfaceViewTests {
   }
 
   @Test func backgroundTintOpacityOpaqueOffBlurOff() {
-    // No blur, no opaque override: tint is fully opaque against the flat background.
     #expect(
       abs(
         GhosttySurfaceView.backgroundTintOpacity(isBackgroundOpaque: false, isBackgroundBlurEnabled: false) - 1.0
@@ -369,8 +346,6 @@ struct GhosttySurfaceViewTests {
   }
 
   @Test func backgroundTintColorReturnsNilWhenRedIsAbsent() {
-    // The bridge writes red/green/blue together, but each is independently optional.
-    // Guard against a partially-set state producing a nonsense color.
     #expect(GhosttySurfaceView.backgroundTintColor(red: nil, green: 0, blue: 0, opacity: 1.0) == nil)
   }
 
@@ -383,9 +358,6 @@ struct GhosttySurfaceViewTests {
   }
 
   @Test func backgroundTintColorConvertsRGBBytesToSRGBComponents() {
-    // OSC 11 delivers color as 8-bit RGB (0–255 per channel). Verify the
-    // conversion to normalised sRGB (0.0–1.0) is exact to floating-point limits.
-    // Using 26/42/58 so each channel has a distinct non-trivial value.
     let color = GhosttySurfaceView.backgroundTintColor(red: 26, green: 42, blue: 58, opacity: 1.0)
     let nsColor = color.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB) }
     #expect(nsColor != nil)

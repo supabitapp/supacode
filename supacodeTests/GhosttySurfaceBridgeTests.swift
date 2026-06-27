@@ -371,10 +371,6 @@ struct GhosttySurfaceBridgeTests {
     #expect(lastState == GHOSTTY_PROGRESS_STATE_REMOVE)
   }
 
-  // GhosttySurfaceBridge routes GHOSTTY_ACTION_COLOR_CHANGE by kind into three
-  // independent state triples so OSC 10 / OSC 12 / palette traffic never disturbs
-  // the background state that GhosttySurfaceView reads to paint the tint layer.
-
   private func colorChangeAction(
     kind: ghostty_action_color_kind_e,
     red: UInt8, green: UInt8, blue: UInt8
@@ -406,8 +402,6 @@ struct GhosttySurfaceBridgeTests {
   }
 
   @Test func osc11ThenOsc10LeavesBackgroundUnchanged() {
-    // OSC 10 (foreground color change) must not disturb the background triple
-    // already set by OSC 11 — the tint layer must not disappear mid-session.
     let bridge = GhosttySurfaceBridge()
     let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
 
@@ -450,8 +444,6 @@ struct GhosttySurfaceBridgeTests {
   }
 
   @Test func osc11ThenPaletteKindLeavesBackgroundUnchanged() {
-    // Positive kind values are OSC 4 palette-index changes. They must not touch
-    // any of the three named triples.
     let bridge = GhosttySurfaceBridge()
     let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
 
