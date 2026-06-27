@@ -14,6 +14,7 @@ struct OpenWorktreeActionTests {
     #expect(settingsIDs.contains("intellij"))
     #expect(settingsIDs.contains("rubymine"))
     #expect(settingsIDs.contains("rustrover"))
+    #expect(settingsIDs.contains("nova"))
     #expect(settingsIDs.contains("vscode-insiders"))
     #expect(settingsIDs.contains("warp"))
     #expect(settingsIDs.contains("webstorm"))
@@ -39,6 +40,15 @@ struct OpenWorktreeActionTests {
     #expect(editors.contains(.pycharm))
     #expect(editors.contains(.rubymine))
     #expect(editors.contains(.rustrover))
+  }
+
+  @Test func novaIsConfiguredAsEditor() {
+    #expect(OpenWorktreeAction.nova.title == "Nova")
+    #expect(OpenWorktreeAction.nova.settingsID == "nova")
+    #expect(OpenWorktreeAction.nova.bundleIdentifier == "com.panic.Nova")
+    #expect(OpenWorktreeAction.nova.openTargets == [.default])
+    #expect(OpenWorktreeAction.nova.openBehaviors == [.default])
+    #expect(OpenWorktreeAction.editorPriority.contains(.nova))
   }
 
   @Test func xcodeOpenTargetsSearchWorkspaceThenProjectThenWorkingDirectory() {
