@@ -74,8 +74,8 @@ struct AgentBusyStateTests {
     }
 
     guard
-      let surfaceA = state.splitTree(for: tabs[0]).root?.leftmostLeaf(),
-      let surfaceB = state.splitTree(for: tabs[1]).root?.leftmostLeaf()
+      let surfaceA = state.splitTree(for: tabs[0]).root?.leftmostLeaf().terminalForTesting,
+      let surfaceB = state.splitTree(for: tabs[1]).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected surfaces in both tabs")
       return
@@ -436,7 +436,7 @@ struct AgentBusyStateTests {
 
     let state = manager.state(for: resolvedWorktree) { false }
     let tabId = state.createTab()!
-    let surface = state.splitTree(for: tabId).root!.leftmostLeaf()
+    let surface = state.splitTree(for: tabId).root!.leftmostLeaf().terminalForTesting
     return SurfaceFixture(manager: manager, presence: presence, state: state, tabId: tabId, surface: surface)
   }
 

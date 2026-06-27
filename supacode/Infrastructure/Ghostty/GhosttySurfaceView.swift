@@ -8,7 +8,10 @@ import UniformTypeIdentifiers
 
 private let surfaceLogger = SupaLogger("Surface")
 
-final class GhosttySurfaceView: NSView, Identifiable {
+final class GhosttySurfaceView: SurfaceView {
+
+  override var content: SurfaceContent { .terminal(self) }
+
   private struct ScrollbarState {
     let total: UInt64
     let offset: UInt64
@@ -70,7 +73,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private let runtime: GhosttyRuntime
-  let id: UUID
   let bridge: GhosttySurfaceBridge
   private(set) var surface: ghostty_surface_t?
   private var surfaceRef: GhosttyRuntime.SurfaceReference?
@@ -213,7 +215,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
     fontSize: Float32? = nil,
     context: ghostty_surface_context_e
   ) {
-    self.id = id
     self.runtime = runtime
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0
@@ -239,7 +240,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     } else {
       initialInputCString = nil
     }
-    super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    super.init(id: id)
     wantsLayer = true
     bridge.surfaceView = self
     createSurface()

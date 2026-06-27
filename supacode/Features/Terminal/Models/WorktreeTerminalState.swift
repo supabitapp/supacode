@@ -64,7 +64,7 @@ final class WorktreeTerminalState {
   // Observed: any mutation re-renders `WorktreeTerminalTabsView`. Mutate only
   // from user-initiated structural changes; per-surface churn must stay on
   // `surfaceStates` / `WorktreeTabProjection` to keep agent storms cold.
-  private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
+  private var trees: [TerminalTabID: SplitTree<SurfaceView>] = [:]
   @ObservationIgnored private var surfaces: [UUID: GhosttySurfaceView] = [:]
   // `usesZmx` + `context` retained per surface so an unexpected zmx exit can recreate it on reattach.
   @ObservationIgnored private var surfaceLaunchMetadata: [UUID: SurfaceLaunchMetadata] = [:]
@@ -237,7 +237,11 @@ final class WorktreeTerminalState {
 
   private func isTabBusy(_ tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
-    return tree.leaves().contains { isRunningProgressState($0.bridge.state.progressState) }
+    return tree.leaves().contains { leaf in
+      switch leaf.content {
+      case .terminal(let surface): isRunningProgressState(surface.bridge.state.progressState)
+      }
+    }
   }
 
   /// Per-row projection consumed by `SidebarItemFeature.terminalProjectionChanged`.
@@ -309,7 +313,7 @@ final class WorktreeTerminalState {
     guard let tree = trees[tabID], let zoomed = tree.zoomed else { return }
     let previouslyZoomedSurface = zoomed.leftmostLeaf()
     updateTree(tree.settingZoomed(nil), for: tabID)
-    focusSurface(previouslyZoomedSurface, in: tabID)
+    focusLeaf(previouslyZoomedSurface, in: tabID)
   }
 
   func ensureInitialTab(focusing: Bool) {
@@ -563,8 +567,8 @@ final class WorktreeTerminalState {
       bypassZmx: creation.bypassZmx
     )
     updateShouldHideTabBar()
-    if creation.focusing, let surface = tree.root?.leftmostLeaf() {
-      focusSurface(surface, in: tabId)
+    if creation.focusing, let leaf = tree.root?.leftmostLeaf() {
+      focusLeaf(leaf, in: tabId)
     }
     onTabCreated?()
     return tabId
@@ -673,19 +677,22 @@ final class WorktreeTerminalState {
       let focusedId = focusedSurfaceIdByTab[tabId]
       let isSelectedTab = (tabId == selectedTabId)
       let visibleSurfaceIDs = Set(tree.visibleLeaves().map(\.id))
-      for surface in tree.leaves() {
-        let activity = Self.surfaceActivity(
-          isSurfaceVisibleInTree: visibleSurfaceIDs.contains(surface.id),
-          isSelectedTab: isSelectedTab,
-          windowIsVisible: lastWindowIsVisible == true,
-          windowIsKey: lastWindowIsKey == true,
-          focusedSurfaceID: focusedId,
-          surfaceID: surface.id
-        )
-        surface.setOcclusion(activity.isVisible)
-        surface.focusDidChange(activity.isFocused)
-        if activity.isFocused {
-          surfaceToFocus = surface
+      for leaf in tree.leaves() {
+        switch leaf.content {
+        case .terminal(let surface):
+          let activity = Self.surfaceActivity(
+            isSurfaceVisibleInTree: visibleSurfaceIDs.contains(surface.id),
+            isSelectedTab: isSelectedTab,
+            windowIsVisible: lastWindowIsVisible == true,
+            windowIsKey: lastWindowIsKey == true,
+            focusedSurfaceID: focusedId,
+            surfaceID: surface.id
+          )
+          surface.setOcclusion(activity.isVisible)
+          surface.focusDidChange(activity.isFocused)
+          if activity.isFocused {
+            surfaceToFocus = surface
+          }
         }
       }
     }
@@ -861,7 +868,7 @@ final class WorktreeTerminalState {
     context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB,
     surfaceID: UUID? = nil,
     bypassZmx: Bool = false
-  ) -> SplitTree<GhosttySurfaceView> {
+  ) -> SplitTree<SurfaceView> {
     if let existing = trees[tabId] {
       return existing
     }
@@ -878,7 +885,7 @@ final class WorktreeTerminalState {
       surfaceID: surfaceID,
       bypassZmx: bypassZmx
     )
-    let tree = SplitTree(view: surface)
+    let tree = SplitTree<SurfaceView>(view: surface)
     setTree(tree, for: tabId)
     setFocusedSurface(surface.id, for: tabId)
     return tree
@@ -941,7 +948,7 @@ final class WorktreeTerminalState {
         }
         updateTree(tree, for: tabId)
       }
-      focusSurface(nextSurface, in: tabId)
+      focusLeaf(nextSurface, in: tabId)
       syncFocusIfNeeded()
       return true
 
@@ -1198,18 +1205,21 @@ final class WorktreeTerminalState {
   }
 
   private func captureLayoutNode(
-    _ node: SplitTree<GhosttySurfaceView>.Node,
+    _ node: SplitTree<SurfaceView>.Node,
     agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]]
   ) -> TerminalLayoutSnapshot.LayoutNode {
     switch node {
     case .leaf(let view):
-      return .leaf(
-        TerminalLayoutSnapshot.SurfaceSnapshot(
-          id: view.id,
-          workingDirectory: view.bridge.state.pwd,
-          agents: agentsBySurface[view.id]
+      switch view.content {
+      case .terminal(let surface):
+        return .leaf(
+          TerminalLayoutSnapshot.SurfaceSnapshot(
+            id: surface.id,
+            workingDirectory: surface.bridge.state.pwd,
+            agents: agentsBySurface[surface.id]
+          )
         )
-      )
+      }
     case .split(let split):
       let direction: SplitDirection =
         switch split.direction {
@@ -1259,7 +1269,7 @@ final class WorktreeTerminalState {
         context: context,
         surfaceID: tabSnapshot.layout.firstLeaf.id,
       )
-      let tree = SplitTree(view: surface)
+      let tree = SplitTree<SurfaceView>(view: surface)
       setTree(tree, for: tabId)
       setFocusedSurface(surface.id, for: tabId)
 
@@ -1323,7 +1333,7 @@ final class WorktreeTerminalState {
     // Create the right child by splitting the anchor.
     let rightPwd = split.right.firstLeaf.workingDirectory
     let rightWorkingDir = rightPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
-    let direction: SplitTree<GhosttySurfaceView>.NewDirection =
+    let direction: SplitTree<SurfaceView>.NewDirection =
       split.direction == .horizontal ? .right : .down
 
     guard
@@ -1347,7 +1357,7 @@ final class WorktreeTerminalState {
 
   private func createRestorationSplit(
     at anchor: GhosttySurfaceView,
-    direction: SplitTree<GhosttySurfaceView>.NewDirection,
+    direction: SplitTree<SurfaceView>.NewDirection,
     ratio: Double,
     workingDirectory: URL?,
     tabId: TerminalTabID,
@@ -2024,8 +2034,17 @@ final class WorktreeTerminalState {
       return
     }
     let tree = splitTree(for: tabId)
-    if let surface = tree.visibleLeaves().first {
-      focusSurface(surface, in: tabId)
+    if let leaf = tree.visibleLeaves().first {
+      focusLeaf(leaf, in: tabId)
+    }
+  }
+
+  /// Focuses a split-tree leaf by routing through its content kind. Terminal is
+  /// the only kind today; a new leaf kind adds a `case` here that the compiler
+  /// forces.
+  private func focusLeaf(_ leaf: SurfaceView, in tabId: TerminalTabID) {
+    switch leaf.content {
+    case .terminal(let surface): focusSurface(surface, in: tabId)
     }
   }
 
@@ -2195,9 +2214,12 @@ final class WorktreeTerminalState {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
     surfaceGenerationByTab.removeValue(forKey: tabId)
     let leafIDs = tree.leaves().map(\.id)
-    for surface in tree.leaves() {
-      surface.closeSurface()
-      cleanupSurfaceState(for: surface.id)
+    for leaf in tree.leaves() {
+      switch leaf.content {
+      case .terminal(let surface):
+        surface.closeSurface()
+        cleanupSurfaceState(for: surface.id)
+      }
     }
     killZmxSessions(forSurfaceIDs: leafIDs, includeRemote: true)
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
@@ -2258,21 +2280,27 @@ final class WorktreeTerminalState {
       let focusedID = focusedSurfaceIdByTab[tabId],
       let focused = leaves.first(where: { $0.id == focusedID })
     {
-      return TerminalTabProgressDisplay.make(
-        progressState: focused.bridge.state.progressState,
-        progressValue: focused.bridge.state.progressValue
-      )
-    }
-    var worst: TerminalTabProgressDisplay?
-    for surface in leaves {
-      guard
-        let candidate = TerminalTabProgressDisplay.make(
+      switch focused.content {
+      case .terminal(let surface):
+        return TerminalTabProgressDisplay.make(
           progressState: surface.bridge.state.progressState,
           progressValue: surface.bridge.state.progressValue
         )
-      else { continue }
-      if worst == nil || candidate.severity > worst!.severity {
-        worst = candidate
+      }
+    }
+    var worst: TerminalTabProgressDisplay?
+    for leaf in leaves {
+      switch leaf.content {
+      case .terminal(let surface):
+        guard
+          let candidate = TerminalTabProgressDisplay.make(
+            progressState: surface.bridge.state.progressState,
+            progressValue: surface.bridge.state.progressValue
+          )
+        else { continue }
+        if worst == nil || candidate.severity > worst!.severity {
+          worst = candidate
+        }
       }
     }
     return worst
@@ -2317,7 +2345,7 @@ final class WorktreeTerminalState {
     applySurfaceActivity()
   }
 
-  private func updateTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
+  private func updateTree(_ tree: SplitTree<SurfaceView>, for tabId: TerminalTabID) {
     setTree(tree, for: tabId)
     syncFocusIfNeeded()
   }
@@ -2325,7 +2353,7 @@ final class WorktreeTerminalState {
   /// Single mutation point for `trees[tabId]`. Recomputes and emits the per-tab
   /// projection so `TerminalTabFeature.State` mirrors `trees[tabId]`'s leaves
   /// + the tab's unread count + focus without observing worktree-wide state.
-  private func setTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
+  private func setTree(_ tree: SplitTree<SurfaceView>, for tabId: TerminalTabID) {
     trees[tabId] = tree
     // Zoom transitions flip the hide-single-tab-bar gate.
     updateShouldHideTabBar()
@@ -2411,7 +2439,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapSplitDirection(_ direction: GhosttySplitAction.NewDirection)
-    -> SplitTree<GhosttySurfaceView>.NewDirection
+    -> SplitTree<SurfaceView>.NewDirection
   {
     switch direction {
     case .left:
@@ -2426,7 +2454,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapFocusDirection(_ direction: GhosttySplitAction.FocusDirection)
-    -> SplitTree<GhosttySurfaceView>.FocusDirection
+    -> SplitTree<SurfaceView>.FocusDirection
   {
     switch direction {
     case .previous:
@@ -2445,7 +2473,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapResizeDirection(_ direction: GhosttySplitAction.ResizeDirection)
-    -> SplitTree<GhosttySurfaceView>.SpatialDirection
+    -> SplitTree<SurfaceView>.SpatialDirection
   {
     switch direction {
     case .left:
@@ -2625,7 +2653,7 @@ final class WorktreeTerminalState {
     updateRunningState(for: tabId)
     if focusedSurfaceIdByTab[tabId] == view.id {
       if let nextSurface {
-        focusSurface(nextSurface, in: tabId)
+        focusLeaf(nextSurface, in: tabId)
       } else {
         focusedSurfaceIdByTab.removeValue(forKey: tabId)
       }
@@ -2638,7 +2666,7 @@ final class WorktreeTerminalState {
     if focusedSurfaceIdByTab[tabId].flatMap({ surfaces[$0] }) == nil,
       let fallback = newTree.visibleLeaves().first
     {
-      focusSurface(fallback, in: tabId)
+      focusLeaf(fallback, in: tabId)
     }
   }
 
@@ -2678,7 +2706,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapDropZone(_ zone: TerminalSplitTreeView.DropZone)
-    -> SplitTree<GhosttySurfaceView>.NewDirection
+    -> SplitTree<SurfaceView>.NewDirection
   {
     switch zone {
     case .top:

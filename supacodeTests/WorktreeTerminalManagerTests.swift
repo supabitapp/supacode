@@ -156,7 +156,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and socket server")
       return
@@ -178,7 +178,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -209,7 +209,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -237,7 +237,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -270,7 +270,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -298,7 +298,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -609,7 +609,7 @@ struct WorktreeTerminalManagerTests {
 
       guard let state = manager.stateIfExists(for: worktree.id),
         let tabId = state.tabManager.selectedTabId,
-        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
       else {
         Issue.record("Expected blocking script tab")
         return
@@ -673,8 +673,8 @@ struct WorktreeTerminalManagerTests {
     guard
       let tab1 = state.createTab(),
       let tab2 = state.createTab(focusing: false),
-      let surface1 = state.splitTree(for: tab1).root?.leftmostLeaf(),
-      let surface2 = state.splitTree(for: tab2).root?.leftmostLeaf()
+      let surface1 = state.splitTree(for: tab1).root?.leftmostLeaf().terminalForTesting,
+      let surface2 = state.splitTree(for: tab2).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected tabs and surfaces")
       return
@@ -934,7 +934,7 @@ struct WorktreeTerminalManagerTests {
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       guard let tabId = state.createTab(focusing: false),
-        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
       else {
         Issue.record("Expected a tab and surface")
         return
@@ -957,7 +957,7 @@ struct WorktreeTerminalManagerTests {
       state.isSelected = { true }
       state.syncFocus(windowIsKey: true, windowIsVisible: true)
       guard let tabId = state.createTab(focusing: true),
-        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
       else {
         Issue.record("Expected a tab and surface")
         return
@@ -974,7 +974,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard let tabId = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1034,7 +1034,7 @@ struct WorktreeTerminalManagerTests {
       return nil
     }
     #expect(surface.id == surfaceID)
-    return surface
+    return surface.terminalForTesting
   }
 
   @Test func cleanupSurfaceStateRemovesSurfaceStateEntry() {
@@ -1042,7 +1042,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard let tabId = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1064,7 +1064,7 @@ struct WorktreeTerminalManagerTests {
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       guard let tabId = state.createTab(focusing: false),
-        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
       else {
         Issue.record("Expected a tab and surface")
         return
@@ -1110,9 +1110,9 @@ struct WorktreeTerminalManagerTests {
     let failedState = manager.state(for: failedRepoWorktree)
     let removedState = manager.state(for: removedWorktree)
     guard let failedTabID = failedState.createTab(),
-      let failedSurfaceID = failedState.splitTree(for: failedTabID).root?.leftmostLeaf().id,
+      let failedSurfaceID = failedState.splitTree(for: failedTabID).root?.leftmostLeaf().terminalForTesting.id,
       let removedTabID = removedState.createTab(),
-      let removedSurfaceID = removedState.splitTree(for: removedTabID).root?.leftmostLeaf().id
+      let removedSurfaceID = removedState.splitTree(for: removedTabID).root?.leftmostLeaf().terminalForTesting.id
     else {
       Issue.record("Expected protected and removed surfaces")
       return
@@ -1209,7 +1209,7 @@ struct WorktreeTerminalManagerTests {
     // Session already gone locally: close + local kill, remote spared.
     await probe.setListing([])
 
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
 
     await probe.waitForKill { $0.contains(sessionID) }
     let remoteKills = await probe.remoteKilledSessions()
@@ -1232,7 +1232,7 @@ struct WorktreeTerminalManagerTests {
     let sessionID = session(for: surface.id)
 
     #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
 
     await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
     let remoteKills = await probe.remoteKilledSessions()
@@ -1464,7 +1464,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: true),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1477,15 +1477,15 @@ struct WorktreeTerminalManagerTests {
     }
     await probe.setListing([.init(name: session(for: surfaceID), clients: 0)])
 
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface replacement") {
-      guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else { return false }
+      guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting else { return false }
       return replacement.id == surfaceID && replacement !== surface
     }
 
     #expect(state.tabManager.tabs.contains(where: { $0.id == tabId }))
-    guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else {
+    guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting else {
       Issue.record("Expected a replacement surface")
       return
     }
@@ -1503,7 +1503,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: true),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1514,12 +1514,12 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.closeSurface(processAlive: true)
     await probe.waitForListCalls(atLeast: 1)
     await waitUntil("detached zmx surface replacement") {
-      guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else { return false }
+      guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting else { return false }
       return replacement.id == surfaceID && replacement !== surface
     }
 
     #expect(state.tabManager.tabs.contains(where: { $0.id == tabId }))
-    guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else {
+    guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting else {
       Issue.record("Expected a replacement surface")
       return
     }
@@ -1533,7 +1533,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: true),
-      let initialSurface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let initialSurface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1544,7 +1544,7 @@ struct WorktreeTerminalManagerTests {
       Issue.record("Expected a split tab")
       return
     }
-    let target = originalLeaves[0]
+    let target = originalLeaves[0].terminalForTesting
     let sibling = originalLeaves[1]
     let targetID = target.id
     let siblingID = sibling.id
@@ -1574,7 +1574,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: true),
-      let initialSurface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let initialSurface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1585,7 +1585,7 @@ struct WorktreeTerminalManagerTests {
       Issue.record("Expected a split tab")
       return
     }
-    let target = originalLeaves[0]
+    let target = originalLeaves[0].terminalForTesting
     let sibling = originalLeaves[1]
     let targetID = target.id
     let siblingID = sibling.id
@@ -1615,7 +1615,7 @@ struct WorktreeTerminalManagerTests {
       toggled.setValue(true)
     }
     guard let tabId = state.createTab(focusing: true),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1623,10 +1623,10 @@ struct WorktreeTerminalManagerTests {
     let surfaceID = surface.id
     await probe.setListing([.init(name: session(for: surfaceID), clients: 0)])
 
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface replacement") {
-      guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else { return false }
+      guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting else { return false }
       return replacement !== surface
     }
 
@@ -1639,7 +1639,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1647,7 +1647,7 @@ struct WorktreeTerminalManagerTests {
     let surfaceID = surface.id
 
     let expectedKill = session(for: surfaceID)
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await probe.waitForListCalls(atLeast: 1)
     await probe.waitForKill { $0.contains(expectedKill) }
     let killed = await probe.killedSessions()
@@ -1665,14 +1665,14 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
     }
     let surfaceID = surface.id
 
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
@@ -1688,7 +1688,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1696,7 +1696,7 @@ struct WorktreeTerminalManagerTests {
     let surfaceID = surface.id
     await probe.setListing([.init(name: session(for: surfaceID), clients: nil)])
 
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await probe.waitForListCalls(atLeast: 1)
     await waitUntil("zmx surface tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
@@ -1712,7 +1712,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1722,7 +1722,7 @@ struct WorktreeTerminalManagerTests {
 
     let expectedKill = session(for: surfaceID)
     #expect(state.closeSurface(id: surfaceID))
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await probe.waitForKill { $0.contains(expectedKill) }
     let killed = await probe.killedSessions()
     await waitUntil("explicit zmx surface tab closes") {
@@ -1740,7 +1740,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: false),
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1750,7 +1750,7 @@ struct WorktreeTerminalManagerTests {
 
     let expectedKill = session(for: surfaceID)
     #expect(state.performBindingAction("close_surface", onSurfaceID: surfaceID))
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await probe.waitForKill { $0.contains(expectedKill) }
     let killed = await probe.killedSessions()
     await waitUntil("binding-closed zmx surface tab closes") {
@@ -1770,7 +1770,7 @@ struct WorktreeTerminalManagerTests {
     let state = manager.state(for: worktree)
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
     guard let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a blocking-script tab and surface")
       return
@@ -1778,7 +1778,7 @@ struct WorktreeTerminalManagerTests {
     let surfaceID = surface.id
     await probe.setListing([.init(name: session(for: surfaceID), clients: 1)])
 
-    surface.bridge.closeSurface(processAlive: false)
+    surface.terminalForTesting.bridge.closeSurface(processAlive: false)
     await waitUntil("bypass-zmx tab closes") {
       !state.tabManager.tabs.contains(where: { $0.id == tabId })
     }
@@ -1835,7 +1835,7 @@ struct WorktreeTerminalManagerTests {
       let state = manager.state(for: worktree)
       state.notificationsEnabled = false
       guard let tabId = state.createTab(focusing: false),
-        let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+        let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
       else {
         Issue.record("Expected a tab and surface")
         return
@@ -1867,7 +1867,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -1894,7 +1894,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -1921,7 +1921,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -1929,7 +1929,7 @@ struct WorktreeTerminalManagerTests {
 
     // Normal flow: command finishes, then shell exits later.
     surface.bridge.onCommandFinished?(0)
-    surface.bridge.onChildExited?(0)
+    surface.terminalForTesting.bridge.onChildExited?(0)
 
     // First completion event should arrive.
     let event = await nextEvent(stream) { event in
@@ -1953,7 +1953,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -1989,7 +1989,7 @@ struct WorktreeTerminalManagerTests {
       return
     }
 
-    surface.bridge.onChildExited?(0)
+    surface.terminalForTesting.bridge.onChildExited?(0)
 
     let event = await nextEvent(stream) { event in
       if case .blockingScriptCompleted = event {
@@ -2010,7 +2010,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -2056,7 +2056,7 @@ struct WorktreeTerminalManagerTests {
     #expect(!state.tabManager.tabs.map(\.id).contains(firstTabId))
 
     // Complete the second script — only this one should fire.
-    guard let surface = state.splitTree(for: secondTabId).root?.leftmostLeaf() else {
+    guard let surface = state.splitTree(for: secondTabId).root?.leftmostLeaf().terminalForTesting else {
       Issue.record("Expected surface for second tab")
       return
     }
@@ -2132,7 +2132,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -2188,7 +2188,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected run script tab and surface")
       return
@@ -2233,7 +2233,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -2262,7 +2262,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo first"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let firstTabId = state.tabManager.selectedTabId,
-      let firstSurface = state.splitTree(for: firstTabId).root?.leftmostLeaf()
+      let firstSurface = state.splitTree(for: firstTabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected first blocking-script tab and surface")
       return
@@ -2288,7 +2288,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking-script tab and surface")
       return
@@ -2438,9 +2438,9 @@ struct WorktreeTerminalManagerTests {
     let stateB = manager.state(for: worktreeB)
     guard
       let tabA = stateA.createTab(),
-      let surfaceA = stateA.splitTree(for: tabA).root?.leftmostLeaf(),
+      let surfaceA = stateA.splitTree(for: tabA).root?.leftmostLeaf().terminalForTesting,
       let tabB = stateB.createTab(),
-      let surfaceB = stateB.splitTree(for: tabB).root?.leftmostLeaf()
+      let surfaceB = stateB.splitTree(for: tabB).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected tabs and surfaces")
       return
@@ -2463,7 +2463,7 @@ struct WorktreeTerminalManagerTests {
     let state = manager.state(for: worktree)
     guard
       let tab = state.createTab(),
-      let surface = state.splitTree(for: tab).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tab).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected tab and surface")
       return
@@ -2493,9 +2493,9 @@ struct WorktreeTerminalManagerTests {
     let stateB = manager.state(for: worktreeB)
     guard
       let tabA = stateA.createTab(),
-      let surfaceA = stateA.splitTree(for: tabA).root?.leftmostLeaf(),
+      let surfaceA = stateA.splitTree(for: tabA).root?.leftmostLeaf().terminalForTesting,
       let tabB = stateB.createTab(),
-      let surfaceB = stateB.splitTree(for: tabB).root?.leftmostLeaf()
+      let surfaceB = stateB.splitTree(for: tabB).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected tabs and surfaces")
       return
@@ -2532,7 +2532,7 @@ struct WorktreeTerminalManagerTests {
     let state = manager.state(for: worktree)
     guard
       let tab = state.createTab(),
-      let surface = state.splitTree(for: tab).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tab).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected tab and surface")
       return
@@ -3134,7 +3134,7 @@ struct WorktreeTerminalManagerTests {
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking script tab and surface")
       return
@@ -3190,7 +3190,7 @@ struct WorktreeTerminalManagerTests {
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
-      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking-script tab and surface")
       return
@@ -3207,14 +3207,14 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard let regularTab = state.createTab(),
-      let regularSurface = state.splitTree(for: regularTab).root?.leftmostLeaf()
+      let regularSurface = state.splitTree(for: regularTab).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected regular tab and surface")
       return
     }
     manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
     guard let blockingTab = state.tabManager.selectedTabId,
-      let blockingSurface = state.splitTree(for: blockingTab).root?.leftmostLeaf()
+      let blockingSurface = state.splitTree(for: blockingTab).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected blocking-script tab and surface")
       return
@@ -3319,8 +3319,8 @@ struct WorktreeTerminalManagerTests {
     guard
       let tabA = state.createTab(),
       let tabB = state.createTab(focusing: false),
-      let surfaceA = state.splitTree(for: tabA).root?.leftmostLeaf(),
-      let surfaceB = state.splitTree(for: tabB).root?.leftmostLeaf()
+      let surfaceA = state.splitTree(for: tabA).root?.leftmostLeaf().terminalForTesting,
+      let surfaceB = state.splitTree(for: tabB).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected two tabs and two surfaces")
       return
@@ -3348,8 +3348,8 @@ struct WorktreeTerminalManagerTests {
     guard
       let tabA = state.createTab(),
       let tabB = state.createTab(focusing: false),
-      let surfaceA = state.splitTree(for: tabA).root?.leftmostLeaf(),
-      let surfaceB = state.splitTree(for: tabB).root?.leftmostLeaf()
+      let surfaceA = state.splitTree(for: tabA).root?.leftmostLeaf().terminalForTesting,
+      let surfaceB = state.splitTree(for: tabB).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected two tabs and two surfaces")
       return
