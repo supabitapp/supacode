@@ -38,6 +38,7 @@ extension RepositoriesFeature {
           repositoryID: repositoryID,
           defaultName: defaultName,
           title: storedItem?.title ?? "",
+          subtitle: storedItem?.subtitle ?? "",
           color: storedItem?.color
         )
         return .none
@@ -47,12 +48,18 @@ extension RepositoriesFeature {
         return .none
 
       case .worktreeCustomization(
-        .presented(.delegate(.save(let worktreeID, let repositoryID, let title, let color)))
+        .presented(.delegate(.save(let worktreeID, let repositoryID, let title, let subtitle, let color)))
       ):
         // Always overwrite (user save intent); falls back to `.unpinned` when the row hasn't been
         // seeded into a bucket yet (folder synthetic before first reconcile, deeplink/palette).
         state.$sidebar.withLock { sidebar in
-          sidebar.setCustomization(title: title, color: color, worktree: worktreeID, in: repositoryID)
+          sidebar.setCustomization(
+            title: title,
+            subtitle: subtitle,
+            color: color,
+            worktree: worktreeID,
+            in: repositoryID
+          )
         }
         syncSidebar(&state)
         state.worktreeCustomization = nil

@@ -61,6 +61,10 @@ struct SidebarItemFeature {
     /// Mirror of `SidebarState.Item.title`; reconcile fans this in from
     /// `@Shared(.sidebar)`. `nil` or whitespace-only means fall back to `name`.
     var customTitle: String?
+    /// Mirror of `SidebarState.Item.subtitle`; reconcile fans this in from
+    /// `@Shared(.sidebar)`. `nil` or whitespace-only means fall back to the
+    /// auto-derived subtitle.
+    var customSubtitle: String?
     /// Mirror of `SidebarState.Item.color`; reconcile fans this in from
     /// `@Shared(.sidebar)`. `nil` means default styling.
     var customTint: RepositoryColor?

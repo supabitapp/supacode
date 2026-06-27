@@ -61,6 +61,7 @@ struct WorktreeCustomizationParentTests {
     var initial = makeInitialState()
     initial.$sidebar.withLock { sidebar in
       sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.title = "Spicy"
+      sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.subtitle = "Spicy Sub"
       sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.color = .blue
     }
     let store = TestStore(initialState: initial) {
@@ -73,6 +74,7 @@ struct WorktreeCustomizationParentTests {
         repositoryID: self.repoID,
         defaultName: "feature/x",
         title: "Spicy",
+        subtitle: "Spicy Sub",
         color: .blue,
       )
     }
@@ -89,6 +91,7 @@ struct WorktreeCustomizationParentTests {
         repositoryID: self.repoID,
         defaultName: "feature/x",
         title: "",
+        subtitle: "",
         color: nil,
       )
     }
@@ -109,6 +112,7 @@ struct WorktreeCustomizationParentTests {
         repositoryID: self.repoID,
         defaultName: "customize-wt-repo",
         title: "",
+        subtitle: "",
         color: nil,
       )
     }
@@ -125,13 +129,14 @@ struct WorktreeCustomizationParentTests {
     #expect(store.state.worktreeCustomization == nil)
   }
 
-  @Test func saveDelegatePersistsTitleAndColorToBucketedItem() async {
+  @Test func saveDelegatePersistsTitleSubtitleAndColorToBucketedItem() async {
     var initial = makeInitialState()
     initial.worktreeCustomization = WorktreeCustomizationFeature.State(
       worktreeID: worktreeID,
       repositoryID: repoID,
       defaultName: "feature/x",
       title: "",
+      subtitle: "",
       color: nil,
     )
     let store = TestStore(initialState: initial) {
@@ -146,6 +151,7 @@ struct WorktreeCustomizationParentTests {
               worktreeID: worktreeID,
               repositoryID: repoID,
               title: "Renamed",
+              subtitle: "Renamed Sub",
               color: .red,
             )
           )))
@@ -154,10 +160,13 @@ struct WorktreeCustomizationParentTests {
       $0.$sidebar.withLock { sidebar in
         sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.title =
           "Renamed"
+        sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.subtitle =
+          "Renamed Sub"
         sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.color = .red
       }
       // syncSidebar fans the bucketed Item write into the per-row mirror.
       $0.sidebarItems[id: self.worktreeID]?.customTitle = "Renamed"
+      $0.sidebarItems[id: self.worktreeID]?.customSubtitle = "Renamed Sub"
       $0.sidebarItems[id: self.worktreeID]?.customTint = .red
       // The save action invalidates every cache; mirror the post-reduce hook
       // so the test diff only contains intentional state changes.
@@ -174,6 +183,7 @@ struct WorktreeCustomizationParentTests {
       repositoryID: repoID,
       defaultName: "feature/x",
       title: "",
+      subtitle: "",
       color: nil,
     )
     let store = TestStore(initialState: initial) {
@@ -188,6 +198,7 @@ struct WorktreeCustomizationParentTests {
               worktreeID: worktreeID,
               repositoryID: repoID,
               title: "Renamed",
+              subtitle: "Renamed Sub",
               color: .red,
             )
           )))
@@ -196,9 +207,12 @@ struct WorktreeCustomizationParentTests {
       $0.$sidebar.withLock { sidebar in
         sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.title =
           "Renamed"
+        sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.subtitle =
+          "Renamed Sub"
         sidebar.sections[self.repoID]?.buckets[.unpinned]?.items[self.worktreeID]?.color = .red
       }
       $0.sidebarItems[id: self.worktreeID]?.customTitle = "Renamed"
+      $0.sidebarItems[id: self.worktreeID]?.customSubtitle = "Renamed Sub"
       $0.sidebarItems[id: self.worktreeID]?.customTint = .red
       $0.applyPostReduceCacheRecomputes()
     }
@@ -337,6 +351,7 @@ struct WorktreeCustomizationParentTests {
       repositoryID: repoID,
       defaultName: "feature/x",
       title: "",
+      subtitle: "",
       color: nil,
     )
     let store = TestStore(initialState: initial) {

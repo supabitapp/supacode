@@ -16,6 +16,7 @@ struct WorktreeCreationPromptFeatureTests {
     selectedBaseRef: String? = nil,
     defaultWorktreeBaseDirectory: String = "/tmp/repo/.worktrees",
     title: String = "",
+    subtitle: String = "",
     color: RepositoryColor? = nil
   ) -> WorktreeCreationPromptFeature.State {
     var state = WorktreeCreationPromptFeature.State(
@@ -33,6 +34,7 @@ struct WorktreeCreationPromptFeatureTests {
       validationMessage: nil
     )
     state.title = title
+    state.subtitle = subtitle
     state.color = color
     return state
   }
@@ -91,6 +93,7 @@ struct WorktreeCreationPromptFeatureTests {
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: nil,
+          subtitle: nil,
           color: nil
         )
       )
@@ -117,6 +120,7 @@ struct WorktreeCreationPromptFeatureTests {
           fetchOrigin: false,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: nil,
+          subtitle: nil,
           color: nil
         )
       )
@@ -150,6 +154,7 @@ struct WorktreeCreationPromptFeatureTests {
             path: "~/Repos"
           ),
           title: nil,
+          subtitle: nil,
           color: nil
         )
       )
@@ -234,10 +239,10 @@ struct WorktreeCreationPromptFeatureTests {
     #expect(state.resolvedWorktreeLocationPreview == "/tmp/repo/.worktrees/feature_foo/")
   }
 
-  // MARK: - Title / Color customization
+  // MARK: - Title / Subtitle / Color customization
 
-  @Test func submitTrimsBranchAndForwardsTitleAndColor() async {
-    var state = makeState(title: "  Spicy  ", color: .blue)
+  @Test func submitTrimsBranchAndForwardsTitleSubtitleAndColor() async {
+    var state = makeState(title: "  Spicy  ", subtitle: "  Spicy Sub  ", color: .blue)
     state.branchName = "  feature/x  "
     let store = TestStore(initialState: state) {
       WorktreeCreationPromptFeature()
@@ -253,14 +258,15 @@ struct WorktreeCreationPromptFeatureTests {
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: "Spicy",
+          subtitle: "Spicy Sub",
           color: .blue
         )
       )
     )
   }
 
-  @Test func submitPreservesTitleWhenItMatchesBranch() async {
-    var state = makeState(title: "feature/x")
+  @Test func submitPreservesTitleAndSubtitleWhenTheyMatchDefaults() async {
+    var state = makeState(title: "feature/x", subtitle: "Default")
     state.branchName = "feature/x"
     let store = TestStore(initialState: state) {
       WorktreeCreationPromptFeature()
@@ -276,6 +282,7 @@ struct WorktreeCreationPromptFeatureTests {
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: "feature/x",
+          subtitle: "Default",
           color: nil
         )
       )
@@ -299,6 +306,7 @@ struct WorktreeCreationPromptFeatureTests {
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: nil,
+          subtitle: nil,
           color: nil
         )
       )

@@ -189,6 +189,10 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     /// worktree's branch / folder name in the sidebar row. `nil` (or
     /// whitespace-only after trim) means "use the default name".
     var title: String?
+    /// Optional user-supplied subtitle that overrides the worktree's
+    /// auto-derived subtitle in the sidebar row. `nil` (or whitespace-only
+    /// after trim) means "use the default subtitle".
+    var subtitle: String?
     /// Optional user-supplied tint applied to the sidebar row title.
     /// `nil` means "default styling".
     var color: RepositoryColor?
@@ -196,12 +200,19 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     private enum CodingKeys: String, CodingKey {
       case archivedAt
       case title
+      case subtitle
       case color
     }
 
-    init(archivedAt: Date? = nil, title: String? = nil, color: RepositoryColor? = nil) {
+    init(
+      archivedAt: Date? = nil,
+      title: String? = nil,
+      subtitle: String? = nil,
+      color: RepositoryColor? = nil
+    ) {
       self.archivedAt = archivedAt
       self.title = title
+      self.subtitle = subtitle
       self.color = color
     }
 
@@ -209,6 +220,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       let container = try decoder.container(keyedBy: CodingKeys.self)
       self.archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
       self.title = try container.decodeIfPresent(String.self, forKey: .title)
+      self.subtitle = try container.decodeIfPresent(String.self, forKey: .subtitle)
       // Use `try?` so a malformed hex color (introduced by a downgrade
       // that doesn't understand `.custom`, hand-edit, etc.) drops just
       // this field rather than killing the row's entire entry.
@@ -221,6 +233,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // Customization fields are only emitted when set so the file
       // stays clean for worktrees the user never touched.
       try container.encodeIfPresent(title, forKey: .title)
+      try container.encodeIfPresent(subtitle, forKey: .subtitle)
       try container.encodeIfPresent(color, forKey: .color)
     }
   }
@@ -340,6 +353,7 @@ nonisolated extension SidebarState {
   /// manufactured into a phantom double-bucket row.
   mutating func mergeCustomization(
     title: String?,
+    subtitle: String? = nil,
     color: RepositoryColor?,
     worktree worktreeID: Worktree.ID,
     in repositoryID: Repository.ID
@@ -349,6 +363,7 @@ nonisolated extension SidebarState {
     var bucket = section.buckets[destinationBucket] ?? .init()
     var item = bucket.items[worktreeID] ?? .init()
     if item.title == nil { item.title = title }
+    if item.subtitle == nil { item.subtitle = subtitle }
     if item.color == nil { item.color = color }
     bucket.items[worktreeID] = item
     section.buckets[destinationBucket] = bucket
@@ -360,6 +375,7 @@ nonisolated extension SidebarState {
   /// this represents an explicit user save intent that must not be silently absorbed.
   mutating func setCustomization(
     title: String?,
+    subtitle: String? = nil,
     color: RepositoryColor?,
     worktree worktreeID: Worktree.ID,
     in repositoryID: Repository.ID
@@ -369,6 +385,7 @@ nonisolated extension SidebarState {
     var bucket = section.buckets[destinationBucket] ?? .init()
     var item = bucket.items[worktreeID] ?? .init()
     item.title = title
+    item.subtitle = subtitle
     item.color = color
     bucket.items[worktreeID] = item
     section.buckets[destinationBucket] = bucket

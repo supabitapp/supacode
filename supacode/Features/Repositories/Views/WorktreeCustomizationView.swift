@@ -15,12 +15,16 @@ struct WorktreeCustomizationView: View {
           .onSubmit {
             store.send(.saveButtonTapped)
           }
+        TextField("Subtitle", text: $store.subtitle, prompt: Text("Default"))
+          .onSubmit {
+            store.send(.saveButtonTapped)
+          }
         LabeledContent("Color") {
           ColorSwatchRow(color: $store.color)
         }
       } header: {
         Text("Customize Appearance")
-        Text("Override the sidebar title and tint for `\(store.defaultName)`.")
+        Text("Override the sidebar title, subtitle, and tint for `\(store.defaultName)`.")
       }
       .headerProminence(.increased)
     }

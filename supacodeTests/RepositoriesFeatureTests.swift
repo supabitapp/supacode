@@ -966,6 +966,7 @@ struct RepositoriesFeatureTests {
               fetchOrigin: true,
               placement: WorktreePlacementOverride(name: nil, path: nil),
               title: nil,
+              subtitle: nil,
               color: nil
             )
           )

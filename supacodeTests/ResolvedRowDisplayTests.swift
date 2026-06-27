@@ -253,4 +253,86 @@ struct ResolvedRowDisplayTests {
     )
     #expect(resolved.accent == .default)
   }
+
+  // MARK: - Custom subtitle override.
+
+  @Test func customSubtitleOverridesPlainSubtitle() {
+    let resolved = ResolvedRowDisplay(
+      kind: .gitWorktree,
+      branchName: "feature/foo",
+      worktreeName: "scratch",
+      isMainWorktree: false,
+      isPinned: false,
+      hideSubtitle: false,
+      hideSubtitleOnMatch: true,
+      customSubtitle: "My Subtitle"
+    )
+    #expect(resolved.subtitle == .plain("My Subtitle"))
+  }
+
+  @Test func customSubtitleOverridesHighlightTrail() {
+    let resolved = ResolvedRowDisplay(
+      kind: .gitWorktree,
+      branchName: "feature/foo",
+      worktreeName: "scratch",
+      isMainWorktree: false,
+      isPinned: false,
+      hideSubtitle: false,
+      hideSubtitleOnMatch: true,
+      highlightSubtitle: SidebarHighlightRepoTag(repoName: "supacode", repoColor: nil, hostInfo: nil),
+      customSubtitle: "My Subtitle"
+    )
+    guard case .highlight(_, _, let trail, _) = resolved.subtitle else {
+      Issue.record("Expected .highlight subtitle")
+      return
+    }
+    #expect(trail == "My Subtitle")
+  }
+
+  @Test func customSubtitleOverridesDefaultMainTrail() {
+    let resolved = ResolvedRowDisplay(
+      kind: .gitWorktree,
+      branchName: "main",
+      worktreeName: nil,
+      isMainWorktree: true,
+      isPinned: false,
+      hideSubtitle: false,
+      hideSubtitleOnMatch: true,
+      highlightSubtitle: SidebarHighlightRepoTag(repoName: "supacode", repoColor: nil, hostInfo: nil),
+      customSubtitle: "My Subtitle"
+    )
+    guard case .highlight(_, _, let trail, _) = resolved.subtitle else {
+      Issue.record("Expected .highlight subtitle")
+      return
+    }
+    #expect(trail == "My Subtitle")
+  }
+
+  @Test func customSubtitleDisablesHideOnMatch() {
+    let resolved = ResolvedRowDisplay(
+      kind: .gitWorktree,
+      branchName: "feature/foo",
+      worktreeName: "foo",
+      isMainWorktree: false,
+      isPinned: false,
+      hideSubtitle: false,
+      hideSubtitleOnMatch: true,
+      customSubtitle: "My Subtitle"
+    )
+    #expect(resolved.subtitle == .plain("My Subtitle"))
+  }
+
+  @Test func whitespaceOnlyCustomSubtitleFallsBackToAutoSubtitle() {
+    let resolved = ResolvedRowDisplay(
+      kind: .gitWorktree,
+      branchName: "feature/foo",
+      worktreeName: "scratch",
+      isMainWorktree: false,
+      isPinned: false,
+      hideSubtitle: false,
+      hideSubtitleOnMatch: false,
+      customSubtitle: "   "
+    )
+    #expect(resolved.subtitle == .plain("scratch"))
+  }
 }

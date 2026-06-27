@@ -198,6 +198,25 @@ struct SidebarStateTests {
     #expect(decoded == original)
   }
 
+  @Test func codableRoundTripPreservesCustomizationFields() throws {
+    var original = SidebarState()
+    original.insert(
+      worktree: "wt-1",
+      in: repoA,
+      bucket: .pinned,
+      item: .init(title: "Custom Title", subtitle: "Custom Subtitle", color: .purple)
+    )
+
+    let data = try JSONEncoder().encode(original)
+    let decoded = try JSONDecoder().decode(SidebarState.self, from: data)
+
+    #expect(decoded == original)
+    let item = decoded.sections[repoA]?.buckets[.pinned]?.items["wt-1"]
+    #expect(item?.title == "Custom Title")
+    #expect(item?.subtitle == "Custom Subtitle")
+    #expect(item?.color == .purple)
+  }
+
   @Test func onDiskBucketKeysAreStableWireFormat() throws {
     // Pins the literal bucket-id / item-field strings that
     // `sidebar.json` uses on disk. Renaming an enum case or a
@@ -480,13 +499,14 @@ struct SidebarStateTests {
       worktree: "wt-1",
       in: "repo",
       bucket: .pinned,
-      item: .init(title: "Manual", color: .blue)
+      item: .init(title: "Manual", subtitle: "Manual Sub", color: .blue)
     )
 
-    state.mergeCustomization(title: "Stale", color: .red, worktree: "wt-1", in: "repo")
+    state.mergeCustomization(title: "Stale", subtitle: "Stale Sub", color: .red, worktree: "wt-1", in: "repo")
 
     // Manual customization wins against the re-seed payload.
     #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]?.title == "Manual")
+    #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]?.subtitle == "Manual Sub")
     #expect(state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]?.color == .blue)
   }
 
@@ -498,13 +518,14 @@ struct SidebarStateTests {
       worktree: "wt-1",
       in: "repo",
       bucket: .pinned,
-      item: .init(title: "Old", color: .blue)
+      item: .init(title: "Old", subtitle: "Old Sub", color: .blue)
     )
 
-    state.setCustomization(title: "New", color: .red, worktree: "wt-1", in: "repo")
+    state.setCustomization(title: "New", subtitle: "New Sub", color: .red, worktree: "wt-1", in: "repo")
 
     let item = state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]
     #expect(item?.title == "New")
+    #expect(item?.subtitle == "New Sub")
     #expect(item?.color == .red)
   }
 
@@ -514,23 +535,25 @@ struct SidebarStateTests {
       worktree: "wt-1",
       in: "repo",
       bucket: .pinned,
-      item: .init(title: "Spicy", color: .red)
+      item: .init(title: "Spicy", subtitle: "Spicy Sub", color: .red)
     )
 
-    state.setCustomization(title: nil, color: nil, worktree: "wt-1", in: "repo")
+    state.setCustomization(title: nil, subtitle: nil, color: nil, worktree: "wt-1", in: "repo")
 
     let item = state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]
     #expect(item?.title == nil)
+    #expect(item?.subtitle == nil)
     #expect(item?.color == nil)
   }
 
   @Test func setCustomizationFallsBackToUnpinnedWhenRowMissing() {
     var state = SidebarState()
 
-    state.setCustomization(title: "Spicy", color: .red, worktree: "wt-1", in: "repo")
+    state.setCustomization(title: "Spicy", subtitle: "Spicy Sub", color: .red, worktree: "wt-1", in: "repo")
 
     let item = state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"]
     #expect(item?.title == "Spicy")
+    #expect(item?.subtitle == "Spicy Sub")
     #expect(item?.color == .red)
   }
 

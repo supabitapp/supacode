@@ -35,9 +35,10 @@ struct WorktreeCreationPromptFeature {
     var showAppearanceOptions: Bool = false
     var validationMessage: String?
     var isValidating = false
-    /// Optional sidebar customization captured by the new Title / Color
-    /// section; transferred to `PendingWorktree.customization` on submit.
+    /// Optional sidebar customization captured by the new Title / Subtitle /
+    /// Color section; transferred to `PendingWorktree.customization` on submit.
     var title: String = ""
+    var subtitle: String = ""
     var color: RepositoryColor?
 
     /// Default leaf folder name shown as the name-override placeholder.
@@ -108,6 +109,7 @@ struct WorktreeCreationPromptFeature {
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride,
       title: String?,
+      subtitle: String?,
       color: RepositoryColor?
     )
   }
@@ -151,6 +153,8 @@ struct WorktreeCreationPromptFeature {
         // on the value surviving.
         let trimmedTitle = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = trimmedTitle.isEmpty ? nil : trimmedTitle
+        let trimmedSubtitle = state.subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSubtitle = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
         return .send(
           .delegate(
             .submit(
@@ -164,6 +168,7 @@ struct WorktreeCreationPromptFeature {
                 path: pathOverride.isEmpty ? nil : pathOverride
               ),
               title: resolvedTitle,
+              subtitle: resolvedSubtitle,
               color: state.color
             )
           )

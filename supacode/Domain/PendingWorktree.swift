@@ -4,12 +4,19 @@ import SupacodeSettingsShared
 struct PendingWorktree: Identifiable, Hashable {
   /// Sidebar customization that travels with the in-flight creation. Reconcile
   /// reads this when materializing the pending row so a user-typed title /
-  /// color is visible while the worktree is being created; on success the
-  /// reducer copies it into the bucketed `SidebarState.Item` before the next
+  /// subtitle / color is visible while the worktree is being created; on success
+  /// the reducer copies it into the bucketed `SidebarState.Item` before the next
   /// reconcile, on failure it's dropped with the row.
   struct Customization: Hashable {
     let title: String?
+    let subtitle: String?
     let color: RepositoryColor?
+
+    init(title: String? = nil, subtitle: String? = nil, color: RepositoryColor? = nil) {
+      self.title = title
+      self.subtitle = subtitle
+      self.color = color
+    }
   }
 
   let id: Worktree.ID

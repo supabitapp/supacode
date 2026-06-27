@@ -70,6 +70,7 @@ extension RepositoriesFeature {
         // transitions because the bucket-flow `move` carries the `Item` over.
         let customization = storedCustomization(for: id, in: repository.id, sidebar: state.sidebar)
         item.customTitle = customization.title
+        item.customSubtitle = customization.subtitle
         item.customTint = customization.color
         // Clear the PR query branch when the worktree was renamed.
         if let existing, existing.branchName != worktree.name {
@@ -85,36 +86,14 @@ extension RepositoriesFeature {
         }
         rebuilt.append(item)
       }
-      for pending in state.pendingWorktrees where pending.repositoryID == repository.id {
-        let id = pending.id
-        let existing = previousByID[id: id]
-        let pendingName = pending.progress.worktreeName ?? "Creating…"
-        var item =
-          existing
-          ?? SidebarItemFeature.State(
-            id: id,
-            repositoryID: repository.id,
-            kind: .gitWorktree,
-            name: pendingName,
-            branchName: pendingName,
-            subtitle: nil,
-            workingDirectory: repository.rootURL,
-            repositoryAccent: nil,
-            isMainWorktree: false,
-            isPinned: false,
-            hasMergedBadge: false,
-            host: repository.host
-          )
-        item.name = pendingName
-        item.branchName = pendingName
-        item.customTitle = pending.customization?.title
-        item.customTint = pending.customization?.color
-        item.lifecycle =
-          state.removingRepositoryIDs[pending.repositoryID] != nil
-          ? .deleting
-          : .pending
-        rebuilt.append(item)
-      }
+      rebuilt.append(
+        contentsOf: pendingItems(
+          for: repository,
+          pendingWorktrees: state.pendingWorktrees,
+          removingRepositoryIDs: state.removingRepositoryIDs,
+          previousByID: previousByID
+        )
+      )
     }
     // Carry forward in-flight rows whose worktree dropped out of the roster
     // mid-archive / mid-delete so the per-target completion handlers can drain
@@ -136,22 +115,87 @@ extension RepositoriesFeature {
     }
   }
 
-  /// User-set title / color for `worktreeID`, read through whichever bucket
+  /// Builds per-row state for any pending worktrees belonging to `repository`.
+  /// Pulled out of `reconcileSidebarItems` so the main reconcile body stays under
+  /// the function-body-length lint limit.
+  private static func pendingItems(
+    for repository: Repository,
+    pendingWorktrees: [PendingWorktree],
+    removingRepositoryIDs: [Repository.ID: RepositoryRemovalRecord],
+    previousByID: IdentifiedArrayOf<SidebarItemFeature.State>
+  ) -> [SidebarItemFeature.State] {
+    var result: [SidebarItemFeature.State] = []
+    for pending in pendingWorktrees where pending.repositoryID == repository.id {
+      let id = pending.id
+      let existing = previousByID[id: id]
+      let pendingName = pending.progress.worktreeName ?? "Creating…"
+      var item =
+        existing
+        ?? SidebarItemFeature.State(
+          id: id,
+          repositoryID: repository.id,
+          kind: .gitWorktree,
+          name: pendingName,
+          branchName: pendingName,
+          subtitle: nil,
+          workingDirectory: repository.rootURL,
+          repositoryAccent: nil,
+          isMainWorktree: false,
+          isPinned: false,
+          hasMergedBadge: false,
+          host: repository.host
+        )
+      item.name = pendingName
+      item.branchName = pendingName
+      item.customTitle = pending.customization?.title
+      item.customSubtitle = pending.customization?.subtitle
+      item.customTint = pending.customization?.color
+      item.lifecycle =
+        removingRepositoryIDs[pending.repositoryID] != nil
+        ? .deleting
+        : .pending
+      result.append(item)
+    }
+    return result
+  }
+
+  /// User-set title / subtitle / color for `worktreeID`, read through whichever bucket
   /// currently owns the row so the lookup survives pin / unpin / archive moves.
-  /// Both fields are `nil` when the row isn't bucketed yet.
+  /// All fields are `nil` when the row isn't bucketed yet.
   private static func storedCustomization(
     for worktreeID: Worktree.ID,
     in repositoryID: Repository.ID,
     sidebar: SidebarState
-  ) -> (title: String?, color: RepositoryColor?) {
+  ) -> SidebarItemCustomization {
     guard let bucketID = sidebar.currentBucket(of: worktreeID, in: repositoryID),
       let storedItem = sidebar.sections[repositoryID]?.buckets[bucketID]?.items[worktreeID]
     else {
-      return (nil, nil)
+      return SidebarItemCustomization()
     }
-    return (storedItem.title, storedItem.color)
+    return SidebarItemCustomization(
+      title: storedItem.title,
+      subtitle: storedItem.subtitle,
+      color: storedItem.color
+    )
   }
+}
 
+/// Value-typed projection of a bucketed `SidebarState.Item`'s customization
+/// fields. Avoids a 3-tuple so `storedCustomization` stays under the `large_tuple`
+/// lint limit.
+private struct SidebarItemCustomization: Equatable {
+  let title: String?
+  let subtitle: String?
+  let color: RepositoryColor?
+
+  init(title: String? = nil, subtitle: String? = nil, color: RepositoryColor? = nil) {
+    self.title = title
+    self.subtitle = subtitle
+    self.color = color
+  }
+}
+
+extension RepositoriesFeature {
   /// Pair with `reconcileSidebarItems`; recomputes `state.sidebarGrouping`.
   static func rebuildSidebarGrouping(_ state: inout State) {
     var buckets: OrderedDictionary<Repository.ID, SidebarGrouping.BucketGrouping> = [:]

@@ -104,6 +104,7 @@ struct WorktreeCreationPromptParentTests {
               fetchOrigin: false,
               placement: WorktreePlacementOverride(name: nil, path: nil),
               title: nil,
+              subtitle: nil,
               color: nil,
             )
           )))
@@ -415,12 +416,13 @@ struct WorktreeCreationPromptParentTests {
               fetchOrigin: false,
               placement: WorktreePlacementOverride(name: nil, path: nil),
               title: "Fresh",
+              subtitle: "Fresh Sub",
               color: .red,
             )
           )))
     ) {
       $0.pendingCreationCustomizations[self.repoID] = [
-        "feature/x": .init(title: "Fresh", color: .red)
+        "feature/x": .init(title: "Fresh", subtitle: "Fresh Sub", color: .red)
       ]
     }
   }

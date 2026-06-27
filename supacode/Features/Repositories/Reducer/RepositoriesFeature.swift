@@ -98,8 +98,8 @@ struct RepositoriesFeature {
     var isInitialLoadComplete = false
     var pendingWorktrees: [PendingWorktree] = []
     /// In-flight customization payloads, keyed by `(repositoryID, branchName)`
-    /// so the New Worktree prompt's `submit` delegate can hand title / color
-    /// off without bloating four action signatures in the creation chain.
+    /// so the New Worktree prompt's `submit` delegate can hand title / subtitle /
+    /// color off without bloating four action signatures in the creation chain.
     /// Drained when the `PendingWorktree` materialises in `createWorktreeInRepository`,
     /// or on a prompt cancel / dismiss.
     var pendingCreationCustomizations: [Repository.ID: [String: PendingWorktree.Customization]] = [:]
@@ -1696,8 +1696,8 @@ struct RepositoriesFeature {
         let initialWorktreeName: String? = if case .explicit(let name) = nameSource { name } else { nil }
         // Pull any customization the New Worktree prompt parked for this
         // (repo, branch) and attach it to the pending row so reconcile
-        // can render the user-typed title / color while git creates the
-        // worktree. Drop the dict entry to avoid leaks if the same name
+        // can render the user-typed title / subtitle / color while git creates
+        // the worktree. Drop the dict entry to avoid leaks if the same name
         // is used in a later run.
         let pendingCustomization: PendingWorktree.Customization?
         if let initialWorktreeName {
@@ -3514,6 +3514,7 @@ struct RepositoriesFeature {
               let fetchOrigin,
               let placement,
               let title,
+              let subtitle,
               let color
             )
           )
@@ -3522,9 +3523,9 @@ struct RepositoriesFeature {
         // Overwrite (or clear) any stale entry for the same (repo, branch) so a user who typed a
         // title, hit a validation error, blanked the field, and re-submitted doesn't keep the
         // dropped value alive.
-        if title != nil || color != nil {
+        if title != nil || subtitle != nil || color != nil {
           state.pendingCreationCustomizations[repositoryID, default: [:]][branchName] =
-            PendingWorktree.Customization(title: title, color: color)
+            PendingWorktree.Customization(title: title, subtitle: subtitle, color: color)
         } else {
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
         }
@@ -3661,13 +3662,17 @@ struct RepositoriesFeature {
           state.setSingleWorktreeSelection(worktree.id, recordHistory: false)
         }
         state.insertWorktree(worktree, repositoryID: repositoryID)
-        if let carriedCustomization, carriedCustomization.title != nil || carriedCustomization.color != nil {
+        if let carriedCustomization,
+          carriedCustomization.title != nil || carriedCustomization.subtitle != nil
+            || carriedCustomization.color != nil
+        {
           // Seed customization into whatever bucket currently holds the row (falls back to
           // `.unpinned` for a brand-new worktree). The bucket probe avoids manufacturing a
           // phantom double-bucket entry against a persisted `.pinned` Item.
           state.$sidebar.withLock { sidebar in
             sidebar.mergeCustomization(
               title: carriedCustomization.title,
+              subtitle: carriedCustomization.subtitle,
               color: carriedCustomization.color,
               worktree: worktree.id,
               in: repositoryID
@@ -4295,7 +4300,7 @@ struct RepositoriesFeature {
       else { continue }
       remainingDiscoveredNamesByRepo[pending.repositoryID]?.remove(pendingName)
       if let customization = pending.customization,
-        customization.title != nil || customization.color != nil
+        customization.title != nil || customization.subtitle != nil || customization.color != nil
       {
         transfers.append(
           PendingCustomizationTransfer(
@@ -4340,6 +4345,7 @@ struct RepositoriesFeature {
         else { continue }
         sidebar.mergeCustomization(
           title: transfer.customization.title,
+          subtitle: transfer.customization.subtitle,
           color: transfer.customization.color,
           worktree: worktreeID,
           in: transfer.repositoryID

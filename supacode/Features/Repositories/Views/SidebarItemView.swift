@@ -47,6 +47,7 @@ struct SidebarItemView: View {
       hideSubtitleOnMatch: hideSubtitleOnMatch,
       highlightSubtitle: highlightSubtitle,
       customTitle: store.customTitle,
+      customSubtitle: store.customSubtitle,
       customTint: store.customTint
     )
 
@@ -111,17 +112,20 @@ struct ResolvedRowDisplay: Equatable {
     hideSubtitleOnMatch: Bool,
     highlightSubtitle: SidebarHighlightRepoTag? = nil,
     customTitle: String? = nil,
+    customSubtitle: String? = nil,
     customTint: RepositoryColor? = nil
   ) {
     self.accent =
       if isMainWorktree { .main } else if isPinned { .pinned } else { .default }
 
-    // User override (trimmed) takes precedence over derived names.
-    let resolvedCustom = SidebarDisplayName.resolved(custom: customTitle, fallback: nil)
-    let hasCustomTitle = resolvedCustom != nil
+    // User overrides (trimmed) take precedence over derived names.
+    let resolvedCustomTitle = SidebarDisplayName.resolved(custom: customTitle, fallback: nil)
+    let hasCustomTitle = resolvedCustomTitle != nil
+    let resolvedCustomSubtitle = SidebarDisplayName.resolved(custom: customSubtitle, fallback: nil)
+    let hasCustomSubtitle = resolvedCustomSubtitle != nil
 
     if kind == .folder {
-      self.name = resolvedCustom ?? branchName
+      self.name = resolvedCustomTitle ?? branchName
       // Folder rows ARE the repo; a remote folder's `wifi` glyph rides the title
       // line (via `TitleView`), so there's no subtitle.
       self.subtitle = .none
@@ -130,29 +134,32 @@ struct ResolvedRowDisplay: Equatable {
 
     let resolvedWorktreeName = worktreeName ?? "Default"
     let effectiveWorktreeName = resolvedWorktreeName.isEmpty ? branchName : resolvedWorktreeName
-    self.name = resolvedCustom ?? branchName
+    self.name = resolvedCustomTitle ?? branchName
 
     let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
     let isMatch = effectiveWorktreeName == branchLastComponent
-    // Once a user types a custom title, they've lost the visual cue that the auto-derived name was
-    // providing, so we always render the subtitle even when it would otherwise collapse on match.
-    let shouldHideOnMatch = hideSubtitleOnMatch && !hasCustomTitle && isMatch
+    // Once a user types a custom title or subtitle, they've lost the visual cue that the
+    // auto-derived name was providing, so we always render the subtitle even when it would
+    // otherwise collapse on match.
+    let shouldHideOnMatch = hideSubtitleOnMatch && !hasCustomTitle && !hasCustomSubtitle && isMatch
+
+    let resolvedTrail: String? = {
+      if hasCustomSubtitle {
+        return resolvedCustomSubtitle
+      } else if isMainWorktree {
+        return "Default"
+      } else if let worktreeName, !worktreeName.isEmpty {
+        return worktreeName
+      } else {
+        return nil
+      }
+    }()
 
     if let highlightSubtitle {
-      let trail: String?
-      if shouldHideOnMatch {
-        trail = nil
-      } else if isMainWorktree {
-        trail = "Default"
-      } else if let worktreeName, !worktreeName.isEmpty {
-        trail = worktreeName
-      } else {
-        trail = nil
-      }
       self.subtitle = .highlight(
         repo: highlightSubtitle.repoName,
         repoColor: highlightSubtitle.repoColor,
-        trail: trail,
+        trail: shouldHideOnMatch ? nil : resolvedTrail,
         hostInfo: highlightSubtitle.hostInfo
       )
       return
@@ -161,7 +168,7 @@ struct ResolvedRowDisplay: Equatable {
     if hideSubtitle || shouldHideOnMatch {
       self.subtitle = .none
     } else {
-      self.subtitle = .plain(effectiveWorktreeName)
+      self.subtitle = .plain(resolvedTrail ?? effectiveWorktreeName)
     }
   }
 }

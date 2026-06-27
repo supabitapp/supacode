@@ -10,6 +10,7 @@ struct WorktreeCustomizationFeature {
     let repositoryID: Repository.ID
     let defaultName: String
     var title: String
+    var subtitle: String
     var color: RepositoryColor?
   }
 
@@ -27,6 +28,7 @@ struct WorktreeCustomizationFeature {
       worktreeID: Worktree.ID,
       repositoryID: Repository.ID,
       title: String?,
+      subtitle: String?,
       color: RepositoryColor?,
     )
   }
@@ -42,16 +44,19 @@ struct WorktreeCustomizationFeature {
         return .send(.delegate(.cancel))
 
       case .saveButtonTapped:
-        let trimmed = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTitle = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
         // Preserve the user's input verbatim; typing the default name "locks in" the current name
         // as a real override rather than silently collapsing to nil.
-        let resolvedTitle = trimmed.isEmpty ? nil : trimmed
+        let resolvedTitle = trimmedTitle.isEmpty ? nil : trimmedTitle
+        let trimmedSubtitle = state.subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSubtitle = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
         return .send(
           .delegate(
             .save(
               worktreeID: state.worktreeID,
               repositoryID: state.repositoryID,
               title: resolvedTitle,
+              subtitle: resolvedSubtitle,
               color: state.color,
             )
           )
