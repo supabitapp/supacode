@@ -8,6 +8,15 @@ import SupacodeSettingsShared
 
 private let surfaceLogger = SupaLogger("Surface")
 
+// Hosts Ghostty's IOSurfaceLayer. Receives no input — every mouse/key/drag
+// event reaches GhosttySurfaceView (the parent container), which forwards to
+// Ghostty via the C API. This separation lets the container layer hold the OSC
+// 11 tint behind the IOSurface without fighting AppKit's event routing.
+private final class GhosttyRenderView: NSView {
+  override var isFlipped: Bool { false }
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 final class GhosttySurfaceView: NSView, Identifiable {
   private struct ScrollbarState {
     let total: UInt64
@@ -69,6 +78,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
   }
 
+  private let renderView = GhosttyRenderView(frame: .zero)
   private let runtime: GhosttyRuntime
   let id: UUID
   let bridge: GhosttySurfaceBridge
@@ -239,6 +249,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
     wantsLayer = true
+    renderView.wantsLayer = true
+    renderView.autoresizingMask = [.width, .height]
+    addSubview(renderView)
     bridge.surfaceView = self
     createSurface()
     setupBackgroundTintLayer()
@@ -439,7 +452,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     if let window {
       CATransaction.begin()
       CATransaction.setDisableActions(true)
-      layer?.contentsScale = window.backingScaleFactor
+      renderView.layer?.contentsScale = window.backingScaleFactor
       CATransaction.commit()
     }
     updateContentScale()
@@ -448,6 +461,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   override func layout() {
     super.layout()
+    renderView.frame = bounds
     notifySizeChanged()
   }
 
@@ -477,10 +491,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
     addCursorRect(bounds, cursor: currentCursor)
   }
 
-  // Dedicated sublayer that carries the OSC 11 background tint. Kept separate
-  // from the host layer so that setting backgroundColor here does not affect
-  // AppKit's event-routing for the view (setting it on the host layer breaks
-  // drag-and-drop by changing how AppKit composites the view hierarchy).
+  // Tint sublayer on the container (self). Ghostty's IOSurfaceLayer lives in
+  // renderView's layer tree and composites above the container via AppKit's
+  // view hierarchy, so the tint sits visually behind the terminal render without
+  // needing to be at sublayer index 0.
   private let backgroundTintLayer: CALayer = {
     let tintLayer = CALayer()
     tintLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
@@ -490,9 +504,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private func setupBackgroundTintLayer() {
     guard let layer else { return }
     backgroundTintLayer.frame = layer.bounds
-    // Insert at index 0 so the tint sits behind Ghostty's CAMetalLayer,
-    // which is added as a sublayer by ghostty_surface_new above.
-    layer.insertSublayer(backgroundTintLayer, at: 0)
+    layer.addSublayer(backgroundTintLayer)
   }
 
   private var lastAppliedWindowAppearance: WindowAppearanceState?
@@ -1071,7 +1083,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     config.platform_tag = GHOSTTY_PLATFORM_MACOS
     config.platform = ghostty_platform_u(
       macos: ghostty_platform_macos_s(
-        nsview: Unmanaged.passUnretained(self).toOpaque()
+        nsview: Unmanaged.passUnretained(renderView).toOpaque()
       ))
     config.scale_factor = backingScaleFactor()
     config.font_size = fontSize
