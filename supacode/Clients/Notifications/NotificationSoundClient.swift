@@ -1,27 +1,36 @@
 import AppKit
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 
-private let appNotificationSound: NSSound? = {
-  guard let url = Bundle.main.url(forResource: "notification", withExtension: "wav") else {
-    return nil
+/// Caches the resolved `NSSound` for each `NotificationSound` so repeated
+/// notifications don't reload the same file off disk. Main-actor isolated
+/// because `NSSound` playback is.
+@MainActor
+private enum NotificationSoundCache {
+  static var sounds: [NotificationSound: NSSound] = [:]
+
+  static func resolve(_ sound: NotificationSound) -> NSSound? {
+    if let cached = sounds[sound] { return cached }
+    guard let made = sound.makeInAppSound() else { return nil }
+    sounds[sound] = made
+    return made
   }
-  return NSSound(contentsOf: url, byReference: true)
-}()
+}
 
 struct NotificationSoundClient {
-  var play: @MainActor @Sendable () -> Void
+  var play: @MainActor @Sendable (_ sound: NotificationSound) -> Void
 }
 
 extension NotificationSoundClient: DependencyKey {
   static let liveValue = NotificationSoundClient(
-    play: {
-      _ = appNotificationSound?.play()
+    play: { sound in
+      _ = NotificationSoundCache.resolve(sound)?.play()
     }
   )
 
   static let testValue = NotificationSoundClient(
-    play: {}
+    play: { _ in }
   )
 }
 

@@ -34,6 +34,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var updatesAutomaticallyDownloadUpdates: Bool
   public var inAppNotificationsEnabled: Bool
   public var notificationSoundEnabled: Bool
+  public var notificationSound: NotificationSound
   public var systemNotificationsEnabled: Bool
   public var moveNotifiedWorktreeToTop: Bool
   public var analyticsEnabled: Bool
@@ -75,6 +76,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyDownloadUpdates: false,
     inAppNotificationsEnabled: true,
     notificationSoundEnabled: true,
+    notificationSound: .systemDefault,
     systemNotificationsEnabled: false,
     moveNotifiedWorktreeToTop: true,
     analyticsEnabled: true,
@@ -109,6 +111,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyDownloadUpdates: Bool,
     inAppNotificationsEnabled: Bool,
     notificationSoundEnabled: Bool,
+    notificationSound: NotificationSound = .systemDefault,
     systemNotificationsEnabled: Bool = false,
     moveNotifiedWorktreeToTop: Bool,
     analyticsEnabled: Bool,
@@ -141,6 +144,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.updatesAutomaticallyDownloadUpdates = updatesAutomaticallyDownloadUpdates
     self.inAppNotificationsEnabled = inAppNotificationsEnabled
     self.notificationSoundEnabled = notificationSoundEnabled
+    self.notificationSound = notificationSound
     self.systemNotificationsEnabled = systemNotificationsEnabled
     self.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
     self.analyticsEnabled = analyticsEnabled
@@ -195,6 +199,13 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     notificationSoundEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .notificationSoundEnabled)
       ?? Self.default.notificationSoundEnabled
+    // `try?` so a present-but-unrecognized raw value (a future build adds a
+    // case, then a downgrade or hand-edited file) falls back to the default
+    // instead of throwing and nuking every other persisted setting. Mirrors
+    // the `mergedWorktreeAction` precedent below.
+    notificationSound =
+      (try? container.decodeIfPresent(NotificationSound.self, forKey: .notificationSound))
+      ?? Self.default.notificationSound
     systemNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .systemNotificationsEnabled)
       ?? Self.default.systemNotificationsEnabled

@@ -120,7 +120,9 @@ struct AppFeatureSystemNotificationTests {
   @Test(.dependencies) func notificationReceivedSendsSystemNotificationWhenEnabled() async {
     var globalSettings = GlobalSettings.default
     globalSettings.systemNotificationsEnabled = true
+    globalSettings.notificationSound = .glass
     let sends = LockIsolated<[(String, String)]>([])
+    let soundsSent = LockIsolated<[NotificationSound]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         settings: SettingsFeature.State(settings: globalSettings)
@@ -128,8 +130,9 @@ struct AppFeatureSystemNotificationTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.systemNotificationClient.send = { title, body, _ in
+      $0.systemNotificationClient.send = { title, body, _, sound in
         sends.withValue { $0.append((title, body)) }
+        soundsSent.withValue { $0.append(sound) }
       }
       $0.terminalClient.tabID = { _, _ in nil }
     }
@@ -150,6 +153,8 @@ struct AppFeatureSystemNotificationTests {
     #expect(sends.value.count == 1)
     #expect(sends.value.first?.0 == "Done")
     #expect(sends.value.first?.1 == "Build succeeded")
+    // The chosen sound is threaded through to the system notification path.
+    #expect(soundsSent.value == [.glass])
   }
 
   @Test(.dependencies) func notificationReceivedSkipsLocalSoundWhenSystemNotificationsEnabled() async {
@@ -164,10 +169,10 @@ struct AppFeatureSystemNotificationTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.notificationSoundClient.play = {
+      $0.notificationSoundClient.play = { _ in
         plays.withValue { $0 += 1 }
       }
-      $0.systemNotificationClient.send = { _, _, _ in }
+      $0.systemNotificationClient.send = { _, _, _, _ in }
       $0.terminalClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
@@ -191,7 +196,8 @@ struct AppFeatureSystemNotificationTests {
     var globalSettings = GlobalSettings.default
     globalSettings.systemNotificationsEnabled = false
     globalSettings.notificationSoundEnabled = true
-    let plays = LockIsolated(0)
+    globalSettings.notificationSound = .funk
+    let plays = LockIsolated<[NotificationSound]>([])
     let sends = LockIsolated(0)
     let store = TestStore(
       initialState: AppFeature.State(
@@ -200,10 +206,10 @@ struct AppFeatureSystemNotificationTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.notificationSoundClient.play = {
-        plays.withValue { $0 += 1 }
+      $0.notificationSoundClient.play = { sound in
+        plays.withValue { $0.append(sound) }
       }
-      $0.systemNotificationClient.send = { _, _, _ in
+      $0.systemNotificationClient.send = { _, _, _, _ in
         sends.withValue { $0 += 1 }
       }
     }
@@ -221,7 +227,7 @@ struct AppFeatureSystemNotificationTests {
     )
     await store.finish()
 
-    #expect(plays.value == 1)
+    #expect(plays.value == [.funk])
     #expect(sends.value == 0)
   }
 }

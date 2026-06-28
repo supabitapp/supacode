@@ -170,6 +170,8 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.updatesAutomaticallyDownloadUpdates == true)
     #expect(settings.global.inAppNotificationsEnabled == true)
     #expect(settings.global.notificationSoundEnabled == true)
+    // Missing key decodes to the default via `decodeIfPresent ?? default`.
+    #expect(settings.global.notificationSound == .systemDefault)
     #expect(settings.global.systemNotificationsEnabled == false)
     #expect(settings.global.moveNotifiedWorktreeToTop == true)
     #expect(settings.global.analyticsEnabled == true)
@@ -263,6 +265,27 @@ struct SettingsFilePersistenceTests {
     }
 
     #expect(settings.global.confirmQuitMode == .auto)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitNotificationSound() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.notificationSound = .submarine }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    // An explicitly chosen sound must survive a save / reload round-trip.
+    #expect(reloaded.global.notificationSound == .submarine)
   }
 
   @Test(.dependencies) func roundTripsExplicitTerminalThemeSyncEnabled() throws {

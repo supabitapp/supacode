@@ -1019,16 +1019,18 @@ struct AppFeature {
         ]
         if state.settings.systemNotificationsEnabled {
           let deeplinkURL = surfaceDeeplinkURL(worktreeID: worktreeID, surfaceID: surfaceID)
+          let sound = state.settings.notificationSound
           effects.append(
             .run { _ in
-              await systemNotificationClient.send(title, body, deeplinkURL)
+              await systemNotificationClient.send(title, body, deeplinkURL, sound)
             }
           )
         }
         if state.settings.notificationSoundEnabled && !state.settings.systemNotificationsEnabled {
+          let sound = state.settings.notificationSound
           effects.append(
             .run { _ in
-              await notificationSoundClient.play()
+              await notificationSoundClient.play(sound)
             }
           )
         }

@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import SupacodeSettingsShared
 import SwiftUI
 
 public struct NotificationsSettingsView: View {
@@ -26,6 +27,21 @@ public struct NotificationsSettingsView: View {
               + " according to your settings."
           )
         }.disabled(store.systemNotificationsEnabled)
+        Picker(selection: $store.notificationSound) {
+          ForEach(NotificationSound.allCases) { sound in
+            Text(sound.displayName).tag(sound)
+          }
+        } label: {
+          Text("Notification sound")
+          Text(
+            "Applies to in-app notifications. macOS banners only support System Default and "
+              + "Supacode Chime; other sounds use the default."
+          )
+        }
+        .help(
+          "Sound for in-app notifications. macOS notification banners only support System Default and the "
+            + "bundled Supacode Chime; other system sounds fall back to the default banner sound."
+        )
       }
       Section("Worktrees") {
         Toggle(

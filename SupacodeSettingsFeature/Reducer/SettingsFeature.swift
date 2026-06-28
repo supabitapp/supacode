@@ -48,6 +48,7 @@ public struct SettingsFeature {
     public var updatesAutomaticallyDownloadUpdates: Bool
     public var inAppNotificationsEnabled: Bool
     public var notificationSoundEnabled: Bool
+    public var notificationSound: NotificationSound
     public var systemNotificationsEnabled: Bool
     public var moveNotifiedWorktreeToTop: Bool
     public var analyticsEnabled: Bool
@@ -90,6 +91,7 @@ public struct SettingsFeature {
       updatesAutomaticallyDownloadUpdates = settings.updatesAutomaticallyDownloadUpdates
       inAppNotificationsEnabled = settings.inAppNotificationsEnabled
       notificationSoundEnabled = settings.notificationSoundEnabled
+      notificationSound = settings.notificationSound
       systemNotificationsEnabled = settings.systemNotificationsEnabled
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
       analyticsEnabled = settings.analyticsEnabled
@@ -126,6 +128,7 @@ public struct SettingsFeature {
         updatesAutomaticallyDownloadUpdates: updatesAutomaticallyDownloadUpdates,
         inAppNotificationsEnabled: inAppNotificationsEnabled,
         notificationSoundEnabled: notificationSoundEnabled,
+        notificationSound: notificationSound,
         systemNotificationsEnabled: systemNotificationsEnabled,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
         analyticsEnabled: analyticsEnabled,
@@ -264,6 +267,7 @@ public struct SettingsFeature {
         state.updatesAutomaticallyDownloadUpdates = normalizedSettings.updatesAutomaticallyDownloadUpdates
         state.inAppNotificationsEnabled = normalizedSettings.inAppNotificationsEnabled
         state.notificationSoundEnabled = normalizedSettings.notificationSoundEnabled
+        state.notificationSound = normalizedSettings.notificationSound
         state.systemNotificationsEnabled = normalizedSettings.systemNotificationsEnabled
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
