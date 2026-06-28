@@ -845,6 +845,34 @@ struct RemotePathClassificationTests {
     #expect(loaded.failure?.message.contains("couldn't list worktrees") == true)
   }
 
+  @Test func duplicateWorktreePathsSurfacesFailureInsteadOfTrapping() async {
+    let config = resolveConfig()
+    let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
+    // A corrupt remote repo (e.g. a stale `core.worktree`) can list the same
+    // path twice; refuse it rather than trap `IdentifiedArray(uniqueElements:)`.
+    let listing = """
+      worktree /srv/repo
+      HEAD 1111111111111111111111111111111111111111
+      branch refs/heads/main
+
+      worktree /srv/repo/feature
+      HEAD 2222222222222222222222222222222222222222
+      branch refs/heads/feature
+
+      worktree /srv/repo/feature
+      HEAD 3333333333333333333333333333333333333333
+      branch refs/heads/other
+      """
+    let shell = routingShell(worktreeList: .success(listing), classifyStdout: "supacode-git")
+    let loaded = await RepositoriesFeature.loadRemoteRepository(config, repoID: repoID, shell: shell)
+    #expect(loaded.repository.worktrees.isEmpty)
+    // Pin the placeholder branch (a folder fallback is also empty-worktrees).
+    #expect(loaded.repository.host != nil)
+    #expect(loaded.failure?.message.contains("more than one worktree at the same path") == true)
+    // The surfaced path is the host-keyed worktree id, not the bare remote path.
+    #expect(loaded.failure?.message.contains("devbox/srv/repo") == true)
+  }
+
   @Test func emptyListingOnGitRepoFallsBackToSyntheticMain() async {
     let config = resolveConfig()
     let repoID = RepositoriesFeature.remoteRepositoryID(for: config)

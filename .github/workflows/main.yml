@@ -97,6 +97,8 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
+        with:
+          disable-tools: spm:swiftlang/swift-format
       - name: Prepare build overrides
         env:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
@@ -110,11 +112,14 @@ jobs:
           # Epoch build number: monotonic, computed once here so the single binary reused by tip and stable carries one version.
           BUILD_NUMBER=$(date +%s)
           mkdir -p build
+          # xcconfig treats // as a comment, which truncates URL values (https://… → https:).
+          # Break every // with $() (evaluates to empty) so the parser never sees a literal //.
+          xcconfig_escape() { printf '%s' "$1" | sed 's#//#/$()/#g'; }
           cat > build/ReleaseOverrides.xcconfig <<EOF
           CURRENT_PROJECT_VERSION = $BUILD_NUMBER
-          SENTRY_DSN = $SENTRY_DSN
-          POSTHOG_API_KEY = $POSTHOG_API_KEY
-          POSTHOG_HOST = $POSTHOG_HOST
+          SENTRY_DSN = $(xcconfig_escape "$SENTRY_DSN")
+          POSTHOG_API_KEY = $(xcconfig_escape "$POSTHOG_API_KEY")
+          POSTHOG_HOST = $(xcconfig_escape "$POSTHOG_HOST")
           EOF
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
           echo "XCODE_XCCONFIG_FILE=$PWD/build/ReleaseOverrides.xcconfig" >> "$GITHUB_ENV"
@@ -159,6 +164,28 @@ jobs:
           </plist>
           EOF
           make export-archive
+      - name: Verify embedded telemetry config
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/export -name "supacode.app" -maxdepth 3 -print -quit)"
+          PLIST="$APP_PATH/Contents/Info.plist"
+          assert_eq() {
+            local key="$1" expected="$2"
+            local actual
+            actual="$(/usr/libexec/PlistBuddy -c "Print :$key" "$PLIST")"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$key embedded as '$actual' but expected '$expected' (xcconfig // truncation?)"
+              exit 1
+            fi
+            echo "$key OK"
+          }
+          assert_eq SentryDSN "$SENTRY_DSN"
+          assert_eq PostHogAPIKey "$POSTHOG_API_KEY"
+          assert_eq PostHogHost "$POSTHOG_HOST"
       - name: Re-sign frameworks
         run: |
           set -ex
@@ -350,6 +377,9 @@ jobs:
       TAG: ${{ needs.detect.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/download-artifact@v7
         with:
           name: build-artifacts
@@ -365,6 +395,24 @@ jobs:
           else
             gh api "repos/$RELEASE_REPO/releases/generate-notes" -f tag_name="$TAG" --jq '.body' > build/release-notes.md
           fi
+          # Prepend the tag's headline ahead of "## What's Changed". Gate on an
+          # annotated tag, else a lightweight tag reads the commit subject.
+          HEADLINE=""
+          if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = tag ]; then
+            # Strip any signature defensively; these notes also feed the Sparkle appcast.
+            HEADLINE=$(git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG" | sed '/-----BEGIN .*SIGNATURE-----/,$d')
+          fi
+          # Prepend only a well-formed headline: a `## ` subject with a non-empty body.
+          SUBJECT=$(printf '%s\n' "$HEADLINE" | sed -n '1p')
+          BODY=$(printf '%s\n' "$HEADLINE" | sed '1,2d')
+          case "$SUBJECT" in
+            '## '*)
+              if [ -n "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+                { printf '%s\n\n' "$HEADLINE"; cat build/release-notes.md; } > build/release-notes.md.new
+                mv build/release-notes.md.new build/release-notes.md
+              fi
+              ;;
+          esac
       - name: Generate appcast with history and deltas
         run: |
           set -euo pipefail

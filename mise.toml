@@ -1,6 +1,11 @@
 [tools]
 tuist = "4.180.0"
 zig = "0.15.2"
-swiftlint = "latest"
+swiftlint = "0.64.0"
+xcbeautify = "3.2.1"
+# swift-format pinned so `make format` is reproducible across contributors'
+# Xcodes (the toolchain's built-in `swift format` drifts per Xcode). Tag tracks
+# the Swift toolchain: 602.x ↔ Swift 6.2.
+"spm:swiftlang/swift-format" = "602.0.0"
 "github:ldomaradzki/xcsift" = "latest"
 "npm:create-dmg" = "latest"

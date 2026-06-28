@@ -1,27 +1,27 @@
 name: Setup macOS build deps
 description: Install + cache mise tools and ThirdParty build outputs (Ghostty, zmx)
 
+inputs:
+  disable-tools:
+    description: Comma-separated mise tools to skip, so CI installs only what it needs.
+    default: spm:swiftlang/swift-format,npm:create-dmg
+
 runs:
   using: composite
   steps:
-    # The bundled zig (0.15.2) self-hosted linker can't link the macOS 26.4+ SDK
-    # (ziglang/zig#31272), which breaks `make build-ghostty-xcframework`. Pin to the
-    # newest installed Xcode <= 26.3, whose SDK zig can link.
-    - name: Select Xcode <= 26.3
+    # Job-wide so every later mise call (install, plus auto-install during the
+    # build steps under MISE_YES) skips the unneeded tools, not just this step.
+    - name: Limit mise to the tools CI needs
+      shell: bash
+      run: echo "MISE_DISABLE_TOOLS=${{ inputs.disable-tools }}" >> "$GITHUB_ENV"
+    # The bundled zig 0.15.2 linker can't link the macOS 26.4+ SDK (ziglang/zig#31658).
+    # Reuse the shared selector so CI and local agree on the Zig-linkable Xcode.
+    - name: Select a Zig-linkable Xcode
       shell: bash
       run: |
         set -euo pipefail
-        selected=""
-        for app in /Applications/Xcode_26.3*.app /Applications/Xcode_26.2*.app \
-          /Applications/Xcode_26.1*.app /Applications/Xcode_26.0*.app; do
-          if [ -d "$app" ]; then selected="$app"; break; fi
-        done
-        if [ -z "$selected" ]; then
-          echo "No Xcode <= 26.3 found on runner; available:" >&2
-          ls -d /Applications/Xcode_*.app >&2 || true
-          exit 1
-        fi
-        sudo xcode-select -s "$selected/Contents/Developer"
+        developer_dir="$(./scripts/select-developer-dir.sh)"
+        sudo xcode-select -s "$developer_dir"
         xcodebuild -version
     - uses: jdx/mise-action@v4
       with:

@@ -10,9 +10,11 @@ struct OpenWorktreeActionTests {
 
     #expect(settingsIDs.contains("android-studio"))
     #expect(settingsIDs.contains("antigravity"))
+    #expect(settingsIDs.contains("goland"))
     #expect(settingsIDs.contains("intellij"))
     #expect(settingsIDs.contains("rubymine"))
     #expect(settingsIDs.contains("rustrover"))
+    #expect(settingsIDs.contains("nova"))
     #expect(settingsIDs.contains("vscode-insiders"))
     #expect(settingsIDs.contains("warp"))
     #expect(settingsIDs.contains("webstorm"))
@@ -21,7 +23,9 @@ struct OpenWorktreeActionTests {
 
   @Test func jetBrainsIDEsHaveCorrectBundleIdentifiers() {
     #expect(OpenWorktreeAction.androidStudio.bundleIdentifier == "com.google.android.studio")
+    #expect(OpenWorktreeAction.goland.bundleIdentifier == "com.jetbrains.goland")
     #expect(OpenWorktreeAction.intellij.bundleIdentifier == "com.jetbrains.intellij")
+    #expect(OpenWorktreeAction.intellijEAP.bundleIdentifier == "com.jetbrains.intellij-EAP")
     #expect(OpenWorktreeAction.webstorm.bundleIdentifier == "com.jetbrains.WebStorm")
     #expect(OpenWorktreeAction.pycharm.bundleIdentifier == "com.jetbrains.pycharm")
     #expect(OpenWorktreeAction.rubymine.bundleIdentifier == "com.jetbrains.rubymine")
@@ -31,11 +35,21 @@ struct OpenWorktreeActionTests {
   @Test func jetBrainsIDEsAreInEditorPriority() {
     let editors = OpenWorktreeAction.editorPriority
     #expect(editors.contains(.androidStudio))
+    #expect(editors.contains(.goland))
     #expect(editors.contains(.intellij))
     #expect(editors.contains(.webstorm))
     #expect(editors.contains(.pycharm))
     #expect(editors.contains(.rubymine))
     #expect(editors.contains(.rustrover))
+  }
+
+  @Test func novaIsConfiguredAsEditor() {
+    #expect(OpenWorktreeAction.nova.title == "Nova")
+    #expect(OpenWorktreeAction.nova.settingsID == "nova")
+    #expect(OpenWorktreeAction.nova.bundleIdentifier == "com.panic.Nova")
+    #expect(OpenWorktreeAction.nova.openTargets == [.default])
+    #expect(OpenWorktreeAction.nova.openBehaviors == [.default])
+    #expect(OpenWorktreeAction.editorPriority.contains(.nova))
   }
 
   @Test func xcodeOpenTargetsSearchWorkspaceThenProjectThenWorkingDirectory() {
@@ -83,6 +97,7 @@ struct OpenWorktreeActionTests {
   @Test func jetBrainsIDEsUseConfiguredWorkspaceOpenBehavior() {
     for action in [
       OpenWorktreeAction.androidStudio,
+      .goland,
       .intellij,
       .webstorm,
       .pycharm,

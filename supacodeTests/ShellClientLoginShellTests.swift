@@ -57,4 +57,24 @@ struct ShellClientLoginShellTests {
       #expect(command.contains("exec \"${__supacode_login_argv[@]}\""))
     }
   }
+
+  /// Regression for #477: after capturing the positional parameters, the zsh/bash snippet must clear
+  /// them (`set --`) BEFORE sourcing the rc file. The positionals otherwise leak into the rc, so a
+  /// dual-mode script dispatching on `$1` (e.g. `fzf-git.sh`) sees the probe's `/usr/bin/which gh`,
+  /// hits its own `exit`, and kills the probe shell before `gh` is ever resolved.
+  @Test func zshAndBashClearPositionalsBeforeSourcingRc() {
+    for path in ["/bin/zsh", "/bin/bash"] {
+      let command = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: path)).command
+      guard let captureRange = command.range(of: "__supacode_login_argv=(\"$@\")"),
+        let clearRange = command.range(of: "set --"),
+        let sourceRange = command.range(of: "~/.")
+      else {
+        Issue.record("\(path) snippet missing capture, clear, or source: \(command)")
+        continue
+      }
+      #expect(captureRange.lowerBound < clearRange.lowerBound)
+      #expect(clearRange.lowerBound < sourceRange.lowerBound)
+      #expect(command.contains("exec \"${__supacode_login_argv[@]}\""))
+    }
+  }
 }

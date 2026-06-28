@@ -156,11 +156,21 @@ extension RepositoriesFeature {
     do {
       let loaded = try await client.gitWorktrees(for: rootURL)
       if !loaded.isEmpty {
+        let worktrees = loaded.map { remoteWorktree(from: $0, host: host) }
+        // A duplicate path signals a corrupt repo; keep the placeholder and
+        // surface a failure instead of trapping `IdentifiedArray(uniqueElements:)`.
+        if let duplicate = firstDuplicateWorktreeID(in: worktrees) {
+          let failure = LoadFailure(
+            rootID: repoID,
+            message: duplicateWorktreePathMessage(path: duplicate.rawValue)
+          )
+          return (remotePlaceholderRepository(host: host, remotePath: remotePath, repoID: repoID), failure)
+        }
         let repository = Repository(
           id: repoID,
           rootURL: rootURL,
           name: remoteRepositoryName(host: host, remotePath: remotePath),
-          worktrees: IdentifiedArray(uniqueElements: loaded.map { remoteWorktree(from: $0, host: host) }),
+          worktrees: IdentifiedArray(uniqueElements: worktrees),
           isGitRepository: true,
           host: host
         )

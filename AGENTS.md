@@ -1,6 +1,7 @@
 ## Build Commands
 
 ```bash
+make doctor                      # Diagnose build prerequisites (run this first on a new machine)
 make build-ghostty-xcframework  # Rebuild GhosttyKit from Zig source (requires mise)
 make build-app                   # Build macOS app (Debug) via xcodebuild
 make run-app                     # Build and launch Debug app
@@ -21,7 +22,23 @@ xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platf
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation
 ```
 
-Requires [mise](https://mise.jdx.dev/) for zig, swiftlint, and xcsift tooling.
+Requires [mise](https://mise.jdx.dev/) for zig, swiftlint, swift-format, xcbeautify, and xcsift tooling. Run `mise install` once to fetch the pinned versions.
+
+## Building on macOS 26.4+ (Tahoe)
+
+On macOS 26.4+ the GhosttyKit build fails to link with a wall of `undefined symbol: _malloc, _free, _sigaction, …` in `build_zcu.o`. **The fix is to build against Xcode 26.3, not the toolchain version.**
+
+**Run `make doctor` first** — it verifies every prerequisite below (mise on PATH, submodules, a Zig-linkable Xcode, license/first-launch, Metal Toolchain, pinned mise tools) and prints the exact command to fix each failure. The build targets also run it automatically as a quiet preflight (skipped on CI, or set `SUPACODE_SKIP_PREFLIGHT=1` to skip it locally). First-time setup, in order:
+
+1. **mise on PATH.** `make` targets call `mise exec`, but mise installs at `~/.local/bin/mise`, which non-login shells don't pick up. Activate it: `echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc` (or add `~/.local/bin` to `PATH`), then `mise install`.
+2. **Submodules.** `git submodule update --init --recursive` (ghostty, zmx, git-wt).
+3. **Xcode 26.3.** The pinned Zig (`0.15.2`, required exactly by ghostty's `build.zig` `requireZig`, and it uses 0.15.2-only stdlib APIs, so bumping Zig is not an option) cannot link the macOS 26.4+ SDK: that SDK's `usr/lib/libSystem.tbd` dropped the plain `arm64-macos` target (keeping only `arm64e-macos`), and Zig 0.15.2's linker won't match — [ziglang/zig#31658](https://github.com/ziglang/zig/issues/31658), fixed only in Zig 0.16+. Install [Xcode 26.3](https://developer.apple.com/download/all/?q=Xcode%2026.3), which ships the macOS 26.2 SDK whose `.tbd` still has `arm64-macos`. **You do not need to `sudo xcode-select -s` it globally** — keep your newer Xcode as the default for other projects. The build auto-detects a Zig-linkable Xcode via `scripts/select-developer-dir.sh` and pins `DEVELOPER_DIR` for just that build (override with `DEVELOPER_DIR=… make build-app` if you want a specific one).
+4. **License + first launch.** A freshly installed Xcode 26.3 must complete these before `DEVELOPER_DIR` works (we observed `DEVELOPER_DIR` alone is insufficient until then): `sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -license accept` and `… -runFirstLaunch`.
+5. **Metal Toolchain.** A fresh Xcode 26.3 ships it uninstalled, and ghostty compiles Metal shaders → `cannot execute tool 'metal' due to missing Metal Toolchain`. Install it into that Xcode (target it explicitly so it lands in 26.3, not whatever is globally selected): `sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -downloadComponent MetalToolchain`.
+
+**Verification quirk:** check the SDK *version*, not just the `arm64-macos` slice. macOS 26.4+ SDKs still list `arm64-macos` in `libSystem.tbd` yet Zig 0.15.2 cannot link them, so grepping that string gives false positives (it accepts Xcode 26.5). `scripts/select-developer-dir.sh` gates on `xcrun --sdk macosx --show-sdk-version` being `<= 26.3` instead. Use the `--sdk macosx` form, not bare `xcrun --show-sdk-version`, which can resolve to the CommandLineTools SDK and mislead you.
+
+**Why no `patches/` entry:** the link failure is in Zig's own self-hosted linker (`build_zcu.o`, the build runner itself), not in ghostty source, so the `patches/*.patch` mechanism — which only patches the ghostty submodule working tree — cannot fix it; and ghostty pins Zig to exactly 0.15.2, so bumping Zig is out. The older-SDK + auto-`DEVELOPER_DIR` approach is the long-term fix until ghostty supports Zig 0.16+.
 
 ## Architecture
 
@@ -112,6 +129,7 @@ Reducer ← .repositories(.worktreeInfoEvent(Event)) ← AsyncStream<Event>
 ### Formatting & Linting
 
 - 2-space indentation, 120 character line length (enforced by `.swift-format.json`)
+- `make format` runs the mise-pinned `swift-format` (`spm:swiftlang/swift-format` in `mise.toml`), NOT the Xcode toolchain's built-in `swift format`. The pin keeps formatting reproducible across contributors' Xcodes — an unpinned toolchain formatter rewrites the whole tree (e.g. Swift call-site trailing commas) and produces spurious churn. Bump the pin in lockstep with the Swift toolchain (tag `60X.x` ↔ Swift 6.X).
 - Trailing commas are mandatory (enforced by `.swiftlint.yml`)
 - SwiftLint runs in strict mode; never disable lint rules without permission
 - Custom SwiftLint rule: `store_state_mutation_in_views` — do not mutate `store.*` directly in view files; send actions instead
