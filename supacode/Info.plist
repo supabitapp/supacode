@@ -7,15 +7,15 @@
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
+	<string>$(ASSETCATALOG_COMPILER_APPICON_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleDisplayName</key>
-	<string>Supacode</string>
+	<string>$(SUPACODE_DISPLAY_NAME:default=Supacode)</string>
 	<key>CFBundleName</key>
-	<string>Supacode</string>
+	<string>$(SUPACODE_DISPLAY_NAME:default=Supacode)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -78,7 +78,7 @@
 			<string>sh.supacode.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>supacode</string>
+				<string>$(SUPACODE_URL_SCHEME:default=supacode)</string>
 			</array>
 		</dict>
 	</array>

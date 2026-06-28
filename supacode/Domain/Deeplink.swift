@@ -1,7 +1,19 @@
 import Foundation
+import SupacodeSettingsShared
 
 /// A parsed deeplink action from a `supacode://` URL.
 enum Deeplink: Equatable, Sendable {
+  /// Schemes this build accepts. The dev build also registers `supacode-dev://`
+  /// (Info.plist) so typed deeplinks route deterministically to it; both builds
+  /// still accept `supacode://` so the embedded CLI works over the socket.
+  nonisolated static let acceptedSchemes: Set<String> = ["supacode", "supacode-dev"]
+
+  /// Canonical scheme this build emits when constructing its own deeplinks —
+  /// `supacode-dev://` for the isolated dev build, `supacode://` otherwise.
+  nonisolated static var scheme: String {
+    SupacodePaths.isDevelopmentBuild ? "supacode-dev" : "supacode"
+  }
+
   case open
   case help
   case worktree(id: Worktree.ID, action: WorktreeAction)

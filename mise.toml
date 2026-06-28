@@ -9,3 +9,5 @@ xcbeautify = "3.2.1"
 "spm:swiftlang/swift-format" = "602.0.0"
 "github:ldomaradzki/xcsift" = "latest"
 "npm:create-dmg" = "latest"
+# `make dev` source watcher (restart-on-change).
+watchexec = "latest"

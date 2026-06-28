@@ -11,6 +11,7 @@ CURRENT_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 CURRENT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(CURRENT_MAKEFILE_PATH)))
 PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/supacode.xcworkspace
 APP_SCHEME := supacode
+APP_DEV_SCHEME := supacode-dev
 PROJECT_CONFIG_PATH := Configurations/Project.xcconfig
 TUIST_GENERATION_STAMP_DIR := $(CURRENT_MAKEFILE_DIR)/.build/.tuist-generated-stamps
 TUIST_INSTALL_STAMP := $(TUIST_GENERATION_STAMP_DIR)/.installed
@@ -42,7 +43,7 @@ TEST_SCHEME := supacode-tests
 SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; export DEVELOPER_DIR
 
 .DEFAULT_GOAL := help
-.PHONY: doctor preflight build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
+.PHONY: doctor preflight build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app build-app-dev run-app run-app-dev dev install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream log-stream-dev
 
 ifdef CI
 TUIST_INSTALL_FLAGS := --force-resolved-versions
@@ -121,6 +122,24 @@ run-app: build-app # Build then launch (Debug) with log streaming
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
 	"$$build_dir/$$product/Contents/MacOS/$$exec_name"
 
+build-app-dev: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the isolated dev app (Debug)
+	$(SELECT_DEVELOPER_DIR); \
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_DEV_SCHEME)" -configuration Debug build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
+
+run-app-dev: build-app-dev # Build then launch the isolated dev app
+	@$(SELECT_DEVELOPER_DIR); \
+	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_DEV_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
+	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
+	pkill -f "$$product/Contents/MacOS/" 2>/dev/null || true; \
+	open "$$build_dir/$$product"
+
+dev: # Watch sources; rebuild + relaunch the dev app on change
+	mise exec -- watchexec --restart \
+		--watch supacode --watch supacode-cli --watch SupacodeSettingsShared --watch SupacodeSettingsFeature \
+		--exts swift,plist,json,svg,xcconfig \
+		-- $(MAKE) run-app-dev
+
 install-dev-build: build-app # install dev build to /Applications
 	@$(SELECT_DEVELOPER_DIR); \
 	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
@@ -164,6 +183,9 @@ check: format lint # Format and lint
 
 log-stream: # Stream logs from the app via log stream
 	log stream --predicate 'subsystem == "app.supabit.supacode"' --style compact --color always
+
+log-stream-dev: # Stream logs from the dev app via log stream
+	log stream --predicate 'subsystem == "app.supabit.supacode.dev"' --style compact --color always
 
 bump-version: # Bump app version (usage: make bump-version VERSION=x.y.z [BUILD=123] [TITLE=… BODY=…])
 	@./scripts/bump-version.sh

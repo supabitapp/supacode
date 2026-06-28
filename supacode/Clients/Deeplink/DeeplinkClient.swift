@@ -24,7 +24,7 @@ private nonisolated enum DeeplinkParser {
   private static let logger = SupaLogger("Deeplink")
 
   static func parse(_ url: URL) -> Deeplink? {
-    guard url.scheme == "supacode" else {
+    guard let scheme = url.scheme, Deeplink.acceptedSchemes.contains(scheme) else {
       logger.debug("Ignoring non-supacode URL: \(url.scheme ?? "nil")")
       return nil
     }

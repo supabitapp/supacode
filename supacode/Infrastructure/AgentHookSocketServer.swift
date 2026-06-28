@@ -428,7 +428,8 @@ final class AgentHookSocketServer {
     case .query(let resource, let params):
       return .query(resource: resource, params: params, clientFD: -1)
     case .command(let deeplink, _):
-      guard let url = URL(string: deeplink), url.scheme == "supacode" else {
+      guard let url = URL(string: deeplink), let scheme = url.scheme, Deeplink.acceptedSchemes.contains(scheme)
+      else {
         socketLogger.warning("Invalid CLI deeplink URL: \(deeplink)")
         return nil
       }

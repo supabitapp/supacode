@@ -123,6 +123,26 @@ make test    # run the tests
 make format  # swift-format only
 ```
 
+### Isolated dev build
+
+`make run-app-dev` builds and launches **Supacode Dev** — a fully independent
+copy with its own bundle id (`app.supabit.supacode.dev`), name, blueprint icon,
+and `supacode-dev://` URL scheme. It keeps its state in `~/.supacode-dev`
+(separate settings, sidebar, layouts, and worktree clones) and never
+auto-updates, so you can test freely without touching your real install.
+
+```bash
+make build-app-dev  # Build the dev app (no launch)
+make run-app-dev    # Build + launch the isolated dev app
+make dev            # Watch sources; rebuild + relaunch the dev app on change (needs watchexec)
+make log-stream-dev # Stream the dev app's logs
+```
+
+`Supacode Dev.app` is a dedicated Xcode target, so it coexists with the prod
+build instead of overwriting it. It shares the same source, and switches to dev
+behaviour at runtime by detecting its `.dev` bundle id. See [AGENTS.md](AGENTS.md)
+for the rationale (why a separate target rather than a build configuration).
+
 ## Technical stack
 
 - [The Composable Architecture](https://github.com/pointfreeco/swift-composable-architecture)

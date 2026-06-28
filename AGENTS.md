@@ -6,6 +6,16 @@ make # this show available commands
 
 Requires [mise](https://mise.jdx.dev/) for zig, swiftlint, swift-format, xcbeautify, and xcsift tooling. Run `mise install` once to fetch the pinned versions.
 
+## Isolated dev build (`make run-app-dev`)
+
+`make run-app-dev` builds and launches **Supacode Dev** — an independent copy (bundle id `app.supabit.supacode.dev`, name/icon "Supacode Dev", `supacode-dev://` scheme) that stores all state under `~/.supacode-dev` and never auto-updates, so you can test without touching a real install. `make build-app-dev` builds without launching; `make dev` watches sources and rebuilds + relaunches on change; `make log-stream-dev` tails its logs.
+
+- **Dedicated Xcode target (`supacode-dev`) on the standard `Debug` configuration — not a build configuration, not command-line overrides.** A custom configuration breaks the `supacode-cli` target (Tuist generates the external SPM projects with only `Debug`/`Release`, so the statically-linked CLI can't resolve package `.swiftmodule`s under a third configuration), and a command-line `PRODUCT_NAME` override applies to every target and collides the shared frameworks on output paths. Both app targets come from the `supacodeAppTarget(name:bundleId:extraBaseSettings:)` factory in `Project.swift`; `Info.plist` reads display name, icon, and URL scheme via `$(VAR:default=…)` so the prod target is unchanged. Frameworks, GhosttyKit, and the CLI are shared targets built once.
+- **Runtime dev-detection, no compile flag.** `SupacodePaths.isDevelopmentBuild` (bundle id ends in `.dev`) gates the data directory (`~/.supacode-dev`), the disabled Sparkle updater, the emitted deeplink scheme (`Deeplink.scheme`), and the CLI socket directory (`/tmp/supacode-dev-<uid>` vs `/tmp/supacode-<uid>`). `Bundle.main` resolves to the host app even from shared frameworks, so no per-target `SWIFT_ACTIVE_COMPILATION_CONDITIONS` is needed.
+- **CLI isolation.** The `supacode` CLI binary is shared between the targets, so it derives dev-ness at runtime from its own executable path (is it inside a `.dev` bundle?): each build's embedded CLI resolves only its own socket directory, and the cold-launch fallback (`Dispatcher.launchApp`) opens the app bundle the CLI is embedded in, so the dev CLI cold-launches the dev app. Inside a Supacode terminal, `SUPACODE_SOCKET_PATH` pins routing regardless.
+- **Dual-scheme acceptance.** The dev app registers `supacode-dev://` for OS routing but `Deeplink.acceptedSchemes` accepts both, so the CLI's `supacode://` payloads work against either build.
+- **The dev icon is a pre-rendered `.appiconset`** (`AppIconDev`), the prod icon's pixels recolored to a blueprint-blue grid — Icon Composer's glass material renders the SC glyph grey over a bright field, so PNGs are used instead; regenerate by recoloring the prod PNGs if the icon changes.
+
 ## Architecture
 
 Supacode is a macOS terminal emulator that for running multiple coding agents in parallel in Git worktrees, using GhosttyKit as the underlying terminal.

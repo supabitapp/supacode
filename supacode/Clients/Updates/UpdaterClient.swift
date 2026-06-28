@@ -26,6 +26,11 @@ class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
 
 extension UpdaterClient: DependencyKey {
   static let liveValue: UpdaterClient = {
+    // Dev build is isolated for testing: never start Sparkle so it can't replace
+    // itself with the public release.
+    if SupacodePaths.isDevelopmentBuild {
+      return testValue
+    }
     let delegate = SparkleUpdateDelegate()
     let controller = SPUStandardUpdaterController(
       startingUpdater: true,

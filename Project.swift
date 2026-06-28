@@ -158,6 +158,80 @@ let embedRuntimeAssetsOutputPaths: [Path] = [
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/supacode",
 ]
 
+let appScripts: [TargetScript] = [
+  .pre(
+    script: shellScript(verifyGitWtScriptPath),
+    name: "Verify git-wt",
+    basedOnDependencyAnalysis: false
+  ),
+  .pre(
+    script: shellScript(zmxBuildScriptPath),
+    name: "Build zmx",
+    basedOnDependencyAnalysis: false
+  ),
+  .post(
+    script: shellScript(embedGhosttyResourcesScriptPath),
+    name: "Embed Ghostty Resources",
+    inputPaths: embedGhosttyResourcesInputPaths,
+    outputPaths: embedGhosttyResourcesOutputPaths,
+    basedOnDependencyAnalysis: false
+  ),
+  .post(
+    script: shellScript(embedRuntimeAssetsScriptPath),
+    name: "Embed Runtime Assets",
+    inputPaths: embedRuntimeAssetsInputPaths,
+    outputPaths: embedRuntimeAssetsOutputPaths,
+    basedOnDependencyAnalysis: false
+  ),
+]
+
+// The Supacode app target. `supacode-dev` is a second target (NOT a build
+// configuration) so it produces its own `Supacode Dev.app` that coexists with
+// the prod `supacode.app` instead of overwriting it: a non-standard Xcode
+// configuration breaks SPM module resolution for the `supacode-cli` target, and
+// a command-line `PRODUCT_NAME` override renames the shared dependency
+// frameworks too (output-file collisions). Frameworks/CLI are separate targets,
+// built once and shared, so only the app sources compile per variant.
+// `extraBaseSettings` carries the dev-only icon / PRODUCT_NAME / display name /
+// URL scheme; everything else (data dir, deeplink scheme, Sparkle) is decided at
+// runtime from the `.dev` bundle id via `SupacodePaths.isDevelopmentBuild`.
+func supacodeAppTarget(
+  name: String,
+  bundleId: String,
+  extraBaseSettings: SettingsDictionary
+) -> Target {
+  var base: SettingsDictionary = [
+    "ENABLE_HARDENED_RUNTIME": "YES",
+    "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/../Frameworks",
+    "OTHER_LDFLAGS": "$(inherited) -lc++",
+  ]
+  for (key, value) in extraBaseSettings {
+    base[key] = value
+  }
+  return .target(
+    name: name,
+    destinations: .macOS,
+    product: .app,
+    bundleId: bundleId,
+    deploymentTargets: .macOS("26.0"),
+    infoPlist: .file(path: "supacode/Info.plist"),
+    resources: appResources,
+    buildableFolders: appBuildableFolders,
+    scripts: appScripts,
+    dependencies: appDependencies,
+    settings: .settings(
+      base: base,
+      debug: [
+        "CODE_SIGN_ENTITLEMENTS": "supacode/supacodeDebug.entitlements",
+      ],
+      release: [
+        "CODE_SIGN_ENTITLEMENTS": "supacode/supacode.entitlements",
+      ],
+      defaultSettings: .essential
+    )
+  )
+}
+
 let project = Project(
   name: "supacode",
   settings: .settings(
@@ -261,57 +335,20 @@ let project = Project(
         defaultSettings: .essential
       )
     ),
-    .target(
+    supacodeAppTarget(
       name: "supacode",
-      destinations: .macOS,
-      product: .app,
       bundleId: "app.supabit.supacode",
-      deploymentTargets: .macOS("26.0"),
-      infoPlist: .file(path: "supacode/Info.plist"),
-      resources: appResources,
-      buildableFolders: appBuildableFolders,
-      scripts: [
-        .pre(
-          script: shellScript(verifyGitWtScriptPath),
-          name: "Verify git-wt",
-          basedOnDependencyAnalysis: false
-        ),
-        .pre(
-          script: shellScript(zmxBuildScriptPath),
-          name: "Build zmx",
-          basedOnDependencyAnalysis: false
-        ),
-        .post(
-          script: shellScript(embedGhosttyResourcesScriptPath),
-          name: "Embed Ghostty Resources",
-          inputPaths: embedGhosttyResourcesInputPaths,
-          outputPaths: embedGhosttyResourcesOutputPaths,
-          basedOnDependencyAnalysis: false
-        ),
-        .post(
-          script: shellScript(embedRuntimeAssetsScriptPath),
-          name: "Embed Runtime Assets",
-          inputPaths: embedRuntimeAssetsInputPaths,
-          outputPaths: embedRuntimeAssetsOutputPaths,
-          basedOnDependencyAnalysis: false
-        ),
-      ],
-      dependencies: appDependencies,
-      settings: .settings(
-        base: [
-          "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
-          "ENABLE_HARDENED_RUNTIME": "YES",
-          "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/../Frameworks",
-          "OTHER_LDFLAGS": "$(inherited) -lc++",
-        ],
-        debug: [
-          "CODE_SIGN_ENTITLEMENTS": "supacode/supacodeDebug.entitlements",
-        ],
-        release: [
-          "CODE_SIGN_ENTITLEMENTS": "supacode/supacode.entitlements",
-        ],
-        defaultSettings: .essential
-      )
+      extraBaseSettings: ["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"]
+    ),
+    supacodeAppTarget(
+      name: "supacode-dev",
+      bundleId: "app.supabit.supacode.dev",
+      extraBaseSettings: [
+        "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIconDev",
+        "PRODUCT_NAME": "Supacode Dev",
+        "SUPACODE_DISPLAY_NAME": "Supacode Dev",
+        "SUPACODE_URL_SCHEME": "supacode-dev",
+      ]
     ),
     testBundle(
       name: "supacodeTests",

@@ -1,9 +1,19 @@
 import Foundation
 
 public nonisolated enum SupacodePaths {
+  /// True for the isolated dev build, detected at runtime from the bundle id
+  /// (`make run-app-dev` sets `…supacode.dev`). Keeps all state, the URL scheme,
+  /// and Sparkle separate without a compile-time flag — a dedicated build flag
+  /// would force a non-standard Xcode configuration, which breaks SPM module
+  /// resolution for the CLI target.
+  public static var isDevelopmentBuild: Bool {
+    Bundle.main.bundleIdentifier?.hasSuffix(".dev") ?? false
+  }
+
   public static var baseDirectory: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appending(path: ".supacode", directoryHint: .isDirectory)
+    let directoryName = isDevelopmentBuild ? ".supacode-dev" : ".supacode"
+    return FileManager.default.homeDirectoryForCurrentUser
+      .appending(path: directoryName, directoryHint: .isDirectory)
   }
 
   public static var reposDirectory: URL {
