@@ -8,10 +8,35 @@ nonisolated enum PiExtensionContent {
   /// Marker comment used to identify Supacode-managed extensions.
   static let ownershipMarker = "/* supacode-managed-extension */"
 
-  static let indexTs = """
+  /// Rendered extension for `agent` (pi or omp). Pi renders byte-identically to
+  /// the pre-parameterization content so existing installs stay `.installed`.
+  static func indexTs(for agent: SkillAgent) -> String {
+    template
+      .replacing(agentIDToken, with: agent.rawValue)
+      .replacing(displayNameToken, with: agent.displayName)
+      .replacing(importPackageToken, with: importPackage(for: agent))
+  }
+
+  /// The pi-fork npm package whose `ExtensionAPI` type the extension imports.
+  /// Type-only import (erased at runtime), so an unresolved package never breaks
+  /// the running extension.
+  static func importPackage(for agent: SkillAgent) -> String {
+    switch agent {
+    case .omp: "@oh-my-pi/pi-coding-agent"
+    default: "@mariozechner/pi-coding-agent"
+    }
+  }
+
+  /// Per-agent substitution tokens, replaced in `template` by `indexTs(for:)`.
+  /// Distinct from any literal text in the extension body so substitution is exact.
+  private static let agentIDToken = "__SUPACODE_AGENT_ID__"
+  private static let displayNameToken = "__SUPACODE_DISPLAY_NAME__"
+  private static let importPackageToken = "__SUPACODE_IMPORT_PACKAGE__"
+
+  private static let template = """
     \(ownershipMarker)
     /**
-     * Supacode + Pi integration extension.
+     * Supacode + \(displayNameToken) integration extension.
      *
      * Reports agent lifecycle and notifications to Supacode by emitting OSC 3008
      * escape sequences to the controlling terminal. The sequences are inert in any
@@ -32,7 +57,7 @@ nonisolated enum PiExtensionContent {
      *   Pi session_shutdown -> session_end + idle (defensive activity reset)
      */
 
-    import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+    import type { ExtensionAPI } from "\(importPackageToken)";
     import { openSync, writeSync, closeSync } from "node:fs";
 
     interface NotifyContent {
@@ -40,7 +65,7 @@ nonisolated enum PiExtensionContent {
       body?: string;
     }
 
-    const AGENT = "pi";
+    const AGENT = "\(agentIDToken)";
 
     let lastWarnedAt = 0;
     const WARN_INTERVAL_MS = 60_000;

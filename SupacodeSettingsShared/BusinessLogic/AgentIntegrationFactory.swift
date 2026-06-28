@@ -15,6 +15,7 @@ nonisolated enum AgentIntegrationFactory {
     case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .omp: omp(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .opencode: opencode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     }
   }
@@ -89,6 +90,31 @@ nonisolated enum AgentIntegrationFactory {
           uninstall: { try installer.uninstall() }
         ),
         skillComponent(agent: .pi, installer: skill),
+      ]
+    )
+  }
+
+  private static func omp(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = PiSettingsInstaller(
+      agent: .omp,
+      homeDirectoryURL: homeDirectoryURL,
+      fileManager: fileManager,
+      binaryProbe: PiSettingsInstaller.ompBinaryProbe
+    )
+    let skill = CLISkillInstaller()
+    return AgentIntegration(
+      agent: .omp,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: {
+            try await installer.ensureBinaryAvailable()
+            try installer.install()
+          },
+          uninstall: { try installer.uninstall() }
+        ),
+        skillComponent(agent: .omp, installer: skill),
       ]
     )
   }

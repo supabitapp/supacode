@@ -157,7 +157,7 @@ struct PiSettingsInstallerTests {
     try installer.install()
 
     let contents = try String(contentsOf: indexURL, encoding: .utf8)
-    #expect(contents == PiExtensionContent.indexTs)
+    #expect(contents == PiExtensionContent.indexTs(for: .pi))
   }
 
   @Test func installThrowsExtensionNotManagedWhenFileIsUserAuthored() throws {

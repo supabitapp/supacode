@@ -184,6 +184,7 @@ extension SkillAgent {
     case .kiro: "Hooks in `~/.kiro/agents/` and skill in `~/.kiro/skills/`."
     case .opencode: "Plugin in `~/.config/opencode/plugins/` and skill in `~/.config/opencode/skills/`."
     case .pi: "Extension in `~/.pi/agent/extensions/` and skill in `~/.pi/agent/skills/`."
+    case .omp: "Extension in `~/.omp/agent/extensions/` and skill in `~/.omp/agent/skills/`."
     }
   }
 }

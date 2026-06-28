@@ -6,6 +6,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   case opencode
   // swiftlint:disable:next identifier_name
   case pi
+  case omp
 
   /// Path under the user's home where the agent stores its config
   /// (e.g. `.claude`, `.codex`, `.kiro`, `.pi/agent`, `.config/opencode`).
@@ -17,6 +18,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .kiro: ".kiro"
     case .opencode: ".config/opencode"
     case .pi: ".pi/agent"
+    case .omp: ".omp/agent"
     }
   }
 
@@ -29,6 +31,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .kiro: "Kiro"
     case .opencode: "OpenCode"
     case .pi: "Pi"
+    case .omp: "Oh My Pi"
     }
   }
 
@@ -41,6 +44,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .kiro: "kiro-mark"
     case .opencode: "opencode-mark"
     case .pi: "pi-mark"
+    case .omp: "omp-mark"
     }
   }
 }
