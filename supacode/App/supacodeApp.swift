@@ -129,6 +129,13 @@ struct SupacodeApp: App {
   @State private var store: StoreOf<AppFeature>
 
   @MainActor init() {
+    // Drop an inherited ZMX_SESSION before any surface spawns. zmx exports it
+    // into every shell it runs, so launching Supacode from inside a Supacode
+    // terminal leaks the parent session id into our process; zmx's `attach`
+    // then reinterprets every new surface as a switch to that (foreign) session
+    // and dies with "session does not exist". zmx re-injects it per session, so
+    // removing the inherited value is safe.
+    unsetenv("ZMX_SESSION")
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
     // Fold the six legacy sidebar-state sources into `sidebar.json`
