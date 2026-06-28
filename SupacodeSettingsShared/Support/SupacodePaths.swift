@@ -155,6 +155,10 @@ public nonisolated enum SupacodePaths {
     baseDirectory.appending(path: "layouts.json", directoryHint: .notDirectory)
   }
 
+  public static var notesURL: URL {
+    baseDirectory.appending(path: "notes.json", directoryHint: .notDirectory)
+  }
+
   public static var settingsURL: URL {
     baseDirectory.appending(path: "settings.json", directoryHint: .notDirectory)
   }

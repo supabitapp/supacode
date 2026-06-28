@@ -117,6 +117,13 @@ final class WorktreeTerminalManager {
   var selectedWorktreeID: Worktree.ID?
   var saveLayoutSnapshot: ((Worktree.ID, TerminalLayoutSnapshot?) -> Void)?
   var loadLayoutSnapshot: ((Worktree.ID) -> TerminalLayoutSnapshot?)?
+  /// Drops a single tab's note when its terminal tab is removed. Wired to
+  /// `WorktreeNotesManager.deleteNote` so notes cleanup self-drives from the
+  /// terminal lifecycle — the TCA reducer can't reach disk (`NotesKey.save` is a
+  /// no-op), so routing it here is the only path that reaches `notes.json`.
+  var deleteNotesForTab: ((Worktree.ID, TerminalTabID) -> Void)?
+  /// Drops all of a worktree's notes when its terminal state is pruned.
+  var deleteNotesForWorktree: ((Worktree.ID) -> Void)?
   /// Deeplink URL received from the CLI via socket. Second parameter is the client FD for response.
   var onDeeplinkCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI via socket. Parameters: resource name, params, client FD.
@@ -520,6 +527,7 @@ final class WorktreeTerminalManager {
     state.onTabRemoved = { [weak self] tabID in
       self?.emit(.tabRemoved(worktreeID: worktree.id, tabID: tabID))
       self?.markLayoutDirty(worktreeID: worktree.id)
+      self?.deleteNotesForTab?(worktree.id, tabID)
     }
     state.onTabProgressDisplayChanged = { [weak self] tabID, display in
       self?.emit(.tabProgressDisplayChanged(worktreeID: worktree.id, tabID: tabID, display: display))
@@ -580,6 +588,9 @@ final class WorktreeTerminalManager {
       // and cancels any queued positive save so a pruned worktree can't be
       // resurrected by an in-flight snapshot.
       deleteLayoutSnapshot(worktreeID: id)
+      // Same no-trace semantics for the worktree's notes; the manager awaits any
+      // in-flight positive flush before the delete so it can't be resurrected.
+      deleteNotesForWorktree?(id)
       state.closeAllSurfaces()
       // Signals the reducer to drop any orphan `terminalTabs` entries and
       // recently-removed-tab records for this worktree so a same-session

@@ -9,6 +9,8 @@ struct TerminalTabBarView: View {
   let createTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
+  let isNotesOpen: Bool
+  let toggleNotes: () -> Void
   let closeTab: (TerminalTabID) -> Void
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
@@ -35,7 +37,9 @@ struct TerminalTabBarView: View {
       TerminalTabBarTrailingAccessories(
         createTab: createTab,
         split: split,
-        canSplit: canSplit
+        canSplit: canSplit,
+        isNotesOpen: isNotesOpen,
+        toggleNotes: toggleNotes
       )
     }
     .frame(height: TerminalTabBarMetrics.barHeight)

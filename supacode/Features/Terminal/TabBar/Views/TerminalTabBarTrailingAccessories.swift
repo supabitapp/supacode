@@ -4,6 +4,8 @@ struct TerminalTabBarTrailingAccessories: View {
   let createTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
+  let isNotesOpen: Bool
+  let toggleNotes: () -> Void
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentTrailingSpacing) {
@@ -17,6 +19,7 @@ struct TerminalTabBarTrailingAccessories: View {
         .disabled(!canSplit)
       TerminalTabBarSplitMenu(primary: .down, secondary: .up, split: split)
         .disabled(!canSplit)
+      ToggleNotesButton(isOpen: isNotesOpen, action: toggleNotes)
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
     .padding(.trailing, 8)

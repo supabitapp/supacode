@@ -48,6 +48,7 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     }
   }
   var terminalManager: WorktreeTerminalManager?
+  var notesManager: WorktreeNotesManager?
   private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -61,6 +62,10 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     let agentsBySurface = appStore?.state.agentPresence.agentsBySurface() ?? [:]
     terminalManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
     terminalManager?.rememberSelectedWorktreeZoomOnQuit()
+    // Notes share the layout quit path: cancel debounce timers, then flush the
+    // current in-memory notes so a last-second keystroke survives relaunch.
+    notesManager?.cancelPendingNotesSaves()
+    notesManager?.flushAllSync()
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -117,6 +122,7 @@ struct SupacodeApp: App {
   @State private var ghostty: GhosttyRuntime
   @State private var ghosttyShortcuts: GhosttyShortcutManager
   @State private var terminalManager: WorktreeTerminalManager
+  @State private var notesManager: WorktreeNotesManager
   @State private var worktreeInfoWatcher: WorktreeInfoWatcherManager
   @State private var commandKeyObserver: CommandKeyObserver
   @State private var store: StoreOf<AppFeature>
@@ -172,6 +178,17 @@ struct SupacodeApp: App {
     _ghosttyShortcuts = State(initialValue: shortcuts)
     let terminalManager = Self.makeTerminalManager(runtime: runtime)
     _terminalManager = State(initialValue: terminalManager)
+    // Notes content lives outside TCA in its own @Observable manager (mirrors
+    // the terminal manager). Cleanup self-drives from the terminal lifecycle, so
+    // wire the manager's deletion hooks to it here.
+    let notesManager = WorktreeNotesManager()
+    terminalManager.deleteNotesForTab = { [weak notesManager] worktreeID, tabID in
+      notesManager?.deleteNote(worktreeID: worktreeID, tabID: tabID)
+    }
+    terminalManager.deleteNotesForWorktree = { [weak notesManager] worktreeID in
+      notesManager?.deleteWorktreeNotes(worktreeID: worktreeID)
+    }
+    _notesManager = State(initialValue: notesManager)
     let worktreeInfoWatcher = WorktreeInfoWatcherManager()
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()
@@ -184,6 +201,7 @@ struct SupacodeApp: App {
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
+    appDelegate.notesManager = notesManager
     // Source live agent badge records for incremental layout captures; the [:]
     // default would clobber badges that share a surface key on every save.
     terminalManager.currentAgentsBySurface = { [weak appStore] in
@@ -429,6 +447,7 @@ struct SupacodeApp: App {
         ContentView(store: store, terminalManager: terminalManager)
           .environment(ghosttyShortcuts)
           .environment(commandKeyObserver)
+          .environment(notesManager)
       }
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)

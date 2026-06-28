@@ -36,6 +36,13 @@ struct WorktreeTerminalTabsView: View {
             _ = state.performBindingActionOnFocusedSurface(direction.ghosttyBinding)
           },
           canSplit: state.tabManager.selectedTabId.flatMap { state.activeSurfaceID(for: $0) } != nil,
+          isNotesOpen: state.tabManager.selectedTabId.flatMap {
+            terminalsStore.terminalTabs[id: $0]?.isNotesOpen
+          } ?? false,
+          toggleNotes: {
+            guard let selectedId = state.tabManager.selectedTabId else { return }
+            terminalsStore.send(.terminalTabs(.element(id: selectedId, action: .notesOpenToggled)))
+          },
           closeTab: { tabId in
             state.closeTab(tabId)
           },
@@ -59,7 +66,8 @@ struct WorktreeTerminalTabsView: View {
       }
       if let selectedId = state.tabManager.selectedTabId {
         TerminalTabContentStack(tabs: state.tabManager.tabs, selectedTabId: selectedId) { tabId in
-          TerminalSplitTreePane(
+          NotesAwareTabPane(
+            worktree: worktree,
             tabId: tabId,
             terminalState: state,
             terminalsStore: terminalsStore,
@@ -137,5 +145,41 @@ private struct TerminalSplitTreePane: View {
         terminalState.performSplitOperation(operation, in: tabId)
       }
     )
+  }
+}
+
+/// Renders a tab's terminal split tree, optionally beside the notes panel when
+/// the tab's `isNotesOpen` flag is set. Purely additive: when notes are closed it
+/// is exactly the previous `TerminalSplitTreePane`. The panel is keyed `.id(tabId)`
+/// so each (worktree, tab) gets a fresh editor + undo stack.
+private struct NotesAwareTabPane: View {
+  let worktree: Worktree
+  let tabId: TerminalTabID
+  let terminalState: WorktreeTerminalState
+  let terminalsStore: StoreOf<TerminalsFeature>
+  let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+
+  var body: some View {
+    let notesOpen = terminalsStore.terminalTabs[id: tabId]?.isNotesOpen ?? false
+    if notesOpen {
+      HSplitView {
+        TerminalSplitTreePane(
+          tabId: tabId,
+          terminalState: terminalState,
+          terminalsStore: terminalsStore,
+          unfocusedSplitOverlay: unfocusedSplitOverlay
+        )
+        NotesPanelView(worktree: worktree, tabID: tabId)
+          .id(tabId)
+          .frame(minWidth: 280, idealWidth: 380, maxWidth: 720)
+      }
+    } else {
+      TerminalSplitTreePane(
+        tabId: tabId,
+        terminalState: terminalState,
+        terminalsStore: terminalsStore,
+        unfocusedSplitOverlay: unfocusedSplitOverlay
+      )
+    }
   }
 }

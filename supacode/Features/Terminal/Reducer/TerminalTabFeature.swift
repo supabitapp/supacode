@@ -36,6 +36,9 @@ struct TerminalTabFeature {
     /// `GhosttySurfaceState.progressState` (focused tabs) or worst-of-all
     /// surfaces (unfocused tabs). Nil = no progress to display.
     var progressDisplay: TerminalTabProgressDisplay?
+    /// True when this tab's notes panel is open. Per-tab UI state analogous to
+    /// `isSplitZoomed`; intentionally not persisted across sessions.
+    var isNotesOpen = false
 
     var hasUnseenNotifications: Bool { unseenNotificationCount > 0 }
   }
@@ -44,6 +47,7 @@ struct TerminalTabFeature {
     case projectionChanged(WorktreeTabProjection)
     case agentSnapshotChanged([AgentPresenceFeature.AgentInstance])
     case progressDisplayChanged(TerminalTabProgressDisplay?)
+    case notesOpenToggled
   }
 
   var body: some Reducer<State, Action> {
@@ -73,6 +77,10 @@ struct TerminalTabFeature {
       case .progressDisplayChanged(let display):
         guard state.progressDisplay != display else { return .none }
         state.progressDisplay = display
+        return .none
+
+      case .notesOpenToggled:
+        state.isNotesOpen.toggle()
         return .none
       }
     }
