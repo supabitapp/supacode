@@ -1247,7 +1247,7 @@ struct RepositoriesFeature {
           state.resetRowLifecycleSyncBeforeReconcile(itemID: worktreeID)
           // Drop the worktree from every bucket in its section. The worktree is
           // going away entirely so its current bucket doesn't matter.
-          state.$sidebar.withLock { sidebar in
+          _ = state.$sidebar.withLock { sidebar in
             sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID)
           }
           _ = state.removeWorktree(worktreeID, repositoryID: repositoryID)
@@ -5171,7 +5171,7 @@ extension RepositoriesFeature.State {
     pendingWorktrees.removeAll { $0.id == worktreeID }
     // Drop the worktree from every bucket in its section. The worktree is going
     // away entirely so the current bucket doesn't matter.
-    $sidebar.withLock { sidebar in
+    _ = $sidebar.withLock { sidebar in
       sidebar.removeAnywhere(worktree: worktreeID, in: repositoryID)
     }
     RepositoriesFeature.syncSidebar(&self)
