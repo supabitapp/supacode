@@ -135,6 +135,7 @@ run-app-dev: build-app-dev # Build then launch the isolated dev app
 	open "$$build_dir/$$product"
 
 dev: # Watch sources; rebuild + relaunch the dev app on change
+	@pkill -f 'watchexec.*run-app-dev' || true
 	mise exec -- watchexec --restart \
 		--watch supacode --watch supacode-cli --watch SupacodeSettingsShared --watch SupacodeSettingsFeature \
 		--exts swift,plist,json,svg,xcconfig \
