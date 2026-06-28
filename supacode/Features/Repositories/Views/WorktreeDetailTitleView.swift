@@ -110,8 +110,7 @@ private struct WorktreeToolbarTitleBody: View {
             .foregroundStyle(payload.repositoryColor?.color ?? .secondary)
           let accentStyle = AnyShapeStyle(payload.accent.shapeStyle(emphasized: false))
           let trail: Text? = payload.worktreeSubtitle.map { worktreeSubtitle in
-            Text(" · ").foregroundStyle(.secondary)
-              + Text(worktreeSubtitle).foregroundStyle(accentStyle)
+            Text("\(Text(" · ").foregroundStyle(.secondary))\(Text(worktreeSubtitle).foregroundStyle(accentStyle))")
           }
           HStack(spacing: 0) {
             repoText

@@ -147,14 +147,14 @@ private struct WorktreeBaseRefMenuContent: View {
       ref: nil,
       label: store.automaticBaseRef.isEmpty
         ? Text("Auto")
-        : Text(store.automaticBaseRef) + Text(" Auto").foregroundStyle(.secondary)
+        : Text("\(store.automaticBaseRef) \(Text("Auto").foregroundStyle(.secondary))")
     )
     if let defaultBranch = store.defaultBranch {
       // Tagged "Local" to distinguish it from the remote-tracking Auto ref above.
       WorktreeBaseRefMenuItem(
         store: store,
         ref: defaultBranch,
-        label: Text(defaultBranch) + Text(" Local").foregroundStyle(.secondary)
+        label: Text("\(defaultBranch) \(Text("Local").foregroundStyle(.secondary))")
       )
     }
 
@@ -187,7 +187,7 @@ private struct WorktreeRemoteBranchMenu: View {
         WorktreeBranchNodeMenu(store: store, node: node)
       }
     } label: {
-      Text(remote.name) + Text(" Remote").foregroundStyle(.secondary)
+      Text("\(remote.name) \(Text("Remote").foregroundStyle(.secondary))")
     }
   }
 }
