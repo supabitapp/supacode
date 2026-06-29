@@ -134,6 +134,22 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.systemNotificationsEnabled == true)
   }
 
+  @Test(.dependencies) func enablingDisabledByDefaultShortcutBindsItsDefault() async {
+    let initialSettings = GlobalSettings.default
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+    let expected = AppShortcuts.defaultEnabledOverride(for: .cloneRepository)
+    await store.send(.toggleShortcutEnabled(id: .cloneRepository, enabled: true)) {
+      $0.shortcutOverrides[.cloneRepository] = expected
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.shortcutOverrides[.cloneRepository] == expected)
+  }
+
   @Test(.dependencies) func settingsPersistDoesNotTouchRemoteRepositoryRoots() async {
     let remote = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
     @Shared(.settingsFile) var settingsFile
@@ -621,6 +637,28 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
     #expect(settingsFile.global.shortcutOverrides[.newWorktree] == nil)
+  }
+
+  @Test(.dependencies) func toggleShortcutEnabledBindsDefaultForDisabledByDefaultSentinel() async {
+    // A disabled-by-default shortcut can pick up a `.disabled` sentinel (e.g. a
+    // group toggle off). Re-enabling must bind its default key, not just drop the
+    // sentinel, which would leave it off ("no override" == disabled for it).
+    var initialSettings = GlobalSettings.default
+    initialSettings.shortcutOverrides = [.cloneRepository: .disabled]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    let expected = AppShortcuts.defaultEnabledOverride(for: .cloneRepository)
+    await store.send(.toggleShortcutEnabled(id: .cloneRepository, enabled: true)) {
+      $0.shortcutOverrides[.cloneRepository] = expected
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.shortcutOverrides[.cloneRepository] == expected)
+    #expect(expected?.isEnabled == true)
   }
 
   @Test(.dependencies) func toggleShortcutEnabledReEnablesCustomOverride() async {

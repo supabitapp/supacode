@@ -195,6 +195,7 @@ private struct WorktreeFileMenu: Commands {
     let overrides = store.worktreeMenuSnapshot.shortcutOverrides
     let openRepo = AppShortcuts.openRepository.effective(from: overrides)
     let addRemoteRepo = AppShortcuts.addRemoteRepository.effective(from: overrides)
+    let cloneRepo = AppShortcuts.cloneRepository.effective(from: overrides)
     let confirm = AppShortcuts.confirmWorktreeAction.effective(from: overrides)
     CommandGroup(replacing: .newItem) {
       Menu("Add Repository or Folder", systemImage: "folder.badge.plus") {
@@ -212,7 +213,8 @@ private struct WorktreeFileMenu: Commands {
         Button("Clone Repository...", systemImage: "square.and.arrow.down.on.square") {
           store.send(.repositories(.requestCloneRepository))
         }
-        .help("Clone a remote repository into a local folder")
+        .appKeyboardShortcut(cloneRepo)
+        .help("Clone a remote repository into a local folder (\(cloneRepo?.display ?? "none"))")
       }
       Button("Confirm Action") {
         confirmWorktreeAction?()
