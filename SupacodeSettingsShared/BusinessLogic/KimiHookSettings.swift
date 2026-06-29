@@ -4,7 +4,8 @@ nonisolated enum KimiHookSettings {
   /// Canonical flat list of Kimi hook entries. Each item is one
   /// `[[hooks]]` block in `~/.kimi/config.toml`; Supacode owns exactly
   /// this set. See `ClaudeHookSettings` for the composite-command rationale
-  /// (one Supacode-managed entry per slot → idempotent prune-and-replace).
+  /// (one Supacode-managed entry per slot, so install is an idempotent
+  /// prune-and-replace).
   static func canonicalEntries() -> [KimiHookEntry] {
     KimiHooksPayload().entries
   }
@@ -34,15 +35,12 @@ nonisolated struct KimiHookEntry: Equatable, Sendable {
 
 // MARK: - Hook payload.
 
-// Kimi's hooks system (currently Beta) stores hooks in `~/.kimi/config.toml`
-// as `[[hooks]]` array-of-tables with flat fields per block. Event names are
-// PascalCase and line up with Claude's set (PreToolUse / PostToolUse /
-// UserPromptSubmit / Stop / SessionStart / SessionEnd / Notification), so the
-// busy/idle/awaitingInput mapping mirrors `ClaudeHooksPayload`.
-//
-// Kimi accepts arbitrary regex matchers; `AskUserQuestion|ExitPlanMode` is a
-// Claude-specific tool pattern and stays inert under Kimi (no tool names
-// match), so the entry is harmless if Kimi doesn't expose equivalent tools.
+// Kimi stores hooks as `[[hooks]]` array-of-tables in `~/.kimi/config.toml`
+// with PascalCase event names matching Claude's set, so the busy/idle/
+// awaitingInput mapping mirrors `ClaudeHooksPayload`. The
+// `AskUserQuestion|ExitPlanMode` matcher is reused from Claude and assumed
+// inert on Kimi today, since it exposes no such tools. Revisit if Kimi adds
+// matching tool names.
 private nonisolated struct KimiHooksPayload {
   static let awaitingInputToolMatcher = "AskUserQuestion|ExitPlanMode"
 

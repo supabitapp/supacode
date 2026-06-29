@@ -2,13 +2,12 @@ import Foundation
 
 private nonisolated let kimiInstallerLogger = SupaLogger("Settings")
 
-/// TOML installer for Kimi's `[[hooks]]` array-of-tables format in
-/// `~/.kimi/config.toml`. Unlike `AgentHookSettingsFileInstaller` (JSON
-/// grouped) and `KiroHookSettingsFileInstaller` (JSON flat), Kimi stores
-/// hooks as TOML array-of-tables, so we operate on the file as structured
-/// text: identify `[[hooks]]` block boundaries, drop Supacode-owned blocks
-/// (by `command` sentinel), append canonical blocks. Non-hooks content
-/// (other TOML sections, comments, blank lines) is preserved verbatim.
+/// TOML installer for Kimi's `[[hooks]]` array-of-tables in
+/// `~/.kimi/config.toml`. Operates on the file as structured text: identifies
+/// `[[hooks]]` block boundaries, drops Supacode-owned blocks (by `command`
+/// sentinel), and appends canonical blocks. All other content (TOML sections,
+/// comments, blank lines) is preserved; line endings are normalized to LF on
+/// any write.
 nonisolated struct KimiHookSettingsFileInstaller {
   let fileManager: FileManager
   let logWarning: @Sendable (String) -> Void
@@ -35,7 +34,8 @@ nonisolated struct KimiHookSettingsFileInstaller {
       if actual.isEmpty { return .notInstalled }
       return actual == expected ? .installed : .outdated
     } catch {
-      logWarning("Failed to inspect Kimi hook settings at \(settingsURL.path): \(error)")
+      logWarning(
+        "Failed to inspect Kimi hook settings at \(settingsURL.path): \(error.localizedDescription)")
       return .notInstalled
     }
   }
@@ -72,7 +72,8 @@ nonisolated struct KimiHookSettingsFileInstaller {
     guard let text = String(data: data, encoding: .utf8) else {
       throw KimiHookSettingsFileError.invalidUTF8
     }
-    return text
+    // Normalize line endings so block scanning is endings-agnostic.
+    return text.replacing("\r\n", with: "\n").replacing("\r", with: "\n")
   }
 
   private func writeText(_ text: String, to url: URL) throws {
@@ -86,7 +87,7 @@ nonisolated struct KimiHookSettingsFileInstaller {
     try data.write(to: url, options: .atomic)
   }
 
-  // MARK: - Block parsing.
+  // MARK: - Block parsing (internal for unit tests).
 
   /// Set of Supacode-managed `command` values found in any `[[hooks]]`
   /// block in `text`. Identifies a hook block by its `[[hooks]]` header
@@ -120,6 +121,10 @@ nonisolated struct KimiHookSettingsFileInstaller {
         if let command = commandValue(in: blockText),
           AgentHookCommandOwnership.isSupacodeManagedCommand(command)
         {
+          // Drop the managed block but keep trailing comment lines, which
+          // belong to the user. Blank separators are dropped so re-install
+          // stays idempotent.
+          result.append(contentsOf: trailingUserComments(in: lines, blockStart..<index))
           continue
         }
         result.append(contentsOf: lines[blockStart..<index])
@@ -184,8 +189,25 @@ nonisolated struct KimiHookSettingsFileInstaller {
     return blocks
   }
 
-  /// Unescaped `command` field value from a `[[hooks]]` block body, or nil if
-  /// the block has no `command = "..."` line. Honors TOML basic strings only.
+  /// Trailing comment lines in `range` that follow the last block-owned
+  /// (non-blank, non-comment) line. These belong to the user and survive a
+  /// managed-block prune; blank separators are dropped to keep re-install
+  /// idempotent.
+  private static func trailingUserComments(in lines: [String], _ range: Range<Int>) -> [String] {
+    var lastOwned = range.lowerBound
+    for index in range {
+      let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+      if !trimmed.isEmpty, !trimmed.hasPrefix("#") { lastOwned = index }
+    }
+    return lines[(lastOwned + 1)..<range.upperBound].filter {
+      $0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
+    }
+  }
+
+  /// Value of the `command` field in a `[[hooks]]` block body, or nil when the
+  /// block has no `command =` line. Honors TOML basic strings (`"..."`, with
+  /// escapes) and literal strings (`'...'`, verbatim) so a managed block is
+  /// still recognized if Kimi rewrites the command as a literal string.
   private static func commandValue(in block: String) -> String? {
     let lines = block.components(separatedBy: "\n")
     for rawLine in lines {
@@ -193,10 +215,21 @@ nonisolated struct KimiHookSettingsFileInstaller {
       guard isCommandKeyLine(line) else { continue }
       guard let equalsIndex = line.firstIndex(of: "=") else { continue }
       let after = line[line.index(after: equalsIndex)...].trimmingCharacters(in: .whitespaces)
-      guard after.hasPrefix("\"") else { continue }
-      return unescapeBasicString(String(after.dropFirst()))
+      if after.hasPrefix("\"") {
+        return unescapeBasicString(String(after.dropFirst()))
+      }
+      if after.hasPrefix("'") {
+        return literalStringValue(String(after.dropFirst()))
+      }
     }
     return nil
+  }
+
+  /// Body of a TOML literal string (the bytes after the opening `'`), up to the
+  /// first `'`. Literal strings have no escapes. Returns nil when unterminated.
+  private static func literalStringValue(_ body: String) -> String? {
+    guard let end = body.firstIndex(of: "'") else { return nil }
+    return String(body[body.startIndex..<end])
   }
 
   /// True when `line` is a `command = ...` key assignment (not `commander`,
@@ -241,24 +274,35 @@ nonisolated struct KimiHookSettingsFileInstaller {
     return closed ? result : nil
   }
 
-  /// True when `line` is the TOML `[[hooks]]` array-of-tables header.
+  /// True when `line` is the TOML `[[hooks]]` array-of-tables header,
+  /// tolerating interior whitespace and a trailing comment.
   private static func isHooksArrayHeader(_ line: String) -> Bool {
-    line.trimmingCharacters(in: .whitespaces) == "[[hooks]]"
-  }
-
-  /// True when `line` opens a new TOML table (`[section]`) or array-of-tables
-  /// (`[[section]]`), which ends the current block scope. A bare `command`
-  /// line whose value starts with `[` does NOT match (the regex requires the
-  /// line to start with `[` after whitespace, which a `key = value` pair
-  /// cannot satisfy).
-  private static func isAnySectionHeader(_ line: String) -> Bool {
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     guard trimmed.hasPrefix("[") else { return false }
     return trimmed.range(
-      of: #"^\[\[?[A-Za-z0-9_.\-"]+\]?\]?\s*(#.*)?$"#,
+      of: #"^\[\[\s*hooks\s*\]\]\s*(#.*)?$"#,
       options: .regularExpression,
     ) != nil
   }
+
+  /// True when `line` opens a new TOML table (`[section]`) or array-of-tables
+  /// (`[[section]]`), which ends the current block scope. Matches dotted and
+  /// quoted keys (`[mcp."my server"]`) and interior whitespace (`[ a.b ]`); a
+  /// `key = value` line is rejected by the leading-`[` guard.
+  private static func isAnySectionHeader(_ line: String) -> Bool {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("[") else { return false }
+    return trimmed.range(of: Self.sectionHeaderRegex, options: .regularExpression) != nil
+  }
+
+  /// Matches a TOML table / array-of-tables header: `[` or `[[`, a dotted path
+  /// of bare or quoted key segments (whitespace allowed around them), then the
+  /// closing brackets and an optional comment. Excludes array values such as
+  /// `[1, 2]`, since a key segment cannot contain a comma.
+  private static let sectionHeaderRegex: String = {
+    let keySegment = #"(?:[A-Za-z0-9_\-]+|"(?:[^"\\]|\\.)*"|'[^']*')"#
+    return #"^\[\[?\s*"# + keySegment + #"(?:\s*\.\s*"# + keySegment + #")*\s*\]\]?\s*(#.*)?$"#
+  }()
 
   /// Quotes a string for TOML basic-string emission. Escapes `\`, `"`, and
   /// the common control characters.
@@ -278,6 +322,13 @@ nonisolated struct KimiHookSettingsFileInstaller {
   }
 }
 
-nonisolated enum KimiHookSettingsFileError: Error, Equatable {
+nonisolated enum KimiHookSettingsFileError: Error, Equatable, LocalizedError {
   case invalidUTF8
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidUTF8:
+      "Kimi's config.toml is not valid UTF-8. Fix or remove ~/.kimi/config.toml and try again."
+    }
+  }
 }

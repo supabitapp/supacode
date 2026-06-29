@@ -2,10 +2,8 @@ import Foundation
 
 /// Top-level installer for Kimi CLI hooks. Owns the canonical entry list
 /// (`KimiHookSettings`) and delegates the on-disk TOML read-modify-write to
-/// `KimiHookSettingsFileInstaller`. No version probe and no feature flag —
-/// unlike Kiro (which seeds `kiro_default.json`) and Codex (which needs
-/// `codex features enable hooks`), Kimi activates hooks purely from
-/// `~/.kimi/config.toml`.
+/// `KimiHookSettingsFileInstaller`. Kimi activates hooks purely from
+/// `~/.kimi/config.toml`, so there is no version probe and no feature flag.
 nonisolated struct KimiSettingsInstaller {
   let homeDirectoryURL: URL
   let fileManager: FileManager
