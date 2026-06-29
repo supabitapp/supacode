@@ -76,6 +76,49 @@ struct ShellClientStreamingTests {
     #expect(finishedOutput == ShellOutput(stdout: "out-1\nout-2", stderr: "err-1", exitCode: 0))
   }
 
+  @Test func runStreamSplitsCarriageReturnProgressLines() async throws {
+    // `git clone --progress` rewrites one line with `\r`; the tokenizer must
+    // surface each update as its own line, not buffer until the closing `\n`.
+    let shell = ShellClient.liveValue
+    let stream = shell.runStream(
+      URL(fileURLWithPath: "/bin/sh"),
+      ["-c", "printf 'p-1\\rp-2\\rp-3\\n'"],
+      nil
+    )
+    var stdoutLines: [String] = []
+    for try await event in stream {
+      if case .line(let line) = event, line.source == .stdout {
+        stdoutLines.append(line.text)
+      }
+    }
+    #expect(stdoutLines == ["p-1", "p-2", "p-3"])
+  }
+
+  @Test func runStreamTreatsCRLFAsSingleBreak() async throws {
+    let shell = ShellClient.liveValue
+    let stream = shell.runStream(
+      URL(fileURLWithPath: "/bin/sh"),
+      ["-c", "printf 'a\\r\\nb\\r\\n'"],
+      nil
+    )
+    var stdoutLines: [String] = []
+    for try await event in stream {
+      if case .line(let line) = event, line.source == .stdout {
+        stdoutLines.append(line.text)
+      }
+    }
+    #expect(stdoutLines == ["a", "b"])
+  }
+
+  @Test func consumeLinesDefersTrailingCarriageReturnAcrossReads() {
+    // A lone trailing CR could be the first half of a CRLF split across reads;
+    // it must be buffered, not emitted as a phantom empty line before the LF.
+    var buffer = Data("a\r".utf8)
+    #expect(consumeLines(from: &buffer).isEmpty)
+    buffer.append(Data("\nb\r\n".utf8))
+    #expect(consumeLines(from: &buffer) == ["a", "b"])
+  }
+
   @Test func runStreamYieldsLinesBeforeProcessFinishes() async throws {
     let shell = ShellClient.liveValue
     let commandURL = URL(fileURLWithPath: "/bin/sh")
