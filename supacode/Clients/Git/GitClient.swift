@@ -1,3 +1,4 @@
+import ConcurrencyExtras
 import Foundation
 import Sentry
 import SupacodeSettingsShared
@@ -24,6 +25,7 @@ enum GitOperation: String {
   case remoteInfo = "remote_info"
   case remoteList = "remote_list"
   case fetchOrigin = "fetch_origin"
+  case clone = "clone"
 }
 
 enum GitClientError: LocalizedError {
@@ -43,6 +45,11 @@ enum GitClientError: LocalizedError {
 enum GitWorktreeCreateEvent: Equatable, Sendable {
   case outputLine(ShellStreamLine)
   case finished(Worktree)
+}
+
+enum GitCloneEvent: Equatable, Sendable {
+  case outputLine(ShellStreamLine)
+  case finished(directory: URL)
 }
 
 nonisolated struct WorktreeAdminEntry: Sendable {
@@ -564,6 +571,9 @@ struct GitClient {
     directoryOverride: URL? = nil
   ) -> AsyncThrowingStream<GitWorktreeCreateEvent, Error> {
     AsyncThrowingStream { continuation in
+      // Let `git worktree add` run to completion even if the consumer drops the
+      // stream: killing it mid-operation can leave a half-created worktree and a
+      // dangling admin entry, and it finishes quickly on its own.
       Task {
         let repositoryRootURL = repoRoot.standardizedFileURL
         do {
@@ -638,6 +648,203 @@ struct GitClient {
         }
       }
     }
+  }
+
+  /// Stream a `git clone` into `destination`, yielding progress lines then the
+  /// resolved directory. Env vars fail fast on credential / host-key prompts (no
+  /// tty to answer). A cancelled or failed clone removes a directory it created.
+  nonisolated func cloneStream(
+    repositoryURL: String,
+    into destination: URL,
+    branch: String?,
+    depth: Int?
+  ) -> AsyncThrowingStream<GitCloneEvent, Error> {
+    AsyncThrowingStream { continuation in
+      let destinationURL = destination.standardizedFileURL
+      // Only a dir the clone created (absent or empty before) is ours to remove on
+      // failure; a pre-existing file, symlink, or non-empty dir is the user's.
+      let destinationHadContent = Self.destinationHasContent(at: destinationURL)
+      let arguments = Self.cloneArguments(
+        repositoryURL: repositoryURL, destination: destinationURL, branch: branch, depth: depth)
+      let envURL = URL(fileURLWithPath: "/usr/bin/env")
+      // `GIT_TERMINAL_PROMPT=0` suppresses git's own HTTPS prompt; the ssh command
+      // fails fast on a passphrase / host-key prompt and a stalled connect instead
+      // of hanging the modal with no tty to answer.
+      let environmentArguments = [
+        "LANG=C", "LC_ALL=C", "LC_MESSAGES=C",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new",
+        "git",
+      ]
+      let invocationArguments = environmentArguments + arguments
+      // Redact the url userinfo (token / password) from everything shown to the
+      // user. Match the credential substring, not the whole url, so it survives
+      // git's url normalization in echoed auth-failure messages.
+      let credentials = Self.cloneCredentials(of: repositoryURL)
+      let command = Self.redacting(
+        ([envURL.path(percentEncoded: false)] + invocationArguments).joined(separator: " "),
+        credentials: credentials
+      )
+      // `log: false` keeps the clone command (and any embedded token) out of the
+      // shell debug log.
+      let process = shell.runLoginProcess(envURL, invocationArguments, nil, log: false)
+      let cancelRequested = LockIsolated(false)
+      // Drain to completion even after the consumer cancels so partial-clone
+      // cleanup runs after git exits rather than racing its teardown.
+      Task.detached {
+        do {
+          for try await event in process.events {
+            switch event {
+            case .line(let line):
+              let redacted = ShellStreamLine(
+                source: line.source, text: Self.redacting(line.text, credentials: credentials))
+              continuation.yield(.outputLine(redacted))
+            case .finished:
+              // A cancel that races this success leaves a complete clone on disk
+              // (harmless: a valid repo, just not added) rather than a partial one.
+              continuation.yield(.finished(directory: destinationURL))
+              continuation.finish()
+              return
+            }
+          }
+          // Events ended without `.finished`: the process exited from a
+          // terminate() (cancel) or genuinely empty output. Drop a dir we created.
+          Self.removePartialClone(at: destinationURL, ifCreated: !destinationHadContent)
+          if cancelRequested.value {
+            continuation.finish(throwing: CancellationError())
+          } else {
+            continuation.finish(throwing: GitClientError.commandFailed(command: command, message: "Empty output"))
+          }
+        } catch {
+          Self.removePartialClone(at: destinationURL, ifCreated: !destinationHadContent)
+          if cancelRequested.value {
+            continuation.finish(throwing: CancellationError())
+          } else if let gitError = error as? GitClientError {
+            continuation.finish(throwing: gitError)
+          } else {
+            // Redact the url userinfo from git's stdout/stderr before the footer.
+            let redactedError = Self.redacting(error, credentials: credentials)
+            continuation.finish(throwing: wrapShellError(redactedError, operation: .clone, command: command))
+          }
+        }
+      }
+      continuation.onTermination = { reason in
+        guard case .cancelled = reason else { return }
+        cancelRequested.setValue(true)
+        // Kill git; the drain finishes after it exits, then cleans up.
+        process.terminate()
+      }
+    }
+  }
+
+  /// `git clone` argv. The url and destination travel as positional arguments
+  /// after `--` so a url beginning with `-` is never read as a flag.
+  nonisolated static func cloneArguments(
+    repositoryURL: String,
+    destination: URL,
+    branch: String?,
+    depth: Int?
+  ) -> [String] {
+    var arguments = ["clone", "--progress"]
+    if let branch, !branch.isEmpty {
+      arguments.append("--branch")
+      arguments.append(branch)
+    }
+    if let depth, depth > 0 {
+      arguments.append("--depth")
+      arguments.append(String(depth))
+    }
+    arguments.append("--")
+    arguments.append(repositoryURL)
+    arguments.append(destination.path(percentEncoded: false))
+    return arguments
+  }
+
+  /// Whether `destination` holds content the clone did not create (a pre-existing
+  /// file, symlink, or non-empty dir), so a failed clone must not remove it. An
+  /// absent path or an empty dir returns false: that is the clone's to clean up.
+  nonisolated static func destinationHasContent(at destination: URL) -> Bool {
+    let path = destination.path(percentEncoded: false)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return false }
+    guard isDirectory.boolValue else { return true }
+    return (try? FileManager.default.contentsOfDirectory(atPath: path))?.isEmpty != true
+  }
+
+  /// Remove a clone directory Supacode created, logging a cleanup failure. Never
+  /// touches a directory that existed before the clone.
+  nonisolated static func removePartialClone(at destination: URL, ifCreated created: Bool) {
+    guard created, FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) else {
+      return
+    }
+    do {
+      try FileManager.default.removeItem(at: destination)
+    } catch {
+      gitLogger.warning(
+        "clone cleanup failed at \(destination.path(percentEncoded: false)): \(error.localizedDescription)")
+    }
+  }
+
+  /// Git's "humanish" directory name for a clone url (last path component, `.git`
+  /// stripped). Parses the raw string so scp-style remotes (`git@host:org/repo.git`)
+  /// work where Foundation's `URL` does not. Empty string when no leaf derives.
+  nonisolated static func humanishName(forCloneURL url: String) -> String {
+    var trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let queryIndex = trimmed.firstIndex(where: { $0 == "?" || $0 == "#" }) {
+      trimmed = String(trimmed[..<queryIndex])
+    }
+    while trimmed.hasSuffix("/") {
+      trimmed.removeLast()
+    }
+    if let separatorIndex = trimmed.lastIndex(where: { $0 == "/" || $0 == ":" }) {
+      trimmed = String(trimmed[trimmed.index(after: separatorIndex)...])
+    }
+    if trimmed.hasSuffix(".git") {
+      trimmed.removeLast(4)
+    }
+    return trimmed
+  }
+
+  /// The secret userinfo of a clone url (`token` or `user:password`) in its raw
+  /// in-url form so it matches what git echoes. An http(s) bare user is a token; an
+  /// ssh user (`git@host`) is just a login name, not a secret, so it is excluded.
+  /// nil when there is no credential to redact.
+  nonisolated static func cloneCredentials(of url: String) -> String? {
+    guard let components = URLComponents(string: url),
+      let user = components.percentEncodedUser, !user.isEmpty
+    else {
+      return nil
+    }
+    // An explicit password is a secret on any scheme; a bare user is one only on
+    // http(s). Redacting an ssh login name would mangle `git` and the host in
+    // surfaced output.
+    if let password = components.percentEncodedPassword, !password.isEmpty {
+      return "\(user):\(password)"
+    }
+    guard let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+      return nil
+    }
+    return user
+  }
+
+  /// Replace `credentials` with `***` in `text`, a no-op when `credentials` is
+  /// nil. Matches the bare credential substring so it survives git's url
+  /// normalization (trailing slash, dropped `.git`, percent-encoding).
+  nonisolated static func redacting(_ text: String, credentials: String?) -> String {
+    guard let credentials else { return text }
+    return text.replacing(credentials, with: "***")
+  }
+
+  /// Redact `credentials` from a shell error's captured output, leaving
+  /// non-`ShellClientError` errors (and a nil credential) untouched.
+  nonisolated static func redacting(_ error: Error, credentials: String?) -> Error {
+    guard let credentials, let shellError = error as? ShellClientError else { return error }
+    return ShellClientError(
+      command: shellError.command.replacing(credentials, with: "***"),
+      stdout: shellError.stdout.replacing(credentials, with: "***"),
+      stderr: shellError.stderr.replacing(credentials, with: "***"),
+      exitCode: shellError.exitCode
+    )
   }
 
   nonisolated private func createWorktreeArguments(
@@ -933,7 +1140,16 @@ struct GitClient {
     return result.joined(separator: "/")
   }
 
-  nonisolated private static func directoryURL(for path: URL) -> URL {
+  /// Stat the filesystem first so a directory URL built without a trailing-slash
+  /// flag (a freshly cloned destination, where `hasDirectoryPath` is false)
+  /// resolves to itself, not its parent (which runs `wt` outside the repo).
+  nonisolated static func directoryURL(for path: URL) -> URL {
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: path.path(percentEncoded: false), isDirectory: &isDirectory),
+      isDirectory.boolValue
+    {
+      return path
+    }
     if path.hasDirectoryPath {
       return path
     }
