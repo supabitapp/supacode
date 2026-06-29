@@ -6,6 +6,9 @@ import SupacodeSettingsShared
 struct BaseRefBranchMenu: Equatable {
   var localBranches: [BranchMenuNode]
   var remotes: [Remote]
+  /// The default-branch quick pick, dropped from the Local submenu but still a
+  /// selectable ref the search must surface; nil when no such local branch exists.
+  var hoistedLocalBranch: String?
 
   struct Remote: Equatable, Identifiable {
     let name: String
@@ -24,23 +27,36 @@ struct BaseRefBranchMenu: Equatable {
         branches: BranchMenuNode.build(branches: remote.branches, refPrefix: "\(remote.name)/")
       )
     }
+    // Only retain it if it was actually a local branch, so search never offers a phantom ref.
+    self.hoistedLocalBranch = inventory.localBranches.contains { $0 == hoistedLocalBranch } ? hoistedLocalBranch : nil
   }
 
-  /// Every selectable ref across local + remote branches, flattened out of the
-  /// display trie in sorted tree order. Backs the searchable base-ref picker (#387).
+  /// Every selectable ref across the hoisted default, local, and remote branches,
+  /// flattened in sorted tree order. Backs the searchable base-ref picker (#387).
   func allRefs() -> [String] {
-    BranchMenuNode.refs(in: localBranches) + remotes.flatMap { BranchMenuNode.refs(in: $0.branches) }
+    (hoistedLocalBranch.map { [$0] } ?? [])
+      + BranchMenuNode.refs(in: localBranches)
+      + remotes.flatMap { BranchMenuNode.refs(in: $0.branches) }
   }
 
   /// Refs containing `query` as a case/diacritic-insensitive substring, in tree
-  /// order. A blank query returns every ref. Matching the full ref (e.g.
-  /// `origin/feature/jira-1234/foo`) lets the user type any fragment — remote,
-  /// namespace, or leaf — instead of drilling submenus.
+  /// order. A blank query returns every ref. Matching the full ref lets the user
+  /// type any fragment (remote, namespace, or leaf) instead of drilling submenus.
   func refs(matching query: String) -> [String] {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     let all = allRefs()
     guard !trimmed.isEmpty else { return all }
     return all.filter { $0.localizedCaseInsensitiveContains(trimmed) }
+  }
+
+  /// Splits a flat ref into a primary branch name plus a trailing scope tag that
+  /// mirrors the browse menu: the remote name for a remote-tracking ref,
+  /// "Local" otherwise. Backs the inline filter rows (#387).
+  static func rowDisplay(for ref: String, remoteNames: [String]) -> (name: String, scope: String) {
+    for remote in remoteNames where ref.hasPrefix("\(remote)/") {
+      return (String(ref.dropFirst(remote.count + 1)), remote)
+    }
+    return (ref, "Local")
   }
 }
 
