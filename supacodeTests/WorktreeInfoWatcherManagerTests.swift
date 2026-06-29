@@ -60,6 +60,36 @@ struct WorktreeInfoWatcherManagerTests {
     try FileManager.default.removeItem(at: tempRepository.tempRoot)
   }
 
+  @Test func buildsWorktreeLookupWithoutTrappingOnDuplicateID() async throws {
+    // A repository registered under both its working dir and its `.bare/` dir can
+    // enumerate the same worktree twice, producing two entries with the same
+    // `WorktreeID`. Setting that list must not trap; the first entry wins.
+    let tempWorktree = try makeTempWorktree()
+    let duplicate = Worktree(
+      id: tempWorktree.worktree.id,
+      name: "eagle-duplicate",
+      detail: "duplicate",
+      workingDirectory: tempWorktree.worktree.workingDirectory,
+      repositoryRootURL: tempWorktree.worktree.repositoryRootURL
+    )
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .seconds(3_600),
+      unfocusedInterval: .seconds(3_600)
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+
+    manager.handleCommand(.setPullRequestTrackingEnabled(false))
+    manager.handleCommand(.setWorktrees([tempWorktree.worktree, duplicate]))
+
+    await drainAsyncEvents(120)
+    // The manager initialized and the single de-duplicated worktree is watched.
+    #expect(await collector.filesChangedCount(worktreeID: tempWorktree.worktree.id) == 1)
+
+    manager.handleCommand(.stop)
+    await task.value
+    try FileManager.default.removeItem(at: tempWorktree.tempRoot)
+  }
+
   @Test func emitsBranchChangedForRemoteWorktreeWhenHeadChanges() async throws {
     let clock = TestClock()
     let stub = RemoteBranchPollStub(responses: ["main", "feature"])

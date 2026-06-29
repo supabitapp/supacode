@@ -113,7 +113,11 @@ final class WorktreeInfoWatcherManager {
 
   private func setWorktrees(_ worktrees: [Worktree]) {
     let isInitialWorktreeLoad = !hasCompletedInitialWorktreeLoad && self.worktrees.isEmpty && !worktrees.isEmpty
-    let worktreesByID = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.id, $0) })
+    // A repository registered under both its working dir and its `.bare/` dir can
+    // enumerate the same worktree twice, yielding a duplicate `WorktreeID`. Use
+    // `uniquingKeysWith` so that collision keeps the first entry instead of trapping
+    // and crash-looping on launch (mirrors the guard in `RepositoriesFeature`).
+    let worktreesByID = Dictionary(worktrees.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let desiredIDs = Set(worktreesByID.keys)
     let currentIDs = Set(self.worktrees.keys)
     let removedIDs = currentIDs.subtracting(desiredIDs)
