@@ -942,7 +942,18 @@ private struct CommandPaletteFuzzyScorer {
     let index: Int
   }
 
+  // Ranking tiers, highest to lowest. The whole point is that match *quality*
+  // dominates: a direct (prefix/substring) hit always outranks a scattered
+  // fuzzy hit, and a direct hit on the subtitle (e.g. a repo name) outranks a
+  // scattered hit on the title — "fuzzy must never beat direct". Tiers are
+  // spaced by `maxIntraTierScore + 1`, and every in-tier score is clamped to
+  // `maxIntraTierScore`, so an in-tier DP score can never bleed into the tier
+  // above (the bug where a position-0/separator-bonus fuzzy match crept past a
+  // mid-word direct match).
+  private static let maxIntraTierScore = (1 << 14) - 1
   private static let labelPrefixScoreThreshold = 1 << 17
+  private static let labelSubstringScoreThreshold = (1 << 16) + (1 << 15)
+  private static let subtitleDirectScoreThreshold = (1 << 16) + (1 << 14)
   private static let labelScoreThreshold = 1 << 16
 
   private let query: PreparedQuery
@@ -1028,71 +1039,96 @@ private struct CommandPaletteFuzzyScorer {
     description: String?,
     query: PreparedQueryPiece
   ) -> ItemScore {
+    let allowNonContiguous = allowNonContiguousMatches && !query.expectContiguousMatch
+
     let (labelScore, labelPositions) = scoreFuzzy(
       target: label,
       query: query,
-      allowNonContiguousMatches: allowNonContiguousMatches && !query.expectContiguousMatch
+      allowNonContiguousMatches: allowNonContiguous
     )
     if labelScore > 0 {
-      let labelPrefixMatch = matchesPrefix(query: query.normalizedLowercase, target: label)
-      let baseScore: Int
-      if let labelPrefixMatch {
-        let prefixLengthBoost = Int(
-          (Double(query.normalized.count) / Double(label.count) * 100).rounded()
-        )
-        baseScore = Self.labelPrefixScoreThreshold + prefixLengthBoost
-        return ItemScore(
-          score: baseScore + labelScore,
+      // Title matched. A direct hit (prefix, then contiguous substring) is
+      // ranked into a strictly higher tier than a scattered subsequence hit.
+      if let labelPrefixMatch = matchesPrefix(query: query.normalizedLowercase, target: label) {
+        return tieredScore(
+          tier: Self.labelPrefixScoreThreshold,
+          intra: lengthBoost(query: query, target: label) + labelScore,
           labelMatch: labelPrefixMatch,
           descriptionMatch: nil
         )
       }
-      baseScore = Self.labelScoreThreshold
-      return ItemScore(
-        score: baseScore + labelScore,
+      if let labelSubstringMatch = matchesSubstring(query: query.normalizedLowercase, target: label) {
+        // No length boost inside non-prefix tiers: equal-quality matches stay
+        // tied on score so recency (MRU) decides them — see `compare`.
+        return tieredScore(
+          tier: Self.labelSubstringScoreThreshold,
+          intra: labelScore,
+          labelMatch: labelSubstringMatch,
+          descriptionMatch: nil
+        )
+      }
+      return tieredScore(
+        tier: Self.labelScoreThreshold,
+        intra: labelScore,
         labelMatch: createMatches(labelPositions),
         descriptionMatch: nil
       )
     }
 
     if let description {
-      let descriptionPrefixLength = description.count
-      let descriptionAndLabel = description + label
-      let (labelDescriptionScore, labelDescriptionPositions) = scoreFuzzy(
-        target: descriptionAndLabel,
+      let (descriptionScore, descriptionPositions) = scoreFuzzy(
+        target: description,
         query: query,
-        allowNonContiguousMatches: allowNonContiguousMatches && !query.expectContiguousMatch
+        allowNonContiguousMatches: allowNonContiguous
       )
-      if labelDescriptionScore > 0 {
-        let labelDescriptionMatches = createMatches(labelDescriptionPositions)
-        var labelMatch: [Match] = []
-        var descriptionMatch: [Match] = []
-
-        for match in labelDescriptionMatches {
-          if match.start < descriptionPrefixLength && match.end > descriptionPrefixLength {
-            labelMatch.append(Match(start: 0, end: match.end - descriptionPrefixLength))
-            descriptionMatch.append(Match(start: match.start, end: descriptionPrefixLength))
-          } else if match.start >= descriptionPrefixLength {
-            labelMatch.append(
-              Match(
-                start: match.start - descriptionPrefixLength,
-                end: match.end - descriptionPrefixLength
-              )
-            )
-          } else {
-            descriptionMatch.append(match)
-          }
+      if descriptionScore > 0 {
+        // A direct hit on the subtitle (the repo name) outranks a scattered hit
+        // on the title — a clean repo match must not lose to a fuzzy worktree
+        // match. A scattered subtitle hit stays in the lowest band.
+        let descriptionIsDirect =
+          matchesPrefix(query: query.normalizedLowercase, target: description) != nil
+          || matchesSubstring(query: query.normalizedLowercase, target: description) != nil
+        if descriptionIsDirect {
+          return tieredScore(
+            tier: Self.subtitleDirectScoreThreshold,
+            intra: descriptionScore,
+            labelMatch: nil,
+            descriptionMatch: createMatches(descriptionPositions)
+          )
         }
-
-        return ItemScore(
-          score: labelDescriptionScore,
-          labelMatch: labelMatch,
-          descriptionMatch: descriptionMatch
+        return tieredScore(
+          tier: 0,
+          intra: descriptionScore,
+          labelMatch: nil,
+          descriptionMatch: createMatches(descriptionPositions)
         )
       }
     }
 
     return ItemScore(score: 0, labelMatch: nil, descriptionMatch: nil)
+  }
+
+  /// Compose a tier threshold with an in-tier refinement score, clamping the
+  /// refinement so it can never bleed into the tier above (preserving the
+  /// strict direct-beats-fuzzy ordering for pathologically long targets).
+  private func tieredScore(
+    tier: Int,
+    intra: Int,
+    labelMatch: [Match]?,
+    descriptionMatch: [Match]?
+  ) -> ItemScore {
+    ItemScore(
+      score: tier + min(intra, Self.maxIntraTierScore),
+      labelMatch: labelMatch,
+      descriptionMatch: descriptionMatch
+    )
+  }
+
+  /// Favour shorter targets within a tier: the closer the query length is to the
+  /// target length, the larger the boost (a 3/3 match beats a 3/8 match).
+  private func lengthBoost(query: PreparedQueryPiece, target: String) -> Int {
+    guard !target.isEmpty else { return 0 }
+    return Int((Double(query.normalized.count) / Double(target.count) * 100).rounded())
   }
 
   private func compare(_ itemA: ScoredItem, _ itemB: ScoredItem) -> Int {
@@ -1129,19 +1165,22 @@ private struct CommandPaletteFuzzyScorer {
       return 1
     }
 
+    if itemA.item.priorityTier != itemB.item.priorityTier {
+      return itemA.item.priorityTier < itemB.item.priorityTier ? -1 : 1
+    }
+
+    // Recency (MRU) is a within-tier signal: once match quality (the score tier)
+    // is equal, the more-recently-used row wins — and it wins BEFORE match-spread
+    // so a navigation surface jumps to what you were just in.
+    if itemA.recencyScore != itemB.recencyScore {
+      return itemA.recencyScore > itemB.recencyScore ? -1 : 1
+    }
+
     if let itemAMatchDistance = matchDistance(itemA),
       let itemBMatchDistance = matchDistance(itemB),
       itemAMatchDistance != itemBMatchDistance
     {
       return itemBMatchDistance > itemAMatchDistance ? -1 : 1
-    }
-
-    if itemA.item.priorityTier != itemB.item.priorityTier {
-      return itemA.item.priorityTier < itemB.item.priorityTier ? -1 : 1
-    }
-
-    if itemA.recencyScore != itemB.recencyScore {
-      return itemA.recencyScore > itemB.recencyScore ? -1 : 1
     }
 
     let fallback = fallbackCompare(itemA.item, itemB.item)
@@ -1490,6 +1529,29 @@ private struct CommandPaletteFuzzyScorer {
     let targetLower = target.lowercased()
     guard targetLower.hasPrefix(query) else { return nil }
     return [Match(start: 0, end: query.count)]
+  }
+
+  /// Contiguous (substring) match anywhere in the target — `query` is already
+  /// normalized lowercase. Returns the first occurrence; treats `/` and `\` as
+  /// equivalent, matching `considerAsEqual`. This is what separates a "direct"
+  /// hit from a scattered subsequence hit.
+  private func matchesSubstring(query: String, target: String) -> [Match]? {
+    guard !query.isEmpty else { return nil }
+    let queryChars = Array(query)
+    let targetChars = Array(target.lowercased())
+    guard queryChars.count <= targetChars.count else { return nil }
+    for start in 0...(targetChars.count - queryChars.count) {
+      var matched = true
+      for offset in 0..<queryChars.count
+      where !considerAsEqual(targetChars[start + offset], queryChars[offset]) {
+        matched = false
+        break
+      }
+      if matched {
+        return [Match(start: start, end: start + queryChars.count)]
+      }
+    }
+    return nil
   }
 
   private static func prepareQuery(_ original: String) -> PreparedQuery {

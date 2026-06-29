@@ -538,6 +538,53 @@ struct CommandPaletteFeatureTests {
     )
   }
 
+  @Test func directSubtitleMatchOutranksScatteredTitleMatch() {
+    // The worktree-title + repo-subtitle split must not let a scattered fuzzy hit
+    // on the worktree name bury a clean direct hit on the repo name. Query "main"
+    // scatter-matches the title "mountain-trail" but exactly matches the repo
+    // subtitle "main" of the other row — the direct repo hit must win.
+    let scatteredTitle = CommandPaletteItem(
+      id: "worktree.mountain",
+      title: "mountain-trail",
+      subtitle: "zzz",
+      kind: .worktreeSelect("wt-mountain")
+    )
+    let directSubtitle = CommandPaletteItem(
+      id: "worktree.feature",
+      title: "feature-x",
+      subtitle: "main",
+      kind: .worktreeSelect("wt-feature")
+    )
+
+    expectNoDifference(
+      CommandPaletteFeature.filterItems(items: [scatteredTitle, directSubtitle], query: "main"),
+      [directSubtitle, scatteredTitle]
+    )
+  }
+
+  @Test func contiguousSubstringOutranksScatteredSubsequence() {
+    // A contiguous substring hit is a "direct" match and must beat a scattered
+    // subsequence hit, even when the scattered one lands on separators/word
+    // starts whose per-character bonuses would otherwise push it ahead.
+    let scattered = CommandPaletteItem(
+      id: "worktree.scattered",
+      title: "a-zzz-b",
+      subtitle: nil,
+      kind: .worktreeSelect("wt-scattered")
+    )
+    let substring = CommandPaletteItem(
+      id: "worktree.substring",
+      title: "xab",
+      subtitle: nil,
+      kind: .worktreeSelect("wt-substring")
+    )
+
+    expectNoDifference(
+      CommandPaletteFeature.filterItems(items: [scattered, substring], query: "ab"),
+      [substring, scattered]
+    )
+  }
+
   @Test func commandPaletteDraftActionRanksFirst() {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(id: "\(rootPath)/wt-draft", name: "draft", repoRoot: rootPath)
