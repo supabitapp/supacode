@@ -15,6 +15,9 @@ struct WorktreeDetailView: View {
   let terminalManager: WorktreeTerminalManager
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.settingsFile) private var settingsFile: SettingsFile
+  // Tracks the terminal-content window's fullscreen state for the open-menu toolbar
+  // tint; the toolbar itself can't observe it (re-hosted in an accessory window).
+  @State private var isToolbarFullScreen = false
 
   private var agentBadgesEnabled: Bool { settingsFile.global.agentPresenceBadgesEnabled }
 
@@ -95,6 +98,7 @@ struct WorktreeDetailView: View {
         WorktreeToolbarContent(
           toolbarState: toolbarState,
           terminalManager: terminalManager,
+          isFullScreen: isToolbarFullScreen,
           repositoriesStore: store.scope(state: \.repositories, action: \.repositories),
           onOpenWorktree: { action in
             store.send(.openWorktree(action))
@@ -120,6 +124,9 @@ struct WorktreeDetailView: View {
         )
       }
     }
+    // Observe fullscreen from the content (main terminal window), then feed it to the
+    // toolbar tint above; toolbar content is re-hosted in fullscreen and can't see it.
+    .windowFullScreenObserver(isFullScreen: $isToolbarFullScreen)
     let hasRunningRunScript = state.hasRunningRunScript
     // Open / Reveal in Finder reach local paths only; the terminal and search
     // commands stay enabled for a remote worktree (they work over SSH).
@@ -450,6 +457,7 @@ struct WorktreeDetailView: View {
   fileprivate struct WorktreeToolbarContent: ToolbarContent {
     let toolbarState: WorktreeToolbarState
     let terminalManager: WorktreeTerminalManager
+    let isFullScreen: Bool
     let repositoriesStore: StoreOf<RepositoriesFeature>?
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
@@ -517,30 +525,38 @@ struct WorktreeDetailView: View {
       let primarySelection = resolved == .finder ? availableActions.first : resolved
       if let primarySelection {
         Menu {
-          ForEach(availableActions) { action in
-            let isDefault = action == primarySelection
-            Button {
-              onOpenActionSelectionChanged(action)
-              onOpenWorktree(action)
-            } label: {
-              OpenWorktreeActionMenuLabelView(action: action)
+          // The popup renders as system chrome; escape the toolbar tint below so its
+          // rows keep the system appearance instead of the terminal background.
+          Group {
+            ForEach(availableActions) { action in
+              let isDefault = action == primarySelection
+              Button {
+                onOpenActionSelectionChanged(action)
+                onOpenWorktree(action)
+              } label: {
+                OpenWorktreeActionMenuLabelView(action: action)
+              }
+              .buttonStyle(.plain)
+              .help(openActionHelpText(for: action, isDefault: isDefault))
             }
-            .buttonStyle(.plain)
-            .help(openActionHelpText(for: action, isDefault: isDefault))
+            Divider()
+            Button {
+              onRevealInFinder()
+            } label: {
+              OpenWorktreeActionMenuLabelView(action: .finder)
+            }
+            .help("Reveal in Finder (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
           }
-          Divider()
-          Button {
-            onRevealInFinder()
-          } label: {
-            OpenWorktreeActionMenuLabelView(action: .finder)
-          }
-          .help("Reveal in Finder (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
+          .inheritSystemColorScheme()
         } label: {
           OpenWorktreeActionMenuLabelView(action: primarySelection)
         } primaryAction: {
           onOpenWorktree(primarySelection)
         }
         .help(openActionHelpText(for: primarySelection, isDefault: true))
+        // The colored app icon opts the toolbar item out of AppKit's vibrant foreground,
+        // so apply the terminal-aware chrome tint manually to keep the label legible.
+        .toolbarTintColorScheme(manager: terminalManager, isFullScreen: isFullScreen)
       }
     }
 
@@ -1132,6 +1148,7 @@ private struct WorktreeToolbarPreview: View {
       WorktreeDetailView.WorktreeToolbarContent(
         toolbarState: toolbarState,
         terminalManager: WorktreeTerminalManager(runtime: GhosttyRuntime()),
+        isFullScreen: false,
         repositoriesStore: nil,
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
