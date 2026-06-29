@@ -181,6 +181,7 @@ struct RepositoriesFeature {
     @Presents var worktreeCustomization: WorktreeCustomizationFeature.State?
     @Presents var renameBranchPrompt: RenameBranchFeature.State?
     @Presents var remoteConnectionForm: RemoteConnectionFormFeature.State?
+    @Presents var cloneRepositoryForm: CloneRepositoryFormFeature.State?
     @Presents var alert: AlertState<Alert>?
 
     // MARK: - Sidebar items (per-row TCA collection).
@@ -259,6 +260,8 @@ struct RepositoriesFeature {
     case requestAddRemoteRepository
     case requestEditRemoteRepository(Repository.ID)
     case remoteConnectionForm(PresentationAction<RemoteConnectionFormFeature.Action>)
+    case requestCloneRepository
+    case cloneRepositoryForm(PresentationAction<CloneRepositoryFormFeature.Action>)
     case removeRemoteRepository(Repository.ID)
     /// Kick off async SSH resolution of every persisted remote config; streams
     /// one `.remoteRepositoryResolved` per repo as each finishes.
@@ -2927,6 +2930,11 @@ struct RepositoriesFeature {
         // runs before the delegate handler nils the presented state.
         return .none
 
+      case .requestCloneRepository, .cloneRepositoryForm:
+        // Handled by `cloneRepositoryFormReducer` so the form's child reducer
+        // runs before the delegate handler nils the presented state.
+        return .none
+
       case .removeRemoteRepository(let repositoryID):
         @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
         $remoteRepositoryRoots.withLock { roots in
@@ -3927,6 +3935,10 @@ struct RepositoriesFeature {
     Self.remoteConnectionFormReducer
       .ifLet(\.$remoteConnectionForm, action: \.remoteConnectionForm) {
         RemoteConnectionFormFeature()
+      }
+    Self.cloneRepositoryFormReducer
+      .ifLet(\.$cloneRepositoryForm, action: \.cloneRepositoryForm) {
+        CloneRepositoryFormFeature()
       }
     worktreeArchiveReducer
     worktreeRemovalReducer
