@@ -113,10 +113,8 @@ final class WorktreeInfoWatcherManager {
 
   private func setWorktrees(_ worktrees: [Worktree]) {
     let isInitialWorktreeLoad = !hasCompletedInitialWorktreeLoad && self.worktrees.isEmpty && !worktrees.isEmpty
-    // A repository registered under both its working dir and its `.bare/` dir can
-    // enumerate the same worktree twice, yielding a duplicate `WorktreeID`. Use
-    // `uniquingKeysWith` so that collision keeps the first entry instead of trapping
-    // and crash-looping on launch (mirrors the guard in `RepositoriesFeature`).
+    // Keep the first entry on a duplicate WorktreeID instead of trapping; a repo registered
+    // under both its working dir and `.bare/` enumerates the same worktree twice.
     let worktreesByID = Dictionary(worktrees.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let desiredIDs = Set(worktreesByID.keys)
     let currentIDs = Set(self.worktrees.keys)
@@ -132,20 +130,20 @@ final class WorktreeInfoWatcherManager {
       deferredLineChangeIDs.formUnion(newIDs)
     }
     self.worktrees = worktreesByID
-    // Iterate the de-duplicated values so a duplicate `WorktreeID` doesn't
-    // configure the same watcher or emit its immediate refresh twice.
-    let uniqueWorktrees = Array(worktreesByID.values)
-    for worktree in uniqueWorktrees {
+    // Iterate the de-duplicated values so a duplicate WorktreeID doesn't configure
+    // the same watcher or emit its immediate refresh twice.
+    var repositoryRoots: Set<URL> = []
+    for worktree in worktreesByID.values {
       configureWatcher(for: worktree)
       updateLineChangeSchedule(
         worktreeID: worktree.id,
         immediate: isInitialWorktreeLoad || !deferredLineChangeIDs.contains(worktree.id)
       )
+      repositoryRoots.insert(worktree.repositoryRootURL)
     }
     if isInitialWorktreeLoad {
       hasCompletedInitialWorktreeLoad = true
     }
-    let repositoryRoots = Set(uniqueWorktrees.map(\.repositoryRootURL))
     for repositoryRootURL in repositoryRoots {
       updatePullRequestSchedule(repositoryRootURL: repositoryRootURL, immediate: true)
     }

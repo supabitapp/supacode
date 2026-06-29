@@ -61,9 +61,7 @@ struct WorktreeInfoWatcherManagerTests {
   }
 
   @Test func buildsWorktreeLookupWithoutTrappingOnDuplicateID() async throws {
-    // A repository registered under both its working dir and its `.bare/` dir can
-    // enumerate the same worktree twice, producing two entries with the same
-    // `WorktreeID`. Setting that list must not trap; the first entry wins.
+    // Two entries sharing one WorktreeID must not trap; the first entry wins.
     let tempWorktree = try makeTempWorktree()
     let duplicate = Worktree(
       id: tempWorktree.worktree.id,
