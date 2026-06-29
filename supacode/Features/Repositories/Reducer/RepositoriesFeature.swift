@@ -276,6 +276,11 @@ struct RepositoriesFeature {
       prefix: String,
       isExpanded: Bool
     )
+    /// Expand or collapse *every* sidebar group at once. Fired by a ⌘-click on
+    /// any sidebar disclosure (a repository section header or a nested branch
+    /// group header). `true` fully unfolds the tree — every repository section
+    /// plus every nested branch group; `false` folds every repository section.
+    case setAllSidebarGroupsExpanded(Bool)
     case selectArchivedWorktrees
     case setSidebarSelectedWorktreeIDs(Set<Worktree.ID>)
     case openRepositories([URL])
@@ -3232,6 +3237,26 @@ struct RepositoriesFeature {
           }
           section.buckets[bucketID] = bucket
           sidebar.sections[repositoryID] = section
+        }
+        return .none
+
+      case .setAllSidebarGroupsExpanded(let isExpanded):
+        state.$sidebar.withLock { sidebar in
+          for repositoryID in Array(sidebar.sections.keys) {
+            guard var section = sidebar.sections[repositoryID] else { continue }
+            section.collapsed = !isExpanded
+            // Expanding "all" means fully open, so also clear every bucket's
+            // collapsed branch-group prefixes. Collapsing only folds the repo
+            // sections — the nested groups are already hidden underneath, and
+            // leaving their prefixes intact preserves the user's per-group
+            // layout for when the section is reopened.
+            if isExpanded {
+              for bucketID in Array(section.buckets.keys) {
+                section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+              }
+            }
+            sidebar.sections[repositoryID] = section
+          }
         }
         return .none
 

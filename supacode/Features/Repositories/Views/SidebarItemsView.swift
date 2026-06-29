@@ -273,15 +273,20 @@ private struct SidebarPathGroupHeaderRow: View {
   var body: some View {
     let label = components.isEmpty ? prefix : components.joined(separator: "/")
     Button {
-      _ = withAnimation(.easeOut(duration: 0.2)) {
-        store.send(
-          .branchNestExpansionChanged(
-            repositoryID: repositoryID,
-            bucketID: bucketID,
-            prefix: prefix,
-            isExpanded: isCollapsed
-          )
+      // ⌘-click expands / collapses every sidebar group at once; a plain click
+      // toggles just this group. `isCollapsed` is this group's current state,
+      // so it is also the expanded target this click produces.
+      let action: RepositoriesFeature.Action =
+        NSEvent.modifierFlags.contains(.command)
+        ? .setAllSidebarGroupsExpanded(isCollapsed)
+        : .branchNestExpansionChanged(
+          repositoryID: repositoryID,
+          bucketID: bucketID,
+          prefix: prefix,
+          isExpanded: isCollapsed
         )
+      _ = withAnimation(.easeOut(duration: 0.2)) {
+        store.send(action)
       }
     } label: {
       HStack(spacing: 6) {
@@ -307,7 +312,7 @@ private struct SidebarPathGroupHeaderRow: View {
     .listRowInsets(.leading, CGFloat(depth) * SidebarNestLayout.indentStep)
     .listRowInsets(.vertical, 6)
     .moveDisabled(true)
-    .help(isCollapsed ? "Expand \(label)" : "Collapse \(label)")
+    .help(isCollapsed ? "Expand \(label) (⌘-click for all)" : "Collapse \(label) (⌘-click for all)")
     .accessibilityLabel("\(label) group, \(isCollapsed ? "collapsed" : "expanded")")
   }
 }
