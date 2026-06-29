@@ -132,7 +132,7 @@ run-app-dev: build-app-dev # Build then launch the isolated dev app
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	pkill -f "$$product/Contents/MacOS/" 2>/dev/null || true; \
-	open "$$build_dir/$$product"
+	open -n "$$build_dir/$$product"
 
 dev: # Watch sources; rebuild + relaunch the dev app on change
 	@pkill -f 'watchexec.*run-app-dev' || true
