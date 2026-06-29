@@ -66,6 +66,10 @@ final class WorktreeTerminalState {
   // `surfaceStates` / `WorktreeTabProjection` to keep agent storms cold.
   private var trees: [TerminalTabID: SplitTree<SurfaceView>] = [:]
   @ObservationIgnored private var surfaces: [UUID: GhosttySurfaceView] = [:]
+  /// Owns pane-rearrange drag state for this worktree's terminal area. The view
+  /// layer reads `isDragging` to mount drop catchers; `onDrop` (wired in `init`)
+  /// routes a landed drop back into `performSplitOperation`.
+  @ObservationIgnored let dragCoordinator = SurfaceDragCoordinator()
   // `usesZmx` + `context` retained per surface so an unexpected zmx exit can recreate it on reattach.
   @ObservationIgnored private var surfaceLaunchMetadata: [UUID: SurfaceLaunchMetadata] = [:]
   // Surfaces the user explicitly closed, so an unexpected zmx exit isn't mistaken for one and reattached.
@@ -215,6 +219,11 @@ final class WorktreeTerminalState {
     // the steady state once tabs exist.
     @Shared(.settingsFile) var settingsFile
     self.shouldHideTabBar = settingsFile.global.hideSingleTabBar
+    dragCoordinator.onDrop = { [weak self] payloadID, destinationID, zone in
+      guard let self, let tabId = self.tabID(containing: destinationID) else { return }
+      self.performSplitOperation(
+        .drop(payloadId: payloadID, destinationId: destinationID, zone: zone), in: tabId)
+    }
   }
 
   var taskStatus: WorktreeTaskStatus {
@@ -914,10 +923,14 @@ final class WorktreeTerminalState {
       }
 
     case .drop(let payloadId, let destinationId, let zone):
-      guard let payload = surfaces[payloadId] else { return }
-      guard let destination = surfaces[destinationId] else { return }
-      if payload === destination { return }
-      guard let sourceNode = tree.root?.node(view: payload) else { return }
+      // Resolve through the tab's tree (content-agnostic), not the terminal-only
+      // `surfaces` map: a drop only ever rearranges leaves within this tab.
+      let leaves = tree.visibleLeaves()
+      guard let payload = leaves.first(where: { $0.id == payloadId }),
+        let destination = leaves.first(where: { $0.id == destinationId }),
+        payload !== destination,
+        let sourceNode = tree.root?.node(view: payload)
+      else { return }
       let treeWithoutSource = tree.removing(sourceNode)
       if treeWithoutSource.isEmpty { return }
       do {
@@ -927,7 +940,7 @@ final class WorktreeTerminalState {
           direction: mapDropZone(zone)
         )
         updateTree(newTree, for: tabId)
-        focusSurface(payload, in: tabId)
+        focusLeaf(payload, in: tabId)
       } catch {
         return
       }
@@ -2592,6 +2605,11 @@ final class WorktreeTerminalState {
     /// `createSurface` / `cleanupSurfaceState`.
     func installSurfaceStateForTesting(_ state: WorktreeSurfaceState, forSurfaceID surfaceID: UUID) {
       surfaceStates[surfaceID] = state
+    }
+
+    /// Test-only read of the tab's active pane id.
+    func focusedSurfaceIDForTesting(in tabId: TerminalTabID) -> UUID? {
+      focusedSurfaceIdByTab[tabId]
     }
 
   #endif

@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct TerminalSplitTreeView: View {
   let tree: SplitTree<SurfaceView>
@@ -16,20 +15,6 @@ struct TerminalSplitTreeView: View {
   // is unreadable; callers must skip the overlay in that case.
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
   let action: (Operation) -> Void
-
-  private static let dragType = UTType(exportedAs: "sh.supacode.ghosttySurfaceId")
-  private static func dragProvider(for surfaceView: GhosttySurfaceView) -> NSItemProvider {
-    let provider = NSItemProvider()
-    let data = surfaceView.id.uuidString.data(using: .utf8) ?? Data()
-    provider.registerDataRepresentation(
-      forTypeIdentifier: dragType.identifier,
-      visibility: .all
-    ) { completion in
-      completion(data, nil)
-      return nil
-    }
-    return provider
-  }
 
   var body: some View {
     if let node = tree.visibleNode {
@@ -70,6 +55,7 @@ struct TerminalSplitTreeView: View {
             isSplit: !isRoot,
             activeSurfaceID: activeSurfaceID,
             unfocusedSplitOverlay: unfocusedSplitOverlay,
+            dragCoordinator: terminalState.dragCoordinator,
             action: action
           )
         }
@@ -122,9 +108,8 @@ struct TerminalSplitTreeView: View {
     let isSplit: Bool
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+    let dragCoordinator: SurfaceDragCoordinator
     let action: (Operation) -> Void
-
-    @State private var dropState: DropState = .idle
 
     private var isDimmed: Bool {
       // During initialization activeSurfaceID is nil and nothing should be
@@ -134,140 +119,39 @@ struct TerminalSplitTreeView: View {
     }
 
     var body: some View {
-      GeometryReader { geometry in
-        GhosttyTerminalView(surfaceView: surfaceView)
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .overlay {
-            if isDimmed, let fill = unfocusedSplitOverlay.fill, unfocusedSplitOverlay.opacity > 0 {
-              fill
-                .opacity(unfocusedSplitOverlay.opacity)
-                .allowsHitTesting(false)
-            }
-          }
-          .overlay(alignment: .topTrailing) {
-            if surfaceView.bridge.state.searchNeedle != nil {
-              GhosttySurfaceSearchOverlay(surfaceView: surfaceView)
-            }
-          }
-          .overlay(alignment: .topTrailing) {
-            SurfaceNotificationDotIndicator(state: surfaceState)
-          }
-          .overlay(alignment: .top) {
-            if isSplit {
-              DragHandle(surfaceView: surfaceView)
-            }
-          }
-          .background {
-            Color.clear
-              .contentShape(.rect)
-              .onDrop(
-                of: [TerminalSplitTreeView.dragType],
-                delegate: SplitDropDelegate(
-                  dropState: $dropState,
-                  viewSize: geometry.size,
-                  destinationId: surfaceView.id,
-                  action: action
-                ))
-          }
-          .overlay {
-            if case .dropping(let zone) = dropState {
-              DropOverlayView(zone: zone, size: geometry.size)
-                .allowsHitTesting(false)
-            }
-          }
-      }
-    }
-
-  }
-
-  struct DragHandle: View {
-    let surfaceView: GhosttySurfaceView
-    private let handleHeight: CGFloat = 10
-    @State private var isHovering = false
-
-    var body: some View {
-      Rectangle()
-        .fill(Color.primary.opacity(isHovering ? 0.12 : 0))
-        .frame(maxWidth: .infinity)
-        .frame(height: handleHeight)
+      GhosttyTerminalView(surfaceView: surfaceView)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay {
-          if isHovering {
-            Image(systemName: "ellipsis")
-              .font(.system(.callout, weight: .semibold))
-              .foregroundStyle(.primary.opacity(0.5))
-              .accessibilityHidden(true)
+          if isDimmed, let fill = unfocusedSplitOverlay.fill, unfocusedSplitOverlay.opacity > 0 {
+            fill
+              .opacity(unfocusedSplitOverlay.opacity)
+              .allowsHitTesting(false)
           }
         }
-        .contentShape(.rect)
-        .onHover { hovering in
-          guard hovering != isHovering else { return }
-          isHovering = hovering
-          if hovering {
-            NSCursor.openHand.push()
-          } else {
-            NSCursor.pop()
+        .overlay(alignment: .topTrailing) {
+          if surfaceView.bridge.state.searchNeedle != nil {
+            GhosttySurfaceSearchOverlay(surfaceView: surfaceView)
           }
         }
-        .onDisappear {
-          if isHovering {
-            isHovering = false
-            NSCursor.pop()
+        .overlay(alignment: .topTrailing) {
+          SurfaceNotificationDotIndicator(state: surfaceState)
+        }
+        .overlay(alignment: .top) {
+          if isSplit {
+            SurfaceDragHandle(surfaceID: surfaceView.id, coordinator: dragCoordinator)
+              .frame(height: handleHeight)
           }
         }
-        .onDrag {
-          TerminalSplitTreeView.dragProvider(for: surfaceView)
+        .overlay {
+          // Mounted for the pane's lifetime (not only during a drag) so the catcher's
+          // drag-type registration is ready before a drag session starts; AppKit can
+          // miss a drop target that registers mid-drag. `SurfaceDropCatcherView.hitTest`
+          // keeps it click-through until a drag is in flight.
+          SurfaceDropCatcher(surfaceID: surfaceView.id, coordinator: dragCoordinator)
         }
     }
-  }
 
-  enum DropState: Equatable {
-    case idle
-    case dropping(DropZone)
-  }
-
-  struct SplitDropDelegate: DropDelegate {
-    @Binding var dropState: DropState
-    let viewSize: CGSize
-    let destinationId: UUID
-    let action: (Operation) -> Void
-
-    func validateDrop(info: DropInfo) -> Bool {
-      info.hasItemsConforming(to: [TerminalSplitTreeView.dragType])
-    }
-
-    func dropEntered(info: DropInfo) {
-      dropState = .dropping(.calculate(at: info.location, in: viewSize))
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-      guard case .dropping = dropState else { return DropProposal(operation: .forbidden) }
-      dropState = .dropping(.calculate(at: info.location, in: viewSize))
-      return DropProposal(operation: .move)
-    }
-
-    func dropExited(info: DropInfo) {
-      dropState = .idle
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-      let zone = DropZone.calculate(at: info.location, in: viewSize)
-      dropState = .idle
-
-      let providers = info.itemProviders(for: [TerminalSplitTreeView.dragType])
-      guard let provider = providers.first else { return false }
-      provider.loadDataRepresentation(
-        forTypeIdentifier: TerminalSplitTreeView.dragType.identifier
-      ) { data, _ in
-        guard let data,
-          let raw = String(data: data, encoding: .utf8),
-          let payloadId = UUID(uuidString: raw)
-        else { return }
-        Task { @MainActor in
-          action(.drop(payloadId: payloadId, destinationId: destinationId, zone: zone))
-        }
-      }
-      return true
-    }
+    private let handleHeight: CGFloat = 10
   }
 
   enum DropZone: String, Equatable {
@@ -294,45 +178,6 @@ struct TerminalSplitTreeView: View {
     }
   }
 
-  struct DropOverlayView: View {
-    let zone: DropZone
-    let size: CGSize
-
-    var body: some View {
-      let overlayColor = Color.accentColor.opacity(0.3)
-
-      switch zone {
-      case .top:
-        VStack(spacing: 0) {
-          Rectangle()
-            .fill(overlayColor)
-            .frame(height: size.height / 2)
-          Spacer()
-        }
-      case .bottom:
-        VStack(spacing: 0) {
-          Spacer()
-          Rectangle()
-            .fill(overlayColor)
-            .frame(height: size.height / 2)
-        }
-      case .left:
-        HStack(spacing: 0) {
-          Rectangle()
-            .fill(overlayColor)
-            .frame(width: size.width / 2)
-          Spacer()
-        }
-      case .right:
-        HStack(spacing: 0) {
-          Spacer()
-          Rectangle()
-            .fill(overlayColor)
-            .frame(width: size.width / 2)
-        }
-      }
-    }
-  }
 }
 
 // MARK: - Surface notification indicator.
