@@ -132,7 +132,10 @@ final class WorktreeInfoWatcherManager {
       deferredLineChangeIDs.formUnion(newIDs)
     }
     self.worktrees = worktreesByID
-    for worktree in worktrees {
+    // Iterate the de-duplicated values so a duplicate `WorktreeID` doesn't
+    // configure the same watcher or emit its immediate refresh twice.
+    let uniqueWorktrees = Array(worktreesByID.values)
+    for worktree in uniqueWorktrees {
       configureWatcher(for: worktree)
       updateLineChangeSchedule(
         worktreeID: worktree.id,
@@ -142,7 +145,7 @@ final class WorktreeInfoWatcherManager {
     if isInitialWorktreeLoad {
       hasCompletedInitialWorktreeLoad = true
     }
-    let repositoryRoots = Set(worktrees.map(\.repositoryRootURL))
+    let repositoryRoots = Set(uniqueWorktrees.map(\.repositoryRootURL))
     for repositoryRootURL in repositoryRoots {
       updatePullRequestSchedule(repositoryRootURL: repositoryRootURL, immediate: true)
     }
