@@ -22,6 +22,10 @@ TUIST_GENERATE_CACHE_PROFILE ?= development
 TUIST_CACHE_CONFIGURATION ?= Debug
 VERSION ?=
 BUILD ?=
+TITLE ?=
+BODY ?=
+# Export so headline markdown reaches the script without a shell re-parse of quotes/backticks.
+export VERSION BUILD TITLE BODY
 XCODEBUILD_FLAGS ?=
 SUPACODE_SKIP_PREFLIGHT ?=
 
@@ -153,47 +157,9 @@ check: format lint # Format and lint
 log-stream: # Stream logs from the app via log stream
 	log stream --predicate 'subsystem == "app.supabit.supacode"' --style compact --color always
 
-bump-version: # Bump app version (usage: make bump-version [VERSION=x.x.x] [BUILD=123])
-	@if [ -z "$(VERSION)" ]; then \
-		current="$$(/usr/bin/awk -F' = ' '/^MARKETING_VERSION = [0-9.]+$$/{print $$2; exit}' "$(PROJECT_CONFIG_PATH)")"; \
-		if [ -z "$$current" ]; then \
-			echo "error: MARKETING_VERSION not found"; \
-			exit 1; \
-		fi; \
-		major="$$(echo "$$current" | cut -d. -f1)"; \
-		minor="$$(echo "$$current" | cut -d. -f2)"; \
-		patch="$$(echo "$$current" | cut -d. -f3)"; \
-		version="$$major.$$minor.$$((patch + 1))"; \
-	else \
-		if ! echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
-			echo "error: VERSION must be in x.x.x format"; \
-			exit 1; \
-		fi; \
-		version="$(VERSION)"; \
-	fi; \
-	if [ -z "$(BUILD)" ]; then \
-		build="$$(/usr/bin/awk -F' = ' '/^CURRENT_PROJECT_VERSION = [0-9]+$$/{print $$2; exit}' "$(PROJECT_CONFIG_PATH)")"; \
-		if [ -z "$$build" ]; then \
-			echo "error: CURRENT_PROJECT_VERSION not found"; \
-			exit 1; \
-		fi; \
-		build="$$((build + 1))"; \
-	else \
-		if ! echo "$(BUILD)" | grep -qE '^[0-9]+$$'; then \
-			echo "error: BUILD must be an integer"; \
-			exit 1; \
-		fi; \
-		build="$(BUILD)"; \
-	fi; \
-	sed -i '' "s/^MARKETING_VERSION = [0-9.]*/MARKETING_VERSION = $$version/g" \
-		"$(PROJECT_CONFIG_PATH)"; \
-	sed -i '' "s/^CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = $$build/g" \
-		"$(PROJECT_CONFIG_PATH)"; \
-	git add "$(PROJECT_CONFIG_PATH)"; \
-	git commit -S -m "bump v$$version"; \
-	git tag -s "v$$version" -m "v$$version"; \
-	echo "version bumped to $$version (build $$build), tagged v$$version"
+bump-version: # Bump app version (usage: make bump-version VERSION=x.y.z [BUILD=123] [TITLE=… BODY=…])
+	@./scripts/bump-version.sh
 
-# main.yml detects the tag at HEAD and cuts the release with auto-generated notes.
-bump-and-release: bump-version # Bump version and push tags to trigger the release
+# main.yml detects the tag at HEAD and cuts the release, prepending its headline.
+bump-and-release: bump-version # Bump version and push tags to trigger the release (usage: make bump-and-release VERSION=x.y.z [TITLE=… BODY=…])
 	git push --follow-tags

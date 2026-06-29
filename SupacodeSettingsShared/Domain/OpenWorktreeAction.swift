@@ -59,7 +59,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   case ghostty
   case goland
   case intellij
+  case intellijEAP
   case kitty
+  case nova
   case pycharm
   case rubymine
   case rustrover
@@ -94,7 +96,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .ghostty: "Ghostty"
     case .goland: "GoLand"
     case .intellij: "IntelliJ IDEA"
+    case .intellijEAP: "IntelliJ IDEA EAP"
     case .kitty: "Kitty"
+    case .nova: "Nova"
     case .pycharm: "PyCharm"
     case .rubymine: "RubyMine"
     case .rustrover: "RustRover"
@@ -121,9 +125,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder: "Finder"
     case .editor: "$EDITOR"
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
-      .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp,
-      .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
+      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rubymine,
+      .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
+      .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
       title
     }
   }
@@ -144,9 +148,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder, .editor:
       return true
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .kitty, .pycharm, .rubymine, .rustrover, .smartgit,
-      .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp,
-      .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
+      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rubymine,
+      .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
+      .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
       return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
     }
   }
@@ -166,7 +170,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .ghostty: "ghostty"
     case .goland: "goland"
     case .intellij: "intellij"
+    case .intellijEAP: "intellijEAP"
     case .kitty: "kitty"
+    case .nova: "nova"
     case .pycharm: "pycharm"
     case .rubymine: "rubymine"
     case .rustrover: "rustrover"
@@ -202,7 +208,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .ghostty: "com.mitchellh.ghostty"
     case .goland: "com.jetbrains.goland"
     case .intellij: "com.jetbrains.intellij"
+    case .intellijEAP: "com.jetbrains.intellij-EAP"
     case .kitty: "net.kovidgoyal.kitty"
+    case .nova: "com.panic.Nova"
     case .pycharm: "com.jetbrains.pycharm"
     case .rubymine: "com.jetbrains.rubymine"
     case .rustrover: "com.jetbrains.rustrover"
@@ -232,16 +240,16 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         .default,
       ]
     case .alacritty, .androidStudio, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop,
-      .gitkraken, .gitup, .ghostty, .goland, .intellij, .kitty, .pycharm, .rubymine, .rustrover,
-      .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders, .vscodium, .warp,
-      .webstorm, .wezterm, .windsurf, .zed, .zedPreview:
+      .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm,
+      .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
+      .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .zed, .zedPreview:
       [.default]
     }
   }
 
   public var openBehaviors: [OpenBehavior] {
     switch self {
-    case .androidStudio, .goland, .intellij, .webstorm, .pycharm, .rubymine, .rustrover:
+    case .androidStudio, .goland, .intellij, .intellijEAP, .webstorm, .pycharm, .rubymine, .rustrover:
       [
         .workspace(
           configuration:
@@ -260,7 +268,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         .default,
       ]
     case .alacritty, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop, .gitkraken, .gitup,
-      .ghostty, .kitty, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
+      .ghostty, .kitty, .nova, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
       .vscodium, .warp, .wezterm, .windsurf, .xcode:
       [.default]
     }
@@ -279,10 +287,12 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     .androidStudio,
     .goland,
     .intellij,
+    .intellijEAP,
     .webstorm,
     .pycharm,
     .rubymine,
     .rustrover,
+    .nova,
     .antigravity,
   ]
   public static let terminalPriority: [OpenWorktreeAction] = [
