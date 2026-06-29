@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Content-agnostic leaf of a tab's `SplitTree`. `GhosttySurfaceView` is the only
 /// subclass today; additional surface kinds become peer subclasses. The leaf *is*
@@ -10,6 +11,12 @@ import AppKit
 /// `as?` downcast.
 class SurfaceView: NSView, Identifiable {
   let id: UUID
+
+  /// Private pasteboard type carrying a leaf's id while a pane is dragged to be
+  /// re-split. Shared by the drag handle (source) and the drop catcher; the
+  /// rearrange machinery lives in a layer above `SurfaceView`, not in the leaf
+  /// itself, so concrete surfaces stay agnostic to it.
+  static let surfaceDragType = UTType(exportedAs: "sh.supacode.ghosttySurfaceId")
 
   var onFocusChange: ((Bool) -> Void)?
   /// Asked on re-attachment to a window: should this surface re-claim
