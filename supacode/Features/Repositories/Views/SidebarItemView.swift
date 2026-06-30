@@ -433,6 +433,7 @@ private struct IconContent: View, Equatable {
           .aspectRatio(contentMode: .fit)
           .fontWeight(.semibold)
           .foregroundStyle(folderColor)
+          .opacity(isEmphasized ? 1 : 0.6)
       } else {
         Image(icon.assetName)
           .renderingMode(.template)
