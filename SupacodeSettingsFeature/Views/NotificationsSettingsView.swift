@@ -18,30 +18,22 @@ public struct NotificationsSettingsView: View {
           Text("System notifications")
         }
         .help("Show macOS system notifications")
-        Toggle(
-          isOn: $store.notificationSoundEnabled
-        ) {
+        Picker(selection: $store.notificationSound) {
+          Text(NotificationSound.never.displayName).tag(NotificationSound.never)
+          Divider()
+          ForEach(NotificationSound.systemCases) { sound in
+            NotificationSoundLabel(sound: sound).tag(sound)
+          }
+          Divider()
+          Text(NotificationSound.supacodeClassic.displayName).tag(NotificationSound.supacodeClassic)
+        } label: {
           Text("Play notification sound")
           Text(
             "Ignored when system notifications are enabled, as they play sounds"
               + " according to your settings."
           )
-        }.disabled(store.systemNotificationsEnabled)
-        Picker(selection: $store.notificationSound) {
-          ForEach(NotificationSound.allCases) { sound in
-            Text(sound.displayName).tag(sound)
-          }
-        } label: {
-          Text("Notification sound")
-          Text(
-            "Applies to in-app notifications. macOS banners only support System Default and "
-              + "Supacode Chime; other sounds use the default."
-          )
         }
-        .help(
-          "Sound for in-app notifications. macOS notification banners only support System Default and the "
-            + "bundled Supacode Chime; other system sounds fall back to the default banner sound."
-        )
+        .disabled(store.systemNotificationsEnabled)
       }
       Section("Worktrees") {
         Toggle(
@@ -64,5 +56,17 @@ public struct NotificationsSettingsView: View {
     .padding(.trailing, -6)
 
     .navigationTitle("Notifications")
+  }
+}
+
+private struct NotificationSoundLabel: View {
+  let sound: NotificationSound
+
+  var body: some View {
+    if sound == GlobalSettings.default.notificationSound {
+      Text("\(sound.displayName) \(Text("Default").foregroundStyle(.secondary))")
+    } else {
+      Text(sound.displayName)
+    }
   }
 }

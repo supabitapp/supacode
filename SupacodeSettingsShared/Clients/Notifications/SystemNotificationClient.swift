@@ -79,18 +79,13 @@ public nonisolated struct SystemNotificationClient: Sendable {
 
   public var authorizationStatus: @MainActor @Sendable () async -> AuthorizationStatus
   public var requestAuthorization: @MainActor @Sendable () async -> AuthorizationRequestResult
-  public var send:
-    @MainActor @Sendable (_ title: String, _ body: String, _ deeplinkURL: URL?, _ sound: NotificationSound) async ->
-      Void
+  public var send: @MainActor @Sendable (_ title: String, _ body: String, _ deeplinkURL: URL?) async -> Void
   public var openSettings: @MainActor @Sendable () async -> Void
 
   public init(
     authorizationStatus: @escaping @MainActor @Sendable () async -> AuthorizationStatus,
     requestAuthorization: @escaping @MainActor @Sendable () async -> AuthorizationRequestResult,
-    send:
-      @escaping @MainActor @Sendable (
-        _ title: String, _ body: String, _ deeplinkURL: URL?, _ sound: NotificationSound
-      ) async -> Void,
+    send: @escaping @MainActor @Sendable (_ title: String, _ body: String, _ deeplinkURL: URL?) async -> Void,
     openSettings: @escaping @MainActor @Sendable () async -> Void
   ) {
     self.authorizationStatus = authorizationStatus
@@ -130,12 +125,12 @@ extension SystemNotificationClient: DependencyKey {
         )
       }
     },
-    send: { title, body, deeplinkURL, sound in
+    send: { title, body, deeplinkURL in
       let center = configuredNotificationCenter()
       let content = UNMutableNotificationContent()
       content.title = title
       content.body = body
-      content.sound = sound.unNotificationSound
+      content.sound = .default
       if let deeplinkURL {
         content.userInfo = [deeplinkUserInfoKey: deeplinkURL.absoluteString]
       }
@@ -157,7 +152,7 @@ extension SystemNotificationClient: DependencyKey {
   public static let testValue = SystemNotificationClient(
     authorizationStatus: { .notDetermined },
     requestAuthorization: { AuthorizationRequestResult(granted: false, errorMessage: nil) },
-    send: { _, _, _, _ in },
+    send: { _, _, _ in },
     openSettings: {}
   )
 }

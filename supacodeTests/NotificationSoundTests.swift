@@ -1,38 +1,41 @@
+import Foundation
 import Testing
-import UserNotifications
 
 @testable import SupacodeSettingsShared
 
 struct NotificationSoundTests {
-  @Test func systemDefaultUsesDefaultBannerSound() {
-    #expect(NotificationSound.systemDefault.unNotificationSound == .default)
-  }
-
-  @Test func chimeUsesNamedBundleSoundNotDefault() {
-    // `.chime` resolves the bundled `notification.wav`, which is a distinct
-    // `UNNotificationSound(named:)` instance — NOT the `.default` singleton.
-    // `UNNotificationSound` is an `NSObject` subclass, so `==` compares via
-    // `isEqual`; the named sound is not equal to the shared default.
-    #expect(NotificationSound.chime.unNotificationSound != .default)
-  }
-
-  @Test func systemSoundsFallBackToDefaultOnBannerPath() {
-    // Documented asymmetry: `/System/Library/Sounds` names don't resolve on the
-    // UNUserNotificationCenter path, so they intentionally fall back to `.default`.
-    #expect(NotificationSound.funk.unNotificationSound == .default)
-    #expect(NotificationSound.tink.unNotificationSound == .default)
-  }
-
-  @Test func systemSoundNameMapsForSystemCasesOnly() {
-    #expect(NotificationSound.funk.systemSoundName == "Funk")
-    #expect(NotificationSound.tink.systemSoundName == "Tink")
-    #expect(NotificationSound.chime.systemSoundName == nil)
-    #expect(NotificationSound.systemDefault.systemSoundName == nil)
+  @Test func sourceMapsEachCaseToExactlyOneKind() {
+    #expect(NotificationSound.never.source == nil)
+    #expect(NotificationSound.funk.source == .system(name: "Funk"))
+    #expect(NotificationSound.tink.source == .system(name: "Tink"))
+    #expect(NotificationSound.supacodeClassic.source == .bundled(resource: "notification", withExtension: "wav"))
   }
 
   @Test func displayNamesAreUnambiguous() {
-    #expect(NotificationSound.systemDefault.displayName == "System Default")
-    #expect(NotificationSound.chime.displayName == "Supacode Chime")
+    #expect(NotificationSound.never.displayName == "Never")
+    #expect(NotificationSound.supacodeClassic.displayName == "Supacode Classic")
     #expect(NotificationSound.funk.displayName == "Funk")
+  }
+
+  @Test func pickerGroupsCoverEveryCaseWithoutOverlap() {
+    let grouped = [NotificationSound.never] + NotificationSound.systemCases + [.supacodeClassic]
+    #expect(Set(grouped) == Set(NotificationSound.allCases))
+    #expect(grouped.count == NotificationSound.allCases.count)
+  }
+
+  // The raw values are the persisted contract; a rename orphans saved
+  // selections, so pin the literals here. Change them only as a deliberate edit.
+  @Test func rawValueContractIsStable() throws {
+    #expect(NotificationSound.never.rawValue == "never")
+    #expect(NotificationSound.hero.rawValue == "hero")
+    #expect(NotificationSound.supacodeClassic.rawValue == "supacodeClassic")
+    #expect(
+      Set(NotificationSound.allCases.map(\.rawValue)) == [
+        "never", "basso", "blow", "bottle", "frog", "funk", "glass", "hero",
+        "morse", "ping", "pop", "purr", "sosumi", "submarine", "tink", "supacodeClassic",
+      ]
+    )
+    // The persisted JSON string must still decode to the case.
+    #expect(try JSONDecoder().decode(NotificationSound.self, from: Data("\"hero\"".utf8)) == .hero)
   }
 }

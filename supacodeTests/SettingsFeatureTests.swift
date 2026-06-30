@@ -20,7 +20,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
       inAppNotificationsEnabled: false,
-      notificationSoundEnabled: true,
       systemNotificationsEnabled: true,
       moveNotifiedWorktreeToTop: false,
       analyticsEnabled: false,
@@ -50,7 +49,6 @@ struct SettingsFeatureTests {
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
       $0.inAppNotificationsEnabled = false
-      $0.notificationSoundEnabled = true
       $0.moveNotifiedWorktreeToTop = false
       $0.systemNotificationsEnabled = true
       $0.analyticsEnabled = false
@@ -75,7 +73,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: false,
       inAppNotificationsEnabled: false,
-      notificationSoundEnabled: false,
       systemNotificationsEnabled: false,
       moveNotifiedWorktreeToTop: true,
       analyticsEnabled: true,
@@ -102,7 +99,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: initialSettings.updatesAutomaticallyCheckForUpdates,
       updatesAutomaticallyDownloadUpdates: initialSettings.updatesAutomaticallyDownloadUpdates,
       inAppNotificationsEnabled: initialSettings.inAppNotificationsEnabled,
-      notificationSoundEnabled: initialSettings.notificationSoundEnabled,
       systemNotificationsEnabled: initialSettings.systemNotificationsEnabled,
       moveNotifiedWorktreeToTop: initialSettings.moveNotifiedWorktreeToTop,
       analyticsEnabled: initialSettings.analyticsEnabled,
@@ -132,6 +128,74 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
     #expect(settingsFile.global.systemNotificationsEnabled == true)
+  }
+
+  @Test(.dependencies) func selectingNotificationSoundPlaysPreview() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let played = LockIsolated<[NotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[NotificationSoundClient.self].play = { sound in
+        played.withValue { $0.append(sound) }
+      }
+    }
+
+    await store.send(.binding(.set(\.notificationSound, .glass))) {
+      $0.notificationSound = .glass
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    // Picking a sound auditions it through the in-app player.
+    #expect(played.value == [.glass])
+  }
+
+  @Test(.dependencies) func doesNotPreviewWhenSystemNotificationsEnabled() async {
+    var settings = GlobalSettings.default
+    settings.systemNotificationsEnabled = true
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+
+    let played = LockIsolated<[NotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[NotificationSoundClient.self].play = { sound in
+        played.withValue { $0.append(sound) }
+      }
+    }
+
+    await store.send(.binding(.set(\.notificationSound, .glass))) {
+      $0.notificationSound = .glass
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    // With system notifications on the in-app path is unused, so no preview.
+    #expect(played.value.isEmpty)
+  }
+
+  @Test(.dependencies) func doesNotPreviewWhenNeverSelected() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let played = LockIsolated<[NotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[NotificationSoundClient.self].play = { sound in
+        played.withValue { $0.append(sound) }
+      }
+    }
+
+    await store.send(.binding(.set(\.notificationSound, .never))) {
+      $0.notificationSound = .never
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    // "Never" has nothing to audition.
+    #expect(played.value.isEmpty)
   }
 
   @Test(.dependencies) func settingsPersistDoesNotTouchRemoteRepositoryRoots() async {
@@ -255,7 +319,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
       inAppNotificationsEnabled: false,
-      notificationSoundEnabled: false,
       systemNotificationsEnabled: true,
       moveNotifiedWorktreeToTop: true,
       analyticsEnabled: true,
@@ -273,7 +336,6 @@ struct SettingsFeatureTests {
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
       $0.inAppNotificationsEnabled = false
-      $0.notificationSoundEnabled = false
       $0.moveNotifiedWorktreeToTop = true
       $0.systemNotificationsEnabled = true
       $0.analyticsEnabled = true

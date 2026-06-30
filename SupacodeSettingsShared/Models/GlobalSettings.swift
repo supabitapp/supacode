@@ -33,7 +33,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var updatesAutomaticallyCheckForUpdates: Bool
   public var updatesAutomaticallyDownloadUpdates: Bool
   public var inAppNotificationsEnabled: Bool
-  public var notificationSoundEnabled: Bool
   public var notificationSound: NotificationSound
   public var systemNotificationsEnabled: Bool
   public var moveNotifiedWorktreeToTop: Bool
@@ -75,8 +74,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyCheckForUpdates: true,
     updatesAutomaticallyDownloadUpdates: false,
     inAppNotificationsEnabled: true,
-    notificationSoundEnabled: true,
-    notificationSound: .systemDefault,
+    notificationSound: .hero,
     systemNotificationsEnabled: false,
     moveNotifiedWorktreeToTop: true,
     analyticsEnabled: true,
@@ -110,8 +108,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyCheckForUpdates: Bool,
     updatesAutomaticallyDownloadUpdates: Bool,
     inAppNotificationsEnabled: Bool,
-    notificationSoundEnabled: Bool,
-    notificationSound: NotificationSound = .systemDefault,
+    notificationSound: NotificationSound = .hero,
     systemNotificationsEnabled: Bool = false,
     moveNotifiedWorktreeToTop: Bool,
     analyticsEnabled: Bool,
@@ -143,7 +140,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.updatesAutomaticallyCheckForUpdates = updatesAutomaticallyCheckForUpdates
     self.updatesAutomaticallyDownloadUpdates = updatesAutomaticallyDownloadUpdates
     self.inAppNotificationsEnabled = inAppNotificationsEnabled
-    self.notificationSoundEnabled = notificationSoundEnabled
     self.notificationSound = notificationSound
     self.systemNotificationsEnabled = systemNotificationsEnabled
     self.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
@@ -196,16 +192,18 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     inAppNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .inAppNotificationsEnabled)
       ?? Self.default.inAppNotificationsEnabled
-    notificationSoundEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .notificationSoundEnabled)
-      ?? Self.default.notificationSoundEnabled
-    // `try?` so a present-but-unrecognized raw value (a future build adds a
-    // case, then a downgrade or hand-edited file) falls back to the default
-    // instead of throwing and nuking every other persisted setting. Mirrors
-    // the `mergedWorktreeAction` precedent below.
-    notificationSound =
-      (try? container.decodeIfPresent(NotificationSound.self, forKey: .notificationSound))
-      ?? Self.default.notificationSound
+    // Fold the removed `notificationSoundEnabled` toggle: off becomes `.never`,
+    // on the default sound. `try?` keeps an unrecognized raw value from failing
+    // the whole decode.
+    if let sound = try? container.decodeIfPresent(NotificationSound.self, forKey: .notificationSound) {
+      notificationSound = sound
+    } else if let soundEnabled = try legacy.decodeIfPresent(
+      Bool.self, forKey: LegacyCodingKey(stringValue: "notificationSoundEnabled")!)
+    {
+      notificationSound = soundEnabled ? Self.default.notificationSound : .never
+    } else {
+      notificationSound = Self.default.notificationSound
+    }
     systemNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .systemNotificationsEnabled)
       ?? Self.default.systemNotificationsEnabled

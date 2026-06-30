@@ -120,9 +120,7 @@ struct AppFeatureSystemNotificationTests {
   @Test(.dependencies) func notificationReceivedSendsSystemNotificationWhenEnabled() async {
     var globalSettings = GlobalSettings.default
     globalSettings.systemNotificationsEnabled = true
-    globalSettings.notificationSound = .glass
     let sends = LockIsolated<[(String, String)]>([])
-    let soundsSent = LockIsolated<[NotificationSound]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         settings: SettingsFeature.State(settings: globalSettings)
@@ -130,9 +128,8 @@ struct AppFeatureSystemNotificationTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.systemNotificationClient.send = { title, body, _, sound in
+      $0.systemNotificationClient.send = { title, body, _ in
         sends.withValue { $0.append((title, body)) }
-        soundsSent.withValue { $0.append(sound) }
       }
       $0.terminalClient.tabID = { _, _ in nil }
     }
@@ -153,14 +150,11 @@ struct AppFeatureSystemNotificationTests {
     #expect(sends.value.count == 1)
     #expect(sends.value.first?.0 == "Done")
     #expect(sends.value.first?.1 == "Build succeeded")
-    // The chosen sound is threaded through to the system notification path.
-    #expect(soundsSent.value == [.glass])
   }
 
   @Test(.dependencies) func notificationReceivedSkipsLocalSoundWhenSystemNotificationsEnabled() async {
     var globalSettings = GlobalSettings.default
     globalSettings.systemNotificationsEnabled = true
-    globalSettings.notificationSoundEnabled = true
     let plays = LockIsolated(0)
     let store = TestStore(
       initialState: AppFeature.State(
@@ -172,7 +166,7 @@ struct AppFeatureSystemNotificationTests {
       $0.notificationSoundClient.play = { _ in
         plays.withValue { $0 += 1 }
       }
-      $0.systemNotificationClient.send = { _, _, _, _ in }
+      $0.systemNotificationClient.send = { _, _, _ in }
       $0.terminalClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
@@ -195,7 +189,6 @@ struct AppFeatureSystemNotificationTests {
   @Test(.dependencies) func notificationReceivedPlaysLocalSoundWhenSystemNotificationsDisabled() async {
     var globalSettings = GlobalSettings.default
     globalSettings.systemNotificationsEnabled = false
-    globalSettings.notificationSoundEnabled = true
     globalSettings.notificationSound = .funk
     let plays = LockIsolated<[NotificationSound]>([])
     let sends = LockIsolated(0)
@@ -209,7 +202,7 @@ struct AppFeatureSystemNotificationTests {
       $0.notificationSoundClient.play = { sound in
         plays.withValue { $0.append(sound) }
       }
-      $0.systemNotificationClient.send = { _, _, _, _ in
+      $0.systemNotificationClient.send = { _, _, _ in
         sends.withValue { $0 += 1 }
       }
     }
@@ -228,6 +221,44 @@ struct AppFeatureSystemNotificationTests {
     await store.finish()
 
     #expect(plays.value == [.funk])
+    #expect(sends.value == 0)
+  }
+
+  @Test(.dependencies) func notificationReceivedSkipsLocalSoundWhenNever() async {
+    var globalSettings = GlobalSettings.default
+    globalSettings.systemNotificationsEnabled = false
+    globalSettings.notificationSound = .never
+    let plays = LockIsolated<[NotificationSound]>([])
+    let sends = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        settings: SettingsFeature.State(settings: globalSettings)
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.notificationSoundClient.play = { sound in
+        plays.withValue { $0.append(sound) }
+      }
+      $0.systemNotificationClient.send = { _, _, _ in
+        sends.withValue { $0 += 1 }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .notificationReceived(
+          worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
+          title: "Done",
+          body: "Build succeeded"
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(plays.value.isEmpty)
     #expect(sends.value == 0)
   }
 }
