@@ -156,7 +156,7 @@ struct TerminalTabView: View {
     )
     .padding(.bottom, isActive ? TerminalTabBarMetrics.activeTabBottomPadding : 0)
     .offset(y: isActive ? TerminalTabBarMetrics.activeTabOffset : 0)
-    .clipShape(.rect(cornerRadius: TerminalTabBarMetrics.tabCornerRadius))
+    .clipShape(TerminalTabClipShape(radius: TerminalTabBarMetrics.tabCornerRadius))
     // Stripe overlay sits AFTER `clipShape` with negative horizontal padding
     // so the tint paints over adjacent dividers; clipping otherwise leaves a
     // 1px gray notch at each side.
@@ -339,4 +339,15 @@ private final class MiddleClickNSView: NSView {
   }
 
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+private struct TerminalTabClipShape: Shape {
+  let radius: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    if #available(macOS 26.0, *) {
+      return .rect(cornerRadius: radius).path(in: rect)
+    }
+    return RoundedRectangle(cornerRadius: radius).path(in: rect)
+  }
 }

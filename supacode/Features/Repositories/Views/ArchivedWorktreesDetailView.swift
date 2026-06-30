@@ -77,7 +77,7 @@ struct ArchivedWorktreesDetailView: View {
         }
       }
       .listStyle(.sidebar)
-      .scrollContentBackground(.hidden)
+      .scrollContentBackgroundIfHidden()
       .onChange(of: groupIDs) { _, newValue in
         collapsedRepositoryIDs = collapsedRepositoryIDs.intersection(newValue)
       }

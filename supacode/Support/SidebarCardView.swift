@@ -44,7 +44,7 @@ struct SidebarCard<Header: View, Content: View>: View {
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .glassEffect(.regular, in: .rect(cornerRadius: 10))
+    .glassEffectCompat(cornerRadius: 10)
     .padding(.horizontal, 10)
     .padding(.bottom, 10)
   }

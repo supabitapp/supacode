@@ -42,7 +42,7 @@ struct WorktreeCreationPromptView: View {
       WorktreeOptionsSection(store: store)
     }
     .formStyle(.grouped)
-    .scrollBounceBehavior(.basedOnSize)
+    .scrollBounceBehaviorIfAvailable()
     .safeAreaInset(edge: .bottom, spacing: 0) {
       HStack {
         if store.isValidating {

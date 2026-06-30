@@ -484,7 +484,7 @@ private struct CommandPaletteRowView: View {
         scheme = .dark
       }
       .background(rowBackground)
-      .clipShape(.rect(cornerRadius: 5))
+      .clipShape(RoundedRect(cornerRadius: 5))
     }
     .buttonStyle(.plain)
     .help(helpText)
@@ -637,5 +637,16 @@ extension NSColor {
     guard let rgb = usingColorSpace(.sRGB) else { return 0 }
     rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
     return (0.299 * red) + (0.587 * green) + (0.114 * blue)
+  }
+}
+
+private struct PaletteRowClipShape: Shape {
+  let cornerRadius: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    if #available(macOS 26.0, *) {
+      return .rect(cornerRadius: cornerRadius).path(in: rect)
+    }
+    return RoundedRectangle(cornerRadius: cornerRadius).path(in: rect)
   }
 }

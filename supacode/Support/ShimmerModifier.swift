@@ -34,16 +34,20 @@ struct ShimmerModifier: ViewModifier {
       // Driving the sweep via `phaseAnimator` lets SwiftUI pause the timeline
       // when the view is occluded. `.repeatForever` kept the animation pipeline
       // active even when nothing was visible.
-      content.phaseAnimator([false, true]) { content, animating in
-        content.mask(
-          LinearGradient(
-            gradient: gradient,
-            startPoint: startPoint(animating: animating),
-            endPoint: endPoint(animating: animating)
+      if #available(macOS 16.0, *) {
+        content.phaseAnimator([false, true]) { content, animating in
+          content.mask(
+            LinearGradient(
+              gradient: gradient,
+              startPoint: startPoint(animating: animating),
+              endPoint: endPoint(animating: animating)
+            )
           )
-        )
-      } animation: { animating in
-        animating ? .linear(duration: 1.5).delay(0.25) : .linear(duration: 0.001)
+        } animation: { animating in
+          animating ? .linear(duration: 1.5).delay(0.25) : .linear(duration: 0.001)
+        }
+      } else {
+        content
       }
     } else {
       content

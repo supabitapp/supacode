@@ -25,7 +25,7 @@ struct WorktreeCustomizationView: View {
       .headerProminence(.increased)
     }
     .formStyle(.grouped)
-    .scrollBounceBehavior(.basedOnSize)
+    .scrollBounceBehaviorIfAvailable()
     .safeAreaInset(edge: .bottom, spacing: 0) {
       HStack {
         Spacer()

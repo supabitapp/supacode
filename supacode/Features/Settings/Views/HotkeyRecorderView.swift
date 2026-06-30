@@ -12,7 +12,7 @@ struct Keycap: View {
       .font(.body.weight(.medium).monospaced())
       .padding(.horizontal, 6)
       .frame(minWidth: 28, minHeight: 28)
-      .background(.quaternary, in: .rect(cornerRadius: 6))
+      .background(.quaternary).clipShape(SmallRoundedRect(cornerRadius: 6))
   }
 }
 
@@ -180,6 +180,17 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
 }
 
 // MARK: - NSView for key capture.
+
+private struct SmallRoundedRect: Shape {
+  let cornerRadius: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    if #available(macOS 26.0, *) {
+      return .rect(cornerRadius: cornerRadius).path(in: rect)
+    }
+    return RoundedRectangle(cornerRadius: cornerRadius).path(in: rect)
+  }
+}
 
 final class HotkeyRecorderNSView: NSView {
   var onRecorded: ((AppShortcutOverride) -> Void)?

@@ -60,7 +60,7 @@ struct CloneRepositoryFormView: View {
       CloneRepositoryAdvancedSection(store: store)
     }
     .formStyle(.grouped)
-    .scrollBounceBehavior(.basedOnSize)
+    .scrollBounceBehaviorIfAvailable()
     .safeAreaInset(edge: .bottom, spacing: 0) {
       HStack {
         if store.isCloning {
@@ -87,7 +87,7 @@ struct CloneRepositoryFormView: View {
       .padding(.bottom, 20)
     }
     .frame(minWidth: 460)
-    .fileImporter(isPresented: $isChoosingLocation, allowedContentTypes: [.folder]) { result in
+    .fileImporterIfAvailable(isPresented: $isChoosingLocation, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
       switch result {
       case .success(let url):
         store.send(.locationSelected(url))

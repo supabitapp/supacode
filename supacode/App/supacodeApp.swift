@@ -476,30 +476,49 @@ struct SupacodeApp: App {
         .help("Quit Supacode (⌘Q)")
       }
     }
-    Window("Settings", id: WindowID.settings) {
-      SettingsView(store: store)
-        .environment(ghosttyShortcuts)
-        .environment(commandKeyObserver)
-        .toolbarBackground(.hidden, for: .windowToolbar)
-        .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
-    }
-    .handlesExternalEvents(matching: [])
+    SettingsWindow()
+    DeeplinkReferenceWindow()
+    CLIReferenceWindow()
+  }
+}
+
+@ViewBuilder
+private func SettingsWindow() -> some Scene {
+  Window("Settings", id: WindowID.settings) {
+    SettingsView(store: store)
+      .environment(ghosttyShortcuts)
+      .environment(commandKeyObserver)
+  }
+  .handlesExternalEvents(matching: [])
+  .defaultSize(width: 800, height: 600)
+  .restorationBehavior(.disabled)
+  if #available(macOS 16.0, *) {
     .windowToolbarStyle(.unified)
-    .defaultSize(width: 800, height: 600)
-    .restorationBehavior(.disabled)
-    Window("Deeplink Reference", id: WindowID.deeplinkReference) {
-      DeeplinkReferenceView()
-    }
-    .handlesExternalEvents(matching: [])
+  }
+}
+
+@ViewBuilder
+private func DeeplinkReferenceWindow() -> some Scene {
+  Window("Deeplink Reference", id: WindowID.deeplinkReference) {
+    DeeplinkReferenceView()
+  }
+  .handlesExternalEvents(matching: [])
+  .defaultSize(width: 720, height: 640)
+  .restorationBehavior(.disabled)
+  if #available(macOS 16.0, *) {
     .windowToolbarStyle(.unified)
-    .defaultSize(width: 720, height: 640)
-    .restorationBehavior(.disabled)
-    Window("CLI Reference", id: WindowID.cliReference) {
-      CLIReferenceView()
-    }
-    .handlesExternalEvents(matching: [])
+  }
+}
+
+@ViewBuilder
+private func CLIReferenceWindow() -> some Scene {
+  Window("CLI Reference", id: WindowID.cliReference) {
+    CLIReferenceView()
+  }
+  .handlesExternalEvents(matching: [])
+  .defaultSize(width: 720, height: 640)
+  .restorationBehavior(.disabled)
+  if #available(macOS 16.0, *) {
     .windowToolbarStyle(.unified)
-    .defaultSize(width: 720, height: 640)
-    .restorationBehavior(.disabled)
   }
 }

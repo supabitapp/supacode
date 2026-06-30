@@ -26,7 +26,6 @@ struct UpdatesSettingsView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.large)
-        .buttonBorderShape(.roundedRectangle)
       }
       Section("Automatic Updates") {
         Toggle(isOn: $settingsStore.updatesAutomaticallyCheckForUpdates) {

@@ -61,7 +61,7 @@ struct TerminalTabsView: View {
             }
           )
         }
-        .scrollIndicators(.never)
+        .scrollIndicatorsIfNever()
         .coordinateSpace(name: "tabScroll")
         .onAppear {
           containerWidth = geometryProxy.size.width

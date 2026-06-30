@@ -46,7 +46,7 @@ struct ContentView: View {
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
     }
-    .fileImporter(
+    .fileImporterIfAvailable(
       isPresented: $repositoriesStore.isOpenPanelPresented.sending(\.setOpenPanelPresented),
       allowedContentTypes: [.folder],
       allowsMultipleSelection: true

@@ -65,20 +65,24 @@ struct SidebarPingCyclingDot: View {
   let showsSolidCenter: Bool
 
   var body: some View {
-    TimelineView(.periodic(from: .now, by: 2.0)) { timeline in
-      let index = Self.colorIndex(for: timeline.date, count: colors.count)
-      let color = colors[index]
-      ZStack {
-        SidebarPingRing(color: color, size: size)
-        if showsSolidCenter {
-          Circle()
-            .fill(color)
-            .frame(width: size, height: size)
+    if #available(macOS 14.0, *) {
+      TimelineView(.periodic(from: .now, by: 2.0)) { timeline in
+        let index = Self.colorIndex(for: timeline.date, count: colors.count)
+        let color = colors[index]
+        ZStack {
+          SidebarPingRing(color: color, size: size)
+          if showsSolidCenter {
+            Circle()
+              .fill(color)
+              .frame(width: size, height: size)
+          }
         }
+        .animation(.easeInOut(duration: 0.6), value: index)
       }
-      .animation(.easeInOut(duration: 0.6), value: index)
+      .accessibilityLabel("Run script active")
+    } else {
+      SidebarPingStaticDot(color: colors[0], size: size, showsSolidCenter: showsSolidCenter)
     }
-    .accessibilityLabel("Run script active")
   }
 
   private static func colorIndex(for date: Date, count: Int) -> Int {
@@ -118,7 +122,7 @@ struct SidebarPingRing: View {
       .frame(width: size, height: size)
     if reduceMotion {
       ring.opacity(0.6)
-    } else {
+    } else if #available(macOS 16.0, *) {
       ring.phaseAnimator([false, true]) { content, expanded in
         content
           .scaleEffect(expanded ? 2 : 1)
@@ -126,6 +130,8 @@ struct SidebarPingRing: View {
       } animation: { expanded in
         expanded ? .easeOut(duration: 1) : .linear(duration: 0.001)
       }
+    } else {
+      ring
     }
   }
 }

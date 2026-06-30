@@ -41,7 +41,7 @@ struct GhosttySurfaceSearchOverlay: View {
           .padding(.trailing, 50)
           .padding(.vertical, 6)
           .background(Color.primary.opacity(0.1))
-          .clipShape(.rect(cornerRadius: 6))
+          .clipShape(SmallRoundedRect(cornerRadius: 6))
           .overlay(alignment: .trailing) {
             matchLabel
           }
@@ -384,5 +384,16 @@ private struct GhosttySearchButtonStyle: ButtonStyle {
       return Color.primary.opacity(0.1)
     }
     return Color.clear
+  }
+}
+
+private struct SmallRoundedRect: Shape {
+  let cornerRadius: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    if #available(macOS 26.0, *) {
+      return .rect(cornerRadius: cornerRadius).path(in: rect)
+    }
+    return RoundedRectangle(cornerRadius: cornerRadius).path(in: rect)
   }
 }

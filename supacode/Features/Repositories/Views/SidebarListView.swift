@@ -340,7 +340,7 @@ private struct SidebarHoistSummaryRow: View {
       .font(.caption)
       .foregroundStyle(.secondary)
       .lineLimit(1)
-      .contentShape(.interaction, .rect)
+      .contentShapeIfAvailable(.interaction, .rect)
     }
     .buttonStyle(.plain)
     .listRowInsets(.leading, 0)

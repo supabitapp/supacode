@@ -118,7 +118,7 @@ let project = Project(
       destinations: .macOS,
       product: .commandLineTool,
       bundleId: "app.supabit.supacode.cli",
-      deploymentTargets: .macOS("26.0"),
+      deploymentTargets: .macOS("13.0"),
       infoPlist: .default,
       buildableFolders: [
         "supacode-cli",
@@ -156,7 +156,7 @@ let project = Project(
       destinations: .macOS,
       product: .staticFramework,
       bundleId: "app.supabit.supacode.settings-shared",
-      deploymentTargets: .macOS("26.0"),
+      deploymentTargets: .macOS("13.0"),
       infoPlist: .default,
       buildableFolders: [
         "SupacodeSettingsShared",
@@ -179,7 +179,7 @@ let project = Project(
       destinations: .macOS,
       product: .staticFramework,
       bundleId: "app.supabit.supacode.settings-feature",
-      deploymentTargets: .macOS("26.0"),
+      deploymentTargets: .macOS("13.0"),
       infoPlist: .default,
       buildableFolders: [
         "SupacodeSettingsFeature",
@@ -202,7 +202,7 @@ let project = Project(
       destinations: .macOS,
       product: .app,
       bundleId: "app.supabit.supacode",
-      deploymentTargets: .macOS("26.0"),
+      deploymentTargets: .macOS("13.0"),
       infoPlist: .file(path: "supacode/Info.plist"),
       resources: appResources,
       buildableFolders: appBuildableFolders,

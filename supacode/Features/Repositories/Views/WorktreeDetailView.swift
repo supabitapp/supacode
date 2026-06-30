@@ -73,7 +73,7 @@ struct WorktreeDetailView: View {
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
     .toolbar(removing: .title)
-    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    let contentWithToolbar = Self.contentWithHiddenToolbarBackground(content)
     .toolbar {
       if showsToolbarPlaceholder {
         ToolbarPlaceholderContent()
@@ -317,6 +317,17 @@ struct WorktreeDetailView: View {
       .focusedSceneAction(\.stopRunScriptAction, enabled: hasRunningRunScript) {
         store.send(.stopRunScripts)
       }
+  }
+
+  @ViewBuilder
+  private static func contentWithHiddenToolbarBackground(
+    _ content: some View
+  ) -> some View {
+    if #available(macOS 16.0, *) {
+      content.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    } else {
+      content
+    }
   }
 
   private func selectToolbarNotification(

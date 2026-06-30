@@ -42,17 +42,25 @@ struct ToolbarStatusView: View {
 
 private struct MotivationalStatusView: View {
   var body: some View {
-    TimelineView(.everyMinute) { context in
-      let hour = Calendar.current.component(.hour, from: context.date)
-      let style = timeStyle(for: hour)
+    if #available(macOS 14.0, *) {
+      TimelineView(.everyMinute) { context in
+        let hour = Calendar.current.component(.hour, from: context.date)
+        let style = timeStyle(for: hour)
+        HStack(spacing: 8) {
+          Image(systemName: style.icon)
+            .foregroundStyle(style.color)
+            .font(.callout)
+            .accessibilityHidden(true)
+          Text("\(context.date, format: .dateTime.hour().minute()) – Open Command Palette (⌘P)")
+            .font(.footnote)
+            .monospaced()
+            .foregroundStyle(.secondary)
+        }
+      }
+    } else {
       HStack(spacing: 8) {
-        Image(systemName: style.icon)
-          .foregroundStyle(style.color)
-          .font(.callout)
-          .accessibilityHidden(true)
-        Text("\(context.date, format: .dateTime.hour().minute()) – Open Command Palette (⌘P)")
+        Text("Open Command Palette (⌘P)")
           .font(.footnote)
-          .monospaced()
           .foregroundStyle(.secondary)
       }
     }

@@ -294,6 +294,7 @@ struct SettingsView: View {
       }
     }
     .navigationSplitViewStyle(.balanced)
+    .contentWithSettingsToolbarModifiers
     .alert($settingsStore.scope(state: \.alert, action: \.alert))
     .frame(minWidth: 750, minHeight: 500)
     .onAppear {
@@ -302,6 +303,16 @@ struct SettingsView: View {
     }
     .onDisappear {
       settingsStore.send(.setSelection(nil))
+    }
+  }
+
+  @ViewBuilder
+  private var contentWithSettingsToolbarModifiers: some View {
+    if #available(macOS 16.0, *) {
+      self.toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbarColorScheme(settingsStore.appearanceMode.colorScheme, for: .windowToolbar)
+    } else {
+      self
     }
   }
 }

@@ -301,7 +301,7 @@ private struct SidebarPathGroupHeaderRow: View {
           SidebarPathGroupAggregatedIndicators(parentStore: store, leafIDs: leafDescendantIDs)
         }
       }
-      .contentShape(.interaction, .rect)
+      .contentShapeIfAvailable(.interaction, .rect)
     }
     .buttonStyle(.plain)
     .listRowInsets(.leading, CGFloat(depth) * SidebarNestLayout.indentStep)
@@ -533,9 +533,9 @@ private struct SidebarItemBody: View {
       }
     }
     .disabled(isRepositoryRemoving && store.lifecycle != .idle)
-    .contentShape(.dragPreview, .rect)
-    .contentShape(.interaction, .rect)
-    .onDragSessionUpdated { session in
+    .contentShapeIfAvailable(.dragPreview, .rect)
+    .contentShapeIfAvailable(.interaction, .rect)
+    .onDragSessionUpdatedIfAvailable { session in
       let draggedIDs = Set(session.draggedItemIDs(for: Worktree.ID.self))
       let active: Bool
       switch session.phase {

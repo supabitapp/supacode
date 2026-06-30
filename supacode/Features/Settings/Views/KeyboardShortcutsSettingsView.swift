@@ -70,14 +70,39 @@ struct KeyboardShortcutsSettingsView: View {
   }
 
   var body: some View {
-    let warnings = warningsByID
-    let terminalDisplays = ghosttyShortcuts.reservedDisplayStrings
+    content
+      .navigationTitle("Shortcuts")
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            showRestoreConfirmation = true
+          } label: {
+            Image(systemName: "arrow.counterclockwise")
+              .accessibilityLabel("Restore Defaults")
+          }
+          .help("Restore all shortcuts to their default values.")
+          .disabled(!hasAnyOverrides)
+          .confirmationDialog(
+            "Restore all keyboard shortcuts to their defaults?",
+            isPresented: $showRestoreConfirmation,
+            titleVisibility: .visible
+          ) {
+            Button("Restore Defaults", role: .destructive) {
+              store.send(.resetAllShortcuts)
+            }
+          }
+        }
+      }
+  }
+
+  @ViewBuilder
+  private var content: some View {
     Table(of: ShortcutTableItem.self) {
       TableColumn("Name") { item in
         NameCell(item: item, overrides: store.shortcutOverrides)
       }
       TableColumn("Hotkey") { item in
-        HotkeyCell(item: item, store: store, warning: warnings, terminalReservedDisplays: terminalDisplays)
+        HotkeyCell(item: item, store: store, warning: warningsByID, terminalReservedDisplays: ghosttyShortcuts.reservedDisplayStrings)
       }
       .width(min: 90, ideal: 120, max: 200)
       TableColumn("Enabled") { item in
@@ -109,29 +134,26 @@ struct KeyboardShortcutsSettingsView: View {
     }
     .alternatingRowBackgrounds()
     .padding(.leading, -6)
-    .searchable(text: $searchText, placement: .toolbar, prompt: "Search...")
-    .navigationTitle("Shortcuts")
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          showRestoreConfirmation = true
-        } label: {
-          Image(systemName: "arrow.counterclockwise")
-            .accessibilityLabel("Restore Defaults")
-        }
-        .help("Restore all shortcuts to their default values.")
-        .disabled(!hasAnyOverrides)
-        .confirmationDialog(
-          "Restore all keyboard shortcuts to their defaults?",
-          isPresented: $showRestoreConfirmation,
-          titleVisibility: .visible
-        ) {
-          Button("Restore Defaults", role: .destructive) {
-            store.send(.resetAllShortcuts)
-          }
-        }
-      }
+    .searchPlacement(text: $searchText)
+  }
+}
+
+private struct SearchPlacementModifier: ViewModifier {
+  @Binding var text: String
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if #available(macOS 14.0, *) {
+      content.searchable(text: text, placement: .toolbar, prompt: "Search...")
+    } else {
+      content.searchable(text: text, prompt: "Search...")
     }
+  }
+}
+
+extension View {
+  func searchPlacement(text: Binding<String>) -> some View {
+    modifier(SearchPlacementModifier(text: text))
   }
 }
 
