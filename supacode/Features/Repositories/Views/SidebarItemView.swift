@@ -439,6 +439,7 @@ private struct IconContent: View, Equatable {
           .resizable()
           .aspectRatio(contentMode: .fit)
           .foregroundStyle(isEmphasized ? AnyShapeStyle(.secondary) : icon.color)
+          .opacity(isEmphasized ? 1 : 0.6)
       }
     }
     .frame(width: 16, height: 16)
