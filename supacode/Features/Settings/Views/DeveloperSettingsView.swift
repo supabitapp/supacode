@@ -181,7 +181,7 @@ extension SkillAgent {
       the badge appears once you send the first message.
       """
     case .copilot: "Hooks in `~/.copilot/hooks/supacode.json` and skill in `~/.copilot/skills/`."
-    case .hermes: "Skill in `~/.hermes/skills/`. The badge appears when Hermes emits Supacode presence events."
+    case .hermes: "Plugin in `~/.hermes/plugins/` and skill in `~/.hermes/skills/`."
     case .kimi: "Hooks in `~/.kimi/config.toml` and skill in `~/.kimi/skills/`. Hooks system is in Beta."
     case .kiro: "Hooks in `~/.kiro/agents/` and skill in `~/.kiro/skills/`."
     case .opencode: "Plugin in `~/.config/opencode/plugins/` and skill in `~/.config/opencode/skills/`."
