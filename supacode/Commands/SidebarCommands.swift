@@ -5,6 +5,8 @@ import SwiftUI
 struct SidebarCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.revealInSidebarAction) private var revealInSidebarAction
+  @FocusedValue(\.expandAllSidebarGroupsAction) private var expandAllSidebarGroupsAction
+  @FocusedValue(\.collapseAllSidebarGroupsAction) private var collapseAllSidebarGroupsAction
   @Shared(.settingsFile) private var settingsFile
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
@@ -70,6 +72,8 @@ struct SidebarCommands: Commands {
     let overrides = settingsFile.global.shortcutOverrides
     let toggleLeftSidebar = AppShortcuts.toggleLeftSidebar.effective(from: overrides)
     let revealInSidebar = AppShortcuts.revealInSidebar.effective(from: overrides)
+    let expandAll = AppShortcuts.expandAllSidebarGroups.effective(from: overrides)
+    let collapseAll = AppShortcuts.collapseAllSidebarGroups.effective(from: overrides)
     CommandGroup(replacing: .sidebar) {
       Button("Toggle Left Sidebar", systemImage: "sidebar.leading") {
         toggleLeftSidebarAction?()
@@ -83,6 +87,20 @@ struct SidebarCommands: Commands {
       .appKeyboardShortcut(revealInSidebar)
       .help("Reveal in Sidebar (\(revealInSidebar?.display ?? "none"))")
       .disabled(revealInSidebarAction?.isEnabled != true)
+      Section {
+        Button("Expand All", systemImage: "chevron.down") {
+          expandAllSidebarGroupsAction?()
+        }
+        .appKeyboardShortcut(expandAll)
+        .help("Expand all sidebar groups (\(expandAll?.display ?? "none"))")
+        .disabled(expandAllSidebarGroupsAction?.isEnabled != true)
+        Button("Collapse All", systemImage: "chevron.right") {
+          collapseAllSidebarGroupsAction?()
+        }
+        .appKeyboardShortcut(collapseAll)
+        .help("Collapse all sidebar groups (\(collapseAll?.display ?? "none"))")
+        .disabled(collapseAllSidebarGroupsAction?.isEnabled != true)
+      }
       Section {
         Menu("Group Relevant Sidebar Rows") {
           Toggle("Group Pinned Rows", isOn: groupPinnedRowsToggle)
@@ -103,6 +121,14 @@ private struct RevealInSidebarActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct ExpandAllSidebarGroupsActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
+private struct CollapseAllSidebarGroupsActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 extension FocusedValues {
   var toggleLeftSidebarAction: FocusedAction<Void>? {
     get { self[ToggleLeftSidebarActionKey.self] }
@@ -112,5 +138,15 @@ extension FocusedValues {
   var revealInSidebarAction: FocusedAction<Void>? {
     get { self[RevealInSidebarActionKey.self] }
     set { self[RevealInSidebarActionKey.self] = newValue }
+  }
+
+  var expandAllSidebarGroupsAction: FocusedAction<Void>? {
+    get { self[ExpandAllSidebarGroupsActionKey.self] }
+    set { self[ExpandAllSidebarGroupsActionKey.self] = newValue }
+  }
+
+  var collapseAllSidebarGroupsAction: FocusedAction<Void>? {
+    get { self[CollapseAllSidebarGroupsActionKey.self] }
+    set { self[CollapseAllSidebarGroupsActionKey.self] = newValue }
   }
 }
