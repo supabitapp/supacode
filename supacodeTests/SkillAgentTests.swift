@@ -30,6 +30,16 @@ struct SkillAgentTests {
     #expect(integration.state() == .installed)
     #expect(
       FileManager.default.fileExists(
+        atPath: home.appending(path: ".hermes/plugins/supacode-presence/plugin.yaml").path(percentEncoded: false)
+      )
+    )
+    #expect(
+      FileManager.default.fileExists(
+        atPath: home.appending(path: ".hermes/plugins/supacode-presence/__init__.py").path(percentEncoded: false)
+      )
+    )
+    #expect(
+      FileManager.default.fileExists(
         atPath: home.appending(path: ".hermes/skills/supacode-cli/SKILL.md").path(percentEncoded: false)
       )
     )

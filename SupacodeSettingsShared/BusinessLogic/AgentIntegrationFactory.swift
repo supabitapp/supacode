@@ -13,7 +13,7 @@ nonisolated enum AgentIntegrationFactory {
     case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    case .hermes: hermes(homeDirectoryURL: homeDirectoryURL)
+    case .hermes: hermes(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kimi: kimi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
@@ -77,12 +77,20 @@ nonisolated enum AgentIntegrationFactory {
     )
   }
 
-  private static func hermes(homeDirectoryURL: URL) -> AgentIntegration {
+  private static func hermes(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = HermesPluginInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .hermes,
       components: [
-        skillComponent(agent: .hermes, installer: skill)
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.install() },
+          uninstall: { try installer.uninstall() }
+        ),
+        skillComponent(agent: .hermes, installer: skill),
       ]
     )
   }
