@@ -544,6 +544,50 @@ struct GithubCLIClientTests {
     #expect(snapshot.loginCallCount == 2)
   }
 
+  @Test func executableResolutionFallsBackToCommonInstallPathWhenShellPathMissesGh() async throws {
+    let fallbackDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-gh-fallback-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: fallbackDirectory, withIntermediateDirectories: true)
+    defer {
+      try? FileManager.default.removeItem(at: fallbackDirectory)
+    }
+    let fallbackGh = fallbackDirectory.appendingPathComponent("gh")
+    let created = FileManager.default.createFile(
+      atPath: fallbackGh.path,
+      contents: Data("#!/bin/sh\n".utf8),
+      attributes: [.posixPermissions: 0o755]
+    )
+    #expect(created)
+
+    let probe = GithubBatchShellProbe()
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          await probe.recordWhichCall()
+          throw ShellClientError(command: "which gh", stdout: "", stderr: "gh not found", exitCode: 1)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          await probe.recordWhichCall()
+          throw ShellClientError(command: "which gh", stdout: "", stderr: "gh not found", exitCode: 1)
+        }
+        #expect(executableURL == fallbackGh)
+        #expect(arguments == ["--version"])
+        await probe.recordLoginCall()
+        return ShellOutput(stdout: "gh version 2.79.0", stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell, fallbackExecutableURLs: [fallbackGh])
+
+    #expect(await client.isAvailable())
+
+    let snapshot = await probe.snapshot()
+    #expect(snapshot.whichCallCount == 2)
+    #expect(snapshot.loginCallCount == 1)
+  }
+
   // MARK: - Noisy login-shell output (#377)
 
   // A ShellClient that resolves `gh` via `which` and returns `stdout` for every gh invocation.

@@ -201,8 +201,11 @@ struct GithubCLIClient: Sendable {
 extension GithubCLIClient: DependencyKey {
   static let liveValue = live()
 
-  static func live(shell: ShellClient = .liveValue) -> GithubCLIClient {
-    let resolver = GithubCLIExecutableResolver()
+  static func live(
+    shell: ShellClient = .liveValue,
+    fallbackExecutableURLs: [URL] = GithubCLIExecutableResolver.defaultFallbackExecutableURLs()
+  ) -> GithubCLIClient {
+    let resolver = GithubCLIExecutableResolver(fallbackExecutableURLs: fallbackExecutableURLs)
     return GithubCLIClient(
       defaultBranch: defaultBranchFetcher(shell: shell, resolver: resolver),
       latestRun: latestRunFetcher(shell: shell, resolver: resolver),
@@ -249,8 +252,15 @@ private struct GithubPullRequestsRequest: Sendable {
 }
 
 private actor GithubCLIExecutableResolver {
+  private let fallbackExecutableURLs: [URL]
   private var cachedExecutableURL: URL?
   private var inFlightResolution: Task<URL, Error>?
+
+  init(
+    fallbackExecutableURLs: [URL] = GithubCLIExecutableResolver.defaultFallbackExecutableURLs()
+  ) {
+    self.fallbackExecutableURLs = fallbackExecutableURLs
+  }
 
   func executableURL(shell: ShellClient) async throws -> URL {
     if let cachedExecutableURL {
@@ -293,7 +303,24 @@ private actor GithubCLIExecutableResolver {
     ) {
       return executableURL
     }
+    if let executableURL = fallbackExecutableURLs.first(where: {
+      FileManager.default.isExecutableFile(atPath: $0.path)
+    }) {
+      return executableURL
+    }
     throw GithubCLIError.unavailable
+  }
+
+  nonisolated static func defaultFallbackExecutableURLs(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> [URL] {
+    [
+      "/opt/homebrew/bin/gh",
+      "/usr/local/bin/gh",
+      environment["HOME"].map { "\($0)/.local/bin/gh" },
+    ]
+    .compactMap { $0 }
+    .map { URL(fileURLWithPath: $0) }
   }
 
   private func locateExecutableURL(
