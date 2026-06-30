@@ -252,6 +252,8 @@ nonisolated enum CLISkillContent {
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
+  static let hermesSkillMd = opencodeSkillMd
+
   // MARK: - Kiro.
 
   // Kiro uses SKILL.md with YAML frontmatter (same as Codex).
