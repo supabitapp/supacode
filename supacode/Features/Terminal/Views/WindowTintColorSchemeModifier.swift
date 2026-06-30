@@ -2,10 +2,9 @@ import AppKit
 import SwiftUI
 
 extension View {
-  // Override `\.colorScheme` to match the terminal background's luminance so
-  // text/icons painted over the window tint (loading view, multi-select,
-  // empty states) stay readable when the user's system appearance differs
-  // from the Ghostty theme — e.g. light system + dark terminal background.
+  // Provides the tab-bar chrome tokens (`surfaceChromeAppearance`) for the
+  // detail subtree. The window's `NSAppearance` (driven by the focused terminal)
+  // owns light/dark for text/icons, so this no longer overrides `\.colorScheme`.
   func windowTintColorScheme(manager: WorktreeTerminalManager) -> some View {
     modifier(WindowTintColorScheme(manager: manager))
   }
@@ -27,10 +26,6 @@ extension View {
 
 private struct WindowTintColorScheme: ViewModifier {
   let manager: WorktreeTerminalManager
-  // Captured here, BEFORE the override below replaces `\.colorScheme`. Anything
-  // that reads `@Environment(\.colorScheme)` underneath the override would
-  // otherwise see the overridden value and `inheritSystemColorScheme()` would
-  // be a no-op.
   @Environment(\.colorScheme) private var systemColorScheme
   @State private var configReloadCounter = 0
 
@@ -48,7 +43,6 @@ private struct WindowTintColorScheme: ViewModifier {
     return
       content
       .environment(\.surfaceChromeAppearance, appearance)
-      .environment(\.colorScheme, tintScheme)
       .onReceive(NotificationCenter.default.publisher(for: .ghosttyRuntimeConfigDidChange)) { _ in
         configReloadCounter &+= 1
       }

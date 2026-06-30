@@ -1,5 +1,7 @@
+import AppKit
 import ComposableArchitecture
 import Foundation
+import GhosttyKit
 import Observation
 import Sharing
 import SupacodeSettingsShared
@@ -514,6 +516,10 @@ final class WorktreeTerminalManager {
     }
     state.onFocusChanged = { [weak self] surfaceID in
       self?.emit(.focusChanged(worktreeID: worktree.id, surfaceID: surfaceID))
+      self?.notifyFocusedSurfaceBackgroundChanged()
+    }
+    state.onFocusedSurfaceColorChanged = { [weak self] in
+      self?.notifyFocusedSurfaceBackgroundChanged()
     }
     state.onTaskStatusChanged = { [weak self] status in
       self?.emit(.taskStatusChanged(worktreeID: worktree.id, status: status))
@@ -898,7 +904,50 @@ final class WorktreeTerminalManager {
   }
 
   func surfaceBackgroundColorScheme() -> ColorScheme {
-    runtime.backgroundColorScheme()
+    var isLight = false
+    NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+      isLight = focusedSurfaceBackgroundColor().isLightColor
+    }
+    return isLight ? .light : .dark
+  }
+
+  // The resolved background color of the focused surface in the selected
+  // worktree: its OSC 11 override if present, else the theme background. This is
+  // the single coherent tint that fills the window and drives its appearance.
+  func focusedSurfaceBackgroundColor() -> NSColor {
+    guard let selectedWorktreeID,
+      let state = states[selectedWorktreeID],
+      let surfaceState = state.focusedSurfaceState()
+    else { return runtime.backgroundColor() }
+    return Self.osc11BackgroundColor(
+      kind: surfaceState.colorChangeKind,
+      red: surfaceState.colorChangeR,
+      green: surfaceState.colorChangeG,
+      blue: surfaceState.colorChangeB
+    ) ?? runtime.backgroundColor()
+  }
+
+  // OSC 11 sets the background; OSC 10/12 (foreground/cursor) and palette kinds
+  // do not affect the window tint, so only the background kind resolves a color.
+  static func osc11BackgroundColor(
+    kind: ghostty_action_color_kind_e?,
+    red: UInt8?,
+    green: UInt8?,
+    blue: UInt8?
+  ) -> NSColor? {
+    guard kind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      let red, let green, let blue
+    else { return nil }
+    return NSColor(
+      srgbRed: CGFloat(red) / 255,
+      green: CGFloat(green) / 255,
+      blue: CGFloat(blue) / 255,
+      alpha: 1
+    )
+  }
+
+  private func notifyFocusedSurfaceBackgroundChanged() {
+    NotificationCenter.default.post(name: .ghosttyFocusedSurfaceBackgroundDidChange, object: self)
   }
 
   var ghosttyRuntime: GhosttyRuntime { runtime }

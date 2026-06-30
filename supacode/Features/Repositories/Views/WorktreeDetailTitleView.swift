@@ -29,9 +29,9 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
   }
 }
 
-/// Chrome-aware wrapper that re-resolves `\.colorScheme` against the
-/// terminal background so the toolbar title stays readable when the Ghostty
-/// theme diverges from the system appearance.
+/// Provides the tab-bar chrome tokens (`surfaceChromeAppearance`) for the
+/// toolbar title. The window's `NSAppearance` (driven by the focused terminal)
+/// owns light/dark, so this no longer overrides `\.colorScheme`.
 struct WorktreeToolbarTitleView: View {
   let content: WorktreeToolbarTitleContent
   let terminalManager: WorktreeTerminalManager
@@ -53,7 +53,6 @@ struct WorktreeToolbarTitleView: View {
     )
     return WorktreeToolbarTitleBody(content: content)
       .environment(\.surfaceChromeAppearance, appearance)
-      .environment(\.colorScheme, tintScheme)
       .onReceive(NotificationCenter.default.publisher(for: .ghosttyRuntimeConfigDidChange)) { _ in
         configReloadCounter &+= 1
       }

@@ -4,9 +4,9 @@ import SwiftUI
 
 struct WindowAppearanceState: Equatable {
   let opacity: Double
-  let appearance: NSAppearance.Name?
   let isFullScreen: Bool
   let isOpaqueOverride: Bool
+  let backgroundColorKey: String
 }
 
 @MainActor
@@ -19,34 +19,49 @@ enum WindowChromeApplier {
   ) {
     guard window.isVisible else { return }
     let opacity = runtime.backgroundOpacity()
+    let tintColor = runtime.windowTintColor()
     let next = WindowAppearanceState(
       opacity: opacity,
-      appearance: window.effectiveAppearance.name,
       isFullScreen: window.styleMask.contains(.fullScreen),
-      isOpaqueOverride: runtime.isBackgroundOpaque
+      isOpaqueOverride: runtime.isBackgroundOpaque,
+      backgroundColorKey: Self.colorKey(tintColor)
     )
     if next == lastApplied {
       return
     }
     lastApplied = next
-    window.effectiveAppearance.performAsCurrentDrawingAppearance {
-      let resolvedColor = runtime.backgroundColor()
-      if !next.isFullScreen, opacity < 1, !next.isOpaqueOverride {
-        window.isOpaque = false
-        window.titlebarAppearsTransparent = true
-        window.backgroundColor = resolvedColor.withAlphaComponent(opacity)
-        if let app = runtime.app {
-          ghostty_set_window_background_blur(
-            app,
-            Unmanaged.passUnretained(window).toOpaque()
-          )
-        }
-        return
+    if !next.isFullScreen, opacity < 1, !next.isOpaqueOverride {
+      window.isOpaque = false
+      window.titlebarAppearsTransparent = true
+      window.backgroundColor = tintColor.withAlphaComponent(opacity)
+      if let app = runtime.app {
+        ghostty_set_window_background_blur(
+          app,
+          Unmanaged.passUnretained(window).toOpaque()
+        )
       }
-      window.isOpaque = true
-      window.titlebarAppearsTransparent = !next.isFullScreen
-      window.backgroundColor = resolvedColor
+      return
     }
+    window.isOpaque = true
+    window.titlebarAppearsTransparent = !next.isFullScreen
+    window.backgroundColor = tintColor
+  }
+
+  // Stable per-color key for the dedupe (NSColor equality is color-space fragile).
+  private static func colorKey(_ color: NSColor) -> String {
+    guard let srgb = color.usingColorSpace(.sRGB) else { return "?" }
+    return "\(Int(srgb.redComponent * 255)),\(Int(srgb.greenComponent * 255)),\(Int(srgb.blueComponent * 255))"
+  }
+
+  // The focused terminal's contrast drives the whole window's NSAppearance, so
+  // the sidebar and chrome (toolbar text included) adopt light/dark to match.
+  // Kept separate from `apply` and driven only by terminal-appearance changes
+  // (focus / OSC 11 / config), never window key/occlusion/alert events: those
+  // would re-assign the same appearance and flash the window.
+  static func applyWindowAppearance(window: NSWindow, runtime: GhosttyRuntime) {
+    let name: NSAppearance.Name = runtime.windowTintColor().isLightColor ? .aqua : .darkAqua
+    guard window.appearance?.name != name else { return }
+    window.appearance = NSAppearance(named: name)
   }
 }
 
@@ -93,6 +108,7 @@ final class WindowChromeObserverNSView: NSView {
     guard let window else { return }
     addObservers(for: window)
     apply()
+    applyAppearance()
   }
 
   override func viewDidChangeEffectiveAppearance() {
@@ -105,6 +121,13 @@ final class WindowChromeObserverNSView: NSView {
   private func apply() {
     guard let window else { return }
     WindowChromeApplier.apply(window: window, runtime: runtime, lastApplied: &lastApplied)
+  }
+
+  // The window appearance is updated only here, on genuine terminal-appearance
+  // changes, so it never flashes on key/occlusion/alert events.
+  private func applyAppearance() {
+    guard let window else { return }
+    WindowChromeApplier.applyWindowAppearance(window: window, runtime: runtime)
   }
 
   private func addObservers(for window: NSWindow) {
@@ -132,6 +155,21 @@ final class WindowChromeObserverNSView: NSView {
         Task { @MainActor [weak self] in
           self?.lastApplied = nil
           self?.apply()
+          self?.applyAppearance()
+        }
+      }
+    )
+    // Focus move or OSC 11 on the focused surface re-tints the window and updates
+    // its appearance. Posted by the manager (object: manager), so match any object.
+    observers.append(
+      center.addObserver(
+        forName: .ghosttyFocusedSurfaceBackgroundDidChange,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          self?.apply()
+          self?.applyAppearance()
         }
       }
     )

@@ -174,6 +174,8 @@ final class WorktreeTerminalState {
   /// sink so a custom title survives relaunch without waiting for quit.
   var onTabRenamed: (() -> Void)?
   var onFocusChanged: ((UUID) -> Void)?
+  // Fired when the currently focused surface's background color changes (OSC 11).
+  var onFocusedSurfaceColorChanged: (() -> Void)?
   var onTaskStatusChanged: ((WorktreeTaskStatus) -> Void)?
   var onBlockingScriptCompleted: ((BlockingScriptKind, Int?, TerminalTabID?) -> Void)?
   var onCommandPaletteToggle: (() -> Void)?
@@ -1595,6 +1597,12 @@ final class WorktreeTerminalState {
       self.recordActiveSurface(view, in: tabId)
       self.emitTaskStatusIfChanged()
     }
+    view.bridge.onColorChanged = { [weak self, weak view] in
+      guard let self, let view, self.isLiveSurface(view) else { return }
+      // Only the focused surface drives the window tint.
+      guard self.focusedSurfaceIdByTab[tabId] == view.id else { return }
+      self.onFocusedSurfaceColorChanged?()
+    }
     view.shouldClaimFocus = { [weak self, weak view] in
       guard let self, let view, self.isLiveSurface(view) else { return false }
       return self.focusedSurfaceIdByTab[tabId] == view.id
@@ -1604,6 +1612,16 @@ final class WorktreeTerminalState {
   // Identity, not key presence: a reattached surface keeps its UUID, so stale closures from the old view must no-op.
   private func isLiveSurface(_ view: GhosttySurfaceView) -> Bool {
     surfaces[view.id] === view
+  }
+
+  // The bridge state of the focused surface in the selected tab, if any. Used to
+  // resolve the window tint from the focused surface's OSC 11 background.
+  func focusedSurfaceState() -> GhosttySurfaceState? {
+    guard let tabID = tabManager.selectedTabId,
+      let surfaceID = focusedSurfaceIdByTab[tabID],
+      let surface = surfaces[surfaceID]
+    else { return nil }
+    return surface.bridge.state
   }
 
   /// Routes an OSC 3008 context signal to the presence or notify handler.

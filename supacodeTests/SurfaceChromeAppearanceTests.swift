@@ -37,40 +37,48 @@ struct WindowAppearanceStateTests {
   @Test func equalStatesDedupe() {
     let lhs = WindowAppearanceState(
       opacity: 0.7,
-      appearance: .aqua,
       isFullScreen: false,
-      isOpaqueOverride: false
+      isOpaqueOverride: false,
+      backgroundColorKey: "26,42,58"
     )
     let rhs = WindowAppearanceState(
       opacity: 0.7,
-      appearance: .aqua,
       isFullScreen: false,
-      isOpaqueOverride: false
+      isOpaqueOverride: false,
+      backgroundColorKey: "26,42,58"
     )
     #expect(lhs == rhs)
   }
 
   @Test func opacityChangeBreaksEquality() {
-    let lhs = WindowAppearanceState(opacity: 1, appearance: .aqua, isFullScreen: false, isOpaqueOverride: false)
-    let rhs = WindowAppearanceState(opacity: 0, appearance: .aqua, isFullScreen: false, isOpaqueOverride: false)
+    let lhs = WindowAppearanceState(
+      opacity: 1, isFullScreen: false, isOpaqueOverride: false, backgroundColorKey: "0,0,0")
+    let rhs = WindowAppearanceState(
+      opacity: 0, isFullScreen: false, isOpaqueOverride: false, backgroundColorKey: "0,0,0")
     #expect(lhs != rhs)
   }
 
-  @Test func appearanceChangeBreaksEquality() {
-    let lhs = WindowAppearanceState(opacity: 0.7, appearance: .aqua, isFullScreen: false, isOpaqueOverride: false)
-    let rhs = WindowAppearanceState(opacity: 0.7, appearance: .darkAqua, isFullScreen: false, isOpaqueOverride: false)
+  @Test func backgroundColorChangeBreaksEquality() {
+    let lhs = WindowAppearanceState(
+      opacity: 0.7, isFullScreen: false, isOpaqueOverride: false, backgroundColorKey: "26,42,58")
+    let rhs = WindowAppearanceState(
+      opacity: 0.7, isFullScreen: false, isOpaqueOverride: false, backgroundColorKey: "200,200,200")
     #expect(lhs != rhs)
   }
 
   @Test func fullScreenChangeBreaksEquality() {
-    let lhs = WindowAppearanceState(opacity: 0.7, appearance: .aqua, isFullScreen: false, isOpaqueOverride: false)
-    let rhs = WindowAppearanceState(opacity: 0.7, appearance: .aqua, isFullScreen: true, isOpaqueOverride: false)
+    let lhs = WindowAppearanceState(
+      opacity: 0.7, isFullScreen: false, isOpaqueOverride: false, backgroundColorKey: "0,0,0")
+    let rhs = WindowAppearanceState(
+      opacity: 0.7, isFullScreen: true, isOpaqueOverride: false, backgroundColorKey: "0,0,0")
     #expect(lhs != rhs)
   }
 
   @Test func opaqueOverrideChangeBreaksEquality() {
-    let lhs = WindowAppearanceState(opacity: 0.7, appearance: .aqua, isFullScreen: false, isOpaqueOverride: false)
-    let rhs = WindowAppearanceState(opacity: 0.7, appearance: .aqua, isFullScreen: false, isOpaqueOverride: true)
+    let lhs = WindowAppearanceState(
+      opacity: 0.7, isFullScreen: false, isOpaqueOverride: false, backgroundColorKey: "0,0,0")
+    let rhs = WindowAppearanceState(
+      opacity: 0.7, isFullScreen: false, isOpaqueOverride: true, backgroundColorKey: "0,0,0")
     #expect(lhs != rhs)
   }
 }

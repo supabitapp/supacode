@@ -711,6 +711,20 @@ final class GhosttyRuntime {
     backgroundColorFromConfig() ?? NSColor.windowBackgroundColor
   }
 
+  // Installed by the terminal manager: resolves the focused surface's background
+  // color (OSC 11 override or theme). Lets the window chrome follow the selected
+  // surface without the AppKit layer reaching into the manager directly.
+  var focusedSurfaceBackgroundColorProvider: (() -> NSColor?)?
+
+  // The color that tints the whole window: the focused surface's background, or
+  // the theme background as a fallback (no surface / provider not yet installed).
+  func windowTintColor() -> NSColor {
+    if let provider = focusedSurfaceBackgroundColorProvider, let color = provider() {
+      return color
+    }
+    return backgroundColor()
+  }
+
   func scrollbarAppearanceName() -> NSAppearance.Name {
     backgroundColor().isLightColor ? .aqua : .darkAqua
   }
@@ -782,14 +796,18 @@ final class GhosttyRuntime {
 
 extension Notification.Name {
   static let ghosttyRuntimeConfigDidChange = Notification.Name("ghosttyRuntimeConfigDidChange")
+  // Posted when the focused surface's resolved background color changes (focus
+  // move or OSC 11), so window chrome re-tints to follow it.
+  static let ghosttyFocusedSurfaceBackgroundDidChange = Notification.Name(
+    "ghosttyFocusedSurfaceBackgroundDidChange")
 }
 
 extension NSColor {
-  fileprivate var isLightColor: Bool {
+  var isLightColor: Bool {
     luminance > 0.5
   }
 
-  fileprivate var luminance: Double {
+  var luminance: Double {
     var red: CGFloat = 0
     var green: CGFloat = 0
     var blue: CGFloat = 0
