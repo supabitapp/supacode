@@ -7,6 +7,38 @@ nonisolated enum CLISkillContent {
     + " Use when running Supacode CLI commands, managing worktrees, tabs, and surfaces programmatically,"
     + " or when inside a Supacode terminal session."
 
+  private static let deepLinksSection = """
+    ## Deep links
+
+    The URL scheme is `supacode://<host>/<path...>[?query]`. Worktree and repo IDs are percent-encoded
+    paths, so encode `/` as `%2F`. Query values must be URL-encoded; for example, an `input` command
+    containing spaces or quotes must be percent-encoded.
+
+    - `supacode://` - bring Supacode to front.
+    - `supacode://help` - open help.
+    - `supacode://worktree/<id>` - select/focus worktree.
+    - `supacode://worktree/<id>/run` - run the worktree's primary script.
+    - `supacode://worktree/<id>/stop` - stop scripts.
+    - `supacode://worktree/<id>/archive` - archive worktree.
+    - `supacode://worktree/<id>/unarchive` - unarchive worktree.
+    - `supacode://worktree/<id>/delete` - delete worktree.
+    - `supacode://worktree/<id>/pin` - pin worktree.
+    - `supacode://worktree/<id>/unpin` - unpin worktree.
+    - `supacode://worktree/<id>/script/<script-uuid>/run` - run a script.
+    - `supacode://worktree/<id>/script/<script-uuid>/stop` - stop a script.
+    - `supacode://worktree/<id>/tab/new?input=<cmd>&id=<uuid>` - create a tab; query params are optional.
+    - `supacode://worktree/<id>/tab/<tab-uuid>` - focus tab.
+    - `supacode://worktree/<id>/tab/<tab-uuid>/destroy` - close tab.
+    - `supacode://worktree/<id>/tab/<tab-uuid>/surface/<surface-uuid>?input=<cmd>` - focus surface.
+    - `supacode://worktree/<id>/tab/<tab-uuid>/surface/<surface-uuid>/split?direction=horizontal|vertical&input=<cmd>&id=<uuid>` - split surface; query params are optional.
+    - `supacode://worktree/<id>/tab/<tab-uuid>/surface/<surface-uuid>/destroy` - close surface.
+    - `supacode://repo/open?path=/abs/path` - add repository; path must be absolute.
+    - `supacode://repo/<repo-id>/worktree/new?branch=<name>&base=<ref>&fetch=true&name=<folder>&location=<dir>` - create worktree; query params are optional.
+    - `supacode://settings[/<section>]` - open settings. Sections: `general`, `notifications`, `worktrees`, `developer`, `shortcuts`, `scripts`, `updates`, `github`.
+    - `supacode://settings/repo/<repo-id>` - open repository settings.
+    - `supacode://settings/repo/<repo-id>/scripts` - open repository scripts settings.
+    """
+
   // MARK: - Claude Code.
 
   static let claudeSkill = """
@@ -156,6 +188,8 @@ nonisolated enum CLISkillContent {
     | `--input` | `-i` | — | Command to run in the terminal. |
     | `--direction` | `-d` | `horizontal` | Split direction (`horizontal`/`h` or `vertical`/`v`). |
     | `--id` | `-n` | random | UUID for new tab/surface. |
+
+    \(deepLinksSection)
     """
 
   // MARK: - Codex.
@@ -214,6 +248,8 @@ nonisolated enum CLISkillContent {
 
     Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
+
+    \(deepLinksSection)
     """
 
   static let codexAgentsMd = """
@@ -250,6 +286,8 @@ nonisolated enum CLISkillContent {
 
     Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
+
+    \(deepLinksSection)
     """
 
   // MARK: - Kiro.
@@ -307,6 +345,8 @@ nonisolated enum CLISkillContent {
 
     Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
+
+    \(deepLinksSection)
     """
 
   // MARK: - Kimi.
@@ -365,6 +405,8 @@ nonisolated enum CLISkillContent {
 
     Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
+
+    \(deepLinksSection)
     """
 
   // MARK: - Pi.
@@ -422,6 +464,8 @@ nonisolated enum CLISkillContent {
 
     Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
+
+    \(deepLinksSection)
     """
   // MARK: - OpenCode.
 
@@ -478,6 +522,8 @@ nonisolated enum CLISkillContent {
 
     Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
+
+    \(deepLinksSection)
     """
 
   // MARK: - Copilot.
