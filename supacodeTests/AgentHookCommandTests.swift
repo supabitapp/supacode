@@ -332,7 +332,7 @@ struct AgentHookCommandTests {
   }
 
   @Test func sessionStartComposesOSCPresenceForClaudeAndCodex() {
-    for agent in [SkillAgent.claude, .codex, .opencode] {
+    for agent in [SkillAgent.claude, .codex, .grok, .opencode] {
       let command = AgentHookSettingsCommand.compositeCommand(
         events: [.sessionStart], forwardStdinAsNotification: false, agent: agent)
       #expect(command.contains("]3008;start=\(agent.rawValue);event=session_start"))

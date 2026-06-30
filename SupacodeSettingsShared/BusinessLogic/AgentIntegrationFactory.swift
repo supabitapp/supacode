@@ -13,6 +13,7 @@ nonisolated enum AgentIntegrationFactory {
     case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .grok: grok(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .hermes: hermes(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kimi: kimi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
@@ -56,6 +57,24 @@ nonisolated enum AgentIntegrationFactory {
           uninstall: { try installer.uninstallAllHooks() }
         ),
         skillComponent(agent: .codex, installer: skill),
+      ]
+    )
+  }
+
+  private static func grok(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = GrokSettingsInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
+    return AgentIntegration(
+      agent: .grok,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.installAllHooks() },
+          uninstall: { try installer.uninstallAllHooks() }
+        ),
+        skillComponent(agent: .grok, installer: skill),
       ]
     )
   }
