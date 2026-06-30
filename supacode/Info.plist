@@ -81,6 +81,14 @@
 				<string>supacode</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>sh.supacode.github-desktop</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>x-github-client</string>
+			</array>
+		</dict>
 	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>

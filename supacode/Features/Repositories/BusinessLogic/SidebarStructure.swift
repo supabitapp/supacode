@@ -447,7 +447,7 @@ extension RepositoriesFeature.Action {
     // Everything else is UI / effects / transient state, no cache touched.
     case .task, .setOpenPanelPresented,
       .requestAddRemoteRepository, .requestEditRemoteRepository, .remoteConnectionForm,
-      .requestCloneRepository, .cloneRepositoryForm,
+      .requestCloneRepository, .requestCloneRepositoryPrefilled, .cloneRepositoryForm,
       .loadPersistedRepositories,
       .removeRemoteRepository,
       .refreshWorktrees, .reloadRepositories,

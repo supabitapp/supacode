@@ -1035,6 +1035,40 @@ struct AppFeatureDeeplinkTests {
     await store.receive(\.repositories.openRepositories)
   }
 
+  @Test(.dependencies) func githubDesktopCloneDeeplinkPrefillsCloneRepositoryFormWhenEnabled() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.githubDesktopCloneLinksEnabled = true
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(.githubDesktopClone(repositoryURL: URL(string: "https://github.com/supabitapp/supacode")!))
+    )
+    await store.receive(
+      .repositories(.requestCloneRepositoryPrefilled(repositoryURL: "https://github.com/supabitapp/supacode"))
+    )
+    #expect(store.state.repositories.cloneRepositoryForm?.repositoryURL == "https://github.com/supabitapp/supacode")
+  }
+
+  @Test(.dependencies) func githubDesktopCloneDeeplinkDoesNothingWhenDisabled() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(
+      .deeplink(.githubDesktopClone(repositoryURL: URL(string: "https://github.com/supabitapp/supacode")!))
+    )
+    await store.finish()
+    #expect(store.state.repositories.cloneRepositoryForm == nil)
+  }
+
   @Test(.dependencies) func repoWorktreeNewWithoutBranchDeeplink() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)

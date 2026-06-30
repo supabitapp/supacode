@@ -261,6 +261,7 @@ struct RepositoriesFeature {
     case requestEditRemoteRepository(Repository.ID)
     case remoteConnectionForm(PresentationAction<RemoteConnectionFormFeature.Action>)
     case requestCloneRepository
+    case requestCloneRepositoryPrefilled(repositoryURL: String)
     case cloneRepositoryForm(PresentationAction<CloneRepositoryFormFeature.Action>)
     case removeRemoteRepository(Repository.ID)
     /// Kick off async SSH resolution of every persisted remote config; streams
@@ -2930,7 +2931,7 @@ struct RepositoriesFeature {
         // runs before the delegate handler nils the presented state.
         return .none
 
-      case .requestCloneRepository, .cloneRepositoryForm:
+      case .requestCloneRepository, .requestCloneRepositoryPrefilled, .cloneRepositoryForm:
         // Handled by `cloneRepositoryFormReducer` so the form's child reducer
         // runs before the delegate handler nils the presented state.
         return .none

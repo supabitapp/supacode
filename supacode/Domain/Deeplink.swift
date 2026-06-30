@@ -1,10 +1,11 @@
 import Foundation
 
-/// A parsed deeplink action from a `supacode://` URL.
+/// A parsed deeplink action from a URL.
 enum Deeplink: Equatable, Sendable {
   case open
   case help
   case worktree(id: Worktree.ID, action: WorktreeAction)
+  case githubDesktopClone(repositoryURL: URL)
   case repoOpen(path: URL)
   case repoWorktreeNew(
     repositoryID: Repository.ID,

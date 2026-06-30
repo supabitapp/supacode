@@ -39,6 +39,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var analyticsEnabled: Bool
   public var crashReportsEnabled: Bool
   public var githubIntegrationEnabled: Bool
+  public var githubDesktopCloneLinksEnabled: Bool
   public var deleteBranchOnDeleteWorktree: Bool
   public var mergedWorktreeAction: MergedWorktreeAction?
   public var promptForWorktreeCreation: Bool
@@ -80,6 +81,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     analyticsEnabled: true,
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,
+    githubDesktopCloneLinksEnabled: false,
     deleteBranchOnDeleteWorktree: true,
     mergedWorktreeAction: nil,
     promptForWorktreeCreation: true,
@@ -114,6 +116,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     analyticsEnabled: Bool,
     crashReportsEnabled: Bool,
     githubIntegrationEnabled: Bool,
+    githubDesktopCloneLinksEnabled: Bool = false,
     deleteBranchOnDeleteWorktree: Bool,
     mergedWorktreeAction: MergedWorktreeAction? = nil,
     promptForWorktreeCreation: Bool,
@@ -146,6 +149,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.analyticsEnabled = analyticsEnabled
     self.crashReportsEnabled = crashReportsEnabled
     self.githubIntegrationEnabled = githubIntegrationEnabled
+    self.githubDesktopCloneLinksEnabled = githubDesktopCloneLinksEnabled
     self.deleteBranchOnDeleteWorktree = deleteBranchOnDeleteWorktree
     self.mergedWorktreeAction = mergedWorktreeAction
     self.promptForWorktreeCreation = promptForWorktreeCreation
@@ -210,6 +214,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     githubIntegrationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .githubIntegrationEnabled)
       ?? Self.default.githubIntegrationEnabled
+    githubDesktopCloneLinksEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .githubDesktopCloneLinksEnabled)
+      ?? Self.default.githubDesktopCloneLinksEnabled
     deleteBranchOnDeleteWorktree =
       try container.decodeIfPresent(Bool.self, forKey: .deleteBranchOnDeleteWorktree)
       ?? Self.default.deleteBranchOnDeleteWorktree

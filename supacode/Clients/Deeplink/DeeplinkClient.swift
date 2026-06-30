@@ -24,6 +24,10 @@ private nonisolated enum DeeplinkParser {
   private static let logger = SupaLogger("Deeplink")
 
   static func parse(_ url: URL) -> Deeplink? {
+    if url.scheme == "x-github-client" {
+      return parseGithubDesktop(url)
+    }
+
     guard url.scheme == "supacode" else {
       logger.debug("Ignoring non-supacode URL: \(url.scheme ?? "nil")")
       return nil
@@ -82,6 +86,63 @@ private nonisolated enum DeeplinkParser {
       logger.warning("Unrecognized deeplink host: \(host)")
       return nil
     }
+  }
+
+  // MARK: - GitHub Desktop.
+
+  private static func parseGithubDesktop(_ url: URL) -> Deeplink? {
+    let prefix = "x-github-client://"
+    guard url.absoluteString.lowercased().hasPrefix(prefix) else {
+      logger.warning("Invalid GitHub Desktop URL scheme.")
+      return nil
+    }
+
+    let remainder = String(url.absoluteString.dropFirst(prefix.count))
+    let parts = remainder.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+    guard parts.count == 2 else {
+      logger.warning("GitHub Desktop URL missing action or repository URL.")
+      return nil
+    }
+
+    switch String(parts[0]) {
+    case "openRepo", "cloneRepo":
+      return parseGithubDesktopRepositoryURL(String(parts[1]))
+    default:
+      logger.warning("Unsupported GitHub Desktop action: \(String(parts[0]))")
+      return nil
+    }
+  }
+
+  private static func parseGithubDesktopRepositoryURL(_ rawRepositoryURL: String) -> Deeplink? {
+    guard
+      let components = URLComponents(string: rawRepositoryURL),
+      components.scheme?.lowercased() == "https",
+      components.host != nil,
+      components.query == nil,
+      components.fragment == nil,
+      let repositoryURL = components.url
+    else {
+      logger.warning("Invalid GitHub Desktop repository URL.")
+      return nil
+    }
+
+    let pathParts = components.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+    guard pathParts.count >= 2, pathParts.allSatisfy(isSafeGithubDesktopPathComponent(_:)) else {
+      logger.warning("Malformed GitHub Desktop repository path.")
+      return nil
+    }
+
+    return .githubDesktopClone(repositoryURL: repositoryURL)
+  }
+
+  private static func isSafeGithubDesktopPathComponent(_ value: String) -> Bool {
+    !value.isEmpty
+      && value != "."
+      && value != ".."
+      && !value.contains("..")
+      && !value.contains("/")
+      && !value.contains("\\")
+      && !value.contains("\0")
   }
 
   // MARK: - Worktree.

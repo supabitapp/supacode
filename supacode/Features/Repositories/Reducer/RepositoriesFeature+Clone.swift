@@ -19,6 +19,18 @@ extension RepositoriesFeature {
         state.cloneRepositoryForm = CloneRepositoryFormFeature.State(cloneLocationPath: seededLocation)
         return .none
 
+      case .requestCloneRepositoryPrefilled(let repositoryURL):
+        @Shared(.appStorage("lastCloneLocationPath")) var lastCloneLocationPath = ""
+        let seededLocation =
+          lastCloneLocationPath.isEmpty
+          ? FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
+          : lastCloneLocationPath
+        state.cloneRepositoryForm = CloneRepositoryFormFeature.State(
+          repositoryURL: repositoryURL,
+          cloneLocationPath: seededLocation
+        )
+        return .none
+
       case .cloneRepositoryForm(.presented(.delegate(.cancel))):
         state.cloneRepositoryForm = nil
         return .none

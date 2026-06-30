@@ -1309,6 +1309,15 @@ struct AppFeature {
       return handleWorktreeDeeplink(
         worktreeID: worktreeID, action: action, source: source, responseFD: responseFD, state: &state
       )
+    case .githubDesktopClone(let repositoryURL):
+      guard state.settings.githubDesktopCloneLinksEnabled else {
+        return .none
+      }
+      return .send(
+        .repositories(
+          .requestCloneRepositoryPrefilled(repositoryURL: repositoryURL.absoluteString)
+        )
+      )
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
     case .repoWorktreeNew(

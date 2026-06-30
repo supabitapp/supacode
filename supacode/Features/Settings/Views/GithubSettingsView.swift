@@ -1,3 +1,4 @@
+import AppKit
 import ComposableArchitecture
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
@@ -21,6 +22,9 @@ final class GithubSettingsViewModel {
 
   @ObservationIgnored
   @Dependency(GithubCLIClient.self) private var githubCLI
+
+  @ObservationIgnored
+  @Dependency(GitHubDesktopURLSchemeClient.self) private var githubDesktopURLScheme
 
   func load() async {
     state = .loading
@@ -51,6 +55,50 @@ final class GithubSettingsViewModel {
       state = .error(error.localizedDescription)
     }
   }
+
+  var githubDesktopURLSchemeHandler: GitHubDesktopURLSchemeHandler?
+  var githubDesktopURLSchemeError: String?
+
+  func loadGithubDesktopURLSchemeHandler() async {
+    githubDesktopURLSchemeError = nil
+    githubDesktopURLSchemeHandler = await githubDesktopURLScheme.currentHandler()
+  }
+
+  func claimGithubDesktopURLScheme() async {
+    do {
+      try await githubDesktopURLScheme.claim()
+      await loadGithubDesktopURLSchemeHandler()
+    } catch {
+      githubDesktopURLSchemeError = error.localizedDescription
+      githubDesktopURLSchemeHandler = await githubDesktopURLScheme.currentHandler()
+    }
+  }
+}
+
+private struct GitHubDesktopURLSchemeHandlerView: View {
+  let handler: GitHubDesktopURLSchemeHandler?
+  let supacodeBundleIdentifier: String?
+
+  var body: some View {
+    if let handler {
+      if handler.bundleIdentifier == supacodeBundleIdentifier {
+        Text("Supacode")
+      } else {
+        HStack(spacing: 6) {
+          if let applicationURL = handler.applicationURL {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: applicationURL.path(percentEncoded: false)))
+              .resizable()
+              .frame(width: 16, height: 16)
+              .accessibilityHidden(true)
+          }
+          Text(handler.applicationName)
+        }
+      }
+    } else {
+      Text("No application")
+        .foregroundStyle(.secondary)
+    }
+  }
 }
 
 struct GithubSettingsView: View {
@@ -63,6 +111,20 @@ struct GithubSettingsView: View {
         Toggle(isOn: $store.githubIntegrationEnabled) {
           Text("Enable GitHub Integration")
           Text("Pull request checks and merge actions in the command palette.")
+        }
+        Toggle(isOn: $store.githubDesktopCloneLinksEnabled) {
+          Text("Handle GitHub Desktop clone links")
+          Text("Open GitHub Desktop repository links in Supacode's clone window.")
+        }
+        LabeledContent("Current clone link handler") {
+          GitHubDesktopURLSchemeHandlerView(
+            handler: viewModel.githubDesktopURLSchemeHandler,
+            supacodeBundleIdentifier: Bundle.main.bundleIdentifier
+          )
+        }
+        if let message = viewModel.githubDesktopURLSchemeError {
+          Text(message)
+            .foregroundStyle(.red)
         }
       }
       Section("GitHub CLI") {
@@ -185,10 +247,20 @@ struct GithubSettingsView: View {
     .navigationTitle("GitHub")
     .task {
       await viewModel.load()
+      await viewModel.loadGithubDesktopURLSchemeHandler()
     }
     .onChange(of: store.githubIntegrationEnabled) { _, _ in
       Task {
         await viewModel.load()
+      }
+    }
+    .onChange(of: store.githubDesktopCloneLinksEnabled) { _, isEnabled in
+      Task {
+        if isEnabled {
+          await viewModel.claimGithubDesktopURLScheme()
+        } else {
+          await viewModel.loadGithubDesktopURLSchemeHandler()
+        }
       }
     }
   }

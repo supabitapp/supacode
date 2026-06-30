@@ -179,6 +179,18 @@ struct CloneRepositoryParentWiringTests {
     #expect(store.state.cloneRepositoryForm == nil)
   }
 
+  @Test func requestCloneRepositoryPrefilledPresentsFormWithURL() async {
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+    }
+    store.exhaustivity = .off
+
+    await store.send(.requestCloneRepositoryPrefilled(repositoryURL: "https://github.com/supabitapp/supacode"))
+    #expect(store.state.cloneRepositoryForm?.repositoryURL == "https://github.com/supabitapp/supacode")
+  }
+
   @Test func clonedDelegateDismissesAndOpensClonedDirectory() async {
     let directory = URL(fileURLWithPath: "/tmp/dest/repo")
     let store = TestStore(initialState: RepositoriesFeature.State()) {
