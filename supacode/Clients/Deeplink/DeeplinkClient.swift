@@ -115,13 +115,28 @@ private nonisolated enum DeeplinkParser {
 
   private static func parseGithubDesktopRepositoryURL(_ rawRepositoryURL: String) -> Deeplink? {
     guard
-      let components = URLComponents(string: rawRepositoryURL),
+      var components = URLComponents(string: rawRepositoryURL),
       components.scheme?.lowercased() == "https",
       components.host != nil,
-      components.query == nil,
-      components.fragment == nil,
-      let repositoryURL = components.url
+      components.fragment == nil
     else {
+      logger.warning("Invalid GitHub Desktop repository URL.")
+      return nil
+    }
+
+    if let queryItems = components.queryItems {
+      guard
+        queryItems.count == 1,
+        queryItems.first?.name == "branch",
+        queryItems.first?.value?.isEmpty == false
+      else {
+        logger.warning("Invalid GitHub Desktop repository URL.")
+        return nil
+      }
+      components.queryItems = nil
+    }
+
+    guard let repositoryURL = components.url else {
       logger.warning("Invalid GitHub Desktop repository URL.")
       return nil
     }

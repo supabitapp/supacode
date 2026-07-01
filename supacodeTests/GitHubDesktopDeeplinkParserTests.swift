@@ -20,6 +20,14 @@ struct GitHubDesktopDeeplinkParserTests {
     #expect(deeplink == .githubDesktopClone(repositoryURL: URL(string: "https://github.com/supabitapp/supacode")!))
   }
 
+  @Test func parsesOpenRepoWithBranchQueryAsGithubDesktopClone() {
+    let url = URL(string: "x-github-client://openRepo/https://github.com/balcsida/homebrew-tap?branch=main")!
+
+    let deeplink = DeeplinkClient.liveValue.parse(url)
+
+    #expect(deeplink == .githubDesktopClone(repositoryURL: URL(string: "https://github.com/balcsida/homebrew-tap")!))
+  }
+
   @Test func rejectsUnsupportedGithubDesktopAction() {
     let url = URL(string: "x-github-client://unknown/https://github.com/supabitapp/supacode")!
 
