@@ -16,7 +16,20 @@ private enum CancelID {
   static let periodicRefresh = "app.periodicRefresh"
   static let backgroundPersist = "app.backgroundPersist"
   static let agentPresencePersist = "app.agentPresencePersist"
+  /// Watchdog for a deferred completion ack, keyed by the open client fd and
+  /// its generation so a recycled fd gets a distinct cancellation id.
+  static func commandAck(_ responseFD: Int32, _ token: Int) -> String {
+    "app.commandAck.\(responseFD).\(token)"
+  }
+  /// Watchdog for a socket-backed confirmation dialog left open, so its fd
+  /// times out instead of lingering until the user acts.
+  static let deeplinkConfirmationTimeout = "app.deeplinkConfirmationTimeout"
 }
+
+/// Default seconds the app holds a socket connection open waiting for a
+/// command to complete before draining it with a timeout error. Overridden
+/// per command by the `timeout` deeplink query item the CLI embeds.
+private nonisolated let defaultCommandTimeoutSeconds = 180
 
 @Reducer
 struct AppFeature {
@@ -50,6 +63,16 @@ struct AppFeature {
     var worktreeMenuSnapshot: WorktreeMenuSnapshot = .init()
     @Presents var alert: AlertState<Alert>?
     @Presents var deeplinkInputConfirmation: DeeplinkInputConfirmationFeature.State?
+    /// CLI socket commands whose ack is deferred until the operation is
+    /// observably complete, keyed by the open client fd. A watchdog drains each
+    /// on timeout so the fd never leaks.
+    var pendingCommandAcks: IdentifiedArrayOf<PendingCommandAck> = []
+    /// Monotonic generation stamped on each pending ack so a stale watchdog can
+    /// never drain a different ack that recycled the same client fd number.
+    var commandAckGeneration: Int = 0
+    /// Monotonic generation stamped on each socket-backed confirmation so a stale
+    /// timeout action can't fire against a dialog that recycled the same fd.
+    var confirmationGeneration: Int = 0
 
     init(
       repositories: RepositoriesFeature.State = .init(),
@@ -98,6 +121,38 @@ struct AppFeature {
     }
   }
 
+  /// A CLI socket command whose response is held open until the operation
+  /// completes. `id` is the open client fd (unique while the connection lives).
+  struct PendingCommandAck: Equatable, Sendable, Identifiable {
+    var id: Int32 { responseFD }
+    let responseFD: Int32
+    /// Generation stamp; the watchdog only drains when it still matches.
+    let token: Int
+    var match: CompletionMatch
+  }
+
+  /// What a deferred ack is waiting for, with the key that correlates the
+  /// completion signal back to the originating command.
+  enum CompletionMatch: Equatable, Sendable {
+    /// tab new: resolves when the worktree's new tab projection carries `tabID`.
+    case tabInWorktree(worktreeID: Worktree.ID, tabID: UUID)
+    /// surface split: resolves when the worktree's tab projection lists `surfaceID`.
+    case surfaceSplit(worktreeID: Worktree.ID, surfaceID: UUID)
+    /// repo worktree-new: `pendingID` (supplied by the deeplink so it flows back
+    /// through the creation stream) correlates the exact creation even when
+    /// several run concurrently in one repo; `worktreeID` is nil until that
+    /// worktree is created, then its first tab resolves the ack.
+    case worktreeNew(pendingID: Worktree.ID, worktreeID: Worktree.ID?)
+    /// tab close.
+    case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    /// surface close (scoped by worktree so a duplicate id elsewhere can't cross-resolve).
+    case surfaceClosed(worktreeID: Worktree.ID, surfaceID: UUID)
+    /// worktree delete (git worktree removed).
+    case worktreeRemoved(worktreeID: Worktree.ID)
+    /// folder-repository delete (the folder is removed from Supacode / disk).
+    case folderRemoved(repositoryID: Repository.ID)
+  }
+
   enum Action {
     case agentPresence(AgentPresenceFeature.Action)
     case terminals(TerminalsFeature.Action)
@@ -131,7 +186,11 @@ struct AppFeature {
     case endSearch
     case systemNotificationsPermissionFailed(errorMessage: String?)
     case deeplinkReceived(URL, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
-    case deeplink(Deeplink, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
+    case deeplink(
+      Deeplink, source: ActionSource = .urlScheme, responseFD: Int32? = nil,
+      timeoutSeconds: Int = defaultCommandTimeoutSeconds)
+    case commandAckTimedOut(responseFD: Int32, token: Int)
+    case deeplinkConfirmationTimedOut(responseFD: Int32, token: Int)
     case deeplinkReferenceOpened
     case alert(PresentationAction<Alert>)
     case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
@@ -818,14 +877,20 @@ struct AppFeature {
           state.pendingDeeplinks.append(parsed)
           return .none
         }
-        return .send(.deeplink(parsed, source: source, responseFD: responseFD))
+        let timeoutSeconds = Self.parseTimeoutSeconds(from: url)
+        return .send(
+          .deeplink(parsed, source: source, responseFD: responseFD, timeoutSeconds: timeoutSeconds))
 
-      case .deeplink(let deeplink, let source, let responseFD):
+      case .deeplink(let deeplink, let source, let responseFD, let timeoutSeconds):
         let alertBefore = state.alert
-        let effect = handleDeeplink(deeplink, source: source, responseFD: responseFD, state: &state)
+        let effect = handleDeeplink(
+          deeplink, source: source, responseFD: responseFD,
+          timeoutSeconds: timeoutSeconds, state: &state)
         guard let responseFD else { return effect }
-        // Confirmation dialog pending — response will be sent when dialog resolves.
+        // Confirmation dialog pending; response will be sent when dialog resolves.
         guard state.deeplinkInputConfirmation == nil else { return effect }
+        // A completion-based ack was registered; it resolves when the operation finishes.
+        guard state.pendingCommandAcks[id: responseFD] == nil else { return effect }
         // If a new alert was set during handling, the command failed.
         let succeeded = state.alert == alertBefore
         let errorMessage: String? = succeeded ? nil : extractAlertMessage(state.alert)
@@ -833,6 +898,27 @@ struct AppFeature {
           effect,
           sendSocketResponse(
             clientFD: responseFD, ok: succeeded, error: errorMessage))
+
+      case .commandAckTimedOut(let responseFD, let token):
+        // Ignore a stale watchdog whose ack was already resolved (and whose fd
+        // may have been recycled by a newer ack with a different token).
+        guard let ack = state.pendingCommandAcks[id: responseFD], ack.token == token else {
+          return .none
+        }
+        state.pendingCommandAcks.remove(id: responseFD)
+        return sendSocketResponse(
+          clientFD: ack.responseFD, ok: false,
+          error: "Timed out waiting for the operation to complete.")
+
+      case .deeplinkConfirmationTimedOut(let responseFD, let token):
+        // Ignore a stale watchdog whose dialog was already resolved (and whose fd
+        // may have been recycled by a newer dialog with a different token).
+        guard let confirmation = state.deeplinkInputConfirmation,
+          confirmation.responseFD == responseFD, confirmation.timeoutToken == token
+        else { return .none }
+        state.deeplinkInputConfirmation = nil
+        return sendSocketResponse(
+          clientFD: responseFD, ok: false, error: "Timed out waiting for confirmation.")
 
       case .deeplinkReferenceOpened:
         state.isDeeplinkReferenceRequested = false
@@ -854,6 +940,8 @@ struct AppFeature {
       case .deeplinkInputConfirmation(
         .presented(.delegate(.confirm(let worktreeID, let confirmedAction, let alwaysAllow)))):
         let pendingFD = state.deeplinkInputConfirmation?.responseFD
+        let timeoutSeconds =
+          state.deeplinkInputConfirmation?.timeoutSeconds ?? defaultCommandTimeoutSeconds
         state.deeplinkInputConfirmation = nil
         // The initial deeplink dispatch already selected the worktree via
         // `handleWorktreeDeeplink`. Re-dispatch only the action effect, skipping
@@ -864,34 +952,123 @@ struct AppFeature {
           action: confirmedAction,
           state: &state,
           bypassConfirmation: true,
+          responseFD: pendingFD,
+          timeoutSeconds: timeoutSeconds,
         )
         let succeeded = state.alert == alertBefore
-        let responseEffect: Effect<Action> =
-          pendingFD.map {
-            sendSocketResponse(
-              clientFD: $0,
-              ok: succeeded,
-              error: succeeded ? nil : extractAlertMessage(state.alert))
-          } ?? .none
+        let responseEffect: Effect<Action>
+        if let pendingFD, state.pendingCommandAcks[id: pendingFD] != nil {
+          // Completion-based ack registered; it resolves when the operation finishes.
+          responseEffect = .none
+        } else if let pendingFD {
+          responseEffect = sendSocketResponse(
+            clientFD: pendingFD,
+            ok: succeeded,
+            error: succeeded ? nil : extractAlertMessage(state.alert))
+        } else {
+          responseEffect = .none
+        }
         let policyEffect: Effect<Action> =
           alwaysAllow
           ? .send(.settings(.setAutomatedActionPolicy(.always)))
           : .none
-        return .concatenate(policyEffect, actionEffect, responseEffect)
+        return .concatenate(
+          .cancel(id: CancelID.deeplinkConfirmationTimeout),
+          policyEffect, actionEffect, responseEffect)
 
       case .deeplinkInputConfirmation(.presented(.delegate(.cancel))):
         let pendingFD = state.deeplinkInputConfirmation?.responseFD
         state.deeplinkInputConfirmation = nil
-        guard let clientFD = pendingFD else { return .none }
-        return sendSocketResponse(clientFD: clientFD, ok: false, error: "Cancelled by user.")
+        let cancelWatchdog: Effect<Action> = .cancel(id: CancelID.deeplinkConfirmationTimeout)
+        guard let clientFD = pendingFD else { return cancelWatchdog }
+        return .merge(
+          cancelWatchdog,
+          sendSocketResponse(clientFD: clientFD, ok: false, error: "Cancelled by user."))
 
       case .deeplinkInputConfirmation(.dismiss):
         // Drain any pending responseFD when TCA auto-dismisses the dialog
         // so the CLI client does not hang.
-        return drainPendingResponseFD(state: &state, error: "Dialog dismissed.")
+        return .merge(
+          .cancel(id: CancelID.deeplinkConfirmationTimeout),
+          drainPendingResponseFD(state: &state, error: "Dialog dismissed."))
 
       case .deeplinkInputConfirmation:
         return .none
+
+      case .repositories(.createRandomWorktreeSucceeded(let worktree, _, let pendingID)):
+        // Bind this creation's ack (matched by its pending id) to the real
+        // worktree id so its first tab resolves it.
+        bindWorktreeNewAck(pendingID: pendingID, to: worktree.id, state: &state)
+        return .none
+
+      case .repositories(.createRandomWorktreeFailed(_, let message, let pendingID, _, _, _, _)):
+        return resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          if case .worktreeNew(let ackPendingID, _) = match { return ackPendingID == pendingID }
+          return false
+        }
+
+      case .repositories(.cliWorktreeAckCancelled(let pendingID)):
+        // The creation prompt was cancelled before it produced a worktree.
+        return resolveCommandAcks(
+          ok: false, error: "Worktree creation cancelled.", state: &state
+        ) { match in
+          if case .worktreeNew(let ackPendingID, _) = match { return ackPendingID == pendingID }
+          return false
+        }
+
+      case .repositories(.worktreeDeleted(let worktreeID, _, _, _)):
+        return resolveCommandAcks(ok: true, state: &state) { match in
+          if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
+          return false
+        }
+
+      case .repositories(.repositoryRemovalCompleted(let repoID, let outcome, _)):
+        // Resolve a folder-delete ack once removal concludes (the single action
+        // that fires for both success and every failure mode).
+        let succeeded: Bool
+        let error: String?
+        switch outcome {
+        case .success:
+          succeeded = true
+          error = nil
+        case .failureSilent:
+          succeeded = false
+          error = "Delete did not complete."
+        case .failureWithMessage(let message):
+          succeeded = false
+          error = message
+        }
+        return resolveCommandAcks(ok: succeeded, error: error, state: &state) { match in
+          if case .folderRemoved(let ackRepoID) = match { return ackRepoID == repoID }
+          return false
+        }
+
+      case .repositories(.alert(.dismiss)):
+        // A pre-confirmation cancel drains the folder ack; one already past
+        // confirmation (its repo is removing) resolves on repositoryRemovalCompleted,
+        // so an unrelated dismissal must not drain it.
+        let removingRepoIDs = Set(state.repositories.removingRepositoryIDs.keys)
+        return resolveCommandAcks(ok: false, error: "Cancelled by user.", state: &state) { match in
+          if case .folderRemoved(let ackRepoID) = match { return !removingRepoIDs.contains(ackRepoID) }
+          return false
+        }
+
+      case .repositories(.deleteWorktreeFailed(let message, let worktreeID)):
+        return resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
+          return false
+        }
+
+      case .repositories(.deleteScriptCompleted(let worktreeID, let exitCode, _)):
+        // Exit 0 proceeds to removal (resolved by `.worktreeDeleted`); a failed or
+        // cancelled delete has no removal to follow, so resolve the ack now.
+        guard exitCode != 0 else { return .none }
+        let message =
+          exitCode.map { "Delete script failed (exit code \($0))." } ?? "Delete cancelled."
+        return resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
+          return false
+        }
 
       case .repositories(.repositoriesLoaded), .repositories(.openRepositoriesFinished):
         // Flush pending deeplinks after initial load completes, even when repositoriesChanged
@@ -1105,10 +1282,52 @@ struct AppFeature {
         )
 
       case .terminalEvent(.tabProjectionChanged(let worktreeID, let projection)):
-        return .send(.terminals(.tabProjectionChanged(worktreeID: worktreeID, projection: projection)))
+        // Resolve tab-new / surface-split acks once the supplied id appears.
+        let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
+          switch match {
+          case .tabInWorktree(let ackWorktree, let tabID):
+            return ackWorktree == worktreeID && projection.tabID.rawValue == tabID
+          case .surfaceSplit(let ackWorktree, let surfaceID):
+            return ackWorktree == worktreeID && projection.surfaceIDs.contains(surfaceID)
+          default:
+            return false
+          }
+        }
+        return .merge(
+          .send(.terminals(.tabProjectionChanged(worktreeID: worktreeID, projection: projection))),
+          ackEffect)
+
+      case .terminalEvent(.tabCreated(let worktreeID)):
+        // Resolve worktree-new acks once the new worktree's first tab exists,
+        // returning the created worktree id to the CLI.
+        return resolveCommandAcks(
+          ok: true, resourceID: Self.percentEncodedID(worktreeID.rawValue), state: &state
+        ) { match in
+          if case .worktreeNew(_, let boundID?) = match { return boundID == worktreeID }
+          return false
+        }
+
+      case .terminalEvent(.surfaceCreationFailed(let worktreeID, let attemptedID, let message)):
+        return resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          switch match {
+          case .tabInWorktree(let ackWorktree, let tabID):
+            return ackWorktree == worktreeID && tabID == attemptedID
+          case .surfaceSplit(let ackWorktree, let surfaceID):
+            return ackWorktree == worktreeID && surfaceID == attemptedID
+          default:
+            return false
+          }
+        }
 
       case .terminalEvent(.tabRemoved(let worktreeID, let tabID)):
-        return .send(.terminals(.tabRemoved(worktreeID: worktreeID, tabID: tabID)))
+        let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
+          if case .tabRemoved(let ackWorktree, let removed) = match {
+            return ackWorktree == worktreeID && removed == tabID
+          }
+          return false
+        }
+        return .merge(
+          .send(.terminals(.tabRemoved(worktreeID: worktreeID, tabID: tabID))), ackEffect)
 
       case .terminalEvent(.worktreeStateTornDown(let worktreeID)):
         return .send(.terminals(.worktreeStateTornDown(worktreeID: worktreeID)))
@@ -1121,12 +1340,19 @@ struct AppFeature {
       case .terminals:
         return .none
 
-      case .terminalEvent(.surfacesClosed(let ids)):
+      case .terminalEvent(.surfacesClosed(let worktreeID, let ids)):
         guard !ids.isEmpty else { return .none }
-        if ids.count == 1, let id = ids.first {
-          return .send(.agentPresence(.surfaceClosed(id)))
+        let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
+          if case .surfaceClosed(let ackWorktree, let surfaceID) = match {
+            return ackWorktree == worktreeID && ids.contains(surfaceID)
+          }
+          return false
         }
-        return .send(.agentPresence(.surfacesClosed(ids)))
+        let presenceEffect: Effect<Action> =
+          ids.count == 1
+          ? .send(.agentPresence(.surfaceClosed(ids.first!)))
+          : .send(.agentPresence(.surfacesClosed(ids)))
+        return .merge(presenceEffect, ackEffect)
 
       case .terminalEvent(.agentHookEventReceived(let event)):
         return .send(.agentPresence(.hookEventReceived(event)))
@@ -1297,6 +1523,7 @@ struct AppFeature {
     _ deeplink: Deeplink,
     source: ActionSource = .urlScheme,
     responseFD: Int32? = nil,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
     state: inout State
   ) -> Effect<Action> {
     switch deeplink {
@@ -1307,7 +1534,8 @@ struct AppFeature {
       return .none
     case .worktree(let worktreeID, let action):
       return handleWorktreeDeeplink(
-        worktreeID: worktreeID, action: action, source: source, responseFD: responseFD, state: &state
+        worktreeID: worktreeID, action: action, source: source, responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds, state: &state
       )
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
@@ -1319,47 +1547,10 @@ struct AppFeature {
       let worktreeName,
       let worktreePath
     ):
-      guard let repository = state.repositories.repositories[id: repositoryID] else {
-        deeplinkLogger.warning("Repository not found: \(repositoryID)")
-        state.alert = repositoryNotFoundAlert()
-        return .none
-      }
-      // Worktree creation is git-only. Reject the deeplink with a
-      // clear alert when it targets a folder rather than letting the
-      // request fall into `createWorktreeStream`.
-      guard repository.isGitRepository else {
-        deeplinkLogger.warning(
-          "Ignoring repoWorktreeNew deeplink for folder repository: \(repositoryID)"
-        )
-        state.alert = AlertState {
-          TextState("Worktrees not available")
-        } actions: {
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("OK")
-          }
-        } message: {
-          TextState("Worktrees are only supported for git repositories.")
-        }
-        return .none
-      }
-      guard let branch else {
-        return .send(.repositories(.createRandomWorktreeInRepository(repositoryID)))
-      }
-      let placement = WorktreePlacementOverride(
-        name: worktreeName?.isEmpty == true ? nil : worktreeName,
-        path: worktreePath?.isEmpty == true ? nil : worktreePath
-      )
-      return .send(
-        .repositories(
-          .createWorktreeInRepository(
-            repositoryID: repositoryID,
-            nameSource: .explicit(branch),
-            baseRefSource: baseRef.map { .explicit($0) } ?? .repositorySetting,
-            fetchOrigin: fetchOrigin,
-            placement: placement,
-          )
-        )
-      )
+      return handleRepoWorktreeNewDeeplink(
+        repositoryID: repositoryID, branch: branch, baseRef: baseRef, fetchOrigin: fetchOrigin,
+        worktreeName: worktreeName, worktreePath: worktreePath,
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .settings(let section):
       return handleSettingsDeeplink(section: section)
     case .settingsRepo(let repositoryID):
@@ -1383,6 +1574,94 @@ struct AppFeature {
     }
   }
 
+  // MARK: Worktree-new deeplink dispatch.
+
+  private func handleRepoWorktreeNewDeeplink(
+    repositoryID: Repository.ID,
+    branch: String? = nil,
+    baseRef: String? = nil,
+    fetchOrigin: Bool = false,
+    worktreeName: String? = nil,
+    worktreePath: String? = nil,
+    responseFD: Int32? = nil,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
+    state: inout State
+  ) -> Effect<Action> {
+    guard let repository = state.repositories.repositories[id: repositoryID] else {
+      deeplinkLogger.warning("Repository not found: \(repositoryID)")
+      state.alert = repositoryNotFoundAlert()
+      return .none
+    }
+    // Worktree creation is git-only. Reject a folder target with a clear alert
+    // rather than letting the request fall into `createWorktreeStream`.
+    guard repository.isGitRepository else {
+      deeplinkLogger.warning(
+        "Ignoring repoWorktreeNew deeplink for folder repository: \(repositoryID)"
+      )
+      state.alert = AlertState {
+        TextState("Worktrees not available")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+      } message: {
+        TextState("Worktrees are only supported for git repositories.")
+      }
+      return .none
+    }
+    if state.repositories.removingRepositoryIDs[repositoryID] != nil {
+      state.alert = AlertState {
+        TextState("Worktree unavailable")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+      } message: {
+        TextState("This repository is being removed.")
+      }
+      return .none
+    }
+    // Remote creation bypasses the local pending / first-tab flow (git worktree
+    // add over ssh + reload), so it has no completion signal yet and acks
+    // immediately. Follow-up: give the remote create + reload its own signal.
+    let isRemote = repository.host != nil
+    // Correlate the CLI ack through to the new worktree's first tab via a pending
+    // id stamped with the monotonic generation so concurrent creations can't
+    // collide. Every local path (explicit branch, random name, the interactive
+    // prompt) resolves on the first tab and returns the id.
+    let pendingID: Worktree.ID?
+    if !isRemote, responseFD != nil {
+      state.commandAckGeneration += 1
+      pendingID = WorktreeID(Self.cliPendingWorktreePrefix + "\(state.commandAckGeneration)")
+    } else {
+      pendingID = nil
+    }
+    let completionMatch: CompletionMatch? = pendingID.map {
+      .worktreeNew(pendingID: $0, worktreeID: nil)
+    }
+    guard let branch else {
+      return awaitingCompletion(
+        .send(.repositories(.createRandomWorktreeInRepository(repositoryID, pendingID: pendingID))),
+        match: completionMatch,
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    }
+    let placement = WorktreePlacementOverride(
+      name: worktreeName?.isEmpty == true ? nil : worktreeName,
+      path: worktreePath?.isEmpty == true ? nil : worktreePath
+    )
+    return awaitingCompletion(
+      .send(
+        .repositories(
+          .createWorktreeInRepository(
+            repositoryID: repositoryID,
+            nameSource: .explicit(branch),
+            baseRefSource: baseRef.map { .explicit($0) } ?? .repositorySetting,
+            fetchOrigin: fetchOrigin,
+            placement: placement,
+            pendingID: pendingID,
+          )
+        )
+      ),
+      match: completionMatch,
+      responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+  }
+
   // MARK: Worktree deeplink dispatch.
 
   private func handleWorktreeDeeplink(
@@ -1390,6 +1669,7 @@ struct AppFeature {
     action: Deeplink.WorktreeAction,
     source: ActionSource = .urlScheme,
     responseFD: Int32? = nil,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
     state: inout State,
     bypassConfirmation: Bool = false
   ) -> Effect<Action> {
@@ -1443,6 +1723,7 @@ struct AppFeature {
       state: &state,
       bypassConfirmation: bypassConfirmation || policyBypass,
       responseFD: responseFD,
+      timeoutSeconds: timeoutSeconds,
     )
     return .concatenate(selectEffect, actionEffect)
   }
@@ -1453,7 +1734,8 @@ struct AppFeature {
     action: Deeplink.WorktreeAction,
     state: inout State,
     bypassConfirmation: Bool,
-    responseFD: Int32? = nil
+    responseFD: Int32? = nil,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds
   ) -> Effect<Action> {
     // Block only the actions that would spawn a shell/script at the
     // missing working dir. Cleanup actions (delete/archive/pin) and
@@ -1500,7 +1782,8 @@ struct AppFeature {
         scriptID: scriptID,
         state: &state,
         bypassConfirmation: bypassConfirmation,
-        responseFD: responseFD
+        responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds
       )
     case .stopScript(let scriptID):
       return stopScriptDeeplinkEffect(worktreeID: worktreeID, scriptID: scriptID, state: &state)
@@ -1517,7 +1800,8 @@ struct AppFeature {
         action: action,
         state: &state,
         bypassConfirmation: bypassConfirmation,
-        responseFD: responseFD
+        responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds
       )
     case .pin:
       return .send(.repositories(.pinWorktree(worktreeID)))
@@ -1529,8 +1813,12 @@ struct AppFeature {
         .selectTab(worktree, tabID: TerminalTabID(rawValue: tabID))
       }
     case .tabNew(let input, let id):
-      // Reject explicit IDs that collide with an existing tab.
-      if let id, terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: id)) {
+      // Reject explicit IDs that collide with an existing or in-flight tab, so a
+      // duplicate id can't have one creation resolve the other's ack.
+      if let id,
+        terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: id))
+          || Self.hasPendingCreationAck(id: id, state: state)
+      {
         state.alert = AlertState {
           TextState("Tab ID already exists")
         } actions: {
@@ -1541,31 +1829,41 @@ struct AppFeature {
         return .none
       }
       guard let input, !input.isEmpty else {
-        return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
           .createTab(worktree, runSetupScriptIfNew: true, id: id)
         }
+        return awaitingCompletion(
+          effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
+          responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
       }
       if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
         return presentDeeplinkConfirmation(
-          worktreeID: worktreeID, responseFD: responseFD, message: .command(input),
-          action: action, state: &state)
+          worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
+          message: .command(input), action: action, state: &state)
       }
-      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .createTabWithInput(worktree, input: input, runSetupScriptIfNew: false, id: id)
       }
+      return awaitingCompletion(
+        effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       guard bypassConfirmation else {
         return presentDeeplinkConfirmation(
           worktreeID: worktreeID,
           responseFD: responseFD,
+          timeoutSeconds: timeoutSeconds,
           message: .confirmation("Close tab \(tabID.uuidString.prefix(8))…?"),
           action: action,
           state: &state)
       }
-      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID))
       }
+      return awaitingCompletion(
+        effect, match: .tabRemoved(worktreeID: worktreeID, tabID: TerminalTabID(rawValue: tabID)),
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .surface(let tabID, let surfaceID, let input):
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
@@ -1574,9 +1872,11 @@ struct AppFeature {
         requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
       {
         return presentDeeplinkConfirmation(
-          worktreeID: worktreeID, responseFD: responseFD, message: .command(input),
-          action: action, state: &state)
+          worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
+          message: .command(input), action: action, state: &state)
       }
+      // Focus has no reliable completion signal (the event only fires when
+      // focus actually moves), so this acks immediately.
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .focusSurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, input: input)
       }
@@ -1584,8 +1884,12 @@ struct AppFeature {
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
       }
-      // Reject explicit IDs that collide with an existing surface across all tabs.
-      if let id, terminalClient.surfaceExistsInWorktree(worktreeID, id) {
+      // Reject explicit IDs that collide with an existing or in-flight surface, so
+      // a duplicate id can't have one split resolve the other's ack.
+      if let id,
+        terminalClient.surfaceExistsInWorktree(worktreeID, id)
+          || Self.hasPendingCreationAck(id: id, state: state)
+      {
         state.alert = AlertState {
           TextState("Surface ID already exists")
         } actions: {
@@ -1599,14 +1903,17 @@ struct AppFeature {
         requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
       {
         return presentDeeplinkConfirmation(
-          worktreeID: worktreeID, responseFD: responseFD, message: .command(input),
-          action: action, state: &state)
+          worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
+          message: .command(input), action: action, state: &state)
       }
-      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .splitSurface(
           worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
           direction: direction, input: input, id: id)
       }
+      return awaitingCompletion(
+        effect, match: id.map { .surfaceSplit(worktreeID: worktreeID, surfaceID: $0) },
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .surfaceDestroy(let tabID, let surfaceID):
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
@@ -1615,13 +1922,17 @@ struct AppFeature {
         return presentDeeplinkConfirmation(
           worktreeID: worktreeID,
           responseFD: responseFD,
+          timeoutSeconds: timeoutSeconds,
           message: .confirmation("Close surface \(surfaceID.uuidString.prefix(8))…?"),
           action: action,
           state: &state)
       }
-      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .destroySurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID)
       }
+      return awaitingCompletion(
+        effect, match: .surfaceClosed(worktreeID: worktreeID, surfaceID: surfaceID),
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     }
   }
 
@@ -1630,7 +1941,8 @@ struct AppFeature {
     scriptID: UUID,
     state: inout State,
     bypassConfirmation: Bool,
-    responseFD: Int32?
+    responseFD: Int32?,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds
   ) -> Effect<Action> {
     // Read scripts from storage so cross-worktree deeplinks are selection-agnostic.
     guard let worktree = state.repositories.worktree(for: worktreeID) else {
@@ -1663,6 +1975,7 @@ struct AppFeature {
       return presentDeeplinkConfirmation(
         worktreeID: worktreeID,
         responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds,
         message: .command(definition.command),
         action: .runScript(scriptID: scriptID),
         state: &state
@@ -1784,7 +2097,8 @@ struct AppFeature {
     action: Deeplink.WorktreeAction,
     state: inout State,
     bypassConfirmation: Bool,
-    responseFD: Int32? = nil
+    responseFD: Int32? = nil,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds
   ) -> Effect<Action> {
     guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "delete", state: &state) else {
       return .none
@@ -1818,24 +2132,64 @@ struct AppFeature {
       worktreeID: worktreeID, repositoryID: repositoryID
     )
     if isFolder {
+      // A folder already removing / not idle, or one whose shared alert slot is
+      // occupied (a second confirmation would displace the first, stranding its
+      // ack), has no usable completion signal, so reject it now.
+      let folderEligible =
+        state.repositories.removingRepositoryIDs[repositoryID] == nil
+        && state.repositories.alert == nil
+        && (state.repositories.sidebarItems[id: worktreeID]?.lifecycle ?? .idle) == .idle
+      guard folderEligible else {
+        let folderName = state.repositories.repositories[id: repositoryID]?.name ?? "This folder"
+        state.alert = AlertState {
+          TextState("Delete unavailable")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("\(folderName) can't be deleted right now (another operation is in progress).")
+        }
+        return .none
+      }
       // Folders always surface the 3-button confirmation so users
       // can pick between `.folderUnlink` (drop from sidebar, stay
       // on disk) and `.folderTrash` (move to Trash). The deeplink
       // `bypassConfirmation` flag still shows it — there's no
-      // reasonable default disposition for folders.
-      return .send(.repositories(.requestDeleteSidebarItems([target])))
+      // reasonable default disposition for folders. Hold the ack until
+      // the removal completes (or the user cancels) instead of acking
+      // success while the confirmation is still on screen.
+      return awaitingCompletion(
+        .send(.repositories(.requestDeleteSidebarItems([target]))),
+        match: .folderRemoved(repositoryID: repositoryID),
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     }
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? worktreeID.rawValue
+    // A worktree already winding down hits deleteSidebarItemConfirmed's re-entry
+    // guard, which no-ops with no completion event, so an ack could only time out.
+    let lifecycle = state.repositories.sidebarItems[id: worktreeID]?.lifecycle ?? .idle
+    guard !lifecycle.isTerminating else {
+      state.alert = AlertState {
+        TextState("Delete unavailable")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+      } message: {
+        TextState("\"\(worktreeName)\" can't be deleted right now (another operation is in progress).")
+      }
+      return .none
+    }
     guard bypassConfirmation else {
       return presentDeeplinkConfirmation(
         worktreeID: worktreeID,
         responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds,
         message: .confirmation("Delete worktree \"\(worktreeName)\"?"),
         action: action,
         state: &state
       )
     }
-    return .send(.repositories(.deleteSidebarItemConfirmed(worktreeID, repositoryID)))
+    return awaitingCompletion(
+      .send(.repositories(.deleteSidebarItemConfirmed(worktreeID, repositoryID))),
+      match: .worktreeRemoved(worktreeID: worktreeID),
+      responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
   }
 
   private func resolveRepositoryID(
@@ -1969,13 +2323,14 @@ struct AppFeature {
   private func quitEffect(state: inout State, terminateSessions: Bool) -> Effect<Action> {
     analyticsClient.capture("app_quit", ["terminate_sessions": terminateSessions])
     let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
+    let pendingAcksEffect = drainAllCommandAcks(state: &state, error: "Supacode is quitting.")
     let terminateEffect: Effect<Action> = .run { @MainActor [terminalClient, appLifecycleClient] _ in
       if terminateSessions {
         await terminalClient.terminateAllSessions()
       }
       appLifecycleClient.terminate()
     }
-    return .concatenate(pendingFDEffect, terminateEffect)
+    return .concatenate(pendingFDEffect, pendingAcksEffect, terminateEffect)
   }
 
   /// Extracts a human-readable message from an alert state for CLI error responses.
@@ -1992,10 +2347,12 @@ struct AppFeature {
   private func sendSocketResponse(
     clientFD: Int32,
     ok succeeded: Bool,
-    error: String? = nil
+    error: String? = nil,
+    resourceID: String? = nil
   ) -> Effect<Action> {
     .run { _ in
-      AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: succeeded, error: error)
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: succeeded, error: error, resourceID: resourceID)
     }
   }
 
@@ -2009,9 +2366,141 @@ struct AppFeature {
     return sendSocketResponse(clientFD: clientFD, ok: false, error: error)
   }
 
+  // MARK: Deferred completion acks.
+
+  /// Prefix for the synthetic worktree id that correlates a CLI worktree-new ack
+  /// to its creation. Never collides with a real worktree id (a filesystem path).
+  private static let cliPendingWorktreePrefix = "pending:cli-"
+
+  /// Parses the `timeout` query item (seconds) the CLI embeds in command
+  /// deeplinks. Falls back to the default; clamps negatives to 0 (indefinite).
+  private static func parseTimeoutSeconds(from url: URL) -> Int {
+    guard
+      let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+        .queryItems?.first(where: { $0.name == "timeout" })?.value,
+      let seconds = Int(raw)
+    else {
+      return defaultCommandTimeoutSeconds
+    }
+    return max(seconds, 0)
+  }
+
+  /// Percent-encodes a resource id the same way the socket query handlers do,
+  /// so a returned id round-trips as a `-w` / `-r` argument.
+  private static func percentEncodedID(_ rawValue: String) -> String {
+    let allowed = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
+    return rawValue.addingPercentEncoding(withAllowedCharacters: allowed) ?? rawValue
+  }
+
+  /// True when a creation ack (tab new / surface split) is already pending for
+  /// `id`, so a duplicate explicit id can't have one creation resolve the other.
+  private static func hasPendingCreationAck(id: UUID?, state: State) -> Bool {
+    guard let id else { return false }
+    return state.pendingCommandAcks.contains { ack in
+      switch ack.match {
+      case .tabInWorktree(_, let tabID): return tabID == id
+      case .surfaceSplit(_, let surfaceID): return surfaceID == id
+      default: return false
+      }
+    }
+  }
+
+  /// Registers a deferred completion ack and merges in its watchdog. A `nil`
+  /// `match` (e.g. tab-new without a correlatable id) or `nil` `responseFD`
+  /// (no socket caller) leaves the ack immediate, returning `effect` unchanged.
+  private func awaitingCompletion(
+    _ effect: Effect<Action>,
+    match: CompletionMatch?,
+    responseFD: Int32?,
+    timeoutSeconds: Int,
+    state: inout State
+  ) -> Effect<Action> {
+    guard let responseFD, let match else { return effect }
+    // One open fd carries one command, so a pending ack here is unexpected.
+    // Cancel its watchdog before overwriting so no stale timer lingers.
+    var supersede: Effect<Action> = .none
+    if let stale = state.pendingCommandAcks[id: responseFD] {
+      appLogger.warning("Superseding an unresolved command ack on fd \(responseFD).")
+      supersede = .cancel(id: CancelID.commandAck(responseFD, stale.token))
+    }
+    state.commandAckGeneration += 1
+    let token = state.commandAckGeneration
+    state.pendingCommandAcks[id: responseFD] = PendingCommandAck(
+      responseFD: responseFD, token: token, match: match)
+    return .merge(
+      supersede,
+      effect,
+      makeAckTimeoutEffect(responseFD: responseFD, token: token, timeoutSeconds: timeoutSeconds))
+  }
+
+  /// Watchdog draining a pending ack with a timeout error if its completion
+  /// signal never arrives. `timeoutSeconds <= 0` waits indefinitely.
+  private func makeAckTimeoutEffect(
+    responseFD: Int32, token: Int, timeoutSeconds: Int
+  ) -> Effect<Action> {
+    guard timeoutSeconds > 0 else { return .none }
+    return .run { [clock] send in
+      try await clock.sleep(for: .seconds(timeoutSeconds))
+      await send(.commandAckTimedOut(responseFD: responseFD, token: token))
+    }
+    .cancellable(id: CancelID.commandAck(responseFD, token), cancelInFlight: true)
+  }
+
+  /// Drains every pending ack whose match satisfies `predicate`, sending each a
+  /// response and cancelling its watchdog. `resourceID` is echoed to the CLI so
+  /// a creation command can print the created resource.
+  private func resolveCommandAcks(
+    ok succeeded: Bool,
+    error: String? = nil,
+    resourceID: String? = nil,
+    state: inout State,
+    where predicate: (CompletionMatch) -> Bool
+  ) -> Effect<Action> {
+    let matched = state.pendingCommandAcks.filter { predicate($0.match) }
+    guard !matched.isEmpty else { return .none }
+    for ack in matched { state.pendingCommandAcks.remove(id: ack.id) }
+    return .merge(matched.map { drainAck($0, ok: succeeded, error: error, resourceID: resourceID) })
+  }
+
+  /// Sends a response on a pending ack's fd and cancels its watchdog.
+  private func drainAck(
+    _ ack: PendingCommandAck, ok succeeded: Bool, error: String?, resourceID: String? = nil
+  ) -> Effect<Action> {
+    .merge(
+      sendSocketResponse(
+        clientFD: ack.responseFD, ok: succeeded, error: error, resourceID: resourceID),
+      .cancel(id: CancelID.commandAck(ack.responseFD, ack.token))
+    )
+  }
+
+  /// Binds a pending worktree-new ack (registered with its pending id before the
+  /// real worktree id was known) to the created worktree id, so its first tab
+  /// resolves it.
+  private func bindWorktreeNewAck(
+    pendingID: Worktree.ID, to worktreeID: Worktree.ID, state: inout State
+  ) {
+    guard
+      let responseFD = state.pendingCommandAcks.first(where: { ack in
+        if case .worktreeNew(let ackPendingID, nil) = ack.match { return ackPendingID == pendingID }
+        return false
+      })?.responseFD
+    else { return }
+    state.pendingCommandAcks[id: responseFD]?.match = .worktreeNew(
+      pendingID: pendingID, worktreeID: worktreeID)
+  }
+
+  /// Drains all pending acks (used on quit) so no client fd leaks.
+  private func drainAllCommandAcks(state: inout State, error: String) -> Effect<Action> {
+    let acks = state.pendingCommandAcks
+    guard !acks.isEmpty else { return .none }
+    state.pendingCommandAcks.removeAll()
+    return .merge(acks.map { drainAck($0, ok: false, error: error) })
+  }
+
   private func presentDeeplinkConfirmation(
     worktreeID: Worktree.ID,
     responseFD: Int32? = nil,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
     message: DeeplinkConfirmationMessage,
     action: Deeplink.WorktreeAction,
     state: inout State
@@ -2024,15 +2513,33 @@ struct AppFeature {
       state.deeplinkInputConfirmation?.responseFD.map {
         sendSocketResponse(clientFD: $0, ok: false, error: "Superseded by another command.")
       } ?? .none
+    state.confirmationGeneration += 1
+    let token = state.confirmationGeneration
     state.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
       worktreeID: worktreeID,
       worktreeName: worktreeName,
       repositoryName: repoName,
       message: message,
       action: action,
-      responseFD: responseFD
+      responseFD: responseFD,
+      timeoutSeconds: timeoutSeconds,
+      timeoutToken: token
     )
-    return supersededEffect
+    // A socket-backed dialog left open would strand its fd, so time it out on the
+    // same budget. Always cancel the prior dialog's watchdog, even when this
+    // replacement starts none, so a superseded watchdog can't outlive its dialog.
+    let cancelPrior: Effect<Action> = .cancel(id: CancelID.deeplinkConfirmationTimeout)
+    let watchdog: Effect<Action>
+    if let responseFD, timeoutSeconds > 0 {
+      watchdog = .run { [clock] send in
+        try await clock.sleep(for: .seconds(timeoutSeconds))
+        await send(.deeplinkConfirmationTimedOut(responseFD: responseFD, token: token))
+      }
+      .cancellable(id: CancelID.deeplinkConfirmationTimeout, cancelInFlight: true)
+    } else {
+      watchdog = .none
+    }
+    return .merge(cancelPrior, supersededEffect, watchdog)
   }
 
   // MARK: Validation helpers.

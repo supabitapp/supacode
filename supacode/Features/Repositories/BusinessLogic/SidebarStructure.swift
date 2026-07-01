@@ -402,6 +402,10 @@ extension RepositoriesFeature.Action {
     case .resolveRemoteRepositories:
       return []
 
+    // Pure signal observed by AppFeature to drain a parked CLI ack; no state.
+    case .cliWorktreeAckCancelled:
+      return []
+
     // `worktreeBranchNameLoaded` mutates `worktree.name` via `updateWorktreeName`,
     // which feeds `computeToolbarNotificationGroups()` (notification group title).
     // Without `.toolbarNotificationGroups` the popover would show the old name
