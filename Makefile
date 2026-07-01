@@ -27,6 +27,7 @@ BODY ?=
 # Export so headline markdown reaches the script without a shell re-parse of quotes/backticks.
 export VERSION BUILD TITLE BODY
 XCODEBUILD_FLAGS ?=
+RUN_FROM_APPLICATIONS ?= 0
 SUPACODE_SKIP_PREFLIGHT ?=
 
 # Export a Zig-linkable Xcode per build recipe (no global xcode-select -s). Plain
@@ -111,7 +112,16 @@ run-app: build-app # Build then launch (Debug) with log streaming
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
-	"$$build_dir/$$product/Contents/MacOS/$$exec_name"
+	app="$$build_dir/$$product"; \
+	if [ "$(RUN_FROM_APPLICATIONS)" = "1" ]; then \
+		dst="/Applications/$$product"; \
+		echo "copying $$app -> $$dst"; \
+		rm -rf "$$dst"; \
+		ditto "$$app" "$$dst"; \
+		/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$$dst"; \
+		app="$$dst"; \
+	fi; \
+	"$$app/Contents/MacOS/$$exec_name"
 
 install-dev-build: build-app # install dev build to /Applications
 	@$(SELECT_DEVELOPER_DIR); \
