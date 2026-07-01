@@ -30,8 +30,10 @@ extension WorktreeCommand {
     @Flag(name: [.short, .long], help: "Print only the focused worktree.")
     var focused = false
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
-      let items = try QueryDispatcher.query(resource: "worktrees")
+      let items = try QueryDispatcher.query(resource: "worktrees", timeoutSeconds: timeoutOption.timeout)
       for item in items {
         let isFocused = !(item["focused"] ?? "").isEmpty
         guard !focused || isFocused else { continue }
@@ -46,9 +48,14 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeSelect(worktreeID: id))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeSelect(worktreeID: id),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 
@@ -63,15 +70,21 @@ extension WorktreeCommand {
     @Option(name: [.customShort("c"), .long], help: "Script UUID (see `worktree script list`).")
     var script: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
       guard let script else {
-        try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeAction("run", worktreeID: id))
+        try Dispatcher.dispatch(
+          deeplinkURL: DeeplinkURLBuilder.worktreeAction("run", worktreeID: id),
+          timeoutSeconds: timeoutOption.timeout
+        )
         return
       }
       let scriptID = try validatedScriptID(script)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.scriptRun(worktreeID: id, scriptID: scriptID)
+        deeplinkURL: DeeplinkURLBuilder.scriptRun(worktreeID: id, scriptID: scriptID),
+        timeoutSeconds: timeoutOption.timeout
       )
     }
   }
@@ -87,15 +100,21 @@ extension WorktreeCommand {
     @Option(name: [.customShort("c"), .long], help: "Script UUID (see `worktree script list`).")
     var script: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
       guard let script else {
-        try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeAction("stop", worktreeID: id))
+        try Dispatcher.dispatch(
+          deeplinkURL: DeeplinkURLBuilder.worktreeAction("stop", worktreeID: id),
+          timeoutSeconds: timeoutOption.timeout
+        )
         return
       }
       let scriptID = try validatedScriptID(script)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.scriptStop(worktreeID: id, scriptID: scriptID)
+        deeplinkURL: DeeplinkURLBuilder.scriptStop(worktreeID: id, scriptID: scriptID),
+        timeoutSeconds: timeoutOption.timeout
       )
     }
   }
@@ -106,9 +125,14 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeAction("archive", worktreeID: id))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeAction("archive", worktreeID: id),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 
@@ -118,9 +142,14 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeAction("unarchive", worktreeID: id))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeAction("unarchive", worktreeID: id),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 
@@ -130,9 +159,14 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeAction("delete", worktreeID: id))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeAction("delete", worktreeID: id),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 
@@ -142,9 +176,14 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeAction("pin", worktreeID: id))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeAction("pin", worktreeID: id),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 
@@ -154,9 +193,14 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.worktreeAction("unpin", worktreeID: id))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeAction("unpin", worktreeID: id),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 }
