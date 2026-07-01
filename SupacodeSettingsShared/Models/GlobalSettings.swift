@@ -34,13 +34,15 @@ public nonisolated struct GitHubDesktopAccount: Codable, Equatable, Sendable {
   public var name: String
   public var avatarURL: String?
   public var id: Int
+  public var email: String?
 
-  public init(endpoint: String, login: String, name: String, avatarURL: String?, id: Int) {
+  public init(endpoint: String, login: String, name: String, avatarURL: String?, id: Int, email: String? = nil) {
     self.endpoint = endpoint
     self.login = login
     self.name = name
     self.avatarURL = avatarURL
     self.id = id
+    self.email = email
   }
 
   public var isDotCom: Bool {

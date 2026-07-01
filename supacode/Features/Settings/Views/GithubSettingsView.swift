@@ -159,28 +159,45 @@ private struct GitHubDesktopAccountRow: View {
 
 private struct GitHubDesktopAccountAvatar: View {
   let account: GitHubDesktopAccount
+  @State private var image: NSImage?
 
   var body: some View {
     Group {
-      if let avatarURL = account.avatarURL, let url = URL(string: avatarURL) {
-        AsyncImage(url: url) { image in
-          image
-            .resizable()
-            .scaledToFill()
-        } placeholder: {
-          Image(systemName: "person.crop.circle.fill")
-            .resizable()
-            .foregroundStyle(.secondary)
-        }
-      } else {
-        Image(systemName: "person.crop.circle.fill")
+      if let image {
+        Image(nsImage: image)
           .resizable()
-          .foregroundStyle(.secondary)
+          .scaledToFill()
+      } else {
+        placeholder
       }
     }
     .frame(width: 36, height: 36)
     .clipShape(Circle())
     .accessibilityHidden(true)
+    .task(id: account) {
+      await loadImage()
+    }
+  }
+
+  private var placeholder: some View {
+    Image(systemName: "person.crop.circle.fill")
+      .resizable()
+      .foregroundStyle(.secondary)
+      .accessibilityHidden(true)
+  }
+
+  @MainActor
+  private func loadImage() async {
+    image = nil
+    guard let request = GitHubDesktopOAuth.avatarRequest(for: account, size: 72) else { return }
+
+    do {
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard !Task.isCancelled, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+      image = NSImage(data: data)
+    } catch {
+      image = nil
+    }
   }
 }
 

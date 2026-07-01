@@ -70,6 +70,29 @@ enum GitHubDesktopOAuth {
     deleteStoredToken(for: account)
   }
 
+  static func avatarRequest(for account: GitHubDesktopAccount, size: Int) -> URLRequest? {
+    avatarRequest(for: account, token: token(for: account), size: size)
+  }
+
+  static func avatarRequest(for account: GitHubDesktopAccount, token: String?, size: Int) -> URLRequest? {
+    guard !account.isDotCom else { return directAvatarRequest(for: account, size: size) }
+    guard let token, var components = URLComponents(string: account.endpoint), isGHES(endpoint: account.endpoint) else {
+      return directAvatarRequest(for: account, size: size)
+    }
+    components.path =
+      components.path.hasSuffix("/")
+      ? "\(components.path)enterprise/avatars/u/e"
+      : "\(components.path)/enterprise/avatars/u/e"
+    components.queryItems = [
+      URLQueryItem(name: "email", value: preferredEmail(for: account)),
+      URLQueryItem(name: "s", value: "\(size)"),
+    ]
+    guard let url = components.url else { return directAvatarRequest(for: account, size: size) }
+    var request = URLRequest(url: url)
+    request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
+    return request
+  }
+
   static func endpoint(for host: String) -> String? {
     let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
@@ -135,13 +158,35 @@ enum GitHubDesktopOAuth {
       throw GitHubDesktopOAuthError.fetchUserFailed
     }
     let user = try JSONDecoder().decode(UserResponse.self, from: data)
+    let emails = await fetchEmails(endpoint: endpoint, token: token)
     return GitHubDesktopAccount(
       endpoint: endpoint,
       login: user.login,
       name: user.name ?? user.login,
       avatarURL: user.avatarURL,
-      id: user.id
+      id: user.id,
+      email: preferredEmail(emails: emails, endpoint: endpoint, login: user.login, id: user.id)
     )
+  }
+
+  private static func fetchEmails(endpoint: String, token: String) async -> [EmailResponse] {
+    guard var components = URLComponents(string: endpoint) else { return [] }
+    components.path =
+      components.path.hasSuffix("/") ? "\(components.path)user/emails" : "\(components.path)/user/emails"
+    guard let url = components.url else { return [] }
+
+    var request = URLRequest(url: url)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+    do {
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+      return (try? JSONDecoder().decode([EmailResponse].self, from: data)) ?? []
+    } catch {
+      logger.debug("Failed to fetch GitHub Desktop account emails for \(endpoint): \(error.localizedDescription)")
+      return []
+    }
   }
 
   private static func deleteToken(endpoint: String, token: String) async -> Bool {
@@ -192,8 +237,57 @@ enum GitHubDesktopOAuth {
     return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
   }
 
+  private static func directAvatarRequest(for account: GitHubDesktopAccount, size: Int) -> URLRequest? {
+    guard let avatarURL = account.avatarURL, var components = URLComponents(string: avatarURL) else { return nil }
+    components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "s", value: "\(size)")]
+    return components.url.map { URLRequest(url: $0) }
+  }
+
+  private static func isGHES(endpoint: String) -> Bool {
+    guard let components = URLComponents(string: endpoint), let host = components.host else { return false }
+    return !host.hasSuffix(".ghe.com") && components.path.contains("/api/v3")
+  }
+
+  private static func preferredEmail(for account: GitHubDesktopAccount) -> String {
+    if let email = account.email, !email.isEmpty {
+      return email
+    }
+    return stealthEmail(login: account.login, id: account.id, endpoint: account.endpoint)
+  }
+
+  private static func preferredEmail(
+    emails: [EmailResponse],
+    endpoint: String,
+    login: String,
+    id: Int
+  ) -> String {
+    if let primary = emails.first(where: { $0.primary && ($0.visibility == "public" || $0.visibility == nil) }) {
+      return primary.email
+    }
+    let suffix = "@\(stealthEmailHost(for: endpoint))"
+    if let noReply = emails.first(where: { $0.email.lowercased().hasSuffix(suffix) }) {
+      return noReply.email
+    }
+    return emails.first?.email ?? stealthEmail(login: login, id: id, endpoint: endpoint)
+  }
+
+  private static func stealthEmail(login: String, id: Int, endpoint: String) -> String {
+    "\(id)+\(login)@\(stealthEmailHost(for: endpoint))"
+  }
+
+  private static func stealthEmailHost(for endpoint: String) -> String {
+    guard isGHES(endpoint: endpoint), let host = URLComponents(string: endpoint)?.host else {
+      return "users.noreply.github.com"
+    }
+    return "users.noreply.\(host)"
+  }
+
   private static func keychainAccount(for account: GitHubDesktopAccount) -> String {
     account.endpoint
+  }
+
+  private static func legacyKeychainAccount(for account: GitHubDesktopAccount) -> String {
+    "\(account.endpoint)#\(account.login)"
   }
 
   private static func storeToken(_ token: String, for account: GitHubDesktopAccount) {
@@ -223,7 +317,13 @@ enum GitHubDesktopOAuth {
       kSecMatchLimit: kSecMatchLimitOne,
     ]
     var item: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+    if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data {
+      return String(data: data, encoding: .utf8)
+    }
+
+    var legacyQuery = query
+    legacyQuery[kSecAttrAccount] = legacyKeychainAccount(for: account)
+    guard SecItemCopyMatching(legacyQuery as CFDictionary, &item) == errSecSuccess,
       let data = item as? Data
     else { return nil }
     return String(data: data, encoding: .utf8)
@@ -236,6 +336,9 @@ enum GitHubDesktopOAuth {
       kSecAttrAccount: keychainAccount(for: account),
     ]
     SecItemDelete(query as CFDictionary)
+    var legacyQuery = query
+    legacyQuery[kSecAttrAccount] = legacyKeychainAccount(for: account)
+    SecItemDelete(legacyQuery as CFDictionary)
   }
 }
 
@@ -279,4 +382,10 @@ private struct UserResponse: Decodable {
     case avatarURL = "avatar_url"
     case id
   }
+}
+
+private struct EmailResponse: Decodable {
+  var email: String
+  var primary: Bool
+  var visibility: String?
 }
