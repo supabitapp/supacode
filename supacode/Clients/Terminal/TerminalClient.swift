@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 
 struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
@@ -42,6 +43,7 @@ struct TerminalClient {
     case closeFocusedSurface(Worktree)
     case performBindingAction(Worktree, action: String)
     case performBindingActionOnSurface(Worktree, surfaceID: UUID, action: String)
+    case setImagePasteAgents(surfaceID: UUID, agents: Set<SkillAgent>)
     case startSearch(Worktree)
     case searchSelection(Worktree)
     case navigateSearchNext(Worktree)

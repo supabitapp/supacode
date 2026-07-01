@@ -701,6 +701,13 @@ final class WorktreeTerminalState {
     return true
   }
 
+  @discardableResult
+  func setImagePasteAgents(_ agents: Set<SkillAgent>, onSurfaceID surfaceID: UUID) -> Bool {
+    guard let surface = surfaces[surfaceID] else { return false }
+    surface.imagePasteAgents = agents
+    return true
+  }
+
   private func performBindingAction(_ action: String, on surface: GhosttySurfaceView) {
     if action == "close_surface" {
       pendingExplicitSurfaceCloseIDs.insert(surface.id)
