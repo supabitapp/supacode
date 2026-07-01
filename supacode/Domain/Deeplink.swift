@@ -6,6 +6,7 @@ enum Deeplink: Equatable, Sendable {
   case help
   case worktree(id: Worktree.ID, action: WorktreeAction)
   case githubDesktopClone(repositoryURL: URL)
+  case githubDesktopOAuth(code: String, state: String)
   case repoOpen(path: URL)
   case repoWorktreeNew(
     repositoryID: Repository.ID,

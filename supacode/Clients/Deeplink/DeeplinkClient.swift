@@ -22,7 +22,7 @@ extension DependencyValues {
 
 private nonisolated enum DeeplinkParser {
   private static let logger = SupaLogger("Deeplink")
-  private static let githubDesktopSchemes = Set(["x-github-client", "github-mac"])
+  private static let githubDesktopSchemes = Set(["x-github-client", "x-github-desktop-auth", "github-mac"])
 
   static func parse(_ url: URL) -> Deeplink? {
     if let scheme = url.scheme?.lowercased(), githubDesktopSchemes.contains(scheme) {
@@ -92,6 +92,10 @@ private nonisolated enum DeeplinkParser {
   // MARK: - GitHub Desktop.
 
   private static func parseGithubDesktop(_ url: URL, scheme: String) -> Deeplink? {
+    if URLComponents(url: url, resolvingAgainstBaseURL: false)?.host?.lowercased() == "oauth" {
+      return parseGithubDesktopOAuth(url)
+    }
+
     let prefix = "\(scheme)://"
     guard url.absoluteString.lowercased().hasPrefix(prefix) else {
       logger.warning("Invalid GitHub Desktop URL scheme.")
@@ -112,6 +116,22 @@ private nonisolated enum DeeplinkParser {
       logger.warning("Unsupported GitHub Desktop action: \(String(parts[0]))")
       return nil
     }
+  }
+
+  private static func parseGithubDesktopOAuth(_ url: URL) -> Deeplink? {
+    guard
+      let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+      let queryItems = components.queryItems,
+      let code = queryItems.first(where: { $0.name == "code" })?.value,
+      let state = queryItems.first(where: { $0.name == "state" })?.value,
+      !code.isEmpty,
+      !state.isEmpty
+    else {
+      logger.warning("Invalid GitHub Desktop OAuth callback.")
+      return nil
+    }
+
+    return .githubDesktopOAuth(code: code, state: state)
   }
 
   private static func parseGithubDesktopRepositoryURL(_ rawRepositoryURL: String) -> Deeplink? {

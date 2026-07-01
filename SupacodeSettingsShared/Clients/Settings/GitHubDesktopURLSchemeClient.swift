@@ -44,7 +44,7 @@ public enum GitHubDesktopURLSchemeClientError: Error, Equatable, LocalizedError 
 
 private enum GitHubDesktopURLSchemes {
   static let primary = "x-github-client"
-  static let all = [primary, "github-mac"]
+  static let all = [primary, "x-github-desktop-auth", "github-mac"]
 }
 
 extension GitHubDesktopURLSchemeClient: DependencyKey {

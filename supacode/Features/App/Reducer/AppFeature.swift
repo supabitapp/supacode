@@ -132,6 +132,7 @@ struct AppFeature {
     case systemNotificationsPermissionFailed(errorMessage: String?)
     case deeplinkReceived(URL, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
     case deeplink(Deeplink, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
+    case githubDesktopOAuthCompleted(host: String?, errorMessage: String?)
     case deeplinkReferenceOpened
     case alert(PresentationAction<Alert>)
     case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
@@ -820,6 +821,29 @@ struct AppFeature {
         }
         return .send(.deeplink(parsed, source: source, responseFD: responseFD))
 
+      case .githubDesktopOAuthCompleted(let host?, nil):
+        state.alert = AlertState {
+          TextState("GitHub Desktop authorization complete")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState(
+            "GitHub Desktop compatibility was authorized for \(host). Reload GitHub and try "
+              + "\"Open in GitHub Desktop\" again."
+          )
+        }
+        return .none
+
+      case .githubDesktopOAuthCompleted(_, let message):
+        state.alert = AlertState {
+          TextState("GitHub Desktop authorization failed")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState(message ?? "Unknown error.")
+        }
+        return .none
+
       case .deeplink(let deeplink, let source, let responseFD):
         let alertBefore = state.alert
         let effect = handleDeeplink(deeplink, source: source, responseFD: responseFD, state: &state)
@@ -1309,15 +1333,8 @@ struct AppFeature {
       return handleWorktreeDeeplink(
         worktreeID: worktreeID, action: action, source: source, responseFD: responseFD, state: &state
       )
-    case .githubDesktopClone(let repositoryURL):
-      guard state.settings.githubDesktopCloneLinksEnabled else {
-        return .none
-      }
-      return .send(
-        .repositories(
-          .requestCloneRepositoryPrefilled(repositoryURL: repositoryURL.absoluteString)
-        )
-      )
+    case .githubDesktopClone, .githubDesktopOAuth:
+      return handleGitHubDesktopDeeplink(deeplink, state: &state)
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
     case .repoWorktreeNew(
@@ -1389,6 +1406,30 @@ struct AppFeature {
         return .none
       }
       return .send(.settings(.setSelection(.repositoryScripts(repositoryID.rawValue))))
+    }
+  }
+
+  private func handleGitHubDesktopDeeplink(
+    _ deeplink: Deeplink,
+    state: inout State
+  ) -> Effect<Action> {
+    if case .githubDesktopClone(let repositoryURL) = deeplink {
+      guard state.settings.githubDesktopCloneLinksEnabled else { return .none }
+      return .send(
+        .repositories(
+          .requestCloneRepositoryPrefilled(repositoryURL: repositoryURL.absoluteString)
+        )
+      )
+    }
+
+    guard case .githubDesktopOAuth(let code, let state) = deeplink else { return .none }
+    return .run { send in
+      do {
+        let host = try await GitHubDesktopOAuth.exchangeCode(code, state: state)
+        await send(.githubDesktopOAuthCompleted(host: host, errorMessage: nil))
+      } catch {
+        await send(.githubDesktopOAuthCompleted(host: nil, errorMessage: error.localizedDescription))
+      }
     }
   }
 

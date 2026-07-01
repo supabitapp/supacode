@@ -28,6 +28,20 @@ struct GitHubDesktopDeeplinkParserTests {
     #expect(deeplink == .githubDesktopClone(repositoryURL: URL(string: "https://github.com/balcsida/homebrew-tap")!))
   }
 
+  @Test func parsesDesktopAuthCallback() {
+    let url = URL(string: "x-github-desktop-auth://oauth?code=abc123&state=state-123")!
+    let deeplink = DeeplinkClient.liveValue.parse(url)
+
+    #expect(deeplink == .githubDesktopOAuth(code: "abc123", state: "state-123"))
+  }
+
+  @Test func parsesClientAuthCallback() {
+    let url = URL(string: "x-github-client://oauth?code=abc123&state=state-123")!
+    let deeplink = DeeplinkClient.liveValue.parse(url)
+
+    #expect(deeplink == .githubDesktopOAuth(code: "abc123", state: "state-123"))
+  }
+
   @Test func rejectsUnsupportedGithubDesktopAction() {
     let url = URL(string: "x-github-client://unknown/https://github.com/supabitapp/supacode")!
 

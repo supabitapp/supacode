@@ -37,6 +37,9 @@ final class GithubSettingsViewModel {
     do {
       if let status = try await githubCLI.authStatus() {
         state = .authenticated(username: status.username, host: status.host)
+        if githubDesktopOAuthHost == "github.com" {
+          githubDesktopOAuthHost = status.host
+        }
       } else {
         state = .notAuthenticated
       }
@@ -58,6 +61,8 @@ final class GithubSettingsViewModel {
 
   var githubDesktopURLSchemeHandler: GitHubDesktopURLSchemeHandler?
   var githubDesktopURLSchemeError: String?
+  var githubDesktopOAuthHost = "github.com"
+  var githubDesktopOAuthError: String?
 
   func loadGithubDesktopURLSchemeHandler() async {
     githubDesktopURLSchemeError = nil
@@ -72,6 +77,16 @@ final class GithubSettingsViewModel {
       githubDesktopURLSchemeError = error.localizedDescription
       githubDesktopURLSchemeHandler = await githubDesktopURLScheme.currentHandler()
     }
+  }
+
+  func authorizeGitHubDesktopOAuth() {
+    githubDesktopOAuthError = nil
+    let state = GitHubDesktopOAuth.makeState(host: githubDesktopOAuthHost)
+    guard let url = GitHubDesktopOAuth.authorizationURL(host: githubDesktopOAuthHost, state: state) else {
+      githubDesktopOAuthError = "Invalid GitHub host."
+      return
+    }
+    NSWorkspace.shared.open(url)
   }
 }
 
@@ -123,6 +138,29 @@ struct GithubSettingsView: View {
           )
         }
         if let message = viewModel.githubDesktopURLSchemeError {
+          Text(message)
+            .foregroundStyle(.red)
+        }
+        LabeledContent("Desktop OAuth host") {
+          TextField(
+            "github.com",
+            text: Binding(
+              get: { viewModel.githubDesktopOAuthHost },
+              set: { viewModel.githubDesktopOAuthHost = $0 }
+            )
+          )
+          .textFieldStyle(.roundedBorder)
+          .frame(maxWidth: 260)
+        }
+        Button("Authorize GitHub Desktop") {
+          viewModel.authorizeGitHubDesktopOAuth()
+        }
+        .disabled(!store.githubDesktopCloneLinksEnabled)
+        .help("Open GitHub Desktop authorization for the selected host.")
+        Text("Experimental GitHub Desktop OAuth compatibility.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+        if let message = viewModel.githubDesktopOAuthError {
           Text(message)
             .foregroundStyle(.red)
         }

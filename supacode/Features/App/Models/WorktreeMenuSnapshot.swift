@@ -126,7 +126,8 @@ extension AppFeature.Action {
       .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
-      .deeplink, .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
+      .deeplink, .githubDesktopOAuthCompleted, .deeplinkReferenceOpened,
+      .alert, .deeplinkInputConfirmation:
       return false
     }
   }
