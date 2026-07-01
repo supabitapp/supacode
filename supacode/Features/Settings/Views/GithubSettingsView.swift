@@ -16,6 +16,9 @@ final class GithubSettingsViewModel {
   }
 
   var state: State = .loading
+  var githubDesktopURLSchemeHandler: GitHubDesktopURLSchemeHandler?
+  var githubDesktopURLSchemeError: String?
+  var githubDesktopOAuthError: String?
 
   @ObservationIgnored
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
@@ -37,9 +40,6 @@ final class GithubSettingsViewModel {
     do {
       if let status = try await githubCLI.authStatus() {
         state = .authenticated(username: status.username, host: status.host)
-        if githubDesktopOAuthHost == "github.com" {
-          githubDesktopOAuthHost = status.host
-        }
       } else {
         state = .notAuthenticated
       }
@@ -59,11 +59,6 @@ final class GithubSettingsViewModel {
     }
   }
 
-  var githubDesktopURLSchemeHandler: GitHubDesktopURLSchemeHandler?
-  var githubDesktopURLSchemeError: String?
-  var githubDesktopOAuthHost = "github.com"
-  var githubDesktopOAuthError: String?
-
   func loadGithubDesktopURLSchemeHandler() async {
     githubDesktopURLSchemeError = nil
     githubDesktopURLSchemeHandler = await githubDesktopURLScheme.currentHandler()
@@ -79,14 +74,20 @@ final class GithubSettingsViewModel {
     }
   }
 
-  func authorizeGitHubDesktopOAuth() {
+  @discardableResult
+  func authorizeGitHubDesktopOAuth(host: String) -> Bool {
     githubDesktopOAuthError = nil
-    let state = GitHubDesktopOAuth.makeState(host: githubDesktopOAuthHost)
-    guard let url = GitHubDesktopOAuth.authorizationURL(host: githubDesktopOAuthHost, state: state) else {
+    let state = GitHubDesktopOAuth.makeState(host: host)
+    guard let url = GitHubDesktopOAuth.authorizationURL(host: host, state: state) else {
       githubDesktopOAuthError = "Invalid GitHub host."
-      return
+      return false
     }
     NSWorkspace.shared.open(url)
+    return true
+  }
+
+  func signOut(_ account: GitHubDesktopAccount) async {
+    await GitHubDesktopOAuth.signOut(account)
   }
 }
 
@@ -116,16 +117,110 @@ private struct GitHubDesktopURLSchemeHandlerView: View {
   }
 }
 
+private struct GitHubDesktopAccountGroup<Content: View>: View {
+  let title: String
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text(title)
+        .font(.headline)
+      content()
+    }
+  }
+}
+
+private struct GitHubDesktopAccountRow: View {
+  let account: GitHubDesktopAccount
+  let onSignOut: () -> Void
+
+  var body: some View {
+    HStack(spacing: 12) {
+      GitHubDesktopAccountAvatar(account: account)
+      VStack(alignment: .leading, spacing: 2) {
+        if account.isDotCom {
+          Text(account.displayName)
+            .font(.headline)
+          Text("@\(account.login)")
+            .foregroundStyle(.secondary)
+        } else {
+          Text(account.name == account.login ? "@\(account.login)" : "@\(account.login) (\(account.name))")
+            .font(.headline)
+          Text(account.htmlURL)
+            .foregroundStyle(.secondary)
+        }
+      }
+      Spacer()
+      Button("Sign Out", action: onSignOut)
+        .help("Sign out of this GitHub Desktop account.")
+    }
+  }
+}
+
+private struct GitHubDesktopAccountAvatar: View {
+  let account: GitHubDesktopAccount
+
+  var body: some View {
+    Group {
+      if let avatarURL = account.avatarURL, let url = URL(string: avatarURL) {
+        AsyncImage(url: url) { image in
+          image
+            .resizable()
+            .scaledToFill()
+        } placeholder: {
+          Image(systemName: "person.crop.circle.fill")
+            .resizable()
+            .foregroundStyle(.secondary)
+        }
+      } else {
+        Image(systemName: "person.crop.circle.fill")
+          .resizable()
+          .foregroundStyle(.secondary)
+      }
+    }
+    .frame(width: 36, height: 36)
+    .clipShape(Circle())
+    .accessibilityHidden(true)
+  }
+}
+
+private struct GitHubDesktopSignInCallToAction: View {
+  let text: String
+  let buttonTitle: String
+  let isEnabled: Bool
+  let action: () -> Void
+
+  var body: some View {
+    HStack {
+      Text(text)
+        .foregroundStyle(.secondary)
+      Spacer()
+      Button(buttonTitle, action: action)
+        .disabled(!isEnabled)
+    }
+  }
+}
+
 struct GithubSettingsView: View {
   @Bindable var store: StoreOf<SettingsFeature>
   @State private var viewModel = GithubSettingsViewModel()
+  @State private var isAddingEnterpriseAccount = false
+  @State private var enterpriseHost = ""
+
+  private var dotComAccount: GitHubDesktopAccount? {
+    store.githubDesktopAccounts.first(where: \.isDotCom)
+  }
+
+  private var enterpriseAccounts: [GitHubDesktopAccount] {
+    store.githubDesktopAccounts.filter { !$0.isDotCom }
+  }
 
   var body: some View {
     Form {
       Section {
         Toggle(isOn: $store.githubIntegrationEnabled) {
           Text("Enable GitHub Integration")
-          Text("Pull request checks and merge actions in the command palette.")
+          Text("Pull request checks and merge actions in command palette.")
         }
         Toggle(isOn: $store.githubDesktopCloneLinksEnabled) {
           Text("Handle GitHub Desktop clone links")
@@ -141,144 +236,88 @@ struct GithubSettingsView: View {
           Text(message)
             .foregroundStyle(.red)
         }
-        LabeledContent("Desktop OAuth host") {
-          TextField(
-            "github.com",
-            text: Binding(
-              get: { viewModel.githubDesktopOAuthHost },
-              set: { viewModel.githubDesktopOAuthHost = $0 }
-            )
-          )
-          .textFieldStyle(.roundedBorder)
-          .frame(maxWidth: 260)
+      }
+
+      Section("GitHub Desktop Accounts") {
+        GitHubDesktopAccountGroup(title: "GitHub.com") {
+          if let dotComAccount {
+            accountRow(dotComAccount)
+          } else {
+            GitHubDesktopSignInCallToAction(
+              text: "Sign in to your GitHub.com account to access your repositories.",
+              buttonTitle: "Sign Into GitHub.com",
+              isEnabled: store.githubDesktopCloneLinksEnabled
+            ) {
+              viewModel.authorizeGitHubDesktopOAuth(host: "github.com")
+            }
+          }
         }
-        Button("Authorize GitHub Desktop") {
-          viewModel.authorizeGitHubDesktopOAuth()
+
+        GitHubDesktopAccountGroup(title: "GitHub Enterprise") {
+          ForEach(enterpriseAccounts, id: \.endpoint) { account in
+            accountRow(account)
+          }
+
+          if isAddingEnterpriseAccount {
+            HStack {
+              TextField("https://github.example.com", text: $enterpriseHost)
+                .textFieldStyle(.roundedBorder)
+              Button("Sign In") {
+                let didOpen = viewModel.authorizeGitHubDesktopOAuth(host: enterpriseHost)
+                if didOpen {
+                  enterpriseHost = ""
+                  isAddingEnterpriseAccount = false
+                }
+              }
+              .disabled(
+                !store.githubDesktopCloneLinksEnabled
+                  || enterpriseHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+              Button("Cancel") {
+                enterpriseHost = ""
+                isAddingEnterpriseAccount = false
+              }
+            }
+          } else {
+            Button(
+              enterpriseAccounts.isEmpty ? "Sign Into GitHub Enterprise" : "Add GitHub Enterprise account"
+            ) {
+              isAddingEnterpriseAccount = true
+            }
+            .disabled(!store.githubDesktopCloneLinksEnabled)
+          }
         }
-        .disabled(!store.githubDesktopCloneLinksEnabled)
-        .help("Open GitHub Desktop authorization for the selected host.")
-        Text("Experimental GitHub Desktop OAuth compatibility.")
-          .font(.callout)
-          .foregroundStyle(.secondary)
+
         if let message = viewModel.githubDesktopOAuthError {
           Text(message)
             .foregroundStyle(.red)
         }
       }
-      Section("GitHub CLI") {
-        switch viewModel.state {
-        case .loading:
-          LabeledContent("Checking GitHub CLI…") {
-            ProgressView().controlSize(.small)
-          }
 
-        case .unavailable:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("GitHub CLI not found")
-              Text("Install `gh` to enable pull request checks.")
-                .foregroundStyle(.secondary)
-                .font(.callout)
-            }
-          } icon: {
-            Image(systemName: "xmark.circle")
-              .foregroundStyle(.red)
-              .accessibilityHidden(true)
-          }
+      githubCLISection
 
-        case .notAuthenticated:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Not authenticated")
-              Text("Run `gh auth login` in a terminal to authenticate.")
-                .foregroundStyle(.secondary)
-                .font(.callout)
-            }
-          } icon: {
-            Image(systemName: "exclamationmark.triangle")
-              .foregroundStyle(.orange)
-              .accessibilityHidden(true)
-          }
-
-        case .outdated:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("GitHub CLI outdated")
-              Text("Update to the latest version for full support.")
-                .foregroundStyle(.secondary)
-                .font(.callout)
-            }
-          } icon: {
-            Image(systemName: "exclamationmark.triangle")
-              .foregroundStyle(.orange)
-              .accessibilityHidden(true)
-          }
-
-        case .authenticated(let username, let host):
-          LabeledContent("Signed in as") {
-            Text(username)
-          }
-          LabeledContent("Host") {
-            Text(host)
-          }
-
-        case .error(let message):
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Error checking status")
-              Text(message)
-                .foregroundStyle(.secondary)
-                .font(.callout)
-            }
-          } icon: {
-            Image(systemName: "exclamationmark.triangle")
-              .foregroundStyle(.red)
-              .accessibilityHidden(true)
-          }
-        }
-
-        switch viewModel.state {
-        case .unavailable:
-          Button("Get GitHub CLI") {
-            NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
-          }
-        case .outdated:
-          Button("Update GitHub CLI") {
-            NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
-          }
-        default:
-          EmptyView()
-        }
-      }
       Section("Pull Requests") {
         Picker(selection: $store.pullRequestMergeStrategy) {
-          ForEach(PullRequestMergeStrategy.allCases) { strategy in
-            Text(strategy.title)
-              .tag(strategy)
+          ForEach(PullRequestMergeStrategy.allCases, id: \.self) { strategy in
+            Text(strategy.title).tag(strategy)
           }
         } label: {
           Text("Merge strategy")
           Text("Default strategy when merging PRs from the command palette.")
         }
+
         Picker(selection: $store.mergedWorktreeAction) {
           Text("Do nothing").tag(MergedWorktreeAction?.none)
-          ForEach(MergedWorktreeAction.allCases) { action in
+          ForEach(MergedWorktreeAction.allCases, id: \.self) { action in
             Text(action.title).tag(MergedWorktreeAction?.some(action))
           }
         } label: {
-          Text("When a pull request is merged")
-          switch store.mergedWorktreeAction {
-          case .archive:
-            Text("Archives the worktree when its pull request is merged.")
-          case .delete:
-            Text("Follows the \"Delete local branch with worktree\" option in Worktrees settings.")
-          case nil:
-            EmptyView()
-          }
+          Text("Merged worktree action")
+          Text("What to do after a pull request has been merged.")
         }
       }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
     .padding(.top, -20)
     .padding(.leading, -8)
     .padding(.trailing, -6)
@@ -288,9 +327,7 @@ struct GithubSettingsView: View {
       await viewModel.loadGithubDesktopURLSchemeHandler()
     }
     .onChange(of: store.githubIntegrationEnabled) { _, _ in
-      Task {
-        await viewModel.load()
-      }
+      Task { await viewModel.load() }
     }
     .onChange(of: store.githubDesktopCloneLinksEnabled) { _, isEnabled in
       Task {
@@ -299,6 +336,105 @@ struct GithubSettingsView: View {
         } else {
           await viewModel.loadGithubDesktopURLSchemeHandler()
         }
+      }
+    }
+  }
+
+  private func accountRow(_ account: GitHubDesktopAccount) -> some View {
+    GitHubDesktopAccountRow(account: account) {
+      Task {
+        store.send(.removeGitHubDesktopAccount(endpoint: account.endpoint))
+        await viewModel.signOut(account)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var githubCLISection: some View {
+    Section("GitHub CLI") {
+      switch viewModel.state {
+      case .loading:
+        LabeledContent("Checking GitHub CLI...") {
+          ProgressView()
+            .controlSize(.small)
+        }
+
+      case .unavailable:
+        Label {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("GitHub CLI not found")
+            Text("Install `gh` to enable pull request checks.")
+              .foregroundStyle(.secondary)
+              .font(.callout)
+          }
+        } icon: {
+          Image(systemName: "xmark.circle")
+            .foregroundStyle(.red)
+            .accessibilityHidden(true)
+        }
+
+      case .notAuthenticated:
+        Label {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Not authenticated")
+            Text("Run `gh auth login` in terminal to authenticate.")
+              .foregroundStyle(.secondary)
+              .font(.callout)
+          }
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+            .accessibilityHidden(true)
+        }
+
+      case .outdated:
+        Label {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("GitHub CLI outdated")
+            Text("Update to the latest version for full support.")
+              .foregroundStyle(.secondary)
+              .font(.callout)
+          }
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+            .accessibilityHidden(true)
+        }
+
+      case .authenticated(let username, let host):
+        LabeledContent("Signed in as") {
+          Text(username)
+        }
+        LabeledContent("Host") {
+          Text(host)
+        }
+
+      case .error(let message):
+        Label {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Error checking status")
+            Text(message)
+              .foregroundStyle(.secondary)
+              .font(.callout)
+          }
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.red)
+            .accessibilityHidden(true)
+        }
+      }
+
+      switch viewModel.state {
+      case .unavailable:
+        Button("Get GitHub CLI") {
+          NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
+        }
+      case .outdated:
+        Button("Update GitHub CLI") {
+          NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
+        }
+      default:
+        EmptyView()
       }
     }
   }

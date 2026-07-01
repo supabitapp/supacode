@@ -54,6 +54,7 @@ public struct SettingsFeature {
     public var crashReportsEnabled: Bool
     public var githubIntegrationEnabled: Bool
     public var githubDesktopCloneLinksEnabled: Bool
+    public var githubDesktopAccounts: [GitHubDesktopAccount]
     public var deleteBranchOnDeleteWorktree: Bool
     public var mergedWorktreeAction: MergedWorktreeAction?
     public var promptForWorktreeCreation: Bool
@@ -97,6 +98,7 @@ public struct SettingsFeature {
       crashReportsEnabled = settings.crashReportsEnabled
       githubIntegrationEnabled = settings.githubIntegrationEnabled
       githubDesktopCloneLinksEnabled = settings.githubDesktopCloneLinksEnabled
+      githubDesktopAccounts = settings.githubDesktopAccounts
       deleteBranchOnDeleteWorktree = settings.deleteBranchOnDeleteWorktree
       mergedWorktreeAction = settings.mergedWorktreeAction
       promptForWorktreeCreation = settings.promptForWorktreeCreation
@@ -134,6 +136,7 @@ public struct SettingsFeature {
         crashReportsEnabled: crashReportsEnabled,
         githubIntegrationEnabled: githubIntegrationEnabled,
         githubDesktopCloneLinksEnabled: githubDesktopCloneLinksEnabled,
+        githubDesktopAccounts: githubDesktopAccounts,
         deleteBranchOnDeleteWorktree: deleteBranchOnDeleteWorktree,
         mergedWorktreeAction: mergedWorktreeAction,
         promptForWorktreeCreation: promptForWorktreeCreation,
@@ -162,6 +165,8 @@ public struct SettingsFeature {
   public enum Action: BindableAction {
     case task
     case settingsLoaded(GlobalSettings)
+    case upsertGitHubDesktopAccount(GitHubDesktopAccount)
+    case removeGitHubDesktopAccount(endpoint: String)
     case repositoriesChanged([SettingsRepositorySummary])
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
@@ -273,6 +278,7 @@ public struct SettingsFeature {
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
         state.githubIntegrationEnabled = normalizedSettings.githubIntegrationEnabled
         state.githubDesktopCloneLinksEnabled = normalizedSettings.githubDesktopCloneLinksEnabled
+        state.githubDesktopAccounts = normalizedSettings.githubDesktopAccounts
         state.deleteBranchOnDeleteWorktree = normalizedSettings.deleteBranchOnDeleteWorktree
         state.mergedWorktreeAction = normalizedSettings.mergedWorktreeAction
         state.promptForWorktreeCreation = normalizedSettings.promptForWorktreeCreation
@@ -295,6 +301,19 @@ public struct SettingsFeature {
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)
         return .send(.delegate(.settingsChanged(normalizedSettings)))
+
+      case .upsertGitHubDesktopAccount(let account):
+        if let index = state.githubDesktopAccounts.firstIndex(where: { $0.endpoint == account.endpoint }) {
+          state.githubDesktopAccounts[index] = account
+        } else {
+          state.githubDesktopAccounts.append(account)
+        }
+        state.githubDesktopAccounts = GitHubDesktopAccount.sorted(state.githubDesktopAccounts)
+        return persist(state)
+
+      case .removeGitHubDesktopAccount(let endpoint):
+        state.githubDesktopAccounts.removeAll { $0.endpoint == endpoint }
+        return persist(state)
 
       case .binding:
         state.syncGlobalDefaults(from: state.globalSettings)

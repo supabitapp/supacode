@@ -21,4 +21,25 @@ struct GitHubDesktopOAuthTests {
 
     #expect(GitHubDesktopOAuth.host(fromState: state) == "https://ghe.example.test")
   }
+
+  @Test func normalizesDesktopAuthEndpointsLikeGitHubDesktop() throws {
+    #expect(GitHubDesktopOAuth.endpoint(for: "github.com") == "https://api.github.com")
+    #expect(GitHubDesktopOAuth.endpoint(for: "GitHub.com") == "https://api.github.com")
+    #expect(GitHubDesktopOAuth.endpoint(for: "https://api.github.com") == "https://api.github.com")
+    #expect(GitHubDesktopOAuth.endpoint(for: "ghe.example.test") == "https://ghe.example.test/api/v3")
+    #expect(GitHubDesktopOAuth.endpoint(for: "https://octo.ghe.com") == "https://api.octo.ghe.com/")
+    #expect(GitHubDesktopOAuth.endpoint(for: "http://ghe.example.test") == nil)
+  }
+
+  @Test func buildsAuthorizationURLForEnterpriseHTMLHost() throws {
+    let url = try #require(
+      GitHubDesktopOAuth.authorizationURL(host: "ghe.example.test", state: "supacode-state")
+    )
+
+    #expect(
+      url.absoluteString
+        == "https://ghe.example.test/login/oauth/authorize?client_id=de0e3c7e9973e1c4dd77"
+        + "&scope=repo%20user%20workflow&state=supacode-state"
+    )
+  }
 }

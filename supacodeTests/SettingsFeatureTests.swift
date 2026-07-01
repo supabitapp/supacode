@@ -12,6 +12,54 @@ import Testing
 
 @MainActor
 struct SettingsFeatureTests {
+  @Test(.dependencies) func githubDesktopAccountsReplaceAndRemoveByEndpoint() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    let first = GitHubDesktopAccount(
+      endpoint: "https://api.github.com",
+      login: "old-login",
+      name: "Old Name",
+      avatarURL: nil,
+      id: 1
+    )
+    let replacement = GitHubDesktopAccount(
+      endpoint: "https://api.github.com",
+      login: "new-login",
+      name: "New Name",
+      avatarURL: "https://avatars.githubusercontent.com/u/2",
+      id: 2
+    )
+    let enterprise = GitHubDesktopAccount(
+      endpoint: "https://ghe.example.test/api/v3",
+      login: "work",
+      name: "Work User",
+      avatarURL: nil,
+      id: 3
+    )
+
+    await store.send(.upsertGitHubDesktopAccount(first))
+    await store.receive(\.delegate.settingsChanged)
+    await store.send(.upsertGitHubDesktopAccount(enterprise))
+    await store.receive(\.delegate.settingsChanged)
+    await store.send(.upsertGitHubDesktopAccount(replacement))
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(store.state.githubDesktopAccounts == [replacement, enterprise])
+    #expect(settingsFile.global.githubDesktopAccounts == [replacement, enterprise])
+
+    await store.send(.removeGitHubDesktopAccount(endpoint: replacement.endpoint))
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(store.state.githubDesktopAccounts == [enterprise])
+    #expect(settingsFile.global.githubDesktopAccounts == [enterprise])
+  }
+
   @Test(.dependencies) func loadSettings() async {
     let loaded = GlobalSettings(
       appearanceMode: .dark,

@@ -1,3 +1,5 @@
+import Foundation
+
 public nonisolated enum AutoDeletePeriod: Int, Codable, CaseIterable, Comparable, Sendable {
   #if DEBUG
     case immediately = 0
@@ -26,6 +28,63 @@ public nonisolated enum AutoDeletePeriod: Int, Codable, CaseIterable, Comparable
   }
 }
 
+public nonisolated struct GitHubDesktopAccount: Codable, Equatable, Sendable {
+  public var endpoint: String
+  public var login: String
+  public var name: String
+  public var avatarURL: String?
+  public var id: Int
+
+  public init(endpoint: String, login: String, name: String, avatarURL: String?, id: Int) {
+    self.endpoint = endpoint
+    self.login = login
+    self.name = name
+    self.avatarURL = avatarURL
+    self.id = id
+  }
+
+  public var isDotCom: Bool {
+    endpoint == "https://api.github.com"
+  }
+
+  public var displayName: String {
+    name.isEmpty ? login : name
+  }
+
+  public var htmlURL: String {
+    Self.htmlURL(forEndpoint: endpoint)
+  }
+
+  public static func sorted(_ accounts: [GitHubDesktopAccount]) -> [GitHubDesktopAccount] {
+    accounts
+      .enumerated()
+      .sorted { lhs, rhs in
+        if lhs.element.isDotCom != rhs.element.isDotCom {
+          return lhs.element.isDotCom
+        }
+        return lhs.offset < rhs.offset
+      }
+      .map(\.element)
+  }
+
+  private static func htmlURL(forEndpoint endpoint: String) -> String {
+    guard var components = URLComponents(string: endpoint), let host = components.host else {
+      return endpoint
+    }
+    if endpoint == "https://api.github.com" {
+      return "https://github.com"
+    }
+    if host.hasPrefix("api."), host.hasSuffix(".ghe.com") {
+      components.host = String(host.dropFirst("api.".count))
+    }
+    components.path = ""
+    components.query = nil
+    components.fragment = nil
+    let value = components.url?.absoluteString ?? endpoint
+    return value.hasSuffix("/") ? String(value.dropLast()) : value
+  }
+}
+
 public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var appearanceMode: AppearanceMode
   public var defaultEditorID: String
@@ -40,6 +99,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var crashReportsEnabled: Bool
   public var githubIntegrationEnabled: Bool
   public var githubDesktopCloneLinksEnabled: Bool
+  public var githubDesktopAccounts: [GitHubDesktopAccount]
   public var deleteBranchOnDeleteWorktree: Bool
   public var mergedWorktreeAction: MergedWorktreeAction?
   public var promptForWorktreeCreation: Bool
@@ -82,6 +142,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,
     githubDesktopCloneLinksEnabled: false,
+    githubDesktopAccounts: [],
     deleteBranchOnDeleteWorktree: true,
     mergedWorktreeAction: nil,
     promptForWorktreeCreation: true,
@@ -117,6 +178,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     crashReportsEnabled: Bool,
     githubIntegrationEnabled: Bool,
     githubDesktopCloneLinksEnabled: Bool = false,
+    githubDesktopAccounts: [GitHubDesktopAccount] = [],
     deleteBranchOnDeleteWorktree: Bool,
     mergedWorktreeAction: MergedWorktreeAction? = nil,
     promptForWorktreeCreation: Bool,
@@ -150,6 +212,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.crashReportsEnabled = crashReportsEnabled
     self.githubIntegrationEnabled = githubIntegrationEnabled
     self.githubDesktopCloneLinksEnabled = githubDesktopCloneLinksEnabled
+    self.githubDesktopAccounts = githubDesktopAccounts
     self.deleteBranchOnDeleteWorktree = deleteBranchOnDeleteWorktree
     self.mergedWorktreeAction = mergedWorktreeAction
     self.promptForWorktreeCreation = promptForWorktreeCreation
@@ -217,6 +280,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     githubDesktopCloneLinksEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .githubDesktopCloneLinksEnabled)
       ?? Self.default.githubDesktopCloneLinksEnabled
+    githubDesktopAccounts =
+      try container.decodeIfPresent([GitHubDesktopAccount].self, forKey: .githubDesktopAccounts)
+      ?? Self.default.githubDesktopAccounts
     deleteBranchOnDeleteWorktree =
       try container.decodeIfPresent(Bool.self, forKey: .deleteBranchOnDeleteWorktree)
       ?? Self.default.deleteBranchOnDeleteWorktree

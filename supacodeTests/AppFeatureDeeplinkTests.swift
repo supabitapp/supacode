@@ -1067,6 +1067,26 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.repositories.cloneRepositoryForm == nil)
   }
 
+  @Test(.dependencies) func githubDesktopOAuthCompletionStoresAccount() async {
+    let account = GitHubDesktopAccount(
+      endpoint: "https://api.github.com",
+      login: "supabit",
+      name: "Supabit",
+      avatarURL: nil,
+      id: 42
+    )
+    let store = TestStore(initialState: AppFeature.State(settings: SettingsFeature.State())) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.githubDesktopOAuthCompleted(account: account, errorMessage: nil))
+    await store.receive(\.settings.upsertGitHubDesktopAccount) {
+      $0.settings.githubDesktopAccounts = [account]
+    }
+    await store.receive(\.settings.delegate.settingsChanged)
+  }
+
   @Test(.dependencies) func repoWorktreeNewWithoutBranchDeeplink() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)

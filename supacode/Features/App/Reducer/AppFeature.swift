@@ -132,7 +132,7 @@ struct AppFeature {
     case systemNotificationsPermissionFailed(errorMessage: String?)
     case deeplinkReceived(URL, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
     case deeplink(Deeplink, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
-    case githubDesktopOAuthCompleted(host: String?, errorMessage: String?)
+    case githubDesktopOAuthCompleted(account: GitHubDesktopAccount?, errorMessage: String?)
     case deeplinkReferenceOpened
     case alert(PresentationAction<Alert>)
     case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
@@ -821,18 +821,18 @@ struct AppFeature {
         }
         return .send(.deeplink(parsed, source: source, responseFD: responseFD))
 
-      case .githubDesktopOAuthCompleted(let host?, nil):
+      case .githubDesktopOAuthCompleted(let account?, nil):
         state.alert = AlertState {
           TextState("GitHub Desktop authorization complete")
         } actions: {
           ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
         } message: {
           TextState(
-            "GitHub Desktop compatibility was authorized for \(host). Reload GitHub and try "
+            "GitHub Desktop compatibility was authorized for \(account.htmlURL). Reload GitHub and try "
               + "\"Open in GitHub Desktop\" again."
           )
         }
-        return .none
+        return .send(.settings(.upsertGitHubDesktopAccount(account)))
 
       case .githubDesktopOAuthCompleted(_, let message):
         state.alert = AlertState {
@@ -1425,10 +1425,10 @@ struct AppFeature {
     guard case .githubDesktopOAuth(let code, let state) = deeplink else { return .none }
     return .run { send in
       do {
-        let host = try await GitHubDesktopOAuth.exchangeCode(code, state: state)
-        await send(.githubDesktopOAuthCompleted(host: host, errorMessage: nil))
+        let account = try await GitHubDesktopOAuth.exchangeCode(code, state: state)
+        await send(.githubDesktopOAuthCompleted(account: account, errorMessage: nil))
       } catch {
-        await send(.githubDesktopOAuthCompleted(host: nil, errorMessage: error.localizedDescription))
+        await send(.githubDesktopOAuthCompleted(account: nil, errorMessage: error.localizedDescription))
       }
     }
   }
