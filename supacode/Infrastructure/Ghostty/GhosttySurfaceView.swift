@@ -4,6 +4,7 @@ import CoreText
 import GhosttyKit
 import QuartzCore
 import SupacodeSettingsShared
+import UniformTypeIdentifiers
 
 private let surfaceLogger = SupaLogger("Surface")
 
@@ -93,6 +94,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var focused = false
   private var markedText = NSMutableAttributedString()
   private var keyboardLayoutChangeKeyUpSuppression: KeyboardLayoutChangeKeyUpSuppression?
+  var imagePasteAgents: Set<SkillAgent> = []
   private var keyTextAccumulator: [String]?
   private var cellSize: CGSize = .zero
   private var lastScrollbar: ScrollbarState?
@@ -1104,7 +1106,12 @@ final class GhosttySurfaceView: NSView, Identifiable {
     // answer so a click on the sidebar lets ⌘⌫ reach the main menu.
     guard focused, window?.firstResponder === self else { return false }
 
-    if let bindingFlags = bindingFlags(for: event, surface: surface) {
+    let bindingFlags = bindingFlags(for: event, surface: surface)
+    if routeCommandPasteToNativeImagePasteIfNeeded(event, hasGhosttyBinding: bindingFlags != nil) {
+      return true
+    }
+
+    if let bindingFlags {
       // Forward to the menu only when the chord resolves to an app-owned item, so Ghostty-only
       // shortcuts like `⌘⇧,` aren't eaten by AppKit's menu-matching quirks. A chord with no
       // forwardable item (e.g. `⌘⌥H` Hide Others vs a `goto_split` binding) falls through to
@@ -1140,6 +1147,74 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     keyDown(with: finalEvent)
     return true
+  }
+
+  private func routeCommandPasteToNativeImagePasteIfNeeded(_ event: NSEvent, hasGhosttyBinding: Bool) -> Bool {
+    guard
+      Self.shouldRouteCommandPasteToNativeImagePaste(
+        event: event,
+        pasteboardTypes: NSPasteboard.general.types,
+        imagePasteAgents: imagePasteAgents,
+        keySequenceActive: bridge.state.keySequenceActive == true,
+        keyTableDepth: bridge.state.keyTableDepth,
+        hasGhosttyBinding: hasGhosttyBinding
+      )
+    else {
+      return false
+    }
+    guard let nativeEvent = Self.nativeImagePasteEvent(from: event) else { return false }
+    keyDown(with: nativeEvent)
+    return true
+  }
+
+  static func shouldRouteCommandPasteToNativeImagePaste(
+    event: NSEvent,
+    pasteboardTypes: [NSPasteboard.PasteboardType]?,
+    imagePasteAgents: Set<SkillAgent>,
+    keySequenceActive: Bool,
+    keyTableDepth: Int,
+    hasGhosttyBinding: Bool = false
+  ) -> Bool {
+    guard event.type == .keyDown else { return false }
+    guard !hasGhosttyBinding else { return false }
+    guard !keySequenceActive, keyTableDepth == 0 else { return false }
+    guard imagePasteAgents.contains(.claude) else { return false }
+    guard isExactCommandV(event) else { return false }
+    guard let pasteboardTypes, pasteboardTypes.contains(where: isImagePasteboardType) else { return false }
+    return pasteboardTypes.allSatisfy { !isTextOrFilePasteboardType($0) }
+  }
+
+  static func nativeImagePasteEvent(from event: NSEvent) -> NSEvent? {
+    guard isExactCommandV(event) else { return nil }
+    return NSEvent.keyEvent(
+      with: .keyDown,
+      location: event.locationInWindow,
+      modifierFlags: .control,
+      timestamp: event.timestamp,
+      windowNumber: event.windowNumber,
+      context: nil,
+      characters: "v",
+      charactersIgnoringModifiers: "v",
+      isARepeat: event.isARepeat,
+      keyCode: UInt16(kVK_ANSI_V)
+    )
+  }
+
+  private static func isExactCommandV(_ event: NSEvent) -> Bool {
+    let shortcutMask: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+    return event.charactersIgnoringModifiers?.lowercased() == "v"
+      && event.modifierFlags.intersection(shortcutMask) == [.command]
+  }
+
+  private static func isTextOrFilePasteboardType(_ type: NSPasteboard.PasteboardType) -> Bool {
+    if [.string, .fileURL, .URL].contains(type) { return true }
+    guard let uniformType = UTType(type.rawValue) else { return false }
+    return uniformType.conforms(to: .text) || uniformType.conforms(to: .url)
+  }
+
+  private static func isImagePasteboardType(_ type: NSPasteboard.PasteboardType) -> Bool {
+    guard let uniformType = UTType(type.rawValue) else { return false }
+    return uniformType.conforms(to: .image)
   }
 
   private func bindingFlags(

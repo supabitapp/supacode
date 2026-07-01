@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GhosttyKit
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -115,6 +116,10 @@ struct GhosttySurfaceViewTests {
     keyEvent(chars: "˙", ignoringModifiers: "h", modifiers: [.command, .option])
   }
 
+  private static func commandV(modifiers: NSEvent.ModifierFlags = [.command]) -> NSEvent {
+    keyEvent(chars: "v", ignoringModifiers: "v", modifiers: modifiers)
+  }
+
   /// The Hide Others built-in item bound to `⌥⌘H`.
   private static func hideOthersItem() -> NSMenuItem {
     item(
@@ -132,6 +137,102 @@ struct GhosttySurfaceViewTests {
     )
 
     #expect(GhosttySurfaceView.forwardableMenuItem(for: Self.optionCommandH(), in: menu) == nil)
+  }
+
+  @Test func imageOnlyCommandVRoutesForClaudeImagePaste() {
+    #expect(
+      GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+  }
+
+  @Test func imageCommandVDoesNotOverrideTextOrFilePaste() {
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.string, .tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.fileURL, .tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+  }
+
+  @Test func imageCommandVRequiresExactCommandVAndSupportedAgent() {
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(modifiers: [.command, .shift]),
+        pasteboardTypes: [.tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.tiff],
+        imagePasteAgents: [.opencode],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+  }
+
+  @Test func imageCommandVDoesNotInterruptGhosttyKeySequences() {
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: true,
+        keyTableDepth: 0
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 1
+      )
+    )
+  }
+
+  @Test func imageCommandVDoesNotOverrideGhosttyBinding() {
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0,
+        hasGhosttyBinding: true
+      )
+    )
+  }
+
+  @Test func nativeImagePasteEventConvertsCommandVToControlV() throws {
+    let converted = try #require(GhosttySurfaceView.nativeImagePasteEvent(from: Self.commandV()))
+
+    #expect(converted.characters == "v")
+    #expect(converted.charactersIgnoringModifiers == "v")
+    #expect(converted.modifierFlags.intersection([.shift, .control, .option, .command]) == [.control])
   }
 
   @Test func forwardableMenuItemKeepsAppOwnedItem() {
