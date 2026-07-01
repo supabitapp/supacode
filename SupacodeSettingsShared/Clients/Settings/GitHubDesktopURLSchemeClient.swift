@@ -46,20 +46,20 @@ extension GitHubDesktopURLSchemeClient: DependencyKey {
   public static let liveValue = Self(
     currentHandler: {
       guard
-        let current = LSCopyDefaultHandlerForURLScheme("x-github-client" as CFString)?
-          .takeRetainedValue() as String?
+        let schemeURL = URL(string: "x-github-client://openRepo/https://github.com/owner/repo"),
+        let appURL = NSWorkspace.shared.urlForApplication(toOpen: schemeURL)
       else {
         return nil
       }
 
-      let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: current)
+      let bundle = Bundle(url: appURL)
+      let bundleIdentifier = bundle?.bundleIdentifier ?? appURL.path
       let appName =
-        appURL.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String }
-        ?? appURL.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleName") as? String }
-        ?? appURL?.deletingPathExtension().lastPathComponent
-        ?? current
+        bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+        ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
+        ?? appURL.deletingPathExtension().lastPathComponent
       return GitHubDesktopURLSchemeHandler(
-        bundleIdentifier: current,
+        bundleIdentifier: bundleIdentifier,
         applicationName: appName,
         applicationURL: appURL
       )
