@@ -1052,9 +1052,7 @@ struct AppFeatureDeeplinkTests {
     await store.send(
       .deeplink(.githubDesktopClone(repositoryURL: URL(string: "https://github.com/supabitapp/supacode")!))
     )
-    await store.receive(
-      .repositories(.requestCloneRepositoryPrefilled(repositoryURL: "https://github.com/supabitapp/supacode"))
-    )
+    await store.receive(\.repositories.requestCloneRepositoryPrefilled)
     #expect(store.state.repositories.cloneRepositoryForm?.repositoryURL == "https://github.com/supabitapp/supacode")
   }
 
