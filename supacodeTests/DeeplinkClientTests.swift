@@ -24,6 +24,11 @@ struct DeeplinkClientTests {
     #expect(parse(url) == nil)
   }
 
+  @Test func githubMacOpenRepoReturnsGithubDesktopClone() {
+    let url = URL(string: "github-mac://openRepo/https://github.com/supabitapp/supacode")!
+    #expect(parse(url) == .githubDesktopClone(repositoryURL: URL(string: "https://github.com/supabitapp/supacode")!))
+  }
+
   // MARK: - Worktree actions.
 
   @Test func worktreeRun() {

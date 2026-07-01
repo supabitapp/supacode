@@ -42,11 +42,16 @@ public enum GitHubDesktopURLSchemeClientError: Error, Equatable, LocalizedError 
   }
 }
 
+private enum GitHubDesktopURLSchemes {
+  static let primary = "x-github-client"
+  static let all = [primary, "github-mac"]
+}
+
 extension GitHubDesktopURLSchemeClient: DependencyKey {
   public static let liveValue = Self(
     currentHandler: {
       guard
-        let schemeURL = URL(string: "x-github-client://openRepo/https://github.com/owner/repo"),
+        let schemeURL = URL(string: "\(GitHubDesktopURLSchemes.primary)://openRepo/https://github.com/owner/repo"),
         let appURL = NSWorkspace.shared.urlForApplication(toOpen: schemeURL)
       else {
         return nil
@@ -69,12 +74,11 @@ extension GitHubDesktopURLSchemeClient: DependencyKey {
         throw GitHubDesktopURLSchemeClientError.missingBundleIdentifier
       }
 
-      let status = LSSetDefaultHandlerForURLScheme(
-        "x-github-client" as CFString,
-        bundleIdentifier as CFString
-      )
-      guard status == noErr else {
-        throw GitHubDesktopURLSchemeClientError.launchServicesStatus(status)
+      for scheme in GitHubDesktopURLSchemes.all {
+        let status = LSSetDefaultHandlerForURLScheme(scheme as CFString, bundleIdentifier as CFString)
+        guard status == noErr else {
+          throw GitHubDesktopURLSchemeClientError.launchServicesStatus(status)
+        }
       }
     }
   )

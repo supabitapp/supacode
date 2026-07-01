@@ -22,10 +22,11 @@ extension DependencyValues {
 
 private nonisolated enum DeeplinkParser {
   private static let logger = SupaLogger("Deeplink")
+  private static let githubDesktopSchemes = Set(["x-github-client", "github-mac"])
 
   static func parse(_ url: URL) -> Deeplink? {
-    if url.scheme == "x-github-client" {
-      return parseGithubDesktop(url)
+    if let scheme = url.scheme?.lowercased(), githubDesktopSchemes.contains(scheme) {
+      return parseGithubDesktop(url, scheme: scheme)
     }
 
     guard url.scheme == "supacode" else {
@@ -90,8 +91,8 @@ private nonisolated enum DeeplinkParser {
 
   // MARK: - GitHub Desktop.
 
-  private static func parseGithubDesktop(_ url: URL) -> Deeplink? {
-    let prefix = "x-github-client://"
+  private static func parseGithubDesktop(_ url: URL, scheme: String) -> Deeplink? {
+    let prefix = "\(scheme)://"
     guard url.absoluteString.lowercased().hasPrefix(prefix) else {
       logger.warning("Invalid GitHub Desktop URL scheme.")
       return nil
