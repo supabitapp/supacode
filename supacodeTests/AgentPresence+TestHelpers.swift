@@ -1,3 +1,4 @@
+import Clocks
 import ComposableArchitecture
 import Foundation
 
@@ -68,6 +69,16 @@ final class PresenceTestHarness {
       settled = consumerIdle && noPendingIdle ? settled + 1 : 0
       if settled >= 2 { return }
     }
+  }
+
+  /// Advances `clock` after letting any just-scheduled idle-debounce task reach
+  /// and register its `clock.sleep`. A bare `clock.advance` on the line right
+  /// after `state.onAgentHookEvent(.idle ...)` can otherwise run before the
+  /// debounce task registers its sleeper, so the sleep is scheduled past the
+  /// advanced instant and never fires (flaky under load, e.g. on CI).
+  func advance(_ clock: TestClock<Duration>, by duration: Duration) async {
+    await Task.megaYield(count: 1000)
+    await clock.advance(by: duration)
   }
 
   func attach(to manager: WorktreeTerminalManager) {

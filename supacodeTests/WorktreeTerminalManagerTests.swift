@@ -185,12 +185,12 @@ struct WorktreeTerminalManagerTests {
     #expect(presence.state.hasActivity(in: [surface.id]))
 
     state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
-    await clock.advance(by: .milliseconds(100))
+    await presence.advance(clock, by: .milliseconds(100))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
 
     state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
-    await clock.advance(by: .milliseconds(500))
+    await presence.advance(clock, by: .milliseconds(500))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
   }
@@ -214,11 +214,11 @@ struct WorktreeTerminalManagerTests {
     state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
     state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
 
-    await clock.advance(by: .milliseconds(399))
+    await presence.advance(clock, by: .milliseconds(399))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
 
-    await clock.advance(by: .milliseconds(1))
+    await presence.advance(clock, by: .milliseconds(1))
     await presence.drain()
     #expect(!presence.state.hasActivity(in: [surface.id]))
   }
@@ -245,7 +245,7 @@ struct WorktreeTerminalManagerTests {
 
     // Codex idles; Claude stays busy. After window, only Codex should commit idle.
     state.onAgentHookEvent?(makeHookEvent(.idle, agent: .codex, surfaceID: surface.id))
-    await clock.advance(by: .milliseconds(400))
+    await presence.advance(clock, by: .milliseconds(400))
 
     await presence.drain()
     let agents = presence.state.agents(across: [surface.id], badgesEnabled: true)
@@ -277,7 +277,7 @@ struct WorktreeTerminalManagerTests {
     state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
     state.onAgentHookEvent?(makeHookEvent(.sessionEnd, surfaceID: surface.id, pid: pid))
 
-    await clock.advance(by: .milliseconds(500))
+    await presence.advance(clock, by: .milliseconds(500))
     await presence.drain()
 
     #expect(presence.state.agents(forSurface: surface.id, badgesEnabled: true).isEmpty)
@@ -307,7 +307,7 @@ struct WorktreeTerminalManagerTests {
     // busy can't resurrect activity after the surface is gone.
     await presence.drain()
     presence.send(.surfaceClosed(surface.id))
-    await clock.advance(by: .milliseconds(500))
+    await presence.advance(clock, by: .milliseconds(500))
     await presence.drain()
 
     #expect(!presence.state.hasActivity(in: [surface.id]))
