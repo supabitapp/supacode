@@ -379,26 +379,53 @@ nonisolated private func collectOutput(
 }
 
 extension ShellClient {
-  /// Builds the `(shell, -c command)` pair for a one-shot login-shell command.
-  /// We only drive shells we have a correct rc snippet for — zsh, bash, fish.
-  /// Anything else (nushell, sh/dash/ksh, pwsh, …) falls back to /bin/zsh, which
-  /// can actually parse the snippet, so the command runs instead of failing
-  /// (issue #100). The interactive terminal still uses the user's real shell.
+  /// Builds the `(shell, -c command)` pair for a one-shot login-shell command
+  /// that execs the target executable from `$@` (see `ShellClient.live`).
   nonisolated static func loginShellInvocation(userShell: URL) -> (shell: URL, command: String) {
-    let drivable: Set<String> = ["zsh", "bash", "fish"]
-    let shell =
-      drivable.contains(userShell.lastPathComponent)
-      ? userShell : URL(fileURLWithPath: "/bin/zsh")
+    let shell = drivableLoginShell(userShell: userShell)
     let command: String
     switch shell.lastPathComponent {
     case "fish":
-      command = "test -f ~/.config/fish/config.fish; and source ~/.config/fish/config.fish >/dev/null 2>&1; exec $argv"
-    case "bash":
-      command = posixLoginCommand(rcFile: "~/.bashrc")
+      command = "\(rcSourceExpression(for: shell)); exec $argv"
     default:
-      command = posixLoginCommand(rcFile: "~/.zshrc")
+      command = posixLoginCommand(shell: shell)
     }
     return (shell, command)
+  }
+
+  /// Sources the user's rc then execs `command` in a login shell so version-manager
+  /// PATH from `~/.zshrc` is visible (#504; `-l -c` alone skips `~/.zshrc`). `exec`
+  /// lets a caller's timeout kill the probe, not an orphan. Caveat: an rc that gates
+  /// PATH behind an interactivity check won't load under `-c`.
+  nonisolated static func loginShellCommandInvocation(
+    _ command: String, userShell: URL
+  ) -> (shell: URL, command: String) {
+    let shell = drivableLoginShell(userShell: userShell)
+    return (shell, "\(rcSourceExpression(for: shell)); exec \(command)")
+  }
+
+  /// The shell we can actually drive with our rc-sourcing snippets: zsh, bash,
+  /// or fish. Anything else (nushell, sh/dash/ksh, pwsh, etc.) falls back to
+  /// /bin/zsh, which can parse the snippet, so the command runs instead of
+  /// failing (issue #100). The interactive terminal still uses the user's real shell.
+  nonisolated static func drivableLoginShell(userShell: URL) -> URL {
+    let drivable: Set<String> = ["zsh", "bash", "fish"]
+    return drivable.contains(userShell.lastPathComponent)
+      ? userShell : URL(fileURLWithPath: "/bin/zsh")
+  }
+
+  /// Sources the rc an interactive shell reads, redirected to /dev/null so
+  /// banners don't pollute captured output or fill the pipe. Load-bearing for
+  /// #504: version-manager PATH usually lives in `~/.zshrc`.
+  nonisolated private static func rcSourceExpression(for shell: URL) -> String {
+    switch shell.lastPathComponent {
+    case "fish":
+      return "test -f ~/.config/fish/config.fish; and source ~/.config/fish/config.fish >/dev/null 2>&1"
+    case "bash":
+      return "[ -f ~/.bashrc ] && . ~/.bashrc >/dev/null 2>&1"
+    default:
+      return "[ -f ~/.zshrc ] && . ~/.zshrc >/dev/null 2>&1"
+    }
   }
 
   /// Builds the zsh/bash one-shot command: capture the positional parameters, clear them, then source
@@ -408,11 +435,52 @@ extension ShellClient {
   /// a dual-mode script dispatching on `$1` (e.g. `fzf-git.sh`) would otherwise see the probe's
   /// arguments, hit its own `exit`, and kill the probe shell before `exec` ran (#477). The exec reads
   /// from the saved array, so clearing the live positionals is safe.
-  nonisolated private static func posixLoginCommand(rcFile: String) -> String {
+  nonisolated private static func posixLoginCommand(shell: URL) -> String {
     let capture = "__supacode_login_argv=(\"$@\")"
     let clear = "set --"
-    let source = "[ -f \(rcFile) ] && . \(rcFile) >/dev/null 2>&1"
-    return "\(capture); \(clear); \(source); exec \"${__supacode_login_argv[@]}\""
+    return "\(capture); \(clear); \(rcSourceExpression(for: shell)); exec \"${__supacode_login_argv[@]}\""
+  }
+
+  /// Drains `handle` to EOF, returning whatever accumulated once `deadlineSeconds`
+  /// elapses. A readability source (not a blocking read) means a grandchild that
+  /// holds the pipe past the deadline can't pin a cooperative-pool thread, and
+  /// buffered bytes are still returned rather than dropped (#504).
+  nonisolated static func readToEndOrDeadline(
+    from handle: FileHandle, deadlineSeconds: UInt64
+  ) async -> Data {
+    let buffer = LockIsolated(Data())
+    let pending = LockIsolated<CheckedContinuation<Data, Never>?>(nil)
+    return await withCheckedContinuation { (continuation: CheckedContinuation<Data, Never>) in
+      pending.setValue(continuation)
+      handle.readabilityHandler = { readable in
+        let chunk = readable.availableData
+        guard chunk.isEmpty else {
+          buffer.withValue { $0.append(chunk) }
+          return
+        }
+        Self.finishDrain(pending: pending, buffer: buffer, handle: handle)
+      }
+      Task {
+        try? await Task.sleep(nanoseconds: deadlineSeconds * 1_000_000_000)
+        Self.finishDrain(pending: pending, buffer: buffer, handle: handle)
+      }
+    }
+  }
+
+  /// Resumes the drain continuation exactly once with the bytes read so far and
+  /// tears down the readability source so no further callbacks fire.
+  nonisolated private static func finishDrain(
+    pending: LockIsolated<CheckedContinuation<Data, Never>?>,
+    buffer: LockIsolated<Data>,
+    handle: FileHandle
+  ) {
+    let continuation = pending.withValue { stored -> CheckedContinuation<Data, Never>? in
+      defer { stored = nil }
+      return stored
+    }
+    guard let continuation else { return }
+    handle.readabilityHandler = nil
+    continuation.resume(returning: buffer.value)
   }
 }
 

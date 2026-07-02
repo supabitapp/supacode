@@ -2,12 +2,20 @@ import Foundation
 
 /// Sends a query to the running Supacode app via socket, parses the response, and returns the data array.
 nonisolated enum QueryDispatcher {
-  static func query(resource: String, params: [String: String] = [:]) throws -> [[String: String]] {
+  static func query(
+    resource: String,
+    params: [String: String] = [:],
+    timeoutSeconds: Int
+  ) throws -> [[String: String]] {
     let socketPath = try Dispatcher.resolveSocket()
     var json: [String: Any] = ["query": resource]
     for (key, value) in params { json[key] = value }
     let data = try JSONSerialization.data(withJSONObject: json)
-    let response = try SocketClient.sendAndReceiveData(to: socketPath, data: data)
+    let response = try SocketClient.sendAndReceiveData(
+      to: socketPath,
+      data: data,
+      readTimeoutSeconds: CommandTimeout.readTimeoutSeconds(timeoutSeconds)
+    )
     guard !response.isEmpty else {
       throw SocketClient.Error.responseError("Empty response from Supacode.")
     }

@@ -103,6 +103,10 @@ struct RepositoriesFeature {
     /// Drained when the `PendingWorktree` materialises in `createWorktreeInRepository`,
     /// or on a prompt cancel / dismiss.
     var pendingCreationCustomizations: [Repository.ID: [String: PendingWorktree.Customization]] = [:]
+    /// CLI worktree-new ack ids parked while a creation prompt is open, keyed by
+    /// repository. Consumed when the prompt creates (so the id threads through to
+    /// the completion ack) or drained if the prompt is cancelled / dismissed.
+    var cliWorktreeAckPendingIDs: [Repository.ID: Worktree.ID] = [:]
     /// In-flight repo-level removals keyed by repository id. Each record
     /// carries the disposition (only `.gitRepositoryUnlink` / `.folderUnlink`
     /// / `.folderTrash`) and the id of the owning batch aggregator that
@@ -298,13 +302,16 @@ struct RepositoriesFeature {
     case revealHoistedWorktreeInSidebar(Worktree.ID)
     case consumePendingSidebarReveal(Int)
     case createRandomWorktree
-    case createRandomWorktreeInRepository(Repository.ID)
+    case createRandomWorktreeInRepository(Repository.ID, pendingID: Worktree.ID? = nil)
+    /// A CLI-initiated creation prompt was abandoned; drains the parked ack.
+    case cliWorktreeAckCancelled(pendingID: Worktree.ID)
     case createWorktreeInRepository(
       repositoryID: Repository.ID,
       nameSource: WorktreeCreationNameSource,
       baseRefSource: WorktreeCreationBaseRefSource,
       fetchOrigin: Bool,
-      placement: WorktreePlacementOverride? = nil
+      placement: WorktreePlacementOverride? = nil,
+      pendingID: Worktree.ID? = nil
     )
     case promptedWorktreeCreationDataLoaded(
       repositoryID: Repository.ID,
@@ -1628,7 +1635,8 @@ struct RepositoriesFeature {
         let nameSource,
         let baseRefSource,
         let fetchOrigin,
-        let placement
+        let placement,
+        let providedPendingID
       ):
         // Pull the parked branch name so every rejection arm can drain its (repo, branch) entry
         // through the same helper — keeps the dict from leaking when a creation is rejected via
@@ -1681,7 +1689,9 @@ struct RepositoriesFeature {
           return .none
         }
         let previousSelection = state.selectedWorktreeID
-        let pendingID = WorktreeID("pending:\(uuid().uuidString)")
+        // Honor a deeplink-supplied pending id so a CLI completion ack can
+        // correlate this exact creation through to its success / failure.
+        let pendingID = providedPendingID ?? WorktreeID("pending:\(uuid().uuidString)")
         @Shared(.settingsFile) var settingsFile
         @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var repositorySettings
         let globalDefaultWorktreeBaseDirectoryPath = settingsFile.global.defaultWorktreeBaseDirectoryPath
@@ -3351,13 +3361,16 @@ struct RepositoriesFeature {
         }
         return .send(.createRandomWorktreeInRepository(repository.id))
 
-      case .createRandomWorktreeInRepository(let repositoryID):
+      case .createRandomWorktreeInRepository(let repositoryID, let pendingID):
+        // Drain a parked CLI ack when a guard rejects, so it can't only time out.
+        let cancelAck: Effect<Action> =
+          pendingID.map { .send(.cliWorktreeAckCancelled(pendingID: $0)) } ?? .none
         guard let repository = state.repositories[id: repositoryID] else {
           state.alert = messageAlert(
             title: "Unable to create worktree",
             message: "Unable to resolve a repository for the new worktree."
           )
-          return .none
+          return cancelAck
         }
         // Worktree creation needs a git repository. Folder-kind entries
         // surface the same menu / hotkey / deeplink path, so reject
@@ -3369,14 +3382,14 @@ struct RepositoriesFeature {
             title: "Unable to create worktree",
             message: "Worktrees are only supported for git repositories."
           )
-          return .none
+          return cancelAck
         }
         if state.removingRepositoryIDs[repository.id] != nil {
           state.alert = messageAlert(
             title: "Unable to create worktree",
             message: "This repository is being removed."
           )
-          return .none
+          return cancelAck
         }
         @Shared(.settingsFile) var settingsFile
         if !settingsFile.global.promptForWorktreeCreation {
@@ -3387,10 +3400,23 @@ struct RepositoriesFeature {
                 repositoryID: repository.id,
                 nameSource: .random,
                 baseRefSource: .repositorySetting,
-                fetchOrigin: settingsFile.global.fetchOriginBeforeWorktreeCreation
+                fetchOrigin: settingsFile.global.fetchOriginBeforeWorktreeCreation,
+                pendingID: pendingID
               )
             )
           )
+        }
+        // The interactive prompt mints the worktree later; park the CLI ack id so
+        // the prompt's create threads it and a cancel / dismiss drains it. A new
+        // prompt supersedes any prior one (single slot), so drain a stale parked
+        // id first instead of orphaning it (covers a user prompt replacing a CLI
+        // one, and back-to-back CLI prompts).
+        let supersededAckEffects: [Effect<Action>] = state.cliWorktreeAckPendingIDs.values.map {
+          .send(.cliWorktreeAckCancelled(pendingID: $0))
+        }
+        state.cliWorktreeAckPendingIDs.removeAll()
+        if let pendingID {
+          state.cliWorktreeAckPendingIDs[repository.id] = pendingID
         }
         @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var repositorySettings
         let selectedBaseRef = repositorySettings.worktreeBaseRef
@@ -3404,7 +3430,7 @@ struct RepositoriesFeature {
         // branch) and present the prompt right away, then load the
         // full local / remote branch lists in the background so the
         // dialog never blocks on `git for-each-ref`.
-        return .run { send in
+        let loadEffect: Effect<Action> = .run { send in
           let automaticBaseRef = await gitClient.automaticWorktreeBaseRef(rootURL) ?? "HEAD"
           guard !Task.isCancelled else {
             return
@@ -3436,6 +3462,7 @@ struct RepositoriesFeature {
           )
         }
         .cancellable(id: CancelID.worktreePromptLoad, cancelInFlight: true)
+        return .merge(supersededAckEffects + [loadEffect])
 
       case .promptedWorktreeCreationDataLoaded(
         let repositoryID,
@@ -3445,7 +3472,10 @@ struct RepositoriesFeature {
         let selectedBaseRef
       ):
         guard let repository = state.repositories[id: repositoryID] else {
-          return .none
+          // The repo vanished mid-load, so the prompt never opens; drain the
+          // parked ack instead of leaving it for the watchdog.
+          let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
+          return ackPendingID.map { .send(.cliWorktreeAckCancelled(pendingID: $0)) } ?? .none
         }
         @Shared(.settingsFile) var promptSettingsFile
         @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var promptRepositorySettings
@@ -3503,14 +3533,18 @@ struct RepositoriesFeature {
         return .none
 
       case .worktreeCreationPrompt(.presented(.delegate(.cancel))):
+        var cancelEffects: [Effect<Action>] = [
+          .cancel(id: CancelID.worktreePromptLoad),
+          .cancel(id: CancelID.worktreePromptValidation),
+        ]
         if let repositoryID = state.worktreeCreationPrompt?.repositoryID {
           state.dropPendingCustomization(repositoryID: repositoryID)
+          if let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID) {
+            cancelEffects.append(.send(.cliWorktreeAckCancelled(pendingID: ackPendingID)))
+          }
         }
         state.worktreeCreationPrompt = nil
-        return .merge(
-          .cancel(id: CancelID.worktreePromptLoad),
-          .cancel(id: CancelID.worktreePromptValidation)
-        )
+        return .merge(cancelEffects)
 
       case .worktreeCreationPrompt(
         .presented(
@@ -3562,7 +3596,8 @@ struct RepositoriesFeature {
           // Drain the just-stashed customization so a later retry with the same name doesn't pick
           // up the orphaned entry.
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
-          return .none
+          let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
+          return ackPendingID.map { .send(.cliWorktreeAckCancelled(pendingID: $0)) } ?? .none
         }
         state.worktreeCreationPrompt?.validationMessage = nil
         state.worktreeCreationPrompt?.isValidating = true
@@ -3615,13 +3650,17 @@ struct RepositoriesFeature {
           return .none
         }
         state.worktreeCreationPrompt = nil
+        // Consume the parked CLI ack id so it threads into this creation and the
+        // subsequent success-path dismiss doesn't mistake it for a cancel.
+        let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
         return .send(
           .createWorktreeInRepository(
             repositoryID: repositoryID,
             nameSource: .explicit(branchName),
             baseRefSource: .explicit(baseRef),
             fetchOrigin: fetchOrigin,
-            placement: placement
+            placement: placement,
+            pendingID: ackPendingID
           )
         )
 
@@ -3630,15 +3669,27 @@ struct RepositoriesFeature {
         // `body` under the type-checker's complexity limit.
         return .none
 
+      case .cliWorktreeAckCancelled:
+        // Observed by AppFeature to drain the parked CLI ack; no local effect.
+        return .none
+
       case .worktreeCreationPrompt(.dismiss):
         // Don't drain `pendingCreationCustomizations` here: `.dismiss` also fires on the success
         // path (when the reducer nils the prompt after validation passes) and the in-flight
         // creation still needs the customization. Only `.cancel` is an explicit user back-out.
-        state.worktreeCreationPrompt = nil
-        return .merge(
+        var dismissEffects: [Effect<Action>] = [
           .cancel(id: CancelID.worktreePromptLoad),
-          .cancel(id: CancelID.worktreePromptValidation)
-        )
+          .cancel(id: CancelID.worktreePromptValidation),
+        ]
+        // A still-parked ack means this dismiss is a back-out (the success path
+        // consumes it first), so drain it instead of stranding it.
+        if let repositoryID = state.worktreeCreationPrompt?.repositoryID,
+          let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
+        {
+          dismissEffects.append(.send(.cliWorktreeAckCancelled(pendingID: ackPendingID)))
+        }
+        state.worktreeCreationPrompt = nil
+        return .merge(dismissEffects)
 
       case .worktreeCreationPrompt:
         return .none

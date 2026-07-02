@@ -187,7 +187,8 @@ enum SidebarCheckBadgeState: Equatable {
     }
   }
 
-  var accessibilityLabel: String {
+  /// Human-readable status used for both the VoiceOver label and the hover tooltip.
+  var statusDescription: String {
     switch self {
     case .passing: "Checks passed"
     case .failing: "Checks failed"
@@ -235,6 +236,18 @@ enum SidebarPullRequestIcon: Equatable {
     case .queued: AnyShapeStyle(.brown)
     case .merged: AnyShapeStyle(.purple)
     case .closed: AnyShapeStyle(.red)
+    }
+  }
+
+  /// Human-readable pull request status shown as the icon's hover tooltip.
+  var statusDescription: String {
+    switch self {
+    case .branch: "No linked pull request"
+    case .open: "Pull request open"
+    case .draft: "Pull request in draft"
+    case .queued: "Pull request in merge queue"
+    case .merged: "Pull request merged"
+    case .closed: "Pull request closed"
     }
   }
 }
@@ -425,6 +438,18 @@ private struct IconContent: View, Equatable {
     }
   }
 
+  /// Single hover tooltip for the whole icon + badge composite. The PR/branch
+  /// icon and the check badge are tiny, separate hover targets, so one `.help`
+  /// on the composite surfaces both the pull request state and the check status
+  /// together (e.g. "Pull request open · Checks passed"). Falls back to the
+  /// folder / lifecycle label for the system-image variants; idle folders map
+  /// to an empty string, which shows no tooltip.
+  private var helpText: String {
+    if isSystemImage { return accessibilityLabel ?? "" }
+    guard let checkBadgeState else { return icon.statusDescription }
+    return "\(icon.statusDescription) · \(checkBadgeState.statusDescription)"
+  }
+
   var body: some View {
     Group {
       if isSystemImage {
@@ -460,10 +485,11 @@ private struct IconContent: View, Equatable {
             isEmphasized ? background : badgeColor,
           )
           .background(in: Circle())
-          .accessibilityLabel(checkBadgeState.accessibilityLabel)
+          .accessibilityLabel(checkBadgeState.statusDescription)
           .offset(x: 2, y: 2)
       }
     }
+    .help(helpText)
     .accessibilityLabel(accessibilityLabel ?? "")
     .accessibilityHidden(accessibilityLabel == nil)
   }

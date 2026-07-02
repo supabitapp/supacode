@@ -211,4 +211,17 @@ struct ShellClientStreamingTests {
     #expect(snapshot.currentDirectoryURL == currentDirectoryURL)
     #expect(snapshot.log == false)
   }
+
+  @Test func readToEndOrDeadlineReturnsAllBytesOnEOF() async {
+    // A closed write end reaches EOF well inside the deadline, so the reader
+    // returns the full payload rather than an empty deadline result.
+    let pipe = Pipe()
+    let payload = Data("codex-cli 1.2.3\n".utf8)
+    pipe.fileHandleForWriting.write(payload)
+    try? pipe.fileHandleForWriting.close()
+
+    let data = await ShellClient.readToEndOrDeadline(
+      from: pipe.fileHandleForReading, deadlineSeconds: 60)
+    #expect(data == payload)
+  }
 }

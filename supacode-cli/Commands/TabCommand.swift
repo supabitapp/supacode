@@ -27,9 +27,15 @@ extension TabCommand {
     @Flag(name: [.short, .long], help: "Print only the focused tab.")
     var focused = false
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
-      let items = try QueryDispatcher.query(resource: "tabs", params: ["worktreeID": wID])
+      let items = try QueryDispatcher.query(
+        resource: "tabs",
+        params: ["worktreeID": wID],
+        timeoutSeconds: timeoutOption.timeout
+      )
       for item in items {
         let isFocused = !(item["focused"] ?? "").isEmpty
         guard !focused || isFocused else { continue }
@@ -47,10 +53,15 @@ extension TabCommand {
     @Option(name: [.short, .long], help: "Tab ID. Defaults to $SUPACODE_TAB_ID.")
     var tab: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let tID = try resolveTabID(tab)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.tabFocus(worktreeID: wID, tabID: tID))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.tabFocus(worktreeID: wID, tabID: tID),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 
@@ -66,11 +77,14 @@ extension TabCommand {
     @Option(name: [.short, .customLong("id")], help: "UUID for the new tab.")
     var newID: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let resolvedID = newID ?? UUID().uuidString
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.tabNew(worktreeID: wID, input: input, id: resolvedID)
+        deeplinkURL: DeeplinkURLBuilder.tabNew(worktreeID: wID, input: input, id: resolvedID),
+        timeoutSeconds: timeoutOption.timeout
       )
       print(resolvedID)
     }
@@ -85,10 +99,15 @@ extension TabCommand {
     @Option(name: [.short, .long], help: "Tab ID. Defaults to $SUPACODE_TAB_ID.")
     var tab: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let tID = try resolveTabID(tab)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.tabClose(worktreeID: wID, tabID: tID))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.tabClose(worktreeID: wID, tabID: tID),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 }

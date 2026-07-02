@@ -294,12 +294,20 @@ final class WorktreeTerminalManager {
       )
       guard splitSucceeded else {
         terminalLogger.warning("splitSurface: failed for surface \(surfaceID) in worktree \(worktree.id).")
+        if let id {
+          emit(
+            .surfaceCreationFailed(
+              worktreeID: worktree.id, attemptedID: id,
+              message: "Could not create the split surface."))
+        }
         break
       }
     case .destroyTab(let worktree, let tabID):
       let terminal = state(for: worktree)
       guard terminal.tabManager.tabs.contains(where: { $0.id == tabID }) else {
         terminalLogger.warning("destroyTab: tab \(tabID.rawValue) not found in worktree \(worktree.id).")
+        // Already gone, so the close goal is met: resolve the ack instead of timing out.
+        emit(.tabRemoved(worktreeID: worktree.id, tabID: tabID))
         break
       }
       terminal.closeTab(tabID)
@@ -308,6 +316,10 @@ final class WorktreeTerminalManager {
       terminal.selectTab(tabID)
       if !terminal.closeSurface(id: surfaceID) {
         terminalLogger.warning("destroySurface: surface \(surfaceID) not found in worktree \(worktree.id).")
+        // Don't synthesize a `surfacesClosed` here: it drives global presence
+        // cleanup keyed by surface id, which would drop a duplicate id live in
+        // another worktree. The rare validated-then-vanished race falls to the
+        // ack watchdog instead.
       }
     default:
       return false
@@ -463,7 +475,7 @@ final class WorktreeTerminalManager {
       self?.selectedWorktreeID == worktree.id
     }
     state.onSurfacesClosed = { [weak self] ids in
-      self?.emit(.surfacesClosed(ids))
+      self?.emit(.surfacesClosed(worktreeID: worktree.id, ids))
     }
     // OSC-sourced presence events go through the existing idle-debounce funnel.
     state.onAgentHookEvent = { [weak self] event in
@@ -544,7 +556,12 @@ final class WorktreeTerminalManager {
     } else {
       setupScript = nil
     }
-    _ = state.createTab(setupScript: setupScript, initialInput: initialInput, tabID: tabID)
+    let created = state.createTab(setupScript: setupScript, initialInput: initialInput, tabID: tabID)
+    guard created == nil, let tabID else { return }
+    // Drain a waiting CLI ack now instead of stranding it until the timeout.
+    emit(
+      .surfaceCreationFailed(
+        worktreeID: worktree.id, attemptedID: tabID, message: "Could not create the tab."))
   }
 
   @discardableResult
