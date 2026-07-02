@@ -293,6 +293,48 @@ struct AppFeatureSystemNotificationTests {
     #expect(plays.value == 0)
   }
 
+  @Test(.dependencies) func notificationReceivedSkipsBothChannelsForViewedSurface() async {
+    var globalSettings = GlobalSettings.default
+    globalSettings.systemNotificationsEnabled = true
+    globalSettings.notificationSoundEnabled = true
+    // muteNotificationsForActiveSurface defaults to true; the muted banner must
+    // not leak into the sound fallback.
+    let sends = LockIsolated(0)
+    let plays = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        settings: SettingsFeature.State(settings: globalSettings)
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.systemNotificationClient.send = { _, _, _ in
+        sends.withValue { $0 += 1 }
+      }
+      $0.notificationSoundClient.play = {
+        plays.withValue { $0 += 1 }
+      }
+      $0.terminalClient.tabID = { _, _ in nil }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .notificationReceived(
+          worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
+          title: "Done",
+          body: "Build succeeded",
+          isViewed: true
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(sends.value == 0)
+    #expect(plays.value == 0)
+  }
+
   @Test(.dependencies) func notificationReceivedSkipsLocalSoundWhenSystemNotificationsEnabled() async {
     var globalSettings = GlobalSettings.default
     globalSettings.systemNotificationsEnabled = true

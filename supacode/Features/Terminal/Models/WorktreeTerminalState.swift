@@ -2086,8 +2086,15 @@ final class WorktreeTerminalState {
   }
 
   private func isViewedSurface(_ surfaceID: UUID) -> Bool {
-    isSelected() && isFocusedSurface(surfaceID)
+    isSelected() && isFocusedSurface(surfaceID) && isVisibleSurface(surfaceID)
       && lastWindowIsKey == true && lastWindowIsVisible == true
+  }
+
+  // A split-zoomed tab hides every pane outside the zoomed subtree, so a focused
+  // pane can still be off screen; gate on the zoom-aware visible leaves.
+  private func isVisibleSurface(_ surfaceID: UUID) -> Bool {
+    guard let selectedTabId = tabManager.selectedTabId else { return false }
+    return trees[selectedTabId]?.visibleLeaves().contains { $0.id == surfaceID } == true
   }
 
   /// True for a blocking-script tab whose script has already finished.

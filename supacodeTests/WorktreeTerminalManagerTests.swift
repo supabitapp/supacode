@@ -671,6 +671,7 @@ struct WorktreeTerminalManagerTests {
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       state.isSelected = { true }
+      state.syncFocus(windowIsKey: true, windowIsVisible: true)
       guard let tabId = state.createTab(focusing: true),
         let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
       else {
