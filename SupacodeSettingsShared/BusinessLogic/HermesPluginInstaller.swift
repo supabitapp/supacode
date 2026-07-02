@@ -1,5 +1,9 @@
 import Foundation
 
+nonisolated enum HermesPluginInstallerError: Error {
+  case pluginNotManaged
+}
+
 nonisolated struct HermesPluginInstaller {
   let homeDirectoryURL: URL
   let fileManager: FileManager
@@ -24,9 +28,23 @@ nonisolated struct HermesPluginInstaller {
   }
 
   func install() throws {
+    // Refuse to clobber a plugin Supacode doesn't own: auto-update calls this
+    // unattended when the aggregate goes `.outdated`, and the path is a fixed
+    // name a user's own plugin could occupy.
+    if let module = try? String(contentsOf: moduleFileURL, encoding: .utf8),
+      !module.contains(HermesPluginContent.ownershipMarker)
+    {
+      throw HermesPluginInstallerError.pluginNotManaged
+    }
     try fileManager.createDirectory(at: pluginDirectoryURL, withIntermediateDirectories: true)
-    try HermesPluginContent.manifest().write(to: manifestFileURL, atomically: true, encoding: .utf8)
-    try HermesPluginContent.module().write(to: moduleFileURL, atomically: true, encoding: .utf8)
+    do {
+      try HermesPluginContent.manifest().write(to: manifestFileURL, atomically: true, encoding: .utf8)
+      try HermesPluginContent.module().write(to: moduleFileURL, atomically: true, encoding: .utf8)
+    } catch {
+      // Never leave a manifest without its module: an orphaned plugin.yaml breaks Hermes at load.
+      try? fileManager.removeItem(at: pluginDirectoryURL)
+      throw error
+    }
   }
 
   func uninstall() throws {
