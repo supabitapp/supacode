@@ -482,6 +482,7 @@ struct SupacodeApp: App {
         .environment(commandKeyObserver)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
+        .movesSettingsWindowToActiveSpace()
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
