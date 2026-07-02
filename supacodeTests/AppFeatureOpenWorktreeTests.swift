@@ -98,6 +98,147 @@ struct AppFeatureOpenWorktreeTests {
     await store.finish()
   }
 
+  @Test(.dependencies, arguments: [OpenWorktreeAction.zed, .zedPreview])
+  func remoteWorktreeOpensThroughWorkspaceClientWithRemoteAnalytics(action: OpenWorktreeAction) async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+
+    await store.send(.repositories(.contextMenuOpenWorktree(worktree.id, action)))
+    await store.receive(\.repositories.delegate.openWorktreeInApp)
+    #expect(context.openedActions.value == [action])
+    #expect(
+      context.capturedEvents.value == [
+        CapturedEvent(name: "worktree_opened", source: "contextMenu", remote: "true")
+      ]
+    )
+    await store.finish()
+  }
+
+  @Test(.dependencies) func revealInFinderOnRemoteWorktreeReportsUnsupported() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+    let expectedError = OpenActionError(
+      title: "Can't reveal remote worktree",
+      message: "Reveal in Finder isn't available for remote SSH worktrees."
+    )
+
+    await store.send(.revealInFinder)
+    await store.receive(\.openWorktreeFailed) { $0.alert = Self.openFailureAlert(expectedError) }
+    #expect(context.openedActions.value.isEmpty)
+    #expect(context.capturedEvents.value.isEmpty)
+    await store.finish()
+  }
+
+  // Drives the toolbar `.openWorktree` path directly (rather than
+  // `.openSelectedWorktree`, which install-gates the action through
+  // `availableSelection` and would be non-deterministic on a CI host without
+  // the editor installed). The capability gate the reducer consults
+  // (`remoteOpenInvocation`) is install-independent, so this is the
+  // deterministic surface for the capable / non-capable distinction.
+  @Test(.dependencies) func openRemoteWorktreeWithCapableEditorRoutesThroughWorkspaceClient() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+
+    await store.send(.openWorktree(.zed))
+    #expect(context.openedActions.value == [.zed])
+    #expect(
+      context.capturedEvents.value == [
+        CapturedEvent(name: "worktree_opened", source: "toolbar", remote: "true")
+      ]
+    )
+    await store.finish()
+  }
+
+  @Test(.dependencies) func openRemoteWorktreeWithVSCodeRoutesThroughWorkspaceClient() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+
+    await store.send(.openWorktree(.vscode))
+    #expect(context.openedActions.value == [.vscode])
+    #expect(
+      context.capturedEvents.value == [
+        CapturedEvent(name: "worktree_opened", source: "toolbar", remote: "true")
+      ]
+    )
+    await store.finish()
+  }
+
+  @Test(.dependencies) func openRemoteWorktreeWithVSCodeOnNonDefaultPortReportsUnsupported() async {
+    // A non-default-port host can't be expressed as `ssh-remote+host:port`, so
+    // `remoteOpenInvocation` is `nil` and the reducer surfaces the port reason.
+    let worktree = Self.makeRemoteWorktree(port: 2222)
+    let (store, context) = makeStore(worktree: worktree)
+    let expectedError = OpenActionError(
+      title: "Can't open in \(OpenWorktreeAction.vscode.title)",
+      message: "Opening \(OpenWorktreeAction.vscode.title) over SSH needs the port in ~/.ssh/config"
+    )
+
+    await store.send(.openWorktree(.vscode))
+    await store.receive(\.openWorktreeFailed) { $0.alert = Self.openFailureAlert(expectedError) }
+    #expect(context.openedActions.value.isEmpty)
+    #expect(context.capturedEvents.value.isEmpty)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func openRemoteWorktreeWithNonCapableEditorReportsUnsupported() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+    let expectedError = OpenActionError(
+      title: "Can't open in \(OpenWorktreeAction.intellij.title)",
+      message: "\(OpenWorktreeAction.intellij.title) doesn't support opening remote SSH worktrees."
+    )
+
+    await store.send(.openWorktree(.intellij))
+    await store.receive(\.openWorktreeFailed) { $0.alert = Self.openFailureAlert(expectedError) }
+    #expect(context.openedActions.value.isEmpty)
+    #expect(context.capturedEvents.value.isEmpty)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func missingRemoteWorktreeIsIgnored() async {
+    let worktree = Self.makeRemoteWorktree(isMissing: true)
+    let (store, context) = makeStore(worktree: worktree)
+
+    await store.send(.repositories(.contextMenuOpenWorktree(worktree.id, .zed)))
+    await store.receive(\.repositories.delegate.openWorktreeInApp)
+    #expect(context.openedActions.value.isEmpty)
+    #expect(context.capturedEvents.value.isEmpty)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func remoteWorktreeWithNonRemoteEditorReportsUnsupported() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+    let expectedError = OpenActionError(
+      title: "Can't open in \(OpenWorktreeAction.intellij.title)",
+      message: "\(OpenWorktreeAction.intellij.title) doesn't support opening remote SSH worktrees."
+    )
+
+    await store.send(.repositories(.contextMenuOpenWorktree(worktree.id, .intellij)))
+    await store.receive(\.repositories.delegate.openWorktreeInApp)
+    await store.receive(\.openWorktreeFailed) { $0.alert = Self.openFailureAlert(expectedError) }
+    #expect(context.openedActions.value.isEmpty)
+    #expect(context.capturedEvents.value.isEmpty)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func remoteWorktreeWithEditorActionReportsUnsupportedAndCreatesNoTerminalTab() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+    let expectedError = OpenActionError(
+      title: "Can't open in \(OpenWorktreeAction.editor.title)",
+      message: "\(OpenWorktreeAction.editor.title) doesn't support opening remote SSH worktrees."
+    )
+
+    await store.send(.repositories(.contextMenuOpenWorktree(worktree.id, .editor)))
+    await store.receive(\.repositories.delegate.openWorktreeInApp)
+    await store.receive(\.openWorktreeFailed) { $0.alert = Self.openFailureAlert(expectedError) }
+    #expect(context.openedActions.value.isEmpty)
+    #expect(context.terminalCommands.value.isEmpty)
+    #expect(context.capturedEvents.value.isEmpty)
+    await store.finish()
+  }
+
   @Test(.dependencies) func openSelectedWorktreeRoutesToSelectedAction() async {
     let (store, context) = makeStore(appState: { $0.openActionSelection = .finder })
 
@@ -113,6 +254,7 @@ struct AppFeatureOpenWorktreeTests {
   private struct CapturedEvent: Equatable {
     let name: String
     let source: String?
+    var remote: String?
   }
 
   private struct TestContext {
@@ -123,10 +265,11 @@ struct AppFeatureOpenWorktreeTests {
   }
 
   private func makeStore(
+    worktree: Worktree? = nil,
     repositoriesState mutate: (inout RepositoriesFeature.State, Worktree) -> Void = { _, _ in },
     appState mutateApp: (inout AppFeature.State) -> Void = { _ in }
   ) -> (TestStoreOf<AppFeature>, TestContext) {
-    let worktree = makeWorktree()
+    let worktree = worktree ?? makeWorktree()
     var repositoriesState = makeRepositoriesState(worktree: worktree)
     repositoriesState.reconcileSidebarForTesting()
     mutate(&repositoriesState, worktree)
@@ -155,7 +298,10 @@ struct AppFeatureOpenWorktreeTests {
       }
       $0.analyticsClient.capture = { event, properties in
         let source = properties?["source"] as? String
-        capturedEvents.withValue { $0.append(CapturedEvent(name: event, source: source)) }
+        let remote = properties?["remote"] as? String
+        capturedEvents.withValue {
+          $0.append(CapturedEvent(name: event, source: source, remote: remote))
+        }
       }
     }
     let context = TestContext(
@@ -179,13 +325,45 @@ struct AppFeatureOpenWorktreeTests {
     )
   }
 
-  private func makeRepositoriesState(worktree: Worktree) -> RepositoriesFeature.State {
-    let repository = Repository(
-      id: RepositoryID(worktree.repositoryRootURL.path(percentEncoded: false)),
-      rootURL: worktree.repositoryRootURL,
-      name: "repo",
-      worktrees: [worktree]
+  private static func makeRemoteWorktree(isMissing: Bool = false, port: Int? = nil) -> Worktree {
+    let host = RemoteHost(alias: "devbox", port: port)
+    return Worktree(
+      location: .remote(host, workingDirectory: "/home/me/proj", repositoryRoot: "/home/me/proj"),
+      kind: .git,
+      name: "proj",
+      detail: host.sshDestination,
+      isMissing: isMissing
     )
+  }
+
+  private static func openFailureAlert(_ error: OpenActionError) -> AlertState<AppFeature.Alert> {
+    AlertState {
+      TextState(error.title)
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState(error.message)
+    }
+  }
+
+  private func makeRepositoriesState(worktree: Worktree) -> RepositoriesFeature.State {
+    let repository: Repository =
+      worktree.host.map { host in
+        Repository(
+          location: .remote(host, path: worktree.repositoryRootURL.path(percentEncoded: false)),
+          kind: .git,
+          name: "repo",
+          worktrees: [worktree]
+        )
+      }
+      ?? Repository(
+        id: RepositoryID(worktree.repositoryRootURL.path(percentEncoded: false)),
+        rootURL: worktree.repositoryRootURL,
+        name: "repo",
+        worktrees: [worktree]
+      )
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)

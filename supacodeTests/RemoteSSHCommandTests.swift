@@ -21,6 +21,52 @@ struct RemoteHostTests {
     let host = RemoteHost(alias: "box", username: "")
     #expect(host.sshDestination == "box")
   }
+
+  @Test func hasNonDefaultPortFoldsDefaultAndUnspecifiedToFalse() {
+    #expect(RemoteHost(alias: "box", port: 22).hasNonDefaultPort == false)
+    #expect(RemoteHost(alias: "box", port: nil).hasNonDefaultPort == false)
+    #expect(RemoteHost(alias: "box", port: 2222).hasNonDefaultPort == true)
+  }
+
+  @Test func sshURLAuthorityLeavesPlainInputsUnchanged() {
+    #expect(RemoteHost(alias: "host").sshURLAuthority == "host")
+    #expect(RemoteHost(alias: "host", username: "me").sshURLAuthority == "me@host")
+    #expect(RemoteHost(alias: "host", username: "me", port: 2222).sshURLAuthority == "me@host:2222")
+  }
+
+  @Test func sshURLAuthorityKeepsExplicitDefaultPort() {
+    // An explicit port 22 is preserved (matching `sshOptionArguments`' `-p 22`);
+    // only a `nil` port is elided.
+    #expect(RemoteHost(alias: "host", port: 22).sshURLAuthority == "host:22")
+    #expect(RemoteHost(alias: "host").sshURLAuthority == "host")
+  }
+
+  @Test func sshURLAuthorityPercentEncodesSpecialCharacters() {
+    #expect(RemoteHost(alias: "host", username: "a b").sshURLAuthority == "a%20b@host")
+    #expect(RemoteHost(alias: "host", username: "a@b:c").sshURLAuthority == "a%40b%3Ac@host")
+    #expect(RemoteHost(alias: "ho st", username: "me").sshURLAuthority == "me@ho%20st")
+  }
+
+  @Test func sshURLAuthorityBracketsIPv6HostWithUnencodedBrackets() {
+    #expect(RemoteHost(alias: "::1").sshURLAuthority == "[::1]")
+    #expect(RemoteHost(alias: "::1", username: "me", port: 2200).sshURLAuthority == "me@[::1]:2200")
+  }
+
+  @Test func sshURLAuthorityAppendsNonDefaultPortAfterEncodingUserAndHost() {
+    #expect(RemoteHost(alias: "ho st", username: "a b", port: 2222).sshURLAuthority == "a%20b@ho%20st:2222")
+  }
+
+  @Test func sshURLAuthorityEncodesEmbeddedAtSoItCannotForgeAuthority() {
+    #expect(RemoteHost(alias: "host", username: "me@evil").sshURLAuthority == "me%40evil@host")
+  }
+
+  @Test func sshURLAuthorityEncodesHostWhenUserIsAbsent() {
+    #expect(RemoteHost(alias: "ho st").sshURLAuthority == "ho%20st")
+  }
+
+  @Test func sshURLAuthorityEncodesStructurallyDangerousUsernameCharacters() {
+    #expect(RemoteHost(alias: "host", username: "a/b?c#d").sshURLAuthority == "a%2Fb%3Fc%23d@host")
+  }
 }
 
 struct SSHCommandTests {

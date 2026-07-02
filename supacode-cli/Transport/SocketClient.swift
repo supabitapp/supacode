@@ -26,9 +26,11 @@ nonisolated enum SocketClient {
     }
   }
 
-  /// Connects, sends data, reads response, parses ok/error. Throws on failure.
-  static func sendAndReceive(to path: String, data: Data) throws {
-    let response = try sendAndReceiveData(to: path, data: data)
+  /// Connects, sends data, reads response, parses ok/error. Returns the created
+  /// resource `id` when the app supplies one. Throws on failure.
+  @discardableResult
+  static func sendAndReceive(to path: String, data: Data, readTimeoutSeconds: Int) throws -> String? {
+    let response = try sendAndReceiveData(to: path, data: data, readTimeoutSeconds: readTimeoutSeconds)
     guard !response.isEmpty else {
       throw Error.responseError("Empty response from Supacode.")
     }
@@ -40,15 +42,19 @@ nonisolated enum SocketClient {
     guard succeeded else {
       throw Error.responseError(json["error"] as? String ?? "Command failed.")
     }
+    return json["id"] as? String
   }
 
   /// Connects, sends data, returns the raw response bytes.
-  static func sendAndReceiveData(to path: String, data: Data) throws -> Data {
+  /// `readTimeoutSeconds <= 0` skips the read timeout and blocks until EOF.
+  static func sendAndReceiveData(to path: String, data: Data, readTimeoutSeconds: Int) throws -> Data {
     try withConnection(to: path, sending: data) { socketFD in
-      var timeout = timeval(tv_sec: 5, tv_usec: 0)
-      guard setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0
-      else {
-        throw Error.socketConfigFailed(errno: errno)
+      if readTimeoutSeconds > 0 {
+        var timeout = timeval(tv_sec: readTimeoutSeconds, tv_usec: 0)
+        guard setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0
+        else {
+          throw Error.socketConfigFailed(errno: errno)
+        }
       }
 
       var responseData = Data()

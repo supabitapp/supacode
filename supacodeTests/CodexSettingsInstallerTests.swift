@@ -73,6 +73,23 @@ struct CodexSettingsInstallerTests {
     }
   }
 
+  @Test func installPreservesEnableHooksTimeout() async {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    // A probe timeout must surface as the precise error, not collapse to codexUnavailable.
+    let installer = CodexSettingsInstaller(
+      homeDirectoryURL: homeURL,
+      fileManager: fileManager,
+      runEnableHooksCommand: {
+        throw CodexSettingsInstallerError.enableHooksTimedOut
+      }
+    )
+    await #expect(throws: CodexSettingsInstallerError.enableHooksTimedOut) {
+      try await installer.installAllHooks()
+    }
+  }
+
   @Test func uninstallAllHooksStripsFeaturesHooksFlag() async throws {
     // Reproduces the partial-install rollback gap: install writes
     // `[features].hooks = true` to config.toml; uninstall must strip

@@ -83,7 +83,7 @@ final class PresenceTestHarness {
         switch event {
         case .agentHookEventReceived(let payload):
           self.reduce(.hookEventReceived(payload))
-        case .surfacesClosed(let ids):
+        case .surfacesClosed(_, let ids):
           if ids.count == 1, let id = ids.first {
             self.reduce(.surfaceClosed(id))
           } else {

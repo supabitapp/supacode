@@ -7,6 +7,10 @@ import Foundation
 /// (write / remove a single owned file) rather than `ClaudeSettingsInstaller`
 /// (prune-append into a shared JSON object). There is no foreign config to
 /// preserve and no schema to satisfy.
+nonisolated enum OpenCodePluginInstallerError: Error {
+  case pluginNotManaged
+}
+
 nonisolated struct OpenCodePluginInstaller {
   let homeDirectoryURL: URL
   let fileManager: FileManager
@@ -22,8 +26,9 @@ nonisolated struct OpenCodePluginInstaller {
   /// `.installed` only on a byte-for-byte match, so an older Supacode version's
   /// plugin reports `.outdated` and the next install upgrades it in place. A
   /// file Supacode does NOT own (no ownership marker) reports `.notInstalled`,
-  /// not `.outdated`, so auto-update never silently overwrites a user plugin
-  /// that happens to share the name — symmetric with `uninstall`.
+  /// symmetric with `uninstall`. That alone does not stop an unattended
+  /// overwrite (the aggregate can still be `.outdated` via another component),
+  /// so `install` also refuses to clobber an unowned file.
   func installState() -> ComponentInstallState {
     guard let contents = try? String(contentsOf: pluginFileURL, encoding: .utf8) else {
       return .notInstalled
@@ -33,6 +38,14 @@ nonisolated struct OpenCodePluginInstaller {
   }
 
   func install() throws {
+    // Refuse to clobber a plugin Supacode doesn't own: auto-update calls this
+    // unattended when the aggregate integration goes `.outdated`, which the
+    // per-component `.notInstalled` alone does not prevent.
+    if let contents = try? String(contentsOf: pluginFileURL, encoding: .utf8),
+      !contents.contains(OpenCodePluginContent.ownershipMarker)
+    {
+      throw OpenCodePluginInstallerError.pluginNotManaged
+    }
     try fileManager.createDirectory(at: pluginDirectoryURL, withIntermediateDirectories: true)
     try OpenCodePluginContent.source().write(to: pluginFileURL, atomically: true, encoding: .utf8)
   }

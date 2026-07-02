@@ -40,6 +40,18 @@ public enum OpenBehavior: Equatable, Sendable {
   public static let `default`: Self = .workspace(configuration: nil)
 }
 
+/// How to open a remote SSH worktree through an editor's Remote-SSH CLI.
+public struct RemoteOpenInvocation: Equatable, Sendable {
+  public var executable: OpenBehavior.ProcessExecutable
+  /// argv following the resolved executable (and its prefix).
+  public var arguments: [String]
+
+  public init(executable: OpenBehavior.ProcessExecutable, arguments: [String]) {
+    self.executable = executable
+    self.arguments = arguments
+  }
+}
+
 public enum OpenWorktreeAction: CaseIterable, Identifiable {
   public enum MenuIcon {
     case app(NSImage)
@@ -63,6 +75,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   case kitty
   case nova
   case pycharm
+  case rider
   case rubymine
   case rustrover
   case smartgit
@@ -100,6 +113,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .kitty: "Kitty"
     case .nova: "Nova"
     case .pycharm: "PyCharm"
+    case .rider: "Rider"
     case .rubymine: "RubyMine"
     case .rustrover: "RustRover"
     case .smartgit: "SmartGit"
@@ -125,7 +139,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder: "Finder"
     case .editor: "$EDITOR"
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rubymine,
+      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rider, .rubymine,
       .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
       .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
       title
@@ -148,7 +162,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder, .editor:
       return true
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rubymine,
+      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rider, .rubymine,
       .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
       .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
       return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
@@ -174,6 +188,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .kitty: "kitty"
     case .nova: "nova"
     case .pycharm: "pycharm"
+    case .rider: "rider"
     case .rubymine: "rubymine"
     case .rustrover: "rustrover"
     case .smartgit: "smartgit"
@@ -212,6 +227,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .kitty: "net.kovidgoyal.kitty"
     case .nova: "com.panic.Nova"
     case .pycharm: "com.jetbrains.pycharm"
+    case .rider: "com.jetbrains.rider"
     case .rubymine: "com.jetbrains.rubymine"
     case .rustrover: "com.jetbrains.rustrover"
     case .smartgit: "com.syntevo.smartgit"
@@ -240,7 +256,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         .default,
       ]
     case .alacritty, .androidStudio, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop,
-      .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm,
+      .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rider,
       .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
       .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .zed, .zedPreview:
       [.default]
@@ -249,7 +265,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
 
   public var openBehaviors: [OpenBehavior] {
     switch self {
-    case .androidStudio, .goland, .intellij, .intellijEAP, .webstorm, .pycharm, .rubymine, .rustrover:
+    case .androidStudio, .goland, .intellij, .intellijEAP, .rider, .webstorm, .pycharm, .rubymine, .rustrover:
       [
         .workspace(
           configuration:
@@ -274,6 +290,69 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     }
   }
 
+  /// How to open this worktree on `host` at `remotePath` via the editor's
+  /// Remote-SSH CLI, or `nil` if the editor can't express this host. The single
+  /// capability signal shared by the reducer guard and the UI enablement.
+  public func remoteOpenInvocation(host: RemoteHost, remotePath: String) -> RemoteOpenInvocation? {
+    switch self {
+    case .zed, .zedPreview:
+      return RemoteOpenInvocation(
+        executable: .appRelativePath("Contents/MacOS/cli"),
+        arguments: [Self.zedSSHURL(host: host, remotePath: remotePath)]
+      )
+    case .vscode, .vscodeInsiders, .vscodium, .cursor, .windsurf, .antigravity:
+      // VS Code parses `ssh-remote+host:2222` as a literal hostname, so it has no
+      // inline port syntax (microsoft/vscode-remote-release #515): a non-default
+      // port is inexpressible, so return `nil`. The path is a literal positional
+      // argv (no shell, no URL), so it is NOT percent-encoded.
+      guard !host.hasNonDefaultPort else { return nil }
+      guard let cliName = vscodeFamilyCLIName else { return nil }
+      return RemoteOpenInvocation(
+        executable: .appRelativePath("Contents/Resources/app/bin/\(cliName)"),
+        arguments: ["--remote", "ssh-remote+\(host.sshDestination)", remotePath]
+      )
+    default:
+      return nil
+    }
+  }
+
+  /// The bundled CLI binary name (under `Contents/Resources/app/bin/`) for the
+  /// VS Code family, or `nil` for any other editor. Doubles as the family
+  /// membership test backing the disabled-reason tooltip.
+  private var vscodeFamilyCLIName: String? {
+    switch self {
+    case .vscode: "code"
+    case .vscodeInsiders: "code-insiders"
+    case .vscodium: "codium"
+    case .cursor: "cursor"
+    case .windsurf: "windsurf"
+    case .antigravity: "antigravity"
+    default: nil
+    }
+  }
+
+  /// A human-facing reason this editor is disabled for `host` at `remotePath`, or
+  /// `nil` when it can open, so a reason structurally implies a disabled item.
+  /// Non-`nil` only for the VS Code family on a non-default port. Presentation
+  /// only; gating stays on `remoteOpenInvocation`.
+  public func remoteOpenDisabledReason(host: RemoteHost, remotePath: String) -> String? {
+    guard remoteOpenInvocation(host: host, remotePath: remotePath) == nil, vscodeFamilyCLIName != nil else {
+      return nil
+    }
+    return "Opening \(title) over SSH needs the port in ~/.ssh/config"
+  }
+
+  /// `ssh://[user@]host[:port]<remotePath>` for Zed's Remote-SSH CLI. The path
+  /// is normalized to a leading `/` so it can't fuse with the authority into a
+  /// malformed `ssh://host~/proj`, then percent-encoded for URI validity (e.g.
+  /// spaces); `.urlPathAllowed` keeps the `/` separators intact.
+  private static func zedSSHURL(host: RemoteHost, remotePath: String) -> String {
+    let normalizedPath = remotePath.hasPrefix("/") ? remotePath : "/" + remotePath
+    let encodedPath =
+      normalizedPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? normalizedPath
+    return "ssh://\(host.sshURLAuthority)\(encodedPath)"
+  }
+
   public nonisolated static let automaticSettingsID = "auto"
 
   public static let editorPriority: [OpenWorktreeAction] = [
@@ -291,6 +370,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     .webstorm,
     .pycharm,
     .rubymine,
+    .rider,
     .rustrover,
     .nova,
     .antigravity,

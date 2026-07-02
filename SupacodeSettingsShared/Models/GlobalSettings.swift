@@ -35,6 +35,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var inAppNotificationsEnabled: Bool
   public var notificationSound: NotificationSound
   public var systemNotificationsEnabled: Bool
+  public var muteNotificationsForActiveSurface: Bool
   public var moveNotifiedWorktreeToTop: Bool
   public var analyticsEnabled: Bool
   public var crashReportsEnabled: Bool
@@ -76,6 +77,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     inAppNotificationsEnabled: true,
     notificationSound: .hero,
     systemNotificationsEnabled: false,
+    muteNotificationsForActiveSurface: true,
     moveNotifiedWorktreeToTop: true,
     analyticsEnabled: true,
     crashReportsEnabled: true,
@@ -110,6 +112,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     inAppNotificationsEnabled: Bool,
     notificationSound: NotificationSound = .hero,
     systemNotificationsEnabled: Bool = false,
+    muteNotificationsForActiveSurface: Bool = true,
     moveNotifiedWorktreeToTop: Bool,
     analyticsEnabled: Bool,
     crashReportsEnabled: Bool,
@@ -142,6 +145,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.inAppNotificationsEnabled = inAppNotificationsEnabled
     self.notificationSound = notificationSound
     self.systemNotificationsEnabled = systemNotificationsEnabled
+    self.muteNotificationsForActiveSurface = muteNotificationsForActiveSurface
     self.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
     self.analyticsEnabled = analyticsEnabled
     self.crashReportsEnabled = crashReportsEnabled
@@ -207,6 +211,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     systemNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .systemNotificationsEnabled)
       ?? Self.default.systemNotificationsEnabled
+    muteNotificationsForActiveSurface =
+      try container.decodeIfPresent(Bool.self, forKey: .muteNotificationsForActiveSurface)
+      ?? Self.default.muteNotificationsForActiveSurface
     moveNotifiedWorktreeToTop =
       try container.decodeIfPresent(Bool.self, forKey: .moveNotifiedWorktreeToTop)
       ?? Self.default.moveNotifiedWorktreeToTop

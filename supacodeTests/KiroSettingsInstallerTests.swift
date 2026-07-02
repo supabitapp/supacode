@@ -164,6 +164,18 @@ struct KiroSettingsInstallerTests {
     }
   }
 
+  @Test func installPreservesKiroVersionCheckTimeout() async {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    // A probe timeout must surface as the precise error, not be flattened to kiroUnavailable.
+    let installer = makeInstaller(
+      homeURL: homeURL, versionError: KiroSettingsInstallerError.kiroVersionCheckTimedOut)
+    await #expect(throws: KiroSettingsInstallerError.kiroVersionCheckTimedOut) {
+      try await installer.installAllHooks()
+    }
+  }
+
   @Test func installFailsOnUnsupportedKiroVersion() async {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }

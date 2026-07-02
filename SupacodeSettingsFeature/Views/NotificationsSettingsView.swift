@@ -34,6 +34,13 @@ public struct NotificationsSettingsView: View {
           )
         }
         .disabled(store.systemNotificationsEnabled)
+        Toggle(
+          isOn: $store.muteNotificationsForActiveSurface
+        ) {
+          Text("Mute notifications for active surface")
+          Text("Skip the notification and sound when the terminal that sent it is focused and visible.")
+        }
+        .disabled(!store.hasActiveNotificationChannel)
       }
       Section("Worktrees") {
         Toggle(

@@ -128,7 +128,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       // Hook-first: our expanded custom notification fires.
       fixture.state.appendHookNotification(title: "Done", body: "Expanded detail", surfaceID: fixture.surface.id)
@@ -150,7 +150,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       // Custom notification fires, then the suppression window fully elapses.
       fixture.state.appendHookNotification(title: "Done", body: "Expanded detail", surfaceID: fixture.surface.id)
@@ -178,7 +178,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       // OSC-9-first: the agent's summary arrives and is held.
       fixture.surface.bridge.onDesktopNotification?("Done", "summary")
@@ -206,7 +206,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       fixture.surface.bridge.onDesktopNotification?("Agent", "standalone")
       await Task.megaYield()
@@ -227,7 +227,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
       // No prior custom notification, so the OSC 9 is held (not suppressed).
       fixture.surface.bridge.onDesktopNotification?("Agent", "held")
       await Task.megaYield()
@@ -258,7 +258,113 @@ struct AgentBusyStateTests {
     }
   }
 
+  // MARK: - isViewedSurface composite (mute-notifications gating).
+
+  @Test(.dependencies) func selectedFocusedVisibleSurfaceIsViewed() {
+    withViewedSurfaceDependencies {
+      let fixture = makeStateWithSurface()
+      fixture.state.isSelected = { true }
+      fixture.state.syncFocus(windowIsKey: true, windowIsVisible: true)
+
+      #expect(viewedFlag(for: fixture, surfaceID: fixture.surface.id) == true)
+      #expect(fixture.state.notifications.first?.isRead == true)
+    }
+  }
+
+  @Test(.dependencies) func unselectedWorktreeSurfaceIsNotViewed() {
+    withViewedSurfaceDependencies {
+      let fixture = makeStateWithSurface()
+      fixture.state.isSelected = { false }
+      fixture.state.syncFocus(windowIsKey: true, windowIsVisible: true)
+
+      #expect(viewedFlag(for: fixture, surfaceID: fixture.surface.id) == false)
+      #expect(fixture.state.notifications.first?.isRead == false)
+    }
+  }
+
+  @Test(.dependencies) func inactiveWindowSurfaceIsNotViewed() {
+    withViewedSurfaceDependencies {
+      let fixture = makeStateWithSurface()
+      fixture.state.isSelected = { true }
+      fixture.state.syncFocus(windowIsKey: false, windowIsVisible: true)
+
+      #expect(viewedFlag(for: fixture, surfaceID: fixture.surface.id) == false)
+    }
+  }
+
+  @Test(.dependencies) func hiddenWindowSurfaceIsNotViewed() {
+    withViewedSurfaceDependencies {
+      let fixture = makeStateWithSurface()
+      fixture.state.isSelected = { true }
+      fixture.state.syncFocus(windowIsKey: true, windowIsVisible: false)
+
+      #expect(viewedFlag(for: fixture, surfaceID: fixture.surface.id) == false)
+    }
+  }
+
+  @Test(.dependencies) func unsyncedWindowStateSurfaceIsNotViewed() {
+    withViewedSurfaceDependencies {
+      let fixture = makeStateWithSurface()
+      fixture.state.isSelected = { true }
+      // No syncFocus: window flags stay nil, so the surface reads as not viewed.
+
+      #expect(viewedFlag(for: fixture, surfaceID: fixture.surface.id) == false)
+    }
+  }
+
+  @Test(.dependencies) func unfocusedSiblingSurfaceIsNotViewed() {
+    withViewedSurfaceDependencies {
+      let fixture = makeStateWithSurface()
+      fixture.state.isSelected = { true }
+      fixture.state.syncFocus(windowIsKey: true, windowIsVisible: true)
+      // The split focuses the new sibling, leaving the original pane unfocused.
+      #expect(
+        fixture.state.performSplitAction(.newSplit(direction: .right), for: fixture.surface.id, newSurfaceID: UUID()))
+
+      #expect(viewedFlag(for: fixture, surfaceID: fixture.surface.id) == false)
+    }
+  }
+
+  @Test(.dependencies) func zoomHiddenFocusedSurfaceIsNotViewed() {
+    withViewedSurfaceDependencies {
+      let fixture = makeStateWithSurface()
+      fixture.state.isSelected = { true }
+      fixture.state.syncFocus(windowIsKey: true, windowIsVisible: true)
+      let sibling = UUID()
+      #expect(
+        fixture.state.performSplitAction(.newSplit(direction: .right), for: fixture.surface.id, newSurfaceID: sibling))
+      // Zoom the sibling, then move focus back to the original pane while it
+      // stays behind the zoom: focused but off screen.
+      #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: sibling))
+      #expect(fixture.state.focusSurface(id: fixture.surface.id))
+      let visible = fixture.state.splitTree(for: fixture.tabId).visibleLeaves()
+      #expect(!visible.contains { $0.id == fixture.surface.id })
+
+      #expect(viewedFlag(for: fixture, surfaceID: fixture.surface.id) == false)
+    }
+  }
+
   // MARK: - Helpers.
+
+  private func withViewedSurfaceDependencies(_ operation: () -> Void) {
+    withDependencies {
+      $0.date = .constant(Date(timeIntervalSince1970: 1000))
+      $0.continuousClock = ImmediateClock()
+    } operation: {
+      operation()
+    }
+  }
+
+  // Drives a hook notification and returns the `isViewed` flag forwarded to the
+  // event, isolating the private `isViewedSurface` composite.
+  private func viewedFlag(for fixture: SurfaceFixture, surfaceID: UUID) -> Bool? {
+    var received: Bool?
+    fixture.state.onNotificationReceived = { id, _, _, isViewed in
+      if id == surfaceID { received = isViewed }
+    }
+    fixture.state.appendHookNotification(title: "Done", body: "ok", surfaceID: surfaceID)
+    return received
+  }
 
   private func makeWorktree() -> Worktree {
     Worktree(

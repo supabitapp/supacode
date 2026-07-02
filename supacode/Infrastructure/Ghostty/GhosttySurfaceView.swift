@@ -1004,7 +1004,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       }
     }
     // Wrapper argv C strings must also outlive the surface_new call.
-    var wrapperCStrings: [UnsafePointer<CChar>?] = commandWrapper.map { arg in
+    let wrapperCStrings: [UnsafePointer<CChar>?] = commandWrapper.map { arg in
       UnsafePointer(arg.withCString { strdup($0)! })
     }
     defer {

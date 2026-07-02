@@ -49,6 +49,7 @@ public struct SettingsFeature {
     public var inAppNotificationsEnabled: Bool
     public var notificationSound: NotificationSound
     public var systemNotificationsEnabled: Bool
+    public var muteNotificationsForActiveSurface: Bool
     public var moveNotifiedWorktreeToTop: Bool
     public var analyticsEnabled: Bool
     public var crashReportsEnabled: Bool
@@ -81,6 +82,12 @@ public struct SettingsFeature {
     public var repositorySettings: RepositorySettingsFeature.State?
     @Presents public var alert: AlertState<Alert>?
 
+    /// True when at least one notification delivery channel (macOS banner or
+    /// the fallback sound) can fire, so surface-mute has something to mute.
+    public var hasActiveNotificationChannel: Bool {
+      systemNotificationsEnabled || notificationSound != .never
+    }
+
     public init(settings: GlobalSettings = .default) {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
       appearanceMode = settings.appearanceMode
@@ -91,6 +98,7 @@ public struct SettingsFeature {
       inAppNotificationsEnabled = settings.inAppNotificationsEnabled
       notificationSound = settings.notificationSound
       systemNotificationsEnabled = settings.systemNotificationsEnabled
+      muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
@@ -127,6 +135,7 @@ public struct SettingsFeature {
         inAppNotificationsEnabled: inAppNotificationsEnabled,
         notificationSound: notificationSound,
         systemNotificationsEnabled: systemNotificationsEnabled,
+        muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
         analyticsEnabled: analyticsEnabled,
         crashReportsEnabled: crashReportsEnabled,
@@ -266,6 +275,7 @@ public struct SettingsFeature {
         state.inAppNotificationsEnabled = normalizedSettings.inAppNotificationsEnabled
         state.notificationSound = normalizedSettings.notificationSound
         state.systemNotificationsEnabled = normalizedSettings.systemNotificationsEnabled
+        state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
@@ -447,15 +457,17 @@ public struct SettingsFeature {
 
       case .toggleShortcutEnabled(let id, let enabled):
         if enabled {
-          // Re-enable: if override exists with a real binding, just flip the flag.
-          // If it was a disabled sentinel, remove the override entirely (restore default).
-          if var existing = state.shortcutOverrides[id] {
+          // A real binding just flips its enabled flag. A sentinel (or no override)
+          // carries no binding, so restore the default: a disabled-by-default
+          // shortcut needs its default key bound, an enabled-by-default one drops
+          // the sentinel.
+          if var existing = state.shortcutOverrides[id], existing.keyCode != 0 || !existing.modifiers.isEmpty {
             existing.isEnabled = true
-            if existing.keyCode == 0, existing.modifiers.isEmpty {
-              state.shortcutOverrides.removeValue(forKey: id)
-            } else {
-              state.shortcutOverrides[id] = existing
-            }
+            state.shortcutOverrides[id] = existing
+          } else if let override = AppShortcuts.defaultEnabledOverride(for: id) {
+            state.shortcutOverrides[id] = override
+          } else {
+            state.shortcutOverrides.removeValue(forKey: id)
           }
         } else {
           if var existing = state.shortcutOverrides[id] {

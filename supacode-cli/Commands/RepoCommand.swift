@@ -19,8 +19,10 @@ extension RepoCommand {
   struct List: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "List repositories.")
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
-      let items = try QueryDispatcher.query(resource: "repos")
+      let items = try QueryDispatcher.query(resource: "repos", timeoutSeconds: timeoutOption.timeout)
       for item in items {
         print(item["id"] ?? "")
       }
@@ -33,8 +35,13 @@ extension RepoCommand {
     @Argument(help: "Absolute path to the repository.")
     var path: String
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.repoOpen(path: path))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.repoOpen(path: path),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
   }
 
@@ -62,14 +69,18 @@ extension RepoCommand {
     @Option(help: "Parent directory the worktree folder is created in.")
     var location: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let rID = try resolveRepoID(repo)
-      try Dispatcher.dispatch(
+      let id = try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.repoWorktreeNew(
           repoID: rID,
           options: .init(branch: branch, base: base, fetch: fetch, name: name, location: location)
-        )
+        ),
+        timeoutSeconds: timeoutOption.timeout
       )
+      if let id { print(id) }
     }
   }
 }

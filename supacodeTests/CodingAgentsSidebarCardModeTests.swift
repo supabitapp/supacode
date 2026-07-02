@@ -10,6 +10,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.outdated),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.outdated),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -27,6 +29,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
+      .hermes: .ready(.installed),
+      .kimi: .ready(.installed),
       .kiro: .ready(.installed),
       .opencode: .ready(.installed),
       .pi: .ready(.installed),
@@ -40,6 +44,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -52,6 +58,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -64,6 +72,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -76,6 +86,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .checking,
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -84,12 +96,14 @@ struct CodingAgentsSidebarCardModeTests {
   }
 
   @Test func installingAgentSuppressesPromptInstallToAvoidMidFlightFlap() {
-    // While an agent is mid-install we can't know its final state — suppress
+    // While an agent is mid-install we can't know its final state, so suppress
     // the prompt card so it doesn't flash off, then back on, on completion.
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .installing,
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -98,12 +112,14 @@ struct CodingAgentsSidebarCardModeTests {
   }
 
   @Test func uninstallingAgentSuppressesPromptInstallToAvoidMidFlightFlap() {
-    // Symmetric to the installing case — an in-flight uninstall shouldn't
+    // Symmetric to the installing case: an in-flight uninstall shouldn't
     // race the prompt card.
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.installed),
       .codex: .uninstalling,
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -112,13 +128,15 @@ struct CodingAgentsSidebarCardModeTests {
   }
 
   @Test func failedAgentCountsAsResolvedAndDoesNotBlockPrompt() {
-    // A failed integration check resolved (we know the result) — it just
+    // A failed integration check resolved (we know the result); it just
     // resolved to "we can't tell", not "still in flight". Treat as resolved
     // so a single failed agent doesn't permanently suppress the prompt.
     let states: [SkillAgent: AgentIntegrationRowState] = [
       .claude: .ready(.notInstalled),
       .codex: .failed("boom"),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -134,6 +152,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
+      .hermes: .ready(.installed),
+      .kimi: .ready(.installed),
       .kiro: .ready(.installed),
       .opencode: .ready(.installed),
       .pi: .ready(.installed),
@@ -146,6 +166,8 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
+      .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
@@ -156,7 +178,7 @@ struct CodingAgentsSidebarCardModeTests {
   }
 
   @Test func dismissedAtBeforeCutoffReEngages() {
-    // Stamps older than `cardRelevantSinceDate` are stale — re-engagement is
+    // Stamps older than `cardRelevantSinceDate` are stale; re-engagement is
     // bumping the cutoff at material changes, no key sprawl required.
     let cutoff = Date(timeIntervalSince1970: 1_000_000_000)
     let stale = cutoff.addingTimeInterval(-1)

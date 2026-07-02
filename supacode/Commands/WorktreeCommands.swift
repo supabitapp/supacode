@@ -195,18 +195,27 @@ private struct WorktreeFileMenu: Commands {
     let overrides = store.worktreeMenuSnapshot.shortcutOverrides
     let openRepo = AppShortcuts.openRepository.effective(from: overrides)
     let addRemoteRepo = AppShortcuts.addRemoteRepository.effective(from: overrides)
+    let cloneRepo = AppShortcuts.cloneRepository.effective(from: overrides)
     let confirm = AppShortcuts.confirmWorktreeAction.effective(from: overrides)
     CommandGroup(replacing: .newItem) {
-      Button("Add Local Repository or Folder...", systemImage: "folder.badge.plus") {
-        store.send(.repositories(.setOpenPanelPresented(true)))
+      Menu("Add Repository or Folder", systemImage: "folder.badge.plus") {
+        Button("Add Local Repository or Folder...", systemImage: "laptopcomputer") {
+          store.send(.repositories(.setOpenPanelPresented(true)))
+        }
+        .appKeyboardShortcut(openRepo)
+        .help("Add a local repository or folder (\(openRepo?.display ?? "none"))")
+        Button("Add Remote Repository or Folder...", systemImage: "wifi") {
+          store.send(.repositories(.requestAddRemoteRepository))
+        }
+        .appKeyboardShortcut(addRemoteRepo)
+        .help("Add a repository or folder on an SSH host (\(addRemoteRepo?.display ?? "none"))")
+        Divider()
+        Button("Clone Repository...", systemImage: "square.and.arrow.down.on.square") {
+          store.send(.repositories(.requestCloneRepository))
+        }
+        .appKeyboardShortcut(cloneRepo)
+        .help("Clone a remote repository into a local folder (\(cloneRepo?.display ?? "none"))")
       }
-      .appKeyboardShortcut(openRepo)
-      .help("Add a local repository or folder (\(openRepo?.display ?? "none"))")
-      Button("Add Remote Repository or Folder...", systemImage: "wifi") {
-        store.send(.repositories(.requestAddRemoteRepository))
-      }
-      .appKeyboardShortcut(addRemoteRepo)
-      .help("Add a repository or folder on an SSH host (\(addRemoteRepo?.display ?? "none"))")
       Button("Confirm Action") {
         confirmWorktreeAction?()
       }
