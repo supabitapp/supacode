@@ -196,7 +196,7 @@ struct SupacodeApp: App {
   private static func makeTerminalManager(runtime: GhosttyRuntime) -> WorktreeTerminalManager {
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
     runtime.focusedSurfaceBackgroundColorProvider = { [weak terminalManager] in
-      terminalManager?.focusedSurfaceBackgroundColor()
+      terminalManager?.focusedSurfaceBackground
     }
     terminalManager.saveLayoutSnapshot = { worktreeID, snapshot in
       @Shared(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]

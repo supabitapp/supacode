@@ -129,6 +129,7 @@ struct ContentView: View {
       )
     }
     .background(WindowTabbingDisabler())
+    .background(WindowTintBackdrop(runtime: terminalManager.ghosttyRuntime))
     .background(WindowChromeObserver(runtime: terminalManager.ghosttyRuntime))
     .background(
       WindowTitleHost(

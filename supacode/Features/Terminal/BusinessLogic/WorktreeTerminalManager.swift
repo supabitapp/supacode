@@ -117,6 +117,12 @@ final class WorktreeTerminalManager {
   }
 
   var selectedWorktreeID: Worktree.ID?
+  /// The resolved background of the focused surface in the selected worktree
+  /// (OSC 11 override or theme fallback). Single source for the window tint,
+  /// `window.appearance`, and the toolbar title's color scheme.
+  private(set) var focusedSurfaceBackground: NSColor
+  @ObservationIgnored
+  private nonisolated(unsafe) var runtimeObservers: [NSObjectProtocol] = []
   var saveLayoutSnapshot: ((Worktree.ID, TerminalLayoutSnapshot?) -> Void)?
   var loadLayoutSnapshot: ((Worktree.ID) -> TerminalLayoutSnapshot?)?
   /// Deeplink URL received from the CLI via socket. Second parameter is the client FD for response.
@@ -130,10 +136,21 @@ final class WorktreeTerminalManager {
     clock: C = ContinuousClock(),
   ) {
     self.runtime = runtime
+    self.focusedSurfaceBackground = runtime.backgroundColor()
     self.hookEventSleep = { duration in try await clock.sleep(for: duration) }
     self.layoutDebounceSleep = { duration in try await clock.sleep(for: duration) }
     @Dependency(\.settingsFileStorage) var settingsFileStorage
     self.layoutsWriter = LayoutsIncrementalWriter(storage: settingsFileStorage)
+    // A theme reload changes the fallback and every non-OSC surface background.
+    runtimeObservers.append(
+      NotificationCenter.default.addObserver(
+        forName: .ghosttyRuntimeConfigDidChange,
+        object: runtime,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in self?.refreshFocusedSurfaceBackground() }
+      }
+    )
     let resolvedServer = socketServer ?? AgentHookSocketServer()
     guard resolvedServer.socketPath != nil else {
       self.socketServer = nil
@@ -148,6 +165,9 @@ final class WorktreeTerminalManager {
     for task in pendingIdleHookEvents.values { task.cancel() }
     for task in layoutDirtyTasks.values { task.cancel() }
     for task in layoutFlushTasks.values { task.cancel() }
+    for observer in runtimeObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   private func configureSocketServer(_ server: AgentHookSocketServer) {
@@ -387,6 +407,9 @@ final class WorktreeTerminalManager {
         markLayoutDirty(worktreeID: previousID)
       }
       selectedWorktreeID = id
+      // A sidebar click never hands AppKit focus to the terminal, so no focus
+      // event fires; refresh here or the window keeps the previous tint.
+      refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
@@ -480,6 +503,9 @@ final class WorktreeTerminalManager {
     }
     state.onSurfacesClosed = { [weak self] ids in
       self?.emit(.surfacesClosed(worktreeID: worktree.id, ids))
+      // The last surface closing leaves no focus target, so no focus event
+      // follows; fall back to the theme background here.
+      self?.refreshFocusedSurfaceBackground()
     }
     // OSC-sourced presence events go through the existing idle-debounce funnel.
     state.onAgentHookEvent = { [weak self] event in
@@ -516,10 +542,10 @@ final class WorktreeTerminalManager {
     }
     state.onFocusChanged = { [weak self] surfaceID in
       self?.emit(.focusChanged(worktreeID: worktree.id, surfaceID: surfaceID))
-      self?.notifyFocusedSurfaceBackgroundChanged()
+      self?.refreshFocusedSurfaceBackground()
     }
     state.onFocusedSurfaceColorChanged = { [weak self] in
-      self?.notifyFocusedSurfaceBackgroundChanged()
+      self?.refreshFocusedSurfaceBackground()
     }
     state.onTaskStatusChanged = { [weak self] status in
       self?.emit(.taskStatusChanged(worktreeID: worktree.id, status: status))
@@ -620,6 +646,7 @@ final class WorktreeTerminalManager {
     for (id, _) in removed { invalidateCaches(forPrunedWorktree: id) }
     emitNotificationIndicatorCountIfNeeded()
     emitHasAnyTerminalSurfaceIfNeeded()
+    refreshFocusedSurfaceBackground()
     killZmxSessions(prunedSessionIDs)
   }
 
@@ -903,18 +930,7 @@ final class WorktreeTerminalManager {
     state.rememberFocusedZoom()
   }
 
-  func surfaceBackgroundColorScheme() -> ColorScheme {
-    var isLight = false
-    NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
-      isLight = focusedSurfaceBackgroundColor().isLightColor
-    }
-    return isLight ? .light : .dark
-  }
-
-  // The resolved background color of the focused surface in the selected
-  // worktree: its OSC 11 override if present, else the theme background. This is
-  // the single coherent tint that fills the window and drives its appearance.
-  func focusedSurfaceBackgroundColor() -> NSColor {
+  private func resolveFocusedSurfaceBackground() -> NSColor {
     guard let selectedWorktreeID,
       let state = states[selectedWorktreeID],
       let surfaceState = state.focusedSurfaceState()
@@ -946,7 +962,13 @@ final class WorktreeTerminalManager {
     )
   }
 
-  private func notifyFocusedSurfaceBackgroundChanged() {
+  // The single funnel for focused-background changes: dedupes on the resolved
+  // color so identical focus moves post nothing, then updates the stored source
+  // and notifies the AppKit consumers (window appearance, tint backdrop).
+  func refreshFocusedSurfaceBackground() {
+    let color = resolveFocusedSurfaceBackground()
+    guard !color.matchesTint(focusedSurfaceBackground) else { return }
+    focusedSurfaceBackground = color
     NotificationCenter.default.post(name: .ghosttyFocusedSurfaceBackgroundDidChange, object: self)
   }
 

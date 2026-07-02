@@ -15,10 +15,6 @@ struct WorktreeDetailView: View {
   let terminalManager: WorktreeTerminalManager
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.settingsFile) private var settingsFile: SettingsFile
-  // Tracks the terminal-content window's fullscreen state for the open-menu toolbar
-  // tint; the toolbar itself can't observe it (re-hosted in an accessory window).
-  @State private var isToolbarFullScreen = false
-
   private var agentBadgesEnabled: Bool { settingsFile.global.agentPresenceBadgesEnabled }
 
   var body: some View {
@@ -62,6 +58,10 @@ struct WorktreeDetailView: View {
     let runningScriptIDs = Set(selectedRow?.runningScripts.ids ?? [])
     // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsPopoverButtonHost`
     // instead; reading it here would re-render the body on every notification.
+    // Read the manager's stored color here (tracked body evaluation, not the
+    // deferred toolbar closure) so the toolbar scheme invalidates on change.
+    let toolbarScheme: ColorScheme =
+      terminalManager.focusedSurfaceBackground.isLightColor ? .light : .dark
     let content = detailContent(
       repositories: repositories,
       loadingInfo: loadingInfo,
@@ -73,7 +73,7 @@ struct WorktreeDetailView: View {
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .toolbar {
       if showsToolbarPlaceholder {
-        ToolbarPlaceholderContent()
+        ToolbarPlaceholderContent(scheme: toolbarScheme)
       } else if hasActiveWorktree, let selectedWorktree {
         let toolbarState = makeToolbarState(
           selectedWorktree: selectedWorktree,
@@ -82,9 +82,9 @@ struct WorktreeDetailView: View {
           runningScriptIDs: runningScriptIDs
         )
         WorktreeToolbarContent(
+          scheme: toolbarScheme,
           toolbarState: toolbarState,
           terminalManager: terminalManager,
-          isFullScreen: isToolbarFullScreen,
           repositoriesStore: store.scope(state: \.repositories, action: \.repositories),
           onOpenWorktree: { action in
             store.send(.openWorktree(action))
@@ -110,9 +110,6 @@ struct WorktreeDetailView: View {
         )
       }
     }
-    // Observe fullscreen from the content (main terminal window), then feed it to the
-    // toolbar tint above; toolbar content is re-hosted in fullscreen and can't see it.
-    .windowFullScreenObserver(isFullScreen: $isToolbarFullScreen)
     let hasRunningRunScript = state.hasRunningRunScript
     // Reveal in Finder is local-only; Open can target a remote worktree when the
     // resolved editor can express the host. `resolvedSelection` (nil when it
@@ -203,11 +200,6 @@ struct WorktreeDetailView: View {
     return !repositories.isInitialLoadComplete
   }
 
-  // Apply `windowTintColorScheme` here, inside the detail body, so that text
-  // and icons painted over the tinted window pick the right luminance — but
-  // the surrounding `.toolbar { ... }` items keep the system color scheme so
-  // they stay readable in fullscreen, where the titlebar paints with system
-  // appearance.
   @ViewBuilder
   private func detailContent(
     repositories: RepositoriesFeature.State,
@@ -270,7 +262,6 @@ struct WorktreeDetailView: View {
         EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
       }
     }
-    .windowTintColorScheme(manager: terminalManager)
   }
 
   private func applyFocusedActions<Content: View>(
@@ -492,9 +483,11 @@ struct WorktreeDetailView: View {
   }
 
   fileprivate struct WorktreeToolbarContent: ToolbarContent {
+    /// Terminal-derived scheme for the `.navigation` item, whose detached host
+    /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
+    let scheme: ColorScheme
     let toolbarState: WorktreeToolbarState
     let terminalManager: WorktreeTerminalManager
-    let isFullScreen: Bool
     let repositoriesStore: StoreOf<RepositoriesFeature>?
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
@@ -509,10 +502,9 @@ struct WorktreeDetailView: View {
 
     var body: some ToolbarContent {
       ToolbarItem(placement: .navigation) {
-        WorktreeToolbarTitleView(
-          content: toolbarState.titleContent,
-          terminalManager: terminalManager
-        )
+        TerminalSchemeHost(scheme: scheme) {
+          WorktreeToolbarTitleView(content: toolbarState.titleContent)
+        }
       }
       .sharedBackgroundVisibility(.hidden)
 
@@ -571,8 +563,6 @@ struct WorktreeDetailView: View {
       if let primarySelection {
         let canOpenPrimary = toolbarState.canOpen(primarySelection)
         Menu {
-          // The popup renders as system chrome; escape the toolbar tint below so its
-          // rows keep the system appearance instead of the terminal background.
           Group {
             ForEach(availableActions) { action in
               let isDefault = action == primarySelection
@@ -595,7 +585,6 @@ struct WorktreeDetailView: View {
             .help("Reveal in Finder (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
             .disabled(toolbarState.remoteOpenHost != nil)
           }
-          .inheritSystemColorScheme()
         } label: {
           OpenWorktreeActionMenuLabelView(action: primarySelection)
         } primaryAction: {
@@ -605,9 +594,6 @@ struct WorktreeDetailView: View {
           onOpenWorktree(primarySelection)
         }
         .help(openActionHelpText(for: primarySelection, isDefault: true))
-        // The colored app icon opts the toolbar item out of AppKit's vibrant foreground,
-        // so apply the terminal-aware chrome tint manually to keep the label legible.
-        .toolbarTintColorScheme(manager: terminalManager, isFullScreen: isFullScreen)
       }
     }
 
@@ -891,19 +877,25 @@ private struct DetailPlaceholderView: View {
 // MARK: - Toolbar placeholder.
 
 private struct ToolbarPlaceholderContent: ToolbarContent {
+  /// Terminal-derived scheme for the `.navigation` item, whose detached host
+  /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
+  let scheme: ColorScheme
+
   var body: some ToolbarContent {
     ToolbarItem(placement: .navigation) {
-      Button {
-      } label: {
-        HStack(spacing: 6) {
-          Image(systemName: "arrow.trianglehead.branch")
-            .foregroundStyle(.secondary)
-          Text("feature/branch")
+      TerminalSchemeHost(scheme: scheme) {
+        Button {
+        } label: {
+          HStack(spacing: 6) {
+            Image(systemName: "arrow.trianglehead.branch")
+              .foregroundStyle(.secondary)
+            Text("feature/branch")
+          }
+          .font(.headline)
         }
-        .font(.headline)
+        .redacted(reason: .placeholder)
+        .shimmer(isActive: true)
       }
-      .redacted(reason: .placeholder)
-      .shimmer(isActive: true)
     }
     .sharedBackgroundVisibility(.hidden)
 
@@ -1225,9 +1217,9 @@ private struct WorktreeToolbarPreview: View {
     }
     .toolbar {
       WorktreeDetailView.WorktreeToolbarContent(
+        scheme: .light,
         toolbarState: toolbarState,
         terminalManager: WorktreeTerminalManager(runtime: GhosttyRuntime()),
-        isFullScreen: false,
         repositoriesStore: nil,
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },

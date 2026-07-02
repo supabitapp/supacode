@@ -29,43 +29,51 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
   }
 }
 
-/// Provides the tab-bar chrome tokens (`surfaceChromeAppearance`) for the
-/// toolbar title. The window's `NSAppearance` (driven by the focused terminal)
-/// owns light/dark, so this no longer overrides `\.colorScheme`.
-struct WorktreeToolbarTitleView: View {
-  let content: WorktreeToolbarTitleContent
-  let terminalManager: WorktreeTerminalManager
+/// Hosts toolbar item content in an `NSHostingView` pinned to the given
+/// scheme's `NSAppearance`. A `.sharedBackgroundVisibility(.hidden)` item host
+/// ignores `window.appearance` and follows the system, and a plain
+/// `.environment(\.colorScheme, _)` doesn't reach its AppKit-side dynamic color
+/// resolution; pinning the hosting view's appearance covers both, so
+/// `.primary` / `.secondary` inside follow the terminal-derived scheme.
+struct TerminalSchemeHost<Content: View>: NSViewRepresentable {
+  let scheme: ColorScheme
+  @ViewBuilder let content: Content
 
-  @Environment(\.colorScheme) private var systemColorScheme
-  @State private var configReloadCounter = 0
+  func makeNSView(context: Context) -> NSHostingView<Content> {
+    let view = NSHostingView(rootView: content)
+    view.sizingOptions = .intrinsicContentSize
+    view.appearance = NSAppearance(named: Self.appearanceName(for: scheme))
+    return view
+  }
 
-  var body: some View {
-    #if DEBUG
-      Self._printChanges()
-      titleRenderLogger.info("WorktreeToolbarTitleView.body re-rendered")
-    #endif
-    _ = configReloadCounter
-    _ = systemColorScheme
-    let tintScheme = terminalManager.surfaceBackgroundColorScheme()
-    let appearance = SurfaceChromeAppearance(
-      colorScheme: tintScheme,
-      systemColorScheme: systemColorScheme
-    )
-    return WorktreeToolbarTitleBody(content: content)
-      .environment(\.surfaceChromeAppearance, appearance)
-      .onReceive(NotificationCenter.default.publisher(for: .ghosttyRuntimeConfigDidChange)) { _ in
-        configReloadCounter &+= 1
-      }
+  func updateNSView(_ nsView: NSHostingView<Content>, context: Context) {
+    nsView.rootView = content
+    // The toolbar re-renders often; only re-pin when the scheme actually flips
+    // so unrelated updates don't force an effectiveAppearance re-resolve.
+    let name = Self.appearanceName(for: scheme)
+    if nsView.appearance?.name != name {
+      nsView.appearance = NSAppearance(named: name)
+    }
+  }
+
+  private static func appearanceName(for scheme: ColorScheme) -> NSAppearance.Name {
+    scheme == .light ? .aqua : .darkAqua
   }
 }
 
-private struct WorktreeToolbarTitleBody: View {
+/// Renders the toolbar repo/worktree title. This `.navigation` item carries
+/// `.sharedBackgroundVisibility(.hidden)`, whose host ignores
+/// `window.appearance`, so `WorktreeToolbarContent` wraps this view in a
+/// `TerminalSchemeHost` pinned to the focused terminal's contrast.
+/// `.primary` / `.secondary` then match the terminal background like the rest of
+/// the window chrome.
+struct WorktreeToolbarTitleView: View {
   let content: WorktreeToolbarTitleContent
 
   var body: some View {
     #if DEBUG
       let _ = Self._printChanges()
-      titleRenderLogger.info("WorktreeToolbarTitleBody.body re-rendered")
+      titleRenderLogger.info("WorktreeToolbarTitleView.body re-rendered")
     #endif
     return HStack(spacing: 8) {
       Group {
@@ -189,7 +197,7 @@ enum GitHubOwnerAvatar {
 
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(
+      WorktreeToolbarTitleView(
         content: .git(
           .init(
             displayTitle: "sbertix/319-toolbar-details",
@@ -211,7 +219,7 @@ enum GitHubOwnerAvatar {
 #Preview("Main worktree") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(
+      WorktreeToolbarTitleView(
         content: .git(
           .init(
             displayTitle: "main",
@@ -233,7 +241,8 @@ enum GitHubOwnerAvatar {
 #Preview("Folder") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(content: .folder(name: "Documents", tint: nil, hostInfo: nil))
+      WorktreeToolbarTitleView(
+        content: .folder(name: "Documents", tint: nil, hostInfo: nil))
     }
   }.frame(width: 600, height: 600)
 }

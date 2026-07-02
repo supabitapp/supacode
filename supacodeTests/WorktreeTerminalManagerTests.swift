@@ -2644,4 +2644,53 @@ struct WorktreeTerminalManagerTests {
       WorktreeTerminalManager.osc11BackgroundColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, red: 1, green: 2, blue: nil) == nil)
   }
+
+  @Test func focusedSurfaceBackgroundInitializesToThemeFallback() {
+    let runtime = GhosttyRuntime()
+    let manager = WorktreeTerminalManager(runtime: runtime)
+    #expect(manager.focusedSurfaceBackground.matchesTint(runtime.backgroundColor()))
+  }
+
+  @Test func refreshFocusedSurfaceBackgroundDedupesUnchangedColor() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let notificationCount = LockIsolated(0)
+    let observer = NotificationCenter.default.addObserver(
+      forName: .ghosttyFocusedSurfaceBackgroundDidChange,
+      object: manager,
+      queue: nil
+    ) { _ in
+      notificationCount.withValue { $0 += 1 }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    // The resolved color (theme fallback, no focused surface) matches the
+    // stored value, so neither a manual refresh nor a selection change posts.
+    manager.refreshFocusedSurfaceBackground()
+    manager.handleCommand(.setSelectedWorktreeID(makeWorktree().id))
+
+    #expect(notificationCount.value == 0)
+    #expect(manager.selectedWorktreeID == makeWorktree().id)
+  }
+
+  @Test func switchingBetweenSelectionsDoesNotSpuriouslyPost() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let notificationCount = LockIsolated(0)
+    let observer = NotificationCenter.default.addObserver(
+      forName: .ghosttyFocusedSurfaceBackgroundDidChange,
+      object: manager,
+      queue: nil
+    ) { _ in
+      notificationCount.withValue { $0 += 1 }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    let first = makeWorktree(id: "/tmp/repo/wt-a").id
+    let second = makeWorktree(id: "/tmp/repo/wt-b").id
+    manager.handleCommand(.setSelectedWorktreeID(first))
+    manager.handleCommand(.setSelectedWorktreeID(second))
+    manager.handleCommand(.setSelectedWorktreeID(first))
+
+    #expect(notificationCount.value == 0)
+    #expect(manager.selectedWorktreeID == first)
+  }
 }
