@@ -279,7 +279,7 @@ struct AppShortcutsTests {
   @Test func categoryDisplayNames() {
     expectNoDifference(
       AppShortcutCategory.allCases.map(\.displayName),
-      ["General", "Sidebar", "Worktrees", "Worktree Selection", "Actions"]
+      ["General", "Sidebar", "Worktrees", "Worktree Selection", "Tab Selection", "Actions"]
     )
   }
 

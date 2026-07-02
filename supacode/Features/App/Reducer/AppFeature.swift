@@ -116,6 +116,7 @@ struct AppFeature {
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
+    case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
     case runScript
@@ -585,6 +586,19 @@ struct AppFeature {
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+        }
+
+      case .selectTerminalTabAtIndex(let tabNumber):
+        // Works regardless of first responder (menu key-equivalent), so ⌘-number
+        // switches tabs even when the sidebar holds focus. The index is clamped to
+        // the last tab inside the terminal state.
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.selectTabAtIndex(worktree, index: tabNumber))
         }
 
       case .splitTerminal(let direction):

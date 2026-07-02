@@ -271,6 +271,8 @@ final class WorktreeTerminalManager {
       terminal.tabManager.beginTabRename(tabID)
     case .selectTab(let worktree, let tabID):
       state(for: worktree).selectTab(tabID)
+    case .selectTabAtIndex(let worktree, let index):
+      stateIfExists(for: worktree.id)?.selectTabAtIndex(index)
     case .focusSurface(let worktree, let tabID, let surfaceID, let input):
       let terminal = state(for: worktree)
       terminal.selectTab(tabID)
@@ -329,8 +331,8 @@ final class WorktreeTerminalManager {
       state(for: worktree).performBindingActionOnFocusedSurface("end_search")
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .performBindingActionOnSurface, .selectTab, .focusSurface, .splitSurface, .destroyTab,
-      .destroySurface, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
+      .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
+      .destroyTab, .destroySurface, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
       .refreshTabBarVisibility, .beginTabRename:
       return false
     }
@@ -345,8 +347,8 @@ final class WorktreeTerminalManager {
       state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
-      .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .focusSurface,
-      .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
+      .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
+      .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
       .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
       return false
     }
@@ -375,8 +377,8 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .endSearch, .selectTab, .focusSurface, .splitSurface, .destroyTab,
-      .destroySurface, .beginTabRename:
+      .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
+      .splitSurface, .destroyTab, .destroySurface, .beginTabRename:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
   }

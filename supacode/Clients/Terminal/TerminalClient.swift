@@ -48,6 +48,7 @@ struct TerminalClient {
     case navigateSearchPrevious(Worktree)
     case endSearch(Worktree)
     case selectTab(Worktree, tabID: TerminalTabID)
+    case selectTabAtIndex(Worktree, index: Int)
     case focusSurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, input: String? = nil)
     case splitSurface(
       Worktree, tabID: TerminalTabID, surfaceID: UUID, direction: SplitDirection,

@@ -439,7 +439,10 @@ struct SupacodeApp: App {
     .commands {
       WorktreeCommands(store: store)
       SidebarCommands()
-      TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
+      Group {
+        TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
+        TerminalTabSelectionCommands(store: store)
+      }
       WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
         Button("Command Palette") {

@@ -121,7 +121,7 @@ extension AppFeature.Action {
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal,
-      .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
+      .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch,

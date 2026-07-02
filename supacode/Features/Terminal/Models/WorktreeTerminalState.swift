@@ -2488,6 +2488,13 @@ final class WorktreeTerminalState {
     }
   }
 
+  // Selects the 1-based Nth tab, clamped to the last tab, matching Ghostty's `goto_tab:N`.
+  func selectTabAtIndex(_ index: Int) {
+    let tabs = tabManager.tabs
+    guard index >= 1, !tabs.isEmpty else { return }
+    selectTab(tabs[min(index - 1, tabs.count - 1)].id)
+  }
+
   private func handleGotoTabRequest(_ target: ghostty_action_goto_tab_e) -> Bool {
     let tabs = tabManager.tabs
     guard !tabs.isEmpty else { return false }

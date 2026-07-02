@@ -121,7 +121,7 @@ struct ContentView: View {
       }
       store.send(.repositories(.revealSelectedWorktreeInSidebar))
     }
-    .overlay {
+    .background {
       CommandPaletteOverlayHost(
         store: store,
         repositoriesStore: repositoriesStore,
@@ -139,9 +139,9 @@ struct ContentView: View {
   }
 }
 
-/// Hosts the command palette overlay so the items build runs in this view's
-/// body instead of `ContentView.body`. Per-row sidebar mutations only
-/// invalidate this host, leaving ContentView's focused-value closures stable.
+/// Builds the palette items in this view's body instead of `ContentView.body`
+/// and drives the floating `CommandPalettePanel`. Per-row sidebar mutations
+/// only invalidate this host, leaving ContentView's focused-value closures stable.
 private struct CommandPaletteOverlayHost: View {
   let store: StoreOf<AppFeature>
   let repositoriesStore: StoreOf<RepositoriesFeature>
@@ -151,14 +151,16 @@ private struct CommandPaletteOverlayHost: View {
     #if DEBUG
       let _ = contentRenderLogger.info("CommandPaletteOverlayHost.body re-rendered")
     #endif
-    return CommandPaletteOverlayView(
-      store: store.scope(state: \.commandPalette, action: \.commandPalette),
+    let paletteStore = store.scope(state: \.commandPalette, action: \.commandPalette)
+    return CommandPalettePanelHost(
+      store: paletteStore,
       items: CommandPaletteFeature.commandPaletteItems(
         from: repositoriesStore.state,
         ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
         scripts: store.allScripts,
         runningScriptIDs: store.runningScriptIDs
-      )
+      ),
+      isPresented: paletteStore.isPresented
     )
   }
 }
