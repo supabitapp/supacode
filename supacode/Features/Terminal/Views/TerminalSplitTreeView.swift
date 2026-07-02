@@ -149,6 +149,11 @@ struct TerminalSplitTreeView: View {
           .overlay(alignment: .topTrailing) {
             SurfaceNotificationDotIndicator(state: surfaceState)
           }
+          .overlay(alignment: .topLeading) {
+            if isSplit {
+              PaneTitleBadge(title: paneTitle)
+            }
+          }
           .overlay(alignment: .top) {
             if isSplit {
               DragHandle(surfaceView: surfaceView)
@@ -175,6 +180,49 @@ struct TerminalSplitTreeView: View {
       }
     }
 
+    private var paneTitle: String {
+      let title = surfaceView.bridge.state.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      if !title.isEmpty {
+        return title
+      }
+
+      let pwd = surfaceView.bridge.state.pwd?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      if !pwd.isEmpty {
+        let lastPathComponent = URL(filePath: pwd).lastPathComponent
+        if !lastPathComponent.isEmpty {
+          return lastPathComponent
+        }
+        return pwd
+      }
+
+      return surfaceView.id.uuidString.prefix(8).uppercased()
+    }
+
+  }
+
+  struct PaneTitleBadge: View {
+    let title: String
+
+    var body: some View {
+      Text(title)
+        .font(.caption2)
+        .fontWeight(.medium)
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .foregroundStyle(.primary)
+        .frame(maxWidth: 220, alignment: .leading)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(.thinMaterial, in: Capsule())
+        .overlay {
+          Capsule()
+            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+        }
+        .padding(.top, 4)
+        .padding(.leading, 6)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
   }
 
   struct DragHandle: View {
