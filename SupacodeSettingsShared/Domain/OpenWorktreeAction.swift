@@ -289,12 +289,10 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         arguments: [Self.zedSSHURL(host: host, remotePath: remotePath)]
       )
     case .vscode, .vscodeInsiders, .vscodium, .cursor, .windsurf, .antigravity:
-      // The `<host>` token is the bare `user@host` (`sshDestination`): VS Code
-      // parses `ssh-remote+host:2222` as a literal hostname, so it has no inline
-      // port syntax (microsoft/vscode-remote-release #515). A non-default port
-      // can only come from `~/.ssh/config`, so a host carrying one is
-      // inexpressible here — return `nil`. The path is a literal positional argv
-      // (no shell, no URL), so it is NOT percent-encoded.
+      // VS Code parses `ssh-remote+host:2222` as a literal hostname, so it has no
+      // inline port syntax (microsoft/vscode-remote-release #515): a non-default
+      // port is inexpressible, so return `nil`. The path is a literal positional
+      // argv (no shell, no URL), so it is NOT percent-encoded.
       guard !host.hasNonDefaultPort else { return nil }
       guard let cliName = vscodeFamilyCLIName else { return nil }
       return RemoteOpenInvocation(
@@ -321,13 +319,14 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     }
   }
 
-  /// A human-facing reason this editor is disabled for `host`, or `nil` if none
-  /// applies. Non-`nil` only for the VS Code family on a non-default port (the
-  /// one case where remote is supported but the port can't be expressed inline).
-  /// Presentation-only — gating stays on `remoteOpenInvocation`.
-  public func remoteOpenDisabledReason(host: RemoteHost) -> String? {
-    guard vscodeFamilyCLIName != nil else { return nil }
-    guard host.hasNonDefaultPort else { return nil }
+  /// A human-facing reason this editor is disabled for `host` at `remotePath`, or
+  /// `nil` when it can open, so a reason structurally implies a disabled item.
+  /// Non-`nil` only for the VS Code family on a non-default port. Presentation
+  /// only; gating stays on `remoteOpenInvocation`.
+  public func remoteOpenDisabledReason(host: RemoteHost, remotePath: String) -> String? {
+    guard remoteOpenInvocation(host: host, remotePath: remotePath) == nil, vscodeFamilyCLIName != nil else {
+      return nil
+    }
     return "Opening \(title) over SSH needs the port in ~/.ssh/config"
   }
 

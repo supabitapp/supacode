@@ -32,7 +32,13 @@ struct RemoteHostTests {
     #expect(RemoteHost(alias: "host").sshURLAuthority == "host")
     #expect(RemoteHost(alias: "host", username: "me").sshURLAuthority == "me@host")
     #expect(RemoteHost(alias: "host", username: "me", port: 2222).sshURLAuthority == "me@host:2222")
-    #expect(RemoteHost(alias: "host", port: 22).sshURLAuthority == "host")
+  }
+
+  @Test func sshURLAuthorityKeepsExplicitDefaultPort() {
+    // An explicit port 22 is preserved (matching `sshOptionArguments`' `-p 22`);
+    // only a `nil` port is elided.
+    #expect(RemoteHost(alias: "host", port: 22).sshURLAuthority == "host:22")
+    #expect(RemoteHost(alias: "host").sshURLAuthority == "host")
   }
 
   @Test func sshURLAuthorityPercentEncodesSpecialCharacters() {

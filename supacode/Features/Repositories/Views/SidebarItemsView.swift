@@ -606,7 +606,7 @@ private struct SidebarItemContextMenu: View {
   }
 
   private var openActionSelection: OpenWorktreeAction {
-    @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
     return OpenWorktreeAction.fromSettingsID(
       repositorySettings.openActionID,
       defaultEditorID: settingsFile.global.defaultEditorID
@@ -837,7 +837,7 @@ private struct SidebarItemContextMenu: View {
     .disabled(worktree.host != nil)
   }
 
-  /// Whether `action` can open this row — local opens everywhere, remote only
+  /// Whether `action` can open this row: local opens everywhere, remote only
   /// via an editor whose Remote-SSH CLI can express the host.
   private func canOpen(_ action: OpenWorktreeAction) -> Bool {
     guard let host = worktree.host else { return true }
@@ -848,7 +848,9 @@ private struct SidebarItemContextMenu: View {
   /// non-default-port host explains the `~/.ssh/config` requirement; otherwise
   /// falls back to the plain action label.
   private func openActionHelp(for action: OpenWorktreeAction) -> String {
-    if let host = worktree.host, let reason = action.remoteOpenDisabledReason(host: host) {
+    if let host = worktree.host,
+      let reason = action.remoteOpenDisabledReason(host: host, remotePath: worktree.location.workingDirectoryPath)
+    {
       return reason
     }
     return "Open with \(action.labelTitle)"

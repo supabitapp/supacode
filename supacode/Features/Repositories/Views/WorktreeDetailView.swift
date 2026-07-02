@@ -140,7 +140,7 @@ struct WorktreeDetailView: View {
   }
 
   /// The editor the primary Open command would launch, or `nil` when it can't
-  /// open the (possibly remote) selection — which disables the Open command and
+  /// open the (possibly remote) selection, which disables the Open command and
   /// clears the menu-bar label.
   private static func resolvedOpenSelection(
     hasActiveWorktree: Bool,
@@ -383,6 +383,8 @@ struct WorktreeDetailView: View {
   // caches a toolbar Menu's item state, so without a fresh identity the per-item
   // `.disabled` gates go stale on a worktree switch. Keyed on `host` (drives
   // `canOpen` + the Finder gate) and `selection` (the primary item's state).
+  // `remoteOpenPath` is intentionally excluded: capability is path-independent,
+  // so keying on it would only force needless rebuilds.
   fileprivate struct OpenMenuIdentity: Hashable {
     let host: RemoteHost?
     let selection: OpenWorktreeAction
@@ -429,7 +431,7 @@ struct WorktreeDetailView: View {
       if case .folder = kind { true } else { false }
     }
 
-    /// Whether `action` can open this worktree — local everywhere, remote only
+    /// Whether `action` can open this worktree: local everywhere, remote only
     /// via an editor whose Remote-SSH CLI can express the host.
     func canOpen(_ action: OpenWorktreeAction) -> Bool {
       guard let remoteOpenHost else { return true }
@@ -440,7 +442,7 @@ struct WorktreeDetailView: View {
     /// host, or `nil` if none applies. Delegates to the shared capability model.
     func remoteOpenDisabledReason(_ action: OpenWorktreeAction) -> String? {
       guard let remoteOpenHost else { return nil }
-      return action.remoteOpenDisabledReason(host: remoteOpenHost)
+      return action.remoteOpenDisabledReason(host: remoteOpenHost, remotePath: remoteOpenPath)
     }
 
     var pullRequest: GithubPullRequest? {
@@ -469,7 +471,7 @@ struct WorktreeDetailView: View {
       )
     }
 
-    // NSMenu cache key for the Open menu — see `OpenMenuIdentity`.
+    // NSMenu cache key for the Open menu. See `OpenMenuIdentity`.
     var openMenuIdentity: OpenMenuIdentity {
       OpenMenuIdentity(host: remoteOpenHost, selection: openActionSelection)
     }
@@ -569,7 +571,7 @@ struct WorktreeDetailView: View {
       let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
       // The primary (single-click) action is the resolved selected editor
       // (Finder falls back to the first available editor). It is NOT substituted
-      // when it can't open the worktree — that would diverge from ⌘O / the menu
+      // when it can't open the worktree, which would diverge from ⌘O / the menu
       // bar; instead it's disabled and the user picks a capable editor from the
       // submenu.
       let primarySelection: OpenWorktreeAction? = resolved == .finder ? availableActions.first : resolved

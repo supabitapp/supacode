@@ -1266,13 +1266,16 @@ struct AppFeature {
     // local `$EDITOR` terminal path and Finder don't apply remotely. Gated here
     // too since a hotkey can reach the reducer without the UI.
     if let host = worktree.host {
+      let remotePath = worktree.location.workingDirectoryPath
       guard action != .editor,
-        action.remoteOpenInvocation(host: host, remotePath: worktree.location.workingDirectoryPath) != nil
+        action.remoteOpenInvocation(host: host, remotePath: remotePath) != nil
       else {
         appLogger.info(
-          "Ignoring open of remote worktree \(worktree.id) in \(action.settingsID) from \(source.rawValue)"
+          "Rejecting open of remote worktree \(worktree.id) in \(action.settingsID) from \(source.rawValue)"
         )
-        return .none
+        // A hotkey / deeplink can reach a non-capable action the UI gates out, so
+        // surface why nothing opened instead of failing silently.
+        return .send(.openWorktreeFailed(.remoteOpenUnsupported(action, host: host, remotePath: remotePath)))
       }
       analyticsClient.capture(
         "worktree_opened",

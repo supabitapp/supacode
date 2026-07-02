@@ -147,7 +147,7 @@ struct AppFeatureDefaultEditorTests {
     #expect(watcherCommands.value == [.setSelectedWorktreeID(worktree.id)])
   }
 
-  @Test(.dependencies) func openAndRevealAreNoOpsForRemoteWorktree() async {
+  @Test(.dependencies) func openAndRevealWithFinderReportUnsupportedForRemoteWorktree() async {
     let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),
       remotePath: "/home/me/proj",
@@ -172,11 +172,21 @@ struct AppFeatureDefaultEditorTests {
       AppFeature()
     }
 
-    // A remote path can't be reached by Finder / an editor, so both routes
-    // return before spawning any workspace effect: exhaustive sends with no
-    // trailing closure and a clean `finish()` prove the no-op.
+    // Finder can't reach a remote path, so both routes reject the open, but a
+    // hotkey / deeplink still gets an explanatory alert instead of silence.
+    let expectedAlert = AlertState<AppFeature.Alert> {
+      TextState("Can't reveal remote worktree")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("Reveal in Finder isn't available for remote SSH worktrees.")
+    }
     await store.send(.openWorktree(.finder))
+    await store.receive(\.openWorktreeFailed) { $0.alert = expectedAlert }
     await store.send(.revealInFinder)
+    await store.receive(\.openWorktreeFailed)
     await store.finish()
   }
 

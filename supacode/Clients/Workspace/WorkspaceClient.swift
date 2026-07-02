@@ -97,7 +97,7 @@ enum WorktreeOpener {
 
   /// Decides how to open `action` on `host` at `remotePath` for the resolved
   /// `appURL` (`nil` means not installed). Unlike `perform`, there is no local
-  /// fallback — the editor's Remote-SSH CLI is required. The reducer pre-gates
+  /// fallback: the editor's Remote-SSH CLI is required. The reducer pre-gates
   /// capability; the guards here are defensive.
   static func remoteLaunchPlan(
     action: OpenWorktreeAction,
@@ -315,6 +315,25 @@ extension OpenActionError {
       title: "Unable to open in \(action.title)",
       message: error.localizedDescription
     )
+  }
+
+  /// Why a remote open was rejected before launch, so a hotkey / deeplink that
+  /// bypasses the UI gates still tells the user why nothing opened.
+  static func remoteOpenUnsupported(
+    _ action: OpenWorktreeAction,
+    host: RemoteHost,
+    remotePath: String
+  ) -> OpenActionError {
+    if action == .finder {
+      return OpenActionError(
+        title: "Can't reveal remote worktree",
+        message: "Reveal in Finder isn't available for remote SSH worktrees."
+      )
+    }
+    let message =
+      action.remoteOpenDisabledReason(host: host, remotePath: remotePath)
+      ?? "\(action.title) doesn't support opening remote SSH worktrees."
+    return OpenActionError(title: "Can't open in \(action.title)", message: message)
   }
 
   /// A launch failure is almost always the CLI being un-runnable, so name the

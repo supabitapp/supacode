@@ -151,11 +151,13 @@ struct OpenWorktreeActionTests {
     }
   }
 
-  @Test func zedRemoteOpenInvocationElidesDefaultPortAndAbsentUser() {
+  @Test func zedRemoteOpenInvocationIncludesExplicitDefaultPortAndElidesAbsentUser() {
+    // An explicit port 22 is kept (matching `sshOptionArguments`' `-p 22`); only
+    // a `nil` port is elided.
     let host = RemoteHost(alias: "host", port: 22)
 
     let invocation = OpenWorktreeAction.zed.remoteOpenInvocation(host: host, remotePath: "/path")
-    #expect(invocation?.arguments == ["ssh://host/path"])
+    #expect(invocation?.arguments == ["ssh://host:22/path"])
   }
 
   @Test func zedRemoteOpenInvocationBracketsIPv6Host() {
@@ -285,7 +287,7 @@ struct OpenWorktreeActionTests {
   )
   func vscodeFamilyRemoteOpenInvocationRejectsNonDefaultPort(action: OpenWorktreeAction) {
     // `ssh-remote+host:2222` is parsed as a literal hostname, so a non-default
-    // port can't be expressed — the editor is treated as incapable for the host.
+    // port can't be expressed, so the editor is treated as incapable for the host.
     let invocation = action.remoteOpenInvocation(
       host: RemoteHost(alias: "host", port: 2222),
       remotePath: "/path"
@@ -304,6 +306,27 @@ struct OpenWorktreeActionTests {
     )
     #expect(defaultPort?.arguments == ["--remote", "ssh-remote+host", "/path"])
     #expect(nilPort?.arguments == ["--remote", "ssh-remote+host", "/path"])
+  }
+
+  @Test(
+    arguments: [
+      OpenWorktreeAction.vscode,
+      .vscodeInsiders,
+      .vscodium,
+      .cursor,
+      .windsurf,
+      .antigravity,
+    ]
+  )
+  func vscodeFamilyRemoteOpenInvocationPassesPathAndHostLiterally(action: OpenWorktreeAction) {
+    // The VS Code `--remote` form passes the path and `ssh-remote+<dest>` as raw
+    // positional argv (no shell, no URL), so a space stays literal, the opposite
+    // of Zed's percent-encoded `ssh://` URL. Guards the encode/don't-encode split.
+    let invocation = action.remoteOpenInvocation(
+      host: RemoteHost(alias: "ho st", username: "a b"),
+      remotePath: "/home/me/my project/src"
+    )
+    #expect(invocation?.arguments == ["--remote", "ssh-remote+a b@ho st", "/home/me/my project/src"])
   }
 
   @Test func zedRemoteOpenInvocationStillIncludesNonDefaultPort() {
@@ -328,7 +351,7 @@ struct OpenWorktreeActionTests {
     ]
   )
   func vscodeFamilyHasDisabledReasonForNonDefaultPort(action: OpenWorktreeAction) {
-    let reason = action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 2222))
+    let reason = action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 2222), remotePath: "/path")
     #expect(reason == "Opening \(action.title) over SSH needs the port in ~/.ssh/config")
   }
 
@@ -343,14 +366,14 @@ struct OpenWorktreeActionTests {
     ]
   )
   func vscodeFamilyHasNoDisabledReasonForDefaultPort(action: OpenWorktreeAction) {
-    #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 22)) == nil)
-    #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host")) == nil)
+    #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 22), remotePath: "/path") == nil)
+    #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host"), remotePath: "/path") == nil)
   }
 
   @Test func nonVSCodeEditorsHaveNoDisabledReasonEvenOnNonDefaultPort() {
     // A non-remote / non-VS-Code editor must not get a misleading port reason.
     for action in [OpenWorktreeAction.intellij, .zed, .finder, .terminal] {
-      #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 2222)) == nil)
+      #expect(action.remoteOpenDisabledReason(host: RemoteHost(alias: "host", port: 2222), remotePath: "/path") == nil)
     }
   }
 
@@ -429,7 +452,7 @@ struct OpenWorktreeActionTests {
     var errors: [OpenActionError] = []
 
     // `.intellij` has a `nil` remoteOpenInvocation, so `performRemote` rejects
-    // it before any Process / NSWorkspace work — a deterministic pure branch.
+    // it before any Process / NSWorkspace work: a deterministic pure branch.
     WorktreeOpener.performRemote(
       action: .intellij,
       worktree: Self.makeRemoteWorktree(),

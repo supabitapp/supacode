@@ -62,7 +62,7 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
   /// The `user@host` (or bare `host`) token passed to `ssh`. The host stays bare
   /// even for an IPv6 literal (the ssh CLI wants `user@::1`, not the bracketed
   /// form). A literal argv destination (e.g. VS Code's `ssh-remote+<…>`), NOT a
-  /// URL — must stay unencoded. The URL-bound counterpart is `sshURLAuthority`.
+  /// URL, so it must stay unencoded. The URL-bound counterpart is `sshURLAuthority`.
   public var sshDestination: String {
     if let username, !username.isEmpty {
       return "\(username)@\(alias)"
@@ -90,12 +90,11 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     return "\(bracketedDestination):\(port)"
   }
 
-  /// Percent-encoded authority for an `ssh://` URL (e.g. Zed's Remote-SSH CLI):
-  /// username only when set, port only when non-default, IPv6 host bracketed.
-  /// Mirrors `displayAuthority`'s elision but encodes userinfo / host so a
-  /// special character can't produce a malformed URL. Zed percent-decodes before
-  /// invoking ssh, so encoding here is correct — unlike the bare argv
-  /// `sshDestination`, which must stay unencoded.
+  /// Percent-encoded `[user@]host[:port]` authority for an `ssh://` URL (Zed's
+  /// Remote-SSH CLI). Includes any explicit port (even 22) to match
+  /// `sshOptionArguments`' `-p`, brackets an IPv6 host, and encodes userinfo /
+  /// host so a special character can't forge a malformed URL. Zed percent-decodes
+  /// before invoking ssh, so encoding here is correct.
   public var sshURLAuthority: String {
     // Bracket an IPv6 literal BEFORE encoding: `.urlHostAllowed` keeps `[`, `]`,
     // `:`, so `[::1]` round-trips while a hostname's special chars still encode.
@@ -108,7 +107,7 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     } else {
       destination = encodedHost
     }
-    guard hasNonDefaultPort, let port else { return destination }
+    guard let port else { return destination }
     return "\(destination):\(port)"
   }
 
