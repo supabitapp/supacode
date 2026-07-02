@@ -13,6 +13,7 @@ nonisolated enum AgentIntegrationFactory {
     case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .kimi: kimi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .opencode: opencode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
@@ -53,6 +54,24 @@ nonisolated enum AgentIntegrationFactory {
           uninstall: { try installer.uninstallAllHooks() }
         ),
         skillComponent(agent: .codex, installer: skill),
+      ]
+    )
+  }
+
+  private static func kimi(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = KimiSettingsInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    let skill = CLISkillInstaller()
+    return AgentIntegration(
+      agent: .kimi,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.installAllHooks() },
+          uninstall: { try installer.uninstallAllHooks() }
+        ),
+        skillComponent(agent: .kimi, installer: skill),
       ]
     )
   }

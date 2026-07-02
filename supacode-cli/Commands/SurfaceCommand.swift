@@ -30,10 +30,16 @@ extension SurfaceCommand {
     @Flag(name: [.short, .long], help: "Print only the focused surface.")
     var focused = false
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let tID = try resolveTabID(tab)
-      let items = try QueryDispatcher.query(resource: "surfaces", params: ["worktreeID": wID, "tabID": tID])
+      let items = try QueryDispatcher.query(
+        resource: "surfaces",
+        params: ["worktreeID": wID, "tabID": tID],
+        timeoutSeconds: timeoutOption.timeout
+      )
       for item in items {
         let isFocused = !(item["focused"] ?? "").isEmpty
         guard !focused || isFocused else { continue }
@@ -57,12 +63,15 @@ extension SurfaceCommand {
     @Option(name: [.short, .long], help: "Command to send to the surface.")
     var input: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let tID = try resolveTabID(tab)
       let sID = try resolveSurfaceID(surface)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.surfaceFocus(worktreeID: wID, tabID: tID, surfaceID: sID, input: input)
+        deeplinkURL: DeeplinkURLBuilder.surfaceFocus(worktreeID: wID, tabID: tID, surfaceID: sID, input: input),
+        timeoutSeconds: timeoutOption.timeout
       )
     }
   }
@@ -88,6 +97,8 @@ extension SurfaceCommand {
     @Option(name: [.short, .customLong("id")], help: "UUID for the new surface.")
     var newID: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let tID = try resolveTabID(tab)
@@ -99,7 +110,8 @@ extension SurfaceCommand {
           tabID: tID,
           surfaceID: sID,
           options: .init(direction: direction?.rawValue, input: input, id: resolvedID)
-        )
+        ),
+        timeoutSeconds: timeoutOption.timeout
       )
       print(resolvedID)
     }
@@ -117,12 +129,15 @@ extension SurfaceCommand {
     @Option(name: [.short, .long], help: "Surface ID. Defaults to $SUPACODE_SURFACE_ID.")
     var surface: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let tID = try resolveTabID(tab)
       let sID = try resolveSurfaceID(surface)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.surfaceClose(worktreeID: wID, tabID: tID, surfaceID: sID)
+        deeplinkURL: DeeplinkURLBuilder.surfaceClose(worktreeID: wID, tabID: tID, surfaceID: sID),
+        timeoutSeconds: timeoutOption.timeout
       )
     }
   }

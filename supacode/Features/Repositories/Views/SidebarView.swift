@@ -51,6 +51,13 @@ struct SidebarView: View {
             Label("Remote Repository or Folder…", systemImage: "wifi")
           }
           .help("Add a repository or folder on an SSH host")
+          Divider()
+          Button {
+            store.send(.requestCloneRepository)
+          } label: {
+            Label("Clone Repository…", systemImage: "square.and.arrow.down.on.square")
+          }
+          .help("Clone a remote repository into a local folder")
         } label: {
           Label {
             Text("Add…")
@@ -67,6 +74,9 @@ struct SidebarView: View {
     }
     .sheet(item: $store.scope(state: \.remoteConnectionForm, action: \.remoteConnectionForm)) { formStore in
       RemoteConnectionFormView(store: formStore)
+    }
+    .sheet(item: $store.scope(state: \.cloneRepositoryForm, action: \.cloneRepositoryForm)) { formStore in
+      CloneRepositoryFormView(store: formStore)
     }
     .focusedSceneAction(
       \.confirmWorktreeAction,

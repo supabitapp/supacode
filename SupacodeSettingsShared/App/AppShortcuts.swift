@@ -12,7 +12,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectNextWorktree, selectPreviousWorktree
   case worktreeHistoryBack, worktreeHistoryForward
   case selectWorktree(Int)
-  case openWorktree, revealInFinder, openRepository, addRemoteRepository, openPullRequest, copyPath
+  case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
   case runScript, stopRunScript
   case jumpToLatestUnread
 
@@ -56,6 +56,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .revealInFinder: "revealInFinder"
     case .openRepository: "openRepository"
     case .addRemoteRepository: "addRemoteRepository"
+    case .cloneRepository: "cloneRepository"
     case .openPullRequest: "openPullRequest"
     case .copyPath: "copyPath"
     case .runScript: "runScript"
@@ -86,6 +87,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "revealInFinder": .revealInFinder,
     "openRepository": .openRepository,
     "addRemoteRepository": .addRemoteRepository,
+    "cloneRepository": .cloneRepository,
     "openPullRequest": .openPullRequest,
     "copyPath": .copyPath,
     "runScript": .runScript,
@@ -128,6 +130,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .revealInFinder: "Reveal in Finder"
     case .openRepository: "Open Repository or Folder"
     case .addRemoteRepository: "Add Remote Repository or Folder"
+    case .cloneRepository: "Clone Repository to Local Folder"
     case .openPullRequest: "Open Pull Request"
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
@@ -147,11 +150,15 @@ public struct AppShortcut: Identifiable {
   public let modifiers: EventModifiers
   private let keyCode: UInt16?
   private let ghosttyKeyName: String
+  // Whether the binding is active with no user override; `false` ships the
+  // shortcut as a rebindable option that stays off until the user enables it.
+  public let isEnabledByDefault: Bool
 
-  public init(id: AppShortcutID, key: Character, modifiers: EventModifiers) {
+  public init(id: AppShortcutID, key: Character, modifiers: EventModifiers, isEnabledByDefault: Bool = true) {
     self.id = id
     self.keyEquivalent = KeyEquivalent(key)
     self.modifiers = modifiers
+    self.isEnabledByDefault = isEnabledByDefault
     let code = AppShortcutOverride.keyCode(forDisplayedKeyEquivalent: key) ?? AppShortcutOverride.keyCode(for: key)
     self.keyCode = code
     if let code {
@@ -162,12 +169,19 @@ public struct AppShortcut: Identifiable {
     }
   }
 
-  public init(id: AppShortcutID, keyEquivalent: KeyEquivalent, ghosttyKeyName: String, modifiers: EventModifiers) {
+  public init(
+    id: AppShortcutID,
+    keyEquivalent: KeyEquivalent,
+    ghosttyKeyName: String,
+    modifiers: EventModifiers,
+    isEnabledByDefault: Bool = true
+  ) {
     self.id = id
     self.keyEquivalent = keyEquivalent
     self.modifiers = modifiers
     self.keyCode = nil
     self.ghosttyKeyName = ghosttyKeyName
+    self.isEnabledByDefault = isEnabledByDefault
   }
 
   public var displayName: String { id.displayName }
@@ -197,12 +211,20 @@ public struct AppShortcut: Identifiable {
     return keyboardShortcut.displaySymbols
   }
 
-  // Resolves the effective shortcut considering user overrides.
-  // Returns `nil` when the user has disabled this shortcut.
+  // Resolves the effective shortcut considering user overrides. Returns `nil`
+  // when the user disabled it, or when it is disabled by default and unset.
   public func effective(from overrides: [AppShortcutID: AppShortcutOverride]) -> AppShortcut? {
-    guard let override = overrides[id] else { return self }
+    guard let override = overrides[id] else { return isEnabledByDefault ? self : nil }
     guard override.isEnabled else { return nil }
     return AppShortcut(id: id, override: override)
+  }
+
+  // The override that binds this shortcut's default key, enabled. Used to turn on
+  // a disabled-by-default shortcut from the settings toggle. nil for special keys
+  // with no resolvable key code.
+  public var enabledOverride: AppShortcutOverride? {
+    guard let keyCode else { return nil }
+    return AppShortcutOverride(keyCode: keyCode, modifiers: rawModifierFlags, isEnabled: true)
   }
 
   private init(id: AppShortcutID, override: AppShortcutOverride) {
@@ -211,6 +233,7 @@ public struct AppShortcut: Identifiable {
     self.modifiers = override.eventModifiers
     self.keyCode = override.keyCode
     self.ghosttyKeyName = AppShortcutOverride.resolvedGhosttyKeyName(for: override.keyCode)
+    self.isEnabledByDefault = true
   }
 
   private var ghosttyModifierParts: [String] {
@@ -326,6 +349,9 @@ public enum AppShortcuts {
   public static let addRemoteRepository = AppShortcut(
     id: .addRemoteRepository, key: "k", modifiers: [.command, .shift]
   )
+  public static let cloneRepository = AppShortcut(
+    id: .cloneRepository, key: "o", modifiers: [.command, .option, .shift], isEnabledByDefault: false
+  )
   public static let openPullRequest = AppShortcut(id: .openPullRequest, key: "g", modifiers: [.command, .control])
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
@@ -379,8 +405,8 @@ public enum AppShortcuts {
     AppShortcutGroup(
       category: .actions,
       shortcuts: [
-        openWorktree, revealInFinder, openRepository, addRemoteRepository, openPullRequest,
-        copyPath, runScript, stopRunScript, jumpToLatestUnread,
+        openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
+        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread,
       ]
     ),
   ]
@@ -388,6 +414,14 @@ public enum AppShortcuts {
   // MARK: - All shortcuts.
 
   public static let all: [AppShortcut] = groups.flatMap(\.shortcuts)
+
+  // The enabled override binding a disabled-by-default shortcut to its default
+  // key, so the settings toggle can turn it on. nil for an enabled-by-default or
+  // unknown shortcut, which needs no override to be active.
+  public static func defaultEnabledOverride(for id: AppShortcutID) -> AppShortcutOverride? {
+    guard let shortcut = all.first(where: { $0.id == id }), !shortcut.isEnabledByDefault else { return nil }
+    return shortcut.enabledOverride
+  }
 
   // MARK: - Tab selection Ghostty bindings.
 

@@ -434,15 +434,17 @@ public struct SettingsFeature {
 
       case .toggleShortcutEnabled(let id, let enabled):
         if enabled {
-          // Re-enable: if override exists with a real binding, just flip the flag.
-          // If it was a disabled sentinel, remove the override entirely (restore default).
-          if var existing = state.shortcutOverrides[id] {
+          // A real binding just flips its enabled flag. A sentinel (or no override)
+          // carries no binding, so restore the default: a disabled-by-default
+          // shortcut needs its default key bound, an enabled-by-default one drops
+          // the sentinel.
+          if var existing = state.shortcutOverrides[id], existing.keyCode != 0 || !existing.modifiers.isEmpty {
             existing.isEnabled = true
-            if existing.keyCode == 0, existing.modifiers.isEmpty {
-              state.shortcutOverrides.removeValue(forKey: id)
-            } else {
-              state.shortcutOverrides[id] = existing
-            }
+            state.shortcutOverrides[id] = existing
+          } else if let override = AppShortcuts.defaultEnabledOverride(for: id) {
+            state.shortcutOverrides[id] = override
+          } else {
+            state.shortcutOverrides.removeValue(forKey: id)
           }
         } else {
           if var existing = state.shortcutOverrides[id] {

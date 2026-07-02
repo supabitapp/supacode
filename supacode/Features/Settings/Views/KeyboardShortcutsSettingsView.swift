@@ -148,7 +148,7 @@ private struct NameCell: View {
         .padding(.vertical, 4)
     case .shortcut(let shortcut):
       Text(shortcut.displayName)
-        .foregroundStyle(overrides[shortcut.id]?.isEnabled ?? true ? .primary : .secondary)
+        .foregroundStyle(overrides[shortcut.id]?.isEnabled ?? shortcut.isEnabledByDefault ? .primary : .secondary)
         .padding(.vertical, 4)
     }
   }
@@ -168,7 +168,7 @@ private struct HotkeyCell: View {
       HotkeyCellView(
         shortcut: shortcut,
         override: store.shortcutOverrides[shortcut.id],
-        isEnabled: store.shortcutOverrides[shortcut.id]?.isEnabled ?? true,
+        isEnabled: store.shortcutOverrides[shortcut.id]?.isEnabled ?? shortcut.isEnabledByDefault,
         warning: warning[shortcut.id],
         onRecorded: { newOverride in
           store.send(.updateShortcut(id: shortcut.id, override: newOverride))
@@ -219,7 +219,7 @@ private struct EnabledCell: View {
       Toggle(
         "",
         isOn: Binding(
-          get: { store.shortcutOverrides[shortcut.id]?.isEnabled ?? true },
+          get: { store.shortcutOverrides[shortcut.id]?.isEnabled ?? shortcut.isEnabledByDefault },
           set: { store.send(.toggleShortcutEnabled(id: shortcut.id, enabled: $0)) }
         )
       )
@@ -231,7 +231,7 @@ private struct EnabledCell: View {
 
   private func groupCheckboxState(for group: AppShortcutGroup) -> CheckboxState {
     let overrides = store.shortcutOverrides
-    let enabledCount = group.shortcuts.filter { overrides[$0.id]?.isEnabled ?? true }.count
+    let enabledCount = group.shortcuts.filter { overrides[$0.id]?.isEnabled ?? $0.isEnabledByDefault }.count
     if enabledCount == group.shortcuts.count { return .checked }
     if enabledCount == 0 { return .unchecked }
     return .mixed

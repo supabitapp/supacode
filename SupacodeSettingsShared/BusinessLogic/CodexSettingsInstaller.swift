@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import os
 
 private nonisolated let codexInstallerLogger = SupaLogger("Settings")
 
@@ -217,28 +218,63 @@ nonisolated struct CodexSettingsInstaller {
       .appendingPathComponent("hooks.json", isDirectory: false)
   }
 
+  /// A misconfigured login shell (e.g. an rc blocking on stdin) can hang the
+  /// child forever; terminate past this so the Install button can't spin.
+  private static let enableHooksTimeoutSeconds: UInt64 = 30
+
+  /// Grace after SIGTERM before the watchdog escalates to SIGKILL.
+  private static let terminateGraceSeconds: UInt64 = 2
+
+  /// Ceiling for the stderr drain. Covers the full kill sequence plus a tail for
+  /// SIGKILL to close the pipe, so an rc grandchild that inherits the pipe can't
+  /// hang the drain past the timeout (#504).
+  private static let drainDeadlineSeconds: UInt64 = enableHooksTimeoutSeconds + terminateGraceSeconds + 3
+
   static func runEnableHooksCommand() async throws -> CommandResult {
     let process = Process()
-    process.executableURL = loginShellURL()
+    // Source the user's rc so a version-manager Codex on the interactive PATH is found (#504).
     // `codex_hooks` was renamed to `hooks` in newer Codex versions; the legacy name is deprecated.
-    process.arguments = ["-l", "-c", "codex features enable hooks"]
+    let (shell, command) = ShellClient.loginShellCommandInvocation(
+      "codex features enable hooks", userShell: loginShellURL())
+    process.executableURL = shell
+    process.arguments = ["-l", "-c", command]
     let errorPipe = Pipe()
     process.standardError = errorPipe
-    let status = try await withCheckedThrowingContinuation { continuation in
-      process.terminationHandler = { process in
-        continuation.resume(returning: process.terminationStatus)
-      }
-      do {
-        try process.run()
-      } catch {
-        continuation.resume(throwing: error)
-      }
+    try process.run()
+
+    // Set only when the watchdog actually fires, so a genuine crash (SIGSEGV,
+    // SIGPIPE, OOM) isn't misreported as a timeout.
+    let didTimeOut = OSAllocatedUnfairLock(initialState: false)
+    let watchdog = Task { [process] in
+      try? await Task.sleep(nanoseconds: enableHooksTimeoutSeconds * 1_000_000_000)
+      guard process.isRunning else { return }
+      codexInstallerLogger.warning(
+        "codex features enable hooks exceeded \(enableHooksTimeoutSeconds)s; terminating.")
+      didTimeOut.withLock { $0 = true }
+      process.terminate()
+      // Escalate to SIGKILL if the probe ignores SIGTERM, so its pipe write end
+      // closes and the drain below can't hang past the timeout.
+      try? await Task.sleep(nanoseconds: terminateGraceSeconds * 1_000_000_000)
+      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
-    let standardError =
-      String(bytes: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    defer { watchdog.cancel() }
+
+    // Drain stderr concurrently so a verbose child can't fill the ~64KB pipe and
+    // deadlock on write; stdout is inherited (unpiped).
+    let standardErrorData = await ShellClient.readToEndOrDeadline(
+      from: errorPipe.fileHandleForReading, deadlineSeconds: drainDeadlineSeconds)
+    process.waitUntilExit()
+
+    // Gate on the watchdog flag rather than the signal reason: a SIGTERM-trapping
+    // CLI that exits cleanly under the grace still counts as our timeout.
+    if didTimeOut.withLock({ $0 }) {
+      throw CodexSettingsInstallerError.enableHooksTimedOut
+    }
+    let status = process.terminationStatus
     if status == 127 {
       throw CodexSettingsInstallerError.codexUnavailable
     }
+    let standardError = String(data: standardErrorData, encoding: .utf8) ?? ""
     return .init(status: status, standardError: standardError.trimmingCharacters(in: .whitespacesAndNewlines))
   }
 
@@ -286,6 +322,7 @@ nonisolated struct CodexSettingsInstaller {
 
 nonisolated enum CodexSettingsInstallerError: Error, Equatable, LocalizedError {
   case codexUnavailable
+  case enableHooksTimedOut
   case enableHooksFailed(String)
   case invalidEventHooks(String)
   case invalidHooksObject
@@ -296,6 +333,8 @@ nonisolated enum CodexSettingsInstallerError: Error, Equatable, LocalizedError {
     switch self {
     case .codexUnavailable:
       "Codex must be installed and available in your login shell before Supacode can install hooks."
+    case .enableHooksTimedOut:
+      "Codex did not respond while enabling hooks. Check that your shell startup files aren't blocking, then retry."
     case .enableHooksFailed(let details):
       details.isEmpty
         ? "Supacode could not enable the Codex hooks feature."
