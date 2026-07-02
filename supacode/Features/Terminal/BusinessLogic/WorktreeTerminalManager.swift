@@ -108,7 +108,7 @@ final class WorktreeTerminalManager {
       "tabProjectionChanged(\(worktreeID), tab: \(projection.tabID))"
     case .tabProgressDisplayChanged(let worktreeID, let tabID, _):
       "tabProgressDisplayChanged(\(worktreeID), tab: \(tabID))"
-    case .notificationReceived(let worktreeID, let surfaceID, _, _):
+    case .notificationReceived(let worktreeID, let surfaceID, _, _, _):
       "notificationReceived(\(worktreeID), surface: \(surfaceID))"
     default: String(describing: event)
     }
@@ -481,13 +481,14 @@ final class WorktreeTerminalManager {
     state.onAgentHookEvent = { [weak self] event in
       self?.dispatchHookEvent(event)
     }
-    state.onNotificationReceived = { [weak self] surfaceID, title, body in
+    state.onNotificationReceived = { [weak self] surfaceID, title, body, isViewed in
       self?.emit(
         .notificationReceived(
           worktreeID: worktree.id,
           surfaceID: surfaceID,
           title: title,
-          body: body
+          body: body,
+          isViewed: isViewed
         )
       )
       self?.emitProjection(for: worktree.id)

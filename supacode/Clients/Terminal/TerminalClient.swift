@@ -62,7 +62,8 @@ struct TerminalClient {
   }
 
   enum Event: Equatable {
-    case notificationReceived(worktreeID: Worktree.ID, surfaceID: UUID, title: String, body: String)
+    case notificationReceived(
+      worktreeID: Worktree.ID, surfaceID: UUID, title: String, body: String, isViewed: Bool)
     case notificationIndicatorChanged(count: Int)
     case tabCreated(worktreeID: Worktree.ID)
     case tabClosed(worktreeID: Worktree.ID)

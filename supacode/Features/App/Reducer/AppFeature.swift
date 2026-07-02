@@ -1190,11 +1190,13 @@ struct AppFeature {
       case .commandPalette:
         return .none
 
-      case .terminalEvent(.notificationReceived(let worktreeID, let surfaceID, let title, let body)):
+      case .terminalEvent(
+        .notificationReceived(let worktreeID, let surfaceID, let title, let body, let isViewed)):
         var effects: [Effect<Action>] = [
           .send(.repositories(.worktreeNotificationReceived(worktreeID)))
         ]
-        if state.settings.systemNotificationsEnabled {
+        let isMuted = isViewed && state.settings.muteNotificationsForActiveSurface
+        if state.settings.systemNotificationsEnabled && !isMuted {
           let deeplinkURL = surfaceDeeplinkURL(worktreeID: worktreeID, surfaceID: surfaceID)
           effects.append(
             .run { _ in
@@ -1202,7 +1204,7 @@ struct AppFeature {
             }
           )
         }
-        if state.settings.notificationSoundEnabled && !state.settings.systemNotificationsEnabled {
+        if state.settings.notificationSoundEnabled && !state.settings.systemNotificationsEnabled && !isMuted {
           effects.append(
             .run { _ in
               await notificationSoundClient.play()

@@ -141,7 +141,8 @@ struct AppFeatureSystemNotificationTests {
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
           title: "Done",
-          body: "Build succeeded"
+          body: "Build succeeded",
+          isViewed: false
         )
       )
     )
@@ -150,6 +151,146 @@ struct AppFeatureSystemNotificationTests {
     #expect(sends.value.count == 1)
     #expect(sends.value.first?.0 == "Done")
     #expect(sends.value.first?.1 == "Build succeeded")
+  }
+
+  @Test(.dependencies) func notificationReceivedSkipsSystemNotificationWhenSurfaceIsViewed() async {
+    var globalSettings = GlobalSettings.default
+    globalSettings.systemNotificationsEnabled = true
+    let sends = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        settings: SettingsFeature.State(settings: globalSettings)
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.systemNotificationClient.send = { _, _, _ in
+        sends.withValue { $0 += 1 }
+      }
+      $0.terminalClient.tabID = { _, _ in nil }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .notificationReceived(
+          worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
+          title: "Done",
+          body: "Build succeeded",
+          isViewed: true
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(sends.value == 0)
+  }
+
+  @Test(.dependencies) func notificationReceivedSendsSystemNotificationForViewedSurfaceWhenMuteDisabled()
+    async
+  {
+    var globalSettings = GlobalSettings.default
+    globalSettings.systemNotificationsEnabled = true
+    globalSettings.muteNotificationsForActiveSurface = false
+    let sends = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        settings: SettingsFeature.State(settings: globalSettings)
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.systemNotificationClient.send = { _, _, _ in
+        sends.withValue { $0 += 1 }
+      }
+      $0.terminalClient.tabID = { _, _ in nil }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .notificationReceived(
+          worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
+          title: "Done",
+          body: "Build succeeded",
+          isViewed: true
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(sends.value == 1)
+  }
+
+  @Test(.dependencies) func notificationReceivedPlaysLocalSoundForViewedSurfaceWhenMuteDisabled() async {
+    var globalSettings = GlobalSettings.default
+    globalSettings.systemNotificationsEnabled = false
+    globalSettings.notificationSoundEnabled = true
+    globalSettings.muteNotificationsForActiveSurface = false
+    let plays = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        settings: SettingsFeature.State(settings: globalSettings)
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.notificationSoundClient.play = {
+        plays.withValue { $0 += 1 }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .notificationReceived(
+          worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
+          title: "Done",
+          body: "Build succeeded",
+          isViewed: true
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(plays.value == 1)
+  }
+
+  @Test(.dependencies) func notificationReceivedSkipsLocalSoundWhenSurfaceIsViewed() async {
+    var globalSettings = GlobalSettings.default
+    globalSettings.systemNotificationsEnabled = false
+    globalSettings.notificationSoundEnabled = true
+    let plays = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        settings: SettingsFeature.State(settings: globalSettings)
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.notificationSoundClient.play = {
+        plays.withValue { $0 += 1 }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .notificationReceived(
+          worktreeID: "/tmp/repo/wt-1",
+          surfaceID: UUID(),
+          title: "Done",
+          body: "Build succeeded",
+          isViewed: true
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(plays.value == 0)
   }
 
   @Test(.dependencies) func notificationReceivedSkipsLocalSoundWhenSystemNotificationsEnabled() async {
@@ -178,7 +319,8 @@ struct AppFeatureSystemNotificationTests {
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
           title: "Done",
-          body: "Build succeeded"
+          body: "Build succeeded",
+          isViewed: false
         )
       )
     )
@@ -215,7 +357,8 @@ struct AppFeatureSystemNotificationTests {
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
           title: "Done",
-          body: "Build succeeded"
+          body: "Build succeeded",
+          isViewed: false
         )
       )
     )

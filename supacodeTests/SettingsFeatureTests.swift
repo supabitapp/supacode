@@ -1028,6 +1028,20 @@ struct SettingsFeatureTests {
     return try JSONSerialization.data(withJSONObject: dict)
   }
 
+  @Test func hasActiveNotificationChannelReflectsDeliveryToggles() {
+    #expect(!Self.deliveryState(system: false, sound: false).hasActiveNotificationChannel)
+    #expect(Self.deliveryState(system: true, sound: false).hasActiveNotificationChannel)
+    #expect(Self.deliveryState(system: false, sound: true).hasActiveNotificationChannel)
+    #expect(Self.deliveryState(system: true, sound: true).hasActiveNotificationChannel)
+  }
+
+  private static func deliveryState(system: Bool, sound: Bool) -> SettingsFeature.State {
+    var settings = GlobalSettings.default
+    settings.systemNotificationsEnabled = system
+    settings.notificationSoundEnabled = sound
+    return SettingsFeature.State(settings: settings)
+  }
+
   private func makeGlobalSettingsJSONWithoutPolicy() throws -> Data {
     let base = GlobalSettings.default
     let encoded = try JSONEncoder().encode(base)

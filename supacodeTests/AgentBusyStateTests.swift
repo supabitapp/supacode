@@ -128,7 +128,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       // Hook-first: our expanded custom notification fires.
       fixture.state.appendHookNotification(title: "Done", body: "Expanded detail", surfaceID: fixture.surface.id)
@@ -150,7 +150,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       // Custom notification fires, then the suppression window fully elapses.
       fixture.state.appendHookNotification(title: "Done", body: "Expanded detail", surfaceID: fixture.surface.id)
@@ -178,7 +178,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       // OSC-9-first: the agent's summary arrives and is held.
       fixture.surface.bridge.onDesktopNotification?("Done", "summary")
@@ -206,7 +206,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
 
       fixture.surface.bridge.onDesktopNotification?("Agent", "standalone")
       await Task.megaYield()
@@ -227,7 +227,7 @@ struct AgentBusyStateTests {
     } operation: {
       let fixture = makeStateWithSurface()
       var systemCount = 0
-      fixture.state.onNotificationReceived = { _, _, _ in systemCount += 1 }
+      fixture.state.onNotificationReceived = { _, _, _, _ in systemCount += 1 }
       // No prior custom notification, so the OSC 9 is held (not suppressed).
       fixture.surface.bridge.onDesktopNotification?("Agent", "held")
       await Task.megaYield()

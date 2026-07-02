@@ -166,7 +166,7 @@ final class WorktreeTerminalState {
   }
 
   var isSelected: () -> Bool = { false }
-  var onNotificationReceived: ((UUID, String, String) -> Void)?
+  var onNotificationReceived: ((UUID, String, String, Bool) -> Void)?
   var onNotificationIndicatorChanged: (() -> Void)?
   var onTabCreated: (() -> Void)?
   var onTabClosed: (() -> Void)?
@@ -1994,15 +1994,15 @@ final class WorktreeTerminalState {
     let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
+    let isViewed = isViewedSurface(surfaceID)
     if notificationsEnabled {
-      let isRead = isSelected() && isFocusedSurface(surfaceID)
       notifications.insert(
         WorktreeTerminalNotification(
           surfaceID: surfaceID,
           title: trimmedTitle,
           body: trimmedBody,
           createdAt: now,
-          isRead: isRead
+          isRead: isViewed
         ),
         at: 0
       )
@@ -2012,7 +2012,7 @@ final class WorktreeTerminalState {
       }
       emitNotificationStateChanged()
     }
-    onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody)
+    onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody, isViewed)
   }
 
   /// Detaches one surface from the local bookkeeping. The zmx session is NOT
@@ -2083,6 +2083,11 @@ final class WorktreeTerminalState {
       return false
     }
     return focusedSurfaceIdByTab[selectedTabId] == surfaceID
+  }
+
+  private func isViewedSurface(_ surfaceID: UUID) -> Bool {
+    isSelected() && isFocusedSurface(surfaceID)
+      && lastWindowIsKey == true && lastWindowIsVisible == true
   }
 
   /// True for a blocking-script tab whose script has already finished.

@@ -49,6 +49,7 @@ public struct SettingsFeature {
     public var inAppNotificationsEnabled: Bool
     public var notificationSoundEnabled: Bool
     public var systemNotificationsEnabled: Bool
+    public var muteNotificationsForActiveSurface: Bool
     public var moveNotifiedWorktreeToTop: Bool
     public var analyticsEnabled: Bool
     public var crashReportsEnabled: Bool
@@ -81,6 +82,12 @@ public struct SettingsFeature {
     public var repositorySettings: RepositorySettingsFeature.State?
     @Presents public var alert: AlertState<Alert>?
 
+    /// True when at least one notification delivery channel (macOS banner or
+    /// the fallback sound) can fire, so surface-mute has something to mute.
+    public var hasActiveNotificationChannel: Bool {
+      systemNotificationsEnabled || notificationSoundEnabled
+    }
+
     public init(settings: GlobalSettings = .default) {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
       appearanceMode = settings.appearanceMode
@@ -91,6 +98,7 @@ public struct SettingsFeature {
       inAppNotificationsEnabled = settings.inAppNotificationsEnabled
       notificationSoundEnabled = settings.notificationSoundEnabled
       systemNotificationsEnabled = settings.systemNotificationsEnabled
+      muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
@@ -127,6 +135,7 @@ public struct SettingsFeature {
         inAppNotificationsEnabled: inAppNotificationsEnabled,
         notificationSoundEnabled: notificationSoundEnabled,
         systemNotificationsEnabled: systemNotificationsEnabled,
+        muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
         analyticsEnabled: analyticsEnabled,
         crashReportsEnabled: crashReportsEnabled,
@@ -265,6 +274,7 @@ public struct SettingsFeature {
         state.inAppNotificationsEnabled = normalizedSettings.inAppNotificationsEnabled
         state.notificationSoundEnabled = normalizedSettings.notificationSoundEnabled
         state.systemNotificationsEnabled = normalizedSettings.systemNotificationsEnabled
+        state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
