@@ -126,6 +126,17 @@ struct SSHCommandTests {
     )
   }
 
+  /// The fixed control-option argv every ssh invocation starts with. Keepalives
+  /// live here so any ControlMaster, whichever path creates it, detects a dead
+  /// connection.
+  private static let controlOptionTokens: [String] = [
+    "-o", "ControlMaster=auto",
+    "-o", "ControlPath=~/.ssh/supacode-%C",
+    "-o", "ControlPersist=10m",
+    "-o", "ServerAliveInterval=5",
+    "-o", "ServerAliveCountMax=3",
+  ]
+
   @Test func invocationWrapsRemoteCommandInLoginShellAfterMultiplexingOptions() {
     let result = SSHCommand.invocation(
       host: RemoteHost(alias: "devbox"),
@@ -140,10 +151,7 @@ struct SSHCommandTests {
       workingDirectory: URL(fileURLWithPath: "/tmp/repo")
     )
     #expect(
-      result.arguments == [
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=~/.ssh/supacode-%C",
-        "-o", "ControlPersist=10m",
+      result.arguments == Self.controlOptionTokens + [
         "devbox",
         SSHCommand.loginShellWrapped(expectedScript),
       ]
@@ -162,10 +170,7 @@ struct SSHCommandTests {
       allocateTTY: true
     )
     #expect(
-      result.arguments == [
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=~/.ssh/supacode-%C",
-        "-o", "ControlPersist=10m",
+      result.arguments == Self.controlOptionTokens + [
         "-tt",
         "-p", "2222",
         "alice@box",
@@ -174,17 +179,17 @@ struct SSHCommandTests {
     )
   }
 
+  /// The fixed option prefix of every interactive `commandLine`.
+  private static let commandLinePrefix =
+    "/usr/bin/ssh " + controlOptionTokens.joined(separator: " ") + " -o ConnectTimeout=30 -tt devbox "
+
   @Test func commandLineWrapsRemoteCommandInLoginShellQuotedForLocalShell() {
     let line = SSHCommand.commandLine(
       host: RemoteHost(alias: "devbox"),
       remoteCommand: "zmx attach supa-x"
     )
     let expectedTail = SSHCommand.shellQuote(SSHCommand.loginShellWrapped("zmx attach supa-x"))
-    #expect(
-      line
-        == "/usr/bin/ssh -o ControlMaster=auto -o ControlPath=~/.ssh/supacode-%C -o ControlPersist=10m -tt devbox "
-        + expectedTail
-    )
+    #expect(line == Self.commandLinePrefix + expectedTail)
   }
 
   @Test func commandLineForwardsPositionalArgumentsQuotedForLocalShell() {
@@ -198,109 +203,306 @@ struct SSHCommandTests {
     let expectedTail = SSHCommand.shellQuote(
       SSHCommand.loginShellWrapped("$0 \"$@\"", positionalArguments: ["claude", "it's a test"])
     )
-    #expect(
-      line
-        == "/usr/bin/ssh -o ControlMaster=auto -o ControlPath=~/.ssh/supacode-%C -o ControlPersist=10m -tt devbox "
-        + expectedTail
-    )
+    #expect(line == Self.commandLinePrefix + expectedTail)
+  }
+
+  @Test func controlOptionsCarryKeepalivesForAnyMultiplexOwner() {
+    // Keepalives belong to whichever process is the ControlMaster, so they
+    // ride `controlOptions` (every path), not a per-caller option set.
+    #expect(SSHCommand.controlOptions() == Self.controlOptionTokens)
+    #expect(!SSHCommand.backgroundProbeOptions.contains("ServerAliveInterval=5"))
+    #expect(SSHCommand.interactiveOptions == ["-o", "ConnectTimeout=30"])
+    // No `BatchMode` on the interactive line so first-connect auth prompts work.
+    let line = SSHCommand.commandLine(host: RemoteHost(alias: "devbox"), remoteCommand: "true")
+    #expect(!line.contains("BatchMode"))
   }
 }
 
 struct ZmxAttachRemoteTests {
   private let surfaceID = UUID(uuidString: "00000000-0000-0000-0000-0000000000AB")!
-  // Surface-id export plus the beta banner, the fixed prefix of every remote command.
-  private var surfacePrelude: String {
-    "export SUPACODE_SURFACE_ID='\(surfaceID.uuidString)'; " + ZmxAttach.betaBanner
-  }
+  private var hostSessionID: String { ZmxSessionID.make(surfaceID: surfaceID) }
   private let localZmx = "/Applications/Supacode.app/Contents/MacOS/zmx"
+  private static let defaultShell = "cd '/home/dev/repo/wt-1' 2>/dev/null; exec \"$SHELL\" -l"
 
-  @Test func remoteShellCommandWithoutUserCommandExportsSurfaceThenExecsLoginShell() {
-    #expect(
-      ZmxAttach.remoteShellCommand(userCommand: nil, surfaceID: surfaceID)
-        == surfacePrelude + "exec \"$SHELL\" -l"
-    )
-  }
-
-  @Test func remoteShellCommandIgnoresWhitespaceUserCommand() {
-    #expect(
-      ZmxAttach.remoteShellCommand(userCommand: "  \n", surfaceID: surfaceID)
-        == surfacePrelude + "exec \"$SHELL\" -l"
-    )
-  }
-
-  @Test func remoteShellCommandRunsUserCommandDirectly() {
-    // No zmx on the remote: the command runs straight under the remote login shell.
-    #expect(
-      ZmxAttach.remoteShellCommand(userCommand: "claude --resume", surfaceID: surfaceID)
-        == surfacePrelude + "claude --resume"
-    )
-  }
-
-  @Test func remoteShellCommandPrintsBetaBannerAtConnection() {
-    let command = ZmxAttach.remoteShellCommand(userCommand: nil, surfaceID: surfaceID)
-    #expect(command.contains("beta"))
-    // Banner precedes the shell so it lands at the top on connect.
-    let bannerIndex = command.range(of: "beta")?.lowerBound
-    let shellIndex = command.range(of: "exec ")?.lowerBound
-    #expect(bannerIndex != nil && shellIndex != nil && bannerIndex! < shellIndex!)
-  }
-
-  @Test func buildRemoteCommandWrapsSSHInLocalZmxWithoutReverseForward() {
-    let host = RemoteHost(alias: "devbox")
-    let sshLine = SSHCommand.commandLine(
+  private func makeLaunch(
+    host: RemoteHost = RemoteHost(alias: "devbox"),
+    userCommand: String? = nil,
+    defaultCommand: String? = defaultShell,
+    hostPersistenceEnabled: Bool = true
+  ) -> ZmxAttach.RemoteSurfaceLaunch {
+    ZmxAttach.RemoteSurfaceLaunch(
       host: host,
-      remoteCommand: ZmxAttach.remoteShellCommand(userCommand: nil, surfaceID: surfaceID)
+      surfaceID: surfaceID,
+      userCommand: userCommand,
+      defaultCommand: defaultCommand,
+      hostPersistenceEnabled: hostPersistenceEnabled
     )
-    let command = ZmxAttach.buildRemoteCommand(
-      host: host,
-      localZmxExecutablePath: localZmx,
-      sessionID: "supa-deadbeef",
-      userCommand: nil,
-      surfaceID: surfaceID
+  }
+
+  private var surfaceExport: String {
+    "export SUPACODE_SURFACE_ID='\(surfaceID.uuidString)'; "
+  }
+
+  @Test func connectScriptWithoutUserCommandAttachesLoginShellSession() {
+    // Interactive surface: the session runs the worktree default (cd + login
+    // shell) behind the banners, and a failed attach falls through to a
+    // fresh default shell with a visible notice instead of an instant close.
+    let script = ZmxAttach.remoteConnectScript(makeLaunch())
+    #expect(script.hasPrefix(surfaceExport + "if command -v zmx >/dev/null 2>&1; then "))
+    #expect(
+      script.contains(
+        "zmx attach \(hostSessionID) \"$SHELL\" -l -c "
+          + ZmxAttach.shellQuote(ZmxAttach.betaBanner + ZmxAttach.persistentBanner + Self.defaultShell) + "\n"
+      )
     )
-    // Local zmx owns the session; its child process is the whole ssh line.
+    #expect(script.contains("[ \"$supa_rc\" -eq 0 ] && exit 0"))
+    #expect(script.contains("zmx attach exited with status %s"))
+    #expect(script.contains(ZmxAttach.betaBanner + ZmxAttach.zmxInstallHintBanner))
+    #expect(script.hasSuffix("fi\n" + ZmxAttach.loginShellRun(Self.defaultShell)))
+    // The banner rides inside the session command (an attach redraw would
+    // swallow anything printed before `zmx attach`).
+    #expect(!script.contains(ZmxAttach.persistentBanner + "zmx attach"))
+    // Env export precedes the attach, so the session inherits it on create.
+    let exportIndex = script.range(of: "export SUPACODE_SURFACE_ID")?.lowerBound
+    let attachIndex = script.range(of: "zmx attach")?.lowerBound
+    #expect(exportIndex != nil && attachIndex != nil && exportIndex! < attachIndex!)
+  }
+
+  @Test func connectScriptRunsUserCommandThroughLoginShellInsideSession() {
+    // The session command rides `"$SHELL" -l -c`, not `/bin/sh -c`, so
+    // bash/zsh-isms keep working on dash-as-/bin/sh hosts.
+    let script = ZmxAttach.remoteConnectScript(makeLaunch(userCommand: "echo 'hi'; claude --resume"))
+    #expect(
+      script.contains(
+        "zmx attach \(hostSessionID) \"$SHELL\" -l -c "
+          + ZmxAttach.shellQuote(ZmxAttach.betaBanner + ZmxAttach.persistentBanner + "echo 'hi'; claude --resume")
+          + "\n"
+      )
+    )
+    // The no-zmx fallthrough runs the user command directly.
+    #expect(script.hasSuffix("fi\n" + ZmxAttach.loginShellRun("echo 'hi'; claude --resume")))
+    // The failed-attach fallthrough lands in a fresh default shell: attach
+    // can fail after the session started, and a one-shot command must never
+    // spawn a second concurrent copy.
+    #expect(script.contains(ZmxAttach.loginShellRun(Self.defaultShell) + "\nelse "))
+    #expect(script.ranges(of: ZmxAttach.loginShellRun("echo 'hi'; claude --resume")).count == 1)
+  }
+
+  @Test func connectScriptWithoutHostPersistenceKeepsFlatShape() {
+    #expect(
+      ZmxAttach.remoteConnectScript(makeLaunch(userCommand: "claude --resume", hostPersistenceEnabled: false))
+        == surfaceExport + ZmxAttach.betaBanner + ZmxAttach.loginShellRun("claude --resume")
+    )
+    #expect(
+      ZmxAttach.remoteConnectScript(makeLaunch(defaultCommand: nil, hostPersistenceEnabled: false))
+        == surfaceExport + ZmxAttach.betaBanner + ZmxAttach.loginShellRun("exec \"$SHELL\" -l")
+    )
+  }
+
+  @Test func connectScriptIgnoresWhitespaceUserCommand() {
+    #expect(
+      ZmxAttach.remoteConnectScript(makeLaunch(userCommand: "  \n"))
+        == ZmxAttach.remoteConnectScript(makeLaunch())
+    )
+  }
+
+  @Test func reconnectScriptReattachesExistingSessionAndNeverRerunsUserCommand() {
+    // Reconnects are attach-only: a session that ended while disconnected
+    // closes the pane (exit 0, with a notice) instead of re-running a
+    // one-shot command. The suffix-anchored grep matches names prefixed by a
+    // host-side ZMX_SESSION_PREFIX.
+    let script = ZmxAttach.remoteReconnectScript(makeLaunch(userCommand: "./deploy.sh"))
+    #expect(script.contains("if zmx list --short 2>/dev/null | grep -q '\(hostSessionID)$'; then "))
+    #expect(script.contains("exec zmx attach \(hostSessionID)\n"))
+    #expect(script.contains(ZmxAttach.sessionEndedNotice + "exit 0\n"))
+    #expect(!script.contains("deploy.sh"))
+    // The no-zmx fallback drops into the default shell with a notice.
+    #expect(script.contains(ZmxAttach.reconnectShellNotice))
+    #expect(script.hasSuffix(ZmxAttach.loginShellRun(Self.defaultShell)))
+  }
+
+  @Test func reconnectScriptWithoutHostPersistenceDropsToDefaultShell() {
+    let script = ZmxAttach.remoteReconnectScript(
+      makeLaunch(userCommand: "./deploy.sh", hostPersistenceEnabled: false))
+    #expect(script == surfaceExport + ZmxAttach.reconnectShellNotice + ZmxAttach.loginShellRun(Self.defaultShell))
+  }
+
+  @Test func posixShellWrappedKeepsLoginShellParseSurfaceTrivial() {
+    // The login shell (possibly fish/csh) only parses one portable line; the
+    // POSIX if/fi script runs in /bin/sh.
+    #expect(
+      ZmxAttach.posixShellWrapped("if true; then echo 'a'; fi")
+        == "exec /bin/sh -c 'if true; then echo '\\''a'\\''; fi'"
+    )
+  }
+
+  @Test func loginShellRunExecsLoginShellWithQuotedCommand() {
+    // Pins the wrapper itself: every consumer golden composes through it, so
+    // only a literal expectation catches it degrading to the /bin/sh layer.
+    #expect(ZmxAttach.loginShellRun("echo 'hi'") == "exec \"$SHELL\" -l -c 'echo '\\''hi'\\'''")
+  }
+
+  @Test func bannerConstantsAreSelfTerminatedPrintfStatements() throws {
+    // Every banner must be a complete `printf '...'; ` statement: script
+    // builders concatenate them blindly, and a missing trailing separator
+    // would merge the banner into the next command by word concatenation,
+    // which `sh -n` cannot catch inside quoted session commands.
+    let banners = [
+      ZmxAttach.betaBanner,
+      ZmxAttach.persistentBanner,
+      ZmxAttach.zmxInstallHintBanner,
+      ZmxAttach.reconnectShellNotice,
+      ZmxAttach.sessionEndedNotice,
+    ]
+    for banner in banners {
+      #expect(banner.hasPrefix("printf '"), "not a printf: \(banner)")
+      #expect(banner.hasSuffix("'; "), "missing statement terminator: \(banner)")
+      #expect(!banner.dropFirst("printf '".count).dropLast("'; ".count).contains("'"), "unescaped quote: \(banner)")
+    }
+    // The exact inner session-command composition executes cleanly and
+    // passes the trailing command's exit status through.
+    let run = Process()
+    run.executableURL = URL(fileURLWithPath: "/bin/sh")
+    run.arguments = ["-c", ZmxAttach.betaBanner + ZmxAttach.persistentBanner + "exit 42"]
+    run.standardOutput = FileHandle.nullDevice
+    run.standardError = FileHandle.nullDevice
+    try run.run()
+    run.waitUntilExit()
+    #expect(run.terminationStatus == 42)
+  }
+
+  @Test func reconnectLoopRunsConnectOnceThenAttachOnlyRetriesOn255() {
+    let connect = "/usr/bin/ssh -tt devbox 'connect'"
+    let reconnect = "/usr/bin/ssh -tt devbox 'reconnect'"
+    let script = SSHReconnectLoop.script(connect: connect, reconnect: reconnect)
+    #expect(
+      script
+        == "trap 'exit 130' INT; "
+        + connect
+        + "; supa_rc=$?; [ \"$supa_rc\" -ne 255 ] && exit \"$supa_rc\"; "
+        + "supa_delay=1; while :; do "
+        + #"printf '\033[1;33m── Connection failed (ssh exit 255). Retrying in %ss. "#
+        + #"Press Ctrl-C to stop. ──\033[0m\r\n' "$supa_delay"; "#
+        + "sleep \"$supa_delay\"; supa_delay=$((supa_delay * 2)); "
+        + "[ \"$supa_delay\" -gt 15 ] && supa_delay=15; "
+        + reconnect
+        + "; supa_rc=$?; [ \"$supa_rc\" -ne 255 ] && exit \"$supa_rc\"; done"
+    )
+    #expect(script.ranges(of: connect).count == 1)
+    #expect(script.ranges(of: reconnect).count == 1)
+  }
+
+  @Test func reconnectLoopScriptsAreValidShAndPassExitCodesThrough() throws {
+    // `sh -n` catches an unbalanced quote or broken test that a golden-string
+    // rewrite could smuggle in; the run asserts non-255 passthrough without
+    // ever reaching `sleep`.
+    let launch = makeLaunch(userCommand: "echo 'x'")
+    let loop = SSHReconnectLoop.script(
+      connect: "sh -c 'exit 7'",
+      reconnect: "sh -c 'exit 0'"
+    )
+    let scripts = [
+      loop,
+      ZmxAttach.remoteConnectScript(launch),
+      ZmxAttach.remoteReconnectScript(launch),
+    ]
+    for script in scripts {
+      let check = Process()
+      check.executableURL = URL(fileURLWithPath: "/bin/sh")
+      check.arguments = ["-n", "-c", script]
+      try check.run()
+      check.waitUntilExit()
+      #expect(check.terminationStatus == 0, "sh -n rejected: \(script)")
+    }
+    let run = Process()
+    run.executableURL = URL(fileURLWithPath: "/bin/sh")
+    run.arguments = ["-c", loop]
+    run.standardOutput = FileHandle.nullDevice
+    run.standardError = FileHandle.nullDevice
+    try run.run()
+    run.waitUntilExit()
+    #expect(run.terminationStatus == 7)
+  }
+
+  @Test func buildRemoteCommandWrapsReconnectLoopInLocalZmxWithoutReverseForward() {
+    let launch = makeLaunch()
+    let connectLine = SSHCommand.commandLine(
+      host: launch.host,
+      remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
+    )
+    let reconnectLine = SSHCommand.commandLine(
+      host: launch.host,
+      remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
+    )
+    let command = ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: localZmx)
+    // Local zmx owns the session; its child process is the reconnect loop
+    // around both ssh lines. Local and host sessions share the name.
     #expect(
       command
-        == ZmxAttach.buildCommand(executablePath: localZmx, sessionID: "supa-deadbeef", userCommand: sshLine)
+        == ZmxAttach.buildCommand(
+          executablePath: localZmx,
+          sessionID: hostSessionID,
+          userCommand: SSHReconnectLoop.script(connect: connectLine, reconnect: reconnectLine)
+        )
     )
-    #expect(command.contains("attach supa-deadbeef"))
+    #expect(command.contains("attach \(hostSessionID)"))
     #expect(command.contains(localZmx))
     #expect(command.contains("SUPACODE_SURFACE_ID="))
-    // The remote never runs zmx.
-    #expect(!command.contains("zmx attach"))
     // Presence rides the OSC stream now, with no reverse socket / remote socket path.
     #expect(!command.contains("-R "))
     #expect(!command.contains("SUPACODE_SOCKET_PATH"))
   }
 
-  @Test func buildRemoteCommandFallsBackToBareSSHWhenLocalZmxUnavailable() {
-    let host = RemoteHost(alias: "devbox")
-    let command = ZmxAttach.buildRemoteCommand(
-      host: host,
-      localZmxExecutablePath: nil,
-      sessionID: "supa-x",
-      userCommand: nil,
-      surfaceID: surfaceID
-    )
+  @Test func buildRemoteCommandFallsBackToBareReconnectLoopWhenLocalZmxUnavailable() {
+    let launch = makeLaunch(hostPersistenceEnabled: false)
+    let command = ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: nil)
+    // No local zmx: still a reconnect loop, just without quit persistence.
     #expect(
       command
-        == SSHCommand.commandLine(
-          host: host,
-          remoteCommand: ZmxAttach.remoteShellCommand(userCommand: nil, surfaceID: surfaceID)
+        == SSHReconnectLoop.script(
+          connect: SSHCommand.commandLine(
+            host: launch.host,
+            remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
+          ),
+          reconnect: SSHCommand.commandLine(
+            host: launch.host,
+            remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
+          )
         )
     )
-    #expect(!command.contains("attach "))
+    #expect(!command.contains("zmx attach"))
   }
 
   @Test func buildRemoteCommandForwardsUsernameAndPort() {
-    let host = RemoteHost(alias: "box", username: "alice", port: 2222)
     let command = ZmxAttach.buildRemoteCommand(
-      host: host,
-      localZmxExecutablePath: localZmx,
-      sessionID: "supa-x",
-      userCommand: nil,
-      surfaceID: surfaceID
+      makeLaunch(host: RemoteHost(alias: "box", username: "alice", port: 2222)),
+      localZmxExecutablePath: localZmx
     )
     #expect(command.contains("-p 2222 alice@box "))
+  }
+
+  @Test func remoteKillInvocationGuardsMissingZmxAndRidesProbeOptions() {
+    let result = ZmxAttach.remoteKillInvocation(
+      host: RemoteHost(alias: "box", username: "alice", port: 2222),
+      sessionID: "supa-x"
+    )
+    #expect(result.executableURL == URL(fileURLWithPath: "/usr/bin/ssh"))
+    #expect(
+      result.arguments == [
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=~/.ssh/supacode-%C",
+        "-o", "ControlPersist=10m",
+        "-o", "ServerAliveInterval=5",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=10",
+        "-p", "2222",
+        "alice@box",
+        SSHCommand.loginShellWrapped(
+          "'/bin/sh' '-c' 'command -v zmx >/dev/null 2>&1 || exit 0; zmx kill supa-x; "
+            + "! zmx list --short 2>/dev/null | grep -q '\\''supa-x$'\\'''"
+        ),
+      ]
+    )
   }
 }

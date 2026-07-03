@@ -73,6 +73,7 @@ public struct SettingsFeature {
     public var autoUpdateAgentIntegrationsEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
     public var terminateSessionsOnQuit: Bool
+    public var remoteSessionPersistenceEnabled: Bool
     public var cliInstallState = CLIInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
@@ -121,6 +122,7 @@ public struct SettingsFeature {
       autoUpdateAgentIntegrationsEnabled = settings.autoUpdateAgentIntegrationsEnabled
       confirmQuitMode = settings.confirmQuitMode
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
+      remoteSessionPersistenceEnabled = settings.remoteSessionPersistenceEnabled
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -160,7 +162,8 @@ public struct SettingsFeature {
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
         autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
         confirmQuitMode: confirmQuitMode,
-        terminateSessionsOnQuit: terminateSessionsOnQuit
+        terminateSessionsOnQuit: terminateSessionsOnQuit,
+        remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled
       )
     }
   }
@@ -298,6 +301,7 @@ public struct SettingsFeature {
         state.autoUpdateAgentIntegrationsEnabled = normalizedSettings.autoUpdateAgentIntegrationsEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
+        state.remoteSessionPersistenceEnabled = normalizedSettings.remoteSessionPersistenceEnabled
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)

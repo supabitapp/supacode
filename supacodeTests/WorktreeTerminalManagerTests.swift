@@ -800,6 +800,163 @@ struct WorktreeTerminalManagerTests {
     #expect(!killed.contains(session(for: failedSurfaceID)))
   }
 
+  private func makeRemoteWorktree(alias: String = "devbox") -> Worktree {
+    Worktree(
+      id: WorktreeID("\(alias)/home/dev/repo/wt-1"),
+      name: "wt-1",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/home/dev/repo/wt-1"),
+      repositoryRootURL: URL(fileURLWithPath: "/home/dev/repo"),
+      host: RemoteHost(alias: alias)
+    )
+  }
+
+  @Test func pruneKillsHostSessionsForRemoteWorktrees() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    manager.prune(keeping: [])
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+    let killed = await probe.killedSessions()
+    #expect(killed.contains(sessionID))
+  }
+
+  @Test func closeTabKillsHostSessionForRemoteWorktree() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    state.closeTab(tabID)
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
+  @Test func unexpectedRemoteSurfaceExitSparesHostSession() async {
+    // A non-explicit close (clean remote exit or a deliberate host-side
+    // detach) must not tear down the host session.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surface.id)
+    // Session already gone locally: close + local kill, remote spared.
+    await probe.setListing([])
+
+    surface.bridge.closeSurface(processAlive: false)
+
+    await probe.waitForKill { $0.contains(sessionID) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.isEmpty)
+  }
+
+  @Test func explicitSurfaceCloseKillsHostSessionForRemoteWorktree() async {
+    // Cmd-W path: performBindingAction marks the close explicit, so the
+    // host-side session dies alongside the local one.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surface.id)
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
+    surface.bridge.closeSurface(processAlive: false)
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
+  @Test func remoteKillFiresEvenWhenLocalZmxIsUnbundled() async {
+    // Over-budget / unbundled local zmx must not gate host-side teardown.
+    // `executableURL` still serves the inert fake binary so the surface never
+    // spawns a real ssh; `isBundled: false` is the guard under test.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let killed = LockIsolated<[String]>([])
+    let zmxURL = makeFakeZmxBinary()
+    let manager = withDependencies {
+      $0.zmxClient = ZmxClient(
+        executableURL: { zmxURL },
+        isBundled: { false },
+        killSession: { id in killed.withValue { $0.append(id) } },
+        killRemoteSession: { host, id in await probe.killRemoteSession(host: host, sessionID: id) },
+        listSessionsWithClients: { [] }
+      )
+    } operation: {
+      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      _ = manager.state(for: worktree)
+      return manager
+    }
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    state.closeTab(tabID)
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+    #expect(killed.value.isEmpty)
+  }
+
+  @Test func terminateAllSessionsKillsHostSessionsForRemoteWorktrees() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    await manager.terminateAllSessions()
+
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
   @Test func unexpectedExitedZmxSurfaceWithLiveSessionReattachesAndKeepsTab() async {
     let probe = ZmxTestProbe(listing: [])
     let manager = makeZmxBackedManager(probe: probe)
@@ -2109,7 +2266,9 @@ struct WorktreeTerminalManagerTests {
     )
   }
 
-  private func makeZmxBackedManager(probe: ZmxTestProbe) -> WorktreeTerminalManager {
+  /// Writes an inert fake zmx (`exec /bin/cat`) so wrapped surface commands
+  /// never spawn anything real.
+  private func makeFakeZmxBinary() -> URL {
     let zmxURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-test-zmx-\(UUID().uuidString)")
     let script = "#!/bin/sh\nexec /bin/cat\n"
     do {
@@ -2118,17 +2277,26 @@ struct WorktreeTerminalManagerTests {
     } catch {
       Issue.record("Failed to set up fake zmx binary: \(error)")
     }
+    return zmxURL
+  }
+
+  /// `worktree` seeds the pre-created state INSIDE the dependency scope, so
+  /// its `@Dependency(\.zmxClient)` captures the probe-backed client. Tests
+  /// must fetch the state with the same worktree id.
+  private func makeZmxBackedManager(probe: ZmxTestProbe, worktree: Worktree? = nil) -> WorktreeTerminalManager {
+    let zmxURL = makeFakeZmxBinary()
 
     return withDependencies {
       $0.zmxClient = ZmxClient(
         executableURL: { zmxURL },
         isBundled: { true },
         killSession: { id in await probe.killSession(id) },
+        killRemoteSession: { host, id in await probe.killRemoteSession(host: host, sessionID: id) },
         listSessionsWithClients: { await probe.listSessionsWithClients() },
       )
     } operation: {
       let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-      _ = manager.state(for: makeWorktree())
+      _ = manager.state(for: worktree ?? makeWorktree())
       return manager
     }
   }
@@ -2159,7 +2327,13 @@ struct WorktreeTerminalManagerTests {
 
     private enum Trigger {
       case kill(@Sendable ([String]) -> Bool)
+      case remoteKill(@Sendable ([RemoteKill]) -> Bool)
       case list(threshold: Int)
+    }
+
+    struct RemoteKill: Equatable, Sendable {
+      var authority: String
+      var sessionID: String
     }
 
     // Resumed exactly once: by the event or the timeout.
@@ -2172,6 +2346,7 @@ struct WorktreeTerminalManagerTests {
 
     private var listing: [ZmxSessionListParser.Entry]?
     private var killed: [String] = []
+    private var remoteKills: [RemoteKill] = []
     private var listCalls = 0
     private var waiters: [Waiter] = []
 
@@ -2198,6 +2373,15 @@ struct WorktreeTerminalManagerTests {
       killed
     }
 
+    func killRemoteSession(host: RemoteHost, sessionID: String) {
+      remoteKills.append(RemoteKill(authority: host.authority, sessionID: sessionID))
+      resumeWaiters()
+    }
+
+    func remoteKilledSessions() -> [RemoteKill] {
+      remoteKills
+    }
+
     func listCallCount() -> Int {
       listCalls
     }
@@ -2208,6 +2392,14 @@ struct WorktreeTerminalManagerTests {
       sourceLocation: SourceLocation = #_sourceLocation
     ) async -> Bool {
       await wait(for: .kill(predicate), description: "zmx session kill", sourceLocation: sourceLocation)
+    }
+
+    @discardableResult
+    func waitForRemoteKill(
+      where predicate: @escaping @Sendable ([RemoteKill]) -> Bool,
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) async -> Bool {
+      await wait(for: .remoteKill(predicate), description: "remote zmx session kill", sourceLocation: sourceLocation)
     }
 
     @discardableResult
@@ -2243,6 +2435,7 @@ struct WorktreeTerminalManagerTests {
     private func isSatisfied(_ trigger: Trigger) -> Bool {
       switch trigger {
       case .kill(let predicate): predicate(killed)
+      case .remoteKill(let predicate): predicate(remoteKills)
       case .list(let threshold): listCalls >= threshold
       }
     }

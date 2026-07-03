@@ -8,6 +8,14 @@ import UniformTypeIdentifiers
 final class GhosttyRuntime {
   private static let logger = SupaLogger("Ghostty")
 
+  /// Live-pointer registries for C callbacks. A queued main-queue callback
+  /// (e.g. a wakeup) can fire after its runtime deinit freed the app, so
+  /// dereferencing the raw userdata/app pointer would be use-after-free;
+  /// every resolution validates membership first. Registered in init,
+  /// removed in deinit.
+  private static var liveUserdataBits: Set<UInt> = []
+  private static var liveAppBits: Set<UInt> = []
+
   final class SurfaceReference {
     let surface: ghostty_surface_t
     var isValid = true
@@ -73,6 +81,8 @@ final class GhosttyRuntime {
       preconditionFailure("ghostty_app_new failed")
     }
     self.app = app
+    Self.liveUserdataBits.insert(UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
+    Self.liveAppBits.insert(UInt(bitPattern: app))
 
     let center = NotificationCenter.default
     observers.append(
@@ -109,11 +119,13 @@ final class GhosttyRuntime {
   }
 
   isolated deinit {
+    Self.liveUserdataBits.remove(UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
     let center = NotificationCenter.default
     for observer in observers {
       center.removeObserver(observer)
     }
     if let app {
+      Self.liveAppBits.remove(UInt(bitPattern: app))
       ghostty_app_free(app)
     }
     if let config {
@@ -236,7 +248,7 @@ final class GhosttyRuntime {
   }
 
   private static func runtime(from userdata: UnsafeMutableRawPointer?) -> GhosttyRuntime? {
-    guard let userdata else { return nil }
+    guard let userdata, liveUserdataBits.contains(UInt(bitPattern: userdata)) else { return nil }
     return Unmanaged<GhosttyRuntime>.fromOpaque(userdata).takeUnretainedValue()
   }
 
@@ -411,7 +423,7 @@ final class GhosttyRuntime {
     target: ghostty_target_s,
     action: ghostty_action_s
   ) -> Bool {
-    guard let app = ghostty_app_t(bitPattern: appBits) else { return false }
+    guard liveAppBits.contains(appBits), let app = ghostty_app_t(bitPattern: appBits) else { return false }
     if let runtime = runtime(fromApp: app) {
       if action.tag == GHOSTTY_ACTION_CONFIG_CHANGE, target.tag == GHOSTTY_TARGET_APP {
         let config = action.action.config_change.config
