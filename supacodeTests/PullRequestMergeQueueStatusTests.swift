@@ -92,13 +92,11 @@ struct PullRequestMergeQueueStatusTests {
     let queued = makePullRequest(mergeQueueEntry: entry)
     let open = makePullRequest(mergeStateStatus: "CLEAN")
 
-    // The toolbar accessory badge and the status button both tint brown to match the sidebar + popover.
+    // The toolbar accessory badge tints brown to match the sidebar + popover.
     #expect(
       WorktreePullRequestDisplay(worktreeName: "feature", pullRequest: queued).pullRequestBadgeStyle?.color == .brown)
     #expect(
       WorktreePullRequestDisplay(worktreeName: "feature", pullRequest: open).pullRequestBadgeStyle?.color == .green)
-    #expect(PullRequestStatusModel(pullRequest: queued)?.badgeColor == .brown)
-    #expect(PullRequestStatusModel(pullRequest: open)?.badgeColor == .green)
   }
 
   @Test func sidebarIconResolvesQueued() {

@@ -76,6 +76,12 @@ nonisolated struct WorktreeCreationProgressUpdateThrottle {
   }
 }
 
+/// Which status pane the detail inspector shows when presented; presentation is tracked by `inspectorPresented`.
+enum WorktreeInspectorPane: Hashable, Sendable {
+  case git
+  case notifications
+}
+
 @Reducer
 struct RepositoriesFeature {
   struct PendingSidebarReveal: Equatable {
@@ -124,6 +130,11 @@ struct RepositoriesFeature {
     var shouldSelectFirstAfterReload = false
     var isRefreshingWorktrees = false
     var statusToast: StatusToast?
+    // Inspector presentation is split from the selected pane so a drag-to-collapse
+    // (which flips `isPresented` to false transiently) doesn't wipe the pane and
+    // leave the column empty when dragged back open.
+    var inspectorPresented = false
+    var inspectorPane: WorktreeInspectorPane = .git
     var githubIntegrationAvailability: GithubIntegrationAvailability = .unknown
     var pendingPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
     var inFlightPullRequestRefreshRepositoryIDs: Set<Repository.ID> = []
@@ -424,6 +435,8 @@ struct RepositoriesFeature {
     case pullRequestAction(Worktree.ID, PullRequestAction)
     case showToast(StatusToast)
     case dismissToast
+    case toggleInspectorPane(WorktreeInspectorPane)
+    case setInspectorPresented(Bool)
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
@@ -2727,6 +2740,19 @@ struct RepositoriesFeature {
         state.statusToast = nil
         return .none
 
+      case .toggleInspectorPane(let target):
+        if state.inspectorPresented, state.inspectorPane == target {
+          state.inspectorPresented = false
+        } else {
+          state.inspectorPane = target
+          state.inspectorPresented = true
+        }
+        return .none
+
+      case .setInspectorPresented(let presented):
+        state.inspectorPresented = presented
+        return .none
+
       case .delayedPullRequestRefresh(let worktreeID):
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
@@ -3815,6 +3841,7 @@ struct RepositoriesFeature {
         return .none
 
       case .pinWorktree, .unpinWorktree, .presentAlert, .showToast, .dismissToast, .delayedPullRequestRefresh,
+        .toggleInspectorPane, .setInspectorPresented,
         .worktreeNotificationReceived, .worktreeInfoEvent:
         // Real handling lives in `worktreeNotificationReducer` (combined below) to keep `body`
         // under the type-checker's complexity limit.

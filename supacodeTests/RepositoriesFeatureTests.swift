@@ -13,6 +13,52 @@ import Testing
 
 @MainActor
 struct RepositoriesFeatureTests {
+  @Test func toggleInspectorPaneOpensSwapsAndCloses() async {
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+    }
+
+    // Opens on the target pane (which defaults to `.git`).
+    await store.send(.toggleInspectorPane(.git)) {
+      $0.inspectorPresented = true
+    }
+    // A different pane swaps the inspector content while staying open.
+    await store.send(.toggleInspectorPane(.notifications)) {
+      $0.inspectorPane = .notifications
+    }
+    // Re-toggling the active pane closes the inspector but keeps the pane.
+    await store.send(.toggleInspectorPane(.notifications)) {
+      $0.inspectorPresented = false
+    }
+    // Toggling the retained pane while closed reopens it (the guard leans on
+    // `inspectorPresented`, not the pane, to decide open vs close).
+    await store.send(.toggleInspectorPane(.notifications)) {
+      $0.inspectorPresented = true
+    }
+  }
+
+  @Test func setInspectorPresentedKeepsSelectedPane() async {
+    var initialState = RepositoriesFeature.State()
+    initialState.inspectorPane = .notifications
+    initialState.inspectorPresented = true
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+    }
+
+    // A drag-to-collapse only flips presentation; the pane must survive so a
+    // drag back open doesn't render an empty inspector.
+    await store.send(.setInspectorPresented(false)) {
+      $0.inspectorPresented = false
+    }
+    await store.send(.setInspectorPresented(true)) {
+      $0.inspectorPresented = true
+    }
+  }
+
   @Test func refreshWorktreesSetsRefreshingStateUntilLoadCompletes() async {
     let worktree = makeWorktree(id: "/tmp/repo/main", name: "main")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])

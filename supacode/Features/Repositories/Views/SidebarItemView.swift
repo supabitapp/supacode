@@ -195,6 +195,14 @@ enum SidebarCheckBadgeState: Equatable {
     case .inProgress: "Checks in progress"
     }
   }
+
+  static func resolve(_ pullRequest: GithubPullRequest?) -> SidebarCheckBadgeState? {
+    guard let checks = pullRequest?.statusCheckRollup?.checks, !checks.isEmpty else { return nil }
+    let breakdown = PullRequestCheckBreakdown(checks: checks)
+    if breakdown.failed > 0 { return .failing }
+    if breakdown.inProgress > 0 || breakdown.expected > 0 { return .inProgress }
+    return .passing
+  }
 }
 
 enum SidebarPullRequestIcon: Equatable {
@@ -250,14 +258,6 @@ enum SidebarPullRequestIcon: Equatable {
     case .closed: "Pull request closed"
     }
   }
-}
-
-private func resolveCheckBadgeState(_ pullRequest: GithubPullRequest?) -> SidebarCheckBadgeState? {
-  guard let checks = pullRequest?.statusCheckRollup?.checks, !checks.isEmpty else { return nil }
-  let breakdown = PullRequestCheckBreakdown(checks: checks)
-  if breakdown.failed > 0 { return .failing }
-  if breakdown.inProgress > 0 || breakdown.expected > 0 { return .inProgress }
-  return .passing
 }
 
 private struct TitleView: View, Equatable {
@@ -357,7 +357,7 @@ private struct IconView: View {
       isRemote: isRemote,
       isMissing: isMissing,
       icon: SidebarPullRequestIcon.resolve(display.pullRequest),
-      checkBadgeState: resolveCheckBadgeState(display.pullRequest),
+      checkBadgeState: SidebarCheckBadgeState.resolve(display.pullRequest),
       rowState: IconRowState(lifecycle),
     )
     .equatable()
