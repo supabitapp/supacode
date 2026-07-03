@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import ComposableArchitecture
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
@@ -56,6 +57,12 @@ struct KeyboardShortcutsSettingsView: View {
     !store.shortcutOverrides.isEmpty
   }
 
+  // Restore-defaults is also the path that clears a configured leader, so it
+  // stays enabled whenever either single chords or a leader are customized.
+  private var canRestoreDefaults: Bool {
+    hasAnyOverrides || store.leaderKey != nil
+  }
+
   private var warningsByID: [AppShortcutID: String] {
     var warnings = AppShortcuts.conflictWarnings(from: store.shortcutOverrides)
     let terminalDisplays = ghosttyShortcuts.reservedDisplayStrings
@@ -72,6 +79,43 @@ struct KeyboardShortcutsSettingsView: View {
   var body: some View {
     let warnings = warningsByID
     let terminalDisplays = ghosttyShortcuts.reservedDisplayStrings
+    VStack(spacing: 0) {
+      LeaderKeyConfigurationView(store: store, terminalReservedDisplays: terminalDisplays)
+        .padding()
+      Divider()
+      shortcutsTable(warnings: warnings, terminalDisplays: terminalDisplays)
+    }
+    .navigationTitle("Shortcuts")
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          showRestoreConfirmation = true
+        } label: {
+          Image(systemName: "arrow.counterclockwise")
+            .accessibilityLabel("Restore Defaults")
+        }
+        .help("Restore all shortcuts, including the leader key and its sequences, to their defaults.")
+        .disabled(!canRestoreDefaults)
+        .confirmationDialog(
+          "Restore all keyboard shortcuts to their defaults?",
+          isPresented: $showRestoreConfirmation,
+          titleVisibility: .visible,
+        ) {
+          Button("Restore Defaults", role: .destructive) {
+            store.send(.resetAllShortcuts)
+            store.send(.resetLeaderKey)
+          }
+        } message: {
+          Text("This clears every custom shortcut and removes the leader key and all of its sequences.")
+        }
+      }
+    }
+  }
+
+  private func shortcutsTable(
+    warnings: [AppShortcutID: String],
+    terminalDisplays: Set<String>,
+  ) -> some View {
     Table(of: ShortcutTableItem.self) {
       TableColumn("Name") { item in
         NameCell(item: item, overrides: store.shortcutOverrides)
@@ -110,28 +154,260 @@ struct KeyboardShortcutsSettingsView: View {
     .alternatingRowBackgrounds()
     .padding(.leading, -6)
     .searchable(text: $searchText, placement: .toolbar, prompt: "Search...")
-    .navigationTitle("Shortcuts")
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          showRestoreConfirmation = true
-        } label: {
-          Image(systemName: "arrow.counterclockwise")
-            .accessibilityLabel("Restore Defaults")
-        }
-        .help("Restore all shortcuts to their default values.")
-        .disabled(!hasAnyOverrides)
-        .confirmationDialog(
-          "Restore all keyboard shortcuts to their defaults?",
-          isPresented: $showRestoreConfirmation,
-          titleVisibility: .visible
-        ) {
-          Button("Restore Defaults", role: .destructive) {
-            store.send(.resetAllShortcuts)
+  }
+}
+
+// MARK: - Leader key configuration.
+
+// The leader-key configuration surface: a single chord row (set / clear the
+// leader) plus a list of multi-key sequences (leader + ordered strokes -> a
+// host-routable Ghostty built-in). Conflict warnings from the pure
+// `LeaderKeyConflictValidator` are surfaced inline and are non-blocking. Sits
+// above the per-action single-chord table so the two binding styles stay visually
+// distinct. Keybinds apply at launch, mirroring single-chord overrides, so the
+// row notes "applies after relaunch".
+//
+// which-key overlay seam: a discoverability popup that shows the available next
+// keys mid-sequence is intentionally deferred (design D7). A future overlay can
+// observe `GhosttySurfaceState.keySequenceActive` / `keyTableName` (already wired
+// by `GhosttySurfaceBridge`) without re-plumbing this view.
+private struct LeaderKeyConfigurationView: View {
+  let store: StoreOf<SettingsFeature>
+  let terminalReservedDisplays: Set<String>
+
+  @State private var isRecordingLeader = false
+  @State private var editTarget: SequenceEditTarget?
+
+  // Identifies the editor sheet. A new sequence has no underlying `existing`.
+  private struct SequenceEditTarget: Identifiable {
+    let id: UUID
+    let existing: LeaderKeySequence?
+  }
+
+  // Default leader suggestion (D1): ⌘K is free in-app and is a modifier chord
+  // (REQ-001). Pre-filling the recorder makes the leader discoverable without
+  // seeding it, so nothing is intercepted until the user sets a leader.
+  private static let suggestedLeader = AppShortcutOverride(
+    keyCode: UInt16(kVK_ANSI_K),
+    modifiers: .command,
+  )
+
+  // Reserved chords for both the leader-conflict check and the pre-commit
+  // recorder check: system/AppKit reserved plus the terminal's own bindings,
+  // so a leader that the terminal would swallow is flagged.
+  private var reservedDisplayStrings: Set<String> {
+    AppShortcutOverride.allReservedDisplayStrings().union(terminalReservedDisplays)
+  }
+
+  private var report: LeaderKeyConflictReport {
+    LeaderKeyConflictValidator.validate(
+      config: store.leaderKey,
+      shortcutOverrides: store.shortcutOverrides,
+      reservedDisplayStrings: reservedDisplayStrings,
+    )
+  }
+
+  var body: some View {
+    let report = report
+    VStack(alignment: .leading, spacing: 12) {
+      header
+      leaderRow(report: report)
+      if store.leaderKey != nil {
+        Divider()
+        sequencesSection(report: report)
+      }
+    }
+    .sheet(item: $editTarget) { target in
+      LeaderSequenceEditorSheet(
+        existing: target.existing,
+        onSave: { sequence in
+          store.send(.updateLeaderSequence(sequence))
+          editTarget = nil
+        },
+        onCancel: { editTarget = nil },
+      )
+    }
+  }
+
+  private var header: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text("Leader Key")
+        .font(.headline)
+      Text("Press the leader chord, then a sequence of keys, to run an action. Applies after relaunch.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  @ViewBuilder
+  private func leaderRow(report: LeaderKeyConflictReport) -> some View {
+    HStack(spacing: 8) {
+      if let leaderKey = store.leaderKey {
+        HStack(spacing: 3) {
+          ForEach(Array(leaderKey.leaderChord.displaySymbols.enumerated()), id: \.offset) { _, symbol in
+            Keycap(symbol: symbol)
           }
+        }
+        Button("Change…") { isRecordingLeader = true }
+          .help("Record a new leader chord. Existing sequences are kept.")
+        Button(role: .destructive) {
+          store.send(.resetLeaderKey)
+        } label: {
+          Text("Clear")
+        }
+        .help("Remove the leader key and all of its sequences.")
+      } else {
+        Text("No leader key set")
+          .foregroundStyle(.secondary)
+        Button("Use \(Self.suggestedLeader.displayString)") {
+          store.send(.updateLeaderChord(Self.suggestedLeader))
+        }
+        .help("Use the suggested \(Self.suggestedLeader.displayString) leader chord.")
+        Button("Set Leader…") { isRecordingLeader = true }
+          .help("Record a custom leader chord. A modifier (such as ⌘) is required.")
+      }
+      Spacer()
+    }
+    .popover(isPresented: $isRecordingLeader) {
+      HotkeyRecorderPopover(
+        onRecorded: { override in store.send(.updateLeaderChord(override)) },
+        onCancelled: { isRecordingLeader = false },
+        conflictChecker: leaderConflictChecker,
+      )
+    }
+    if !report.leaderConflicts.isEmpty {
+      VStack(alignment: .leading, spacing: 2) {
+        ForEach(Array(report.leaderConflicts.enumerated()), id: \.offset) { _, conflict in
+          LeaderConflictLabel(message: conflict.message)
         }
       }
     }
+  }
+
+  @ViewBuilder
+  private func sequencesSection(report: LeaderKeyConflictReport) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Sequences")
+          .font(.subheadline.weight(.medium))
+        Spacer()
+        Button {
+          editTarget = SequenceEditTarget(id: UUID(), existing: nil)
+        } label: {
+          Label("Add Sequence", systemImage: "plus")
+        }
+        .help("Add a new leader sequence.")
+      }
+      if let sequences = store.leaderKey?.sequences, !sequences.isEmpty {
+        ForEach(sequences) { sequence in
+          LeaderSequenceRow(
+            leaderChord: store.leaderKey?.leaderChord,
+            sequence: sequence,
+            conflicts: report.conflicts(for: sequence.id),
+            onEdit: { editTarget = SequenceEditTarget(id: sequence.id, existing: sequence) },
+            onRemove: { store.send(.removeLeaderSequence(sequence.id)) },
+          )
+        }
+      } else {
+        Text("No sequences yet. Add one to bind a leader sequence to an action.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  // Pre-commit conflict surface for the leader recorder popover, mirroring the
+  // single-chord recorder: returns the colliding owner's name, or `nil`.
+  private func leaderConflictChecker(_ proposed: AppShortcutOverride) -> String? {
+    let proposedDisplay = proposed.displayString
+    guard !AppShortcutOverride.allReservedDisplayStrings().contains(proposedDisplay) else {
+      return "System"
+    }
+    guard !terminalReservedDisplays.contains(proposedDisplay) else { return "Terminal" }
+    for shortcut in AppShortcuts.all {
+      guard let effective = shortcut.effective(from: store.shortcutOverrides) else { continue }
+      guard effective.display == proposedDisplay else { continue }
+      return shortcut.displayName
+    }
+    return nil
+  }
+}
+
+// MARK: - Leader sequence row.
+
+private struct LeaderSequenceRow: View {
+  let leaderChord: AppShortcutOverride?
+  let sequence: LeaderKeySequence
+  let conflicts: [LeaderKeyConflict]
+  let onEdit: () -> Void
+  let onRemove: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 6) {
+        HStack(spacing: 3) {
+          if let leaderChord {
+            ForEach(Array(leaderChord.displaySymbols.enumerated()), id: \.offset) { _, symbol in
+              Keycap(symbol: symbol)
+            }
+          }
+          ForEach(Array(sequence.keyStrokes.enumerated()), id: \.offset) { _, stroke in
+            ForEach(Array(stroke.displaySymbols.enumerated()), id: \.offset) { _, symbol in
+              Keycap(symbol: symbol)
+            }
+          }
+        }
+        Image(systemName: "arrow.right")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+        Text(sequence.target.ghosttyAction?.displayName ?? "Unknown action")
+          .foregroundStyle(.primary)
+        Spacer()
+        Button {
+          onEdit()
+        } label: {
+          Image(systemName: "pencil")
+            .accessibilityLabel("Edit Sequence")
+        }
+        .buttonStyle(.borderless)
+        .help("Edit this leader sequence.")
+        Button {
+          onRemove()
+        } label: {
+          Image(systemName: "trash")
+            .accessibilityLabel("Remove Sequence")
+        }
+        .buttonStyle(.borderless)
+        .help("Remove this leader sequence.")
+      }
+      ForEach(Array(conflicts.enumerated()), id: \.offset) { _, conflict in
+        LeaderConflictLabel(message: conflict.message)
+      }
+    }
+    .padding(.vertical, 2)
+  }
+}
+
+// MARK: - Conflict label.
+
+// Inline, non-blocking conflict warning, styled like the single-chord table's
+// warning affordance (a yellow triangle) for consistency.
+private struct LeaderConflictLabel: View {
+  let message: String
+
+  var body: some View {
+    Label {
+      Text(message)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    } icon: {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .font(.caption2)
+        .foregroundStyle(.yellow)
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Warning: \(message)")
   }
 }
 

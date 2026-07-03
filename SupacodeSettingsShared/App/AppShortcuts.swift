@@ -476,6 +476,37 @@ public enum AppShortcuts {
     }
   }
 
+  // MARK: - Leader-key sequence Ghostty bindings.
+
+  // Ghostty key-sequence bindings for the leader-key feature. Each sequence
+  // lowers to `--keybind=<leader>>k1>k2=<action>`: the leader chord's keybind
+  // token, then every continuation stroke's token, joined by Ghostty's `>`
+  // sequence separator, bound to the target's built-in action string.
+  //
+  // A single `--keybind=<leader>escape=end_key_sequence` cancel bind is appended
+  // when any sequence lowers, giving REQ-004's explicit cancel; unmatched keys
+  // are flushed to the shell by Ghostty's native pass-through (no app-side
+  // timeout — HYP-002). Returns `[]` when no leader is configured or nothing
+  // lowers, so a settings file without a leader leaves the single-chord args
+  // byte-for-byte unchanged.
+  //
+  // A target that does not resolve to a Ghostty built-in (a future
+  // `.appShortcut` case) is skipped via `LeaderActionTarget.ghosttyAction`, so a
+  // forward-compat entry never emits a bad bind.
+  public static func leaderKeyGhosttyKeybindArguments(from config: LeaderKeyConfig?) -> [String] {
+    guard let config else { return [] }
+    let leaderToken = config.leaderChord.ghosttyKeybind
+
+    let sequenceArguments = config.sequences.compactMap { sequence -> String? in
+      guard let action = sequence.target.ghosttyAction, !sequence.keyStrokes.isEmpty else { return nil }
+      let trigger = ([leaderToken] + sequence.keyStrokes.map(\.ghosttyKeybindToken)).joined(separator: ">")
+      return "--keybind=\(trigger)=\(action.ghosttyActionString)"
+    }
+
+    guard !sequenceArguments.isEmpty else { return [] }
+    return sequenceArguments + ["--keybind=\(leaderToken)>escape=end_key_sequence"]
+  }
+
   // MARK: - Ghostty CLI arguments.
 
   public static var ghosttyCLIKeybindArguments: [String] {

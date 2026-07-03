@@ -648,6 +648,167 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.shortcutOverrides.isEmpty)
   }
 
+  // MARK: - Leader-key configuration.
+
+  @Test(.dependencies) func updateLeaderChordCreatesConfigWhenNoneExists() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    let leader = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    await store.send(.updateLeaderChord(leader)) {
+      $0.leaderKey = LeaderKeyConfig(leaderChord: leader)
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.leaderKey == LeaderKeyConfig(leaderChord: leader))
+  }
+
+  @Test(.dependencies) func updateLeaderChordPreservesExistingSequences() async {
+    let oldLeader = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    let sequence = LeaderKeySequence(
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_W))],
+      target: .ghostty(.newTab),
+    )
+    var initialSettings = GlobalSettings.default
+    initialSettings.leaderKey = LeaderKeyConfig(leaderChord: oldLeader, sequences: [sequence])
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    // Changing the leader chord re-homes the existing sequences onto the new
+    // leader rather than dropping them (REQ-001 AC3).
+    let newLeader = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_J), modifiers: [.command])
+    await store.send(.updateLeaderChord(newLeader)) {
+      $0.leaderKey?.leaderChord = newLeader
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.leaderKey?.leaderChord == newLeader)
+    #expect(settingsFile.global.leaderKey?.sequences == [sequence])
+  }
+
+  @Test(.dependencies) func updateLeaderSequenceAddsNewSequence() async {
+    let leader = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    var initialSettings = GlobalSettings.default
+    initialSettings.leaderKey = LeaderKeyConfig(leaderChord: leader)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    let sequence = LeaderKeySequence(
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_W))],
+      target: .ghostty(.newTab),
+    )
+    await store.send(.updateLeaderSequence(sequence)) {
+      $0.leaderKey?.sequences = [sequence]
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.leaderKey?.sequences == [sequence])
+  }
+
+  @Test(.dependencies) func updateLeaderSequenceEditsExistingSequenceByID() async {
+    let leader = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    let original = LeaderKeySequence(
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_W))],
+      target: .ghostty(.newTab),
+    )
+    var initialSettings = GlobalSettings.default
+    initialSettings.leaderKey = LeaderKeyConfig(leaderChord: leader, sequences: [original])
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    // Same id, new target -> upsert edits in place rather than appending.
+    let edited = LeaderKeySequence(
+      id: original.id,
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_C))],
+      target: .ghostty(.closeTab),
+    )
+    await store.send(.updateLeaderSequence(edited)) {
+      $0.leaderKey?.sequences = [edited]
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.leaderKey?.sequences == [edited])
+  }
+
+  @Test(.dependencies) func updateLeaderSequenceWithoutLeaderIsNoOp() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    // A sequence is anchored to a leader; with none configured there is nothing
+    // to attach it to, so the arm is a no-op (no state change, no persist).
+    let sequence = LeaderKeySequence(
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_W))],
+      target: .ghostty(.newTab),
+    )
+    await store.send(.updateLeaderSequence(sequence))
+    #expect(settingsFile.global.leaderKey == nil)
+  }
+
+  @Test(.dependencies) func removeLeaderSequenceKeepsLeaderAndOtherSequences() async {
+    let leader = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    let keep = LeaderKeySequence(
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_W))],
+      target: .ghostty(.newTab),
+    )
+    let remove = LeaderKeySequence(
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_C))],
+      target: .ghostty(.closeTab),
+    )
+    var initialSettings = GlobalSettings.default
+    initialSettings.leaderKey = LeaderKeyConfig(leaderChord: leader, sequences: [keep, remove])
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.removeLeaderSequence(remove.id)) {
+      $0.leaderKey?.sequences = [keep]
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.leaderKey?.leaderChord == leader)
+    #expect(settingsFile.global.leaderKey?.sequences == [keep])
+  }
+
+  @Test(.dependencies) func resetLeaderKeyClearsEntireConfig() async {
+    let leader = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    let sequence = LeaderKeySequence(
+      keyStrokes: [SequenceKeyStroke(keyCode: UInt16(kVK_ANSI_W))],
+      target: .ghostty(.newTab),
+    )
+    var initialSettings = GlobalSettings.default
+    initialSettings.leaderKey = LeaderKeyConfig(leaderChord: leader, sequences: [sequence])
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.resetLeaderKey) {
+      $0.leaderKey = nil
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.leaderKey == nil)
+  }
+
   // MARK: - Toggle shortcut enabled.
 
   @Test(.dependencies) func toggleShortcutDisabledInsertsDisabledSentinel() async {
