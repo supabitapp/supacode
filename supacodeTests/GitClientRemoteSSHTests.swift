@@ -51,19 +51,21 @@ struct GitClientRemoteSSHTests {
 
     // Fixed multiplexing options + destination precede the single remote-command arg.
     #expect(
-      Array(snapshot.arguments.prefix(7)) == [
+      Array(snapshot.arguments.prefix(11)) == [
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=~/.ssh/supacode-%C",
         "-o", "ControlPersist=10m",
+        "-o", "ServerAliveInterval=5",
+        "-o", "ServerAliveCountMax=3",
         "devbox",
       ]
     )
-    #expect(snapshot.arguments.count == 8)
+    #expect(snapshot.arguments.count == 12)
 
     // The single remote arg is login-shell wrapped (so Homebrew's PATH is on
     // the remote); the payload carries `cd -- <repoRoot> && exec … <wt> …`.
     // The wrapping re-quotes the inner single-quotes, so assert on bare tokens.
-    let wrapped = snapshot.arguments[7]
+    let wrapped = snapshot.arguments[11]
     #expect(wrapped.hasPrefix("exec \"$SHELL\" -l -c "))
     #expect(wrapped.contains("cd -- "))
     #expect(wrapped.contains("/tmp/repo"))
