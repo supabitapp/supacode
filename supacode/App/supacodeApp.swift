@@ -10,6 +10,7 @@ import ComposableArchitecture
 import Foundation
 import GhosttyKit
 import IdentifiedCollections
+import OrderedCollections
 import Sharing
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
