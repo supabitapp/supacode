@@ -534,6 +534,65 @@ struct SidebarStateTests {
     #expect(item?.color == .red)
   }
 
+  // MARK: - setColor (color-only overwrite).
+
+  @Test func setColorPreservesExistingTitle() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Manual", color: .blue)
+    )
+
+    state.setColor(.red, worktree: "wt-1", in: "repo")
+
+    let item = state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]
+    #expect(item?.title == "Manual")
+    #expect(item?.color == .red)
+  }
+
+  @Test func setColorClearsColorAndKeepsTitleWhenPassedNil() {
+    var state = SidebarState()
+    state.insert(
+      worktree: "wt-1",
+      in: "repo",
+      bucket: .pinned,
+      item: .init(title: "Manual", color: .red)
+    )
+
+    state.setColor(nil, worktree: "wt-1", in: "repo")
+
+    let item = state.sections["repo"]?.buckets[.pinned]?.items["wt-1"]
+    #expect(item?.title == "Manual")
+    #expect(item?.color == nil)
+  }
+
+  @Test func setColorFallsBackToUnpinnedWhenRowMissing() {
+    var state = SidebarState()
+
+    state.setColor(.custom("#A1B2C3"), worktree: "wt-1", in: "repo")
+
+    let item = state.sections["repo"]?.buckets[.unpinned]?.items["wt-1"]
+    #expect(item?.color == .custom("#A1B2C3"))
+    #expect(item?.title == nil)
+  }
+
+  @Test func itemColorEncodesWireFormatAndRoundTrips() throws {
+    let predefined = SidebarState.Item(title: "Manual", color: .red)
+    let custom = SidebarState.Item(color: .custom("#A1B2C3"))
+
+    let predefinedData = try JSONEncoder().encode(predefined)
+    let customData = try JSONEncoder().encode(custom)
+
+    let predefinedJSON = try #require(String(bytes: predefinedData, encoding: .utf8))
+    let customJSON = try #require(String(bytes: customData, encoding: .utf8))
+    #expect(predefinedJSON.contains("\"red\""))
+    #expect(customJSON.contains("\"#A1B2C3\""))
+    #expect(try JSONDecoder().decode(SidebarState.Item.self, from: predefinedData) == predefined)
+    #expect(try JSONDecoder().decode(SidebarState.Item.self, from: customData) == custom)
+  }
+
   // MARK: - removeAnywhere(preferring:) ordering.
 
   @Test func removeAnywhereHonorsPreferringOrderWhenRowExistsInMultipleBuckets() {

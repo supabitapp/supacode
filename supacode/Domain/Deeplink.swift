@@ -29,6 +29,9 @@ enum Deeplink: Equatable, Sendable {
     case delete
     case pin
     case unpin
+    /// Raw color value from the URL (`red` / `#A1B2C3` / `none`); parsed to
+    /// `RepositoryColor` at execution so the parser stays dumb.
+    case color(value: String)
     case tab(tabID: UUID)
     case tabNew(input: String?, id: UUID?)
     case tabDestroy(tabID: UUID)

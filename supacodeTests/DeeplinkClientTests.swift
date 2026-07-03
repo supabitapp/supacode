@@ -62,6 +62,42 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .unpin))
   }
 
+  @Test func worktreeColorPredefined() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/color?value=red")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "red")))
+  }
+
+  @Test func worktreeColorPercentEncodedHex() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/color?value=%23A1B2C3")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "#A1B2C3")))
+  }
+
+  @Test func worktreeColorNone() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/color?value=none")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "none")))
+  }
+
+  @Test func worktreeColorMissingValueReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/color")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreeColorEmptyValueReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/color?value=")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreeColorIDWithTrailingSlashIsNormalized() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1%2F"
+    let url = URL(string: "supacode://worktree/\(encoded)/color?value=red")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "red")))
+  }
+
   @Test func worktreeMissingActionDefaultsToSelect() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let url = URL(string: "supacode://worktree/\(encoded)")!

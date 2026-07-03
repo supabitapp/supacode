@@ -1784,7 +1784,7 @@ struct AppFeature {
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
     case .select, .stop, .stopScript, .tab, .tabDestroy, .surfaceDestroy,
-      .archive, .unarchive, .delete, .pin, .unpin:
+      .archive, .unarchive, .delete, .pin, .unpin, .color:
       spawnsShell = false
     }
     if spawnsShell, let worktree = state.repositories.worktree(for: worktreeID), worktree.isMissing {
@@ -1843,6 +1843,31 @@ struct AppFeature {
       return .send(.repositories(.pinWorktree(worktreeID)))
     case .unpin:
       return .send(.repositories(.unpinWorktree(worktreeID)))
+    case .color(let value):
+      guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "color", state: &state) else {
+        return .none
+      }
+      if value.lowercased() == "none" {
+        return .send(.repositories(.setWorktreeColor(worktreeID, repositoryID, nil)))
+      }
+      guard let color = RepositoryColor.parse(value) else {
+        deeplinkLogger.warning("Unrecognized worktree color value: \(value)")
+        // Set alert so the CLI socket response surfaces a real error instead of silent ok=true.
+        state.alert = AlertState {
+          TextState("Invalid color value")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState(
+            "\(value) is not a recognized color. Use red, orange, yellow, green, teal, blue, purple, "
+              + "#RRGGBB[AA] hex, or none."
+          )
+        }
+        return .none
+      }
+      return .send(.repositories(.setWorktreeColor(worktreeID, repositoryID, color)))
     case .tab(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in

@@ -375,6 +375,24 @@ nonisolated extension SidebarState {
     sections[repositoryID] = section
   }
 
+  /// Overwrite only a row's user-supplied color, preserving any existing
+  /// title override. `nil` clears the tint. Falls back to `.unpinned` when
+  /// the row hasn't been seeded yet, matching `setCustomization`.
+  mutating func setColor(
+    _ color: RepositoryColor?,
+    worktree worktreeID: Worktree.ID,
+    in repositoryID: Repository.ID
+  ) {
+    let destinationBucket = currentBucket(of: worktreeID, in: repositoryID) ?? .unpinned
+    var section = sections[repositoryID] ?? .init()
+    var bucket = section.buckets[destinationBucket] ?? .init()
+    var item = bucket.items[worktreeID] ?? .init()
+    item.color = color
+    bucket.items[worktreeID] = item
+    section.buckets[destinationBucket] = bucket
+    sections[repositoryID] = section
+  }
+
   /// Archive `worktreeID`: drop from `from`, insert into `.archived`
   /// at the tail with the given timestamp. Materialises the section
   /// and the archived bucket when missing so a late-arriving

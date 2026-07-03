@@ -79,6 +79,10 @@ struct CLIReferenceView: View {
     .init(command: "supacode worktree delete [-w <id>]", description: "Delete the worktree."),
     .init(command: "supacode worktree pin [-w <id>]", description: "Pin the worktree."),
     .init(command: "supacode worktree unpin [-w <id>]", description: "Unpin the worktree."),
+    .init(
+      command: "supacode worktree color <value> [-w <id>]",
+      description: "Set the sidebar tint. Predefined name, #RRGGBB[AA] hex, or none to clear."
+    ),
   ]
 
   private static let tabRows: [CLIEntry] = [

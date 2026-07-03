@@ -122,6 +122,12 @@ private nonisolated enum DeeplinkParser {
       return .worktree(id: worktreeID, action: .pin)
     case "unpin":
       return .worktree(id: worktreeID, action: .unpin)
+    case "color":
+      guard let value = queryItems.first(where: { $0.name == "value" })?.value, !value.isEmpty else {
+        logger.warning("Color deeplink missing value query param")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .color(value: value))
     case "tab":
       return parseWorktreeTab(
         worktreeID: worktreeID,

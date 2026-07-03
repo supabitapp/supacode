@@ -62,6 +62,15 @@ extension RepositoriesFeature {
         state.worktreeCustomization = nil
         return .none
 
+      case .setWorktreeColor(let worktreeID, let repositoryID, let color):
+        // Color-only write so a CLI / deeplink tint never clobbers a
+        // user-set title override (`setCustomization` overwrites both).
+        state.$sidebar.withLock { sidebar in
+          sidebar.setColor(color, worktree: worktreeID, in: repositoryID)
+        }
+        syncSidebar(&state)
+        return .none
+
       default:
         return .none
       }

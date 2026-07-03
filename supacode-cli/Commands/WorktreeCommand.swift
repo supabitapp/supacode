@@ -16,6 +16,7 @@ struct WorktreeCommand: ParsableCommand {
       Delete.self,
       Pin.self,
       Unpin.self,
+      Color.self,
     ],
     defaultSubcommand: Focus.self
   )
@@ -199,6 +200,29 @@ extension WorktreeCommand {
       let id = try resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.worktreeAction("unpin", worktreeID: id),
+        timeoutSeconds: timeoutOption.timeout
+      )
+    }
+  }
+
+  struct Color: ParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Set the worktree's sidebar tint. Pass `none` to clear it."
+    )
+
+    @Argument(help: "red|orange|yellow|green|teal|blue|purple, #RRGGBB[AA], or none.")
+    var value: String
+
+    @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
+    var worktree: String?
+
+    @OptionGroup var timeoutOption: TimeoutOption
+
+    func run() throws {
+      let id = try resolveWorktreeID(worktree)
+      let value = try CLIWorktreeColor.validated(value)
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeColor(worktreeID: id, value: value),
         timeoutSeconds: timeoutOption.timeout
       )
     }
