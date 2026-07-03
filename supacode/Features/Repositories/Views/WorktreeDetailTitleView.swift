@@ -31,22 +31,25 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
 
 /// Hosts toolbar item content in an `NSHostingView` pinned to the given
 /// scheme's `NSAppearance`. A `.sharedBackgroundVisibility(.hidden)` item host
-/// ignores `window.appearance` and follows the system, and a plain
+/// ignores `window.appearance` and follows the app appearance, and a plain
 /// `.environment(\.colorScheme, _)` doesn't reach its AppKit-side dynamic color
-/// resolution; pinning the hosting view's appearance covers both, so
-/// `.primary` / `.secondary` inside follow the terminal-derived scheme.
+/// resolution; pinning the hosting view's appearance covers both. When the
+/// item is hosted in a borderless toolbar window (fullscreen strip, detached
+/// item overlay), the host's content view is pinned too so the bar and its
+/// sibling items follow the terminal scheme with it.
 struct TerminalSchemeHost<Content: View>: NSViewRepresentable {
   let scheme: ColorScheme
   @ViewBuilder let content: Content
 
-  func makeNSView(context: Context) -> NSHostingView<Content> {
-    let view = NSHostingView(rootView: content)
+  func makeNSView(context: Context) -> SchemeHostingView<Content> {
+    let view = SchemeHostingView(rootView: content)
     view.sizingOptions = .intrinsicContentSize
     view.appearance = NSAppearance(named: Self.appearanceName(for: scheme))
+    view.schemeName = Self.appearanceName(for: scheme)
     return view
   }
 
-  func updateNSView(_ nsView: NSHostingView<Content>, context: Context) {
+  func updateNSView(_ nsView: SchemeHostingView<Content>, context: Context) {
     nsView.rootView = content
     // The toolbar re-renders often; only re-pin when the scheme actually flips
     // so unrelated updates don't force an effectiveAppearance re-resolve.
@@ -54,10 +57,38 @@ struct TerminalSchemeHost<Content: View>: NSViewRepresentable {
     if nsView.appearance?.name != name {
       nsView.appearance = NSAppearance(named: name)
     }
+    nsView.schemeName = name
   }
 
   private static func appearanceName(for scheme: ColorScheme) -> NSAppearance.Name {
     scheme == .light ? .aqua : .darkAqua
+  }
+}
+
+/// Pins the toolbar host it lands in to the terminal scheme. The main window
+/// is left alone (WindowChromeApplier owns its appearance, same value); a
+/// borderless host is the toolbar strip or item overlay, whose CONTENT VIEW
+/// takes the pin. Never the window property itself: re-pinning the private
+/// window makes AppKit rebuild its items, which re-triggers the pin in a loop.
+final class SchemeHostingView<Content: View>: NSHostingView<Content> {
+  var schemeName: NSAppearance.Name = .aqua {
+    didSet {
+      guard schemeName != oldValue else { return }
+      pinToolbarHostAppearance()
+    }
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    pinToolbarHostAppearance()
+  }
+
+  private func pinToolbarHostAppearance() {
+    guard let window, !window.styleMask.contains(.titled) else { return }
+    guard let contentView = window.contentView, contentView.appearance?.name != schemeName else {
+      return
+    }
+    contentView.appearance = NSAppearance(named: schemeName)
   }
 }
 
