@@ -64,9 +64,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var autoUpdateAgentIntegrationsEnabled: Bool
   public var confirmQuitMode: ConfirmQuitMode
   /// When true, quitting Supacode also closes every terminal tab and tears
-  /// down the bundled zmx daemon's sessions, so nothing keeps running in
-  /// the background. Default off because persistence is the headline feature.
+  /// down zmx sessions, local and host-side, so nothing keeps running in the
+  /// background. Default off because persistence is the headline feature.
   public var terminateSessionsOnQuit: Bool
+  /// When true, remote surfaces wrap their session in zmx on the host when
+  /// the host has it installed, so the session survives disconnects.
+  public var remoteSessionPersistenceEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -100,7 +103,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: true,
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
-    terminateSessionsOnQuit: false
+    terminateSessionsOnQuit: false,
+    remoteSessionPersistenceEnabled: true
   )
 
   public init(
@@ -135,7 +139,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: Bool = true,
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
-    terminateSessionsOnQuit: Bool = false
+    terminateSessionsOnQuit: Bool = false,
+    remoteSessionPersistenceEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -169,6 +174,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
     self.confirmQuitMode = confirmQuitMode
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
+    self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -328,5 +334,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminateSessionsOnQuit =
       try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
       ?? Self.default.terminateSessionsOnQuit
+    remoteSessionPersistenceEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .remoteSessionPersistenceEnabled)
+      ?? Self.default.remoteSessionPersistenceEnabled
   }
 }
