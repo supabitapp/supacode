@@ -5,6 +5,7 @@ import SwiftUI
 struct SidebarCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.revealInSidebarAction) private var revealInSidebarAction
+  @FocusedValue(\.toggleInspectorPaneAction) private var toggleInspectorPaneAction
   @Shared(.settingsFile) private var settingsFile
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
@@ -70,6 +71,8 @@ struct SidebarCommands: Commands {
     let overrides = settingsFile.global.shortcutOverrides
     let toggleLeftSidebar = AppShortcuts.toggleLeftSidebar.effective(from: overrides)
     let revealInSidebar = AppShortcuts.revealInSidebar.effective(from: overrides)
+    let togglePullRequestInspector = AppShortcuts.togglePullRequestInspector.effective(from: overrides)
+    let toggleNotificationsInspector = AppShortcuts.toggleNotificationsInspector.effective(from: overrides)
     CommandGroup(replacing: .sidebar) {
       Button("Toggle Left Sidebar", systemImage: "sidebar.leading") {
         toggleLeftSidebarAction?()
@@ -83,6 +86,20 @@ struct SidebarCommands: Commands {
       .appKeyboardShortcut(revealInSidebar)
       .help("Reveal in Sidebar (\(revealInSidebar?.display ?? "none"))")
       .disabled(revealInSidebarAction?.isEnabled != true)
+      Section {
+        Button("Toggle Pull Request Inspector", systemImage: "arrow.trianglehead.branch") {
+          toggleInspectorPaneAction?(.git)
+        }
+        .appKeyboardShortcut(togglePullRequestInspector)
+        .help("Toggle Pull Request Inspector (\(togglePullRequestInspector?.display ?? "none"))")
+        .disabled(toggleInspectorPaneAction?.isEnabled != true)
+        Button("Toggle Notifications Inspector", systemImage: "bell") {
+          toggleInspectorPaneAction?(.notifications)
+        }
+        .appKeyboardShortcut(toggleNotificationsInspector)
+        .help("Toggle Notifications Inspector (\(toggleNotificationsInspector?.display ?? "none"))")
+        .disabled(toggleInspectorPaneAction?.isEnabled != true)
+      }
       Section {
         Menu("Group Relevant Sidebar Rows") {
           Toggle("Group Pinned Rows", isOn: groupPinnedRowsToggle)
@@ -103,6 +120,10 @@ private struct RevealInSidebarActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct ToggleInspectorPaneActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<WorktreeInspectorPane>
+}
+
 extension FocusedValues {
   var toggleLeftSidebarAction: FocusedAction<Void>? {
     get { self[ToggleLeftSidebarActionKey.self] }
@@ -112,5 +133,10 @@ extension FocusedValues {
   var revealInSidebarAction: FocusedAction<Void>? {
     get { self[RevealInSidebarActionKey.self] }
     set { self[RevealInSidebarActionKey.self] = newValue }
+  }
+
+  var toggleInspectorPaneAction: FocusedAction<WorktreeInspectorPane>? {
+    get { self[ToggleInspectorPaneActionKey.self] }
+    set { self[ToggleInspectorPaneActionKey.self] = newValue }
   }
 }
