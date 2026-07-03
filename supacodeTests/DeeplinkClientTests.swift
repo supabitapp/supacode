@@ -62,40 +62,48 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .unpin))
   }
 
-  @Test func worktreeColorPredefined() {
+  @Test func worktreeAppearanceTitleAndColor() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
-    let url = URL(string: "supacode://worktree/\(encoded)/color?value=red")!
-    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "red")))
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?title=Custom&color=red")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: "Custom", color: "red")))
   }
 
-  @Test func worktreeColorPercentEncodedHex() {
+  @Test func worktreeAppearancePercentEncodedValues() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
-    let url = URL(string: "supacode://worktree/\(encoded)/color?value=%23A1B2C3")!
-    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "#A1B2C3")))
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?title=Hello%20World&color=%23A1B2C3")!
+    #expect(
+      parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: "Hello World", color: "#A1B2C3"))
+    )
   }
 
-  @Test func worktreeColorNone() {
+  @Test func worktreeAppearanceColorOnly() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
-    let url = URL(string: "supacode://worktree/\(encoded)/color?value=none")!
-    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "none")))
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?color=none")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: nil, color: "none")))
   }
 
-  @Test func worktreeColorMissingValueReturnsNil() {
+  @Test func worktreeAppearanceEmptyTitleIsPreservedForClearing() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
-    let url = URL(string: "supacode://worktree/\(encoded)/color")!
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?title=")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: "", color: nil)))
+  }
+
+  @Test func worktreeAppearanceMissingQueryReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance")!
     #expect(parse(url) == nil)
   }
 
-  @Test func worktreeColorEmptyValueReturnsNil() {
+  @Test func worktreeAppearanceEmptyColorReturnsNil() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
-    let url = URL(string: "supacode://worktree/\(encoded)/color?value=")!
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?color=")!
     #expect(parse(url) == nil)
   }
 
-  @Test func worktreeColorIDWithTrailingSlashIsNormalized() {
+  @Test func worktreeAppearanceIDWithTrailingSlashIsNormalized() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1%2F"
-    let url = URL(string: "supacode://worktree/\(encoded)/color?value=red")!
-    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .color(value: "red")))
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?color=red")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: nil, color: "red")))
   }
 
   @Test func worktreeMissingActionDefaultsToSelect() {

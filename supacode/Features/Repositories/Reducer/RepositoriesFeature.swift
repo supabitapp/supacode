@@ -428,9 +428,8 @@ struct RepositoriesFeature {
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
     case requestCustomizeWorktree(Worktree.ID, Repository.ID)
-    /// Deeplink / CLI color set: overwrites only the row's tint (`nil` clears),
-    /// preserving any existing title override.
-    case setWorktreeColor(Worktree.ID, Repository.ID, RepositoryColor?)
+    /// Deeplink / CLI appearance update: overwrites the row's sidebar title and tint.
+    case setWorktreeAppearance(Worktree.ID, Repository.ID, title: String?, color: RepositoryColor?)
     case requestRenameBranch(Worktree.ID, Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
@@ -3877,7 +3876,7 @@ struct RepositoriesFeature {
         return .none
 
       case .requestCustomizeWorktree,
-        .setWorktreeColor,
+        .setWorktreeAppearance,
         .worktreeCustomization:
         // Handled by `WorktreeCustomizationParentReducer` below; main switch is at type-checker
         // capacity, so the customization arms are split out into a dedicated reducer.

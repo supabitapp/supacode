@@ -1784,7 +1784,7 @@ struct AppFeature {
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
     case .select, .stop, .stopScript, .tab, .tabDestroy, .surfaceDestroy,
-      .archive, .unarchive, .delete, .pin, .unpin, .color:
+      .archive, .unarchive, .delete, .pin, .unpin, .appearance:
       spawnsShell = false
     }
     if spawnsShell, let worktree = state.repositories.worktree(for: worktreeID), worktree.isMissing {
@@ -1843,31 +1843,51 @@ struct AppFeature {
       return .send(.repositories(.pinWorktree(worktreeID)))
     case .unpin:
       return .send(.repositories(.unpinWorktree(worktreeID)))
-    case .color(let value):
-      guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "color", state: &state) else {
+    case .appearance(let title, let colorValue):
+      guard title != nil || colorValue != nil else {
         return .none
       }
-      if value.lowercased() == "none" {
-        return .send(.repositories(.setWorktreeColor(worktreeID, repositoryID, nil)))
+      guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "appearance", state: &state) else {
+        return .none
       }
-      guard let color = RepositoryColor.parse(value) else {
-        deeplinkLogger.warning("Unrecognized worktree color value: \(value)")
-        // Set alert so the CLI socket response surfaces a real error instead of silent ok=true.
-        state.alert = AlertState {
-          TextState("Invalid color value")
-        } actions: {
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("OK")
+      let stored = storedWorktreeAppearance(worktreeID: worktreeID, repositoryID: repositoryID, state: state)
+      let resolvedTitle = title.map(Self.normalizedWorktreeTitle) ?? stored.title
+      let resolvedColor: RepositoryColor?
+      if let colorValue {
+        if colorValue.lowercased() == "none" {
+          resolvedColor = nil
+        } else if let color = RepositoryColor.parse(colorValue) {
+          resolvedColor = color
+        } else {
+          deeplinkLogger.warning("Unrecognized worktree appearance color value: \(colorValue)")
+          // Set alert so the CLI socket response surfaces a real error instead of silent ok=true.
+          state.alert = AlertState {
+            TextState("Invalid color value")
+          } actions: {
+            ButtonState(role: .cancel, action: .dismiss) {
+              TextState("OK")
+            }
+          } message: {
+            TextState(
+              "\(colorValue) is not a recognized color. Use red, orange, yellow, green, teal, blue, purple, "
+                + "#RRGGBB[AA] hex, or none."
+            )
           }
-        } message: {
-          TextState(
-            "\(value) is not a recognized color. Use red, orange, yellow, green, teal, blue, purple, "
-              + "#RRGGBB[AA] hex, or none."
-          )
+          return .none
         }
-        return .none
+      } else {
+        resolvedColor = stored.color
       }
-      return .send(.repositories(.setWorktreeColor(worktreeID, repositoryID, color)))
+      return .send(
+        .repositories(
+          .setWorktreeAppearance(
+            worktreeID,
+            repositoryID,
+            title: resolvedTitle,
+            color: resolvedColor
+          )
+        )
+      )
     case .tab(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
@@ -2272,6 +2292,23 @@ struct AppFeature {
       return nil
     }
     return repositoryID
+  }
+
+  private func storedWorktreeAppearance(
+    worktreeID: Worktree.ID,
+    repositoryID: Repository.ID,
+    state: State
+  ) -> (title: String?, color: RepositoryColor?) {
+    let bucket = state.repositories.sidebar.currentBucket(of: worktreeID, in: repositoryID)
+    let item = bucket.flatMap {
+      state.repositories.sidebar.sections[repositoryID]?.buckets[$0]?.items[worktreeID]
+    }
+    return (item?.title, item?.color)
+  }
+
+  private static func normalizedWorktreeTitle(_ title: String) -> String? {
+    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 
   // MARK: Confirmation helpers.

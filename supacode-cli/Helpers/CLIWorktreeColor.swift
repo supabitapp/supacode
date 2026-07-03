@@ -1,7 +1,7 @@
 import ArgumentParser
 
-/// Local validation for `worktree color` values so the CLI fails fast with a
-/// helpful message. The app re-validates authoritatively via
+/// Local validation for `worktree appearance --color` values so the CLI fails
+/// fast with a helpful message. The app re-validates authoritatively via
 /// `RepositoryColor.parse`; keep the accepted forms in sync with
 /// `SupacodeSettingsShared/Models/RepositoryColor.swift`.
 nonisolated enum CLIWorktreeColor {

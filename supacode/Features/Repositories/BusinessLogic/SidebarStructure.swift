@@ -439,8 +439,8 @@ extension RepositoriesFeature.Action {
     // per-row `customTitle` / `customTint` mirror (highlight tags + notification group name).
     case .worktreeCustomization(.presented(.delegate(.save))):
       return .all
-    // Deeplink / CLI color set mutates the bucketed Item's color; same surfaces as the sheet save.
-    case .setWorktreeColor:
+    // Deeplink / CLI appearance update mutates the same fields as the sheet save.
+    case .setWorktreeAppearance:
       return .all
     case .worktreeCustomization:
       return []

@@ -103,7 +103,7 @@ nonisolated enum CLISkillContent {
     supacode worktree delete [-w <id>]                  # Delete worktree.
     supacode worktree pin [-w <id>]                     # Pin worktree.
     supacode worktree unpin [-w <id>]                   # Unpin worktree.
-    supacode worktree color <value> [-w <id>]           # Set sidebar tint (red|orange|yellow|green|teal|blue|purple, #RRGGBB[AA], or none to clear).
+    supacode worktree appearance [-w <id>] [--title <title>] [--color <value>]  # Read stored title/tint overrides; flags update them (empty title or color none clears).
     ```
 
     ### Tab
@@ -153,6 +153,8 @@ nonisolated enum CLISkillContent {
     | `--tab` | `-t` | `$SUPACODE_TAB_ID` | Tab UUID. |
     | `--surface` | `-s` | `$SUPACODE_SURFACE_ID` | Surface UUID. |
     | `--script` | `-c` | — | Script UUID (for `worktree run`/`stop`). |
+    | `--title` | — | — | Sidebar title override; pass an empty string to clear. |
+    | `--color` | — | — | Sidebar tint override; pass `none` to clear. |
     | `--repo` | `-r` | `$SUPACODE_REPO_ID` | Repository ID. |
     | `--input` | `-i` | — | Command to run in the terminal. |
     | `--direction` | `-d` | `horizontal` | Split direction (`horizontal`/`h` or `vertical`/`v`). |
@@ -202,7 +204,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|color <value>] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -211,9 +213,11 @@ nonisolated enum CLISkillContent {
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
+    With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `--title` / `--color` (worktree appearance updates), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
@@ -249,7 +253,7 @@ nonisolated enum CLISkillContent {
     supacode surface split -d v -i "test"     # BAD: missing -t/-s, targets your shell
     ```
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `--title` / `--color` (worktree appearance updates), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
@@ -297,7 +301,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|color <value>] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -306,9 +310,11 @@ nonisolated enum CLISkillContent {
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
+    With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `--title` / `--color` (worktree appearance updates), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
@@ -355,7 +361,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|color <value>] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -364,9 +370,11 @@ nonisolated enum CLISkillContent {
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
+    With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `--title` / `--color` (worktree appearance updates), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
@@ -412,7 +420,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|color <value>] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -421,9 +429,11 @@ nonisolated enum CLISkillContent {
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
+    With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `--title` / `--color` (worktree appearance updates), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
   // MARK: - OpenCode.
@@ -468,7 +478,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|color <value>] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -477,9 +487,11 @@ nonisolated enum CLISkillContent {
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
+    `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
+    With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
     Use these IDs directly as `-w`, `-t`, `-s`, `-r`, `-c` flag values.
 
-    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `-i` (input), `-d` (direction), `-n` (new ID).
+    Flags: `-w` (worktree), `-t` (tab), `-s` (surface), `-r` (repo), `-c` (script UUID for `worktree run`/`stop`), `--title` / `--color` (worktree appearance updates), `-i` (input), `-d` (direction), `-n` (new ID).
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 

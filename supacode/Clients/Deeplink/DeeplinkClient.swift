@@ -122,12 +122,8 @@ private nonisolated enum DeeplinkParser {
       return .worktree(id: worktreeID, action: .pin)
     case "unpin":
       return .worktree(id: worktreeID, action: .unpin)
-    case "color":
-      guard let value = queryItems.first(where: { $0.name == "value" })?.value, !value.isEmpty else {
-        logger.warning("Color deeplink missing value query param")
-        return nil
-      }
-      return .worktree(id: worktreeID, action: .color(value: value))
+    case "appearance":
+      return parseWorktreeAppearance(worktreeID: worktreeID, queryItems: queryItems)
     case "tab":
       return parseWorktreeTab(
         worktreeID: worktreeID,
@@ -140,6 +136,24 @@ private nonisolated enum DeeplinkParser {
       logger.warning("Unrecognized worktree action: \(action)")
       return nil
     }
+  }
+
+  private static func parseWorktreeAppearance(
+    worktreeID: Worktree.ID,
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    let titleItem = queryItems.first { $0.name == "title" }
+    let colorItem = queryItems.first { $0.name == "color" }
+    guard titleItem != nil || colorItem != nil else {
+      logger.warning("Appearance deeplink missing title or color query param")
+      return nil
+    }
+    let title = titleItem.map { $0.value ?? "" }
+    if let colorItem, colorItem.value?.isEmpty != false {
+      logger.warning("Appearance deeplink color query param was empty")
+      return nil
+    }
+    return .worktree(id: worktreeID, action: .appearance(title: title, color: colorItem?.value))
   }
 
   private static func parseWorktreeScript(

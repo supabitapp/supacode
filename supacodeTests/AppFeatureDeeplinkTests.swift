@@ -111,58 +111,75 @@ struct AppFeatureDeeplinkTests {
     await store.receive(\.repositories.unpinWorktree)
   }
 
-  @Test(.dependencies) func colorWorktreeDeeplinkSetsColorAndPreservesTitleOverride() async {
+  @Test(.dependencies) func appearanceWorktreeDeeplinkSetsTitleAndColor() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(worktree: worktree, item: .init())
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "Custom", color: "red"))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == "Custom")
+    #expect(item?.color == .red)
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkColorOnlyPreservesTitleOverride() async {
     let worktree = makeWorktree()
     let (store, repositoryID) = makeStoreWithSidebarItem(
       worktree: worktree,
       item: .init(title: "Custom")
     )
 
-    await store.send(.deeplink(.worktree(id: worktree.id, action: .color(value: "red"))))
-    await store.receive(\.repositories.setWorktreeColor)
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: nil, color: "#A1B2C3"))))
+    await store.receive(\.repositories.setWorktreeAppearance)
 
     let item = store.state.repositories.sidebar
       .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
-    #expect(item?.color == .red)
     #expect(item?.title == "Custom")
-  }
-
-  @Test(.dependencies) func colorWorktreeDeeplinkParsesHexValue() async {
-    let worktree = makeWorktree()
-    let (store, repositoryID) = makeStoreWithSidebarItem(worktree: worktree, item: .init())
-
-    await store.send(.deeplink(.worktree(id: worktree.id, action: .color(value: "#A1B2C3"))))
-    await store.receive(\.repositories.setWorktreeColor)
-
-    let item = store.state.repositories.sidebar
-      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
     #expect(item?.color == .custom("#A1B2C3"))
   }
 
-  @Test(.dependencies) func colorNoneWorktreeDeeplinkClearsColorAndPreservesTitleOverride() async {
+  @Test(.dependencies) func appearanceWorktreeDeeplinkTitleOnlyPreservesColor() async {
     let worktree = makeWorktree()
     let (store, repositoryID) = makeStoreWithSidebarItem(
       worktree: worktree,
-      item: .init(title: "Custom", color: .blue)
+      item: .init(title: "Old", color: .blue)
     )
 
-    await store.send(.deeplink(.worktree(id: worktree.id, action: .color(value: "none"))))
-    await store.receive(\.repositories.setWorktreeColor)
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "New", color: nil))))
+    await store.receive(\.repositories.setWorktreeAppearance)
 
     let item = store.state.repositories.sidebar
       .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
-    #expect(item?.color == nil)
-    #expect(item?.title == "Custom")
+    #expect(item?.title == "New")
+    #expect(item?.color == .blue)
   }
 
-  @Test(.dependencies) func colorWorktreeDeeplinkWithInvalidValueShowsAlert() async {
+  @Test(.dependencies) func appearanceWorktreeDeeplinkClearsTitleAndColor() async {
     let worktree = makeWorktree()
     let (store, repositoryID) = makeStoreWithSidebarItem(
       worktree: worktree,
       item: .init(title: "Custom", color: .blue)
     )
 
-    await store.send(.deeplink(.worktree(id: worktree.id, action: .color(value: "mauve"))))
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "", color: "none"))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == nil)
+    #expect(item?.color == nil)
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkWithInvalidColorShowsAlert() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Custom", color: .blue)
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: nil, color: "mauve"))))
     await store.receive(\.repositories.selectWorktree)
     await store.finish()
 
@@ -2079,7 +2096,7 @@ struct AppFeatureDeeplinkTests {
   }
 
   /// Store whose sidebar has `worktree` seeded into the `.pinned` bucket with
-  /// the given item payload, so color deeplink tests can assert title / color
+  /// the given item payload, so appearance deeplink tests can assert title / color
   /// preservation end to end. Returns the owning repository ID for lookups.
   private func makeStoreWithSidebarItem(
     worktree: Worktree,

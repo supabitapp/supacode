@@ -18,9 +18,13 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/\(action)"
   }
 
-  static func worktreeColor(worktreeID: String, value: String) -> String {
-    // Hex values contain `#`, which must be percent-encoded.
-    "supacode://worktree/\(worktreeID)/color?value=\(percentEncodeQueryValue(value))"
+  static func worktreeAppearance(worktreeID: String, title: String?, color: String?) -> String {
+    var url = "supacode://worktree/\(worktreeID)/appearance"
+    var params: [String] = []
+    if let title { params.append("title=\(percentEncodeQueryValue(title))") }
+    if let color { params.append("color=\(percentEncodeQueryValue(color))") }
+    if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
+    return url
   }
 
   // MARK: - Script.

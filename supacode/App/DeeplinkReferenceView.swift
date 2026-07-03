@@ -62,8 +62,9 @@ struct DeeplinkReferenceView: View {
     .init(url: "supacode://worktree/<worktree_id>/pin", description: "Pin the worktree."),
     .init(url: "supacode://worktree/<worktree_id>/unpin", description: "Unpin the worktree."),
     .init(
-      url: "supacode://worktree/<worktree_id>/color?value=<red|orange|yellow|green|teal|blue|purple|%23RRGGBB|none>",
-      description: "Set the sidebar tint. Hex is percent-encoded #RRGGBB[AA]; none clears."
+      url: "supacode://worktree/<worktree_id>/appearance",
+      description: "Update title/tint overrides. Omitted fields are preserved; empty title clears; color=none clears.",
+      params: "?title=<title>&color=<red|orange|yellow|green|teal|blue|purple|%23RRGGBB|none>"
     ),
   ]
 
