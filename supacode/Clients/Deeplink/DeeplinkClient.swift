@@ -149,11 +149,10 @@ private nonisolated enum DeeplinkParser {
       return nil
     }
     let title = titleItem.map { $0.value ?? "" }
-    if let colorItem, colorItem.value?.isEmpty != false {
-      logger.warning("Appearance deeplink color query param was empty")
-      return nil
-    }
-    return .worktree(id: worktreeID, action: .appearance(title: title, color: colorItem?.value))
+    // An empty color passes through so execution rejects it with a visible
+    // alert (and CLI ok=false) instead of a log-only drop here.
+    let color = colorItem.map { $0.value ?? "" }
+    return .worktree(id: worktreeID, action: .appearance(title: title, color: color))
   }
 
   private static func parseWorktreeScript(

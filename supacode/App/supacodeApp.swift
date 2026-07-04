@@ -417,7 +417,14 @@ struct SupacodeApp: App {
     }
     AgentHookSocketServer.sendQueryResponse(
       clientFD: clientFD,
-      data: [WorktreeAppearanceQueryResponse.fields(repository: repository, worktree: worktree, item: item)]
+      data: [
+        WorktreeAppearanceQueryResponse.fields(
+          repository: repository,
+          worktree: worktree,
+          item: item,
+          resolvedSidebarTitle: store.repositories.sidebarItems[id: worktree.id]?.resolvedSidebarTitle
+        )
+      ]
     )
   }
 

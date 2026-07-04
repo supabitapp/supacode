@@ -94,10 +94,10 @@ struct DeeplinkClientTests {
     #expect(parse(url) == nil)
   }
 
-  @Test func worktreeAppearanceEmptyColorReturnsNil() {
+  @Test func worktreeAppearanceEmptyColorIsPreservedForValidation() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let url = URL(string: "supacode://worktree/\(encoded)/appearance?color=")!
-    #expect(parse(url) == nil)
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: nil, color: "")))
   }
 
   @Test func worktreeAppearanceIDWithTrailingSlashIsNormalized() {

@@ -1870,7 +1870,7 @@ struct AppFeature {
           } message: {
             TextState(
               "\(colorValue) is not a recognized color. Use red, orange, yellow, green, teal, blue, purple, "
-                + "#RRGGBB[AA] hex, or none."
+                + "#RRGGBB[AA] hex, or none. No appearance changes were applied."
             )
           }
           return .none

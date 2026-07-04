@@ -192,6 +192,26 @@ struct AppFeatureDeeplinkTests {
     #expect(item?.title == "Custom")
   }
 
+  @Test(.dependencies) func appearanceWorktreeDeeplinkWithEmptyColorShowsAlertAndDropsTitle() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Custom", color: .blue)
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "New", color: ""))))
+    await store.receive(\.repositories.selectWorktree)
+    await store.finish()
+
+    // Invalid color fails the whole update atomically: the valid title is
+    // dropped too, and the alert says so.
+    #expect(store.state.alert != nil)
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.color == .blue)
+    #expect(item?.title == "Custom")
+  }
+
   @Test(.dependencies) func archiveWorktreeDeeplink() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)

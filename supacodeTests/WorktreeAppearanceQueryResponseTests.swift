@@ -10,7 +10,8 @@ struct WorktreeAppearanceQueryResponseTests {
   @Test func unsetCustomizationReportsStoredFieldsSeparatelyFromDisplayTitle() {
     let (repository, worktree) = makeGitWorktree(name: "feature/review")
 
-    let fields = WorktreeAppearanceQueryResponse.fields(repository: repository, worktree: worktree, item: nil)
+    let fields = WorktreeAppearanceQueryResponse.fields(
+      repository: repository, worktree: worktree, item: nil, resolvedSidebarTitle: nil)
 
     #expect(fields["title"] == "")
     #expect(fields["color"] == "none")
@@ -21,17 +22,28 @@ struct WorktreeAppearanceQueryResponseTests {
     let (repository, worktree) = makeGitWorktree(name: "feature/review")
     let item = SidebarState.Item(title: "  Review UI  ", color: .purple)
 
-    let fields = WorktreeAppearanceQueryResponse.fields(repository: repository, worktree: worktree, item: item)
+    let fields = WorktreeAppearanceQueryResponse.fields(
+      repository: repository, worktree: worktree, item: item, resolvedSidebarTitle: nil)
 
     #expect(fields["title"] == "  Review UI  ")
     #expect(fields["color"] == "purple")
     #expect(fields["displayTitle"] == "Review UI")
   }
 
+  @Test func seededRowResolvedTitleWinsOverStoredOverrideFallback() {
+    let (repository, worktree) = makeGitWorktree(name: "feature/review")
+
+    let fields = WorktreeAppearanceQueryResponse.fields(
+      repository: repository, worktree: worktree, item: nil, resolvedSidebarTitle: "review")
+
+    #expect(fields["displayTitle"] == "review")
+  }
+
   @Test func folderDisplayTitleFallsBackToRepositoryName() {
     let (repository, worktree) = makeFolderWorktree(repositoryName: "Documents", worktreeName: "Synthetic Row")
 
-    let fields = WorktreeAppearanceQueryResponse.fields(repository: repository, worktree: worktree, item: nil)
+    let fields = WorktreeAppearanceQueryResponse.fields(
+      repository: repository, worktree: worktree, item: nil, resolvedSidebarTitle: nil)
 
     #expect(fields["title"] == "")
     #expect(fields["color"] == "none")
