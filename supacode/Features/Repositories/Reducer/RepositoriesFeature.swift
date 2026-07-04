@@ -2639,11 +2639,11 @@ struct RepositoriesFeature {
     Reduce { state, action in
       switch action {
       case .pinWorktree(let worktreeID):
-        // Git "main" worktrees never appear in any sidebar bucket (the
-        // seed pass skips them), so pinning one is a no-op. Folder
-        // synthetic worktrees satisfy `isMainWorktree` by geometry but
-        // ARE pinnable; scope the skip to git repos so folders fall
-        // through to the bucket machinery below.
+        // Git "main" worktrees always render in the main slot, not the user-curated pinned list
+        // (though a hidden bucket item may carry CLI-set appearance overrides), so pinning one is
+        // a no-op. Folder synthetic worktrees satisfy `isMainWorktree` by geometry but ARE
+        // pinnable; scope the skip to git repos so folders fall through to the bucket machinery
+        // below.
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
           let repository = state.repositories[id: repositoryID]
@@ -5670,6 +5670,7 @@ extension RepositoriesFeature.State {
       let isUnresolvedRemotePlaceholder = repository.host != nil && repository.worktrees.isEmpty
       let pruneAgainstRoster = pruneLivenessAgainstRoster && !isUnresolvedRemotePlaceholder
       var copy = section
+      let mainCustomization = mainID.flatMap { Self.mainWorktreeCustomization(in: copy, mainID: $0) }
       var seenInCuratedBuckets: Set<Worktree.ID> = []
       for (bucketID, bucket) in copy.buckets {
         if bucketID == .archived { continue }
@@ -5683,6 +5684,11 @@ extension RepositoriesFeature.State {
         var prunedBucket = bucket
         prunedBucket.items = prunedItems
         copy.buckets[bucketID] = prunedBucket
+      }
+      if let mainID, let mainCustomization {
+        var unpinned = copy.buckets[.unpinned] ?? .init()
+        unpinned.items[mainID] = mainCustomization
+        copy.buckets[.unpinned] = unpinned
       }
       var archivedIDs: Set<Worktree.ID> = []
       if let archivedBucket = copy.buckets[.archived] {
@@ -5722,6 +5728,26 @@ extension RepositoriesFeature.State {
     // `sidebar.json` on every tick.
     guard rebuilt != sidebar.sections else { return }
     $sidebar.withLock { sidebar in sidebar.sections = rebuilt }
+  }
+
+  /// Returns a git main worktree's CLI-set appearance override, if one exists.
+  /// Main worktrees do not participate in bucket ordering (the sidebar always
+  /// projects them into the main slot), but `supacode worktree appearance` can
+  /// still tint or rename the current main-worktree row. Reconciliation
+  /// normalizes that hidden payload into `.unpinned` so the override survives
+  /// roster reloads without making the main worktree user-pinned.
+  private static func mainWorktreeCustomization(
+    in section: SidebarState.Section,
+    mainID: Worktree.ID
+  ) -> SidebarState.Item? {
+    for bucketID in [SidebarState.BucketID.unpinned, .pinned] {
+      guard var item = section.buckets[bucketID]?.items[mainID],
+        item.title != nil || item.color != nil
+      else { continue }
+      item.archivedAt = nil
+      return item
+    }
+    return nil
   }
 
   /// Drop persisted `collapsedBranchPrefixes` entries no longer covered by any
