@@ -52,12 +52,20 @@ struct WorktreeDetailView: View {
       && loadingInfo == nil
       && !showsMultiSelectionSummary
       && selectedWorktree?.isMissing != true
-    // Source `runningScriptIDs` from the slice instead of `state.runningScriptIDs`
-    // so an unrelated `sidebarItems[id:].agents` mutation on the focused row
-    // doesn't re-publish this. Same field, observed through the projected slice.
-    let runningScriptIDs = Set(selectedRow?.runningScripts.ids ?? [])
-    // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsPopoverButtonHost`
+    // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsButtonHost`
     // instead; reading it here would re-render the body on every notification.
+    let repositoriesStore = store.scope(state: \.repositories, action: \.repositories)
+    let inspectorPane = repositories.inspectorPane
+    let inspectorPresented = repositories.inspectorPresented
+    let inspectorPullRequest = Self.inspectorPullRequest(
+      selectedWorktree: selectedWorktree,
+      selectedRow: selectedRow
+    )
+    let isCheckingPullRequest = Self.isCheckingPullRequest(
+      selectedWorktree: selectedWorktree,
+      selectedRow: selectedRow,
+      repositories: repositories
+    )
     // Read the manager's stored color here (tracked body evaluation, not the
     // deferred toolbar closure) so the toolbar scheme invalidates on change.
     let toolbarScheme: ColorScheme =
@@ -72,43 +80,46 @@ struct WorktreeDetailView: View {
     .toolbar(removing: .title)
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .toolbar {
-      if showsToolbarPlaceholder {
-        ToolbarPlaceholderContent(scheme: toolbarScheme)
-      } else if hasActiveWorktree, let selectedWorktree {
-        let toolbarState = makeToolbarState(
-          selectedWorktree: selectedWorktree,
-          selectedRow: selectedRow,
-          state: state,
-          runningScriptIDs: runningScriptIDs
-        )
-        WorktreeToolbarContent(
-          scheme: toolbarScheme,
-          toolbarState: toolbarState,
-          terminalManager: terminalManager,
-          repositoriesStore: store.scope(state: \.repositories, action: \.repositories),
-          onOpenWorktree: { action in
-            store.send(.openWorktree(action))
-          },
-          onOpenActionSelectionChanged: { action in
-            store.send(.openActionSelectionChanged(action))
-          },
-          onRevealInFinder: {
-            store.send(.revealInFinder)
-          },
-          onSelectNotification: selectToolbarNotification,
-          onRunScript: { store.send(.runScript) },
-          onRunNamedScript: { store.send(.runNamedScript($0)) },
-          onStopScript: { store.send(.stopScript($0)) },
-          onStopRunScripts: { store.send(.stopRunScripts) },
-          onManageRepoScripts: {
-            let repositoryID = selectedWorktree.repositoryRootURL.path(percentEncoded: false)
-            store.send(.settings(.setSelection(.repositoryScripts(repositoryID))))
-          },
-          onManageGlobalScripts: {
-            store.send(.settings(.setSelection(.scripts)))
+      WorktreeDetailToolbar(
+        store: store,
+        terminalManager: terminalManager,
+        repositoriesStore: repositoriesStore,
+        scheme: toolbarScheme,
+        showsToolbarPlaceholder: showsToolbarPlaceholder,
+        hasActiveWorktree: hasActiveWorktree,
+        selectedWorktree: selectedWorktree,
+        selectedRow: selectedRow,
+        repositories: repositories,
+        hideSubtitleOnMatch: hideSubtitleOnMatch,
+        inspectorPane: inspectorPane,
+        inspectorPresented: inspectorPresented,
+        onSelectNotification: selectToolbarNotification
+      )
+    }
+    .inspector(
+      isPresented: Binding(
+        get: { inspectorPresented },
+        set: { repositoriesStore.send(.setInspectorPresented($0)) }
+      )
+    ) {
+      WorktreeStatusInspectorContainer(
+        pane: inspectorPane,
+        isFolder: selectedRow?.isFolder == true,
+        isCheckingPullRequest: isCheckingPullRequest,
+        pullRequest: inspectorPullRequest,
+        repositoriesStore: repositoriesStore,
+        terminalManager: terminalManager,
+        onSelectNotification: selectToolbarNotification,
+        onPullRequestAction: { action in
+          if let worktreeID = selectedWorktree?.id {
+            repositoriesStore.send(.pullRequestAction(worktreeID, action))
           }
-        )
-      }
+        }
+      )
+      .inspectorColumnWidth(min: 280, ideal: 320, max: 480)
+      // Match the inspector's accent to the terminal background; the appearance
+      // is forced inside `WorktreeStatusInspectorContainer`.
+      .tint(terminalManager.chromeOverlayTint())
     }
     let hasRunningRunScript = state.hasRunningRunScript
     // Reveal in Finder is local-only; Open can target a remote worktree when the
@@ -126,6 +137,30 @@ struct WorktreeDetailView: View {
       hasRunningRunScript: hasRunningRunScript,
       resolvedSelection: resolvedSelection
     )
+  }
+
+  /// The selected worktree's pull request, shown in the inspector's git pane.
+  private static func inspectorPullRequest(
+    selectedWorktree: Worktree?,
+    selectedRow: SelectedWorktreeSlice?
+  ) -> GithubPullRequest? {
+    selectedWorktree.flatMap { worktree in
+      if case .git(let pullRequest) = toolbarKind(for: worktree, selectedRow: selectedRow) {
+        return pullRequest
+      }
+      return nil
+    }
+  }
+
+  /// Whether a pull-request refresh is in flight for the selected worktree's repo.
+  private static func isCheckingPullRequest(
+    selectedWorktree: Worktree?,
+    selectedRow: SelectedWorktreeSlice?,
+    repositories: RepositoriesFeature.State
+  ) -> Bool {
+    guard selectedRow?.isFolder != true, let worktree = selectedWorktree else { return false }
+    guard let repositoryID = repositories.repositoryID(containing: worktree.id) else { return false }
+    return repositories.inFlightPullRequestRefreshRepositoryIDs.contains(repositoryID)
   }
 
   /// The editor the primary Open command would launch, or `nil` when it can't
@@ -281,6 +316,9 @@ struct WorktreeDetailView: View {
         store.send(.revealInFinder)
       }
       .focusedSceneValue(\.openActionSelection, resolvedSelection)
+      .focusedSceneAction(\.toggleInspectorPaneAction, enabled: hasActiveWorktree) { pane in
+        store.send(.repositories(.toggleInspectorPane(pane)))
+      }
       .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
         store.send(.newTerminal)
       }
@@ -326,32 +364,32 @@ struct WorktreeDetailView: View {
     }
   }
 
-  /// Toolbar notification button host. Reads `toolbarNotificationGroupsCache`
+  /// Toolbar notification bell host. Reads `toolbarNotificationGroupsCache`
   /// itself so notification churn invalidates only this leaf. `repositoriesStore`
   /// is optional so previews can mount the host without booting a `Store`.
-  fileprivate struct ToolbarNotificationsPopoverButtonHost: View {
+  fileprivate struct ToolbarNotificationsButtonHost: View {
     let repositoriesStore: StoreOf<RepositoriesFeature>?
-    let terminalManager: WorktreeTerminalManager
-    let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
+    let isSelected: Bool
+    let tint: Color
+    let foreground: Color
+    let onActivate: () -> Void
 
     var body: some View {
       if let repositoriesStore {
         let groups = repositoriesStore.toolbarNotificationGroupsCache
-        if !groups.isEmpty {
-          let unseenWorktreeCount = groups.reduce(0) { $0 + $1.unseenWorktreeCount }
-          ToolbarNotificationsPopoverButton(
-            groups: groups,
-            unseenWorktreeCount: unseenWorktreeCount,
-            onSelectNotification: onSelectNotification,
-            onDismissAll: {
-              for repositoryGroup in groups {
-                for worktreeGroup in repositoryGroup.worktrees {
-                  terminalManager.stateIfExists(for: worktreeGroup.id)?.dismissAllNotifications()
-                }
-              }
+        let unreadCount = groups.reduce(0) { count, repository in
+          count
+            + repository.worktrees.reduce(0) { worktreeCount, worktree in
+              worktreeCount + worktree.notifications.filter { !$0.isRead }.count
             }
-          )
         }
+        WorktreeNotificationsToolbarButton(
+          unreadCount: unreadCount,
+          isSelected: isSelected,
+          tint: tint,
+          foreground: foreground,
+          onActivate: onActivate
+        )
       }
     }
   }
@@ -404,7 +442,6 @@ struct WorktreeDetailView: View {
     // menu editor is enabled only when it can express the host (`canOpen`).
     let remoteOpenHost: RemoteHost?
     let remoteOpenPath: String
-    let statusToast: RepositoriesFeature.StatusToast?
     let openActionSelection: OpenWorktreeAction
     let repoScripts: [ScriptDefinition]
     let globalScripts: [ScriptDefinition]
@@ -482,6 +519,72 @@ struct WorktreeDetailView: View {
     }
   }
 
+  fileprivate struct WorktreeDetailToolbar: ToolbarContent {
+    let store: StoreOf<AppFeature>
+    let terminalManager: WorktreeTerminalManager
+    let repositoriesStore: StoreOf<RepositoriesFeature>
+    /// Terminal-derived scheme for the `.navigation` item, whose detached host
+    /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
+    let scheme: ColorScheme
+    let showsToolbarPlaceholder: Bool
+    let hasActiveWorktree: Bool
+    let selectedWorktree: Worktree?
+    let selectedRow: SelectedWorktreeSlice?
+    let repositories: RepositoriesFeature.State
+    let hideSubtitleOnMatch: Bool
+    let inspectorPane: WorktreeInspectorPane
+    let inspectorPresented: Bool
+    let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
+
+    var body: some ToolbarContent {
+      if showsToolbarPlaceholder {
+        ToolbarPlaceholderContent(scheme: scheme)
+      } else if hasActiveWorktree, let selectedWorktree {
+        let titleContent = WorktreeDetailView.makeToolbarTitleContent(
+          selectedWorktree: selectedWorktree,
+          selectedRow: selectedRow,
+          repositories: repositories,
+          hideSubtitleOnMatch: hideSubtitleOnMatch
+        )
+        // `runningScriptIDs` comes off the projected slice so an unrelated per-leaf
+        // agent mutation on the focused row doesn't re-publish the toolbar.
+        let toolbarState = WorktreeToolbarState(
+          titleContent: titleContent,
+          rootURL: selectedWorktree.repositoryRootURL,
+          kind: WorktreeDetailView.toolbarKind(for: selectedWorktree, selectedRow: selectedRow),
+          remoteOpenHost: selectedWorktree.host,
+          remoteOpenPath: selectedWorktree.location.workingDirectoryPath,
+          openActionSelection: store.openActionSelection,
+          repoScripts: store.repoScripts,
+          globalScripts: store.globalScripts,
+          runningScriptIDs: Set(selectedRow?.runningScripts.ids ?? [])
+        )
+        WorktreeToolbarContent(
+          scheme: scheme,
+          toolbarState: toolbarState,
+          terminalManager: terminalManager,
+          repositoriesStore: repositoriesStore,
+          inspectorPane: inspectorPane,
+          inspectorPresented: inspectorPresented,
+          onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) },
+          onOpenWorktree: { store.send(.openWorktree($0)) },
+          onOpenActionSelectionChanged: { store.send(.openActionSelectionChanged($0)) },
+          onRevealInFinder: { store.send(.revealInFinder) },
+          onSelectNotification: onSelectNotification,
+          onRunScript: { store.send(.runScript) },
+          onRunNamedScript: { store.send(.runNamedScript($0)) },
+          onStopScript: { store.send(.stopScript($0)) },
+          onStopRunScripts: { store.send(.stopRunScripts) },
+          onManageRepoScripts: {
+            let repositoryID = selectedWorktree.repositoryRootURL.path(percentEncoded: false)
+            store.send(.settings(.setSelection(.repositoryScripts(repositoryID))))
+          },
+          onManageGlobalScripts: { store.send(.settings(.setSelection(.scripts))) }
+        )
+      }
+    }
+  }
+
   fileprivate struct WorktreeToolbarContent: ToolbarContent {
     /// Terminal-derived scheme for the `.navigation` item, whose detached host
     /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
@@ -489,6 +592,9 @@ struct WorktreeDetailView: View {
     let toolbarState: WorktreeToolbarState
     let terminalManager: WorktreeTerminalManager
     let repositoriesStore: StoreOf<RepositoriesFeature>?
+    let inspectorPane: WorktreeInspectorPane
+    let inspectorPresented: Bool
+    let onActivateInspector: (WorktreeInspectorPane) -> Void
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
     let onRevealInFinder: () -> Void
@@ -507,21 +613,6 @@ struct WorktreeDetailView: View {
         }
       }
       .sharedBackgroundVisibility(.hidden)
-
-      ToolbarSpacer(.flexible)
-
-      ToolbarItemGroup {
-        ToolbarStatusView(
-          toast: toolbarState.statusToast,
-          pullRequest: toolbarState.pullRequest
-        )
-        .padding(.horizontal)
-        ToolbarNotificationsPopoverButtonHost(
-          repositoriesStore: repositoriesStore,
-          terminalManager: terminalManager,
-          onSelectNotification: onSelectNotification
-        )
-      }
 
       ToolbarSpacer(.flexible)
 
@@ -547,6 +638,27 @@ struct WorktreeDetailView: View {
         // Rebuild the NSMenu when any field changes (#280) so renames propagate without a worktree switch.
         .id(toolbarState.scriptMenuIdentity)
         .transaction { $0.animation = nil }
+      }
+
+      ToolbarItemGroup {
+        // Translucent chrome-tracking highlight (whiteish on a dark terminal);
+        // full-opacity tint reads as a stark solid pill against the glass.
+        let chromeForeground = terminalManager.chromeOverlayTint()
+        let chromeTint = chromeForeground.opacity(0.2)
+        WorktreeGitStatusButton(
+          pullRequest: toolbarState.pullRequest,
+          isSelected: inspectorPresented && inspectorPane == .git,
+          tint: chromeTint,
+          foreground: chromeForeground,
+          onActivate: { onActivateInspector(.git) }
+        )
+        ToolbarNotificationsButtonHost(
+          repositoriesStore: repositoriesStore,
+          isSelected: inspectorPresented && inspectorPane == .notifications,
+          tint: chromeTint,
+          foreground: chromeForeground,
+          onActivate: { onActivateInspector(.notifications) }
+        )
       }
     }
 
@@ -586,7 +698,14 @@ struct WorktreeDetailView: View {
             .disabled(toolbarState.remoteOpenHost != nil)
           }
         } label: {
-          OpenWorktreeActionMenuLabelView(action: primarySelection)
+          // Icon-only toolbar label (icon + system chevron). Plain `Label`
+          // with no `.labelStyle` so the toolbar collapses the title yet
+          // leaves customization intact.
+          Label {
+            Text(primarySelection.labelTitle)
+          } icon: {
+            OpenWorktreeActionIcon(action: primarySelection)
+          }
         } primaryAction: {
           // Single-click never opens an editor that can't reach the worktree;
           // the submenu stays available for picking a capable one.
@@ -666,33 +785,7 @@ struct WorktreeDetailView: View {
     )
   }
 
-  private func makeToolbarState(
-    selectedWorktree: Worktree,
-    selectedRow: SelectedWorktreeSlice?,
-    state: AppFeature.State,
-    runningScriptIDs: Set<UUID>
-  ) -> WorktreeToolbarState {
-    let repositories = state.repositories
-    return WorktreeToolbarState(
-      titleContent: Self.makeToolbarTitleContent(
-        selectedWorktree: selectedWorktree,
-        selectedRow: selectedRow,
-        repositories: repositories,
-        hideSubtitleOnMatch: hideSubtitleOnMatch
-      ),
-      rootURL: selectedWorktree.repositoryRootURL,
-      kind: toolbarKind(for: selectedWorktree, selectedRow: selectedRow),
-      remoteOpenHost: selectedWorktree.host,
-      remoteOpenPath: selectedWorktree.location.workingDirectoryPath,
-      statusToast: repositories.statusToast,
-      openActionSelection: state.openActionSelection,
-      repoScripts: state.repoScripts,
-      globalScripts: state.globalScripts,
-      runningScriptIDs: runningScriptIDs
-    )
-  }
-
-  private func toolbarKind(
+  fileprivate static func toolbarKind(
     for selectedWorktree: Worktree,
     selectedRow: SelectedWorktreeSlice?
   ) -> WorktreeToolbarState.Kind {
@@ -902,30 +995,10 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
     ToolbarSpacer(.flexible)
 
     ToolbarItemGroup {
-      HStack(spacing: 8) {
-        Image(systemName: "sun.max.fill")
-          .font(.callout)
-        Text("00:00 – Open Command Palette (⌘P)")
-          .font(.footnote)
-          .monospaced()
-      }
-      .foregroundStyle(.secondary)
-      .padding(.horizontal)
-      .redacted(reason: .placeholder)
-      .shimmer(isActive: true)
-    }
-
-    ToolbarSpacer(.flexible)
-
-    ToolbarItemGroup {
       Button {
       } label: {
-        HStack(spacing: 4) {
-          Image(systemName: "doc.text")
-          Text("VS Code (⌘O)")
-        }
+        Image(systemName: "doc.text")
       }
-      .font(.caption)
       .redacted(reason: .placeholder)
       .shimmer(isActive: true)
     }
@@ -934,12 +1007,23 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
     ToolbarItem {
       Button {
       } label: {
-        Label {
-          Text("Run")
-        } icon: {
-          Image(systemName: "play")
-        }
-        .labelStyle(.titleAndIcon)
+        Image(systemName: "play")
+      }
+      .redacted(reason: .placeholder)
+      .shimmer(isActive: true)
+    }
+
+    ToolbarItemGroup {
+      // Mirror the trailing inspector toggles (git status + notifications).
+      Button {
+      } label: {
+        Image(systemName: "arrow.trianglehead.branch")
+      }
+      .redacted(reason: .placeholder)
+      .shimmer(isActive: true)
+      Button {
+      } label: {
+        Image(systemName: "bell")
       }
       .redacted(reason: .placeholder)
       .shimmer(isActive: true)
@@ -1160,12 +1244,14 @@ private struct ScriptMenu: View {
   private func scriptLabel(hasRunning: Bool) -> some View {
     let icon = hasRunning ? "stop" : (primaryScript?.resolvedSystemImage ?? "play")
     let label = hasRunning ? "Stop" : (primaryScript?.displayName ?? "Run")
+    // Icon-only toolbar label (icon + system chevron). No `.labelStyle` so the
+    // toolbar collapses the title while keeping customization intact.
     Label {
       Text(label)
     } icon: {
       Image(systemName: icon)
         .accessibilityHidden(true)
-    }.labelStyle(.titleAndIcon)
+    }
   }
 
   private func primaryHelpText(hasRunning: Bool) -> String {
@@ -1202,7 +1288,6 @@ private struct WorktreeToolbarPreview: View {
       kind: .git(pullRequest: nil),
       remoteOpenHost: nil,
       remoteOpenPath: "/tmp/preview",
-      statusToast: nil,
       openActionSelection: .finder,
       repoScripts: [ScriptDefinition(kind: .run, command: "npm run dev")],
       globalScripts: [],
@@ -1221,6 +1306,9 @@ private struct WorktreeToolbarPreview: View {
         toolbarState: toolbarState,
         terminalManager: WorktreeTerminalManager(runtime: GhosttyRuntime()),
         repositoriesStore: nil,
+        inspectorPane: .git,
+        inspectorPresented: false,
+        onActivateInspector: { _ in },
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onRevealInFinder: {},

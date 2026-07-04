@@ -1,9 +1,14 @@
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
+import SupacodeSettingsShared
 
 struct ToolbarNotificationRepositoryGroup: Identifiable, Equatable {
   let id: Repository.ID
   let name: String
+  // Sidebar identity so notification headers render like the sidebar rows.
+  let color: RepositoryColor?
+  let isFolder: Bool
   let worktrees: [ToolbarNotificationWorktreeGroup]
 
   var notificationCount: Int {
@@ -64,10 +69,19 @@ extension RepositoriesFeature.State {
         }
 
       if !worktreeGroups.isEmpty {
+        let isFolder = !repository.isGitRepository
+        // A folder's title / tint live on its synthetic row, not the repo
+        // section; resolve there so a customized folder header matches the sidebar.
+        let folderRow = isFolder ? sidebarItems[id: Repository.folderWorktreeID(for: repository.rootURL)] : nil
+        let section = sidebar.sections[repositoryID]
         groups.append(
           ToolbarNotificationRepositoryGroup(
             id: repository.id,
-            name: repository.name,
+            name: isFolder
+              ? (folderRow?.resolvedSidebarTitle ?? repository.name)
+              : Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
+            color: isFolder ? folderRow?.customTint : section?.color,
+            isFolder: isFolder,
             worktrees: worktreeGroups
           )
         )

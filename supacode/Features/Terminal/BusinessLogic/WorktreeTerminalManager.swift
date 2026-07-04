@@ -1026,6 +1026,17 @@ final class WorktreeTerminalManager {
     NotificationCenter.default.post(name: .ghosttyFocusedSurfaceBackgroundDidChange, object: self)
   }
 
+  // Chrome tint derived off the terminal background instead of the system accent:
+  // whiteish on a dark terminal, blackish on light.
+  func chromeOverlayTint() -> Color {
+    focusedSurfaceBackground.isLightColor ? .black : .white
+  }
+
+  // The focused terminal background's luminance as a scheme (dark terminal → .dark).
+  func surfaceBackgroundColorScheme() -> ColorScheme {
+    focusedSurfaceBackground.isLightColor ? .light : .dark
+  }
+
   var ghosttyRuntime: GhosttyRuntime { runtime }
 
   func unfocusedSplitOverlay() -> (fill: Color?, opacity: Double) {

@@ -481,6 +481,7 @@ extension RepositoriesFeature.Action {
       .setMoveNotifiedWorktreeToTop,
       .pullRequestAction,
       .showToast, .dismissToast,
+      .toggleInspectorPane, .setInspectorPresented,
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
       .requestCustomizeWorktree,
