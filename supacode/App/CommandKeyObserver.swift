@@ -1,17 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// Tracks whether the user is currently holding ⌘ or ⌃ so the UI can surface shortcut hints.
+/// Tracks whether the user is currently holding ⌘ or ⌃ so the UI can surface
+/// shortcut hints. The two modifiers are tracked independently: the tab bar
+/// hints on ⌘ (tab selection is ⌘1..⌘9) while the sidebar hints on ⌃ (worktree
+/// selection is ⌃1..⌃0). A single "either modifier" flag would surface the
+/// wrong hints — e.g. ⌘ lighting up the ⌃-based worktree hints.
 @MainActor
 @Observable
 final class CommandKeyObserver {
-  var isPressed: Bool
+  var isCommandPressed: Bool
+  var isControlPressed: Bool
   private var monitor: Any?
   private var didBecomeActiveObserver: NSObjectProtocol?
   private var didResignActiveObserver: NSObjectProtocol?
 
   init() {
-    isPressed = false
+    isCommandPressed = false
+    isControlPressed = false
     monitor = nil
     didBecomeActiveObserver = nil
     didResignActiveObserver = nil
@@ -21,7 +27,7 @@ final class CommandKeyObserver {
   private func configureObservers() {
     monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
       MainActor.assumeIsolated {
-        self?.handleCommandKeyChange(isDown: Self.shouldShowShortcuts(for: event.modifierFlags))
+        self?.update(for: event.modifierFlags)
       }
       return event
     }
@@ -32,7 +38,7 @@ final class CommandKeyObserver {
       queue: .main
     ) { [weak self] _ in
       MainActor.assumeIsolated {
-        self?.handleCommandKeyChange(isDown: Self.shouldShowShortcuts(for: NSEvent.modifierFlags))
+        self?.update(for: NSEvent.modifierFlags)
       }
     }
     didResignActiveObserver = center.addObserver(
@@ -41,17 +47,22 @@ final class CommandKeyObserver {
       queue: .main
     ) { [weak self] _ in
       MainActor.assumeIsolated {
-        self?.handleCommandKeyChange(isDown: false)
+        self?.update(for: [])
       }
     }
   }
 
-  nonisolated static func shouldShowShortcuts(for modifierFlags: NSEvent.ModifierFlags) -> Bool {
-    modifierFlags.contains(.command) || modifierFlags.contains(.control)
+  nonisolated static func isCommandActive(for modifierFlags: NSEvent.ModifierFlags) -> Bool {
+    modifierFlags.contains(.command)
   }
 
-  private func handleCommandKeyChange(isDown: Bool) {
+  nonisolated static func isControlActive(for modifierFlags: NSEvent.ModifierFlags) -> Bool {
+    modifierFlags.contains(.control)
+  }
+
+  private func update(for modifierFlags: NSEvent.ModifierFlags) {
     // Flip immediately; consumers fade the visual change in/out themselves.
-    isPressed = isDown
+    isCommandPressed = Self.isCommandActive(for: modifierFlags)
+    isControlPressed = Self.isControlActive(for: modifierFlags)
   }
 }

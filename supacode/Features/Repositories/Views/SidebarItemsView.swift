@@ -13,8 +13,8 @@ struct SidebarItemsView: View {
   /// no slot derivation: it walks `groups` in order and renders.
   let groups: [SidebarItemGroup]
   /// Already-resolved shortcut hint strings from the structure's `slotByID`
-  /// joined with `commandKeyObserver.isPressed` + shortcut overrides at the
-  /// `SidebarListView` level. `nil` here means "no hint to render".
+  /// joined with `commandKeyObserver.isControlPressed` + shortcut overrides at
+  /// the `SidebarListView` level. `nil` here means "no hint to render".
   let shortcutHintByID: [Worktree.ID: String]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>

@@ -4,17 +4,17 @@ import Testing
 @testable import supacode
 
 struct CommandKeyObserverTests {
-  @Test func shouldShowShortcutsForCommandOrControl() {
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: [.command]))
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: [.control]))
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: [.command, .shift]))
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: [.control, .option]))
+  @Test func detectsCommandModifierIndependently() {
+    #expect(CommandKeyObserver.isCommandActive(for: [.command]))
+    #expect(CommandKeyObserver.isCommandActive(for: [.command, .shift]))
+    #expect(CommandKeyObserver.isCommandActive(for: [.control]) == false)
+    #expect(CommandKeyObserver.isCommandActive(for: []) == false)
   }
 
-  @Test func shouldNotShowShortcutsForOtherModifiers() {
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: []) == false)
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: [.shift]) == false)
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: [.option]) == false)
-    #expect(CommandKeyObserver.shouldShowShortcuts(for: [.shift, .option]) == false)
+  @Test func detectsControlModifierIndependently() {
+    #expect(CommandKeyObserver.isControlActive(for: [.control]))
+    #expect(CommandKeyObserver.isControlActive(for: [.control, .option]))
+    #expect(CommandKeyObserver.isControlActive(for: [.command]) == false)
+    #expect(CommandKeyObserver.isControlActive(for: []) == false)
   }
 }

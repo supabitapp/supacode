@@ -33,10 +33,11 @@ struct SidebarListView: View {
     let pendingSidebarReveal = state.pendingSidebarReveal
 
     // The only legal view-side computation: a trivial join from the
-    // reducer-derived `slotByID` against the Cmd state + shortcut overrides.
-    // Gated on `isPressed` so the dict is empty when no hints are visible.
+    // reducer-derived `slotByID` against the Ctrl state + shortcut overrides.
+    // Worktree selection binds to ⌃1..⌃0, so hints show on ⌃ (not ⌘).
+    // Gated on `isControlPressed` so the dict is empty when no hints are visible.
     let shortcutHintByID: [Worktree.ID: String]
-    if commandKeyObserver.isPressed {
+    if commandKeyObserver.isControlPressed {
       let overrides = settingsFile.global.shortcutOverrides
       shortcutHintByID = structure.slotByID.compactMapValues { index in
         AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: index, overrides: overrides)

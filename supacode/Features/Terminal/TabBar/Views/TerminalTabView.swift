@@ -243,7 +243,7 @@ struct TerminalTabView: View {
   /// Hover wins: when the user is over the tab the close button takes the
   /// slot regardless of whether ⌘ is also pressed.
   private var isShowingHint: Bool {
-    commandKeyObserver.isPressed && shortcutHint != nil && !isHovering && !isDragging
+    commandKeyObserver.isCommandPressed && shortcutHint != nil && !isHovering && !isDragging
   }
 
   /// State-aware accessibility value for VoiceOver. Restores the OSC-9 progress
