@@ -74,6 +74,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   case intellijEAP
   case kitty
   case nova
+  case phpstorm
   case pycharm
   case rider
   case rubymine
@@ -112,6 +113,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .intellijEAP: "IntelliJ IDEA EAP"
     case .kitty: "Kitty"
     case .nova: "Nova"
+    case .phpstorm: "PhpStorm"
     case .pycharm: "PyCharm"
     case .rider: "Rider"
     case .rubymine: "RubyMine"
@@ -139,9 +141,10 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder: "Finder"
     case .editor: "$EDITOR"
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rider, .rubymine,
-      .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
-      .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
+      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm, .pycharm,
+      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
+      .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed,
+      .zedPreview:
       title
     }
   }
@@ -162,9 +165,10 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .finder, .editor:
       return true
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rider, .rubymine,
-      .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
-      .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed, .zedPreview:
+      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm, .pycharm,
+      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
+      .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed,
+      .zedPreview:
       return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
     }
   }
@@ -187,6 +191,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .intellijEAP: "intellijEAP"
     case .kitty: "kitty"
     case .nova: "nova"
+    case .phpstorm: "phpstorm"
     case .pycharm: "pycharm"
     case .rider: "rider"
     case .rubymine: "rubymine"
@@ -226,6 +231,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .intellijEAP: "com.jetbrains.intellij-EAP"
     case .kitty: "net.kovidgoyal.kitty"
     case .nova: "com.panic.Nova"
+    case .phpstorm: "com.jetbrains.PhpStorm"
     case .pycharm: "com.jetbrains.pycharm"
     case .rider: "com.jetbrains.rider"
     case .rubymine: "com.jetbrains.rubymine"
@@ -256,16 +262,18 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         .default,
       ]
     case .alacritty, .androidStudio, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop,
-      .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .pycharm, .rider,
-      .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
-      .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .zed, .zedPreview:
+      .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm,
+      .pycharm, .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal,
+      .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .zed,
+      .zedPreview:
       [.default]
     }
   }
 
   public var openBehaviors: [OpenBehavior] {
     switch self {
-    case .androidStudio, .goland, .intellij, .intellijEAP, .rider, .webstorm, .pycharm, .rubymine, .rustrover:
+    case .androidStudio, .goland, .intellij, .intellijEAP, .phpstorm, .rider, .webstorm, .pycharm,
+      .rubymine, .rustrover:
       [
         .workspace(
           configuration:
@@ -284,8 +292,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         .default,
       ]
     case .alacritty, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop, .gitkraken, .gitup,
-      .ghostty, .kitty, .nova, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode, .vscodeInsiders,
-      .vscodium, .warp, .wezterm, .windsurf, .xcode:
+      .ghostty, .kitty, .nova, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
+      .vscodeInsiders, .vscodium, .warp, .wezterm, .windsurf, .xcode:
       [.default]
     }
   }
@@ -368,6 +376,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     .intellij,
     .intellijEAP,
     .webstorm,
+    .phpstorm,
     .pycharm,
     .rubymine,
     .rider,
