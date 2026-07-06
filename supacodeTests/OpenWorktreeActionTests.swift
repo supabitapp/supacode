@@ -18,6 +18,7 @@ struct OpenWorktreeActionTests {
     #expect(settingsIDs.contains("vscode-insiders"))
     #expect(settingsIDs.contains("warp"))
     #expect(settingsIDs.contains("webstorm"))
+    #expect(settingsIDs.contains("phpstorm"))
     #expect(settingsIDs.contains("pycharm"))
   }
 
@@ -27,6 +28,7 @@ struct OpenWorktreeActionTests {
     #expect(OpenWorktreeAction.intellij.bundleIdentifier == "com.jetbrains.intellij")
     #expect(OpenWorktreeAction.intellijEAP.bundleIdentifier == "com.jetbrains.intellij-EAP")
     #expect(OpenWorktreeAction.webstorm.bundleIdentifier == "com.jetbrains.WebStorm")
+    #expect(OpenWorktreeAction.phpstorm.bundleIdentifier == "com.jetbrains.PhpStorm")
     #expect(OpenWorktreeAction.pycharm.bundleIdentifier == "com.jetbrains.pycharm")
     #expect(OpenWorktreeAction.rubymine.bundleIdentifier == "com.jetbrains.rubymine")
     #expect(OpenWorktreeAction.rustrover.bundleIdentifier == "com.jetbrains.rustrover")
@@ -38,6 +40,7 @@ struct OpenWorktreeActionTests {
     #expect(editors.contains(.goland))
     #expect(editors.contains(.intellij))
     #expect(editors.contains(.webstorm))
+    #expect(editors.contains(.phpstorm))
     #expect(editors.contains(.pycharm))
     #expect(editors.contains(.rubymine))
     #expect(editors.contains(.rustrover))
@@ -100,6 +103,7 @@ struct OpenWorktreeActionTests {
       .goland,
       .intellij,
       .webstorm,
+      .phpstorm,
       .pycharm,
       .rubymine,
       .rustrover,
