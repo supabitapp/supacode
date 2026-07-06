@@ -525,7 +525,6 @@ final class GhosttyRuntime {
     // Snapshot the user's opacity from a clone before the override clobbers it.
     let userOpacity: Double
     if let userView = ghostty_config_clone(config) {
-      loadBundledTheme(into: userView, enabled: themeSyncEnabled)
       ghostty_config_finalize(userView)
       userOpacity = readBackgroundOpacity(from: userView)
       ghostty_config_free(userView)
