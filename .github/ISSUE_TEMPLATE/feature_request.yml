@@ -1,0 +1,61 @@
+name: Feature request
+description: Suggest a new feature or an improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Feature requests are reviewed before any code is written.
+
+        **Please do not open a pull request yet.** A maintainer adds the `ready` label once the feature is approved and the direction is agreed, and a comment here will let you know. A pull request linked to a feature that is not yet `ready` is moved to draft and labeled `invalid` until then. Once it is `ready`, open your pull request and link it with `Closes #<this issue number>`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the motivation. What are you trying to do that Supacode makes hard or impossible today?
+      placeholder: I'm always frustrated when ...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you would like to happen. Be as concrete as you can.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or workarounds you have considered.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Supacode version
+      description: "Optional. The version you are on, if relevant to the request."
+      placeholder: 0.10.5
+    validations:
+      required: false
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Are you planning to build this yourself?
+      description: Optional. If approved, you can implement it. Please wait for the `ready` label before opening a pull request.
+      options:
+        - label: I intend to open a pull request once this is approved and marked `ready`.
+          required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I understand feature pull requests are closed until the issue is marked `ready`.
+          required: true
+        - label: I agree to follow this project's [Code of Conduct](https://github.com/supabitapp/supacode/blob/main/CODE_OF_CONDUCT.md).
+          required: true

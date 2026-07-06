@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/supabitapp/supacode/security/advisories/new
+    about: Please report security issues privately here, never in a public issue.
+  - name: Website and general chat
+    url: https://supacode.sh
+    about: Learn more about Supacode. Use the forms above to report a bug, request a feature, or ask a question.
