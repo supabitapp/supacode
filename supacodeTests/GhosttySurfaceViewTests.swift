@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 import GhosttyKit
 import Testing
@@ -77,6 +78,63 @@ struct GhosttySurfaceViewTests {
 
     #expect(!suppression.suppresses(keyCode: 49, timestamp: 11.1))
     #expect(suppression.isExpired(at: 11.1))
+  }
+
+  @Test func controlCodepointUsesPhysicalUSQwertyKey() {
+    #expect(
+      GhosttySurfaceView.layoutIndependentControlCodepoint(
+        keyCode: UInt16(kVK_ANSI_C),
+        modifiers: [.control]
+      ) == 0x63
+    )
+  }
+
+  @Test func controlCodepointIncludesTerminalPunctuationKeys() {
+    #expect(
+      GhosttySurfaceView.layoutIndependentControlCodepoint(
+        keyCode: UInt16(kVK_ANSI_Slash),
+        modifiers: [.control]
+      ) == UInt32(UnicodeScalar("/").value)
+    )
+    #expect(
+      GhosttySurfaceView.layoutIndependentControlCodepoint(
+        keyCode: UInt16(kVK_Space),
+        modifiers: [.control]
+      ) == UInt32(UnicodeScalar(" ").value)
+    )
+  }
+
+  @Test func controlCodepointAllowsShift() {
+    #expect(
+      GhosttySurfaceView.layoutIndependentControlCodepoint(
+        keyCode: UInt16(kVK_ANSI_C),
+        modifiers: [.control, .shift]
+      ) == 0x63
+    )
+  }
+
+  @Test func controlCodepointIgnoresNonControlInput() {
+    #expect(
+      GhosttySurfaceView.layoutIndependentControlCodepoint(
+        keyCode: UInt16(kVK_ANSI_C),
+        modifiers: []
+      ) == nil
+    )
+  }
+
+  @Test func controlCodepointLeavesAppAndOptionChordsAlone() {
+    #expect(
+      GhosttySurfaceView.layoutIndependentControlCodepoint(
+        keyCode: UInt16(kVK_ANSI_C),
+        modifiers: [.control, .command]
+      ) == nil
+    )
+    #expect(
+      GhosttySurfaceView.layoutIndependentControlCodepoint(
+        keyCode: UInt16(kVK_ANSI_C),
+        modifiers: [.control, .option]
+      ) == nil
+    )
   }
 
   private static func keyEvent(

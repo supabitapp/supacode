@@ -177,6 +177,25 @@ final class GhosttySurfaceView: NSView, Identifiable {
     .URL,
   ]
 
+  private static let terminalControlCodepointsByKeyCode: [UInt16: UInt32] = {
+    let candidates = "abcdefghijklmnopqrstuvwxyz0123456789[]\\;',./-=` "
+    var map: [UInt16: UInt32] = [:]
+    for scalar in candidates.unicodeScalars {
+      guard let keyCode = AppShortcutOverride.keyCode(for: Character(scalar)) else { continue }
+      map[keyCode] = scalar.value
+    }
+    return map
+  }()
+
+  static func layoutIndependentControlCodepoint(
+    keyCode: UInt16,
+    modifiers: NSEvent.ModifierFlags
+  ) -> UInt32? {
+    guard modifiers.contains(.control) else { return nil }
+    guard modifiers.isDisjoint(with: [.command, .option]) else { return nil }
+    return terminalControlCodepointsByKeyCode[keyCode]
+  }
+
   static func normalizedWorkingDirectoryPath(_ path: String) -> String {
     var normalized = path
     while normalized.count > 1 && normalized.hasSuffix("/") {
@@ -1434,7 +1453,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
       translationMods: resolvedMods,
       composing: composing
     )
-    let finalText = text ?? ghosttyCharacters(resolvedEvent)
+    let finalText =
+      Self.layoutIndependentControlCodepoint(keyCode: event.keyCode, modifiers: event.modifierFlags) == nil
+      ? text ?? ghosttyCharacters(resolvedEvent)
+      : nil
     if let finalText, !finalText.isEmpty,
       let codepoint = finalText.utf8.first, codepoint >= 0x20
     {
@@ -1527,7 +1549,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     keyEvent.consumed_mods = ghosttyMods(translationMods.subtracting([.control, .command]))
     keyEvent.unshifted_codepoint = 0
     if event.type == .keyDown || event.type == .keyUp {
-      if let chars = event.characters(byApplyingModifiers: []),
+      if let codepoint = Self.layoutIndependentControlCodepoint(keyCode: event.keyCode, modifiers: originalMods) {
+        keyEvent.unshifted_codepoint = codepoint
+      } else if let chars = event.characters(byApplyingModifiers: []),
         let codepoint = chars.unicodeScalars.first
       {
         keyEvent.unshifted_codepoint = codepoint.value
