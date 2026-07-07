@@ -121,6 +121,18 @@ struct ContentView: View {
       }
       store.send(.repositories(.revealSelectedWorktreeInSidebar))
     }
+    .focusedSceneAction(
+      \.expandAllSidebarGroupsAction,
+      enabled: !repositoriesStore.repositories.isEmpty
+    ) {
+      store.send(.repositories(.setAllSidebarGroupsExpanded(true)))
+    }
+    .focusedSceneAction(
+      \.collapseAllSidebarGroupsAction,
+      enabled: !repositoriesStore.repositories.isEmpty
+    ) {
+      store.send(.repositories(.setAllSidebarGroupsExpanded(false)))
+    }
     .background {
       CommandPaletteOverlayHost(
         store: store,

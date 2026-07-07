@@ -374,6 +374,183 @@ struct RepositoriesFeatureTests {
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false))
   }
 
+  @Test func setAllSidebarGroupsExpandedCollapsesEveryRepositorySection() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "wt1", repoRoot: "/tmp/repoA")
+    let worktreeB = makeWorktree(id: "/tmp/repoB/wt1", name: "wt1", repoRoot: "/tmp/repoB")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    let repoB = makeRepository(id: "/tmp/repoB", name: "repoB", worktrees: [worktreeB])
+    var initialState = makeState(repositories: [repoA, repoB])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    // No repo has a persisted section yet, so collapse-all must materialize one
+    // for every repo in the roster.
+    await store.send(.setAllSidebarGroupsExpanded(false)) {
+      $0.$sidebar.withLock { sidebar in
+        for repositoryID in [repoA.id, repoB.id] {
+          sidebar.sections[repositoryID, default: .init()].collapsed = true
+        }
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[repoA.id]?.collapsed == true)
+    #expect(store.state.sidebar.sections[repoB.id]?.collapsed == true)
+  }
+
+  @Test func setAllSidebarGroupsExpandedCollapsePreservesBranchPrefixes() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "feature/x", repoRoot: "/tmp/repoA")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    var initialState = makeState(repositories: [repoA])
+    initialState.reconcileSidebarForTesting()
+    // Seed an expanded section with a collapsed branch group so collapse-all has
+    // a prefix that must survive.
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoA.id, default: .init()].collapsed = false
+      sidebar.sections[repoA.id, default: .init()].buckets[.unpinned] = .init(collapsedBranchPrefixes: [
+        "feature"
+      ])
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(false)) {
+      $0.$sidebar.withLock { sidebar in
+        sidebar.sections[repoA.id, default: .init()].collapsed = true
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[repoA.id]?.collapsed == true)
+    #expect(
+      store.state.sidebar.sections[repoA.id]?.buckets[.unpinned]?.collapsedBranchPrefixes == ["feature"]
+    )
+  }
+
+  @Test func setAllSidebarGroupsExpandedExpandsSectionsAndClearsEveryBucketsBranchPrefixes() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "feature/x", repoRoot: "/tmp/repoA")
+    let worktreeB = makeWorktree(id: "/tmp/repoB/wt1", name: "hotfix/y", repoRoot: "/tmp/repoB")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    let repoB = makeRepository(id: "/tmp/repoB", name: "repoB", worktrees: [worktreeB])
+    var initialState = makeState(repositories: [repoA, repoB])
+    initialState.reconcileSidebarForTesting()
+    // Collapse every section and seed collapsed branch groups across multiple
+    // buckets and repos, so expand-all has to clear more than one bucket.
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoA.id, default: .init()].collapsed = true
+      sidebar.sections[repoB.id, default: .init()].collapsed = true
+      sidebar.sections[repoA.id, default: .init()].buckets[.pinned] = .init(collapsedBranchPrefixes: [
+        "release"
+      ])
+      sidebar.sections[repoA.id, default: .init()].buckets[.unpinned] = .init(collapsedBranchPrefixes: [
+        "feature"
+      ])
+      sidebar.sections[repoB.id, default: .init()].buckets[.unpinned] = .init(collapsedBranchPrefixes: [
+        "hotfix"
+      ])
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(true)) {
+      $0.$sidebar.withLock { sidebar in
+        for repositoryID in [repoA.id, repoB.id] {
+          guard var section = sidebar.sections[repositoryID] else { continue }
+          section.collapsed = false
+          for bucketID in Array(section.buckets.keys) {
+            section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+          }
+          sidebar.sections[repositoryID] = section
+        }
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[repoA.id]?.collapsed == false)
+    #expect(store.state.sidebar.sections[repoB.id]?.collapsed == false)
+    #expect(
+      store.state.sidebar.sections[repoA.id]?.buckets[.pinned]?.collapsedBranchPrefixes.isEmpty == true
+    )
+    #expect(
+      store.state.sidebar.sections[repoA.id]?.buckets[.unpinned]?.collapsedBranchPrefixes.isEmpty == true
+    )
+    #expect(
+      store.state.sidebar.sections[repoB.id]?.buckets[.unpinned]?.collapsedBranchPrefixes.isEmpty == true
+    )
+  }
+
+  @Test func setAllSidebarGroupsExpandedIsNoOpWhenAlreadyExpanded() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "wt1", repoRoot: "/tmp/repoA")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    var initialState = makeState(repositories: [repoA])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    // Already expanded with no persisted section, so expand-all writes nothing.
+    await store.send(.setAllSidebarGroupsExpanded(true))
+
+    #expect(store.state.isRepositoryExpanded(repoA.id))
+    #expect(store.state.sidebar.sections[repoA.id] == nil)
+  }
+
+  @Test func setAllSidebarGroupsExpandedExpandsFolderRepositorySection() async {
+    let folderURL = URL(fileURLWithPath: "/tmp/folderRepo")
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: RepositoryID("/tmp/folderRepo"),
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    var initialState = makeState(repositories: [folderRepo])
+    initialState.reconcileSidebarForTesting()
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[folderRepo.id, default: .init()].collapsed = true
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(true)) {
+      $0.$sidebar.withLock { sidebar in
+        guard var section = sidebar.sections[folderRepo.id] else { return }
+        section.collapsed = false
+        for bucketID in Array(section.buckets.keys) {
+          section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+        }
+        sidebar.sections[folderRepo.id] = section
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[folderRepo.id]?.collapsed == false)
+  }
+
+  @Test func setAllSidebarGroupsExpandedOnEmptySidebarIsNoOp() async {
+    var initialState = makeState(repositories: [])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(true))
+    await store.send(.setAllSidebarGroupsExpanded(false))
+  }
+
   @Test func sidebarSelectionChangedWithoutFocusTerminalDoesNotInsertPendingFocus() async {
     let wt1 = makeWorktree(id: "/tmp/repo/wt1", name: "wt1", repoRoot: "/tmp/repo")
     let wt2 = makeWorktree(id: "/tmp/repo/wt2", name: "wt2", repoRoot: "/tmp/repo")

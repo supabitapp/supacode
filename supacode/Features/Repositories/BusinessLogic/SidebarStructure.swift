@@ -386,6 +386,7 @@ extension RepositoriesFeature.Action {
     // Sidebar layout toggles only.
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
       .repositoryExpansionChanged, .branchNestExpansionChanged,
+      .setAllSidebarGroupsExpanded,
       .repositoriesMoved, .pinnedWorktreesMoved, .unpinnedWorktreesMoved,
       .worktreeNotificationReceived, .worktreeLineChangesLoaded,
       .consumeTerminalFocus:

@@ -300,6 +300,9 @@ struct RepositoriesFeature {
       prefix: String,
       isExpanded: Bool
     )
+    /// Expand or collapse every sidebar group at once. Expanding also clears
+    /// every nested branch-group prefix so the tree opens fully.
+    case setAllSidebarGroupsExpanded(Bool)
     case selectArchivedWorktrees
     case setSidebarSelectedWorktreeIDs(Set<Worktree.ID>)
     case openRepositories([URL])
@@ -3298,6 +3301,30 @@ struct RepositoriesFeature {
           }
           section.buckets[bucketID] = bucket
           sidebar.sections[repositoryID] = section
+        }
+        return .none
+
+      case .setAllSidebarGroupsExpanded(let isExpanded):
+        // Iterate the full roster, not just `sidebar.sections.keys`: the section
+        // map is sparse (a repo renders expanded until something writes an
+        // entry), so collapsing must materialize one for every repo.
+        let repositoryIDs = state.repositories.map(\.id)
+        state.$sidebar.withLock { sidebar in
+          for repositoryID in repositoryIDs {
+            guard isExpanded else {
+              // Collapse keeps branch-group prefixes so each group's layout
+              // survives when its section reopens.
+              sidebar.sections[repositoryID, default: .init()].collapsed = true
+              continue
+            }
+            // A repo with no entry is already fully open, so nothing to undo.
+            guard var section = sidebar.sections[repositoryID] else { continue }
+            section.collapsed = false
+            for bucketID in Array(section.buckets.keys) {
+              section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+            }
+            sidebar.sections[repositoryID] = section
+          }
         }
         return .none
 
