@@ -377,7 +377,7 @@ struct RepositoriesFeature {
     case consumeSetupScript(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
     case scriptCompleted(
-      worktreeID: Worktree.ID, scriptID: UUID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
+      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
     case requestArchiveWorktree(Worktree.ID, Repository.ID)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID)
@@ -709,15 +709,10 @@ struct RepositoriesFeature {
           }
         )
 
-      case .scriptCompleted(let worktreeID, let scriptID, let kind, let exitCode, let tabId):
-        guard state.sidebarItems[id: worktreeID]?.runningScripts[id: scriptID] != nil else {
-          repositoriesLogger.debug("Ignoring scriptCompleted for \(worktreeID)/\(scriptID): not tracked")
-          return .none
-        }
-        let stopEffect: Effect<Action> = .send(
-          .sidebarItems(.element(id: worktreeID, action: .runningScriptStopped(id: scriptID)))
-        )
-        guard let exitCode, exitCode != 0 else { return stopEffect }
+      case .scriptCompleted(let worktreeID, let kind, let exitCode, let tabId):
+        // `runningScripts` reconciles from the terminal's row projection
+        // (sole populator), so completion here only surfaces failures.
+        guard let exitCode, exitCode != 0 else { return .none }
         state.alert = blockingScriptFailureAlert(
           kind: kind,
           exitCode: exitCode,
@@ -725,7 +720,7 @@ struct RepositoriesFeature {
           tabId: tabId,
           state: state
         )
-        return stopEffect
+        return .none
 
       case .archiveWorktreeConfirmed(let worktreeID, let repositoryID):
         guard let repository = state.repositories[id: repositoryID],
@@ -4830,6 +4825,12 @@ extension RepositoriesFeature.State {
       return false
     }
     return sidebar.sections[repositoryID]?.buckets[.archived]?.items[id] != nil
+  }
+
+  /// Archived rows show no running-script dots, except while their delete script
+  /// runs (the row re-enters the sidebar to show that terminal).
+  func stripsArchivedRunningScripts(for id: Worktree.ID, lifecycle: SidebarItemFeature.State.Lifecycle) -> Bool {
+    isWorktreeArchived(id) && lifecycle != .deletingScript
   }
 
   func worktreesForInfoWatcher() -> [Worktree] {

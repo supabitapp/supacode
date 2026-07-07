@@ -394,10 +394,13 @@ struct WorktreeDetailView: View {
     }
   }
 
-  fileprivate struct ScriptMenuIdentity: Hashable {
+  struct ScriptMenuIdentity: Hashable {
     let rootURL: URL
     let repoFingerprints: [ScriptFingerprint]
     let globalFingerprints: [ScriptFingerprint]
+    // The label and per-item run/stop entries render running state, so the
+    // cached NSMenu must rebuild when it changes (#573).
+    let runningScriptIDs: Set<UUID>
   }
 
   // NSMenu cache key for the Open menu, mirroring `ScriptMenuIdentity`. AppKit
@@ -411,7 +414,7 @@ struct WorktreeDetailView: View {
     let selection: OpenWorktreeAction
   }
 
-  fileprivate struct ScriptFingerprint: Hashable {
+  struct ScriptFingerprint: Hashable {
     let id: UUID
     let displayName: String
     let resolvedSystemImage: String
@@ -488,6 +491,7 @@ struct WorktreeDetailView: View {
         rootURL: rootURL,
         repoFingerprints: repoScripts.map(ScriptFingerprint.init),
         globalFingerprints: globalScripts.map(ScriptFingerprint.init),
+        runningScriptIDs: runningScriptIDs,
       )
     }
 

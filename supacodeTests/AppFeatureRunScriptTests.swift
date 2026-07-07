@@ -53,13 +53,11 @@ struct AppFeatureRunScriptTests {
 
     await store.send(.runScript)
     await store.receive(\.runNamedScript)
-    await store.receive(\.repositories.sidebarItems) {
-      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
-        .init(id: definition.id, tint: definition.resolvedTintColor)
-      $0.repositories.reconcileSidebarForTesting()
-    }
     await store.finish()
 
+    // No optimistic `runningScripts` write: the row reconciles from the
+    // terminal's row projection once the script tab is tracked.
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.runningScripts.isEmpty == true)
     #expect(sent.value.count == 1)
     guard case .runBlockingScript(let sentWorktree, let kind, let script) = sent.value.first else {
       Issue.record("Expected runBlockingScript command")
@@ -75,28 +73,58 @@ struct AppFeatureRunScriptTests {
     #expect(sentDefinition.command == "npm run dev")
   }
 
-  @Test(.dependencies) func runNamedScriptTracksRunningState() async {
+  @Test(.dependencies) func projectionAddsMissedRunningScript() async {
+    // A projection carrying a script the row doesn't track (e.g. the start
+    // landed before the row existed) reconciles the row to terminal truth.
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
-    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
-    var initialState = AppFeature.State(
-      repositories: repositories,
-      settings: SettingsFeature.State()
-    )
-    initialState.repoScripts = [definition]
-    let store = TestStore(initialState: initialState) {
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
       AppFeature()
-    } withDependencies: {
-      $0.terminalClient.send = { _ in }
     }
 
-    await store.send(.runNamedScript(definition))
+    await store.send(
+      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
+    )
     await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
       $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
         .init(id: definition.id, tint: definition.resolvedTintColor)
-      $0.repositories.reconcileSidebarForTesting()
+      $0.repositories.applyPostReduceCacheRecomputes()
     }
-    await store.finish()
+  }
+
+  @Test(.dependencies) func projectionClearsPhantomRunningScript() async {
+    // A projection with no tracked scripts clears a stale row entry, so the
+    // toolbar can't keep offering "Stop" for a process that's gone (#573).
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+      .init(id: definition.id, tint: definition.resolvedTintColor)
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(
+      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [])))
+    )
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
+      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.removeAll()
+      $0.repositories.applyPostReduceCacheRecomputes()
+    }
   }
 
   @Test(.dependencies) func runNamedScriptRejectsDuplicateRun() async {
@@ -126,11 +154,12 @@ struct AppFeatureRunScriptTests {
     #expect(sent.value.isEmpty)
   }
 
-  @Test(.dependencies) func scriptCompletedRemovesFromTracking() async {
+  @Test(.dependencies) func scriptCompletedLeavesTrackingToProjection() async {
+    // Completion does not mutate `runningScripts`; the terminal's row
+    // projection is the single writer and reconciles the removal itself.
     let worktree = makeWorktree()
-    let repositories = makeRepositoriesState(worktree: worktree)
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
-    var repositoriesState = repositories
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
     repositoriesState.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
     // Re-reconcile after the ad-hoc runningScripts seed so the sidebar
@@ -148,19 +177,73 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(
-      .repositories(
-        .scriptCompleted(
+      .terminalEvent(
+        .blockingScriptCompleted(
           worktreeID: worktree.id,
-          scriptID: definition.id,
           kind: .script(definition),
           exitCode: 0,
           tabId: nil
         )
       )
     )
+    await store.receive(\.repositories.scriptCompleted)
+    #expect(
+      store.state.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] != nil
+    )
+  }
+
+  @Test(.dependencies) func projectionStripsRunningScriptsForArchivedRow() async {
+    // Mirrors `reconcileSidebarItems`: archived rows render no running-state
+    // dots, so terminal truth must not re-inject them through the projection.
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
+    let repositoriesState = makeArchivedRepositoriesState(worktree: worktree)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(
+      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
+    )
     await store.receive(\.repositories.sidebarItems) {
-      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.repositories.reconcileSidebarForTesting()
+      $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
+      $0.repositories.applyPostReduceCacheRecomputes()
+    }
+    #expect(
+      store.state.repositories.sidebarItems[id: worktree.id]?.runningScripts.isEmpty == true
+    )
+  }
+
+  @Test(.dependencies) func projectionKeepsRunningScriptsForArchivedDeletingRow() async {
+    // The strip's `.deletingScript` exception: a row mid-delete keeps its
+    // running-state dots, mirroring `reconcileSidebarItems`.
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
+    var repositoriesState = makeArchivedRepositoriesState(worktree: worktree)
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .deletingScript
+    repositoriesState.applyPostReduceCacheRecomputes()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(
+      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
+    )
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
+      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+        .init(id: definition.id, tint: definition.resolvedTintColor)
+      $0.repositories.applyPostReduceCacheRecomputes()
     }
   }
 
@@ -242,43 +325,35 @@ struct AppFeatureRunScriptTests {
     #expect(store.state.repoScripts == [definition])
   }
 
-  @Test(.dependencies) func scriptCompletedCleansUpOrphanedIDAfterScriptDeletion() async {
+  @Test(.dependencies) func scriptCompletedFailureAlertsWithoutTrackedRow() async {
+    // The failure alert must not depend on the row mirror still tracking the
+    // script: the projection may reconcile the removal before the completion
+    // event lands (#573).
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
-    let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
-    // Simulate a script that is running but has been removed from
-    // the settings (e.g. user deleted it while it was executing).
-    var repositoriesState = repositories
-    repositoriesState.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
-      .init(id: definition.id, tint: definition.resolvedTintColor)
-    repositoriesState.reconcileSidebarForTesting()
-
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
     let store = TestStore(
       initialState: AppFeature.State(
-        repositories: repositoriesState,
+        repositories: repositories,
         settings: SettingsFeature.State()
       )
     ) {
       AppFeature()
     }
-    // Scripts array is empty — the definition was deleted from settings.
-    #expect(store.state.repoScripts.isEmpty)
+    store.exhaustivity = .off
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.runningScripts.isEmpty == true)
 
     await store.send(
       .repositories(
         .scriptCompleted(
           worktreeID: worktree.id,
-          scriptID: definition.id,
           kind: .script(definition),
-          exitCode: 0,
+          exitCode: 143,
           tabId: nil
         )
       )
     )
-    await store.receive(\.repositories.sidebarItems) {
-      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.repositories.reconcileSidebarForTesting()
-    }
+    #expect(store.state.repositories.alert != nil)
   }
 
   @Test(.dependencies) func allScriptsMergesRepoAndGlobalScripts() {
@@ -316,11 +391,6 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(.runNamedScript(globalScript))
-    await store.receive(\.repositories.sidebarItems) {
-      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: globalScript.id] =
-        .init(id: globalScript.id, tint: globalScript.resolvedTintColor)
-      $0.repositories.reconcileSidebarForTesting()
-    }
     await store.finish()
 
     #expect(sent.value.count == 1)
@@ -471,8 +541,7 @@ struct AppFeatureRunScriptTests {
     }
     store.exhaustivity = .off
 
-    // Stale view binding from before a remove — must drop, not run, and not
-    // mutate `runningScriptsByWorktreeID`.
+    // Stale view binding from before a remove: must drop, not run.
     await store.send(.runNamedScript(orphan))
     await store.finish()
 
@@ -510,6 +579,20 @@ struct AppFeatureRunScriptTests {
     )
   }
 
+  private func makeProjection(scripts: [ScriptDefinition]) -> WorktreeRowProjection {
+    var runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = []
+    for script in scripts {
+      runningScripts.updateOrAppend(.init(id: script.id, tint: script.resolvedTintColor))
+    }
+    return WorktreeRowProjection(
+      surfaceIDs: [],
+      isProgressBusy: false,
+      hasUnseenNotifications: false,
+      notifications: [],
+      runningScripts: runningScripts
+    )
+  }
+
   private func makeRepositoriesState(worktree: Worktree) -> RepositoriesFeature.State {
     let repository = Repository(
       id: "/tmp/repo",
@@ -520,6 +603,22 @@ struct AppFeatureRunScriptTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
+    repositoriesState.reconcileSidebarForTesting()
+    return repositoriesState
+  }
+
+  /// `makeRepositoriesState` with the worktree seeded into the archived bucket.
+  private func makeArchivedRepositoriesState(worktree: Worktree) -> RepositoriesFeature.State {
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    let repositoryID = RepositoryID(worktree.repositoryRootURL.path(percentEncoded: false))
+    repositoriesState.$sidebar.withLock { sidebar in
+      sidebar.insert(
+        worktree: worktree.id,
+        in: repositoryID,
+        bucket: .archived,
+        item: .init(archivedAt: Date(timeIntervalSince1970: 1_000_000))
+      )
+    }
     repositoriesState.reconcileSidebarForTesting()
     return repositoriesState
   }
