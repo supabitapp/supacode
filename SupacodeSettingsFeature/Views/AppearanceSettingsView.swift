@@ -30,6 +30,15 @@ public struct AppearanceSettingsView: View {
           Text("Supacode Terminal Theme")
           Text("When off, honors your Ghostty config theme.")
         }
+        Picker(selection: $store.appFontScale) {
+          ForEach(AppFontScale.allCases) { scale in
+            Text(scale.title).tag(scale)
+          }
+        } label: {
+          Text("Interface Font Size")
+          Text("Scales the sidebar, tabs, and toolbars. The terminal font is unaffected — zoom it with ⌘ +/−.")
+        }
+        .help("Scale Supacode's interface text independently of the terminal font.")
       }
       Section {
         Picker(selection: $store.confirmQuitMode) {

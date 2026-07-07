@@ -28,6 +28,7 @@ public nonisolated enum AutoDeletePeriod: Int, Codable, CaseIterable, Comparable
 
 public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var appearanceMode: AppearanceMode
+  public var appFontScale: AppFontScale
   public var defaultEditorID: String
   public var updateChannel: UpdateChannel
   public var updatesAutomaticallyCheckForUpdates: Bool
@@ -73,6 +74,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
+    appFontScale: .default,
     defaultEditorID: OpenWorktreeAction.automaticSettingsID,
     updateChannel: .stable,
     updatesAutomaticallyCheckForUpdates: true,
@@ -109,6 +111,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
 
   public init(
     appearanceMode: AppearanceMode,
+    appFontScale: AppFontScale = .default,
     defaultEditorID: String,
     updateChannel: UpdateChannel,
     updatesAutomaticallyCheckForUpdates: Bool,
@@ -143,6 +146,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     remoteSessionPersistenceEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
+    self.appFontScale = appFontScale
     self.defaultEditorID = defaultEditorID
     self.updateChannel = updateChannel
     self.updatesAutomaticallyCheckForUpdates = updatesAutomaticallyCheckForUpdates
@@ -191,6 +195,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let legacy = try decoder.container(keyedBy: LegacyCodingKey.self)
     appearanceMode = try container.decode(AppearanceMode.self, forKey: .appearanceMode)
+    appFontScale =
+      try container.decodeIfPresent(AppFontScale.self, forKey: .appFontScale)
+      ?? Self.default.appFontScale
     defaultEditorID =
       try container.decodeIfPresent(String.self, forKey: .defaultEditorID)
       ?? Self.default.defaultEditorID

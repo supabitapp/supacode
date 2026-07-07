@@ -232,6 +232,22 @@ struct SettingsFeatureTests {
     #expect(settingsFile.remoteRepositoryRoots == [remote.id.rawValue])
   }
 
+  @Test(.dependencies) func appFontScaleBindingPersistsToSettingsFile() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.appFontScale = .standard }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.appFontScale, .huge))) {
+      $0.appFontScale = .huge
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.appFontScale == .huge)
+  }
+
   @Test(.dependencies) func settingsLoadedNormalizationDoesNotTouchRemoteRepositoryRoots() async {
     let remote = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
     @Shared(.settingsFile) var settingsFile

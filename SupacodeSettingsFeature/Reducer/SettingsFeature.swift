@@ -42,6 +42,7 @@ public struct SettingsFeature {
   @ObservableState
   public struct State: Equatable {
     public var appearanceMode: AppearanceMode
+    public var appFontScale: AppFontScale
     public var defaultEditorID: String
     public var updateChannel: UpdateChannel
     public var updatesAutomaticallyCheckForUpdates: Bool
@@ -92,6 +93,7 @@ public struct SettingsFeature {
     public init(settings: GlobalSettings = .default) {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
       appearanceMode = settings.appearanceMode
+      appFontScale = settings.appFontScale
       defaultEditorID = normalizedDefaultEditorID
       updateChannel = settings.updateChannel
       updatesAutomaticallyCheckForUpdates = settings.updatesAutomaticallyCheckForUpdates
@@ -130,6 +132,7 @@ public struct SettingsFeature {
     var globalSettings: GlobalSettings {
       GlobalSettings(
         appearanceMode: appearanceMode,
+        appFontScale: appFontScale,
         defaultEditorID: defaultEditorID,
         updateChannel: updateChannel,
         updatesAutomaticallyCheckForUpdates: updatesAutomaticallyCheckForUpdates,
@@ -271,6 +274,7 @@ public struct SettingsFeature {
           normalizedSettings = persistGlobalSettings(updatedSettings)
         }
         state.appearanceMode = normalizedSettings.appearanceMode
+        state.appFontScale = normalizedSettings.appFontScale
         state.defaultEditorID = normalizedSettings.defaultEditorID
         state.updateChannel = normalizedSettings.updateChannel
         state.updatesAutomaticallyCheckForUpdates = normalizedSettings.updatesAutomaticallyCheckForUpdates
