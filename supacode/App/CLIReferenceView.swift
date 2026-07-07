@@ -79,6 +79,10 @@ struct CLIReferenceView: View {
     .init(command: "supacode worktree delete [-w <id>]", description: "Delete the worktree."),
     .init(command: "supacode worktree pin [-w <id>]", description: "Pin the worktree."),
     .init(command: "supacode worktree unpin [-w <id>]", description: "Unpin the worktree."),
+    .init(
+      command: "supacode worktree appearance [-w <id>] [--title <title>] [--color <value>]",
+      description: "No flags reads stored title/tint overrides plus displayTitle; omitted update flags preserve values."
+    ),
   ]
 
   private static let tabRows: [CLIEntry] = [
@@ -136,6 +140,8 @@ struct CLIReferenceView: View {
     .init(command: "-t, --tab", description: "Tab UUID. Defaults to $SUPACODE_TAB_ID."),
     .init(command: "-s, --surface", description: "Surface UUID. Defaults to $SUPACODE_SURFACE_ID."),
     .init(command: "-c, --script", description: "Script UUID (for `worktree run`/`stop`)."),
+    .init(command: "--title", description: "Sidebar title override; pass an empty string to clear."),
+    .init(command: "--color", description: "Sidebar tint override; pass none to clear."),
     .init(command: "-r, --repo", description: "Repository ID. Defaults to $SUPACODE_REPO_ID."),
     .init(command: "-i, --input", description: "Command to run in the terminal."),
     .init(command: "-d, --direction", description: "Split direction: horizontal (h) or vertical (v)."),

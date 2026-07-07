@@ -125,6 +125,45 @@ struct WorktreeCustomizationParentTests {
     #expect(store.state.worktreeCustomization == nil)
   }
 
+  @Test func mainWorktreeAppearanceSurvivesSidebarReconcile() {
+    let mainID = WorktreeID("\(repoID)/main")
+    var state = makeInitialState(seedSidebarBucket: false)
+    state.$sidebar.withLock { sidebar in
+      sidebar.setCustomization(title: "Root", color: .blue, worktree: mainID, in: repoID)
+    }
+    RepositoriesFeature.syncSidebar(&state)
+    #expect(state.sidebarItems[id: mainID]?.customTitle == "Root")
+    #expect(state.sidebarItems[id: mainID]?.customTint == .blue)
+
+    state.reconcileSidebarState(
+      roots: [URL(fileURLWithPath: repoID.rawValue)],
+      pruneLivenessAgainstRoster: true
+    )
+    RepositoriesFeature.syncSidebar(&state)
+
+    let item = state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[mainID]
+    #expect(item?.title == "Root")
+    #expect(item?.color == .blue)
+    #expect(state.sidebar.sections[repoID]?.buckets[.pinned]?.items[mainID] == nil)
+    #expect(state.sidebarItems[id: mainID]?.customTitle == "Root")
+    #expect(state.sidebarItems[id: mainID]?.customTint == .blue)
+  }
+
+  @Test func mainWorktreeWithoutOverrideIsNotInjectedOnReconcile() {
+    let mainID = WorktreeID("\(repoID)/main")
+    var state = makeInitialState(seedSidebarBucket: false)
+
+    state.reconcileSidebarState(
+      roots: [URL(fileURLWithPath: repoID.rawValue)],
+      pruneLivenessAgainstRoster: true
+    )
+
+    // A main worktree carrying no override must not be projected into any bucket,
+    // otherwise it would surface as a spurious pinnable / duplicate row.
+    #expect(state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[mainID] == nil)
+    #expect(state.sidebar.sections[repoID]?.buckets[.pinned]?.items[mainID] == nil)
+  }
+
   @Test func saveDelegatePersistsTitleAndColorToBucketedItem() async {
     var initial = makeInitialState()
     initial.worktreeCustomization = WorktreeCustomizationFeature.State(

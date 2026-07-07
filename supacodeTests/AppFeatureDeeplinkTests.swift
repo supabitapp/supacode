@@ -111,6 +111,135 @@ struct AppFeatureDeeplinkTests {
     await store.receive(\.repositories.unpinWorktree)
   }
 
+  @Test(.dependencies) func appearanceWorktreeDeeplinkSetsTitleAndColor() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(worktree: worktree, item: .init())
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "Custom", color: "red"))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == "Custom")
+    #expect(item?.color == .red)
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkColorOnlyPreservesTitleOverride() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Custom")
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: nil, color: "#A1B2C3"))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == "Custom")
+    #expect(item?.color == .custom("#A1B2C3"))
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkTitleOnlyPreservesColor() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Old", color: .blue)
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "New", color: nil))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == "New")
+    #expect(item?.color == .blue)
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkClearsTitleAndColor() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Custom", color: .blue)
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "", color: "none"))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == nil)
+    #expect(item?.color == nil)
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkWithInvalidColorShowsAlert() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Custom", color: .blue)
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: nil, color: "mauve"))))
+    await store.finish()
+
+    // The alert doubles as the socket-ack failure signal, so a CLI caller
+    // gets ok=false instead of a silent success. Appearance never selects the
+    // worktree, so no `selectWorktree` is received.
+    #expect(store.state.alert != nil)
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.color == .blue)
+    #expect(item?.title == "Custom")
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkWithInvalidColorStillAppliesTitle() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Custom", color: .blue)
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "New", color: ""))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+    await store.finish()
+
+    // An invalid color no longer rejects a valid title: the title applies, the
+    // tint is left unchanged, and the alert still signals ok=false.
+    #expect(store.state.alert != nil)
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.color == .blue)
+    #expect(item?.title == "New")
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkWhitespaceOnlyTitleClearsOverride() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(
+      worktree: worktree,
+      item: .init(title: "Custom", color: .blue)
+    )
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "   ", color: nil))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == nil)
+    #expect(item?.color == .blue)
+  }
+
+  @Test(.dependencies) func appearanceWorktreeDeeplinkCollapsesControlCharactersInTitle() async {
+    let worktree = makeWorktree()
+    let (store, repositoryID) = makeStoreWithSidebarItem(worktree: worktree, item: .init())
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .appearance(title: "a\tb\nc", color: nil))))
+    await store.receive(\.repositories.setWorktreeAppearance)
+
+    let item = store.state.repositories.sidebar
+      .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
+    #expect(item?.title == "a b c")
+  }
+
   @Test(.dependencies) func archiveWorktreeDeeplink() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)
@@ -2012,6 +2141,32 @@ struct AppFeatureDeeplinkTests {
     repositoriesState.selection = .worktree(worktree.id)
     repositoriesState.isInitialLoadComplete = true
     return repositoriesState
+  }
+
+  /// Store whose sidebar has `worktree` seeded into the `.pinned` bucket with
+  /// the given item payload, so appearance deeplink tests can assert title / color
+  /// preservation end to end. Returns the owning repository ID for lookups.
+  private func makeStoreWithSidebarItem(
+    worktree: Worktree,
+    item: SidebarState.Item
+  ) -> (TestStoreOf<AppFeature>, Repository.ID) {
+    var repositories = makeRepositoriesState(worktree: worktree)
+    let repositoryID = makeRepository(worktree: worktree).id
+    repositories.$sidebar.withLock { sidebar in
+      sidebar.sections[repositoryID, default: .init()]
+        .buckets[.pinned, default: .init()]
+        .items[worktree.id] = item
+    }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+    return (store, repositoryID)
   }
 
   private func makeStore(worktree: Worktree) -> TestStoreOf<AppFeature> {

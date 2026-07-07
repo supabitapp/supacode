@@ -29,12 +29,24 @@ enum Deeplink: Equatable, Sendable {
     case delete
     case pin
     case unpin
+    /// Raw appearance values from the URL; parsed at execution so the parser
+    /// stays dumb. `nil` means the query item was omitted and should be preserved.
+    case appearance(title: String?, color: String?)
     case tab(tabID: UUID)
     case tabNew(input: String?, id: UUID?)
     case tabDestroy(tabID: UUID)
     case surface(tabID: UUID, surfaceID: UUID, input: String?)
     case surfaceSplit(tabID: UUID, surfaceID: UUID, direction: SplitDirection, input: String?, id: UUID?)
     case surfaceDestroy(tabID: UUID, surfaceID: UUID)
+
+    /// Whether dispatching this action should also select / focus the worktree.
+    /// Metadata-only updates (appearance) skip it so they don't steal focus.
+    var selectsWorktree: Bool {
+      switch self {
+      case .appearance: false
+      default: true
+      }
+    }
   }
 
   /// Settings sections reachable via deeplink.

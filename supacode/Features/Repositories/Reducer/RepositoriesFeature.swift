@@ -450,6 +450,9 @@ struct RepositoriesFeature {
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
     case requestCustomizeWorktree(Worktree.ID, Repository.ID)
+    /// Deeplink / CLI appearance update: overwrites the row's sidebar title and tint.
+    /// `nil` clears the field; omit-vs-clear was already resolved upstream in `AppFeature`.
+    case setWorktreeAppearance(Worktree.ID, Repository.ID, title: String?, color: RepositoryColor?)
     case requestRenameBranch(Worktree.ID, Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
@@ -2647,11 +2650,8 @@ struct RepositoriesFeature {
     Reduce { state, action in
       switch action {
       case .pinWorktree(let worktreeID):
-        // Git "main" worktrees never appear in any sidebar bucket (the
-        // seed pass skips them), so pinning one is a no-op. Folder
-        // synthetic worktrees satisfy `isMainWorktree` by geometry but
-        // ARE pinnable; scope the skip to git repos so folders fall
-        // through to the bucket machinery below.
+        // Git main worktrees render in the main slot, never the pinned list, so pinning is a no-op.
+        // Scope the skip to git repos: folder synthetics are `isMainWorktree` by geometry but ARE pinnable.
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
           let repository = state.repositories[id: repositoryID]
@@ -3950,6 +3950,7 @@ struct RepositoriesFeature {
         return .none
 
       case .requestCustomizeWorktree,
+        .setWorktreeAppearance,
         .worktreeCustomization:
         // Handled by `WorktreeCustomizationParentReducer` below; main switch is at type-checker
         // capacity, so the customization arms are split out into a dedicated reducer.
@@ -5759,33 +5760,16 @@ extension RepositoriesFeature.State {
       let isUnresolvedRemotePlaceholder = repository.host != nil && repository.worktrees.isEmpty
       let pruneAgainstRoster = pruneLivenessAgainstRoster && !isUnresolvedRemotePlaceholder
       var copy = section
-      var seenInCuratedBuckets: Set<Worktree.ID> = []
-      for (bucketID, bucket) in copy.buckets {
-        if bucketID == .archived { continue }
-        var prunedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
-        for (worktreeID, item) in bucket.items {
-          if let mainID, worktreeID == mainID { continue }
-          if pruneAgainstRoster, !worktreeIDs.contains(worktreeID) { continue }
-          prunedItems[worktreeID] = item
-          seenInCuratedBuckets.insert(worktreeID)
-        }
-        var prunedBucket = bucket
-        prunedBucket.items = prunedItems
-        copy.buckets[bucketID] = prunedBucket
-      }
-      var archivedIDs: Set<Worktree.ID> = []
-      if let archivedBucket = copy.buckets[.archived] {
-        archivedIDs = Set(archivedBucket.items.keys)
-      }
-      // Seed every live non-main worktree that isn't already curated. Mutation
-      // actions assume every live worktree has a bucket and skip fallback paths.
-      for worktree in repository.worktrees {
-        if let mainID, worktree.id == mainID { continue }
-        if seenInCuratedBuckets.contains(worktree.id) || archivedIDs.contains(worktree.id) { continue }
+      let mainCustomization = mainID.flatMap { Self.mainWorktreeCustomization(in: copy, mainID: $0) }
+      let seenInCuratedBuckets = Self.pruneCuratedBuckets(
+        in: &copy, mainID: mainID, liveWorktreeIDs: worktreeIDs, pruneAgainstRoster: pruneAgainstRoster)
+      if let mainID, let mainCustomization {
         var unpinned = copy.buckets[.unpinned] ?? .init()
-        unpinned.items[worktree.id] = .init()
+        unpinned.items[mainID] = mainCustomization
         copy.buckets[.unpinned] = unpinned
       }
+      Self.seedLiveWorktrees(
+        into: &copy, repository: repository, mainID: mainID, seenInCuratedBuckets: seenInCuratedBuckets)
       // Same carve-out: a disconnected remote's empty roster would otherwise drop
       // every stored branch-collapse prefix.
       if !isUnresolvedRemotePlaceholder {
@@ -5811,6 +5795,71 @@ extension RepositoriesFeature.State {
     // `sidebar.json` on every tick.
     guard rebuilt != sidebar.sections else { return }
     $sidebar.withLock { sidebar in sidebar.sections = rebuilt }
+  }
+
+  /// Prunes each curated bucket in place: drops the main worktree (it renders in
+  /// the main slot) and, when `pruneAgainstRoster`, any row no longer live.
+  /// Returns the worktree IDs kept, so the caller can skip re-seeding them.
+  private static func pruneCuratedBuckets(
+    in copy: inout SidebarState.Section,
+    mainID: Worktree.ID?,
+    liveWorktreeIDs: Set<Worktree.ID>,
+    pruneAgainstRoster: Bool
+  ) -> Set<Worktree.ID> {
+    var seen: Set<Worktree.ID> = []
+    for (bucketID, bucket) in copy.buckets {
+      if bucketID == .archived { continue }
+      var prunedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
+      for (worktreeID, item) in bucket.items {
+        if let mainID, worktreeID == mainID { continue }
+        if pruneAgainstRoster, !liveWorktreeIDs.contains(worktreeID) { continue }
+        prunedItems[worktreeID] = item
+        seen.insert(worktreeID)
+      }
+      var prunedBucket = bucket
+      prunedBucket.items = prunedItems
+      copy.buckets[bucketID] = prunedBucket
+    }
+    return seen
+  }
+
+  /// Seeds every live non-main worktree that isn't already curated or archived into
+  /// `.unpinned`. Mutation actions assume every live worktree has a bucket and skip
+  /// fallback paths.
+  private static func seedLiveWorktrees(
+    into copy: inout SidebarState.Section,
+    repository: Repository,
+    mainID: Worktree.ID?,
+    seenInCuratedBuckets: Set<Worktree.ID>
+  ) {
+    var archivedIDs: Set<Worktree.ID> = []
+    if let archivedBucket = copy.buckets[.archived] {
+      archivedIDs = Set(archivedBucket.items.keys)
+    }
+    for worktree in repository.worktrees {
+      if let mainID, worktree.id == mainID { continue }
+      if seenInCuratedBuckets.contains(worktree.id) || archivedIDs.contains(worktree.id) { continue }
+      var unpinned = copy.buckets[.unpinned] ?? .init()
+      unpinned.items[worktree.id] = .init()
+      copy.buckets[.unpinned] = unpinned
+    }
+  }
+
+  /// Returns a git main worktree's CLI-set appearance override, if any.
+  /// Reconciliation reprojects it into `.unpinned` so the tint / rename survives
+  /// roster reloads without making the main worktree user-pinned.
+  private static func mainWorktreeCustomization(
+    in section: SidebarState.Section,
+    mainID: Worktree.ID
+  ) -> SidebarState.Item? {
+    for bucketID in [SidebarState.BucketID.unpinned, .pinned] {
+      guard var item = section.buckets[bucketID]?.items[mainID],
+        item.title != nil || item.color != nil
+      else { continue }
+      item.archivedAt = nil
+      return item
+    }
+    return nil
   }
 
   /// Drop persisted `collapsedBranchPrefixes` entries no longer covered by any

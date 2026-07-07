@@ -16,6 +16,7 @@ struct WorktreeCommand: ParsableCommand {
       Delete.self,
       Pin.self,
       Unpin.self,
+      Appearance.self,
     ],
     defaultSubcommand: Focus.self
   )
@@ -201,6 +202,70 @@ extension WorktreeCommand {
         deeplinkURL: DeeplinkURLBuilder.worktreeAction("unpin", worktreeID: id),
         timeoutSeconds: timeoutOption.timeout
       )
+    }
+  }
+
+  struct Appearance: ParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Read stored sidebar appearance overrides or update them."
+    )
+
+    @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
+    var worktree: String?
+
+    @Option(help: "Sidebar title override. Pass an empty string to clear it.")
+    var title: String?
+
+    @Option(help: "Sidebar tint override: red|orange|yellow|green|teal|blue|purple, #RRGGBB[AA], or none to clear.")
+    var color: String?
+
+    @OptionGroup var timeoutOption: TimeoutOption
+
+    func run() throws {
+      let id = try resolveWorktreeID(worktree)
+      guard title != nil || color != nil else {
+        let items = try QueryDispatcher.query(
+          resource: "worktreeAppearance",
+          params: ["worktreeID": id],
+          timeoutSeconds: timeoutOption.timeout
+        )
+        guard let item = items.first else {
+          throw SocketClient.Error.responseError("Worktree appearance query returned no rows.")
+        }
+        for line in Self.formattedAppearance(item) {
+          print(line)
+        }
+        return
+      }
+
+      let color = try color.map(CLIWorktreeColor.validated)
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.worktreeAppearance(worktreeID: id, title: title, color: color),
+        timeoutSeconds: timeoutOption.timeout
+      )
+    }
+
+    /// Socket wire keys. Mirrors `WorktreeAppearanceQueryResponse.Key` (app side);
+    /// keep in sync (the CLI links no shared module to stay dependency-light).
+    private enum Key {
+      static let title = "title"
+      static let color = "color"
+      static let displayTitle = "displayTitle"
+    }
+
+    private static func formattedAppearance(_ item: [String: String]) -> [String] {
+      var lines = [
+        "\(Key.title)=\(sanitizeValue(item[Key.title] ?? ""))",
+        "\(Key.color)=\(sanitizeValue(item[Key.color] ?? "none"))",
+      ]
+      if let displayTitle = item[Key.displayTitle] {
+        lines.append("\(Key.displayTitle)=\(sanitizeValue(displayTitle))")
+      }
+      return lines
+    }
+
+    private static func sanitizeValue(_ value: String) -> String {
+      value.replacing("\t", with: " ").replacing("\n", with: " ").replacing("\r", with: " ")
     }
   }
 }
