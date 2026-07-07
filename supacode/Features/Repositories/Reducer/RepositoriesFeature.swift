@@ -94,6 +94,9 @@ struct RepositoriesFeature {
     var repositories: IdentifiedArrayOf<Repository> = []
     var repositoryRoots: [URL] = []
     var loadFailuresByID: [Repository.ID: String] = [:]
+    /// Set when git is environment-blocked (e.g. an unaccepted Xcode license):
+    /// drives the banner and suppresses the false per-repo "broken" rows.
+    var gitEnvironmentError: GitEnvironmentError?
     /// Remote repositories whose SSH listing is still resolving (shown with a
     /// loading spinner). Cleared per repo as each `.remoteRepositoryResolved`
     /// lands; a repo here with no `loadFailuresByID` entry is "loading", one
@@ -286,6 +289,9 @@ struct RepositoriesFeature {
     case refreshWorktrees
     case reloadRepositories(animated: Bool)
     case repositoriesLoaded([Repository], failures: [LoadFailure], roots: [URL], animated: Bool)
+    /// Sole owner of `state.gitEnvironmentError`. Emitted by every load path with
+    /// the current git-environment probe result (`nil` clears the banner).
+    case gitEnvironmentChanged(GitEnvironmentError?)
     case selectionChanged(Set<SidebarSelection>, focusTerminal: Bool = false)
     case repositoryExpansionChanged(Repository.ID, isExpanded: Bool)
     case branchNestExpansionChanged(
@@ -1396,11 +1402,12 @@ struct RepositoriesFeature {
           await repositoryPersistence.saveRoots(remaining)
           await repositoryPersistence.pruneRepositoryConfigs([repositoryID.rawValue])
           let roots = remaining.map { URL(fileURLWithPath: $0) }
-          let (repositories, failures) = await loadRepositoriesData(roots)
+          let loadResult = await loadRepositoriesData(roots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .repositoriesLoaded(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               roots: roots,
               animated: true
             )
@@ -2988,11 +2995,12 @@ struct RepositoriesFeature {
           let loadedPaths = await repositoryPersistence.loadRoots()
           let rootPaths = RepositoryPathNormalizer.normalize(loadedPaths)
           let roots = rootPaths.map { URL(fileURLWithPath: $0) }
-          let (repositories, failures) = await loadRepositoriesData(roots)
+          let loadResult = await loadRepositoriesData(roots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .repositoriesLoaded(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               roots: roots,
               animated: false
             )
@@ -3018,11 +3026,23 @@ struct RepositoriesFeature {
         let roots = state.repositoryRoots
         // A remote-only setup has no local roots, but the load path still
         // appends persisted remote configs, so a refresh must run for it.
-        guard !roots.isEmpty || !Self.persistedRemoteRepositoryRoots().isEmpty else {
+        // Also keep refreshing while environment-blocked (even with zero roots)
+        // so accepting the Xcode license re-probes and clears the banner without
+        // a relaunch.
+        guard
+          !roots.isEmpty || !Self.persistedRemoteRepositoryRoots().isEmpty
+            || state.gitEnvironmentError != nil
+        else {
           state.isRefreshingWorktrees = false
           return .none
         }
         return loadRepositories(roots, animated: animated)
+
+      case .gitEnvironmentChanged(let environmentError):
+        // Guard so the periodic refresh doesn't re-publish an unchanged value.
+        guard state.gitEnvironmentError != environmentError else { return .none }
+        state.gitEnvironmentError = environmentError
+        return .none
 
       case .repositoriesLoaded(let repositories, let failures, let roots, let animated):
         state.isRefreshingWorktrees = false
@@ -3035,9 +3055,12 @@ struct RepositoriesFeature {
         _ = applyRepositories(
           mergedRepositories,
           roots: roots,
-          // Don't prune archived worktree ids while remotes are still resolving:
-          // their worktrees aren't in the roster yet.
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
+          // Don't prune archived worktree ids while remotes are still resolving
+          // (their worktrees aren't in the roster yet) or while git is
+          // environment-blocked (the suppressed repos' worktrees are absent, so
+          // pruning would drop their curation for a transient failure).
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty
+            && state.gitEnvironmentError == nil,
           state: &state,
           animated: animated
         )
@@ -3152,23 +3175,18 @@ struct RepositoriesFeature {
               let root = try await gitClient.repoRoot(url)
               resolvedRoots.append(root)
             } catch {
-              // `gitClient.repoRoot` throws for non-git paths, but
-              // also for transient `wt` / subprocess failures. To
-              // avoid silently reclassifying a git repo as a folder
-              // on transient errors, double-check via the injected
-              // `gitClient.isGitRepository`: if the path actually
-              // has `.git`, surface the original error as an invalid
-              // root. Non-git readable directories are accepted as
-              // folder-kind repositories.
+              // `repoRoot` failed. A readable directory is still worth keeping: a
+              // plain folder repo, or a real git repo we can't resolve because git
+              // is environment-blocked. Either way persist it and let the load
+              // classify it (folder, blocked warning row, or a real failure once
+              // git returns). A non-directory is genuinely invalid.
               let standardized = url.standardizedFileURL
               var isDirectory: ObjCBool = false
               let exists = FileManager.default.fileExists(
                 atPath: standardized.path(percentEncoded: false),
                 isDirectory: &isDirectory
               )
-              if exists, isDirectory.boolValue,
-                await !gitClient.isGitRepository(standardized)
-              {
+              if exists, isDirectory.boolValue {
                 resolvedRoots.append(standardized)
               } else {
                 invalidRoots.append(url.path(percentEncoded: false))
@@ -3181,11 +3199,12 @@ struct RepositoriesFeature {
           let mergedPaths = RepositoryPathNormalizer.normalize(existingRootPaths + resolvedRootPaths)
           let mergedRoots = mergedPaths.map { URL(fileURLWithPath: $0) }
           await repositoryPersistence.saveRoots(mergedPaths)
-          let (repositories, failures) = await loadRepositoriesData(mergedRoots)
+          let loadResult = await loadRepositoriesData(mergedRoots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .openRepositoriesFinished(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               invalidRoots: invalidRoots,
               roots: mergedRoots
             )
@@ -3201,7 +3220,10 @@ struct RepositoriesFeature {
         _ = applyRepositories(
           mergedRemote.repositories,
           roots: roots,
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
+          // Keep archived curation while git is environment-blocked: the
+          // suppressed repos' worktrees are absent from the roster.
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty
+            && state.gitEnvironmentError == nil,
           state: &state,
           animated: false
         )
@@ -4090,11 +4112,12 @@ struct RepositoriesFeature {
           group.addTask { await gitClient.reconcileSupacodeLocks(root) }
         }
       }
-      let (repositories, failures) = await loadRepositoriesData(roots)
+      let loadResult = await loadRepositoriesData(roots)
+      await send(.gitEnvironmentChanged(loadResult.environmentError))
       await send(
         .repositoriesLoaded(
-          repositories,
-          failures: failures,
+          loadResult.repositories,
+          failures: loadResult.failures,
           roots: roots,
           animated: animated
         )
@@ -4231,7 +4254,8 @@ struct RepositoriesFeature {
     // filesystem.
     let isGit = await gitClient.isGitRepository(root)
     guard isGit else {
-      return WorktreesFetchResult(root: root, isGitRepository: false, worktrees: [], errorMessage: nil)
+      return WorktreesFetchResult(
+        root: root, isGitRepository: false, worktrees: [], errorMessage: nil)
     }
     do {
       let worktrees = try await gitClient.worktrees(root)
@@ -4246,8 +4270,12 @@ struct RepositoriesFeature {
           errorMessage: duplicateWorktreePathMessage(path: duplicate.rawValue)
         )
       }
-      return WorktreesFetchResult(root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
+      return WorktreesFetchResult(
+        root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
     } catch {
+      // Any git listing failure (blocked binary, transient error, or a real repo
+      // problem). Report it as a failed git root and let the loader's
+      // `git --version` probe decide, once, whether git itself is blocked.
       return WorktreesFetchResult(
         root: root,
         isGitRepository: true,
@@ -4257,7 +4285,23 @@ struct RepositoriesFeature {
     }
   }
 
-  private func loadRepositoriesData(_ roots: [URL]) async -> ([Repository], [LoadFailure]) {
+  /// A git root whose listing failed, held until the `git --version` probe
+  /// decides if git is really blocked (suppress under the banner) or working
+  /// (surface `message` as a real failure row).
+  private struct DeferredGitFailure {
+    let rootID: Repository.ID
+    let message: String
+  }
+
+  /// Result of a local repository load. A struct rather than a tuple so the
+  /// three payloads travel together without tripping the `large_tuple` lint.
+  private struct RepositoriesLoadResult {
+    let repositories: [Repository]
+    let failures: [LoadFailure]
+    let environmentError: GitEnvironmentError?
+  }
+
+  private func loadRepositoriesData(_ roots: [URL]) async -> RepositoriesLoadResult {
     let fetchResults = await withTaskGroup(of: WorktreesFetchResult.self) { group in
       for root in roots {
         let gitClient = self.gitClient
@@ -4276,6 +4320,9 @@ struct RepositoriesFeature {
 
     var loaded: [Repository] = []
     var failures: [LoadFailure] = []
+    // Git roots that failed to list, deferred until the probe decides whether
+    // git itself is blocked (see below).
+    var deferredGitFailures: [DeferredGitFailure] = []
     for root in roots {
       let normalizedRoot = root.standardizedFileURL
       let rootID = RepositoryID(normalizedRoot.path(percentEncoded: false))
@@ -4292,15 +4339,13 @@ struct RepositoriesFeature {
           )
           loaded.append(repository)
         } else {
-          failures.append(
-            LoadFailure(
-              rootID: rootID,
-              message: result.errorMessage ?? "Unknown error"
-            )
-          )
+          // A real block fails every git root, and we can't judge a repo broken
+          // while git is down, so defer the verdict to the probe below.
+          deferredGitFailures.append(
+            DeferredGitFailure(rootID: rootID, message: result.errorMessage ?? "Unknown error"))
         }
       } else if let errorMessage = result.errorMessage {
-        // Non-git root with an error — classifier couldn't open
+        // Non-git root with an error: the classifier couldn't open
         // the directory (missing / unmounted / unreadable).
         // Route through the same `LoadFailure` pipeline git
         // repos use so the sidebar shows the error row.
@@ -4308,7 +4353,7 @@ struct RepositoriesFeature {
           LoadFailure(rootID: rootID, message: errorMessage)
         )
       } else {
-        // Folder repository — synthesize a single main-like worktree
+        // Folder repository: synthesize a single main-like worktree
         // so the existing sidebar selection + terminal plumbing keeps
         // working without new entity types.
         let synthetic = Worktree(
@@ -4330,11 +4375,31 @@ struct RepositoriesFeature {
         loaded.append(repository)
       }
     }
+    // If any git repo loaded, git demonstrably works. Otherwise a direct
+    // `git --version` probe is the ground truth for whether git is
+    // environment-blocked: locale-independent (so it doesn't depend on a repo's
+    // stderr being English-matchable), and it disconfirms a repo error that
+    // merely echoes a gate phrase. It also covers a folder-only / empty roster.
+    // Blocked -> the deferred git failures become suppressed warning rows;
+    // working -> they were real repo problems and surface as failure rows.
+    var environmentError: GitEnvironmentError?
+    if !loaded.contains(where: \.isGitRepository) {
+      environmentError = await gitClient.checkGitEnvironment()
+    }
+    if environmentError == nil {
+      for failure in deferredGitFailures {
+        failures.append(LoadFailure(rootID: failure.rootID, message: failure.message))
+      }
+    }
     // Remote repositories are NOT resolved here: that SSH work runs
     // asynchronously after the load (`.resolveRemoteRepositories`) so an
     // unreachable host never blocks the initial sidebar. The `.repositoriesLoaded`
     // handler merges in their placeholders and triggers resolution.
-    return (loaded, failures)
+    return RepositoriesLoadResult(
+      repositories: loaded,
+      failures: failures,
+      environmentError: environmentError
+    )
   }
 
   /// Customization transfer record produced by `prunedPendingWorktrees` and

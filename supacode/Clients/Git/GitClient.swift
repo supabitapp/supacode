@@ -4,6 +4,7 @@ import Sentry
 import SupacodeSettingsShared
 
 enum GitOperation: String {
+  case version = "version"
   case repoRoot = "repo_root"
   case worktreeList = "worktree_list"
   case worktreeCreate = "worktree_create"
@@ -1051,14 +1052,38 @@ struct GitClient {
     GitReferenceQueries.preferredBaseRef(remote: remote, localHead: localHead)
   }
 
+  /// Probe whether the `git` binary itself is blocked at the environment level
+  /// (e.g. an unaccepted Xcode license). Returns `nil` when git runs normally or
+  /// fails for a repository-specific reason.
+  nonisolated func gitEnvironmentError() async -> GitEnvironmentError? {
+    do {
+      _ = try await runGit(operation: .version, arguments: ["--version"], localePinned: true)
+      return nil
+    } catch {
+      // `git --version` failing at all means git is unusable. Classify the known
+      // gates; otherwise fall back to the command-line-tools remedy (covers a
+      // missing binary / exit 127) and log so a reworded gate stays diagnosable.
+      if let classified = GitEnvironmentError(classifying: error) {
+        return classified
+      }
+      gitLogger.warning(
+        "git --version failed without a known gate signature: \(error.localizedDescription)")
+      return .developerToolsUnavailable
+    }
+  }
+
   nonisolated private func runGit(
     operation: GitOperation,
-    arguments: [String]
+    arguments: [String],
+    localePinned: Bool = false
   ) async throws -> String {
     let env = URL(fileURLWithPath: "/usr/bin/env")
-    let command = ([env.path(percentEncoded: false)] + ["git"] + arguments).joined(separator: " ")
+    // Pin the C locale for the environment probe so its diagnostics stay English
+    // and classify regardless of the user's system language.
+    let invocation = (localePinned ? ["LC_ALL=C", "LANG=C"] : []) + ["git"] + arguments
+    let command = ([env.path(percentEncoded: false)] + invocation).joined(separator: " ")
     do {
-      return try await shell.run(env, ["git"] + arguments, nil).stdout
+      return try await shell.run(env, invocation, nil).stdout
     } catch {
       throw wrapShellError(error, operation: operation, command: command)
     }

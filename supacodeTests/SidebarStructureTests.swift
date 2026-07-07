@@ -464,6 +464,88 @@ struct SidebarStructureTests {
     #expect(structure.reorderableRepositoryIDs.contains(failedID))
   }
 
+  // MARK: - Environment-blocked git repos.
+
+  @Test func environmentBlockedGitRootRendersWarningRowNotFailedRow() {
+    // A git root we couldn't list because git is blocked stays visible as a
+    // warning row (not removed, not a "broken" failure row).
+    var state = makeState(repositories: [])
+    let gitRoot = URL(fileURLWithPath: "/tmp/blocked-repo")
+    let gitID = RepositoryID(gitRoot.path(percentEncoded: false))
+    state.repositoryRoots.append(gitRoot)
+    state.gitEnvironmentError = .xcodeLicenseNotAccepted
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    #expect(
+      structure.sections.contains {
+        if case .environmentBlockedRepository(let id, _, _, _) = $0 { return id == gitID }
+        return false
+      })
+    #expect(
+      !structure.sections.contains {
+        if case .failedRepository(let id, _, _, _, _) = $0 { return id == gitID }
+        return false
+      })
+    #expect(structure.reorderableRepositoryIDs.contains(gitID))
+  }
+
+  @Test func unloadedGitRootShowsNoWarningRowWhenGitHealthy() {
+    // Without the gate set, an unloaded root is "still loading", not blocked.
+    var state = makeState(repositories: [])
+    state.repositoryRoots.append(URL(fileURLWithPath: "/tmp/loading-repo"))
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    #expect(
+      !structure.sections.contains {
+        if case .environmentBlockedRepository = $0 { return true }
+        return false
+      })
+  }
+
+  @Test func genuinelyFailedRepoStaysFailedRowEvenWhileGitBlocked() {
+    // A missing directory is detectable without git, so it keeps its actionable
+    // failure row rather than being masked as merely blocked.
+    var state = makeState(repositories: [])
+    let failedRoot = URL(fileURLWithPath: "/tmp/missing-dir")
+    let failedID = RepositoryID(failedRoot.path(percentEncoded: false))
+    state.repositoryRoots.append(failedRoot)
+    state.loadFailuresByID[failedID] = "directory not found"
+    state.gitEnvironmentError = .xcodeLicenseNotAccepted
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    #expect(
+      structure.sections.contains {
+        if case .failedRepository(let id, _, _, _, _) = $0 { return id == failedID }
+        return false
+      })
+    #expect(
+      !structure.sections.contains {
+        if case .environmentBlockedRepository(let id, _, _, _) = $0 { return id == failedID }
+        return false
+      })
+  }
+
+  @Test func environmentBlockedRepositoryIDsListsBlockedRootsOnly() {
+    // The set that both the warning rows and the terminal-prune shield read from.
+    var state = makeState(repositories: [])
+    let gitRoot = URL(fileURLWithPath: "/tmp/blocked-repo")
+    let gitID = RepositoryID(gitRoot.path(percentEncoded: false))
+    state.repositoryRoots.append(gitRoot)
+
+    // Healthy: no gate, so nothing is blocked.
+    #expect(state.environmentBlockedRepositoryIDs.isEmpty)
+
+    state.gitEnvironmentError = .xcodeLicenseNotAccepted
+    #expect(state.environmentBlockedRepositoryIDs == [gitID])
+
+    // A failure entry means the repo is broken, not merely blocked.
+    state.loadFailuresByID[gitID] = "boom"
+    #expect(state.environmentBlockedRepositoryIDs.isEmpty)
+  }
+
   // MARK: - Custom repo title flows through to the highlight tag.
 
   @Test func highlightTagReadsCustomRepoTitleAndColor() {

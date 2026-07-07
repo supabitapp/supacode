@@ -14,6 +14,9 @@ struct GitClientDependency: Sendable {
   /// `/tmp/...` paths keep working; tests that exercise the
   /// missing-directory path override explicitly.
   var rootDirectoryExists: @Sendable (URL) async -> Bool
+  /// One-shot `git --version` probe classifying an environment-level git
+  /// failure (e.g. an unaccepted Xcode license). `nil` means git is usable.
+  var checkGitEnvironment: @Sendable () async -> GitEnvironmentError?
   var worktrees: @Sendable (URL) async throws -> [Worktree]
   var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
@@ -85,6 +88,7 @@ extension GitClientDependency: DependencyKey {
         )
         return exists && isDirectory.boolValue
       },
+      checkGitEnvironment: { await GitClient(shell: shell).gitEnvironmentError() },
       worktrees: { try await GitClient(shell: shell).worktrees(for: $0) },
       reconcileSupacodeLocks: { await GitClient(shell: shell).reconcileSupacodeLocks(for: $0) },
       localBranchNames: { try await GitClient(shell: shell).localBranchNames(for: $0) },
@@ -149,6 +153,9 @@ extension GitClientDependency: DependencyKey {
     var value = liveValue
     value.isGitRepository = { _ in true }
     value.rootDirectoryExists = { _ in true }
+    // Default to a healthy git environment so tests don't shell out to real
+    // `git --version`; the license-gate tests override this explicitly.
+    value.checkGitEnvironment = { nil }
     value.reconcileSupacodeLocks = { _ in }
     // `liveValue` shells out to real `git clone`; a no-op default keeps an
     // unstubbed test from cloning over the network. Clone tests override this.

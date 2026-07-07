@@ -404,7 +404,10 @@ struct AppFeature {
         // remote layouts and kill their zmx sessions before resolution lands.
         if state.repositories.resolvingRemoteRepositoryIDs.isEmpty {
           // Failed/loading repos have no worktree rows yet, so shield their restored zmx sessions from prune.
+          // Environment-blocked git repos are suppressed with no rows either, so shield them too: a transient
+          // license/tools gate must not tear down their live terminal layouts.
           let protectedRepositoryIDs = Set(state.repositories.loadFailuresByID.keys)
+            .union(state.repositories.environmentBlockedRepositoryIDs)
           effects.append(
             .run { [allowed, protectedRepositoryIDs] _ in
               await terminalClient.send(
