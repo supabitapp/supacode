@@ -1,0 +1,256 @@
+name: Pull request policy
+
+# Runs against fork pull requests with a write-scoped token via `pull_request_target`.
+# It NEVER checks out or executes pull-request code: it is pure GitHub API only, and all
+# contributor-controlled data (body, commit messages) is read as data, never interpolated
+# into a shell or script via `${{ }}`.
+#
+# On a pull request event the job is a status check: green when the pull request meets the
+# contribution policy, red when it does not. A non-compliant pull request from a non-maintainer
+# is also converted to draft and labeled `invalid`, with one comment listing every reason. When
+# it later becomes compliant the label is cleared and the draft is restored (only if we set it).
+#
+# On a daily schedule the job sweeps open `invalid` pull requests: it re-evaluates each one, so a
+# pull request made compliant by an issue-side change (a maintainer adding `ready`, or reassigning
+# the issue) is cleared rather than closed, and only genuinely still-invalid, inactive ones are
+# closed. Make this job a required status check in branch protection to block merging while red.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pr-policy-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- supacode-pr-policy -->';
+            const draftedToken = '<!-- drafted-by-policy -->';
+            const staleMarker = '<!-- supacode-pr-stale -->';
+            const invalidLabel = 'invalid';
+            const staleDays = 3;
+            const { owner, repo } = context.repo;
+
+            // `Co-authored-by:` / `Authored-by:` trailers are matched broadly, since naming a tool
+            // there is explicit. The git author name is matched narrowly, because agent brands like
+            // Claude and Gemini are also common human first names: only tool-specific forms count.
+            const trailerAgent = /\b(claude|anthropic|copilot|chatgpt|openai|gpt-[0-9]|cursor|codex|devin[ -]?ai|aider|windsurf|sourcegraph|google-labs-jules|gemini)\b/i;
+            const authorNameAgent = /\b(anthropic|copilot|chatgpt|openai|gpt-[0-9]|cursor|codex|devin[ -]?ai|aider|windsurf|sourcegraph|google-labs-jules|claude[ -]?code|gemini[ -]?(?:cli|code))\b/i;
+            const trailerLine = /^[ \t]*(?:co-authored-by|authored-by):[ \t]*(.+)$/gim;
+
+            const hasLabel = (pr, name) => (pr.labels || []).some((l) => l.name.toLowerCase() === name);
+            async function getComments(number) {
+              return github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
+            }
+
+            // Returns { skip, reasons }. `skip` is true for bots and write-access contributors.
+            // Throws on an indeterminate permission error so the run fails visibly rather than
+            // passing or acting on the pull request while unsure of the author's access.
+            async function evaluate(pr) {
+              const author = pr.user.login;
+              // Only allowlisted maintenance bots bypass. Any other bot, including an AI coding bot,
+              // is enforced like a human so it cannot skip the linked-issue and human-author checks.
+              const allowlistedBots = ['dependabot[bot]', 'renovate[bot]', 'github-actions[bot]'];
+              if (allowlistedBots.includes(author)) return { skip: true, reasons: [] };
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: author });
+                if (data.permission === 'admin' || data.permission === 'write') return { skip: true, reasons: [] };
+              } catch (error) {
+                if (error.status !== 404) throw error; // 404 means "not a collaborator": enforce.
+              }
+
+              const reasons = [];
+
+              // Linked issues. GitHub's closing references are the authority (they ignore keywords
+              // inside HTML comments and code). The body regex is a fallback only when the reference
+              // index is empty, and it strips comments, fenced and inline code, and quotes first so a
+              // pasted `git commit -m "fixes #9"` is not mistaken for a link.
+              const gql = await github.graphql(
+                `query($owner:String!, $repo:String!, $number:Int!) {
+                   repository(owner:$owner, name:$repo) {
+                     pullRequest(number:$number) {
+                       closingIssuesReferences(first: 20) { nodes { number repository { owner { login } name } } }
+                     }
+                   }
+                 }`,
+                { owner, repo, number: pr.number },
+              );
+              const isSameRepo = (node) =>
+                node.repository.owner.login.toLowerCase() === owner.toLowerCase() &&
+                node.repository.name.toLowerCase() === repo.toLowerCase();
+              const candidates = new Set(
+                gql.repository.pullRequest.closingIssuesReferences.nodes.filter(isSameRepo).map((n) => n.number),
+              );
+              if (candidates.size === 0) {
+                const text = (pr.body || '')
+                  .replace(/<!--[\s\S]*?-->/g, '')
+                  .replace(/```[\s\S]*?```/g, '')
+                  .replace(/~~~[\s\S]*?~~~/g, '')
+                  .replace(/`[^`]*`/g, '')
+                  .replace(/^\s*>.*$/gm, '');
+                const re = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d{1,7})\b/gi;
+                let m;
+                while ((m = re.exec(text)) !== null) candidates.add(Number(m[1]));
+              }
+
+              let anyValidIssue = false;
+              for (const number of candidates) {
+                let issue;
+                try {
+                  ({ data: issue } = await github.rest.issues.get({ owner, repo, issue_number: number }));
+                } catch (error) {
+                  if (error.status !== 404) throw error; // Transient error: fail, never mis-triage.
+                  continue; // Unknown issue number, ignore.
+                }
+                if (issue.pull_request || issue.state !== 'open') continue; // Not a real, open issue.
+                anyValidIssue = true;
+                const isReady = issue.labels.some((l) => (typeof l === 'string' ? l : l.name).toLowerCase() === 'ready');
+                if (!isReady) reasons.push(`Linked issue #${number} is not marked \`ready\` yet. Bugs are \`ready\` on filing; features are marked \`ready\` by a maintainer once approved.`);
+                const assignees = issue.assignees || [];
+                if (assignees.length > 0 && !assignees.some((a) => a.id === pr.user.id)) {
+                  const names = [...new Set(assignees.map((a) => '@' + a.login))].join(', ');
+                  reasons.push(`Linked issue #${number} is assigned to ${names}, so it is reserved for them. Ask a maintainer to reassign it if they have stopped.`);
+                }
+              }
+              if (!anyValidIssue) {
+                reasons.push('No linked issue. Add a line like `Closes #123` to the description, pointing at an open issue in this repository.');
+              }
+
+              // AI authorship. A human must be the author of record. Match only the display-name part
+              // of a trailer (before the email), so a human co-author at `<x@openai.com>` is not flagged.
+              const commits = await github.paginate(github.rest.pulls.listCommits, {
+                owner, repo, pull_number: pr.number, per_page: 100,
+              });
+              if (commits.length >= 250) {
+                core.warning(`#${pr.number}: commit list may be truncated at ${commits.length}; AI-authorship check could miss later commits.`);
+              }
+              const aiAuthored = commits.some((c) => {
+                const message = c.commit.message || '';
+                for (const match of message.matchAll(trailerLine)) {
+                  if (trailerAgent.test(match[1].split('<')[0])) return true;
+                }
+                return authorNameAgent.test((c.commit.author && c.commit.author.name) || '');
+              });
+              if (aiAuthored) {
+                reasons.push('A commit is authored or co-authored by an AI agent. A human must be the author of record: re-author the commits under your own name (reset the author, or drop the `Co-authored-by:` trailer). Using AI tools is welcome, and you are encouraged to disclose them in the description.');
+              }
+
+              return { skip: false, reasons };
+            }
+
+            // Draft, label, and comment a non-compliant pull request. The `drafted-by-policy` token
+            // in the comment records that we, not the author, converted it to draft.
+            async function applyInvalid(pr, reasons, existing) {
+              let weDrafted = existing ? existing.body.includes(draftedToken) : false;
+              if (!pr.draft) {
+                await github.graphql(
+                  `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { clientMutationId } }`,
+                  { id: pr.node_id },
+                );
+                weDrafted = true;
+              }
+              if (!hasLabel(pr, invalidLabel)) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [invalidLabel] });
+              }
+              const list = reasons.map((reason) => `- ${reason}`).join('\n');
+              const body =
+                `${marker}\n${weDrafted ? draftedToken + '\n' : ''}\n` +
+                "Thanks for the pull request. It doesn't meet the contribution policy yet, so I've moved it to " +
+                '**draft** and labeled it `invalid`. Please address the following, then mark it ready for review:\n\n' +
+                `${list}\n\n` +
+                'Nothing needs to be redone. A pull request left `invalid` is closed automatically after a few ' +
+                'days of inactivity. See [CONTRIBUTING.md](https://github.com/supabitapp/supacode/blob/main/CONTRIBUTING.md) for the full flow.';
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+              }
+            }
+
+            // Clear our own intervention once a pull request is compliant. Undraft only a draft we set,
+            // and remove the label last so a transient failure earlier leaves the marker in place to
+            // re-run on the next event.
+            async function clearIntervention(pr, existing) {
+              if (existing.body.includes(draftedToken) && pr.draft) {
+                await github.graphql(
+                  `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`,
+                  { id: pr.node_id },
+                );
+              }
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id,
+                body: `${marker}\n\nThanks, this now meets the contribution policy. I've cleared the \`invalid\` label.`,
+              });
+              if (hasLabel(pr, invalidLabel)) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: invalidLabel }).catch((error) => {
+                  if (error.status !== 404) throw error;
+                });
+              }
+            }
+
+            if (context.eventName === 'schedule' || context.eventName === 'workflow_dispatch') {
+              // Daily sweep: re-evaluate every open `invalid` pull request.
+              const cutoff = Date.now() - staleDays * 24 * 60 * 60 * 1000;
+              const prs = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
+              for (const pr of prs) {
+                if (!hasLabel(pr, invalidLabel)) continue;
+                try {
+                  const { skip, reasons } = await evaluate(pr);
+                  if (skip) continue;
+                  const comments = await getComments(pr.number);
+                  const existing = comments.find((c) => c.body && c.body.includes(marker));
+                  if (reasons.length === 0) {
+                    if (existing) await clearIntervention(pr, existing);
+                    continue;
+                  }
+                  // Still non-compliant: close only if inactive past the cutoff. Do not re-comment or
+                  // re-draft the not-yet-stale ones, so the sweep never bumps `updated_at` and resets
+                  // the staleness clock. Close before commenting so a failed close is retried next run
+                  // rather than leaving a "closing" comment on a still-open pull request.
+                  if (new Date(pr.updated_at).getTime() > cutoff) continue;
+                  await github.rest.pulls.update({ owner, repo, pull_number: pr.number, state: 'closed' });
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: pr.number,
+                    body:
+                      `${staleMarker}\n\n` +
+                      `Closing this because it has been labeled \`invalid\` and inactive for more than ${staleDays} days. ` +
+                      'Nothing is lost: address the points in the policy comment above and reopen it, and the checks ' +
+                      'will re-run. See [CONTRIBUTING.md](https://github.com/supabitapp/supacode/blob/main/CONTRIBUTING.md).',
+                  });
+                  core.info(`Closed stale invalid pull request #${pr.number}.`);
+                } catch (error) {
+                  core.warning(`Sweep skipped #${pr.number}: ${error.status || error.message}`);
+                }
+              }
+              return;
+            }
+
+            // Pull request event: a single status check.
+            const pr = context.payload.pull_request;
+            const { skip, reasons } = await evaluate(pr);
+            if (skip) {
+              core.info(`Skipping: ${pr.user.login} is a bot or has write access.`);
+              return;
+            }
+            const comments = await getComments(pr.number);
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (reasons.length === 0) {
+              if (existing) await clearIntervention(pr, existing);
+              core.info('Compliant: all policy checks pass.');
+              return;
+            }
+            await applyInvalid(pr, reasons, existing);
+            core.setFailed(reasons[0]);
