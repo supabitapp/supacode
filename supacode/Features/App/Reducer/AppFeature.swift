@@ -258,6 +258,7 @@ struct AppFeature {
         let agentsBySurface = state.agentPresence.agentsBySurface()
         return .merge(
           agentPresenceFanOutEffect(surfaces: surfaces, state: state),
+          imagePasteAgentFanOutEffect(surfaces: surfaces, state: state),
           .run { [clock] _ in
             try await clock.sleep(for: .seconds(1))
             await MainActor.run {
@@ -423,7 +424,12 @@ struct AppFeature {
         state.repositories.pendingAgentRehydrateSurfaces.removeAll()
         let rehydrate = pendingRehydrate.intersection(state.agentPresence.bySurface.keys)
         if !rehydrate.isEmpty {
-          effects.append(agentPresenceFanOutEffect(surfaces: rehydrate, state: state))
+          effects.append(
+            .merge(
+              agentPresenceFanOutEffect(surfaces: rehydrate, state: state),
+              imagePasteAgentFanOutEffect(surfaces: rehydrate, state: state)
+            )
+          )
         }
         if !state.pendingDeeplinks.isEmpty {
           let pending = state.pendingDeeplinks
@@ -1276,14 +1282,17 @@ struct AppFeature {
 
       case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
         guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
+        let projectedSurfaces = Set(projection.surfaceIDs)
         // Re-fan-out only for surfaces this projection ADDS to the row;
         // steady-state churn (notification arrival, focus changes) keeps the
         // surfaceIDs set stable and skips this entirely.
-        let addedSurfaces = Set(projection.surfaceIDs).subtracting(row.surfaceIDs)
+        let addedSurfaces = projectedSurfaces.subtracting(row.surfaceIDs)
+        let pendingProjectedSurfaces = projectedSurfaces.intersection(state.repositories.pendingAgentRehydrateSurfaces)
+        state.repositories.pendingAgentRehydrateSurfaces.subtract(pendingProjectedSurfaces)
         let restoredAddedSurfaces: Set<UUID> =
-          addedSurfaces.isEmpty || state.agentPresence.bySurface.isEmpty
+          addedSurfaces.isEmpty && pendingProjectedSurfaces.isEmpty || state.agentPresence.bySurface.isEmpty
           ? []
-          : addedSurfaces.filter { state.agentPresence.bySurface[$0] != nil }
+          : addedSurfaces.union(pendingProjectedSurfaces).filter { state.agentPresence.bySurface[$0] != nil }
         let projectionEffect: Effect<Action> = .send(
           .repositories(
             .sidebarItems(
@@ -1436,6 +1445,23 @@ struct AppFeature {
       affectedRowIDs.insert(rowID)
     }
     return agentSnapshotEffects(for: affectedRowIDs, state: state, badgesEnabled: badgesEnabled)
+  }
+
+  // Per-surface fan-out, deliberately separate from `agentPresenceFanOutEffect`:
+  // it pushes the raw agent set to each `GhosttySurfaceView` for paste routing and
+  // must not inherit the badge (`agentPresenceBadgesEnabled`) gate.
+  private func imagePasteAgentFanOutEffect(
+    surfaces: Set<UUID>,
+    state: State
+  ) -> Effect<Action> {
+    .merge(
+      surfaces.map { surfaceID in
+        let agents = state.agentPresence.bySurface[surfaceID] ?? []
+        return .run { _ in
+          await terminalClient.send(.setImagePasteAgents(surfaceID: surfaceID, agents: agents))
+        }
+      }
+    )
   }
 
   /// Re-broadcasts every row's agent snapshot under the supplied badge gate.

@@ -218,11 +218,14 @@ struct AppFeatureArchivedSelectionTests {
     appState.agentPresence.records[
       AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
     ] = AgentPresenceFeature.PresenceRecord(activity: .awaitingInput, pids: [42])
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
 
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in }
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
       $0.worktreeInfoWatcher.send = { _ in }
     }
     store.exhaustivity = .off
@@ -247,6 +250,86 @@ struct AppFeatureArchivedSelectionTests {
       return []
     }
     #expect(activeRowIDs.contains(worktree.id))
+    #expect(
+      sentCommands.value == [
+        .prune(keeping: [worktree.id], protectingRepositoryIDs: []),
+        .setImagePasteAgents(surfaceID: surfaceID, agents: [.claude]),
+      ]
+    )
+  }
+
+  @Test(.dependencies) func restoredProjectionRehydratesImagePasteAgentsForSeededSurface() async {
+    let surfaceID = UUID()
+    let worktree = Worktree(
+      id: "/tmp/repo/wt-feature",
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-feature"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.sidebarItems.append(
+      SidebarItemFeature.State(
+        id: worktree.id,
+        repositoryID: RepositoryID("/tmp/repo"),
+        kind: .gitWorktree,
+        name: worktree.name,
+        branchName: worktree.name,
+        workingDirectory: worktree.workingDirectory,
+        isMainWorktree: false,
+        isPinned: false,
+        hasMergedBadge: false
+      )
+    )
+    repositoriesState.sidebarItems[id: worktree.id]?.surfaceIDs = [surfaceID]
+    repositoriesState.pendingAgentRehydrateSurfaces = [surfaceID]
+    var appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    appState.agentPresence.bySurface[surfaceID] = [.claude]
+    appState.agentPresence.records[
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let clock = TestClock()
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .worktreeProjectionChanged(
+          worktree.id,
+          WorktreeRowProjection(
+            surfaceIDs: [surfaceID],
+            isProgressBusy: false,
+            hasUnseenNotifications: false,
+            notifications: []
+          )
+        )
+      )
+    )
+    await store.receive(
+      \.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged
+    ) {
+      $0.repositories.sidebarItems[id: worktree.id]?.agents = [
+        AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+      ]
+      $0.repositories.sidebarItems[id: worktree.id]?.hasAgentActivity = true
+    }
+    await store.finish()
+
+    #expect(store.state.repositories.pendingAgentRehydrateSurfaces.isEmpty)
+    #expect(sentCommands.value == [.setImagePasteAgents(surfaceID: surfaceID, agents: [.claude])])
   }
 
   @Test(.dependencies) func agentPresenceDeltaPersistsLayoutsAfterDebounceWindow() async {
@@ -280,6 +363,63 @@ struct AppFeatureArchivedSelectionTests {
     let written = savedAgents.value
     #expect(written?[surfaceID]?.first?.agent == SkillAgent.claude.rawValue)
     #expect(written?[surfaceID]?.first?.activity == AgentPresenceFeature.Activity.busy.rawValue)
+  }
+
+  @Test(.dependencies) func agentPresenceDeltaFansOutImagePasteAgentsToTerminalSurfaces() async {
+    let surfaceID = UUID()
+    var appState = AppFeature.State(
+      repositories: RepositoriesFeature.State(),
+      settings: SettingsFeature.State()
+    )
+    appState.agentPresence.bySurface[surfaceID] = [.claude]
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let clock = TestClock()
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.agentPresence(.delegate(.surfacesChanged([surfaceID]))))
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+
+    #expect(sentCommands.value == [.setImagePasteAgents(surfaceID: surfaceID, agents: [.claude])])
+  }
+
+  @Test(.dependencies) func agentExitFansOutEmptyImagePasteAgentsToStopRouting() async {
+    // A surface whose agent went away carries no `bySurface` entry; the fan-out must
+    // push the empty set so Cmd+V stops routing to Claude's native paste.
+    let surfaceID = UUID()
+    let appState = AppFeature.State(
+      repositories: RepositoriesFeature.State(),
+      settings: SettingsFeature.State()
+    )
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let clock = TestClock()
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.agentPresence(.delegate(.surfacesChanged([surfaceID]))))
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+
+    #expect(sentCommands.value == [.setImagePasteAgents(surfaceID: surfaceID, agents: [])])
   }
 
   @Test(.dependencies) func presenceDeltaWithinDebounceWindowCoalescesIntoOneWrite() async {

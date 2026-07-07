@@ -700,6 +700,60 @@ struct WorktreeTerminalManagerTests {
     #expect(state.surfaceStates[surface.id] != nil)
   }
 
+  @Test func restoreSeedsImagePasteAgentsForLiveAgentRecord() {
+    let surface = restoreSurface(
+      agents: [TerminalLayoutSnapshot.SurfaceAgentRecord(agent: "claude", pids: [getpid()], activity: "busy")]
+    )
+    #expect(surface?.imagePasteAgents == [.claude])
+  }
+
+  @Test func restoreSkipsImagePasteAgentsForStaleAgentRecord() {
+    // A pid-less (or dead-pid) record is dropped by the presence restore and never gets a
+    // corrective empty fan-out, so seeding it would strand Cmd+V routing into a stale shell.
+    let surface = restoreSurface(
+      agents: [TerminalLayoutSnapshot.SurfaceAgentRecord(agent: "claude", pids: [], activity: "busy")]
+    )
+    #expect(surface?.imagePasteAgents.isEmpty == true)
+  }
+
+  private func restoreSurface(agents: [TerminalLayoutSnapshot.SurfaceAgentRecord]) -> GhosttySurfaceView? {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    state.pendingLayoutSnapshot = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
+          title: "Terminal 1",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(
+            TerminalLayoutSnapshot.SurfaceSnapshot(
+              id: surfaceID,
+              workingDirectory: "/tmp/repo/wt-1",
+              agents: agents
+            )
+          ),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+
+    state.ensureInitialTab(focusing: false)
+
+    guard let tabID = state.tabManager.tabs.first?.id,
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a restored tab and surface")
+      return nil
+    }
+    #expect(surface.id == surfaceID)
+    return surface
+  }
+
   @Test func cleanupSurfaceStateRemovesSurfaceStateEntry() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
