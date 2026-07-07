@@ -195,6 +195,9 @@ struct SupacodeApp: App {
   @MainActor
   private static func makeTerminalManager(runtime: GhosttyRuntime) -> WorktreeTerminalManager {
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
+    runtime.focusedSurfaceBackgroundColorProvider = { [weak terminalManager] in
+      terminalManager?.focusedSurfaceBackground
+    }
     terminalManager.saveLayoutSnapshot = { worktreeID, snapshot in
       @Shared(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
       $layouts.withLock { dict in
@@ -439,7 +442,10 @@ struct SupacodeApp: App {
     .commands {
       WorktreeCommands(store: store)
       SidebarCommands()
-      TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
+      Group {
+        TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
+        TerminalTabSelectionCommands(store: store)
+      }
       WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
         Button("Command Palette") {
@@ -482,6 +488,7 @@ struct SupacodeApp: App {
         .environment(commandKeyObserver)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
+        .movesSettingsWindowToActiveSpace()
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)

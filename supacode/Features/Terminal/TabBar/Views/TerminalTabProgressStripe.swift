@@ -15,7 +15,6 @@ struct TerminalTabProgressStripe: View {
   let tabStore: StoreOf<TerminalTabFeature>
 
   @Environment(\.pixelLength) private var pixelLength
-  @Environment(\.surfaceChromeAppearance) private var chromeAppearance
 
   var body: some View {
     let progressDisplay = tabStore.state.progressDisplay
@@ -28,21 +27,11 @@ struct TerminalTabProgressStripe: View {
     )
   }
 
-  /// True when the stripe carries no progress signal and no tab tint, in
-  /// which case it paints a chrome-aware secondary tone instead of accent.
-  private var isSecondaryFallback: Bool {
-    tintColor == nil
-  }
-
   private func stripeOpacity(progressDisplay: TerminalTabProgressDisplay?) -> Double {
     let hasProgress = progressDisplay != nil
-    // Secondary-fallback active tab paints at the chrome-aware opacity so it
-    // doesn't compete with tinted tabs. Tinted or progress-carrying tabs
-    // still paint at full opacity when active.
+    // The untinted fallback carries its own dimming via `.secondary`, so the
+    // active tab paints at full opacity regardless.
     if isActive {
-      if isSecondaryFallback, !hasProgress {
-        return chromeAppearance.secondaryAccentOpacity
-      }
       return 1
     }
     // Inactive untinted tabs with no progress signal stay hidden.
@@ -54,9 +43,8 @@ struct TerminalTabProgressStripe: View {
   }
 
   /// Resolves the stripe's primary color. Progress states override the tab
-  /// tint; the no-tint / no-progress fallback paints the chrome overlay tint
-  /// (white on dark chrome, black on light chrome) so the active tab's
-  /// indicator stays visible without an accent-color flash.
+  /// tint; the no-tint / no-progress fallback paints `.secondary` so the active
+  /// tab's indicator stays visible without an accent-color flash.
   private func strokeColor(progressDisplay: TerminalTabProgressDisplay?) -> Color {
     switch progressDisplay?.style {
     case .error: return .red
@@ -64,7 +52,7 @@ struct TerminalTabProgressStripe: View {
     case .indeterminate, .determinate:
       return tintColor?.color ?? .accentColor
     case .none:
-      return tintColor?.color ?? chromeAppearance.overlayTint
+      return tintColor?.color ?? .secondary
     }
   }
 }

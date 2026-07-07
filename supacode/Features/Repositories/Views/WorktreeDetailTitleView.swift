@@ -29,44 +29,82 @@ enum WorktreeToolbarTitleContent: Hashable, Sendable {
   }
 }
 
-/// Chrome-aware wrapper that re-resolves `\.colorScheme` against the
-/// terminal background so the toolbar title stays readable when the Ghostty
-/// theme diverges from the system appearance.
-struct WorktreeToolbarTitleView: View {
-  let content: WorktreeToolbarTitleContent
-  let terminalManager: WorktreeTerminalManager
+/// Hosts toolbar item content in an `NSHostingView` pinned to the given
+/// scheme's `NSAppearance`. A `.sharedBackgroundVisibility(.hidden)` item host
+/// ignores `window.appearance` and follows the app appearance, and a plain
+/// `.environment(\.colorScheme, _)` doesn't reach its AppKit-side dynamic color
+/// resolution; pinning the hosting view's appearance covers both. When the
+/// item is hosted in a borderless toolbar window (fullscreen strip, detached
+/// item overlay), the host's content view is pinned too so the bar and its
+/// sibling items follow the terminal scheme with it.
+struct TerminalSchemeHost<Content: View>: NSViewRepresentable {
+  let scheme: ColorScheme
+  @ViewBuilder let content: Content
 
-  @Environment(\.colorScheme) private var systemColorScheme
-  @State private var configReloadCounter = 0
+  func makeNSView(context: Context) -> SchemeHostingView<Content> {
+    let view = SchemeHostingView(rootView: content)
+    view.sizingOptions = .intrinsicContentSize
+    view.appearance = NSAppearance(named: Self.appearanceName(for: scheme))
+    view.schemeName = Self.appearanceName(for: scheme)
+    return view
+  }
 
-  var body: some View {
-    #if DEBUG
-      Self._printChanges()
-      titleRenderLogger.info("WorktreeToolbarTitleView.body re-rendered")
-    #endif
-    _ = configReloadCounter
-    _ = systemColorScheme
-    let tintScheme = terminalManager.surfaceBackgroundColorScheme()
-    let appearance = SurfaceChromeAppearance(
-      colorScheme: tintScheme,
-      systemColorScheme: systemColorScheme
-    )
-    return WorktreeToolbarTitleBody(content: content)
-      .environment(\.surfaceChromeAppearance, appearance)
-      .environment(\.colorScheme, tintScheme)
-      .onReceive(NotificationCenter.default.publisher(for: .ghosttyRuntimeConfigDidChange)) { _ in
-        configReloadCounter &+= 1
-      }
+  func updateNSView(_ nsView: SchemeHostingView<Content>, context: Context) {
+    nsView.rootView = content
+    // The toolbar re-renders often; only re-pin when the scheme actually flips
+    // so unrelated updates don't force an effectiveAppearance re-resolve.
+    let name = Self.appearanceName(for: scheme)
+    if nsView.appearance?.name != name {
+      nsView.appearance = NSAppearance(named: name)
+    }
+    nsView.schemeName = name
+  }
+
+  private static func appearanceName(for scheme: ColorScheme) -> NSAppearance.Name {
+    scheme == .light ? .aqua : .darkAqua
   }
 }
 
-private struct WorktreeToolbarTitleBody: View {
+/// Pins the toolbar host it lands in to the terminal scheme. The main window
+/// is left alone (WindowChromeApplier owns its appearance, same value); a
+/// borderless host is the toolbar strip or item overlay, whose CONTENT VIEW
+/// takes the pin. Never the window property itself: re-pinning the private
+/// window makes AppKit rebuild its items, which re-triggers the pin in a loop.
+final class SchemeHostingView<Content: View>: NSHostingView<Content> {
+  var schemeName: NSAppearance.Name = .aqua {
+    didSet {
+      guard schemeName != oldValue else { return }
+      pinToolbarHostAppearance()
+    }
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    pinToolbarHostAppearance()
+  }
+
+  private func pinToolbarHostAppearance() {
+    guard let window, !window.styleMask.contains(.titled) else { return }
+    guard let contentView = window.contentView, contentView.appearance?.name != schemeName else {
+      return
+    }
+    contentView.appearance = NSAppearance(named: schemeName)
+  }
+}
+
+/// Renders the toolbar repo/worktree title. This `.navigation` item carries
+/// `.sharedBackgroundVisibility(.hidden)`, whose host ignores
+/// `window.appearance`, so `WorktreeToolbarContent` wraps this view in a
+/// `TerminalSchemeHost` pinned to the focused terminal's contrast.
+/// `.primary` / `.secondary` then match the terminal background like the rest of
+/// the window chrome.
+struct WorktreeToolbarTitleView: View {
   let content: WorktreeToolbarTitleContent
 
   var body: some View {
     #if DEBUG
       let _ = Self._printChanges()
-      titleRenderLogger.info("WorktreeToolbarTitleBody.body re-rendered")
+      titleRenderLogger.info("WorktreeToolbarTitleView.body re-rendered")
     #endif
     return HStack(spacing: 8) {
       Group {
@@ -190,7 +228,7 @@ enum GitHubOwnerAvatar {
 
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(
+      WorktreeToolbarTitleView(
         content: .git(
           .init(
             displayTitle: "sbertix/319-toolbar-details",
@@ -212,7 +250,7 @@ enum GitHubOwnerAvatar {
 #Preview("Main worktree") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(
+      WorktreeToolbarTitleView(
         content: .git(
           .init(
             displayTitle: "main",
@@ -234,7 +272,8 @@ enum GitHubOwnerAvatar {
 #Preview("Folder") {
   Text("").toolbar {
     ToolbarItem {
-      WorktreeToolbarTitleBody(content: .folder(name: "Documents", tint: nil, hostInfo: nil))
+      WorktreeToolbarTitleView(
+        content: .folder(name: "Documents", tint: nil, hostInfo: nil))
     }
   }.frame(width: 600, height: 600)
 }

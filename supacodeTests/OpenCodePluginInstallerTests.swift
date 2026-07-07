@@ -119,6 +119,19 @@ struct OpenCodePluginInstallerTests {
     }
   }
 
+  @Test func installRefusesToOverwriteUnownedPlugin() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+    let installer = OpenCodePluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    let userPlugin = "export const NotSupacode = async () => ({})\n"
+    try fileManager.createDirectory(
+      at: installer.pluginFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try userPlugin.write(to: installer.pluginFileURL, atomically: true, encoding: .utf8)
+
+    #expect(throws: OpenCodePluginInstallerError.self) { try installer.install() }
+    #expect(try String(contentsOf: installer.pluginFileURL, encoding: .utf8) == userPlugin)
+  }
+
   @Test func pluginFilePointsToExpectedPath() {
     let homeURL = URL(fileURLWithPath: "/Users/test")
     let installer = OpenCodePluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)

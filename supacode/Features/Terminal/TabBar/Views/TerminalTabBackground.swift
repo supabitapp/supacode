@@ -10,8 +10,6 @@ struct TerminalTabBackground: View {
   var isPressing: Bool
   var isDragging: Bool
 
-  @Environment(\.surfaceChromeAppearance)
-  private var chromeAppearance
   @Environment(\.pixelLength)
   private var pixelLength
 
@@ -20,7 +18,7 @@ struct TerminalTabBackground: View {
       .overlay(alignment: .bottom) {
         if !isActive {
           Rectangle()
-            .fill(chromeAppearance.overlayTint.opacity(chromeAppearance.separatorOpacity))
+            .fill(Color(nsColor: .separatorColor))
             .frame(height: pixelLength)
         }
       }

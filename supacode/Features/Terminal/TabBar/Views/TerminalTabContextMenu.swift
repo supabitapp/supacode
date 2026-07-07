@@ -49,10 +49,6 @@ struct TerminalTabContextMenu: ViewModifier {
           actions.closeAll()
         }
       }
-      // SwiftUI menu items containing Labels/Images receive `\.colorScheme`
-      // from the surrounding env, so without escaping the chrome override
-      // their tinting renders against the wrong appearance.
-      .inheritSystemColorScheme()
     }
   }
 

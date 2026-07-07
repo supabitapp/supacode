@@ -13,8 +13,10 @@ nonisolated enum AgentIntegrationFactory {
     case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .hermes: hermes(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kimi: kimi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    case .omp: omp(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .opencode: opencode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     }
@@ -25,7 +27,7 @@ nonisolated enum AgentIntegrationFactory {
   private static func claude(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = ClaudeSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller()
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .claude,
       components: [
@@ -43,7 +45,7 @@ nonisolated enum AgentIntegrationFactory {
   private static func codex(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = CodexSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller()
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .codex,
       components: [
@@ -61,7 +63,7 @@ nonisolated enum AgentIntegrationFactory {
   private static func kimi(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = KimiSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller()
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .kimi,
       components: [
@@ -76,10 +78,28 @@ nonisolated enum AgentIntegrationFactory {
     )
   }
 
+  private static func hermes(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = HermesPluginInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
+    return AgentIntegration(
+      agent: .hermes,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.install() },
+          uninstall: { try installer.uninstall() }
+        ),
+        skillComponent(agent: .hermes, installer: skill),
+      ]
+    )
+  }
+
   private static func kiro(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = KiroSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller()
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .kiro,
       components: [
@@ -94,10 +114,28 @@ nonisolated enum AgentIntegrationFactory {
     )
   }
 
+  private static func omp(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = OmpSettingsInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
+    return AgentIntegration(
+      agent: .omp,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.install() },
+          uninstall: { try installer.uninstall() }
+        ),
+        skillComponent(agent: .omp, installer: skill),
+      ]
+    )
+  }
+
   private static func pi(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = PiSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller()
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .pi,
       components: [
@@ -115,7 +153,7 @@ nonisolated enum AgentIntegrationFactory {
   private static func opencode(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = OpenCodePluginInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller()
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .opencode,
       components: [
@@ -133,7 +171,7 @@ nonisolated enum AgentIntegrationFactory {
   private static func copilot(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = CopilotHooksInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller()
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration(
       agent: .copilot,
       components: [

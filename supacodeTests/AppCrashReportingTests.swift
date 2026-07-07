@@ -42,7 +42,6 @@ struct AppCrashReportingTests {
           updatesAutomaticallyCheckForUpdates: true,
           updatesAutomaticallyDownloadUpdates: false,
           inAppNotificationsEnabled: true,
-          notificationSoundEnabled: true,
           moveNotifiedWorktreeToTop: true,
           analyticsEnabled: true,
           crashReportsEnabled: false,

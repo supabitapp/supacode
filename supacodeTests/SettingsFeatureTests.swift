@@ -20,7 +20,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
       inAppNotificationsEnabled: false,
-      notificationSoundEnabled: true,
       systemNotificationsEnabled: true,
       moveNotifiedWorktreeToTop: false,
       analyticsEnabled: false,
@@ -50,7 +49,6 @@ struct SettingsFeatureTests {
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
       $0.inAppNotificationsEnabled = false
-      $0.notificationSoundEnabled = true
       $0.moveNotifiedWorktreeToTop = false
       $0.systemNotificationsEnabled = true
       $0.analyticsEnabled = false
@@ -75,7 +73,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: false,
       inAppNotificationsEnabled: false,
-      notificationSoundEnabled: false,
       systemNotificationsEnabled: false,
       moveNotifiedWorktreeToTop: true,
       analyticsEnabled: true,
@@ -102,7 +99,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: initialSettings.updatesAutomaticallyCheckForUpdates,
       updatesAutomaticallyDownloadUpdates: initialSettings.updatesAutomaticallyDownloadUpdates,
       inAppNotificationsEnabled: initialSettings.inAppNotificationsEnabled,
-      notificationSoundEnabled: initialSettings.notificationSoundEnabled,
       systemNotificationsEnabled: initialSettings.systemNotificationsEnabled,
       moveNotifiedWorktreeToTop: initialSettings.moveNotifiedWorktreeToTop,
       analyticsEnabled: initialSettings.analyticsEnabled,
@@ -132,6 +128,90 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
     #expect(settingsFile.global.systemNotificationsEnabled == true)
+  }
+
+  @Test(.dependencies) func selectingNotificationSoundPlaysPreview() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let played = LockIsolated<[NotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[NotificationSoundClient.self].play = { sound in
+        played.withValue { $0.append(sound) }
+      }
+    }
+
+    await store.send(.binding(.set(\.notificationSound, .glass))) {
+      $0.notificationSound = .glass
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    // Picking a sound auditions it through the in-app player.
+    #expect(played.value == [.glass])
+  }
+
+  @Test(.dependencies) func doesNotPreviewWhenSystemNotificationsEnabled() async {
+    var settings = GlobalSettings.default
+    settings.systemNotificationsEnabled = true
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+
+    let played = LockIsolated<[NotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[NotificationSoundClient.self].play = { sound in
+        played.withValue { $0.append(sound) }
+      }
+    }
+
+    await store.send(.binding(.set(\.notificationSound, .glass))) {
+      $0.notificationSound = .glass
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    // With system notifications on the in-app path is unused, so no preview.
+    #expect(played.value.isEmpty)
+  }
+
+  @Test(.dependencies) func doesNotPreviewWhenNeverSelected() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let played = LockIsolated<[NotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[NotificationSoundClient.self].play = { sound in
+        played.withValue { $0.append(sound) }
+      }
+    }
+
+    await store.send(.binding(.set(\.notificationSound, .never))) {
+      $0.notificationSound = .never
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    // "Never" has nothing to audition.
+    #expect(played.value.isEmpty)
+  }
+
+  @Test(.dependencies) func enablingDisabledByDefaultShortcutBindsItsDefault() async {
+    let initialSettings = GlobalSettings.default
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+    let expected = AppShortcuts.defaultEnabledOverride(for: .cloneRepository)
+    await store.send(.toggleShortcutEnabled(id: .cloneRepository, enabled: true)) {
+      $0.shortcutOverrides[.cloneRepository] = expected
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.shortcutOverrides[.cloneRepository] == expected)
   }
 
   @Test(.dependencies) func settingsPersistDoesNotTouchRemoteRepositoryRoots() async {
@@ -255,7 +335,6 @@ struct SettingsFeatureTests {
       updatesAutomaticallyCheckForUpdates: false,
       updatesAutomaticallyDownloadUpdates: true,
       inAppNotificationsEnabled: false,
-      notificationSoundEnabled: false,
       systemNotificationsEnabled: true,
       moveNotifiedWorktreeToTop: true,
       analyticsEnabled: true,
@@ -273,7 +352,6 @@ struct SettingsFeatureTests {
       $0.updatesAutomaticallyCheckForUpdates = false
       $0.updatesAutomaticallyDownloadUpdates = true
       $0.inAppNotificationsEnabled = false
-      $0.notificationSoundEnabled = false
       $0.moveNotifiedWorktreeToTop = true
       $0.systemNotificationsEnabled = true
       $0.analyticsEnabled = true
@@ -621,6 +699,28 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
     #expect(settingsFile.global.shortcutOverrides[.newWorktree] == nil)
+  }
+
+  @Test(.dependencies) func toggleShortcutEnabledBindsDefaultForDisabledByDefaultSentinel() async {
+    // A disabled-by-default shortcut can pick up a `.disabled` sentinel (e.g. a
+    // group toggle off). Re-enabling must bind its default key, not just drop the
+    // sentinel, which would leave it off ("no override" == disabled for it).
+    var initialSettings = GlobalSettings.default
+    initialSettings.shortcutOverrides = [.cloneRepository: .disabled]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    let expected = AppShortcuts.defaultEnabledOverride(for: .cloneRepository)
+    await store.send(.toggleShortcutEnabled(id: .cloneRepository, enabled: true)) {
+      $0.shortcutOverrides[.cloneRepository] = expected
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.shortcutOverrides[.cloneRepository] == expected)
+    #expect(expected?.isEnabled == true)
   }
 
   @Test(.dependencies) func toggleShortcutEnabledReEnablesCustomOverride() async {
@@ -988,6 +1088,20 @@ struct SettingsFeatureTests {
     dict.removeValue(forKey: "automatedActionPolicy")
     dict["allowArbitraryDeeplinkInput"] = value
     return try JSONSerialization.data(withJSONObject: dict)
+  }
+
+  @Test func hasActiveNotificationChannelReflectsDeliveryToggles() {
+    #expect(!Self.deliveryState(system: false, sound: false).hasActiveNotificationChannel)
+    #expect(Self.deliveryState(system: true, sound: false).hasActiveNotificationChannel)
+    #expect(Self.deliveryState(system: false, sound: true).hasActiveNotificationChannel)
+    #expect(Self.deliveryState(system: true, sound: true).hasActiveNotificationChannel)
+  }
+
+  private static func deliveryState(system: Bool, sound: Bool) -> SettingsFeature.State {
+    var settings = GlobalSettings.default
+    settings.systemNotificationsEnabled = system
+    settings.notificationSound = sound ? .hero : .never
+    return SettingsFeature.State(settings: settings)
   }
 
   private func makeGlobalSettingsJSONWithoutPolicy() throws -> Data {

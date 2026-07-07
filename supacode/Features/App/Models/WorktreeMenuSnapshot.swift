@@ -105,7 +105,8 @@ extension AppFeature.Action {
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
         .tabRemoved, .worktreeStateTornDown, .tabProgressDisplayChanged,
-        .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged:
+        .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
+        .surfaceCreationFailed:
         return false
       }
     // Hot agent-storm paths: per-tab churn never mutates snapshot inputs.
@@ -121,12 +122,13 @@ extension AppFeature.Action {
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal,
-      .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
+      .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
-      .deeplink, .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
+      .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
+      .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
       return false
     }
   }

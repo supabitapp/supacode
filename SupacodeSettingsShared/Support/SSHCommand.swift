@@ -24,25 +24,38 @@ public nonisolated enum SSHCommand {
 
   /// SSH connection-multiplexing options. `auto` opens a master if none exists
   /// and reuses it otherwise; `ControlPersist` keeps it warm briefly after the
-  /// last client so a burst of git calls shares one connection.
+  /// last client so a burst of git calls shares one connection. `ServerAlive*`
+  /// lives here, not per-caller: keepalives belong to whichever process is the
+  /// master, so every path that can create one must carry them or a dead
+  /// connection is never detected for any mux client riding it (~15s bound).
   public static func controlOptions(controlPath: String = defaultControlPath) -> [String] {
     [
       "-o", "ControlMaster=auto",
       "-o", "ControlPath=\(controlPath)",
       "-o", "ControlPersist=10m",
+      "-o", "ServerAliveInterval=5",
+      "-o", "ServerAliveCountMax=3",
     ]
   }
 
   /// Options for a non-interactive background probe (e.g. resolving a remote
   /// repository at launch). `BatchMode` so it fails fast instead of blocking on
-  /// a password / host-key prompt; `ConnectTimeout` bounds the TCP+handshake;
-  /// `ServerAlive*` aborts a connection that stalls mid-command (~10s). A live
-  /// ControlMaster (an open terminal) bypasses auth, so the common case is fast.
+  /// a password / host-key prompt; `ConnectTimeout` bounds the TCP+handshake.
+  /// Keepalives come from `controlOptions`. A live ControlMaster (an open
+  /// terminal) bypasses auth, so the common case is fast.
   public static let backgroundProbeOptions: [String] = [
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=10",
-    "-o", "ServerAliveInterval=5",
-    "-o", "ServerAliveCountMax=2",
+  ]
+
+  /// Options for an interactive terminal surface. `ConnectTimeout` bounds each
+  /// reconnect attempt; 30s (vs the probe's 10s) tolerates slow ProxyJump/VPN
+  /// handshakes while keeping the reconnect loop live. It does override a
+  /// larger ssh_config value, the price of never hanging an attempt forever.
+  /// No `BatchMode`, so first-connect password / 2FA prompts still work.
+  /// Keepalives come from `controlOptions`.
+  public static let interactiveOptions: [String] = [
+    "-o", "ConnectTimeout=30",
   ]
 
   /// POSIX single-quote a token so a parent shell passes it through literally.
@@ -151,6 +164,7 @@ public nonisolated enum SSHCommand {
   ) -> String {
     var tokens = [sshExecutablePath]
     tokens += controlOptions(controlPath: controlPath)
+    tokens += interactiveOptions
     if allocateTTY {
       tokens.append("-tt")
     }
@@ -173,6 +187,7 @@ public nonisolated enum SSHCommand {
   ) -> String {
     var tokens = [sshExecutablePath]
     tokens += controlOptions(controlPath: controlPath)
+    tokens += interactiveOptions
     if allocateTTY {
       tokens.append("-tt")
     }

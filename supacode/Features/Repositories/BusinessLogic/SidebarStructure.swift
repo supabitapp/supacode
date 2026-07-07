@@ -223,6 +223,15 @@ struct SidebarStructure: Equatable, Sendable {
       color: RepositoryColor?,
       isRemote: Bool
     )
+    /// A persisted local git root whose worktrees can't be listed right now
+    /// because git itself is environment-blocked. Not broken, so it's a warning
+    /// row (not a removable failure row); the bottom banner carries the remedy.
+    case environmentBlockedRepository(
+      repositoryID: Repository.ID,
+      rootURL: URL,
+      customTitle: String?,
+      color: RepositoryColor?
+    )
     case placeholder
 
     var id: SectionID {
@@ -231,6 +240,7 @@ struct SidebarStructure: Equatable, Sendable {
       case .repository(let repositoryID, _): .repository(repositoryID)
       case .folder(let repositoryID, _): .folder(repositoryID)
       case .failedRepository(let repositoryID, _, _, _, _): .failedRepository(repositoryID)
+      case .environmentBlockedRepository(let repositoryID, _, _, _): .environmentBlockedRepository(repositoryID)
       case .placeholder: .placeholder
       }
     }
@@ -240,6 +250,7 @@ struct SidebarStructure: Equatable, Sendable {
       case repository(Repository.ID)
       case folder(Repository.ID)
       case failedRepository(Repository.ID)
+      case environmentBlockedRepository(Repository.ID)
       case placeholder
     }
   }
@@ -403,6 +414,10 @@ extension RepositoriesFeature.Action {
     case .resolveRemoteRepositories:
       return []
 
+    // Pure signal observed by AppFeature to drain a parked CLI ack; no state.
+    case .cliWorktreeAckCancelled:
+      return []
+
     // `worktreeBranchNameLoaded` mutates `worktree.name` via `updateWorktreeName`,
     // which feeds `computeToolbarNotificationGroups()` (notification group title).
     // Without `.toolbarNotificationGroups` the popover would show the old name
@@ -448,9 +463,13 @@ extension RepositoriesFeature.Action {
     // Everything else is UI / effects / transient state, no cache touched.
     case .task, .setOpenPanelPresented,
       .requestAddRemoteRepository, .requestEditRemoteRepository, .remoteConnectionForm,
+      .requestCloneRepository, .cloneRepositoryForm,
       .loadPersistedRepositories,
       .removeRemoteRepository,
       .refreshWorktrees, .reloadRepositories,
+      // Blocked-git warning rows recompute via the paired bulk load action that
+      // always follows `.gitEnvironmentChanged`, so this needs no invalidation.
+      .gitEnvironmentChanged,
       .setSidebarSelectedWorktreeIDs,
       .openRepositories,
       .revealSelectedWorktreeInSidebar, .revealHoistedWorktreeInSidebar,
@@ -474,6 +493,7 @@ extension RepositoriesFeature.Action {
       .setMoveNotifiedWorktreeToTop,
       .pullRequestAction,
       .showToast, .dismissToast,
+      .toggleInspectorPane, .setInspectorPresented,
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
       .requestCustomizeWorktree,
@@ -533,6 +553,19 @@ extension RepositoriesFeature.State {
   /// reducer (see `recomputeSidebarStructure(...)`); never call from a view
   /// body or the per-leaf reads here will observation-track every row at
   /// the parent and reintroduce the regression commit `0a1ed578` documents.
+  /// Local git roots we can't read because git is environment-blocked: present
+  /// in `repositoryRoots` but with no loaded repository and no failure entry
+  /// while the gate is active. Rendered as warning rows, and shielded from
+  /// terminal prune so a transient gate doesn't tear down their live sessions.
+  var environmentBlockedRepositoryIDs: Set<Repository.ID> {
+    guard gitEnvironmentError != nil else { return [] }
+    return Set(
+      repositoryRoots
+        .map { RepositoryID($0.standardizedFileURL.path(percentEncoded: false)) }
+        .filter { repositories[id: $0] == nil && loadFailuresByID[$0] == nil }
+    )
+  }
+
   func computeSidebarStructure(
     groupPinned: Bool,
     groupActive: Bool
@@ -633,6 +666,7 @@ extension RepositoriesFeature.State {
   private func buildRepositorySections(hoisted: Set<Worktree.ID>) -> RepositorySectionsBuild {
     var sections: [SidebarStructure.Section] = []
     var reorderableRepositoryIDs: [Repository.ID] = []
+    let blockedRepositoryIDs = environmentBlockedRepositoryIDs
     let pendingIDsByRepo: [Repository.ID: Set<Worktree.ID>] = Dictionary(
       grouping: pendingWorktrees,
       by: \.repositoryID
@@ -672,6 +706,23 @@ extension RepositoriesFeature.State {
             customTitle: sectionEntry?.title ?? folderItem?.title,
             color: sectionEntry?.color ?? folderItem?.color,
             isRemote: isRemote
+          )
+        )
+        continue
+      }
+
+      // A git root we couldn't list because git itself is environment-blocked.
+      // Surface a warning row so the repo doesn't look removed. Folder roots keep
+      // a repository entry, so they never fall here.
+      if blockedRepositoryIDs.contains(repositoryID), let rootURL = localRootsByID[repositoryID] {
+        let sectionEntry = sidebar.sections[repositoryID]
+        let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
+        sections.append(
+          .environmentBlockedRepository(
+            repositoryID: repositoryID,
+            rootURL: rootURL,
+            customTitle: sectionEntry?.title ?? folderItem?.title,
+            color: sectionEntry?.color ?? folderItem?.color
           )
         )
         continue
@@ -806,7 +857,7 @@ extension RepositoriesFeature.State {
     var ids: [Worktree.ID] = []
     for section in sections {
       switch section {
-      case .highlight, .placeholder, .failedRepository:
+      case .highlight, .placeholder, .failedRepository, .environmentBlockedRepository:
         continue
       case .folder(_, let rowID):
         ids.append(rowID)

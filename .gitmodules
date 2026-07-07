@@ -6,4 +6,4 @@
 	url = https://github.com/khoi/git-wt.git
 [submodule "ThirdParty/zmx"]
 	path = ThirdParty/zmx
-	url = https://github.com/neurosnap/zmx
+	url = https://github.com/supabitapp/zmx.git

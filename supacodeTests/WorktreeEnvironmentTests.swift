@@ -146,7 +146,7 @@ struct WorktreeEnvironmentTests {
     #expect(runner.contains("cd -- '/home/me/wt'"))
     #expect(runner.contains("\"$SHELL\" -l -c \"$1\""))
     // Beta banner present (remote surfaces are in beta).
-    #expect(runner.contains("beta"))
+    #expect(runner.contains(ZmxAttach.betaBanner))
   }
 
   @Test func remoteRunnerScriptSkipsCdForRootOrEmptyPath() {

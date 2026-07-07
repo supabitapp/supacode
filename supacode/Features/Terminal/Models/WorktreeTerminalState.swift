@@ -166,7 +166,7 @@ final class WorktreeTerminalState {
   }
 
   var isSelected: () -> Bool = { false }
-  var onNotificationReceived: ((UUID, String, String) -> Void)?
+  var onNotificationReceived: ((UUID, String, String, Bool) -> Void)?
   var onNotificationIndicatorChanged: (() -> Void)?
   var onTabCreated: (() -> Void)?
   var onTabClosed: (() -> Void)?
@@ -174,6 +174,8 @@ final class WorktreeTerminalState {
   /// sink so a custom title survives relaunch without waiting for quit.
   var onTabRenamed: (() -> Void)?
   var onFocusChanged: ((UUID) -> Void)?
+  // Fired when the currently focused surface's background color changes (OSC 11).
+  var onFocusedSurfaceColorChanged: (() -> Void)?
   var onTaskStatusChanged: ((WorktreeTaskStatus) -> Void)?
   var onBlockingScriptCompleted: ((BlockingScriptKind, Int?, TerminalTabID?) -> Void)?
   var onCommandPaletteToggle: (() -> Void)?
@@ -527,6 +529,12 @@ final class WorktreeTerminalState {
   /// All surface IDs across every tab in this worktree state.
   var allSurfaceIDs: [UUID] {
     trees.values.flatMap { $0.leaves().map(\.id) }
+  }
+
+  /// Host of a remote worktree, nil for local. Every surface in this state
+  /// shares it, so teardown paths can target the host-side zmx sessions.
+  var remoteHost: RemoteHost? {
+    worktree.host
   }
 
   // Standardized to match `loadFailuresByID` keys (built from `standardizedFileURL.path`)
@@ -1595,6 +1603,12 @@ final class WorktreeTerminalState {
       self.recordActiveSurface(view, in: tabId)
       self.emitTaskStatusIfChanged()
     }
+    view.bridge.onColorChanged = { [weak self, weak view] in
+      guard let self, let view, self.isLiveSurface(view) else { return }
+      // Only the focused surface drives the window tint.
+      guard self.focusedSurfaceIdByTab[tabId] == view.id else { return }
+      self.onFocusedSurfaceColorChanged?()
+    }
     view.shouldClaimFocus = { [weak self, weak view] in
       guard let self, let view, self.isLiveSurface(view) else { return false }
       return self.focusedSurfaceIdByTab[tabId] == view.id
@@ -1604,6 +1618,16 @@ final class WorktreeTerminalState {
   // Identity, not key presence: a reattached surface keeps its UUID, so stale closures from the old view must no-op.
   private func isLiveSurface(_ view: GhosttySurfaceView) -> Bool {
     surfaces[view.id] === view
+  }
+
+  // The bridge state of the focused surface in the selected tab, if any. Used to
+  // resolve the window tint from the focused surface's OSC 11 background.
+  func focusedSurfaceState() -> GhosttySurfaceState? {
+    guard let tabID = tabManager.selectedTabId,
+      let surfaceID = focusedSurfaceIdByTab[tabID],
+      let surface = surfaces[surfaceID]
+    else { return nil }
+    return surface.bridge.state
   }
 
   /// Routes an OSC 3008 context signal to the presence or notify handler.
@@ -1785,26 +1809,27 @@ final class WorktreeTerminalState {
     if bypassZmx {
       return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [], usesZmx: false)
     }
-    let sessionID = ZmxSessionID.make(surfaceID: surfaceID)
     let zmxExecutablePath = zmxClient.executableURL()?.path(percentEncoded: false)
-    // Remote worktree: a *local* zmx session wraps the SSH connection, so zmx
-    // only needs to exist on the client. The remote runs a plain login shell
-    // (no zmx installed there). The surface command is always the wrapped ssh
-    // line (no command-wrapper, since Ghostty wraps the local argv, not the ssh
-    // line). When the caller has no explicit command, default to
-    // cd-into-the-remote-dir so a freshly created session lands in the project.
+    // Remote worktree: a *local* zmx session wraps a reconnect loop around the
+    // SSH connection, and the remote reattaches its own zmx session when the
+    // host has zmx (host persistence). The surface command is always the
+    // reconnect-loop script (no command-wrapper, since Ghostty wraps the
+    // local argv, not the loop). When the caller has no explicit command,
+    // default to cd-into-the-remote-dir so a freshly created session lands in
+    // the project.
     if let host = worktree.host {
-      let userCommand =
-        command
-        ?? Self.remoteDefaultShellCommand(remotePath: worktree.workingDirectory.path(percentEncoded: false))
+      @Shared(.settingsFile) var settingsFile
+      let hostPersistence = settingsFile.global.remoteSessionPersistenceEnabled
+      let launch = ZmxAttach.RemoteSurfaceLaunch(
+        host: host,
+        surfaceID: surfaceID,
+        userCommand: command,
+        defaultCommand: Self.remoteDefaultShellCommand(
+          remotePath: worktree.workingDirectory.path(percentEncoded: false)),
+        hostPersistenceEnabled: hostPersistence,
+      )
       return ResolvedLaunch(
-        command: ZmxAttach.buildRemoteCommand(
-          host: host,
-          localZmxExecutablePath: zmxExecutablePath,
-          sessionID: sessionID,
-          userCommand: userCommand,
-          surfaceID: surfaceID,
-        ),
+        command: ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: zmxExecutablePath),
         initialInput: initialInput,
         commandWrapper: [],
         usesZmx: zmxExecutablePath != nil,
@@ -1812,7 +1837,7 @@ final class WorktreeTerminalState {
     }
     let resolved = ZmxAttach.resolveLaunch(
       executablePath: zmxExecutablePath,
-      sessionID: sessionID,
+      sessionID: ZmxSessionID.make(surfaceID: surfaceID),
       command: command,
     )
     return ResolvedLaunch(
@@ -1823,11 +1848,11 @@ final class WorktreeTerminalState {
     )
   }
 
-  /// Default command for a remote worktree surface with no explicit command:
-  /// `cd` into the remote project dir, then exec a login shell. The `cd` failure
-  /// is swallowed so a stale path still drops the user into a usable shell. Nil
-  /// for an empty/root path so we just attach the default shell. The path is
-  /// single-quoted for the remote shell (which re-parses the attach string).
+  /// Connect default and reconnect fallback for a remote surface: `cd` into
+  /// the remote project dir, then exec a login shell. The `cd` failure is
+  /// swallowed so a stale path still drops the user into a usable shell. Nil
+  /// for an empty/root path falls back to a bare login shell. The path is
+  /// single-quoted for the login shell that re-parses the session command.
   static func remoteDefaultShellCommand(remotePath: String) -> String? {
     let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, trimmed != "/" else { return nil }
@@ -1994,15 +2019,15 @@ final class WorktreeTerminalState {
     let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
+    let isViewed = isViewedSurface(surfaceID)
     if notificationsEnabled {
-      let isRead = isSelected() && isFocusedSurface(surfaceID)
       notifications.insert(
         WorktreeTerminalNotification(
           surfaceID: surfaceID,
           title: trimmedTitle,
           body: trimmedBody,
           createdAt: now,
-          isRead: isRead
+          isRead: isViewed
         ),
         at: 0
       )
@@ -2012,7 +2037,7 @@ final class WorktreeTerminalState {
       }
       emitNotificationStateChanged()
     }
-    onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody)
+    onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody, isViewed)
   }
 
   /// Detaches one surface from the local bookkeeping. The zmx session is NOT
@@ -2039,18 +2064,36 @@ final class WorktreeTerminalState {
   /// `isBundled` (not `executableURL`) is the gate so sessions created on a
   /// previous under-budget launch still tear down when this launch exceeds the
   /// socket budget. One analytics event + one `withTaskGroup` per call.
-  private func killZmxSessions(forSurfaceIDs surfaceIDs: [UUID]) {
-    guard !surfaceIDs.isEmpty, zmxClient.isBundled() else { return }
+  /// `includeRemote` also tears down the host-side sessions of a remote
+  /// worktree; only explicit close paths set it, so a non-explicit end (clean
+  /// remote exit, deliberate host-side detach, or a reconnect abort) spares
+  /// the host session. The remote kill is unconditional on explicit close (no
+  /// per-surface persistence gate): a host session may exist from an earlier
+  /// launch regardless of the current toggle, and the kill invocation is a
+  /// silent no-op when nothing exists.
+  private func killZmxSessions(forSurfaceIDs surfaceIDs: [UUID], includeRemote: Bool = false) {
+    guard !surfaceIDs.isEmpty else { return }
+    let killLocal = zmxClient.isBundled()
+    let host = includeRemote ? worktree.host : nil
+    guard killLocal || host != nil else { return }
     let sessionIDs = surfaceIDs.map(ZmxSessionID.make(surfaceID:))
     let client = zmxClient
     analyticsClient.capture(
       "terminal_persistence_session_killed",
-      ["reason": "user_close", "count": sessionIDs.count]
+      [
+        "reason": "user_close", "count": killLocal ? sessionIDs.count : 0,
+        "remote_count": host == nil ? 0 : sessionIDs.count,
+      ]
     )
     Task.detached {
       await withTaskGroup(of: Void.self) { group in
         for id in sessionIDs {
-          group.addTask { await client.killSession(id) }
+          if killLocal {
+            group.addTask { await client.killSession(id) }
+          }
+          if let host {
+            group.addTask { await client.killRemoteSession(host, id) }
+          }
         }
       }
     }
@@ -2064,7 +2107,7 @@ final class WorktreeTerminalState {
       surface.closeSurface()
       cleanupSurfaceState(for: surface.id)
     }
-    killZmxSessions(forSurfaceIDs: leafIDs)
+    killZmxSessions(forSurfaceIDs: leafIDs, includeRemote: true)
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     if lastTabProjections.removeValue(forKey: tabId) != nil {
       onTabRemoved?(tabId)
@@ -2083,6 +2126,18 @@ final class WorktreeTerminalState {
       return false
     }
     return focusedSurfaceIdByTab[selectedTabId] == surfaceID
+  }
+
+  private func isViewedSurface(_ surfaceID: UUID) -> Bool {
+    isSelected() && isFocusedSurface(surfaceID) && isVisibleSurface(surfaceID)
+      && lastWindowIsKey == true && lastWindowIsVisible == true
+  }
+
+  // A split-zoomed tab hides every pane outside the zoomed subtree, so a focused
+  // pane can still be off screen; gate on the zoom-aware visible leaves.
+  private func isVisibleSurface(_ surfaceID: UUID) -> Bool {
+    guard let selectedTabId = tabManager.selectedTabId else { return false }
+    return trees[selectedTabId]?.visibleLeaves().contains { $0.id == surfaceID } == true
   }
 
   /// True for a blocking-script tab whose script has already finished.
@@ -2322,7 +2377,10 @@ final class WorktreeTerminalState {
       handleUnexpectedZmxClose(for: view)
       return
     }
-    closeSurfaceAndUpdateTabs(view, killZmxSession: true)
+    // The host-side session dies only on explicit close: a non-explicit exit
+    // (e.g. a clean remote exit with the session already gone, a deliberate
+    // host-side detach, or a reconnect abort) spares it.
+    closeSurfaceAndUpdateTabs(view, killZmxSession: true, includeRemoteSession: isExplicitClose)
   }
 
   private func shouldHandleAsUnexpectedZmxClose(
@@ -2418,12 +2476,16 @@ final class WorktreeTerminalState {
     surfaceGenerationByTab[tabId, default: 0] += 1
   }
 
-  private func closeSurfaceAndUpdateTabs(_ view: GhosttySurfaceView, killZmxSession: Bool) {
+  private func closeSurfaceAndUpdateTabs(
+    _ view: GhosttySurfaceView,
+    killZmxSession: Bool,
+    includeRemoteSession: Bool = false
+  ) {
     guard let tabId = tabID(containing: view.id), let tree = trees[tabId] else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
       if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id])
+        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
       }
       return
     }
@@ -2431,7 +2493,7 @@ final class WorktreeTerminalState {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
       if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id])
+        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
       }
       return
     }
@@ -2443,7 +2505,7 @@ final class WorktreeTerminalState {
     view.closeSurface()
     cleanupSurfaceState(for: view.id)
     if killZmxSession {
-      killZmxSessions(forSurfaceIDs: [view.id])
+      killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
     }
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
@@ -2486,6 +2548,13 @@ final class WorktreeTerminalState {
     {
       focusSurface(fallback, in: tabId)
     }
+  }
+
+  // Selects the 1-based Nth tab, clamped to the last tab, matching Ghostty's `goto_tab:N`.
+  func selectTabAtIndex(_ index: Int) {
+    let tabs = tabManager.tabs
+    guard index >= 1, !tabs.isEmpty else { return }
+    selectTab(tabs[min(index - 1, tabs.count - 1)].id)
   }
 
   private func handleGotoTabRequest(_ target: ghostty_action_goto_tab_e) -> Bool {

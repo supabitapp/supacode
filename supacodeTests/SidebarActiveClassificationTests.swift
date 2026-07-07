@@ -1,3 +1,5 @@
+import Foundation
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -66,6 +68,14 @@ struct SidebarActiveClassificationTests {
     )
     #expect(classification == .agent)
   }
+  @Test func ompBadgeClassifiesRowAsAgent() {
+    var state = makeState(name: "omp")
+    state.agents = [.init(agent: .omp, activity: .idle)]
+
+    let classification = SidebarActiveClassification.classify(state)
+
+    #expect(classification == .agent)
+  }
 
   @Test func runningOnly() {
     let classification = SidebarActiveClassification.classify(
@@ -89,5 +99,20 @@ struct SidebarActiveClassificationTests {
       .unreadRunning, .awaitingRunning, .awaiting, .agentRunning, .agent, .running,
     ]
     #expect(SidebarActiveClassification.allCases == expected)
+  }
+  private func makeState(name: String) -> SidebarItemFeature.State {
+    SidebarItemFeature.State(
+      id: SidebarItemID("/tmp/repo/wt-\(name)"),
+      repositoryID: "/tmp/repo",
+      kind: .gitWorktree,
+      name: name,
+      branchName: name,
+      subtitle: nil,
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-\(name)"),
+      repositoryAccent: nil,
+      isMainWorktree: false,
+      isPinned: false,
+      hasMergedBadge: false
+    )
   }
 }

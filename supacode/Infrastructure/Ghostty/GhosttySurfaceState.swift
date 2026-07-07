@@ -20,6 +20,8 @@ final class GhosttySurfaceState {
   var rendererHealth: ghostty_action_renderer_health_e?
   var openUrl: String?
   var openUrlKind: ghostty_action_open_url_kind_e?
+  /// Last OSC 11 background change; the bridge stores no other kinds so a
+  /// later OSC 10/12 or palette change can't clobber the active background.
   var colorChangeKind: ghostty_action_color_kind_e?
   var colorChangeR: UInt8?
   var colorChangeG: UInt8?
