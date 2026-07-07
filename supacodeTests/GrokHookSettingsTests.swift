@@ -27,6 +27,23 @@ struct GrokHookSettingsTests {
     #expect(commands.allSatisfy { $0.contains(AgentHookSettingsCommand.ownershipMarker) })
   }
 
+  @Test func everyHookForwardsSupacodeEnv() throws {
+    let groups = try GrokHookSettings.hooksByEvent()
+    let expected = AgentHookSettingsCommand.grokHookEnvPassthrough
+    let envMaps = groups.values.flatMap { group in
+      group.flatMap { entry in
+        entry.objectValue?["hooks"]?.arrayValue?.compactMap { hook in
+          hook.objectValue?["env"]?.objectValue
+        } ?? []
+      }
+    }
+    #expect(!envMaps.isEmpty)
+    #expect(
+      envMaps.allSatisfy { env in
+        expected.allSatisfy { key, value in env[key]?.stringValue == value }
+      })
+  }
+
   @Test func everyCommandTargetsGrokAgent() throws {
     let commands = try Self.commandStrings(from: try GrokHookSettings.hooksByEvent())
     #expect(commands.allSatisfy { $0.contains("start=grok;") })

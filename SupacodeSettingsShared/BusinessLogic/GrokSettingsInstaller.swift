@@ -27,7 +27,14 @@ nonisolated struct GrokSettingsInstaller {
       Self.reportInvalidHookConfiguration(error)
       return .notInstalled
     }
-    return fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
+    let base = fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
+    guard base == .installed else { return base }
+    if GrokHookSettings.managedHooksLackEnvPassthrough(
+      at: settingsURL, fileManager: fileManager
+    ) {
+      return .outdated
+    }
+    return .installed
   }
 
   func installAllHooks() throws {

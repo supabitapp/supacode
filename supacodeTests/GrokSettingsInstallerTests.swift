@@ -36,6 +36,38 @@ struct GrokSettingsInstallerTests {
     #expect(installer.installState() == .notInstalled)
   }
 
+  @Test func installStateReturnsOutdatedWhenEnvPassthroughMissing() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(
+      at: settingsURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.sessionStart], forwardStdinAsNotification: false, agent: .grok)
+    let stale: JSONValue = .object([
+      "hooks": .object([
+        "SessionStart": .array([
+          .object([
+            "hooks": .array([
+              .object([
+                "type": "command",
+                "command": .string(command),
+                "timeout": 5,
+              ])
+            ])
+          ])
+        ])
+      ])
+    ])
+    try JSONEncoder().encode(stale).write(to: settingsURL)
+
+    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(installer.installState() == .outdated)
+  }
+
   @Test func installStateReturnsOutdatedWhenManagedBodyDrifted() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
@@ -83,6 +115,12 @@ struct GrokSettingsInstallerTests {
     let data = try Data(contentsOf: settingsURL)
     let root = try JSONDecoder().decode(JSONValue.self, from: data)
     #expect(root.objectValue?["hooks"]?.objectValue?["SessionStart"] != nil)
+    let sessionStartHook = try #require(
+      root.objectValue?["hooks"]?.objectValue?["SessionStart"]?.arrayValue?.first?
+        .objectValue?["hooks"]?.arrayValue?.first?.objectValue
+    )
+    let env = try #require(sessionStartHook["env"]?.objectValue)
+    #expect(env["SUPACODE_SURFACE_ID"]?.stringValue == "${SUPACODE_SURFACE_ID}")
     #expect(installer.installState() == .installed)
   }
 

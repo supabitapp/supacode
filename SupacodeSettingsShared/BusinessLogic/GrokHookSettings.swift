@@ -9,6 +9,39 @@ nonisolated enum GrokHookSettings {
       invalidConfiguration: GrokHookSettingsError.invalidConfiguration
     )
   }
+
+  /// True when any Supacode-managed Grok hook is missing the canonical env
+  /// passthrough map. Grok hook subprocesses do not inherit terminal env, so
+  /// absence of these blocks means presence badges silently no-op.
+  static func managedHooksLackEnvPassthrough(
+    at settingsURL: URL,
+    fileManager: FileManager = .default
+  ) -> Bool {
+    guard
+      let data = try? Data(contentsOf: settingsURL),
+      let root = try? JSONDecoder().decode(JSONValue.self, from: data),
+      let hooksObject = root.objectValue?["hooks"]?.objectValue
+    else { return false }
+    let expected = AgentHookSettingsCommand.grokHookEnvPassthrough
+    for (_, value) in hooksObject {
+      guard let groups = value.arrayValue else { continue }
+      for group in groups {
+        guard let hooks = group.objectValue?["hooks"]?.arrayValue else { continue }
+        for hook in hooks {
+          guard
+            let hookObject = hook.objectValue,
+            let command = hookObject["command"]?.stringValue,
+            AgentHookCommandOwnership.isSupacodeManagedCommand(command)
+          else { continue }
+          guard let envObject = hookObject["env"]?.objectValue else { return true }
+          for (key, value) in expected {
+            guard envObject[key]?.stringValue == value else { return true }
+          }
+        }
+      }
+    }
+    return false
+  }
 }
 
 nonisolated enum GrokHookSettingsError: Error {
@@ -24,6 +57,7 @@ nonisolated enum GrokHookSettingsError: Error {
 // matching tool names.
 private nonisolated struct GrokHooksPayload: Encodable {
   static let awaitingInputToolMatcher = "AskUserQuestion|ExitPlanMode"
+  private static let hookEnv = AgentHookSettingsCommand.grokHookEnvPassthrough
 
   private static let busy = AgentHookSettingsCommand.compositeCommand(
     events: [.busy], forwardStdinAsNotification: false, agent: .grok, )
@@ -42,30 +76,33 @@ private nonisolated struct GrokHooksPayload: Encodable {
 
   let hooks: [String: [AgentHookGroup]] = [
     "SessionStart": [
-      .init(hooks: [.init(command: Self.sessionStart, timeout: 5)])
+      .init(hooks: [.init(command: Self.sessionStart, timeout: 5, env: Self.hookEnv)])
     ],
     "UserPromptSubmit": [
-      .init(hooks: [.init(command: Self.busy, timeout: 10)])
+      .init(hooks: [.init(command: Self.busy, timeout: 10, env: Self.hookEnv)])
     ],
     "PreToolUse": [
-      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5)]),
+      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5, env: Self.hookEnv)]),
       // Array-order: matched-by-name fires AFTER matcher-"", so awaiting wins.
       .init(
         matcher: Self.awaitingInputToolMatcher,
-        hooks: [.init(command: Self.awaitingInput, timeout: 5)]
+        hooks: [.init(command: Self.awaitingInput, timeout: 5, env: Self.hookEnv)]
       ),
     ],
     "PostToolUse": [
-      .init(matcher: "", hooks: [.init(command: Self.idle, timeout: 5)])
+      .init(matcher: "", hooks: [.init(command: Self.idle, timeout: 5, env: Self.hookEnv)])
     ],
     "Notification": [
-      .init(matcher: "", hooks: [.init(command: Self.awaitingInputAndNotify, timeout: 10)])
+      .init(
+        matcher: "",
+        hooks: [.init(command: Self.awaitingInputAndNotify, timeout: 10, env: Self.hookEnv)]
+      )
     ],
     "Stop": [
-      .init(hooks: [.init(command: Self.idleAndNotify, timeout: 10)])
+      .init(hooks: [.init(command: Self.idleAndNotify, timeout: 10, env: Self.hookEnv)])
     ],
     "SessionEnd": [
-      .init(matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: 5)])
+      .init(matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: 5, env: Self.hookEnv)])
     ],
   ]
 }
