@@ -1,3 +1,6 @@
+import ComposableArchitecture
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalCommands: Commands {
@@ -63,6 +66,38 @@ struct TerminalCommands: Commands {
       }
       .ghosttyKeyboardShortcut("search_selection", in: ghosttyShortcuts)
       .disabled(searchSelectionAction?.isEnabled != true)
+    }
+  }
+}
+
+/// Static ⌘1..⌘9 submenu switching the selected worktree's terminal tab. Uses
+/// the store (not a `FocusedAction`) so the menu key-equivalent fires regardless
+/// of which pane holds first responder; out-of-range tabs clamp in the reducer.
+struct TerminalTabSelectionCommands: Commands {
+  @Bindable var store: StoreOf<AppFeature>
+  @Shared(.settingsFile) private var settingsFile
+
+  var body: some Commands {
+    CommandGroup(after: .newItem) {
+      Menu("Select Tab") {
+        TerminalTabSelectionItems(store: store, overrides: settingsFile.global.shortcutOverrides)
+      }
+    }
+  }
+}
+
+private struct TerminalTabSelectionItems: View {
+  let store: StoreOf<AppFeature>
+  let overrides: [AppShortcutID: AppShortcutOverride]
+
+  var body: some View {
+    ForEach(0..<AppShortcuts.tabSelection.count, id: \.self) { index in
+      let shortcut = AppShortcuts.tabSelection[index].effective(from: overrides)
+      Button("Select Tab \(index + 1)") {
+        store.send(.selectTerminalTabAtIndex(index + 1))
+      }
+      .appKeyboardShortcut(shortcut)
+      .help("Select Tab \(index + 1) (\(shortcut?.display ?? "no shortcut"))")
     }
   }
 }

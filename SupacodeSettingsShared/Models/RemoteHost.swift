@@ -55,9 +55,14 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
     self.init(alias: host, username: (user?.isEmpty ?? true) ? nil : user, port: port)
   }
 
-  /// The `user@host` (or bare `host`) token passed to `ssh`. The host is left
-  /// bare even for an IPv6 literal, since the ssh CLI wants `user@::1`, not the
-  /// bracketed URL form.
+  /// Whether this host carries a non-default SSH port (22 and `nil` both fold to
+  /// `false`). Backs the "VS Code family can't express an inline port" rule.
+  public var hasNonDefaultPort: Bool { port != nil && port != 22 }
+
+  /// The `user@host` (or bare `host`) token passed to `ssh`. The host stays bare
+  /// even for an IPv6 literal (the ssh CLI wants `user@::1`, not the bracketed
+  /// form). A literal argv destination (e.g. VS Code's `ssh-remote+<…>`), NOT a
+  /// URL, so it must stay unencoded. The URL-bound counterpart is `sshURLAuthority`.
   public var sshDestination: String {
     if let username, !username.isEmpty {
       return "\(username)@\(alias)"
@@ -83,6 +88,27 @@ public nonisolated struct RemoteHost: Codable, Hashable, Sendable {
   public var displayAuthority: String {
     guard let port, port != 22 else { return bracketedDestination }
     return "\(bracketedDestination):\(port)"
+  }
+
+  /// Percent-encoded `[user@]host[:port]` authority for an `ssh://` URL (Zed's
+  /// Remote-SSH CLI). Includes any explicit port (even 22) to match
+  /// `sshOptionArguments`' `-p`, brackets an IPv6 host, and encodes userinfo /
+  /// host so a special character can't forge a malformed URL. Zed percent-decodes
+  /// before invoking ssh, so encoding here is correct.
+  public var sshURLAuthority: String {
+    // Bracket an IPv6 literal BEFORE encoding: `.urlHostAllowed` keeps `[`, `]`,
+    // `:`, so `[::1]` round-trips while a hostname's special chars still encode.
+    let bracketedHost = alias.contains(":") ? "[\(alias)]" : alias
+    let encodedHost = bracketedHost.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? bracketedHost
+    let destination: String
+    if let username, !username.isEmpty {
+      let encodedUser = username.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? username
+      destination = "\(encodedUser)@\(encodedHost)"
+    } else {
+      destination = encodedHost
+    }
+    guard let port else { return destination }
+    return "\(destination):\(port)"
   }
 
   /// `[user@]host[:port]` token used to brand remote ids and settings keys.

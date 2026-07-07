@@ -49,6 +49,15 @@ public struct AppearanceSettingsView: View {
             """
           )
         }
+        Toggle(isOn: $store.remoteSessionPersistenceEnabled) {
+          Text("Persist Remote Sessions on Host")
+          Text(
+            """
+            Keeps SSH surfaces alive across disconnects when \
+            [zmx \u{2197}](https://github.com/neurosnap/zmx) is installed on the host.
+            """
+          )
+        }
       }
       Section("Editor") {
         Picker(

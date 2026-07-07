@@ -77,4 +77,79 @@ struct ShellClientLoginShellTests {
       #expect(command.contains("exec \"${__supacode_login_argv[@]}\""))
     }
   }
+
+  /// Locks the exact strings so the shared-helper refactor can't drift them;
+  /// the regressions above only assert with `.contains`.
+  @Test func loginShellInvocationProducesExactStrings() {
+    let zsh = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: "/bin/zsh"))
+    #expect(zsh.shell.path == "/bin/zsh")
+    #expect(
+      zsh.command
+        == "__supacode_login_argv=(\"$@\"); set --; [ -f ~/.zshrc ] && . ~/.zshrc >/dev/null 2>&1; "
+        + "exec \"${__supacode_login_argv[@]}\""
+    )
+
+    let bash = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: "/bin/bash"))
+    #expect(
+      bash.command
+        == "__supacode_login_argv=(\"$@\"); set --; [ -f ~/.bashrc ] && . ~/.bashrc >/dev/null 2>&1; "
+        + "exec \"${__supacode_login_argv[@]}\""
+    )
+
+    let fish = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: "/opt/homebrew/bin/fish"))
+    #expect(
+      fish.command
+        == "test -f ~/.config/fish/config.fish; and source ~/.config/fish/config.fish >/dev/null 2>&1; exec $argv"
+    )
+  }
+
+  /// #504: a literal-command probe sources rc (redirected to /dev/null) and execs
+  /// the command last, so its exit status is what the caller sees and the
+  /// watchdog's signal lands on the CLI, not an orphaned shell.
+  @Test func loginShellCommandSourcesRcAndRunsCommand() {
+    let zsh = ShellClient.loginShellCommandInvocation(
+      "codex features enable hooks", userShell: URL(fileURLWithPath: "/bin/zsh"))
+    #expect(zsh.shell.path == "/bin/zsh")
+    #expect(zsh.command == "[ -f ~/.zshrc ] && . ~/.zshrc >/dev/null 2>&1; exec codex features enable hooks")
+
+    let bash = ShellClient.loginShellCommandInvocation(
+      "kiro-cli --version", userShell: URL(fileURLWithPath: "/bin/bash"))
+    #expect(bash.command == "[ -f ~/.bashrc ] && . ~/.bashrc >/dev/null 2>&1; exec kiro-cli --version")
+  }
+
+  /// fish sources its own config and must NOT get the zsh/bash capture dance.
+  @Test func loginShellCommandUsesFishConfig() {
+    let fish = ShellClient.loginShellCommandInvocation(
+      "codex features enable hooks", userShell: URL(fileURLWithPath: "/opt/homebrew/bin/fish"))
+    #expect(fish.shell.lastPathComponent == "fish")
+    #expect(
+      fish.command
+        == "test -f ~/.config/fish/config.fish; and source ~/.config/fish/config.fish >/dev/null 2>&1; "
+        + "exec codex features enable hooks"
+    )
+    #expect(!fish.command.contains("__supacode_login_argv"))
+  }
+
+  /// Homebrew shells live outside /bin; selection keys off `lastPathComponent`,
+  /// so they must run as themselves, not collapse to /bin/zsh.
+  @Test func homebrewShellsRunAsThemselves() {
+    for path in ["/opt/homebrew/bin/bash", "/opt/homebrew/bin/zsh", "/usr/local/bin/bash"] {
+      let exec = ShellClient.loginShellInvocation(userShell: URL(fileURLWithPath: path))
+      #expect(exec.shell.path == path)
+      let literal = ShellClient.loginShellCommandInvocation("x", userShell: URL(fileURLWithPath: path))
+      #expect(literal.shell.path == path)
+    }
+  }
+
+  /// Same #100 fallback as the exec form: an undrivable shell runs under /bin/zsh,
+  /// and the command must survive the fallthrough.
+  @Test func loginShellCommandFallsBackToZshForUnsupportedShells() {
+    for path in ["/usr/bin/pwsh", "/bin/sh", "/usr/bin/ksh", "/run/current-system/sw/bin/nu"] {
+      let result = ShellClient.loginShellCommandInvocation(
+        "codex features enable hooks", userShell: URL(fileURLWithPath: path))
+      #expect(result.shell.path == "/bin/zsh")
+      #expect(result.command.contains("~/.zshrc"))
+      #expect(result.command.hasSuffix("; exec codex features enable hooks"))
+    }
+  }
 }

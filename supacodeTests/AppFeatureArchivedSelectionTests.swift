@@ -153,6 +153,39 @@ struct AppFeatureArchivedSelectionTests {
     )
   }
 
+  @Test(.dependencies) func repositoriesChangedProtectsEnvironmentBlockedReposDuringTerminalPrune() async {
+    // A transient git gate suppresses the repo's rows but must not tear down its
+    // live terminal layouts: the blocked root is shielded from prune.
+    var repositoriesState = RepositoriesFeature.State()
+    let blockedRoot = URL(fileURLWithPath: "/tmp/blocked-repo")
+    let blockedID = RepositoryID(blockedRoot.path(percentEncoded: false))
+    repositoriesState.repositoryRoots = [blockedRoot]
+    repositoriesState.gitEnvironmentError = .xcodeLicenseNotAccepted
+    let appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+      $0.worktreeInfoWatcher.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.delegate(.repositoriesChanged([]))))
+    await store.finish()
+
+    #expect(
+      sentCommands.value == [
+        .prune(keeping: [], protectingRepositoryIDs: [blockedID])
+      ]
+    )
+  }
+
   @Test(.dependencies) func repositoriesChangedRehydratesAgentPresenceFromRestore() async {
     let rootURL = URL(fileURLWithPath: "/tmp/repo")
     let worktree = Worktree(

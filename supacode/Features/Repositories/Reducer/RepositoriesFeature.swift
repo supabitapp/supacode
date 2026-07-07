@@ -76,6 +76,12 @@ nonisolated struct WorktreeCreationProgressUpdateThrottle {
   }
 }
 
+/// Which status pane the detail inspector shows when presented; presentation is tracked by `inspectorPresented`.
+enum WorktreeInspectorPane: Hashable, Sendable {
+  case git
+  case notifications
+}
+
 @Reducer
 struct RepositoriesFeature {
   struct PendingSidebarReveal: Equatable {
@@ -88,6 +94,9 @@ struct RepositoriesFeature {
     var repositories: IdentifiedArrayOf<Repository> = []
     var repositoryRoots: [URL] = []
     var loadFailuresByID: [Repository.ID: String] = [:]
+    /// Set when git is environment-blocked (e.g. an unaccepted Xcode license):
+    /// drives the banner and suppresses the false per-repo "broken" rows.
+    var gitEnvironmentError: GitEnvironmentError?
     /// Remote repositories whose SSH listing is still resolving (shown with a
     /// loading spinner). Cleared per repo as each `.remoteRepositoryResolved`
     /// lands; a repo here with no `loadFailuresByID` entry is "loading", one
@@ -103,6 +112,10 @@ struct RepositoriesFeature {
     /// Drained when the `PendingWorktree` materialises in `createWorktreeInRepository`,
     /// or on a prompt cancel / dismiss.
     var pendingCreationCustomizations: [Repository.ID: [String: PendingWorktree.Customization]] = [:]
+    /// CLI worktree-new ack ids parked while a creation prompt is open, keyed by
+    /// repository. Consumed when the prompt creates (so the id threads through to
+    /// the completion ack) or drained if the prompt is cancelled / dismissed.
+    var cliWorktreeAckPendingIDs: [Repository.ID: Worktree.ID] = [:]
     /// In-flight repo-level removals keyed by repository id. Each record
     /// carries the disposition (only `.gitRepositoryUnlink` / `.folderUnlink`
     /// / `.folderTrash`) and the id of the owning batch aggregator that
@@ -120,6 +133,11 @@ struct RepositoriesFeature {
     var shouldSelectFirstAfterReload = false
     var isRefreshingWorktrees = false
     var statusToast: StatusToast?
+    // Inspector presentation is split from the selected pane so a drag-to-collapse
+    // (which flips `isPresented` to false transiently) doesn't wipe the pane and
+    // leave the column empty when dragged back open.
+    var inspectorPresented = false
+    var inspectorPane: WorktreeInspectorPane = .git
     var githubIntegrationAvailability: GithubIntegrationAvailability = .unknown
     var pendingPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
     var inFlightPullRequestRefreshRepositoryIDs: Set<Repository.ID> = []
@@ -271,6 +289,9 @@ struct RepositoriesFeature {
     case refreshWorktrees
     case reloadRepositories(animated: Bool)
     case repositoriesLoaded([Repository], failures: [LoadFailure], roots: [URL], animated: Bool)
+    /// Sole owner of `state.gitEnvironmentError`. Emitted by every load path with
+    /// the current git-environment probe result (`nil` clears the banner).
+    case gitEnvironmentChanged(GitEnvironmentError?)
     case selectionChanged(Set<SidebarSelection>, focusTerminal: Bool = false)
     case repositoryExpansionChanged(Repository.ID, isExpanded: Bool)
     case branchNestExpansionChanged(
@@ -279,6 +300,9 @@ struct RepositoriesFeature {
       prefix: String,
       isExpanded: Bool
     )
+    /// Expand or collapse every sidebar group at once. Expanding also clears
+    /// every nested branch-group prefix so the tree opens fully.
+    case setAllSidebarGroupsExpanded(Bool)
     case selectArchivedWorktrees
     case setSidebarSelectedWorktreeIDs(Set<Worktree.ID>)
     case openRepositories([URL])
@@ -298,13 +322,16 @@ struct RepositoriesFeature {
     case revealHoistedWorktreeInSidebar(Worktree.ID)
     case consumePendingSidebarReveal(Int)
     case createRandomWorktree
-    case createRandomWorktreeInRepository(Repository.ID)
+    case createRandomWorktreeInRepository(Repository.ID, pendingID: Worktree.ID? = nil)
+    /// A CLI-initiated creation prompt was abandoned; drains the parked ack.
+    case cliWorktreeAckCancelled(pendingID: Worktree.ID)
     case createWorktreeInRepository(
       repositoryID: Repository.ID,
       nameSource: WorktreeCreationNameSource,
       baseRefSource: WorktreeCreationBaseRefSource,
       fetchOrigin: Bool,
-      placement: WorktreePlacementOverride? = nil
+      placement: WorktreePlacementOverride? = nil,
+      pendingID: Worktree.ID? = nil
     )
     case promptedWorktreeCreationDataLoaded(
       repositoryID: Repository.ID,
@@ -417,6 +444,8 @@ struct RepositoriesFeature {
     case pullRequestAction(Worktree.ID, PullRequestAction)
     case showToast(StatusToast)
     case dismissToast
+    case toggleInspectorPane(WorktreeInspectorPane)
+    case setInspectorPresented(Bool)
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
@@ -1376,11 +1405,12 @@ struct RepositoriesFeature {
           await repositoryPersistence.saveRoots(remaining)
           await repositoryPersistence.pruneRepositoryConfigs([repositoryID.rawValue])
           let roots = remaining.map { URL(fileURLWithPath: $0) }
-          let (repositories, failures) = await loadRepositoriesData(roots)
+          let loadResult = await loadRepositoriesData(roots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .repositoriesLoaded(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               roots: roots,
               animated: true
             )
@@ -1628,7 +1658,8 @@ struct RepositoriesFeature {
         let nameSource,
         let baseRefSource,
         let fetchOrigin,
-        let placement
+        let placement,
+        let providedPendingID
       ):
         // Pull the parked branch name so every rejection arm can drain its (repo, branch) entry
         // through the same helper — keeps the dict from leaking when a creation is rejected via
@@ -1681,7 +1712,9 @@ struct RepositoriesFeature {
           return .none
         }
         let previousSelection = state.selectedWorktreeID
-        let pendingID = WorktreeID("pending:\(uuid().uuidString)")
+        // Honor a deeplink-supplied pending id so a CLI completion ack can
+        // correlate this exact creation through to its success / failure.
+        let pendingID = providedPendingID ?? WorktreeID("pending:\(uuid().uuidString)")
         @Shared(.settingsFile) var settingsFile
         @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var repositorySettings
         let globalDefaultWorktreeBaseDirectoryPath = settingsFile.global.defaultWorktreeBaseDirectoryPath
@@ -2717,6 +2750,19 @@ struct RepositoriesFeature {
         state.statusToast = nil
         return .none
 
+      case .toggleInspectorPane(let target):
+        if state.inspectorPresented, state.inspectorPane == target {
+          state.inspectorPresented = false
+        } else {
+          state.inspectorPane = target
+          state.inspectorPresented = true
+        }
+        return .none
+
+      case .setInspectorPresented(let presented):
+        state.inspectorPresented = presented
+        return .none
+
       case .delayedPullRequestRefresh(let worktreeID):
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
@@ -2952,11 +2998,12 @@ struct RepositoriesFeature {
           let loadedPaths = await repositoryPersistence.loadRoots()
           let rootPaths = RepositoryPathNormalizer.normalize(loadedPaths)
           let roots = rootPaths.map { URL(fileURLWithPath: $0) }
-          let (repositories, failures) = await loadRepositoriesData(roots)
+          let loadResult = await loadRepositoriesData(roots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .repositoriesLoaded(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               roots: roots,
               animated: false
             )
@@ -2982,11 +3029,23 @@ struct RepositoriesFeature {
         let roots = state.repositoryRoots
         // A remote-only setup has no local roots, but the load path still
         // appends persisted remote configs, so a refresh must run for it.
-        guard !roots.isEmpty || !Self.persistedRemoteRepositoryRoots().isEmpty else {
+        // Also keep refreshing while environment-blocked (even with zero roots)
+        // so accepting the Xcode license re-probes and clears the banner without
+        // a relaunch.
+        guard
+          !roots.isEmpty || !Self.persistedRemoteRepositoryRoots().isEmpty
+            || state.gitEnvironmentError != nil
+        else {
           state.isRefreshingWorktrees = false
           return .none
         }
         return loadRepositories(roots, animated: animated)
+
+      case .gitEnvironmentChanged(let environmentError):
+        // Guard so the periodic refresh doesn't re-publish an unchanged value.
+        guard state.gitEnvironmentError != environmentError else { return .none }
+        state.gitEnvironmentError = environmentError
+        return .none
 
       case .repositoriesLoaded(let repositories, let failures, let roots, let animated):
         state.isRefreshingWorktrees = false
@@ -2999,9 +3058,12 @@ struct RepositoriesFeature {
         _ = applyRepositories(
           mergedRepositories,
           roots: roots,
-          // Don't prune archived worktree ids while remotes are still resolving:
-          // their worktrees aren't in the roster yet.
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
+          // Don't prune archived worktree ids while remotes are still resolving
+          // (their worktrees aren't in the roster yet) or while git is
+          // environment-blocked (the suppressed repos' worktrees are absent, so
+          // pruning would drop their curation for a transient failure).
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty
+            && state.gitEnvironmentError == nil,
           state: &state,
           animated: animated
         )
@@ -3116,23 +3178,18 @@ struct RepositoriesFeature {
               let root = try await gitClient.repoRoot(url)
               resolvedRoots.append(root)
             } catch {
-              // `gitClient.repoRoot` throws for non-git paths, but
-              // also for transient `wt` / subprocess failures. To
-              // avoid silently reclassifying a git repo as a folder
-              // on transient errors, double-check via the injected
-              // `gitClient.isGitRepository`: if the path actually
-              // has `.git`, surface the original error as an invalid
-              // root. Non-git readable directories are accepted as
-              // folder-kind repositories.
+              // `repoRoot` failed. A readable directory is still worth keeping: a
+              // plain folder repo, or a real git repo we can't resolve because git
+              // is environment-blocked. Either way persist it and let the load
+              // classify it (folder, blocked warning row, or a real failure once
+              // git returns). A non-directory is genuinely invalid.
               let standardized = url.standardizedFileURL
               var isDirectory: ObjCBool = false
               let exists = FileManager.default.fileExists(
                 atPath: standardized.path(percentEncoded: false),
                 isDirectory: &isDirectory
               )
-              if exists, isDirectory.boolValue,
-                await !gitClient.isGitRepository(standardized)
-              {
+              if exists, isDirectory.boolValue {
                 resolvedRoots.append(standardized)
               } else {
                 invalidRoots.append(url.path(percentEncoded: false))
@@ -3145,11 +3202,12 @@ struct RepositoriesFeature {
           let mergedPaths = RepositoryPathNormalizer.normalize(existingRootPaths + resolvedRootPaths)
           let mergedRoots = mergedPaths.map { URL(fileURLWithPath: $0) }
           await repositoryPersistence.saveRoots(mergedPaths)
-          let (repositories, failures) = await loadRepositoriesData(mergedRoots)
+          let loadResult = await loadRepositoriesData(mergedRoots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .openRepositoriesFinished(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               invalidRoots: invalidRoots,
               roots: mergedRoots
             )
@@ -3165,7 +3223,10 @@ struct RepositoriesFeature {
         _ = applyRepositories(
           mergedRemote.repositories,
           roots: roots,
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
+          // Keep archived curation while git is environment-blocked: the
+          // suppressed repos' worktrees are absent from the roster.
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty
+            && state.gitEnvironmentError == nil,
           state: &state,
           animated: false
         )
@@ -3240,6 +3301,30 @@ struct RepositoriesFeature {
           }
           section.buckets[bucketID] = bucket
           sidebar.sections[repositoryID] = section
+        }
+        return .none
+
+      case .setAllSidebarGroupsExpanded(let isExpanded):
+        // Iterate the full roster, not just `sidebar.sections.keys`: the section
+        // map is sparse (a repo renders expanded until something writes an
+        // entry), so collapsing must materialize one for every repo.
+        let repositoryIDs = state.repositories.map(\.id)
+        state.$sidebar.withLock { sidebar in
+          for repositoryID in repositoryIDs {
+            guard isExpanded else {
+              // Collapse keeps branch-group prefixes so each group's layout
+              // survives when its section reopens.
+              sidebar.sections[repositoryID, default: .init()].collapsed = true
+              continue
+            }
+            // A repo with no entry is already fully open, so nothing to undo.
+            guard var section = sidebar.sections[repositoryID] else { continue }
+            section.collapsed = false
+            for bucketID in Array(section.buckets.keys) {
+              section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+            }
+            sidebar.sections[repositoryID] = section
+          }
         }
         return .none
 
@@ -3351,13 +3436,16 @@ struct RepositoriesFeature {
         }
         return .send(.createRandomWorktreeInRepository(repository.id))
 
-      case .createRandomWorktreeInRepository(let repositoryID):
+      case .createRandomWorktreeInRepository(let repositoryID, let pendingID):
+        // Drain a parked CLI ack when a guard rejects, so it can't only time out.
+        let cancelAck: Effect<Action> =
+          pendingID.map { .send(.cliWorktreeAckCancelled(pendingID: $0)) } ?? .none
         guard let repository = state.repositories[id: repositoryID] else {
           state.alert = messageAlert(
             title: "Unable to create worktree",
             message: "Unable to resolve a repository for the new worktree."
           )
-          return .none
+          return cancelAck
         }
         // Worktree creation needs a git repository. Folder-kind entries
         // surface the same menu / hotkey / deeplink path, so reject
@@ -3369,14 +3457,14 @@ struct RepositoriesFeature {
             title: "Unable to create worktree",
             message: "Worktrees are only supported for git repositories."
           )
-          return .none
+          return cancelAck
         }
         if state.removingRepositoryIDs[repository.id] != nil {
           state.alert = messageAlert(
             title: "Unable to create worktree",
             message: "This repository is being removed."
           )
-          return .none
+          return cancelAck
         }
         @Shared(.settingsFile) var settingsFile
         if !settingsFile.global.promptForWorktreeCreation {
@@ -3387,10 +3475,23 @@ struct RepositoriesFeature {
                 repositoryID: repository.id,
                 nameSource: .random,
                 baseRefSource: .repositorySetting,
-                fetchOrigin: settingsFile.global.fetchOriginBeforeWorktreeCreation
+                fetchOrigin: settingsFile.global.fetchOriginBeforeWorktreeCreation,
+                pendingID: pendingID
               )
             )
           )
+        }
+        // The interactive prompt mints the worktree later; park the CLI ack id so
+        // the prompt's create threads it and a cancel / dismiss drains it. A new
+        // prompt supersedes any prior one (single slot), so drain a stale parked
+        // id first instead of orphaning it (covers a user prompt replacing a CLI
+        // one, and back-to-back CLI prompts).
+        let supersededAckEffects: [Effect<Action>] = state.cliWorktreeAckPendingIDs.values.map {
+          .send(.cliWorktreeAckCancelled(pendingID: $0))
+        }
+        state.cliWorktreeAckPendingIDs.removeAll()
+        if let pendingID {
+          state.cliWorktreeAckPendingIDs[repository.id] = pendingID
         }
         @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var repositorySettings
         let selectedBaseRef = repositorySettings.worktreeBaseRef
@@ -3404,7 +3505,7 @@ struct RepositoriesFeature {
         // branch) and present the prompt right away, then load the
         // full local / remote branch lists in the background so the
         // dialog never blocks on `git for-each-ref`.
-        return .run { send in
+        let loadEffect: Effect<Action> = .run { send in
           let automaticBaseRef = await gitClient.automaticWorktreeBaseRef(rootURL) ?? "HEAD"
           guard !Task.isCancelled else {
             return
@@ -3436,6 +3537,7 @@ struct RepositoriesFeature {
           )
         }
         .cancellable(id: CancelID.worktreePromptLoad, cancelInFlight: true)
+        return .merge(supersededAckEffects + [loadEffect])
 
       case .promptedWorktreeCreationDataLoaded(
         let repositoryID,
@@ -3445,7 +3547,10 @@ struct RepositoriesFeature {
         let selectedBaseRef
       ):
         guard let repository = state.repositories[id: repositoryID] else {
-          return .none
+          // The repo vanished mid-load, so the prompt never opens; drain the
+          // parked ack instead of leaving it for the watchdog.
+          let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
+          return ackPendingID.map { .send(.cliWorktreeAckCancelled(pendingID: $0)) } ?? .none
         }
         @Shared(.settingsFile) var promptSettingsFile
         @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var promptRepositorySettings
@@ -3503,14 +3608,18 @@ struct RepositoriesFeature {
         return .none
 
       case .worktreeCreationPrompt(.presented(.delegate(.cancel))):
+        var cancelEffects: [Effect<Action>] = [
+          .cancel(id: CancelID.worktreePromptLoad),
+          .cancel(id: CancelID.worktreePromptValidation),
+        ]
         if let repositoryID = state.worktreeCreationPrompt?.repositoryID {
           state.dropPendingCustomization(repositoryID: repositoryID)
+          if let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID) {
+            cancelEffects.append(.send(.cliWorktreeAckCancelled(pendingID: ackPendingID)))
+          }
         }
         state.worktreeCreationPrompt = nil
-        return .merge(
-          .cancel(id: CancelID.worktreePromptLoad),
-          .cancel(id: CancelID.worktreePromptValidation)
-        )
+        return .merge(cancelEffects)
 
       case .worktreeCreationPrompt(
         .presented(
@@ -3562,7 +3671,8 @@ struct RepositoriesFeature {
           // Drain the just-stashed customization so a later retry with the same name doesn't pick
           // up the orphaned entry.
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
-          return .none
+          let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
+          return ackPendingID.map { .send(.cliWorktreeAckCancelled(pendingID: $0)) } ?? .none
         }
         state.worktreeCreationPrompt?.validationMessage = nil
         state.worktreeCreationPrompt?.isValidating = true
@@ -3615,13 +3725,17 @@ struct RepositoriesFeature {
           return .none
         }
         state.worktreeCreationPrompt = nil
+        // Consume the parked CLI ack id so it threads into this creation and the
+        // subsequent success-path dismiss doesn't mistake it for a cancel.
+        let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
         return .send(
           .createWorktreeInRepository(
             repositoryID: repositoryID,
             nameSource: .explicit(branchName),
             baseRefSource: .explicit(baseRef),
             fetchOrigin: fetchOrigin,
-            placement: placement
+            placement: placement,
+            pendingID: ackPendingID
           )
         )
 
@@ -3630,15 +3744,27 @@ struct RepositoriesFeature {
         // `body` under the type-checker's complexity limit.
         return .none
 
+      case .cliWorktreeAckCancelled:
+        // Observed by AppFeature to drain the parked CLI ack; no local effect.
+        return .none
+
       case .worktreeCreationPrompt(.dismiss):
         // Don't drain `pendingCreationCustomizations` here: `.dismiss` also fires on the success
         // path (when the reducer nils the prompt after validation passes) and the in-flight
         // creation still needs the customization. Only `.cancel` is an explicit user back-out.
-        state.worktreeCreationPrompt = nil
-        return .merge(
+        var dismissEffects: [Effect<Action>] = [
           .cancel(id: CancelID.worktreePromptLoad),
-          .cancel(id: CancelID.worktreePromptValidation)
-        )
+          .cancel(id: CancelID.worktreePromptValidation),
+        ]
+        // A still-parked ack means this dismiss is a back-out (the success path
+        // consumes it first), so drain it instead of stranding it.
+        if let repositoryID = state.worktreeCreationPrompt?.repositoryID,
+          let ackPendingID = state.cliWorktreeAckPendingIDs.removeValue(forKey: repositoryID)
+        {
+          dismissEffects.append(.send(.cliWorktreeAckCancelled(pendingID: ackPendingID)))
+        }
+        state.worktreeCreationPrompt = nil
+        return .merge(dismissEffects)
 
       case .worktreeCreationPrompt:
         return .none
@@ -3764,6 +3890,7 @@ struct RepositoriesFeature {
         return .none
 
       case .pinWorktree, .unpinWorktree, .presentAlert, .showToast, .dismissToast, .delayedPullRequestRefresh,
+        .toggleInspectorPane, .setInspectorPresented,
         .worktreeNotificationReceived, .worktreeInfoEvent:
         // Real handling lives in `worktreeNotificationReducer` (combined below) to keep `body`
         // under the type-checker's complexity limit.
@@ -4012,11 +4139,12 @@ struct RepositoriesFeature {
           group.addTask { await gitClient.reconcileSupacodeLocks(root) }
         }
       }
-      let (repositories, failures) = await loadRepositoriesData(roots)
+      let loadResult = await loadRepositoriesData(roots)
+      await send(.gitEnvironmentChanged(loadResult.environmentError))
       await send(
         .repositoriesLoaded(
-          repositories,
-          failures: failures,
+          loadResult.repositories,
+          failures: loadResult.failures,
           roots: roots,
           animated: animated
         )
@@ -4153,7 +4281,8 @@ struct RepositoriesFeature {
     // filesystem.
     let isGit = await gitClient.isGitRepository(root)
     guard isGit else {
-      return WorktreesFetchResult(root: root, isGitRepository: false, worktrees: [], errorMessage: nil)
+      return WorktreesFetchResult(
+        root: root, isGitRepository: false, worktrees: [], errorMessage: nil)
     }
     do {
       let worktrees = try await gitClient.worktrees(root)
@@ -4168,8 +4297,12 @@ struct RepositoriesFeature {
           errorMessage: duplicateWorktreePathMessage(path: duplicate.rawValue)
         )
       }
-      return WorktreesFetchResult(root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
+      return WorktreesFetchResult(
+        root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
     } catch {
+      // Any git listing failure (blocked binary, transient error, or a real repo
+      // problem). Report it as a failed git root and let the loader's
+      // `git --version` probe decide, once, whether git itself is blocked.
       return WorktreesFetchResult(
         root: root,
         isGitRepository: true,
@@ -4179,7 +4312,23 @@ struct RepositoriesFeature {
     }
   }
 
-  private func loadRepositoriesData(_ roots: [URL]) async -> ([Repository], [LoadFailure]) {
+  /// A git root whose listing failed, held until the `git --version` probe
+  /// decides if git is really blocked (suppress under the banner) or working
+  /// (surface `message` as a real failure row).
+  private struct DeferredGitFailure {
+    let rootID: Repository.ID
+    let message: String
+  }
+
+  /// Result of a local repository load. A struct rather than a tuple so the
+  /// three payloads travel together without tripping the `large_tuple` lint.
+  private struct RepositoriesLoadResult {
+    let repositories: [Repository]
+    let failures: [LoadFailure]
+    let environmentError: GitEnvironmentError?
+  }
+
+  private func loadRepositoriesData(_ roots: [URL]) async -> RepositoriesLoadResult {
     let fetchResults = await withTaskGroup(of: WorktreesFetchResult.self) { group in
       for root in roots {
         let gitClient = self.gitClient
@@ -4198,6 +4347,9 @@ struct RepositoriesFeature {
 
     var loaded: [Repository] = []
     var failures: [LoadFailure] = []
+    // Git roots that failed to list, deferred until the probe decides whether
+    // git itself is blocked (see below).
+    var deferredGitFailures: [DeferredGitFailure] = []
     for root in roots {
       let normalizedRoot = root.standardizedFileURL
       let rootID = RepositoryID(normalizedRoot.path(percentEncoded: false))
@@ -4214,15 +4366,13 @@ struct RepositoriesFeature {
           )
           loaded.append(repository)
         } else {
-          failures.append(
-            LoadFailure(
-              rootID: rootID,
-              message: result.errorMessage ?? "Unknown error"
-            )
-          )
+          // A real block fails every git root, and we can't judge a repo broken
+          // while git is down, so defer the verdict to the probe below.
+          deferredGitFailures.append(
+            DeferredGitFailure(rootID: rootID, message: result.errorMessage ?? "Unknown error"))
         }
       } else if let errorMessage = result.errorMessage {
-        // Non-git root with an error — classifier couldn't open
+        // Non-git root with an error: the classifier couldn't open
         // the directory (missing / unmounted / unreadable).
         // Route through the same `LoadFailure` pipeline git
         // repos use so the sidebar shows the error row.
@@ -4230,7 +4380,7 @@ struct RepositoriesFeature {
           LoadFailure(rootID: rootID, message: errorMessage)
         )
       } else {
-        // Folder repository — synthesize a single main-like worktree
+        // Folder repository: synthesize a single main-like worktree
         // so the existing sidebar selection + terminal plumbing keeps
         // working without new entity types.
         let synthetic = Worktree(
@@ -4252,11 +4402,31 @@ struct RepositoriesFeature {
         loaded.append(repository)
       }
     }
+    // If any git repo loaded, git demonstrably works. Otherwise a direct
+    // `git --version` probe is the ground truth for whether git is
+    // environment-blocked: locale-independent (so it doesn't depend on a repo's
+    // stderr being English-matchable), and it disconfirms a repo error that
+    // merely echoes a gate phrase. It also covers a folder-only / empty roster.
+    // Blocked -> the deferred git failures become suppressed warning rows;
+    // working -> they were real repo problems and surface as failure rows.
+    var environmentError: GitEnvironmentError?
+    if !loaded.contains(where: \.isGitRepository) {
+      environmentError = await gitClient.checkGitEnvironment()
+    }
+    if environmentError == nil {
+      for failure in deferredGitFailures {
+        failures.append(LoadFailure(rootID: failure.rootID, message: failure.message))
+      }
+    }
     // Remote repositories are NOT resolved here: that SSH work runs
     // asynchronously after the load (`.resolveRemoteRepositories`) so an
     // unreachable host never blocks the initial sidebar. The `.repositoriesLoaded`
     // handler merges in their placeholders and triggers resolution.
-    return (loaded, failures)
+    return RepositoriesLoadResult(
+      repositories: loaded,
+      failures: failures,
+      environmentError: environmentError
+    )
   }
 
   /// Customization transfer record produced by `prunedPendingWorktrees` and

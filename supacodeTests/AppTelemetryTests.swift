@@ -45,7 +45,6 @@ struct AppTelemetryTests {
           updatesAutomaticallyCheckForUpdates: true,
           updatesAutomaticallyDownloadUpdates: false,
           inAppNotificationsEnabled: true,
-          notificationSoundEnabled: true,
           moveNotifiedWorktreeToTop: true,
           analyticsEnabled: false,
           crashReportsEnabled: true,

@@ -17,8 +17,13 @@ struct SettingsCommand: ParsableCommand {
     ]
   )
 
+  @OptionGroup var timeoutOption: TimeoutOption
+
   func run() throws {
-    try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.settings(section: nil))
+    try Dispatcher.dispatch(
+      deeplinkURL: DeeplinkURLBuilder.settings(section: nil),
+      timeoutSeconds: timeoutOption.timeout
+    )
   }
 }
 
@@ -37,42 +42,50 @@ extension SettingsCommand {
 
   struct General: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open General settings.")
-    func run() throws { try dispatchSettings(.general) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.general, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Notifications: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open Notifications settings.")
-    func run() throws { try dispatchSettings(.notifications) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.notifications, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Worktrees: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open Worktrees settings.")
-    func run() throws { try dispatchSettings(.worktrees) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.worktrees, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Developer: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open Developer settings.")
-    func run() throws { try dispatchSettings(.developer) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.developer, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Shortcuts: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open Shortcuts settings.")
-    func run() throws { try dispatchSettings(.shortcuts) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.shortcuts, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Scripts: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open Global Scripts settings.")
-    func run() throws { try dispatchSettings(.scripts) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.scripts, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Updates: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open Updates settings.")
-    func run() throws { try dispatchSettings(.updates) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.updates, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Github: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Open GitHub settings.")
-    func run() throws { try dispatchSettings(.github) }
+    @OptionGroup var timeoutOption: TimeoutOption
+    func run() throws { try dispatchSettings(.github, timeoutSeconds: timeoutOption.timeout) }
   }
 
   struct Repo: ParsableCommand {
@@ -82,20 +95,28 @@ extension SettingsCommand {
     )
 
     @OptionGroup var options: RepoIDOptions
+    @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
       let rID = try resolveRepoID(options.repo)
-      try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.settingsRepo(repoID: rID))
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.settingsRepo(repoID: rID),
+        timeoutSeconds: timeoutOption.timeout
+      )
     }
 
     struct Scripts: ParsableCommand {
       static let configuration = CommandConfiguration(abstract: "Open repository Scripts settings.")
 
       @OptionGroup var options: RepoIDOptions
+      @OptionGroup var timeoutOption: TimeoutOption
 
       func run() throws {
         let rID = try resolveRepoID(options.repo)
-        try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.settingsRepoScripts(repoID: rID))
+        try Dispatcher.dispatch(
+          deeplinkURL: DeeplinkURLBuilder.settingsRepoScripts(repoID: rID),
+          timeoutSeconds: timeoutOption.timeout
+        )
       }
     }
   }
@@ -107,6 +128,9 @@ struct RepoIDOptions: ParsableArguments {
   var repo: String?
 }
 
-private nonisolated func dispatchSettings(_ section: SettingsCommand.Section) throws {
-  try Dispatcher.dispatch(deeplinkURL: DeeplinkURLBuilder.settings(section: section.rawValue))
+private nonisolated func dispatchSettings(_ section: SettingsCommand.Section, timeoutSeconds: Int) throws {
+  try Dispatcher.dispatch(
+    deeplinkURL: DeeplinkURLBuilder.settings(section: section.rawValue),
+    timeoutSeconds: timeoutSeconds
+  )
 }

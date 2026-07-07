@@ -10,8 +10,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.outdated),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.outdated),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -28,8 +30,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
+      .hermes: .ready(.installed),
       .kimi: .ready(.installed),
       .kiro: .ready(.installed),
+      .omp: .ready(.installed),
       .opencode: .ready(.installed),
       .pi: .ready(.installed),
     ]
@@ -42,8 +46,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -55,8 +61,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -68,8 +76,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -81,8 +91,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .checking,
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -96,8 +108,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .installing,
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -111,8 +125,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .uninstalling,
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -127,8 +143,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .failed("boom"),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -143,8 +161,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
+      .hermes: .ready(.installed),
       .kimi: .ready(.installed),
       .kiro: .ready(.installed),
+      .omp: .ready(.installed),
       .opencode: .ready(.installed),
       .pi: .ready(.installed),
     ]
@@ -156,8 +176,10 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
+      .omp: .ready(.notInstalled),
       .opencode: .ready(.notInstalled),
       .pi: .ready(.notInstalled),
     ]
@@ -176,5 +198,13 @@ struct CodingAgentsSidebarCardModeTests {
     #expect(CodingAgentsSidebarCardView.isDismissed(at: stale, relevantSince: cutoff) == false)
     #expect(CodingAgentsSidebarCardView.isDismissed(at: cutoff, relevantSince: cutoff) == true)
     #expect(CodingAgentsSidebarCardView.isDismissed(at: future, relevantSince: cutoff) == true)
+  }
+
+  @Test func cardRelevantSinceDateMatchesOmpLaunchReEngagement() {
+    let ompLaunchCutoff = Date(timeIntervalSince1970: 1_783_209_600)
+    let previouslyDismissedUser = Date(timeIntervalSince1970: 1_778_371_200)
+
+    #expect(CodingAgentsSidebarCardView.cardRelevantSinceDate == ompLaunchCutoff)
+    #expect(CodingAgentsSidebarCardView.isDismissed(at: previouslyDismissedUser) == false)
   }
 }

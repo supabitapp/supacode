@@ -33,8 +33,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var updatesAutomaticallyCheckForUpdates: Bool
   public var updatesAutomaticallyDownloadUpdates: Bool
   public var inAppNotificationsEnabled: Bool
-  public var notificationSoundEnabled: Bool
+  public var notificationSound: NotificationSound
   public var systemNotificationsEnabled: Bool
+  public var muteNotificationsForActiveSurface: Bool
   public var moveNotifiedWorktreeToTop: Bool
   public var analyticsEnabled: Bool
   public var crashReportsEnabled: Bool
@@ -63,9 +64,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var autoUpdateAgentIntegrationsEnabled: Bool
   public var confirmQuitMode: ConfirmQuitMode
   /// When true, quitting Supacode also closes every terminal tab and tears
-  /// down the bundled zmx daemon's sessions, so nothing keeps running in
-  /// the background. Default off because persistence is the headline feature.
+  /// down zmx sessions, local and host-side, so nothing keeps running in the
+  /// background. Default off because persistence is the headline feature.
   public var terminateSessionsOnQuit: Bool
+  /// When true, remote surfaces wrap their session in zmx on the host when
+  /// the host has it installed, so the session survives disconnects.
+  public var remoteSessionPersistenceEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -74,8 +78,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyCheckForUpdates: true,
     updatesAutomaticallyDownloadUpdates: false,
     inAppNotificationsEnabled: true,
-    notificationSoundEnabled: true,
+    notificationSound: .hero,
     systemNotificationsEnabled: false,
+    muteNotificationsForActiveSurface: true,
     moveNotifiedWorktreeToTop: true,
     analyticsEnabled: true,
     crashReportsEnabled: true,
@@ -98,7 +103,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: true,
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
-    terminateSessionsOnQuit: false
+    terminateSessionsOnQuit: false,
+    remoteSessionPersistenceEnabled: true
   )
 
   public init(
@@ -108,8 +114,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyCheckForUpdates: Bool,
     updatesAutomaticallyDownloadUpdates: Bool,
     inAppNotificationsEnabled: Bool,
-    notificationSoundEnabled: Bool,
+    notificationSound: NotificationSound = .hero,
     systemNotificationsEnabled: Bool = false,
+    muteNotificationsForActiveSurface: Bool = true,
     moveNotifiedWorktreeToTop: Bool,
     analyticsEnabled: Bool,
     crashReportsEnabled: Bool,
@@ -132,7 +139,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: Bool = true,
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
-    terminateSessionsOnQuit: Bool = false
+    terminateSessionsOnQuit: Bool = false,
+    remoteSessionPersistenceEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -140,8 +148,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.updatesAutomaticallyCheckForUpdates = updatesAutomaticallyCheckForUpdates
     self.updatesAutomaticallyDownloadUpdates = updatesAutomaticallyDownloadUpdates
     self.inAppNotificationsEnabled = inAppNotificationsEnabled
-    self.notificationSoundEnabled = notificationSoundEnabled
+    self.notificationSound = notificationSound
     self.systemNotificationsEnabled = systemNotificationsEnabled
+    self.muteNotificationsForActiveSurface = muteNotificationsForActiveSurface
     self.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
     self.analyticsEnabled = analyticsEnabled
     self.crashReportsEnabled = crashReportsEnabled
@@ -165,6 +174,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
     self.confirmQuitMode = confirmQuitMode
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
+    self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -192,12 +202,24 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     inAppNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .inAppNotificationsEnabled)
       ?? Self.default.inAppNotificationsEnabled
-    notificationSoundEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .notificationSoundEnabled)
-      ?? Self.default.notificationSoundEnabled
+    // Fold the removed `notificationSoundEnabled` toggle: off becomes `.never`,
+    // on the default sound. `try?` keeps an unrecognized raw value from failing
+    // the whole decode.
+    if let sound = try? container.decodeIfPresent(NotificationSound.self, forKey: .notificationSound) {
+      notificationSound = sound
+    } else if let soundEnabled = try legacy.decodeIfPresent(
+      Bool.self, forKey: LegacyCodingKey(stringValue: "notificationSoundEnabled")!)
+    {
+      notificationSound = soundEnabled ? Self.default.notificationSound : .never
+    } else {
+      notificationSound = Self.default.notificationSound
+    }
     systemNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .systemNotificationsEnabled)
       ?? Self.default.systemNotificationsEnabled
+    muteNotificationsForActiveSurface =
+      try container.decodeIfPresent(Bool.self, forKey: .muteNotificationsForActiveSurface)
+      ?? Self.default.muteNotificationsForActiveSurface
     moveNotifiedWorktreeToTop =
       try container.decodeIfPresent(Bool.self, forKey: .moveNotifiedWorktreeToTop)
       ?? Self.default.moveNotifiedWorktreeToTop
@@ -312,5 +334,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminateSessionsOnQuit =
       try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
       ?? Self.default.terminateSessionsOnQuit
+    remoteSessionPersistenceEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .remoteSessionPersistenceEnabled)
+      ?? Self.default.remoteSessionPersistenceEnabled
   }
 }

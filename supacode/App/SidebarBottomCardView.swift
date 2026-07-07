@@ -56,16 +56,22 @@ struct SidebarBottomCardView: View {
       dismissedAt: onboardingDismissedAt
     )
     let resolved = Slot.resolve(
-      agentMode: agentMode,
-      remoteRepositoriesBetaMode: remoteRepositoriesBetaMode,
-      terminalPersistenceMode: terminalPersistenceMode,
-      highlightMode: highlightMode,
-      onboardingMode: onboardingMode
+      gitEnvironmentError: store.repositories.gitEnvironmentError,
+      cards: Slot.resolve(
+        agentMode: agentMode,
+        remoteRepositoriesBetaMode: remoteRepositoriesBetaMode,
+        terminalPersistenceMode: terminalPersistenceMode,
+        highlightMode: highlightMode,
+        onboardingMode: onboardingMode
+      )
     )
     Group {
       switch resolved {
       case .none:
         EmptyView()
+      case .gitEnvironmentError(let error):
+        GitEnvironmentErrorCardView(error: error)
+          .transition(Slot.transition)
       case .agent(let mode):
         CodingAgentsSidebarCardView(store: store, mode: mode)
           .transition(Slot.transition)
@@ -96,6 +102,7 @@ struct SidebarBottomCardView: View {
   /// older cards that the same user may have already seen.
   enum Slot: Equatable {
     case none
+    case gitEnvironmentError(GitEnvironmentError)
     case agent(CodingAgentsSidebarCardView.Mode)
     case remoteRepositoriesBeta
     case terminalPersistenceOnboarding
@@ -103,6 +110,13 @@ struct SidebarBottomCardView: View {
     case nestedWorktreesOnboarding
 
     static let transition: AnyTransition = .move(edge: .bottom).combined(with: .opacity)
+
+    /// Layer a blocked-git error over the resolved card: it makes the app
+    /// largely unusable, so it pre-empts every onboarding / announcement card.
+    static func resolve(gitEnvironmentError: GitEnvironmentError?, cards: Slot) -> Slot {
+      if let gitEnvironmentError { return .gitEnvironmentError(gitEnvironmentError) }
+      return cards
+    }
 
     static func resolve(
       agentMode: CodingAgentsSidebarCardView.Mode,
@@ -131,6 +145,7 @@ struct SidebarBottomCardView: View {
     var transitionToken: String {
       switch self {
       case .none: "none"
+      case .gitEnvironmentError(let error): "gitEnvironmentError:" + String(describing: error)
       case .agent(.updatesAvailable(let agents)):
         "agent:updates:" + agents.map { String(describing: $0) }.sorted().joined(separator: ",")
       case .agent(.promptInstall): "agent:promptInstall"

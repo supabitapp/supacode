@@ -1,6 +1,10 @@
-/// ANSI formatting for list output.
+import Darwin
+
+/// ANSI formatting for list output. The underline is only emitted to a TTY so
+/// a captured / piped id (e.g. `worktree list | head -1`) stays clean.
 nonisolated func formatListLine(_ text: String, focused: Bool) -> String {
-  focused ? "\u{1B}[4m\(text)\u{1B}[0m" : text
+  guard focused, isatty(STDOUT_FILENO) != 0 else { return text }
+  return "\u{1B}[4m\(text)\u{1B}[0m"
 }
 
 /// Formats a script row from the `scripts` query as tab-separated

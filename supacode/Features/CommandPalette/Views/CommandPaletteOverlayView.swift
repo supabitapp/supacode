@@ -12,70 +12,33 @@ struct CommandPaletteOverlayView: View {
   @State private var filteredItems: [CommandPaletteItem] = []
 
   var body: some View {
-    ZStack {
-      if store.isPresented {
-        ZStack {
-          Color.clear
-            .contentShape(.rect)
-            .onTapGesture {
-              store.send(.setPresented(false))
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Dismiss Command Palette")
-
-          GeometryReader { geometry in
-            let topOffset = max(
-              0,
-              geometry.size.height * 0.3
-                - CommandPaletteQuery.fieldHeight / 2
-                - CommandPaletteCard.padding
-            )
-            VStack {
-              CommandPaletteCard(
-                query: $store.query,
-                selectedIndex: $store.selectedIndex,
-                items: filteredItems,
-                hoveredID: $hoveredID,
-                isQueryFocused: _isQueryFocused,
-                onEvent: { event in
-                  switch event {
-                  case .exit:
-                    store.send(.setPresented(false))
-                  case .submit:
-                    submitSelected(rows: filteredItems)
-                  case .move(let direction):
-                    moveSelection(direction, rows: filteredItems)
-                  }
-                },
-                activate: { id in
-                  activate(id, rows: filteredItems)
-                }
-              )
-              .zIndex(1)
-              .task {
-                isQueryFocused = store.isPresented
-              }
-
-              Spacer(minLength: 0)
-            }
-            .frame(
-              width: geometry.size.width,
-              height: geometry.size.height,
-              alignment: .top
-            )
-            .padding(.top, topOffset)
-          }
+    // The card fills the glass panel edge to edge; positioning, the material
+    // background, corner rounding, and click-away dismissal are all owned by
+    // `CommandPalettePanel`, not this view.
+    CommandPaletteCard(
+      query: $store.query,
+      selectedIndex: $store.selectedIndex,
+      items: filteredItems,
+      hoveredID: $hoveredID,
+      isQueryFocused: _isQueryFocused,
+      onEvent: { event in
+        switch event {
+        case .exit:
+          store.send(.setPresented(false))
+        case .submit:
+          submitSelected(rows: filteredItems)
+        case .move(let direction):
+          moveSelection(direction, rows: filteredItems)
         }
+      },
+      activate: { id in
+        activate(id, rows: filteredItems)
       }
-    }
-    .onChange(of: store.isPresented) { _, newValue in
-      isQueryFocused = newValue
-      if newValue {
-        let updatedItems = refreshFilteredItems(items: items)
-        updateSelection(rows: updatedItems)
-      } else {
-        hoveredID = nil
-      }
+    )
+    .task {
+      isQueryFocused = true
+      let updatedItems = refreshFilteredItems(items: items)
+      updateSelection(rows: updatedItems)
     }
     .onChange(of: store.query) { _, _ in
       let updatedItems = refreshFilteredItems(items: items)
@@ -88,9 +51,6 @@ struct CommandPaletteOverlayView: View {
     .onChange(of: store.recencyByItemID) { _, _ in
       let updatedItems = refreshFilteredItems(items: items)
       updateSelection(rows: updatedItems)
-    }
-    .task {
-      _ = refreshFilteredItems(items: items)
     }
   }
 
@@ -149,7 +109,7 @@ struct CommandPaletteOverlayView: View {
 }
 
 private struct CommandPaletteCard: View {
-  static let padding: CGFloat = 16
+  static let width: CGFloat = 500
 
   @Binding var query: String
   @Binding var selectedIndex: Int?
@@ -159,21 +119,15 @@ private struct CommandPaletteCard: View {
   let onEvent: (CommandPaletteKeyboardEvent) -> Void
   let activate: (CommandPaletteItem.ID) -> Void
 
-  private var backgroundColor: Color {
-    Color(nsColor: .windowBackgroundColor)
-  }
-
   var body: some View {
+    // No background / shadow / clip here: the host panel supplies a native
+    // `NSGlassEffectView` glass, rounded corners, and window shadow.
     VStack(alignment: .leading, spacing: 0) {
       CommandPaletteQuery(query: $query, isTextFieldFocused: isQueryFocused) { event in
         onEvent(event)
       }
 
       Divider()
-
-      CommandPaletteShortcutHandler(items: Array(items.prefix(5))) { id in
-        activate(id)
-      }
 
       CommandPaletteList(
         rows: items,
@@ -183,23 +137,7 @@ private struct CommandPaletteCard: View {
         activate(id)
       }
     }
-    .frame(maxWidth: 500)
-    .background(
-      ZStack {
-        Rectangle().fill(.ultraThinMaterial)
-        Rectangle()
-          .fill(backgroundColor)
-          .blendMode(.color)
-      }
-      .compositingGroup()
-    )
-    .clipShape(RoundedRectangle(cornerRadius: 10))
-    .overlay(
-      RoundedRectangle(cornerRadius: 10)
-        .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.75))
-    )
-    .shadow(radius: 32, x: 0, y: 12)
-    .padding(Self.padding)
+    .frame(width: Self.width)
   }
 }
 
@@ -268,11 +206,6 @@ private struct CommandPaletteQuery: View {
         .frame(height: Self.fieldHeight)
         .textFieldStyle(.plain)
         .focused($isTextFieldFocused)
-        .onChange(of: isTextFieldFocused) { _, focused in
-          if !focused {
-            onEvent?(.exit)
-          }
-        }
         .onExitCommand { onEvent?(.exit) }
         .onMoveCommand { onEvent?(.move($0)) }
         .onSubmit { onEvent?(.submit) }
@@ -281,7 +214,7 @@ private struct CommandPaletteQuery: View {
 }
 
 private struct CommandPaletteList: View {
-  static let listHeight: CGFloat = 200
+  static let listHeight: CGFloat = 205
 
   let rows: [CommandPaletteItem]
   @Binding var selectedIndex: Int?
@@ -289,31 +222,31 @@ private struct CommandPaletteList: View {
   let activate: (CommandPaletteItem.ID) -> Void
 
   var body: some View {
-    if rows.isEmpty {
-      EmptyView()
-    } else {
-      ScrollViewReader { proxy in
-        ScrollView {
-          VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(rows.enumerated()), id: \.1.id) { index, row in
-              CommandPaletteRowView(
-                row: row,
-                shortcutIndex: index < 5 ? index : nil,
-                isSelected: isRowSelected(index: index),
-                hoveredID: $hoveredID
-              ) {
-                activate(row.id)
-              }
-              .id(row.id)
+    // Fixed height (blank when there are no matches) so the panel stays a
+    // constant size; the host window is not resized while it is displayed.
+    ScrollViewReader { proxy in
+      ScrollView {
+        VStack(alignment: .leading, spacing: 4) {
+          ForEach(Array(rows.enumerated()), id: \.1.id) { index, row in
+            CommandPaletteRowView(
+              row: row,
+              shortcutIndex: index < 5 ? index : nil,
+              isSelected: isRowSelected(index: index),
+              hoveredID: $hoveredID
+            ) {
+              activate(row.id)
             }
+            .id(row.id)
           }
-          .padding(10)
         }
-        .frame(height: Self.listHeight)
-        .onChange(of: selectedIndex) { _, newValue in
-          guard let selectedIndex = newValue, rows.indices.contains(selectedIndex) else { return }
-          proxy.scrollTo(rows[selectedIndex].id)
-        }
+        .padding(.horizontal, 10)
+      }
+      .frame(height: Self.listHeight)
+      .contentMargins(.vertical, 10, for: .scrollContent)
+      .scrollIndicators(.visible)
+      .onChange(of: selectedIndex) { _, newValue in
+        guard let selectedIndex = newValue, rows.indices.contains(selectedIndex) else { return }
+        proxy.scrollTo(rows[selectedIndex].id)
       }
     }
   }
@@ -591,51 +524,10 @@ private struct ShortcutSymbolsView: View {
   }
 }
 
-private struct CommandPaletteShortcutHandler: View {
-  let items: [CommandPaletteItem]
-  let activate: (CommandPaletteItem.ID) -> Void
-
-  var body: some View {
-    Group {
-      ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-        shortcutButton(index: index, itemID: item.id)
-      }
-    }
-    .frame(width: 0, height: 0)
-    .accessibilityHidden(true)
-  }
-
-  private func shortcutButton(index: Int, itemID: CommandPaletteItem.ID) -> some View {
-    Button {
-      activate(itemID)
-    } label: {
-      Color.clear
-    }
-    .buttonStyle(.plain)
-    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
-  }
-}
-
 private func commandPaletteShortcutSymbols(for index: Int) -> [String] {
   ["⌘", "\(index + 1)"]
 }
 
 private func commandPaletteShortcutLabel(for index: Int) -> String {
   "Cmd+\(index + 1)"
-}
-
-extension NSColor {
-  fileprivate var isLightColor: Bool {
-    luminance > 0.5
-  }
-
-  fileprivate var luminance: Double {
-    var red: CGFloat = 0
-    var green: CGFloat = 0
-    var blue: CGFloat = 0
-    var alpha: CGFloat = 0
-    guard let rgb = usingColorSpace(.sRGB) else { return 0 }
-    rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-    return (0.299 * red) + (0.587 * green) + (0.114 * blue)
-  }
 }

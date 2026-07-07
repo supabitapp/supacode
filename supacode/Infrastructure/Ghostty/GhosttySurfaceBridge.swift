@@ -59,6 +59,9 @@ final class GhosttySurfaceBridge {
   var onMoveTab: ((ghostty_action_move_tab_s) -> Bool)?
   var onCommandPaletteToggle: (() -> Bool)?
   var onProgressReport: ((ghostty_action_progress_report_state_e) -> Void)?
+  // Fired on OSC 11 background changes only; used to re-tint window chrome
+  // when the focused surface's background changes.
+  var onColorChanged: (() -> Void)?
   // Used by blocking script completion detection in WorktreeTerminalState.
   // Both callbacks are set on every surface but guarded by the
   // blockingScripts dict in the handlers.
@@ -464,10 +467,14 @@ final class GhosttySurfaceBridge {
 
     case GHOSTTY_ACTION_COLOR_CHANGE:
       let change = action.action.color_change
+      // Only OSC 11 (background) drives the window tint; storing other kinds
+      // here would clobber the active background and reset the tint to theme.
+      guard change.kind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND else { return true }
       state.colorChangeKind = change.kind
       state.colorChangeR = change.r
       state.colorChangeG = change.g
       state.colorChangeB = change.b
+      onColorChanged?()
       return true
 
     default:

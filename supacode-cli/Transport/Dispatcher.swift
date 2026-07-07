@@ -3,12 +3,19 @@ import Foundation
 /// Dispatches a deeplink URL to the running Supacode app via its Unix domain socket.
 /// Launches the app and waits for the socket if not already running.
 nonisolated enum Dispatcher {
-  /// Sends a deeplink URL to the app via socket.
-  static func dispatch(deeplinkURL: String) throws {
+  /// Sends a deeplink URL to the app via socket. Returns the created resource
+  /// `id` when the command produces one.
+  @discardableResult
+  static func dispatch(deeplinkURL: String, timeoutSeconds: Int) throws -> String? {
     let socketPath = try resolveSocket()
-    let json: [String: String] = ["deeplink": deeplinkURL]
+    let url = CommandTimeout.embed(timeoutSeconds, in: deeplinkURL)
+    let json: [String: String] = ["deeplink": url]
     let data = try JSONSerialization.data(withJSONObject: json)
-    try SocketClient.sendAndReceive(to: socketPath, data: data)
+    return try SocketClient.sendAndReceive(
+      to: socketPath,
+      data: data,
+      readTimeoutSeconds: CommandTimeout.readTimeoutSeconds(timeoutSeconds)
+    )
   }
 
   /// Returns the socket path, launching the app and waiting if needed.

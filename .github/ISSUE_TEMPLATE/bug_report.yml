@@ -1,0 +1,91 @@
+name: Bug report
+description: Report something that is broken or behaving incorrectly.
+title: "[Bug]: "
+labels:
+  - bug
+  - ready
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in the details below so it can be reproduced quickly.
+
+        Bugs are marked `ready` automatically, so once this is filed you are welcome to open a pull request that fixes it. Link it back here with `Closes #<this issue number>`.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected to happen instead.
+      placeholder: When I ..., I expected ..., but instead ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that trigger the bug. A reliable reproduction is the single biggest factor in getting a fix.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Supacode version and build
+      description: "From the menu bar: Supacode → About Supacode. Copy the version and build number (e.g. 0.10.5 (1234))."
+      placeholder: 0.10.5 (1234)
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: " → About This Mac (e.g. macOS 26.4)."
+      placeholder: macOS 26.4
+    validations:
+      required: true
+  - type: input
+    id: locale
+    attributes:
+      label: System locale
+      description: "Run `defaults read -g AppleLocale` in a terminal (e.g. en_US, it_IT)."
+      placeholder: en_US
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Mac hardware
+      description: "Apple silicon model, if relevant (e.g. M3 Pro)."
+      placeholder: M3 Pro
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: "Paste any relevant output from `make log-stream`, crash reports, or screenshots. Logs are automatically formatted, no backticks needed."
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Are you planning to fix this yourself?
+      description: Optional. Bugs are `ready` on filing, so you can open a pull request right away.
+      options:
+        - label: I intend to open a pull request that fixes this bug.
+          required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am on the latest available version of Supacode.
+          required: true
+        - label: I agree to follow this project's [Code of Conduct](https://github.com/supabitapp/supacode/blob/main/CODE_OF_CONDUCT.md).
+          required: true

@@ -4,21 +4,16 @@ struct TerminalTabCloseButtonBackground: View {
   let isPressing: Bool
   let isHoveringClose: Bool
 
-  @Environment(\.surfaceChromeAppearance)
-  private var chromeAppearance
-
   var body: some View {
     Circle()
-      .fill(backgroundColor)
+      .fill(backgroundStyle)
   }
 
-  private var backgroundColor: Color {
-    if isPressing {
-      return chromeAppearance.overlayTint.opacity(0.16)
+  private var backgroundStyle: AnyShapeStyle {
+    switch true {
+    case isPressing: AnyShapeStyle(.tertiary)
+    case isHoveringClose: AnyShapeStyle(.quaternary)
+    default: AnyShapeStyle(.clear)
     }
-    if isHoveringClose {
-      return chromeAppearance.overlayTint.opacity(0.12)
-    }
-    return .clear
   }
 }

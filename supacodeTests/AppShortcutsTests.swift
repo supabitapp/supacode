@@ -279,7 +279,7 @@ struct AppShortcutsTests {
   @Test func categoryDisplayNames() {
     expectNoDifference(
       AppShortcutCategory.allCases.map(\.displayName),
-      ["General", "Sidebar", "Worktrees", "Worktree Selection", "Actions"]
+      ["General", "Sidebar", "Worktrees", "Worktree Selection", "Tab Selection", "Actions"]
     )
   }
 
@@ -314,5 +314,28 @@ struct AppShortcutsTests {
     let effective = AppShortcuts.newWorktree.effective(from: [.newWorktree: override])
     #expect(effective != nil)
     #expect(effective?.ghosttyKeybind == override.ghosttyKeybind)
+  }
+
+  // MARK: - Inspector pane shortcuts.
+
+  @Test func inspectorShortcutKeysRoundTrip() {
+    for id in [AppShortcutID.togglePullRequestInspector, .toggleNotificationsInspector] {
+      let decoded = AppShortcutID(codingKey: PlainCodingKey(id.codingKey.stringValue))
+      #expect(decoded == id)
+    }
+  }
+
+  @Test func inspectorShortcutsHaveNoDefaultConflict() {
+    let warnings = AppShortcuts.conflictWarnings(from: [:])
+    #expect(warnings[.togglePullRequestInspector] == nil)
+    #expect(warnings[.toggleNotificationsInspector] == nil)
+  }
+
+  @Test func inspectorShortcutsUnbindInGhostty() {
+    #expect(AppShortcuts.togglePullRequestInspector.ghosttyUnbindArgument == "--keybind=alt+super+g=unbind")
+    #expect(AppShortcuts.toggleNotificationsInspector.ghosttyUnbindArgument == "--keybind=alt+super+n=unbind")
+    let arguments = AppShortcuts.ghosttyCLIKeybindArguments
+    #expect(arguments.contains("--keybind=alt+super+g=unbind"))
+    #expect(arguments.contains("--keybind=alt+super+n=unbind"))
   }
 }
