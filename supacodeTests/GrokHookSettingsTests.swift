@@ -39,6 +39,19 @@ struct GrokHookSettingsTests {
     #expect(commands.allSatisfy { !$0.contains("event=busy") })
   }
 
+  @Test func grokEmittedLifecycleEventsParseAsPresence() throws {
+    // Pin the emit-to-parse coupling end to end: each composite command still
+    // carries the OSC event literal and the parser accepts it, so a HookEvent
+    // rename or a compositeCommand typo can't silently kill presence over SSH.
+    let commands = try Self.commandStrings(from: try GrokHookSettings.hooksByEvent())
+    for event in ["session_start", "busy", "idle", "session_end"] {
+      #expect(commands.contains { $0.contains("event=\(event)") })
+      let signal = AgentPresenceOSC.parse(id: "grok", metadata: "event=\(event)")
+      #expect(signal?.agent == "grok")
+      #expect(signal?.eventRawValue == event)
+    }
+  }
+
   @Test func timeoutsArePositive() throws {
     let groups = try GrokHookSettings.hooksByEvent()
     let timeouts = groups.values.flatMap { group in

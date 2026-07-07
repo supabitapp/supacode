@@ -19,6 +19,57 @@ struct GrokSettingsInstallerTests {
     #expect(installer.installState() == .notInstalled)
   }
 
+  @Test func installStateIsNotInstalledWhenFileIsUnreadableAsUTF8() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(
+      at: settingsURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    // Lead bytes that are invalid UTF-8: an unreadable file resolves to
+    // not-installed rather than crashing or false-positiving as installed.
+    try Data([0xFF, 0xFE, 0xFD, 0x00]).write(to: settingsURL)
+
+    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(installer.installState() == .notInstalled)
+  }
+
+  @Test func installStateReturnsOutdatedWhenManagedBodyDrifted() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(
+      at: settingsURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    // Ownership marker present but SessionStart carries a stale busy command:
+    // an older Supacode wrote this, so the user must get the Update affordance.
+    let staleCommand = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .grok)
+    let stale: JSONValue = .object([
+      "hooks": .object([
+        "SessionStart": .array([
+          .object([
+            "hooks": .array([
+              .object([
+                "type": "command",
+                "command": .string(staleCommand),
+                "timeout": 5,
+              ])
+            ])
+          ])
+        ])
+      ])
+    ])
+    try JSONEncoder().encode(stale).write(to: settingsURL)
+
+    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(installer.installState() == .outdated)
+  }
+
   @Test func installAllHooksWritesSupacodeManagedFile() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
