@@ -33,7 +33,7 @@ Closes #<!-- issue number, e.g. Closes #123 -->
   Disclosure is welcome and encouraged: it keeps the review honest without hiding anything.
   You, a human, remain the author of record and are accountable for every line.
   Do NOT leave AI agents as git authors or `Co-authored-by:` trailers. Such pull requests
-  are moved to draft and labeled `invalid` automatically. See CONTRIBUTING.md.
+  are labeled `invalid` automatically. See CONTRIBUTING.md.
 -->
 
 - Model(s): <!-- e.g. Claude Opus 4.8, GPT-5.4, none -->
