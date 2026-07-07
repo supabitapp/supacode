@@ -8,15 +8,20 @@ name: Pull request policy
 # On a pull request event the job is a status check: green when the pull request meets the
 # contribution policy, red when it does not. A non-compliant pull request from a non-maintainer
 # is labeled `invalid`, with one comment listing every reason. When it later becomes compliant
-# the label is cleared.
+# the label is cleared. An approving review from a maintainer (write/admin) waives every check,
+# so the job re-runs on review submit/dismiss to flip the status as the maintainer's stance changes.
 #
 # On a daily schedule the job sweeps open `invalid` pull requests: it re-evaluates each one, so a
 # pull request made compliant by an issue-side change (a maintainer adding `ready`, or reassigning
 # the issue) is cleared rather than closed, and only genuinely still-invalid, inactive ones are
-# closed. Make this job a required status check in branch protection to block merging while red.
+# closed. The verdict is published as the `pull-request-policy` commit status on the head SHA, not
+# the implicit job check, so a `pull_request_review` re-run can flip it (review-triggered runs do
+# not otherwise attach to the pull request head commit). Require that status in branch protection.
 on:
   pull_request_target:
     types: [opened, edited, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
@@ -29,6 +34,7 @@ permissions:
   contents: read
   issues: read
   pull-requests: write
+  statuses: write
 
 jobs:
   policy:
@@ -40,6 +46,7 @@ jobs:
             const marker = '<!-- supacode-pr-policy -->';
             const staleMarker = '<!-- supacode-pr-stale -->';
             const invalidLabel = 'invalid';
+            const statusContext = 'pull-request-policy';
             const staleDays = 3;
             const { owner, repo } = context.repo;
 
@@ -73,25 +80,39 @@ jobs:
 
               const reasons = [];
 
-              // Linked issues. GitHub's closing references are the authority (they ignore keywords
-              // inside HTML comments and code). The body regex is a fallback only when the reference
-              // index is empty, and it strips comments, fenced and inline code, and quotes first so a
-              // pasted `git commit -m "fixes #9"` is not mistaken for a link.
+              // One round-trip fetches both the closing-issue references and the latest opinionated
+              // review per write-access user (`writersOnly`), so the maintainer-approval waiver below
+              // costs no extra API calls.
               const gql = await github.graphql(
                 `query($owner:String!, $repo:String!, $number:Int!) {
                    repository(owner:$owner, name:$repo) {
                      pullRequest(number:$number) {
                        closingIssuesReferences(first: 20) { nodes { number repository { owner { login } name } } }
+                       latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state } }
                      }
                    }
                  }`,
                 { owner, repo, number: pr.number },
               );
+              const pull = gql.repository.pullRequest;
+
+              // A maintainer greenlight overrides the policy: once a write/admin collaborator approves,
+              // they have explicitly vetted the pull request, so every other check is waived.
+              // `latestOpinionatedReviews` is each reviewer's current stance, so a later rejection or
+              // dismissal drops the approval and revokes the waiver.
+              if (pull.latestOpinionatedReviews.nodes.some((r) => r.state === 'APPROVED')) {
+                return { skip: true, reasons: [] };
+              }
+
+              // Linked issues. GitHub's closing references are the authority (they ignore keywords
+              // inside HTML comments and code). The body regex is a fallback only when the reference
+              // index is empty, and it strips comments, fenced and inline code, and quotes first so a
+              // pasted `git commit -m "fixes #9"` is not mistaken for a link.
               const isSameRepo = (node) =>
                 node.repository.owner.login.toLowerCase() === owner.toLowerCase() &&
                 node.repository.name.toLowerCase() === repo.toLowerCase();
               const candidates = new Set(
-                gql.repository.pullRequest.closingIssuesReferences.nodes.filter(isSameRepo).map((n) => n.number),
+                pull.closingIssuesReferences.nodes.filter(isSameRepo).map((n) => n.number),
               );
               if (candidates.size === 0) {
                 const text = (pr.body || '')
@@ -184,6 +205,14 @@ jobs:
               }
             }
 
+            // Publish the verdict on the head commit so it lands on the SHA branch protection reads,
+            // regardless of which event triggered the run.
+            async function setStatus(pr, state, description) {
+              await github.rest.repos.createCommitStatus({
+                owner, repo, sha: pr.head.sha, state, context: statusContext, description: description.slice(0, 140),
+              });
+            }
+
             if (context.eventName === 'schedule' || context.eventName === 'workflow_dispatch') {
               // Daily sweep: re-evaluate every open `invalid` pull request.
               const cutoff = Date.now() - staleDays * 24 * 60 * 60 * 1000;
@@ -192,11 +221,12 @@ jobs:
                 if (!hasLabel(pr, invalidLabel)) continue;
                 try {
                   const { skip, reasons } = await evaluate(pr);
-                  if (skip) continue;
                   const comments = await getComments(pr.number);
                   const existing = comments.find((c) => c.body && c.body.includes(marker));
-                  if (reasons.length === 0) {
+                  // Now bypassed, approved, or compliant: clear the label and go green.
+                  if (skip || reasons.length === 0) {
                     if (existing) await clearIntervention(pr, existing);
+                    await setStatus(pr, 'success', 'Meets the contribution policy.');
                     continue;
                   }
                   // Still non-compliant: close only if inactive past the cutoff. Do not re-comment on
@@ -221,19 +251,19 @@ jobs:
               return;
             }
 
-            // Pull request event: a single status check.
+            // Pull request or review event: resolve the single `pull-request-policy` status check.
             const pr = context.payload.pull_request;
             const { skip, reasons } = await evaluate(pr);
-            if (skip) {
-              core.info(`Skipping: ${pr.user.login} is a bot or has write access.`);
-              return;
-            }
             const comments = await getComments(pr.number);
             const existing = comments.find((c) => c.body && c.body.includes(marker));
-            if (reasons.length === 0) {
+            // A bypass, a maintainer approval, or a fully compliant pull request all pass: clear any
+            // prior intervention and go green.
+            if (skip || reasons.length === 0) {
               if (existing) await clearIntervention(pr, existing);
-              core.info('Compliant: all policy checks pass.');
+              await setStatus(pr, 'success', 'Meets the contribution policy.');
+              core.info(skip ? `Passed: ${pr.user.login} is a bot, maintainer, or has an approval.` : 'Compliant: all policy checks pass.');
               return;
             }
             await applyInvalid(pr, reasons, existing);
-            core.setFailed(reasons[0]);
+            await setStatus(pr, 'failure', reasons[0]);
+            core.notice(`#${pr.number} is invalid: ${reasons[0]}`);
