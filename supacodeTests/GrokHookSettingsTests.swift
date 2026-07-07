@@ -39,6 +39,28 @@ struct GrokHookSettingsTests {
     #expect(commands.allSatisfy { !$0.contains("event=busy") })
   }
 
+  @Test func timeoutsArePositive() throws {
+    let groups = try GrokHookSettings.hooksByEvent()
+    let timeouts = groups.values.flatMap { group in
+      group.flatMap { entry in
+        entry.objectValue?["hooks"]?.arrayValue?.compactMap { hook in
+          Self.timeoutValue(from: hook.objectValue?["timeout"])
+        } ?? []
+      }
+    }
+    #expect(!timeouts.isEmpty)
+    #expect(timeouts.allSatisfy { $0 > 0 })
+  }
+
+  private static func timeoutValue(from value: JSONValue?) -> Int? {
+    guard let value else { return nil }
+    switch value {
+    case .int(let timeout): return timeout
+    case .double(let timeout): return Int(timeout)
+    default: return nil
+    }
+  }
+
   private static func commandStrings(from groups: [String: [JSONValue]]) -> [String] {
     groups.values.flatMap { commandStrings(in: $0) }
   }

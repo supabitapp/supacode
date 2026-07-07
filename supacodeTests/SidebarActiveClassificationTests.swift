@@ -76,6 +76,14 @@ struct SidebarActiveClassificationTests {
 
     #expect(classification == .agent)
   }
+  @Test func grokBadgeClassifiesRowAsAgent() {
+    var state = makeState(name: "grok")
+    state.agents = [.init(agent: .grok, activity: .idle)]
+
+    let classification = SidebarActiveClassification.classify(state)
+
+    #expect(classification == .agent)
+  }
 
   @Test func runningOnly() {
     let classification = SidebarActiveClassification.classify(

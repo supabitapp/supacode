@@ -11,6 +11,14 @@ struct GrokSettingsInstallerTests {
       .appendingPathComponent("supacode-grok-installer-\(UUID().uuidString)", isDirectory: true)
   }
 
+  @Test func installStateIsNotInstalledWhenFileMissing() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(installer.installState() == .notInstalled)
+  }
+
   @Test func installAllHooksWritesSupacodeManagedFile() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }

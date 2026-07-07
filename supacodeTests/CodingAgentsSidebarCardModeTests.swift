@@ -10,6 +10,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.outdated),
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.outdated),
@@ -30,6 +31,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
+      .grok: .ready(.installed),
       .hermes: .ready(.installed),
       .kimi: .ready(.installed),
       .kiro: .ready(.installed),
@@ -46,6 +48,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -61,6 +64,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -76,6 +80,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -91,6 +96,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .checking,
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -108,6 +114,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .installing,
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -125,6 +132,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.installed),
       .codex: .uninstalling,
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -143,6 +151,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .failed("boom"),
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -161,6 +170,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
+      .grok: .ready(.installed),
       .hermes: .ready(.installed),
       .kimi: .ready(.installed),
       .kiro: .ready(.installed),
@@ -176,6 +186,7 @@ struct CodingAgentsSidebarCardModeTests {
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
+      .grok: .ready(.notInstalled),
       .hermes: .ready(.notInstalled),
       .kimi: .ready(.notInstalled),
       .kiro: .ready(.notInstalled),
@@ -200,11 +211,11 @@ struct CodingAgentsSidebarCardModeTests {
     #expect(CodingAgentsSidebarCardView.isDismissed(at: future, relevantSince: cutoff) == true)
   }
 
-  @Test func cardRelevantSinceDateMatchesOmpLaunchReEngagement() {
-    let ompLaunchCutoff = Date(timeIntervalSince1970: 1_783_209_600)
-    let previouslyDismissedUser = Date(timeIntervalSince1970: 1_778_371_200)
+  @Test func cardRelevantSinceDateMatchesGrokLaunchReEngagement() {
+    let grokLaunchCutoff = Date(timeIntervalSince1970: 1_783_382_400)
+    let previouslyDismissedUser = Date(timeIntervalSince1970: 1_783_209_600)
 
-    #expect(CodingAgentsSidebarCardView.cardRelevantSinceDate == ompLaunchCutoff)
+    #expect(CodingAgentsSidebarCardView.cardRelevantSinceDate == grokLaunchCutoff)
     #expect(CodingAgentsSidebarCardView.isDismissed(at: previouslyDismissedUser) == false)
   }
 }

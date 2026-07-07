@@ -26,19 +26,19 @@ private nonisolated struct GrokHooksPayload: Encodable {
   static let awaitingInputToolMatcher = "AskUserQuestion|ExitPlanMode"
 
   private static let busy = AgentHookSettingsCommand.compositeCommand(
-    events: [.busy], forwardStdinAsNotification: false, agent: .grok)
+    events: [.busy], forwardStdinAsNotification: false, agent: .grok, )
   private static let idle = AgentHookSettingsCommand.compositeCommand(
-    events: [.idle], forwardStdinAsNotification: false, agent: .grok)
+    events: [.idle], forwardStdinAsNotification: false, agent: .grok, )
   private static let awaitingInputAndNotify = AgentHookSettingsCommand.compositeCommand(
-    events: [.awaitingInput], forwardStdinAsNotification: true, agent: .grok)
+    events: [.awaitingInput], forwardStdinAsNotification: true, agent: .grok, )
   private static let awaitingInput = AgentHookSettingsCommand.compositeCommand(
-    events: [.awaitingInput], forwardStdinAsNotification: false, agent: .grok)
+    events: [.awaitingInput], forwardStdinAsNotification: false, agent: .grok, )
   private static let idleAndNotify = AgentHookSettingsCommand.compositeCommand(
-    events: [.idle], forwardStdinAsNotification: true, agent: .grok)
+    events: [.idle], forwardStdinAsNotification: true, agent: .grok, )
   private static let sessionStart = AgentHookSettingsCommand.compositeCommand(
-    events: [.sessionStart], forwardStdinAsNotification: false, agent: .grok)
+    events: [.sessionStart], forwardStdinAsNotification: false, agent: .grok, )
   private static let sessionEndAndIdle = AgentHookSettingsCommand.compositeCommand(
-    events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .grok)
+    events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .grok, )
 
   let hooks: [String: [AgentHookGroup]] = [
     "SessionStart": [

@@ -31,6 +31,17 @@ struct AgentPresenceFeatureTests {
     let key = AgentPresenceFeature.PresenceKey(agent: .omp, surfaceID: surfaceID)
     #expect(harness.state.records[key]?.pids == [pid])
   }
+  @Test func grokSessionStartRegistersAgentForSurface() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .grok, surfaceID: surfaceID, pid: pid)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.grok]))
+    let key = AgentPresenceFeature.PresenceKey(agent: .grok, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.pids == [pid])
+  }
 
   @Test func sessionStartWithoutPidSeedsPidlessRecord() {
     // The OSC-over-SSH transport attributes by the receiving surface and has no
@@ -108,6 +119,18 @@ struct AgentPresenceFeatureTests {
 
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
     let key = AgentPresenceFeature.PresenceKey(agent: .omp, surfaceID: surfaceID)
+    #expect(harness.state.records[key] == nil)
+  }
+  @Test func grokSessionEndRemovesLocalPidRecord() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .grok, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .grok, surfaceID: surfaceID, pid: pid)))
+
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
+    let key = AgentPresenceFeature.PresenceKey(agent: .grok, surfaceID: surfaceID)
     #expect(harness.state.records[key] == nil)
   }
 
@@ -531,6 +554,18 @@ struct AgentPresenceFeatureTests {
     #expect(omp?.activity == .busy)
     #expect(harness.state.hasActivity(in: [surfaceID]) == true)
   }
+  @Test func grokBusySetsActivity() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .grok, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .grok, surfaceID: surfaceID)))
+
+    let grok = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .grok }
+    #expect(grok?.activity == .busy)
+    #expect(harness.state.hasActivity(in: [surfaceID]) == true)
+  }
 
   @Test func repeatedBusyEventsDoNotMutateRecords() {
     // Repeated `busy` must not re-write `records`, or every dict-observation
@@ -602,6 +637,20 @@ struct AgentPresenceFeatureTests {
     let omp = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .omp }
     #expect(omp?.activity == .idle)
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.omp]))
+    #expect(harness.state.hasActivity(in: [surfaceID]) == false)
+  }
+  @Test func grokIdleClearsActivityWhileKeepingBadge() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .grok, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .grok, surfaceID: surfaceID)))
+    harness.send(.hookEventReceived(makeEvent(.idle, agent: .grok, surfaceID: surfaceID)))
+
+    let grok = harness.state.agents(across: [surfaceID], badgesEnabled: true).first { $0.agent == .grok }
+    #expect(grok?.activity == .idle)
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.grok]))
     #expect(harness.state.hasActivity(in: [surfaceID]) == false)
   }
 
