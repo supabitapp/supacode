@@ -149,6 +149,21 @@ struct WorktreeCustomizationParentTests {
     #expect(state.sidebarItems[id: mainID]?.customTint == .blue)
   }
 
+  @Test func mainWorktreeWithoutOverrideIsNotInjectedOnReconcile() {
+    let mainID = WorktreeID("\(repoID)/main")
+    var state = makeInitialState(seedSidebarBucket: false)
+
+    state.reconcileSidebarState(
+      roots: [URL(fileURLWithPath: repoID.rawValue)],
+      pruneLivenessAgainstRoster: true
+    )
+
+    // A main worktree carrying no override must not be projected into any bucket,
+    // otherwise it would surface as a spurious pinnable / duplicate row.
+    #expect(state.sidebar.sections[repoID]?.buckets[.unpinned]?.items[mainID] == nil)
+    #expect(state.sidebar.sections[repoID]?.buckets[.pinned]?.items[mainID] == nil)
+  }
+
   @Test func saveDelegatePersistsTitleAndColorToBucketedItem() async {
     var initial = makeInitialState()
     initial.worktreeCustomization = WorktreeCustomizationFeature.State(

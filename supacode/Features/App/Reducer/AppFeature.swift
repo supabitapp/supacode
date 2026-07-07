@@ -1751,8 +1751,11 @@ struct AppFeature {
     }
 
     let policyBypass = state.settings.automatedActionPolicy.allowsBypass(from: source)
+    // Appearance is a metadata-only update; don't steal focus for a tint / title change.
     let selectEffect: Effect<Action> =
-      .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
+      action.selectsWorktree
+      ? .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
+      : .none
     let actionEffect = worktreeActionEffect(
       worktreeID: worktreeID,
       action: action,
@@ -1845,6 +1848,9 @@ struct AppFeature {
       return .send(.repositories(.unpinWorktree(worktreeID)))
     case .appearance(let title, let colorValue):
       guard title != nil || colorValue != nil else {
+        // Unreachable: the parser guarantees at least one field.
+        // Log so contract drift can't silently ack ok=true.
+        deeplinkLogger.warning("Appearance deeplink resolved with neither title nor color")
         return .none
       }
       guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "appearance", state: &state) else {
@@ -1852,31 +1858,34 @@ struct AppFeature {
       }
       let stored = storedWorktreeAppearance(worktreeID: worktreeID, repositoryID: repositoryID, state: state)
       let resolvedTitle = title.map(Self.normalizedWorktreeTitle) ?? stored.title
-      let resolvedColor: RepositoryColor?
+      var resolvedColor = stored.color
+      var rejectedColor: String?
       if let colorValue {
         if colorValue.lowercased() == "none" {
           resolvedColor = nil
         } else if let color = RepositoryColor.parse(colorValue) {
           resolvedColor = color
         } else {
-          deeplinkLogger.warning("Unrecognized worktree appearance color value: \(colorValue)")
-          // Set alert so the CLI socket response surfaces a real error instead of silent ok=true.
-          state.alert = AlertState {
-            TextState("Invalid color value")
-          } actions: {
-            ButtonState(role: .cancel, action: .dismiss) {
-              TextState("OK")
-            }
-          } message: {
-            TextState(
-              "\(colorValue) is not a recognized color. Use red, orange, yellow, green, teal, blue, purple, "
-                + "#RRGGBB[AA] hex, or none. No appearance changes were applied."
-            )
-          }
-          return .none
+          rejectedColor = colorValue
         }
-      } else {
-        resolvedColor = stored.color
+      }
+      if let rejectedColor {
+        deeplinkLogger.warning("Unrecognized worktree appearance color value: \(rejectedColor)")
+        // Alert doubles as the socket-ack failure signal, so the CLI gets ok=false.
+        state.alert = AlertState {
+          TextState("Invalid color value")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState(
+            "\(rejectedColor) is not a recognized color. Use red, orange, yellow, green, teal, blue, purple, "
+              + "#RRGGBB[AA] hex, or none. The tint was left unchanged."
+          )
+        }
+        // Nothing valid to apply when only an invalid color was supplied; a valid title still lands.
+        guard title != nil else { return .none }
       }
       return .send(
         .repositories(
@@ -2307,7 +2316,10 @@ struct AppFeature {
   }
 
   private static func normalizedWorktreeTitle(_ title: String) -> String? {
-    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Collapse control whitespace so the stored title round-trips through the
+    // CLI's line-based read output (which strips tab / newline / CR).
+    let collapsed = title.replacing("\t", with: " ").replacing("\n", with: " ").replacing("\r", with: " ")
+    let trimmed = collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
   }
 

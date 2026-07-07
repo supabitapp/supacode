@@ -38,6 +38,15 @@ enum Deeplink: Equatable, Sendable {
     case surface(tabID: UUID, surfaceID: UUID, input: String?)
     case surfaceSplit(tabID: UUID, surfaceID: UUID, direction: SplitDirection, input: String?, id: UUID?)
     case surfaceDestroy(tabID: UUID, surfaceID: UUID)
+
+    /// Whether dispatching this action should also select / focus the worktree.
+    /// Metadata-only updates (appearance) skip it so they don't steal focus.
+    var selectsWorktree: Bool {
+      switch self {
+      case .appearance: false
+      default: true
+      }
+    }
   }
 
   /// Settings sections reachable via deeplink.

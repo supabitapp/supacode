@@ -245,13 +245,21 @@ extension WorktreeCommand {
       )
     }
 
+    /// Socket wire keys. Mirrors `WorktreeAppearanceQueryResponse.Key` (app side);
+    /// keep in sync (the CLI links no shared module to stay dependency-light).
+    private enum Key {
+      static let title = "title"
+      static let color = "color"
+      static let displayTitle = "displayTitle"
+    }
+
     private static func formattedAppearance(_ item: [String: String]) -> [String] {
       var lines = [
-        "title=\(sanitizeValue(item["title"] ?? ""))",
-        "color=\(sanitizeValue(item["color"] ?? "none"))",
+        "\(Key.title)=\(sanitizeValue(item[Key.title] ?? ""))",
+        "\(Key.color)=\(sanitizeValue(item[Key.color] ?? "none"))",
       ]
-      if let displayTitle = item["displayTitle"] {
-        lines.append("displayTitle=\(sanitizeValue(displayTitle))")
+      if let displayTitle = item[Key.displayTitle] {
+        lines.append("\(Key.displayTitle)=\(sanitizeValue(displayTitle))")
       }
       return lines
     }

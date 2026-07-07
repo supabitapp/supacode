@@ -421,8 +421,7 @@ struct SupacodeApp: App {
         WorktreeAppearanceQueryResponse.fields(
           repository: repository,
           worktree: worktree,
-          item: item,
-          resolvedSidebarTitle: store.repositories.sidebarItems[id: worktree.id]?.resolvedSidebarTitle
+          item: item
         )
       ]
     )
@@ -471,6 +470,7 @@ struct SupacodeApp: App {
   ) -> (Repository, Worktree)? {
     let decoded = worktreeID.removingPercentEncoding ?? worktreeID
     return repos.lazy.compactMap { repo -> (Repository, Worktree)? in
+      // IDs from standardizedFileURL carry a trailing slash; accept both forms.
       let worktree = repo.worktrees.first { candidate in
         candidate.id.rawValue == decoded || candidate.id.rawValue == decoded + "/"
       }

@@ -1,28 +1,29 @@
 import SupacodeSettingsShared
 
-/// Constructs the socket payload for `supacode worktree appearance` reads.
-///
-/// The CLI intentionally reports stored override fields separately from the
-/// app-resolved display title so clearing an override is visible as `title=`
-/// rather than looking like the default title is still stored.
+/// Builds the `supacode worktree appearance` read payload. Reports stored
+/// override fields separately from the resolved display title so a cleared
+/// override reads as `title=` rather than the default.
 enum WorktreeAppearanceQueryResponse {
-  /// `resolvedSidebarTitle` is the seeded row's rendered title
-  /// (`SidebarItemFeature.State.resolvedSidebarTitle`); it wins so
-  /// `displayTitle` matches what the sidebar actually shows. The
-  /// override-based fallback only covers rows not yet seeded.
+  /// Socket wire keys. `WorktreeCommand.Appearance` reads the same literals;
+  /// keep both sides in sync (the CLI stays dependency-light, so no shared module).
+  enum Key {
+    static let title = "title"
+    static let color = "color"
+    static let displayTitle = "displayTitle"
+  }
+
   static func fields(
     repository: Repository,
     worktree: Worktree,
-    item: SidebarState.Item?,
-    resolvedSidebarTitle: String?
+    item: SidebarState.Item?
   ) -> [String: String] {
+    // Use the row's base title (`item.title` ?? worktree / repo name), not the
+    // folder-derived disambiguator that `resolvedSidebarTitle` would report.
     let fallbackTitle = repository.isGitRepository ? worktree.name : repository.name
     return [
-      "title": item?.title ?? "",
-      "color": item?.color?.rawValue ?? "none",
-      "displayTitle": resolvedSidebarTitle
-        ?? SidebarDisplayName.resolved(custom: item?.title, fallback: fallbackTitle)
-        ?? fallbackTitle,
+      Key.title: item?.title ?? "",
+      Key.color: item?.color?.rawValue ?? "none",
+      Key.displayTitle: SidebarDisplayName.resolved(custom: item?.title, fallback: fallbackTitle) ?? fallbackTitle,
     ]
   }
 }

@@ -152,11 +152,11 @@ nonisolated enum CLISkillContent {
     | `--worktree` | `-w` | `$SUPACODE_WORKTREE_ID` | Worktree ID. |
     | `--tab` | `-t` | `$SUPACODE_TAB_ID` | Tab UUID. |
     | `--surface` | `-s` | `$SUPACODE_SURFACE_ID` | Surface UUID. |
-    | `--script` | `-c` | — | Script UUID (for `worktree run`/`stop`). |
-    | `--title` | — | — | Sidebar title override; pass an empty string to clear. |
-    | `--color` | — | — | Sidebar tint override; pass `none` to clear. |
+    | `--script` | `-c` | - | Script UUID (for `worktree run`/`stop`). |
+    | `--title` | - | - | Sidebar title override; pass an empty string to clear. |
+    | `--color` | - | - | Sidebar tint override; pass `none` to clear. |
     | `--repo` | `-r` | `$SUPACODE_REPO_ID` | Repository ID. |
-    | `--input` | `-i` | — | Command to run in the terminal. |
+    | `--input` | `-i` | - | Command to run in the terminal. |
     | `--direction` | `-d` | `horizontal` | Split direction (`horizontal`/`h` or `vertical`/`v`). |
     | `--id` | `-n` | random | UUID for new tab/surface. |
     """

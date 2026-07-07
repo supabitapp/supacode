@@ -11,7 +11,7 @@ struct WorktreeAppearanceQueryResponseTests {
     let (repository, worktree) = makeGitWorktree(name: "feature/review")
 
     let fields = WorktreeAppearanceQueryResponse.fields(
-      repository: repository, worktree: worktree, item: nil, resolvedSidebarTitle: nil)
+      repository: repository, worktree: worktree, item: nil)
 
     #expect(fields["title"] == "")
     #expect(fields["color"] == "none")
@@ -23,27 +23,29 @@ struct WorktreeAppearanceQueryResponseTests {
     let item = SidebarState.Item(title: "  Review UI  ", color: .purple)
 
     let fields = WorktreeAppearanceQueryResponse.fields(
-      repository: repository, worktree: worktree, item: item, resolvedSidebarTitle: nil)
+      repository: repository, worktree: worktree, item: item)
 
     #expect(fields["title"] == "  Review UI  ")
     #expect(fields["color"] == "purple")
     #expect(fields["displayTitle"] == "Review UI")
   }
 
-  @Test func seededRowResolvedTitleWinsOverStoredOverrideFallback() {
+  @Test func displayTitleReflectsBranchNameNotFolderBasename() {
+    // Folder basename ("review") differs from the branch name; the sidebar row
+    // titles with the branch, so `displayTitle` must too.
     let (repository, worktree) = makeGitWorktree(name: "feature/review")
 
     let fields = WorktreeAppearanceQueryResponse.fields(
-      repository: repository, worktree: worktree, item: nil, resolvedSidebarTitle: "review")
+      repository: repository, worktree: worktree, item: nil)
 
-    #expect(fields["displayTitle"] == "review")
+    #expect(fields["displayTitle"] == "feature/review")
   }
 
   @Test func folderDisplayTitleFallsBackToRepositoryName() {
     let (repository, worktree) = makeFolderWorktree(repositoryName: "Documents", worktreeName: "Synthetic Row")
 
     let fields = WorktreeAppearanceQueryResponse.fields(
-      repository: repository, worktree: worktree, item: nil, resolvedSidebarTitle: nil)
+      repository: repository, worktree: worktree, item: nil)
 
     #expect(fields["title"] == "")
     #expect(fields["color"] == "none")
