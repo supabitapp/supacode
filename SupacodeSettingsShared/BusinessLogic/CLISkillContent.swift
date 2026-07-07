@@ -486,5 +486,6 @@ nonisolated enum CLISkillContent {
 
   // Generic CLI doc, same as OpenCode's (content is agent-agnostic).
   static let copilotSkillMd = opencodeSkillMd
+  static let ompSkillMd = opencodeSkillMd
 
 }

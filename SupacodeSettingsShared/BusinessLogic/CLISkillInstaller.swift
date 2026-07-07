@@ -57,6 +57,7 @@ nonisolated struct CLISkillInstaller {
     case .hermes: CLISkillContent.hermesSkillMd
     case .kimi: CLISkillContent.kimiSkillMd
     case .kiro: CLISkillContent.kiroSkillMd
+    case .omp: CLISkillContent.ompSkillMd
     case .pi: CLISkillContent.piSkillMd
     case .opencode: CLISkillContent.opencodeSkillMd
     }
