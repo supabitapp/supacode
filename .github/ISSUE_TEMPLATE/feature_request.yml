@@ -9,7 +9,7 @@ body:
       value: |
         Thanks for the idea. Feature requests are reviewed before any code is written.
 
-        **Please do not open a pull request yet.** A maintainer adds the `ready` label once the feature is approved and the direction is agreed, and a comment here will let you know. A pull request linked to a feature that is not yet `ready` is moved to draft and labeled `invalid` until then. Once it is `ready`, open your pull request and link it with `Closes #<this issue number>`.
+        **Please do not open a pull request yet.** A maintainer adds the `ready` label once the feature is approved and the direction is agreed, and a comment here will let you know. A pull request linked to a feature that is not yet `ready` is labeled `invalid` until then. Once it is `ready`, open your pull request and link it with `Closes #<this issue number>`.
   - type: textarea
     id: problem
     attributes:

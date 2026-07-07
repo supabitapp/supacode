@@ -34,17 +34,16 @@ the solution you have in mind. Feature requests are discussed before code is wri
 maintainer adds the `ready` label once the feature is approved.
 
 **Please do not open a feature pull request until the issue is `ready`.** A pull request
-linked to a feature that is not yet `ready` is moved to draft and labeled `invalid` until the
-label is added. Once the feature is `ready`, mark your pull request ready for review and the
-check clears.
+linked to a feature that is not yet `ready` is labeled `invalid` and its policy check fails
+until the label is added. Once the feature is `ready`, push an update and the check clears.
 
 ## Opening a pull request
 
 Every pull request must be linked to a single issue. Keep the `Closes #<number>` line in the
 description. A status check enforces the policy below (write-access contributors are exempt).
-When it fails, the pull request is moved to draft, labeled `invalid`, and a comment lists every
-reason. Fix the points, mark it ready for review, and the check clears. A pull request left
-`invalid` and inactive is closed automatically after a few days; reopen it once fixed.
+When it fails, the pull request is labeled `invalid` and a comment lists every reason. Fix the
+points, push an update, and the check clears. A pull request left `invalid` and inactive is
+closed automatically after a few days; reopen it once fixed.
 
 - **A linked issue is required.** Link a valid, open issue in this repository with
   `Closes #<number>`.
@@ -76,8 +75,8 @@ accountability, not tooling:
 - **No AI agent as a git author or co-author.** Commits must not carry an AI agent in the
   `Author:` field or in a `Co-authored-by:` trailer. Accountability is to a human, and a
   co-author line names the agent as a contributor of record. Pull requests whose commits do
-  this are moved to draft and labeled `invalid` automatically, with a comment explaining how to
-  fix it (reset the commit author or drop the trailer, then mark ready for review).
+  this are labeled `invalid` automatically, with a comment explaining how to fix it (reset the
+  commit author or drop the trailer, then push an update).
 - **Disclosure is welcome.** If you used AI tools, note the model and harness in the optional
   disclosure section of the pull request. Disclosing your tools keeps review honest; it is
   never held against you. Please disclose there rather than in a commit trailer.
