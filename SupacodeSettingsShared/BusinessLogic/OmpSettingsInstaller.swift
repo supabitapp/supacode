@@ -1,8 +1,8 @@
 import Foundation
 
-private nonisolated let piInstallerLogger = SupaLogger("Settings")
+private nonisolated let ompInstallerLogger = SupaLogger("Settings")
 
-nonisolated struct PiSettingsInstaller {
+nonisolated struct OmpSettingsInstaller {
   let homeDirectoryURL: URL
   let fileManager: FileManager
 
@@ -26,15 +26,15 @@ nonisolated struct PiSettingsInstaller {
     // Install attempt rethrows the real read error to the reducer.
     do {
       let contents = try String(contentsOf: indexURL, encoding: .utf8)
-      guard contents.contains(PiExtensionContent.ownershipMarker) else {
+      guard contents.contains(OmpExtensionContent.ownershipMarker) else {
         return .notInstalled
       }
       // Marker present but content drift = older Supacode wrote this file;
       // surface as outdated so the user gets an Update affordance.
-      return contents == PiExtensionContent.indexTs ? .installed : .outdated
+      return contents == OmpExtensionContent.indexTs ? .installed : .outdated
     } catch {
-      piInstallerLogger.warning(
-        "Pi extension at \(indexURL.path(percentEncoded: false)) is unreadable: \(error)")
+      ompInstallerLogger.warning(
+        "OMP extension at \(indexURL.path(percentEncoded: false)) is unreadable: \(error)")
       return .notInstalled
     }
   }
@@ -52,22 +52,22 @@ nonisolated struct PiSettingsInstaller {
       } catch {
         // Surface the path so the reducer's generic localizedDescription
         // alone does not lose the file we were trying to probe.
-        piInstallerLogger.warning(
-          "Pi install pre-check: unable to read \(indexPath): \(error)")
+        ompInstallerLogger.warning(
+          "OMP install pre-check: unable to read \(indexPath): \(error)")
         throw error
       }
-      guard contents.contains(PiExtensionContent.ownershipMarker) else {
-        throw PiSettingsInstallerError.extensionNotManaged
+      guard contents.contains(OmpExtensionContent.ownershipMarker) else {
+        throw OmpSettingsInstallerError.extensionNotManaged
       }
     }
     let dirPath = extensionDirectoryURL.path(percentEncoded: false)
     try fileManager.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
-    try PiExtensionContent.indexTs.write(
+    try OmpExtensionContent.indexTs.write(
       to: extensionIndexURL,
       atomically: true,
       encoding: .utf8
     )
-    piInstallerLogger.info("Installed Pi extension at \(extensionIndexURL.path(percentEncoded: false))")
+    ompInstallerLogger.info("Installed OMP extension at \(extensionIndexURL.path(percentEncoded: false))")
   }
 
   // MARK: - Uninstall.
@@ -78,18 +78,18 @@ nonisolated struct PiSettingsInstaller {
     let indexPath = extensionIndexURL.path(percentEncoded: false)
     guard fileManager.fileExists(atPath: indexPath) else {
       try fileManager.removeItem(atPath: dirPath)
-      piInstallerLogger.info("Removed stale empty Pi extension directory at \(dirPath)")
+      ompInstallerLogger.info("Removed stale empty OMP extension directory at \(dirPath)")
       return
     }
     // Refuse to remove a user-authored extension at the managed path;
     // surface it as a typed error so the reducer can show `.failed(…)`
     // instead of silently flipping the UI to "not installed".
     let contents = try String(contentsOf: extensionIndexURL, encoding: .utf8)
-    guard contents.contains(PiExtensionContent.ownershipMarker) else {
-      throw PiSettingsInstallerError.extensionNotManaged
+    guard contents.contains(OmpExtensionContent.ownershipMarker) else {
+      throw OmpSettingsInstallerError.extensionNotManaged
     }
     try fileManager.removeItem(atPath: dirPath)
-    piInstallerLogger.info("Uninstalled Pi extension from \(dirPath)")
+    ompInstallerLogger.info("Uninstalled OMP extension from \(dirPath)")
   }
 
   // MARK: - Paths.
@@ -104,18 +104,18 @@ nonisolated struct PiSettingsInstaller {
 
   static func extensionDirectoryURL(homeDirectoryURL: URL) -> URL {
     homeDirectoryURL
-      .appending(path: ".pi/agent/extensions", directoryHint: .isDirectory)
-      .appending(path: PiExtensionContent.extensionDirectoryName, directoryHint: .isDirectory)
+      .appending(path: ".omp/agent/extensions", directoryHint: .isDirectory)
+      .appending(path: OmpExtensionContent.extensionDirectoryName, directoryHint: .isDirectory)
   }
 }
 
-nonisolated enum PiSettingsInstallerError: Error, Equatable, LocalizedError {
+nonisolated enum OmpSettingsInstallerError: Error, Equatable, LocalizedError {
   case extensionNotManaged
 
   var errorDescription: String? {
     switch self {
     case .extensionNotManaged:
-      "The Pi extension at ~/.pi/agent/extensions/supacode is not managed by Supacode."
+      "The OMP extension at ~/.omp/agent/extensions/supacode is not managed by Supacode."
     }
   }
 }

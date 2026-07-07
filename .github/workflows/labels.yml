@@ -1,0 +1,41 @@
+name: Sync labels
+
+# Ensures the labels the contribution workflows and issue forms depend on exist.
+# Upsert only: it creates or updates the labels below and never deletes any others,
+# so the repository's existing labels are left untouched.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/labels.yml
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const labels = [
+              { name: 'ready', color: '0e8a16', description: 'Approved for a pull request. Auto-applied to bugs; added by a maintainer for features.' },
+              { name: 'bug', color: 'd73a4a', description: "Something isn't working" },
+              { name: 'enhancement', color: 'a2eeef', description: 'New feature or request' },
+              { name: 'question', color: 'd876e3', description: 'A question about using or configuring Supacode' },
+              { name: 'invalid', color: 'e4e669', description: 'Does not meet the contribution policy; closed automatically after a few days if left inactive.' },
+            ];
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: label.name });
+                await github.rest.issues.updateLabel({ owner, repo, name: label.name, color: label.color, description: label.description });
+                core.info(`Updated label: ${label.name}`);
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ owner, repo, name: label.name, color: label.color, description: label.description });
+                core.info(`Created label: ${label.name}`);
+              }
+            }
