@@ -1,0 +1,70 @@
+name: Normalize issue titles
+
+# A title that leads with a `[Bug]` / `[Feature]` / `[Question]` style tag (from the issue forms,
+# copied by hand, or a near-synonym) gets the matching label if it is missing, then the tag is
+# stripped and the first letter capitalized so the stored title stays clean.
+on:
+  issues:
+    types: [opened, edited]
+
+concurrency:
+  # Serialize an issue's events so an `opened` plus a quick follow-up edit can't both rewrite the
+  # title at once. The bot's own update does not re-fire here: events from GITHUB_TOKEN don't
+  # trigger new workflow runs.
+  group: issue-normalize-${{ github.event.issue.number }}
+
+permissions:
+  issues: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const { owner, repo } = context.repo;
+
+            if (issue.pull_request) return; // Issues only.
+
+            // Near-synonyms all fold onto the three real labels.
+            const synonyms = {
+              bug: 'bug',
+              defect: 'bug',
+              broken: 'bug',
+              feature: 'enhancement',
+              'feature request': 'enhancement',
+              enhancement: 'enhancement',
+              improvement: 'enhancement',
+              request: 'enhancement',
+              question: 'question',
+              help: 'question',
+              support: 'question',
+            };
+
+            // Match a leading `[tag]` with an optional colon; the tag itself is matched loosely.
+            const match = issue.title.match(/^\s*\[\s*([^\]]+?)\s*\]\s*:?\s*/);
+            if (!match) return;
+
+            const key = match[1].toLowerCase().replace(/\s+/g, ' ');
+            const label = synonyms[key];
+            if (!label) return; // Unknown tag: leave the title untouched.
+
+            const hasLabel = issue.labels.some(
+              (l) => (typeof l === 'string' ? l : l.name).toLowerCase() === label,
+            );
+            if (!hasLabel) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [label] });
+            }
+
+            // Strip the tag and capitalize the first letter, leaving a first word that already
+            // carries casing (macOS, iOS, SwiftUI) untouched.
+            const stripped = issue.title.slice(match[0].length).trim();
+            const firstWord = stripped.split(/\s/, 1)[0];
+            const cleaned = /\p{Lu}/u.test(firstWord)
+              ? stripped
+              : stripped.replace(/\p{L}/u, (c) => c.toUpperCase());
+            if (cleaned && cleaned !== issue.title) {
+              await github.rest.issues.update({ owner, repo, issue_number: issue.number, title: cleaned });
+            }
