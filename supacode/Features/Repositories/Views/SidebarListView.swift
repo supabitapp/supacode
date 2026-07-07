@@ -308,13 +308,7 @@ private struct SidebarGitRepositorySection: View {
     Binding(
       get: { store.state.isRepositoryExpanded(repository.id) },
       set: { isExpanded in
-        // ⌘-click on the disclosure triangle expands / collapses every sidebar
-        // section at once; a plain click toggles just this repository.
-        if NSEvent.modifierFlags.contains(.command) {
-          store.send(.setAllSidebarGroupsExpanded(isExpanded))
-        } else {
-          store.send(.repositoryExpansionChanged(repository.id, isExpanded: isExpanded))
-        }
+        store.send(.repositoryExpansionChanged(repository.id, isExpanded: isExpanded))
       }
     )
   }

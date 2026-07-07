@@ -276,10 +276,8 @@ struct RepositoriesFeature {
       prefix: String,
       isExpanded: Bool
     )
-    /// Expand or collapse *every* sidebar group at once. Fired by a ⌘-click on
-    /// any sidebar disclosure (a repository section header or a nested branch
-    /// group header). `true` fully unfolds the tree — every repository section
-    /// plus every nested branch group; `false` folds every repository section.
+    /// Expand or collapse every sidebar group at once. Expanding also clears
+    /// every nested branch-group prefix so the tree opens fully.
     case setAllSidebarGroupsExpanded(Bool)
     case selectArchivedWorktrees
     case setSidebarSelectedWorktreeIDs(Set<Worktree.ID>)
@@ -3241,19 +3239,23 @@ struct RepositoriesFeature {
         return .none
 
       case .setAllSidebarGroupsExpanded(let isExpanded):
+        // Iterate the full roster, not just `sidebar.sections.keys`: the section
+        // map is sparse (a repo renders expanded until something writes an
+        // entry), so collapsing must materialize one for every repo.
+        let repositoryIDs = state.repositories.map(\.id)
         state.$sidebar.withLock { sidebar in
-          for repositoryID in Array(sidebar.sections.keys) {
+          for repositoryID in repositoryIDs {
+            guard isExpanded else {
+              // Collapse keeps branch-group prefixes so each group's layout
+              // survives when its section reopens.
+              sidebar.sections[repositoryID, default: .init()].collapsed = true
+              continue
+            }
+            // A repo with no entry is already fully open, so nothing to undo.
             guard var section = sidebar.sections[repositoryID] else { continue }
-            section.collapsed = !isExpanded
-            // Expanding "all" means fully open, so also clear every bucket's
-            // collapsed branch-group prefixes. Collapsing only folds the repo
-            // sections — the nested groups are already hidden underneath, and
-            // leaving their prefixes intact preserves the user's per-group
-            // layout for when the section is reopened.
-            if isExpanded {
-              for bucketID in Array(section.buckets.keys) {
-                section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
-              }
+            section.collapsed = false
+            for bucketID in Array(section.buckets.keys) {
+              section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
             }
             sidebar.sections[repositoryID] = section
           }
