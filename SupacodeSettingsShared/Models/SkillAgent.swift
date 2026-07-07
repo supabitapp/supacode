@@ -51,7 +51,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .hermes: "hermes-mark"
     case .kimi: "kimi-mark"
     case .kiro: "kiro-mark"
-    case .omp: "pi-mark"
+    case .omp: "omp-mark"
     case .opencode: "opencode-mark"
     case .pi: "pi-mark"
     }

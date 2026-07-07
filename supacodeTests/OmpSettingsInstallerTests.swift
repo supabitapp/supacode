@@ -46,7 +46,7 @@ struct OmpSettingsInstallerTests {
       at: indexURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    // Partial marker must not match — full-string containment is the contract.
+    // Partial marker must not match: full-string containment is the contract.
     try "/* supacode-managed".write(to: indexURL, atomically: true, encoding: .utf8)
 
     let installer = makeInstaller(homeDirectoryURL: home)
@@ -60,8 +60,8 @@ struct OmpSettingsInstallerTests {
       at: indexURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    // Lead bytes that are invalid UTF-8 — read should fail, not be confused
-    // with an installed/uninstalled state.
+    // Lead bytes that are invalid UTF-8: an unreadable file resolves to
+    // not-installed rather than crashing or false-positiving as installed.
     try Data([0xFF, 0xFE, 0xFD, 0x00]).write(to: indexURL)
 
     let installer = makeInstaller(homeDirectoryURL: home)
@@ -73,6 +73,33 @@ struct OmpSettingsInstallerTests {
     let installer = makeInstaller(homeDirectoryURL: home)
     try installer.install()
     #expect(installer.installState() == .installed)
+  }
+
+  @Test func installStateReturnsOutdatedWhenManagedBodyDrifted() throws {
+    let home = try makeTempHome()
+    let indexURL = extensionIndexURL(homeDirectoryURL: home)
+    try FileManager.default.createDirectory(
+      at: indexURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    // Marker present but body drifted from the current bundle: an older
+    // Supacode wrote this, so the user must get the Update affordance.
+    try "\(OmpExtensionContent.ownershipMarker)\n// stale body".write(
+      to: indexURL, atomically: true, encoding: .utf8)
+
+    #expect(makeInstaller(homeDirectoryURL: home).installState() == .outdated)
+  }
+
+  @Test func ompEmittedLifecycleEventsParseAsPresence() {
+    // Pin the emit-to-parse coupling end to end: the extension emits each
+    // literal and the parser still accepts it, so a HookEvent rename or an
+    // emitPresence typo can't silently kill presence over SSH.
+    for event in ["session_start", "busy", "idle", "session_end"] {
+      #expect(OmpExtensionContent.indexTs.contains("emitPresence(\"\(event)\")"))
+      let signal = AgentPresenceOSC.parse(id: "omp", metadata: "event=\(event)")
+      #expect(signal?.agent == "omp")
+      #expect(signal?.eventRawValue == event)
+    }
   }
 
   @Test func installCreatesExtensionFile() throws {
@@ -136,7 +163,7 @@ struct OmpSettingsInstallerTests {
       try installer.uninstall()
     }
     // Neither the file nor the enclosing directory may be touched when
-    // the guard fires — a user could be keeping siblings alongside it.
+    // the guard fires: a user could be keeping siblings alongside it.
     #expect(FileManager.default.fileExists(atPath: indexURL.path(percentEncoded: false)))
     let dirURL = OmpSettingsInstaller.extensionDirectoryURL(homeDirectoryURL: home)
     #expect(FileManager.default.fileExists(atPath: dirURL.path(percentEncoded: false)))
@@ -145,7 +172,7 @@ struct OmpSettingsInstallerTests {
   @Test func uninstallNoOpWhenDirectoryDoesNotExist() throws {
     let home = try makeTempHome()
     let installer = makeInstaller(homeDirectoryURL: home)
-    // Already uninstalled — silent no-op.
+    // Already uninstalled: silent no-op.
     try installer.uninstall()
   }
 
@@ -167,7 +194,7 @@ struct OmpSettingsInstallerTests {
       at: indexURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    // Seed a stale managed file — marker present but body drifted from
+    // Seed a stale managed file: marker present but body drifted from
     // the current bundle. Install must rewrite the full canonical body.
     let staleBody = "\(OmpExtensionContent.ownershipMarker)\n// stale body"
     try staleBody.write(to: indexURL, atomically: true, encoding: .utf8)
@@ -199,14 +226,14 @@ struct OmpSettingsInstallerTests {
 
   @Test func installCreatesFullDirectoryChainWhenMissing() throws {
     let home = try makeTempHome()
-    // No `.omp` directory exists at all — install must create the whole chain.
+    // No `.omp` directory exists at all: install must create the whole chain.
     let ompDir = home.appending(path: ".omp", directoryHint: .isDirectory)
     #expect(!FileManager.default.fileExists(atPath: ompDir.path(percentEncoded: false)))
 
     let installer = makeInstaller(homeDirectoryURL: home)
     try installer.install()
 
-    // Lock the `.omp/agent/extensions/<name>` layout — a reshuffle of the
+    // Lock the `.omp/agent/extensions/<name>` layout: a reshuffle of the
     // managed paths would otherwise slip past `installState()`.
     let dirURL = OmpSettingsInstaller.extensionDirectoryURL(homeDirectoryURL: home)
     #expect(FileManager.default.fileExists(atPath: dirURL.path(percentEncoded: false)))

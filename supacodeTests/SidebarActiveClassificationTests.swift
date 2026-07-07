@@ -1,4 +1,5 @@
 import Foundation
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode

@@ -74,6 +74,12 @@ nonisolated enum OmpExtensionContent {
           // half OSC 3008 with no ST (ESC\\) and corrupt the terminal parser.
           const bytes = Buffer.from(sequence, "utf8");
           let offset = 0;
+          // Reusable cell backing the EAGAIN backoff sleep.
+          const backoffCell = new Int32Array(new SharedArrayBuffer(4));
+          // Cap EAGAIN retries that make no progress and back off between them,
+          // so a wedged tty degrades to the outer catch (throttled warn + inert)
+          // instead of pinning a core in an unbounded spin.
+          let stalledWrites = 0;
           while (offset < bytes.length) {
             try {
               const written = writeSync(fd, bytes, offset, bytes.length - offset);
@@ -81,10 +87,18 @@ nonisolated enum OmpExtensionContent {
                 throw new Error(`short write (${offset}/${bytes.length} bytes)`);
               }
               offset += written;
+              stalledWrites = 0;
             } catch (writeErr) {
-              // Retry interrupted / non-blocking transient errors; abort on anything else.
               const code = (writeErr as NodeJS.ErrnoException).code;
-              if (code === "EINTR" || code === "EAGAIN") continue;
+              // EINTR is a signal artifact, not a stall: retry immediately.
+              if (code === "EINTR") continue;
+              // EAGAIN means the tty is momentarily full: back off, and give up
+              // once it never drains so the emit degrades instead of spinning.
+              if (code === "EAGAIN" && stalledWrites < 100) {
+                stalledWrites++;
+                Atomics.wait(backoffCell, 0, 0, 5);
+                continue;
+              }
               throw writeErr;
             }
           }
