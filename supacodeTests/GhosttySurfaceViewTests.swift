@@ -214,15 +214,66 @@ struct GhosttySurfaceViewTests {
     )
   }
 
-  @Test func imageCommandVDoesNotOverrideGhosttyBinding() {
+  @Test func imageCommandVIgnoresRichTextAndUrlRepresentations() {
+    // Browser / Preview image copies carry TIFF alongside RTF, HTML, or a URL; those paste as text.
     #expect(
       !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
         event: Self.commandV(),
-        pasteboardTypes: [.tiff],
+        pasteboardTypes: [NSPasteboard.PasteboardType("public.rtf"), .tiff],
         imagePasteAgents: [.claude],
         keySequenceActive: false,
-        keyTableDepth: 0,
-        hasGhosttyBinding: true
+        keyTableDepth: 0
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [NSPasteboard.PasteboardType("public.html"), .tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.URL, .tiff],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+  }
+
+  @Test func imageCommandVRoutesForNonTiffImageType() {
+    #expect(
+      GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.png],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+  }
+
+  @Test func imageCommandVDoesNotRouteWithoutImageType() {
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [],
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+    #expect(
+      !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: nil,
+        imagePasteAgents: [.claude],
+        keySequenceActive: false,
+        keyTableDepth: 0
       )
     )
   }

@@ -1201,6 +1201,9 @@ struct AppFeature {
     return agentSnapshotEffects(for: affectedRowIDs, state: state, badgesEnabled: badgesEnabled)
   }
 
+  // Per-surface fan-out, deliberately separate from `agentPresenceFanOutEffect`:
+  // it pushes the raw agent set to each `GhosttySurfaceView` for paste routing and
+  // must not inherit the badge (`agentPresenceBadgesEnabled`) gate.
   private func imagePasteAgentFanOutEffect(
     surfaces: Set<UUID>,
     state: State

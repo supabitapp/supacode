@@ -94,6 +94,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var focused = false
   private var markedText = NSMutableAttributedString()
   private var keyboardLayoutChangeKeyUpSuppression: KeyboardLayoutChangeKeyUpSuppression?
+  // Agent presence pushed from app state; gates Cmd+V image-paste routing.
   var imagePasteAgents: Set<SkillAgent> = []
   private var keyTextAccumulator: [String]?
   private var cellSize: CGSize = .zero
@@ -1106,12 +1107,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
     // answer so a click on the sidebar lets ⌘⌫ reach the main menu.
     guard focused, window?.firstResponder === self else { return false }
 
-    let bindingFlags = bindingFlags(for: event, surface: surface)
-    if routeCommandPasteToNativeImagePasteIfNeeded(event, hasGhosttyBinding: bindingFlags != nil) {
+    // Image-only Cmd+V routes to Claude's native Ctrl+V paste before binding
+    // resolution, intentionally overriding the default `super+v=paste_from_clipboard`
+    // binding (which would otherwise drop the image).
+    if routeCommandPasteToNativeImagePasteIfNeeded(event) {
       return true
     }
 
-    if let bindingFlags {
+    if let bindingFlags = bindingFlags(for: event, surface: surface) {
       // Forward to the menu only when the chord resolves to an app-owned item, so Ghostty-only
       // shortcuts like `⌘⇧,` aren't eaten by AppKit's menu-matching quirks. A chord with no
       // forwardable item (e.g. `⌘⌥H` Hide Others vs a `goto_split` binding) falls through to
@@ -1149,39 +1152,41 @@ final class GhosttySurfaceView: NSView, Identifiable {
     return true
   }
 
-  private func routeCommandPasteToNativeImagePasteIfNeeded(_ event: NSEvent, hasGhosttyBinding: Bool) -> Bool {
+  private func routeCommandPasteToNativeImagePasteIfNeeded(_ event: NSEvent) -> Bool {
     guard
       Self.shouldRouteCommandPasteToNativeImagePaste(
         event: event,
         pasteboardTypes: NSPasteboard.general.types,
         imagePasteAgents: imagePasteAgents,
         keySequenceActive: bridge.state.keySequenceActive == true,
-        keyTableDepth: bridge.state.keyTableDepth,
-        hasGhosttyBinding: hasGhosttyBinding
+        keyTableDepth: bridge.state.keyTableDepth
       )
     else {
       return false
     }
-    guard let nativeEvent = Self.nativeImagePasteEvent(from: event) else { return false }
+    guard let nativeEvent = Self.nativeImagePasteEvent(from: event) else {
+      surfaceLogger.error("Cmd+V image paste matched but Ctrl+V synthesis returned nil; falling back to default paste.")
+      return false
+    }
     keyDown(with: nativeEvent)
     return true
   }
 
+  // `pasteboardTypes` is an autoclosure so the cross-process pasteboard read only
+  // happens once the cheap local gates pass, not on every Cmd chord.
   static func shouldRouteCommandPasteToNativeImagePaste(
     event: NSEvent,
-    pasteboardTypes: [NSPasteboard.PasteboardType]?,
+    pasteboardTypes: @autoclosure () -> [NSPasteboard.PasteboardType]?,
     imagePasteAgents: Set<SkillAgent>,
     keySequenceActive: Bool,
-    keyTableDepth: Int,
-    hasGhosttyBinding: Bool = false
+    keyTableDepth: Int
   ) -> Bool {
     guard event.type == .keyDown else { return false }
-    guard !hasGhosttyBinding else { return false }
     guard !keySequenceActive, keyTableDepth == 0 else { return false }
     guard imagePasteAgents.contains(.claude) else { return false }
     guard isExactCommandV(event) else { return false }
-    guard let pasteboardTypes, pasteboardTypes.contains(where: isImagePasteboardType) else { return false }
-    return pasteboardTypes.allSatisfy { !isTextOrFilePasteboardType($0) }
+    guard let types = pasteboardTypes(), types.contains(where: isImagePasteboardType) else { return false }
+    return types.allSatisfy { !isTextOrFilePasteboardType($0) }
   }
 
   static func nativeImagePasteEvent(from event: NSEvent) -> NSEvent? {

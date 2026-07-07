@@ -360,6 +360,35 @@ struct AppFeatureArchivedSelectionTests {
     #expect(sentCommands.value == [.setImagePasteAgents(surfaceID: surfaceID, agents: [.claude])])
   }
 
+  @Test(.dependencies) func agentExitFansOutEmptyImagePasteAgentsToStopRouting() async {
+    // A surface whose agent went away carries no `bySurface` entry; the fan-out must
+    // push the empty set so Cmd+V stops routing to Claude's native paste.
+    let surfaceID = UUID()
+    let appState = AppFeature.State(
+      repositories: RepositoriesFeature.State(),
+      settings: SettingsFeature.State()
+    )
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let clock = TestClock()
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.agentPresence(.delegate(.surfacesChanged([surfaceID]))))
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+
+    #expect(sentCommands.value == [.setImagePasteAgents(surfaceID: surfaceID, agents: [])])
+  }
+
   @Test(.dependencies) func presenceDeltaWithinDebounceWindowCoalescesIntoOneWrite() async {
     let surfaceID = UUID()
     var appState = AppFeature.State(

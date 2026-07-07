@@ -1208,6 +1208,18 @@ final class WorktreeTerminalState {
       onTabCreated?()
     }
 
+    // Seed image-paste routing from the snapshot's per-surface agent records, matching
+    // the presence restore's liveness filter: an unopened worktree drains its rehydrate
+    // fan-out before the surface exists, and a dead-pid record never gets a corrective
+    // empty fan-out, so seeding only live agents keeps Cmd+V from routing into a stale shell.
+    for record in snapshot.allAgentRecords() {
+      let liveAgents = record.records.compactMap {
+        $0.pids.contains(where: AgentPresenceFeature.isAlive) ? SkillAgent(rawValue: $0.agent) : nil
+      }
+      guard !liveAgents.isEmpty else { continue }
+      surfaces[record.surfaceID]?.imagePasteAgents = Set(liveAgents)
+    }
+
     // Select the correct tab.
     let selectedIndex = max(0, min(snapshot.selectedTabIndex, tabManager.tabs.count - 1))
     if selectedIndex < tabManager.tabs.count {
