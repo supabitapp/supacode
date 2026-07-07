@@ -137,4 +137,41 @@ struct GrokSettingsInstallerTests {
     #expect(text.contains(AgentHookSettingsCommand.ownershipMarker))
     #expect(installer.installState() == .installed)
   }
+
+  @Test func uninstallPreservesUserAuthoredHooksInSameFile() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(
+      at: settingsURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    let existing = """
+      {
+        "hooks": {
+          "PostToolUse": [
+            {
+              "hooks": [
+                {
+                  "type": "command",
+                  "command": "prettier --write"
+                }
+              ]
+            }
+          ]
+        }
+      }
+      """
+    try existing.write(to: settingsURL, atomically: true, encoding: .utf8)
+
+    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+    try installer.uninstallAllHooks()
+
+    let text = try String(contentsOf: settingsURL, encoding: .utf8)
+    #expect(text.contains("prettier --write"))
+    #expect(!text.contains(AgentHookSettingsCommand.ownershipMarker))
+    #expect(installer.installState() == .notInstalled)
+  }
 }

@@ -40,15 +40,14 @@ struct GrokHookSettingsTests {
   }
 
   @Test func grokEmittedLifecycleEventsParseAsPresence() throws {
-    // Pin the emit-to-parse coupling end to end: each composite command still
-    // carries the OSC event literal and the parser accepts it, so a HookEvent
-    // rename or a compositeCommand typo can't silently kill presence over SSH.
+    // Pin the emit-to-parse coupling end to end: pull each event's metadata
+    // straight from the emitted OSC sequence and run it through the real parser,
+    // so a HookEvent rename, a compositeCommand typo, or an OSC framing bug
+    // can't silently kill presence over SSH.
     let commands = try Self.commandStrings(from: try GrokHookSettings.hooksByEvent())
-    for event in ["session_start", "busy", "idle", "session_end"] {
-      #expect(commands.contains { $0.contains("event=\(event)") })
-      let signal = AgentPresenceOSC.parse(id: "grok", metadata: "event=\(event)")
-      #expect(signal?.agent == "grok")
-      #expect(signal?.eventRawValue == event)
+    let signals = commands.flatMap { Self.parsedPresenceSignals(in: $0) }
+    for event in ["session_start", "busy", "idle", "awaiting_input", "session_end"] {
+      #expect(signals.contains { $0.agent == "grok" && $0.eventRawValue == event })
     }
   }
 
@@ -71,6 +70,18 @@ struct GrokHookSettingsTests {
     case .int(let timeout): return timeout
     case .double(let timeout): return Int(timeout)
     default: return nil
+    }
+  }
+
+  /// Parse every OSC 3008 presence signal a composite command emits, mirroring
+  /// libghostty's `id;metadata` split. The `%s` pid placeholder is dropped to
+  /// match the no-pid remote wire the parser receives over SSH.
+  private static func parsedPresenceSignals(in command: String) -> [AgentPresenceOSC.Signal] {
+    command.components(separatedBy: "]3008;").dropFirst().compactMap { chunk in
+      guard let stEnd = chunk.range(of: #"\033"#) else { return nil }
+      let sequence = chunk[..<stEnd.lowerBound].replacing("%s", with: "")
+      guard let idEnd = sequence.firstIndex(of: ";") else { return nil }
+      return AgentPresenceOSC.parse(id: "grok", metadata: String(sequence[sequence.index(after: idEnd)...]))
     }
   }
 

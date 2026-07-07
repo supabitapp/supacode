@@ -49,6 +49,7 @@ private nonisolated struct GrokHooksPayload: Encodable {
     ],
     "PreToolUse": [
       .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5)]),
+      // Array-order: matched-by-name fires AFTER matcher-"", so awaiting wins.
       .init(
         matcher: Self.awaitingInputToolMatcher,
         hooks: [.init(command: Self.awaitingInput, timeout: 5)]

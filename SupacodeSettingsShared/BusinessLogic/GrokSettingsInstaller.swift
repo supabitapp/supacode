@@ -1,8 +1,8 @@
 import Foundation
 
-/// Top-level installer for Grok hooks. Owns `~/.grok/hooks/supacode.json`;
-/// Grok merges every JSON file in that directory, so Supacode writes only
-/// its own file (same pattern as Copilot's `~/.copilot/hooks/supacode.json`).
+/// Top-level installer for Grok hooks. Owns a dedicated `~/.grok/hooks/supacode.json`
+/// in the shared hooks dir (like Copilot's layout), but merges into it with the
+/// Claude-style prune-and-replace installer, so user-authored hooks in that file survive.
 nonisolated struct GrokSettingsInstaller {
   static let hookFileName = "supacode.json"
 
