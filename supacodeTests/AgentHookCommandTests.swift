@@ -19,6 +19,31 @@ struct AgentHookCommandTests {
     #expect(command.contains("event=idle"))
   }
 
+  // MARK: - AgentCommandHook env encoding.
+
+  @Test func commandHookOmitsEnvWhenNil() throws {
+    let encoded = try Self.encodeHook(.init(command: "run", timeout: 5))
+    #expect(encoded["env"] == nil)
+  }
+
+  @Test func commandHookOmitsEnvWhenEmpty() throws {
+    // An empty map must not serialize as `"env": {}`, so agents without a
+    // passthrough (Claude, Codex) keep their bare hook shape.
+    let encoded = try Self.encodeHook(.init(command: "run", timeout: 5, env: [:]))
+    #expect(encoded["env"] == nil)
+  }
+
+  @Test func commandHookEncodesNonEmptyEnv() throws {
+    let encoded = try Self.encodeHook(
+      .init(command: "run", timeout: 5, env: ["SUPACODE_SURFACE_ID": "${SUPACODE_SURFACE_ID}"]))
+    #expect(encoded["env"]?.objectValue?["SUPACODE_SURFACE_ID"]?.stringValue == "${SUPACODE_SURFACE_ID}")
+  }
+
+  private static func encodeHook(_ hook: AgentCommandHook) throws -> [String: JSONValue] {
+    let data = try JSONEncoder().encode(hook)
+    return try JSONDecoder().decode(JSONValue.self, from: data).objectValue ?? [:]
+  }
+
   // MARK: - Claude canonical hook map.
 
   @Test func claudePostToolUseFiresIdleNotBusy() throws {

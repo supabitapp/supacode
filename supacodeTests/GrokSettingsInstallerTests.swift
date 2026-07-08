@@ -11,6 +11,39 @@ struct GrokSettingsInstallerTests {
       .appendingPathComponent("supacode-grok-installer-\(UUID().uuidString)", isDirectory: true)
   }
 
+  /// Rewrites every hook's `env` map on disk via `transform`; returning nil
+  /// drops the `env` key. Simulates an older install whose commands still
+  /// match but whose env passthrough is absent, partial, or drifted.
+  private func rewriteManagedHookEnv(
+    at settingsURL: URL,
+    transform: ([String: JSONValue]?) -> [String: JSONValue]?
+  ) throws {
+    let data = try Data(contentsOf: settingsURL)
+    guard
+      var rootObject = try JSONDecoder().decode(JSONValue.self, from: data).objectValue,
+      var hooksObject = rootObject["hooks"]?.objectValue
+    else { return }
+    for (event, value) in hooksObject {
+      guard let groups = value.arrayValue else { continue }
+      hooksObject[event] = .array(
+        groups.map { group in
+          guard
+            var groupObject = group.objectValue,
+            let hooks = groupObject["hooks"]?.arrayValue
+          else { return group }
+          groupObject["hooks"] = .array(
+            hooks.map { hook in
+              guard var hookObject = hook.objectValue else { return hook }
+              hookObject["env"] = transform(hookObject["env"]?.objectValue).map { .object($0) }
+              return .object(hookObject)
+            })
+          return .object(groupObject)
+        })
+    }
+    rootObject["hooks"] = .object(hooksObject)
+    try JSONEncoder().encode(JSONValue.object(rootObject)).write(to: settingsURL)
+  }
+
   @Test func installStateIsNotInstalledWhenFileMissing() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
@@ -40,31 +73,51 @@ struct GrokSettingsInstallerTests {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
+    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+    #expect(installer.installState() == .installed)
+
+    // An older install carries the full canonical command set but no env
+    // blocks. The command set still matches, so only the env check can flag it.
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
-    try fileManager.createDirectory(
-      at: settingsURL.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    let command = AgentHookSettingsCommand.compositeCommand(
-      events: [.sessionStart], forwardStdinAsNotification: false, agent: .grok)
-    let stale: JSONValue = .object([
-      "hooks": .object([
-        "SessionStart": .array([
-          .object([
-            "hooks": .array([
-              .object([
-                "type": "command",
-                "command": .string(command),
-                "timeout": 5,
-              ])
-            ])
-          ])
-        ])
-      ])
-    ])
-    try JSONEncoder().encode(stale).write(to: settingsURL)
+    try rewriteManagedHookEnv(at: settingsURL) { _ in nil }
+
+    #expect(installer.installState() == .outdated)
+  }
+
+  @Test func installStateReturnsOutdatedWhenEnvPassthroughIncomplete() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+    #expect(installer.installState() == .installed)
+
+    // Only the surface id survives: a partial env map is still outdated.
+    let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try rewriteManagedHookEnv(at: settingsURL) { _ in
+      ["SUPACODE_SURFACE_ID": .string("${SUPACODE_SURFACE_ID}")]
+    }
+
+    #expect(installer.installState() == .outdated)
+  }
+
+  @Test func installStateReturnsOutdatedWhenEnvPassthroughValueDrifted() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+    #expect(installer.installState() == .installed)
+
+    // A stale literal value (not the `${VAR}` expansion) is outdated.
+    let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try rewriteManagedHookEnv(at: settingsURL) { env in
+      var env = env ?? [:]
+      env["SUPACODE_SURFACE_ID"] = .string("stale")
+      return env
+    }
+
     #expect(installer.installState() == .outdated)
   }
 

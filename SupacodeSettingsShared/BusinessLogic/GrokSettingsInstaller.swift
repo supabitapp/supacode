@@ -29,9 +29,7 @@ nonisolated struct GrokSettingsInstaller {
     }
     let base = fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
     guard base == .installed else { return base }
-    if GrokHookSettings.managedHooksLackEnvPassthrough(
-      at: settingsURL, fileManager: fileManager
-    ) {
+    if GrokHookSettings.managedHooksLackEnvPassthrough(at: settingsURL) {
       return .outdated
     }
     return .installed
