@@ -2158,9 +2158,8 @@ final class WorktreeTerminalState {
   }
 
   /// Detaches one surface from the local bookkeeping. The zmx session is NOT
-  /// killed here; callers route the kill through `killZmxSessions(forSurfaceIDs:)`
-  /// so a single multi-pane close emits one `count=N` analytics event + one
-  /// `withTaskGroup` instead of N events and N detached Tasks.
+  /// killed here; callers compute the Supacode-owned session IDs before this
+  /// drops launch metadata, then kill the batch afterwards.
   /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
   /// instant so a future surface ID can't reuse stale dedupe state.
   private func discardSurfaceBookkeeping(for surfaceID: UUID) {
@@ -2177,7 +2176,7 @@ final class WorktreeTerminalState {
     onSurfacesClosed?([surfaceID])
   }
 
-  /// Tears down persistent zmx sessions for surfaces the user just closed.
+  /// Tears down persistent zmx sessions the user just closed.
   /// `isBundled` (not `executableURL`) is the gate so sessions created on a
   /// previous under-budget launch still tear down when this launch exceeds the
   /// socket budget. One analytics event + one `withTaskGroup` per call.
@@ -2186,11 +2185,6 @@ final class WorktreeTerminalState {
   /// (clean remote exit, deliberate host-side detach, or a reconnect abort)
   /// spares the host session. Externally adopted sessions are skipped because
   /// their lifecycle is managed by the caller.
-  private func killZmxSessions(forSurfaceIDs surfaceIDs: [UUID], includeRemote: Bool = false) {
-    let sessionIDs = ownedZmxSessionIDs(forSurfaceIDs: surfaceIDs)
-    killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemote)
-  }
-
   private func killZmxSessions(forSessionIDs sessionIDs: [String], includeRemote: Bool = false) {
     guard !sessionIDs.isEmpty else { return }
     let killLocal = zmxClient.isBundled()
