@@ -939,6 +939,58 @@ struct WorktreeTerminalManagerTests {
     #expect(remoteKills.filter { $0 == .init(authority: "devbox", sessionID: staleSessionID) }.count == 1)
   }
 
+  @Test func reAdoptingSameZmxSessionDoesNotStealFocus() {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let primaryTabID = state.createTab(focusing: true) else {
+      Issue.record("Expected primary tab")
+      return
+    }
+    let requestedID = UUID()
+    let terminalTabID = TerminalTabID(rawValue: requestedID)
+
+    _ = state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: requestedID)
+    state.tabManager.selectTab(primaryTabID)
+    _ = state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: requestedID)
+
+    #expect(state.tabManager.selectedTabId == primaryTabID)
+    #expect(state.tabManager.tabs.map(\.id) == [primaryTabID, terminalTabID])
+  }
+
+  @Test func closeAdoptedZmxTabDoesNotKillExternalSession() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    let requestedID = UUID()
+    let terminalTabID = TerminalTabID(rawValue: requestedID)
+
+    _ = state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: requestedID)
+    state.closeTab(terminalTabID)
+
+    let killed = await probe.killedSessions()
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(killed.isEmpty)
+    #expect(remoteKills.isEmpty)
+  }
+
+  @Test func pruneSkipsAdoptedExternalZmxSessions() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+
+    _ = state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: UUID())
+    manager.prune(keeping: [])
+
+    let killed = await probe.killedSessions()
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(killed.isEmpty)
+    #expect(remoteKills.isEmpty)
+  }
+
   @Test func unexpectedRemoteSurfaceExitSparesHostSession() async {
     // A non-explicit close (clean remote exit or a deliberate host-side
     // detach) must not tear down the host session.
@@ -2637,6 +2689,26 @@ struct WorktreeTerminalManagerTests {
     // readonly on completion), so it must not be persisted into the layout.
     #expect(snapshot.tabs.count == 1)
     #expect(snapshot.tabs.first?.title != "Archive Script")
+  }
+
+  @Test func captureLayoutSnapshotExcludesAdoptedExternalZmxTabs() {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let regularTabID = state.createTab() else {
+      Issue.record("Expected regular tab")
+      return
+    }
+
+    _ = state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: UUID())
+
+    guard let snapshot = state.captureLayoutSnapshot() else {
+      Issue.record("Expected non-nil snapshot")
+      return
+    }
+    #expect(snapshot.tabs.map(\.id) == [regularTabID.rawValue])
+    #expect(snapshot.selectedTabIndex == 0)
   }
 
   @Test func captureLayoutSnapshotExcludesCompletedBlockingScriptTabs() async {

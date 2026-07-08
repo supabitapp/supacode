@@ -359,7 +359,7 @@ final class WorktreeTerminalState {
     if hasTab(terminalTabID) {
       if externalZmxSessionID(in: terminalTabID) == sessionID {
         if let title { tabManager.setCustomTitle(terminalTabID, title: title) }
-        if focusing { selectTab(terminalTabID) }
+        // Re-applying the same external session is a sync no-op; do not steal focus.
         return terminalTabID
       }
       closeTab(terminalTabID)
@@ -590,6 +590,12 @@ final class WorktreeTerminalState {
     return nil
   }
 
+  private func tabContainsExternalZmxSession(_ tabID: TerminalTabID) -> Bool {
+    surfaceIDs(inTab: tabID).contains { surfaceID in
+      surfaceLaunchMetadata[surfaceID]?.externalZmxSessionID != nil
+    }
+  }
+
   func hasTab(_ tabId: TerminalTabID) -> Bool {
     tabManager.tabs.contains(where: { $0.id == tabId })
   }
@@ -603,6 +609,14 @@ final class WorktreeTerminalState {
   /// All surface IDs across every tab in this worktree state.
   var allSurfaceIDs: [UUID] {
     trees.values.flatMap { $0.leaves().map(\.id) }
+  }
+
+  /// zmx session IDs whose lifecycle is owned by Supacode for these surfaces.
+  func ownedZmxSessionIDs(forSurfaceIDs surfaceIDs: [UUID]) -> [String] {
+    surfaceIDs.compactMap { surfaceID -> String? in
+      guard surfaceLaunchMetadata[surfaceID]?.externalZmxSessionID == nil else { return nil }
+      return ZmxSessionID.make(surfaceID: surfaceID)
+    }
   }
 
   /// Host of a remote worktree, nil for local. Every surface in this state
@@ -1157,6 +1171,9 @@ final class WorktreeTerminalState {
     for tab in tabManager.tabs {
       // Blocking-script tabs die with the app; persisting them would resurrect a dead session.
       if tab.isBlockingScript { continue }
+      // Externally managed zmx sessions must be re-adopted by their owner; persisting
+      // them as normal tabs would restore a shell that is no longer attached.
+      if tabContainsExternalZmxSession(tab.id) { continue }
       guard let tree = trees[tab.id], let root = tree.root else {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
@@ -2164,19 +2181,21 @@ final class WorktreeTerminalState {
   /// `isBundled` (not `executableURL`) is the gate so sessions created on a
   /// previous under-budget launch still tear down when this launch exceeds the
   /// socket budget. One analytics event + one `withTaskGroup` per call.
-  /// `includeRemote` also tears down the host-side sessions of a remote
-  /// worktree; only explicit close paths set it, so a non-explicit end (clean
-  /// remote exit, deliberate host-side detach, or a reconnect abort) spares
-  /// the host session. The remote kill is unconditional on explicit close (no
-  /// per-surface persistence gate): a host session may exist from an earlier
-  /// launch regardless of the current toggle, and the kill invocation is a
-  /// silent no-op when nothing exists.
+  /// `includeRemote` also tears down Supacode-owned host-side sessions of a
+  /// remote worktree; only explicit close paths set it, so a non-explicit end
+  /// (clean remote exit, deliberate host-side detach, or a reconnect abort)
+  /// spares the host session. Externally adopted sessions are skipped because
+  /// their lifecycle is managed by the caller.
   private func killZmxSessions(forSurfaceIDs surfaceIDs: [UUID], includeRemote: Bool = false) {
-    guard !surfaceIDs.isEmpty else { return }
+    let sessionIDs = ownedZmxSessionIDs(forSurfaceIDs: surfaceIDs)
+    killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemote)
+  }
+
+  private func killZmxSessions(forSessionIDs sessionIDs: [String], includeRemote: Bool = false) {
+    guard !sessionIDs.isEmpty else { return }
     let killLocal = zmxClient.isBundled()
     let host = includeRemote ? worktree.host : nil
     guard killLocal || host != nil else { return }
-    let sessionIDs = surfaceIDs.map(ZmxSessionID.make(surfaceID:))
     let client = zmxClient
     analyticsClient.capture(
       "terminal_persistence_session_killed",
@@ -2203,11 +2222,12 @@ final class WorktreeTerminalState {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
     surfaceGenerationByTab.removeValue(forKey: tabId)
     let leafIDs = tree.leaves().map(\.id)
+    let sessionIDs = ownedZmxSessionIDs(forSurfaceIDs: leafIDs)
     for surface in tree.leaves() {
       surface.closeSurface()
       cleanupSurfaceState(for: surface.id)
     }
-    killZmxSessions(forSurfaceIDs: leafIDs, includeRemote: true)
+    killZmxSessions(forSessionIDs: sessionIDs, includeRemote: true)
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     if lastTabProjections.removeValue(forKey: tabId) != nil {
       onTabRemoved?(tabId)

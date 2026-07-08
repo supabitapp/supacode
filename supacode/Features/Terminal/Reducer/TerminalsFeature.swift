@@ -56,7 +56,8 @@ struct TerminalsFeature {
         if state.terminalTabs[id: tabID] == nil {
           // Drop stale empty projections arriving after the tab was removed in
           // this worktree, while still allowing an immediate same-ID re-add
-          // once it has a live surface.
+          // once it has a live surface. Today a non-empty projection after
+          // removal means the tree was synchronously rebuilt with that ID.
           if let recentlyRemovedIndex = state.recentlyRemovedTabIDs.firstIndex(where: {
             $0.worktreeID == worktreeID && $0.tabID == tabID
           }) {

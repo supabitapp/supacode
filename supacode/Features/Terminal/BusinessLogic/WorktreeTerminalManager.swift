@@ -657,7 +657,7 @@ final class WorktreeTerminalManager {
     }
     let prunedSurfaceIDs = Set(removed.flatMap { _, state in state.allSurfaceIDs })
     let prunedSessionIDs = removed.flatMap { _, state in
-      state.allSurfaceIDs.map { ZmxSessionID.make(surfaceID: $0) }
+      state.ownedZmxSessionIDs(forSurfaceIDs: state.allSurfaceIDs)
     }
     let prunedRemoteSessions = Self.remoteSessions(in: removed.map(\.1))
     for (id, state) in removed {
@@ -684,16 +684,16 @@ final class WorktreeTerminalManager {
     killZmxSessions(prunedSessionIDs, remoteSessions: prunedRemoteSessions)
   }
 
-  /// Host-side zmx sessions owned by the given states, one entry per surface
-  /// of each remote worktree. Unconditional on the persistence toggle: a host
-  /// session may exist from an earlier launch, and the kill invocation is a
-  /// silent no-op when nothing exists.
+  /// Host-side zmx sessions owned by the given states, one entry per owned
+  /// surface of each remote worktree. Unconditional on the persistence toggle:
+  /// a host session may exist from an earlier launch, and the kill invocation
+  /// is a silent no-op when nothing exists.
   private static func remoteSessions(
     in states: [WorktreeTerminalState]
   ) -> [(host: RemoteHost, sessionID: String)] {
     states.flatMap { state -> [(host: RemoteHost, sessionID: String)] in
       guard let host = state.remoteHost else { return [] }
-      return state.allSurfaceIDs.map { (host, ZmxSessionID.make(surfaceID: $0)) }
+      return state.ownedZmxSessionIDs(forSurfaceIDs: state.allSurfaceIDs).map { (host, $0) }
     }
   }
 
