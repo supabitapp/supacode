@@ -74,7 +74,9 @@ final class TerminalTabManager {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     guard !tabs[index].isTitleLocked else { return }
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-    tabs[index].customTitle = trimmed.isEmpty ? nil : trimmed
+    let customTitle = trimmed.isEmpty ? nil : trimmed
+    guard tabs[index].customTitle != customTitle else { return }
+    tabs[index].customTitle = customTitle
   }
 
   func isBlockingScript(_ id: TerminalTabID) -> Bool {

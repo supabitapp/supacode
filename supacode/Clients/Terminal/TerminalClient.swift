@@ -35,6 +35,7 @@ struct TerminalClient {
   enum Command: Equatable {
     case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil)
     case createTabWithInput(Worktree, input: String, runSetupScriptIfNew: Bool, id: UUID? = nil)
+    case adoptZmxSession(Worktree, sessionID: String, title: String?, id: UUID)
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case stopRunScript(Worktree)
     case stopScript(Worktree, definitionID: UUID)

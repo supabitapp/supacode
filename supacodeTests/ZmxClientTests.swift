@@ -33,6 +33,24 @@ struct ZmxSessionIDTests {
 }
 
 @MainActor
+struct ZmxExternalSessionNameTests {
+  @Test func normalizedTrimsSupportedNames() {
+    #expect(
+      ZmxExternalSessionName.normalized("  devbox tiktok@1:main_ok  ")
+        == "devbox tiktok@1:main_ok"
+    )
+  }
+
+  @Test func normalizedRejectsEmptyAndUnsupportedNames() {
+    #expect(ZmxExternalSessionName.normalized("  \n ") == nil)
+    #expect(ZmxExternalSessionName.normalized("devbox/tiktok") == nil)
+    #expect(ZmxExternalSessionName.normalized(".") == nil)
+    #expect(ZmxExternalSessionName.normalized("..") == nil)
+    #expect(ZmxExternalSessionName.normalized("devbox\u{7f}tiktok") == nil)
+  }
+}
+
+@MainActor
 struct ZmxAttachTests {
   @Test func buildCommandWithoutUserCommandUsesAttachOnly() {
     let cmd = ZmxAttach.buildCommand(
@@ -97,6 +115,21 @@ struct ZmxAttachTests {
     #expect(argv[0] == "/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx")
     #expect(argv[1] == "attach")
     #expect(argv[2] == "supa-1")
+  }
+
+  @Test func buildExternalAttachCommandAttachesExistingSession() {
+    let cmd = ZmxAttach.buildExternalAttachCommand(
+      executablePath: "/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx",
+      sessionID: "devbox tiktok@1:main_ok"
+    )
+    #expect(
+      cmd
+        == "'/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx' attach 'devbox tiktok@1:main_ok'"
+    )
+  }
+
+  @Test func buildExternalAttachCommandRejectsUnsupportedSessionName() {
+    #expect(ZmxAttach.buildExternalAttachCommand(executablePath: "/zmx", sessionID: "devbox/tiktok") == nil)
   }
 }
 

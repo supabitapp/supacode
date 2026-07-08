@@ -286,6 +286,13 @@ final class WorktreeTerminalState {
     _ = createTab(focusing: focusing, setupScript: setupScript)
   }
 
+  private func restorePendingLayoutIfNeeded(focusing: Bool) {
+    guard let snapshot = pendingLayoutSnapshot else { return }
+    pendingLayoutSnapshot = nil
+    hasAttemptedInitialTab = true
+    restoreFromSnapshot(snapshot, focusing: focusing)
+  }
+
   @discardableResult
   func createTab(
     focusing: Bool = true,
@@ -332,6 +339,49 @@ final class WorktreeTerminalState {
     )
     if shouldConsumeSetupScript, tabId != nil {
       onSetupScriptConsumed?()
+    }
+    return tabId
+  }
+
+  @discardableResult
+  func adoptZmxSession(
+    sessionID: String,
+    title: String?,
+    tabID requestedTabID: UUID,
+    focusing: Bool = true
+  ) -> TerminalTabID? {
+    guard let sessionID = ZmxExternalSessionName.normalized(sessionID),
+      let command = externalZmxAttachCommand(sessionID: sessionID)
+    else { return nil }
+    restorePendingLayoutIfNeeded(focusing: false)
+    let terminalTabID = TerminalTabID(rawValue: requestedTabID)
+    if hasTab(terminalTabID) {
+      if let title { tabManager.setCustomTitle(terminalTabID, title: title) }
+      if focusing { selectTab(terminalTabID) }
+      return terminalTabID
+    }
+    let resolvedTitle: String
+    if let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmedTitle.isEmpty {
+      resolvedTitle = trimmedTitle
+    } else {
+      resolvedTitle = sessionID
+    }
+    let tabId = createTab(
+      TabCreation(
+        title: resolvedTitle,
+        icon: nil,
+        isTitleLocked: false,
+        command: command,
+        initialInput: nil,
+        focusing: focusing,
+        inheritingFromSurfaceId: currentFocusedSurfaceId(),
+        context: tabManager.tabs.isEmpty ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB,
+        tabID: requestedTabID,
+        bypassZmx: true,
+      )
+    )
+    if let tabId, let title {
+      tabManager.setCustomTitle(tabId, title: title)
     }
     return tabId
   }
@@ -504,6 +554,14 @@ final class WorktreeTerminalState {
     }
     onTabCreated?()
     return tabId
+  }
+
+  private func externalZmxAttachCommand(sessionID: String) -> String? {
+    if let host = worktree.host {
+      return ZmxAttach.buildRemoteExternalAttachCommand(host: host, sessionID: sessionID)
+    }
+    guard let executablePath = zmxClient.executableURL()?.path(percentEncoded: false) else { return nil }
+    return ZmxAttach.buildExternalAttachCommand(executablePath: executablePath, sessionID: sessionID)
   }
 
   func listSurfaces(tabID: TerminalTabID) -> [[String: String]] {

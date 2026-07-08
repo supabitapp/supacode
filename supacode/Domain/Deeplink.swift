@@ -34,6 +34,7 @@ enum Deeplink: Equatable, Sendable {
     case appearance(title: String?, color: String?)
     case tab(tabID: UUID)
     case tabNew(input: String?, id: UUID?)
+    case tabAdoptZmx(sessionID: String, title: String?, id: UUID)
     case tabDestroy(tabID: UUID)
     case surface(tabID: UUID, surfaceID: UUID, input: String?)
     case surfaceSplit(tabID: UUID, surfaceID: UUID, direction: SplitDirection, input: String?, id: UUID?)
