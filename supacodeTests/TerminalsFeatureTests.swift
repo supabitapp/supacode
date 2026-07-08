@@ -77,6 +77,40 @@ struct TerminalsFeatureTests {
     #expect(store.state.terminalTabs.isEmpty)
   }
 
+  @Test func tabProjectionWithSurfacesAfterRemoveReinsertsSameIDTab() async {
+    let tabID = TerminalTabID(rawValue: UUID())
+    let surface = UUID()
+    var initial = TerminalsFeature.State()
+    initial.terminalTabs.append(
+      TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
+    )
+    let store = TestStore(initialState: initial) { TerminalsFeature() }
+    store.exhaustivity = .off
+
+    await store.send(.tabRemoved(worktreeID: "/tmp/repo", tabID: tabID)) {
+      $0.terminalTabs.remove(id: tabID)
+      $0.recentlyRemovedTabIDs = [
+        TerminalsFeature.RecentlyRemovedTab(worktreeID: "/tmp/repo", tabID: tabID)
+      ]
+    }
+
+    await store.send(
+      .tabProjectionChanged(
+        worktreeID: "/tmp/repo",
+        projection: WorktreeTabProjection(
+          tabID: tabID,
+          surfaceIDs: [surface],
+          activeSurfaceID: surface,
+          unseenNotificationCount: 0
+        )
+      )
+    ) {
+      $0.recentlyRemovedTabIDs = []
+      $0.terminalTabs.append(TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo"))
+    }
+    await store.receive(\.terminalTabs)
+  }
+
   @Test func recentlyRemovedTabIDsAreBoundedByLimit() async {
     let initial = TerminalsFeature.State()
     let store = TestStore(initialState: initial) { TerminalsFeature() }

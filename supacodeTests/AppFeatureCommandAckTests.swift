@@ -135,7 +135,7 @@ struct AppFeatureCommandAckTests {
 
     await store.send(
       .deeplink(
-        .worktree(id: worktree.id, action: .tabAdoptZmx(sessionID: "devbox-tiktok", title: "TikTok", id: tabID)),
+        .worktree(id: worktree.id, action: .tabAdoptZmx(sessionID: "remote-session", title: "Remote", id: tabID)),
         source: .socket,
         responseFD: writeFD,
         timeoutSeconds: 0
@@ -171,7 +171,7 @@ struct AppFeatureCommandAckTests {
 
     await store.send(
       .deeplink(
-        .worktree(id: worktree.id, action: .tabAdoptZmx(sessionID: "devbox-tiktok", title: nil, id: tabID)),
+        .worktree(id: worktree.id, action: .tabAdoptZmx(sessionID: "remote-session", title: nil, id: tabID)),
         source: .socket,
         responseFD: writeFD,
         timeoutSeconds: 0

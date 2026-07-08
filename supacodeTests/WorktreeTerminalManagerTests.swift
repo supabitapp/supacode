@@ -910,6 +910,35 @@ struct WorktreeTerminalManagerTests {
     #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
   }
 
+  @Test func adoptZmxSessionReplacesSameIDRemotePersistenceTab() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    let requestedID = UUID()
+    let terminalTabID = TerminalTabID(rawValue: requestedID)
+    guard let staleTabID = state.createTab(tabID: requestedID),
+      let staleSurfaceID = state.surfaceIDs(inTab: staleTabID).first
+    else {
+      Issue.record("Expected stale tab and surface")
+      return
+    }
+
+    let adopted = state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: requestedID)
+
+    #expect(adopted == terminalTabID)
+    #expect(state.tabManager.tabs.map(\.id) == [terminalTabID])
+    #expect(state.tabManager.tabs.first?.displayTitle == "Agent")
+    #expect(state.surfaceIDs(inTab: terminalTabID) == [requestedID])
+    let staleSessionID = session(for: staleSurfaceID)
+    await probe.waitForRemoteKill { $0.contains(.init(authority: "devbox", sessionID: staleSessionID)) }
+
+    _ = state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: requestedID)
+
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.filter { $0 == .init(authority: "devbox", sessionID: staleSessionID) }.count == 1)
+  }
+
   @Test func unexpectedRemoteSurfaceExitSparesHostSession() async {
     // A non-explicit close (clean remote exit or a deliberate host-side
     // detach) must not tear down the host session.

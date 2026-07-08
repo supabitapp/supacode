@@ -404,13 +404,20 @@ nonisolated enum ZmxAttach {
 
   static func buildExternalAttachCommand(executablePath: String, sessionID: String) -> String? {
     guard let sessionID = ZmxExternalSessionName.normalized(sessionID) else { return nil }
-    return "\(shellQuote(executablePath)) attach \(shellQuote(sessionID))"
+    return existingExternalAttachScript(executable: shellQuote(executablePath), sessionID: sessionID)
   }
 
   static func buildRemoteExternalAttachCommand(host: RemoteHost, sessionID: String) -> String? {
     guard let sessionID = ZmxExternalSessionName.normalized(sessionID) else { return nil }
-    let remote = posixShellWrapped("exec zmx attach \(shellQuote(sessionID))")
+    let remote = posixShellWrapped(existingExternalAttachScript(executable: "zmx", sessionID: sessionID))
     return SSHCommand.commandLine(host: host, remoteCommand: remote)
+  }
+
+  private static func existingExternalAttachScript(executable: String, sessionID: String) -> String {
+    let quotedSessionID = shellQuote(sessionID)
+    return "if \(executable) list --short | grep -Fx -- \(quotedSessionID) >/dev/null; "
+      + "then exec \(executable) attach \(quotedSessionID); "
+      + "else printf 'zmx session not found: %s\\n' \(quotedSessionID); exit 1; fi"
   }
 
   /// Resolves how a surface launches under zmx, given the budget-gated executable

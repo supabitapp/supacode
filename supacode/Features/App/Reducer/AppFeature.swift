@@ -2009,7 +2009,7 @@ struct AppFeature {
         effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabAdoptZmx(let sessionID, let title, let id):
-      guard ZmxExternalSessionName.normalized(sessionID) != nil else {
+      guard let sessionID = ZmxExternalSessionName.normalized(sessionID) else {
         state.alert = AlertState {
           TextState("Invalid zmx session")
         } actions: {

@@ -204,8 +204,8 @@ private nonisolated enum DeeplinkParser {
       return .worktree(id: worktreeID, action: .tabNew(input: input, id: id))
     }
     if thirdSegment == "adopt-zmx" {
-      guard let sessionID = queryItems.first(where: { $0.name == "session" })?.value,
-        ZmxExternalSessionName.normalized(sessionID) != nil
+      guard let rawSessionID = queryItems.first(where: { $0.name == "session" })?.value,
+        let sessionID = ZmxExternalSessionName.normalized(rawSessionID)
       else {
         logger.warning("adopt-zmx deeplink missing or invalid session.")
         return nil
