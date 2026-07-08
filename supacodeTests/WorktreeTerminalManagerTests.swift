@@ -991,6 +991,51 @@ struct WorktreeTerminalManagerTests {
     #expect(remoteKills.isEmpty)
   }
 
+  @Test func explicitSurfaceCloseOfAdoptedZmxSessionDoesNotKillExternalSession() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    let requestedID = UUID()
+    let terminalTabID = TerminalTabID(rawValue: requestedID)
+    guard state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: requestedID) != nil,
+      let surface = state.splitTree(for: terminalTabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected adopted tab and surface")
+      return
+    }
+
+    #expect(state.closeSurface(id: surface.id))
+    surface.bridge.closeSurface(processAlive: false)
+
+    let killed = await probe.killedSessions()
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(killed.isEmpty)
+    #expect(remoteKills.isEmpty)
+  }
+
+  @Test func adoptedZmxSurfaceExitDoesNotKillExternalSession() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    let requestedID = UUID()
+    let terminalTabID = TerminalTabID(rawValue: requestedID)
+    guard state.adoptZmxSession(sessionID: "external-session-1", title: "Agent", tabID: requestedID) != nil,
+      let surface = state.splitTree(for: terminalTabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected adopted tab and surface")
+      return
+    }
+
+    surface.bridge.closeSurface(processAlive: false)
+
+    let killed = await probe.killedSessions()
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(killed.isEmpty)
+    #expect(remoteKills.isEmpty)
+  }
+
   @Test func unexpectedRemoteSurfaceExitSparesHostSession() async {
     // A non-explicit close (clean remote exit or a deliberate host-side
     // detach) must not tear down the host session.

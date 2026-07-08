@@ -2601,20 +2601,17 @@ final class WorktreeTerminalState {
     killZmxSession: Bool,
     includeRemoteSession: Bool = false
   ) {
+    let sessionIDs = killZmxSession ? ownedZmxSessionIDs(forSurfaceIDs: [view.id]) : []
     guard let tabId = tabID(containing: view.id), let tree = trees[tabId] else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
-      if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
-      }
+      killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemoteSession)
       return
     }
     guard let node = tree.find(id: view.id) else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
-      if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
-      }
+      killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemoteSession)
       return
     }
     let nextSurface =
@@ -2624,9 +2621,7 @@ final class WorktreeTerminalState {
     let newTree = tree.removing(node)
     view.closeSurface()
     cleanupSurfaceState(for: view.id)
-    if killZmxSession {
-      killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
-    }
+    killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemoteSession)
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
