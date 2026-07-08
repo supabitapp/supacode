@@ -6,7 +6,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct WorktreeCustomizationFeatureTests {
   private func makeState(
     title: String = "",

@@ -5,7 +5,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct DeeplinkInputConfirmationFeatureTests {
   @Test func runTappedDelegatesConfirmWithAlwaysAllowFalse() async {
     let state = DeeplinkInputConfirmationFeature.State(
