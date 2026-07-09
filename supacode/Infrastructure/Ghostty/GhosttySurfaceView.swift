@@ -179,6 +179,25 @@ final class GhosttySurfaceView: NSView, Identifiable {
     .fileURL,
     .URL,
   ]
+  private static let layoutIndependentControlCharactersByKeyCode: [UInt16: String] = {
+    let candidates = "abcdefghijklmnopqrstuvwxyz0123456789[]\\;',./-=`"
+    var map: [UInt16: String] = [:]
+    for scalar in candidates.unicodeScalars {
+      guard let keyCode = AppShortcutOverride.keyCode(for: Character(scalar)) else { continue }
+      map[keyCode] = String(scalar)
+    }
+    map[UInt16(kVK_Space)] = " "
+    return map
+  }()
+
+  static func layoutIndependentControlCharacter(
+    keyCode: UInt16,
+    modifiers: NSEvent.ModifierFlags
+  ) -> String? {
+    let shortcutModifiers = modifiers.intersection([.shift, .control, .option, .command])
+    guard shortcutModifiers == [.control] else { return nil }
+    return layoutIndependentControlCharactersByKeyCode[keyCode]
+  }
 
   static func normalizedWorkingDirectoryPath(_ path: String) -> String {
     var normalized = path
@@ -1514,7 +1533,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
       translationMods: resolvedMods,
       composing: composing
     )
-    let finalText = text ?? ghosttyCharacters(resolvedEvent)
+    let finalText =
+      Self.layoutIndependentControlCharacter(keyCode: event.keyCode, modifiers: event.modifierFlags)
+      ?? text
+      ?? ghosttyCharacters(resolvedEvent)
     if let finalText, !finalText.isEmpty,
       let codepoint = finalText.utf8.first, codepoint >= 0x20
     {
@@ -1607,7 +1629,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
     keyEvent.consumed_mods = ghosttyMods(translationMods.subtracting([.control, .command]))
     keyEvent.unshifted_codepoint = 0
     if event.type == .keyDown || event.type == .keyUp {
-      if let chars = event.characters(byApplyingModifiers: []),
+      if let chars = Self.layoutIndependentControlCharacter(keyCode: event.keyCode, modifiers: originalMods),
+        let codepoint = chars.unicodeScalars.first
+      {
+        keyEvent.unshifted_codepoint = codepoint.value
+      } else if let chars = event.characters(byApplyingModifiers: []),
         let codepoint = chars.unicodeScalars.first
       {
         keyEvent.unshifted_codepoint = codepoint.value
