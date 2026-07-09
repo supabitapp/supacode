@@ -2,7 +2,7 @@ import SupacodeSettingsShared
 import SwiftUI
 
 /// Trailing toolbar toggle for git / pull-request status, reusing the sidebar's
-/// icon + check-status badge. Always tappable: it opens the git inspector pane.
+/// icon + check-status badge. Always tappable: it toggles the git inspector pane.
 struct WorktreeGitStatusButton: View {
   let pullRequest: GithubPullRequest?
   let isSelected: Bool
@@ -26,7 +26,9 @@ struct WorktreeGitStatusButton: View {
         WorktreePullRequestIconBadge(
           icon: icon,
           checkBadgeState: checkBadgeState,
-          iconStyle: Self.iconStyle(for: icon, foreground: foreground)
+          iconStyle: Self.iconStyle(for: icon, foreground: foreground, isSelected: isSelected),
+          // Match the sidebar's muted main icon at rest; full strength only when the pane is open.
+          iconOpacity: isSelected ? 1 : 0.6
         )
       }
     }
@@ -35,13 +37,19 @@ struct WorktreeGitStatusButton: View {
     .accessibilityLabel(accessibilityLabel)
   }
 
-  // Hierarchical styles (`.secondary` / `.tertiary`) re-resolve inside the
-  // selected toggle; substitute concrete chrome-derived colors for them.
-  private static func iconStyle(for icon: SidebarPullRequestIcon, foreground: Color) -> AnyShapeStyle {
+  // Pin the concrete chrome color only while selected (a lit toggle re-resolves
+  // hierarchical styles against its tint); at rest fall back to the sidebar's own
+  // colors (nil) so the icon reads identically to the sidebar.
+  private static func iconStyle(
+    for icon: SidebarPullRequestIcon,
+    foreground: Color,
+    isSelected: Bool
+  ) -> AnyShapeStyle? {
+    guard isSelected else { return nil }
     switch icon {
-    case .branch: AnyShapeStyle(foreground.opacity(0.65))
-    case .draft: AnyShapeStyle(foreground.opacity(0.45))
-    case .open, .queued, .merged, .closed: icon.color
+    case .branch: return AnyShapeStyle(foreground.opacity(0.65))
+    case .draft: return AnyShapeStyle(foreground.opacity(0.45))
+    case .open, .queued, .merged, .closed: return icon.color
     }
   }
 }
@@ -55,6 +63,8 @@ struct WorktreePullRequestIconBadge: View {
   // Style override for surfaces that can't rely on hierarchical resolution
   // (the selected toolbar toggle); defaults to the sidebar's own colors.
   var iconStyle: AnyShapeStyle?
+  // Opacity for the main icon only; the status badge stays full, mirroring the sidebar.
+  var iconOpacity: CGFloat = 1
 
   var body: some View {
     Image(icon.assetName)
@@ -62,6 +72,8 @@ struct WorktreePullRequestIconBadge: View {
       .resizable()
       .aspectRatio(contentMode: .fit)
       .foregroundStyle(iconStyle ?? icon.color)
+      // Before the overlay, so only the main icon dims and the status badge stays full.
+      .opacity(iconOpacity)
       .frame(width: size, height: size)
       .overlay(alignment: .bottomTrailing) {
         if let checkBadgeState {
@@ -94,23 +106,37 @@ struct WorktreeNotificationsToolbarButton: View {
   // doesn't change color when the toggle is selected.
   let foreground: Color
   let onActivate: () -> Void
+  // Drives the unread bell body's fade: an explicit palette color can't inherit
+  // the automatic window-key dim the plain bell gets for free.
+  @Environment(\.controlActiveState) private var controlActiveState
 
   var body: some View {
     let shortcut = WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.toggleNotificationsInspector)
     Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
-      // Palette orange is scoped to the badge variant; on the plain bell the
-      // first palette style would paint the whole symbol orange.
       if unreadCount > 0 {
+        // Palette keeps the badge dot orange; the bell body tracks the resting tint
+        // and fades with the window, since palette can't inherit the automatic dim.
         Label("Notifications", systemImage: "bell.badge")
           .symbolRenderingMode(.palette)
-          .foregroundStyle(.orange, foreground)
-      } else {
+          .foregroundStyle(.orange, bellBodyStyle)
+      } else if isSelected {
         Label("Notifications", systemImage: "bell")
           .foregroundStyle(foreground)
+      } else {
+        // No foreground so the resting bell matches the other toolbar buttons exactly,
+        // including the fade when the window isn't key.
+        Label("Notifications", systemImage: "bell")
       }
     }
     .tint(tint)
     .help("Toggle Notifications Inspector (\(shortcut))")
     .accessibilityLabel(unreadCount > 0 ? "Notifications, \(unreadCount) unread" : "Notifications")
+  }
+
+  // Bell body for the unread `bell.badge` variant: chrome color when lit, else the
+  // default label tint dropping to secondary whenever the window isn't key.
+  private var bellBodyStyle: AnyShapeStyle {
+    if isSelected { return AnyShapeStyle(foreground) }
+    return controlActiveState == .key ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
   }
 }

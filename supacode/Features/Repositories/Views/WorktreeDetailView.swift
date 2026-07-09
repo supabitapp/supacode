@@ -86,6 +86,7 @@ struct WorktreeDetailView: View {
         repositoriesStore: repositoriesStore,
         scheme: toolbarScheme,
         showsToolbarPlaceholder: showsToolbarPlaceholder,
+        showsLoadingWorktree: showsToolbarPlaceholder && loadingInfo != nil,
         hasActiveWorktree: hasActiveWorktree,
         selectedWorktree: selectedWorktree,
         selectedRow: selectedRow,
@@ -121,7 +122,6 @@ struct WorktreeDetailView: View {
       // is forced inside `WorktreeStatusInspectorContainer`.
       .tint(terminalManager.chromeOverlayTint())
     }
-    let hasRunningRunScript = state.hasRunningRunScript
     // Reveal in Finder is local-only; Open can target a remote worktree when the
     // resolved editor can express the host. `resolvedSelection` (nil when it
     // can't) drives both the focused-action enablement and the menu label.
@@ -134,7 +134,7 @@ struct WorktreeDetailView: View {
       content: content,
       hasActiveWorktree: hasActiveWorktree,
       canRevealLocally: hasActiveWorktree && selectedWorktree?.host == nil,
-      hasRunningRunScript: hasRunningRunScript,
+      hasRunningRunScript: state.hasRunningRunScript,
       resolvedSelection: resolvedSelection
     )
   }
@@ -531,6 +531,9 @@ struct WorktreeDetailView: View {
     /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
     let scheme: ColorScheme
     let showsToolbarPlaceholder: Bool
+    // Worktree present but content still loading; the git + bell toggles are valid,
+    // so render them for real instead of skeletons (cold boot keeps the skeletons).
+    let showsLoadingWorktree: Bool
     let hasActiveWorktree: Bool
     let selectedWorktree: Worktree?
     let selectedRow: SelectedWorktreeSlice?
@@ -542,7 +545,20 @@ struct WorktreeDetailView: View {
 
     var body: some ToolbarContent {
       if showsToolbarPlaceholder {
-        ToolbarPlaceholderContent(scheme: scheme)
+        ToolbarPlaceholderContent(scheme: scheme, includesStatusSkeleton: !showsLoadingWorktree)
+        if showsLoadingWorktree {
+          TrailingStatusToolbarContent(
+            pullRequest: WorktreeDetailView.inspectorPullRequest(
+              selectedWorktree: selectedWorktree,
+              selectedRow: selectedRow
+            ),
+            repositoriesStore: repositoriesStore,
+            terminalManager: terminalManager,
+            inspectorPane: inspectorPane,
+            inspectorPresented: inspectorPresented,
+            onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) }
+          )
+        }
       } else if hasActiveWorktree, let selectedWorktree {
         let titleContent = WorktreeDetailView.makeToolbarTitleContent(
           selectedWorktree: selectedWorktree,
@@ -644,26 +660,14 @@ struct WorktreeDetailView: View {
         .transaction { $0.animation = nil }
       }
 
-      ToolbarItemGroup {
-        // Translucent chrome-tracking highlight (whiteish on a dark terminal);
-        // full-opacity tint reads as a stark solid pill against the glass.
-        let chromeForeground = terminalManager.chromeOverlayTint()
-        let chromeTint = chromeForeground.opacity(0.2)
-        WorktreeGitStatusButton(
-          pullRequest: toolbarState.pullRequest,
-          isSelected: inspectorPresented && inspectorPane == .git,
-          tint: chromeTint,
-          foreground: chromeForeground,
-          onActivate: { onActivateInspector(.git) }
-        )
-        ToolbarNotificationsButtonHost(
-          repositoriesStore: repositoriesStore,
-          isSelected: inspectorPresented && inspectorPane == .notifications,
-          tint: chromeTint,
-          foreground: chromeForeground,
-          onActivate: { onActivateInspector(.notifications) }
-        )
-      }
+      TrailingStatusToolbarContent(
+        pullRequest: toolbarState.pullRequest,
+        repositoriesStore: repositoriesStore,
+        terminalManager: terminalManager,
+        inspectorPane: inspectorPane,
+        inspectorPresented: inspectorPresented,
+        onActivateInspector: onActivateInspector
+      )
     }
 
     @ViewBuilder
@@ -724,6 +728,39 @@ struct WorktreeDetailView: View {
       if let reason = toolbarState.remoteOpenDisabledReason(action) { return reason }
       guard isDefault else { return action.title }
       return "\(action.title) (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
+    }
+  }
+
+  /// Trailing git + notifications status toggles, always real controls (never skeletons).
+  fileprivate struct TrailingStatusToolbarContent: ToolbarContent {
+    let pullRequest: GithubPullRequest?
+    let repositoriesStore: StoreOf<RepositoriesFeature>?
+    let terminalManager: WorktreeTerminalManager
+    let inspectorPane: WorktreeInspectorPane
+    let inspectorPresented: Bool
+    let onActivateInspector: (WorktreeInspectorPane) -> Void
+
+    var body: some ToolbarContent {
+      ToolbarItemGroup {
+        // Translucent chrome-tracking highlight (whiteish on a dark terminal);
+        // full-opacity tint reads as a stark solid pill against the glass.
+        let chromeForeground = terminalManager.chromeOverlayTint()
+        let chromeTint = chromeForeground.opacity(0.2)
+        WorktreeGitStatusButton(
+          pullRequest: pullRequest,
+          isSelected: inspectorPresented && inspectorPane == .git,
+          tint: chromeTint,
+          foreground: chromeForeground,
+          onActivate: { onActivateInspector(.git) }
+        )
+        ToolbarNotificationsButtonHost(
+          repositoriesStore: repositoriesStore,
+          isSelected: inspectorPresented && inspectorPane == .notifications,
+          tint: chromeTint,
+          foreground: chromeForeground,
+          onActivate: { onActivateInspector(.notifications) }
+        )
+      }
     }
   }
 
@@ -977,6 +1014,9 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
   /// Terminal-derived scheme for the `.navigation` item, whose detached host
   /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
   let scheme: ColorScheme
+  // Omit the git + bell skeletons while a worktree loads (the real toggles are
+  // appended by the toolbar) so the group isn't doubled; cold boot keeps them.
+  var includesStatusSkeleton: Bool = true
 
   var body: some ToolbarContent {
     ToolbarItem(placement: .navigation) {
@@ -1017,20 +1057,22 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
       .shimmer(isActive: true)
     }
 
-    ToolbarItemGroup {
-      // Mirror the trailing inspector toggles (git status + notifications).
-      Button {
-      } label: {
-        Image(systemName: "arrow.trianglehead.branch")
+    if includesStatusSkeleton {
+      ToolbarItemGroup {
+        // Mirror the trailing inspector toggles (git status + notifications).
+        Button {
+        } label: {
+          Image(systemName: "arrow.trianglehead.branch")
+        }
+        .redacted(reason: .placeholder)
+        .shimmer(isActive: true)
+        Button {
+        } label: {
+          Image(systemName: "bell")
+        }
+        .redacted(reason: .placeholder)
+        .shimmer(isActive: true)
       }
-      .redacted(reason: .placeholder)
-      .shimmer(isActive: true)
-      Button {
-      } label: {
-        Image(systemName: "bell")
-      }
-      .redacted(reason: .placeholder)
-      .shimmer(isActive: true)
     }
   }
 }
