@@ -1,3 +1,4 @@
+import ConcurrencyExtras
 import Darwin
 import Foundation
 import SupacodeSettingsShared
@@ -18,17 +19,28 @@ private nonisolated let socketLogger = SupaLogger("AgentHookSocket")
 final class AgentHookSocketServer {
   private(set) var socketPath: String?
 
-  private var listenTask: Task<Void, Never>?
+  /// Cancellation flag for the accept-loop thread; shared by reference so the
+  /// thread never retains `self`.
+  private let listenStopped = LockIsolated(false)
   /// Deeplink URL received from the CLI. Second parameter is the client FD for response.
   var onCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI. Parameters: resource name, extra params, client FD for response.
   var onQuery: ((String, [String: String], Int32) -> Void)?
 
-  init() {
-    let uid = getuid()
-    let pid = ProcessInfo.processInfo.processIdentifier
-    let directory = "/tmp/supacode-\(uid)"
-    let path = "\(directory)/pid-\(pid)"
+  /// `socketPathOverride` lets tests bind a unique path; the default is the
+  /// pid-derived path the CLI discovers.
+  init(socketPathOverride: String? = nil) {
+    let directory: String
+    let path: String
+    if let socketPathOverride {
+      path = socketPathOverride
+      directory = (socketPathOverride as NSString).deletingLastPathComponent
+    } else {
+      let uid = getuid()
+      let pid = ProcessInfo.processInfo.processIdentifier
+      directory = "/tmp/supacode-\(uid)"
+      path = "\(directory)/pid-\(pid)"
+    }
 
     do {
       try FileManager.default.createDirectory(
@@ -41,7 +53,9 @@ final class AgentHookSocketServer {
       return
     }
 
-    Self.pruneStaleSocketFiles(in: directory)
+    if socketPathOverride == nil {
+      Self.pruneStaleSocketFiles(in: directory)
+    }
     unlink(path)
     guard startListening(path: path) else { return }
     socketPath = path
@@ -65,15 +79,18 @@ final class AgentHookSocketServer {
   }
 
   deinit {
-    listenTask?.cancel()
+    listenStopped.setValue(true)
     if let socketPath {
       unlink(socketPath)
     }
   }
 
   func shutdown() {
-    listenTask?.cancel()
-    listenTask = nil
+    listenStopped.setValue(true)
+    // A connection accepted in the final poll window must get "Not ready."
+    // instead of running against state the owner is tearing down.
+    onCommand = nil
+    onQuery = nil
     if let socketPath {
       unlink(socketPath)
     }
@@ -87,16 +104,28 @@ final class AgentHookSocketServer {
     let socketFD = Self.createSocket(path: path)
     guard socketFD >= 0 else { return false }
 
-    listenTask = Task.detached { [weak self] in
+    // The accept loop blocks in poll(), so it runs on a dedicated thread: on
+    // the cooperative pool it would pin a thread, and under the test main
+    // serial executor it would starve the main thread outright. The thread
+    // captures the stop flag, never `self`, so deinit stays reachable.
+    let stopped = listenStopped
+    let thread = Thread { [weak self] in
       socketLogger.info("Listening on \(path)")
       defer { close(socketFD) }
 
-      while !Task.isCancelled {
+      while !stopped.value {
         var pollFD = pollfd(fd: socketFD, events: Int16(POLLIN), revents: 0)
         let ready = poll(&pollFD, 1, 200)
         if ready < 0 {
           guard errno == EINTR else {
             socketLogger.warning("poll() failed: \(String(cString: strerror(errno)))")
+            // Remove the advertised path so the CLI sees "not running"
+            // instead of a confusing refused connection, and stop new
+            // terminals from exporting a dead socket path.
+            unlink(path)
+            Task { @MainActor [weak self] in
+              self?.socketPath = nil
+            }
             break
           }
           continue
@@ -107,25 +136,33 @@ final class AgentHookSocketServer {
           continue
         }
 
-        await MainActor.run { [weak self] in
-          switch message {
-          case .command(let deeplinkURL, let clientFD):
-            guard let self, let handler = self.onCommand else {
-              Self.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
-              return
-            }
-            handler(deeplinkURL, clientFD)
-          case .query(let resource, let params, let clientFD):
-            guard let self, let handler = self.onQuery else {
-              Self.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
-              return
-            }
-            handler(resource, params, clientFD)
-          }
+        Task { @MainActor [weak self] in
+          Self.dispatch(message: message, to: self)
         }
       }
     }
+    thread.name = "supacode.agent-hook-socket"
+    thread.start()
     return true
+  }
+
+  /// Routes an accepted message to the server's handlers, answering "Not
+  /// ready." when the server died or has no handler installed yet.
+  private static func dispatch(message: Message, to server: AgentHookSocketServer?) {
+    switch message {
+    case .command(let deeplinkURL, let clientFD):
+      guard let handler = server?.onCommand else {
+        sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
+        return
+      }
+      handler(deeplinkURL, clientFD)
+    case .query(let resource, let params, let clientFD):
+      guard let handler = server?.onQuery else {
+        sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
+        return
+      }
+      handler(resource, params, clientFD)
+    }
   }
 
   /// Writes all bytes to an FD, handling partial writes. Logs and

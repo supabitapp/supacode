@@ -256,8 +256,8 @@ nonisolated private func sendTerminationSignals(to pid: Int32) {
 }
 
 /// Run a process, exposing both its event stream and an explicit `terminate`
-/// handle. `events` finishes only after `waitUntilExit()` returns, so a consumer
-/// that drains to completion after calling `terminate()` can clean up without
+/// handle. `events` finishes only after the child exits, so a consumer that
+/// drains to completion after calling `terminate()` can clean up without
 /// racing the SIGTERM/SIGKILL teardown. Consumer-task cancellation still kills
 /// the child (so existing stream consumers keep their timeout behavior).
 nonisolated private func runProcessHandle(
@@ -292,6 +292,15 @@ nonisolated private func runProcessHandle(
       let outputHandle = outputPipe.fileHandleForReading
       let errorHandle = errorPipe.fileHandleForReading
       let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
+      // An async exit wait instead of waitUntilExit(): blocking would pin a
+      // cooperative-pool thread, and starve the main thread under the test
+      // main serial executor. Installed before run() so an instant exit can't
+      // slip past the handler.
+      let (exitEvents, exitContinuation) = AsyncStream<Int32>.makeStream()
+      process.terminationHandler = { process in
+        exitContinuation.yield(process.terminationStatus)
+        exitContinuation.finish()
+      }
       do {
         try process.run()
         // Terminate the child only when the consuming task is cancelled (e.g. a
@@ -335,13 +344,16 @@ nonisolated private func runProcessHandle(
             )
           }
         }
-        process.waitUntilExit()
+        var terminationStatus: Int32 = EXIT_FAILURE
+        for await status in exitEvents {
+          terminationStatus = status
+        }
         // The pid is reaped; stop any later terminate() from signalling it.
         signalState.withValue { $0.exited = true }
         await stdoutTask.value
         await stderrTask.value
-        let output = await outputAccumulator.output(exitCode: process.terminationStatus)
-        if process.terminationStatus != 0 {
+        let output = await outputAccumulator.output(exitCode: terminationStatus)
+        if terminationStatus != 0 {
           continuation.finish(
             throwing: ShellClientError(
               command: command,

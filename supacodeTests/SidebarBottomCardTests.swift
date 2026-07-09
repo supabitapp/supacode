@@ -6,6 +6,29 @@ import Testing
 
 @MainActor
 struct SidebarBottomCardTests {
+  @Test func gitEnvironmentErrorWinsOverEverything() {
+    // Even the highest-priority card loses to a blocked-git error.
+    let cards = SidebarBottomCardView.Slot.agent(.updatesAvailable([.claude]))
+    #expect(
+      SidebarBottomCardView.Slot.resolve(gitEnvironmentError: .xcodeLicenseNotAccepted, cards: cards)
+        == .gitEnvironmentError(.xcodeLicenseNotAccepted)
+    )
+  }
+
+  @Test func resolvedCardPassesThroughWhenGitEnvironmentHealthy() {
+    #expect(
+      SidebarBottomCardView.Slot.resolve(gitEnvironmentError: nil, cards: .remoteRepositoriesBeta)
+        == .remoteRepositoriesBeta
+    )
+  }
+
+  @Test func gitEnvironmentErrorTransitionTokenIsStable() {
+    #expect(
+      SidebarBottomCardView.Slot.gitEnvironmentError(.xcodeLicenseNotAccepted).transitionToken
+        == "gitEnvironmentError:xcodeLicenseNotAccepted"
+    )
+  }
+
   @Test func agentUpdatesWinOverEverything() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       agentMode: .updatesAvailable([.claude]),

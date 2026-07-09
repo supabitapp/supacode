@@ -118,7 +118,8 @@ extension AppFeature.Action {
       return false
     // Lifecycle / UI / effect-dispatch actions never write snapshot inputs
     // directly; any downstream mutation flows back through a classified arm.
-    case .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
+    case .applicationDidBecomeActive, .applicationDidResignActive,
+      .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal,

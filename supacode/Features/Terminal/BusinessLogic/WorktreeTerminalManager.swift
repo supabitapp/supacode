@@ -366,7 +366,7 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
-      .destroyTab, .destroySurface, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
+      .destroyTab, .destroySurface, .setImagePasteAgents, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
       .refreshTabBarVisibility, .beginTabRename:
       return false
     }
@@ -379,6 +379,8 @@ final class WorktreeTerminalManager {
       state(for: worktree).performBindingActionOnFocusedSurface(action)
     case .performBindingActionOnSurface(let worktree, let surfaceID, let action):
       state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
+    case .setImagePasteAgents(let surfaceID, let agents):
+      setImagePasteAgents(agents, onSurfaceID: surfaceID)
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
@@ -387,6 +389,12 @@ final class WorktreeTerminalManager {
       return false
     }
     return true
+  }
+
+  private func setImagePasteAgents(_ agents: Set<SkillAgent>, onSurfaceID surfaceID: UUID) {
+    for state in states.values where state.setImagePasteAgents(agents, onSurfaceID: surfaceID) {
+      return
+    }
   }
 
   private func handleManagementCommand(_ command: TerminalClient.Command) {
@@ -413,7 +421,7 @@ final class WorktreeTerminalManager {
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .performBindingActionOnSurface, .startSearch, .searchSelection, .navigateSearchNext,
+      .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
       .splitSurface, .destroyTab, .destroySurface, .beginTabRename:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")

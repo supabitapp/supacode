@@ -140,7 +140,8 @@ struct SidebarListView: View {
       switch section {
       case .repository(let repositoryID, _),
         .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _, _):
+        .failedRepository(let repositoryID, _, _, _, _),
+        .environmentBlockedRepository(let repositoryID, _, _, _):
         if let repoIndex = repoIDs.firstIndex(of: repositoryID) {
           repoOffsets.insert(repoIndex)
         }
@@ -158,7 +159,8 @@ struct SidebarListView: View {
       switch section {
       case .repository(let repositoryID, _),
         .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _, _):
+        .failedRepository(let repositoryID, _, _, _, _),
+        .environmentBlockedRepository(let repositoryID, _, _, _):
         repoDestination = repoIDs.firstIndex(of: repositoryID) ?? repoIDs.count
       case .highlight, .placeholder:
         // Dropping above the highlight prefix collapses to "before the first repo".
@@ -219,6 +221,14 @@ private struct SidebarSectionDispatcher: View {
         customTitle: customTitle,
         color: color,
         isRemote: isRemote,
+        store: store
+      )
+    case .environmentBlockedRepository(let repositoryID, let rootURL, let customTitle, let color):
+      SidebarBlockedRepositorySection(
+        repositoryID: repositoryID,
+        rootURL: rootURL,
+        customTitle: customTitle,
+        color: color,
         store: store
       )
     case .folder(let repositoryID, let rowID):
@@ -492,6 +502,42 @@ private struct SidebarFailedRepositorySection: View {
           .contentShape(Rectangle())
       }
       .menuStyle(.secondaryToolbar)
+    }
+  }
+}
+
+/// A git repo hidden behind an environment block (unaccepted license / missing
+/// tools). Renders a non-selectable warning row so the repo stays visible; the
+/// bottom banner owns the remedy, so there's no per-row action here.
+private struct SidebarBlockedRepositorySection: View {
+  let repositoryID: Repository.ID
+  let rootURL: URL
+  let customTitle: String?
+  let color: RepositoryColor?
+  let store: StoreOf<RepositoriesFeature>
+
+  var body: some View {
+    let standardizedRootURL = rootURL.standardizedFileURL
+    let fallbackName = Repository.name(for: standardizedRootURL)
+    let displayName = Repository.sidebarDisplayName(custom: customTitle, fallback: fallbackName)
+    let path = standardizedRootURL.path(percentEncoded: false)
+    Section {
+      EnvironmentBlockedRepositoryRow(
+        name: displayName,
+        path: path,
+        // Path-based removal, so it works even though the blocked root has no
+        // `loadFailuresByID` entry to key on.
+        removeRepository: { store.send(.requestRemoveFailedRepository(repositoryID)) }
+      )
+      .moveDisabled(true)
+    } header: {
+      RepoSectionHeaderView(
+        name: fallbackName,
+        customTitle: customTitle,
+        color: color,
+        isRemoving: false,
+        hostInfo: nil
+      )
     }
   }
 }

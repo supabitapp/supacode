@@ -18,6 +18,15 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/\(action)"
   }
 
+  static func worktreeAppearance(worktreeID: String, title: String?, color: String?) -> String {
+    var url = "supacode://worktree/\(worktreeID)/appearance"
+    var params: [String] = []
+    if let title { params.append("title=\(percentEncodeQueryValue(title))") }
+    if let color { params.append("color=\(percentEncodeQueryValue(color))") }
+    if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
+    return url
+  }
+
   // MARK: - Script.
 
   static func scriptRun(worktreeID: String, scriptID: String) -> String {

@@ -94,6 +94,9 @@ struct RepositoriesFeature {
     var repositories: IdentifiedArrayOf<Repository> = []
     var repositoryRoots: [URL] = []
     var loadFailuresByID: [Repository.ID: String] = [:]
+    /// Set when git is environment-blocked (e.g. an unaccepted Xcode license):
+    /// drives the banner and suppresses the false per-repo "broken" rows.
+    var gitEnvironmentError: GitEnvironmentError?
     /// Remote repositories whose SSH listing is still resolving (shown with a
     /// loading spinner). Cleared per repo as each `.remoteRepositoryResolved`
     /// lands; a repo here with no `loadFailuresByID` entry is "loading", one
@@ -286,6 +289,9 @@ struct RepositoriesFeature {
     case refreshWorktrees
     case reloadRepositories(animated: Bool)
     case repositoriesLoaded([Repository], failures: [LoadFailure], roots: [URL], animated: Bool)
+    /// Sole owner of `state.gitEnvironmentError`. Emitted by every load path with
+    /// the current git-environment probe result (`nil` clears the banner).
+    case gitEnvironmentChanged(GitEnvironmentError?)
     case selectionChanged(Set<SidebarSelection>, focusTerminal: Bool = false)
     case repositoryExpansionChanged(Repository.ID, isExpanded: Bool)
     case branchNestExpansionChanged(
@@ -294,6 +300,9 @@ struct RepositoriesFeature {
       prefix: String,
       isExpanded: Bool
     )
+    /// Expand or collapse every sidebar group at once. Expanding also clears
+    /// every nested branch-group prefix so the tree opens fully.
+    case setAllSidebarGroupsExpanded(Bool)
     case selectArchivedWorktrees
     case setSidebarSelectedWorktreeIDs(Set<Worktree.ID>)
     case openRepositories([URL])
@@ -441,6 +450,9 @@ struct RepositoriesFeature {
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
     case requestCustomizeWorktree(Worktree.ID, Repository.ID)
+    /// Deeplink / CLI appearance update: overwrites the row's sidebar title and tint.
+    /// `nil` clears the field; omit-vs-clear was already resolved upstream in `AppFeature`.
+    case setWorktreeAppearance(Worktree.ID, Repository.ID, title: String?, color: RepositoryColor?)
     case requestRenameBranch(Worktree.ID, Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
@@ -1396,11 +1408,12 @@ struct RepositoriesFeature {
           await repositoryPersistence.saveRoots(remaining)
           await repositoryPersistence.pruneRepositoryConfigs([repositoryID.rawValue])
           let roots = remaining.map { URL(fileURLWithPath: $0) }
-          let (repositories, failures) = await loadRepositoriesData(roots)
+          let loadResult = await loadRepositoriesData(roots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .repositoriesLoaded(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               roots: roots,
               animated: true
             )
@@ -2637,11 +2650,8 @@ struct RepositoriesFeature {
     Reduce { state, action in
       switch action {
       case .pinWorktree(let worktreeID):
-        // Git "main" worktrees never appear in any sidebar bucket (the
-        // seed pass skips them), so pinning one is a no-op. Folder
-        // synthetic worktrees satisfy `isMainWorktree` by geometry but
-        // ARE pinnable; scope the skip to git repos so folders fall
-        // through to the bucket machinery below.
+        // Git main worktrees render in the main slot, never the pinned list, so pinning is a no-op.
+        // Scope the skip to git repos: folder synthetics are `isMainWorktree` by geometry but ARE pinnable.
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
           let repository = state.repositories[id: repositoryID]
@@ -2988,11 +2998,12 @@ struct RepositoriesFeature {
           let loadedPaths = await repositoryPersistence.loadRoots()
           let rootPaths = RepositoryPathNormalizer.normalize(loadedPaths)
           let roots = rootPaths.map { URL(fileURLWithPath: $0) }
-          let (repositories, failures) = await loadRepositoriesData(roots)
+          let loadResult = await loadRepositoriesData(roots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .repositoriesLoaded(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               roots: roots,
               animated: false
             )
@@ -3018,11 +3029,23 @@ struct RepositoriesFeature {
         let roots = state.repositoryRoots
         // A remote-only setup has no local roots, but the load path still
         // appends persisted remote configs, so a refresh must run for it.
-        guard !roots.isEmpty || !Self.persistedRemoteRepositoryRoots().isEmpty else {
+        // Also keep refreshing while environment-blocked (even with zero roots)
+        // so accepting the Xcode license re-probes and clears the banner without
+        // a relaunch.
+        guard
+          !roots.isEmpty || !Self.persistedRemoteRepositoryRoots().isEmpty
+            || state.gitEnvironmentError != nil
+        else {
           state.isRefreshingWorktrees = false
           return .none
         }
         return loadRepositories(roots, animated: animated)
+
+      case .gitEnvironmentChanged(let environmentError):
+        // Guard so the periodic refresh doesn't re-publish an unchanged value.
+        guard state.gitEnvironmentError != environmentError else { return .none }
+        state.gitEnvironmentError = environmentError
+        return .none
 
       case .repositoriesLoaded(let repositories, let failures, let roots, let animated):
         state.isRefreshingWorktrees = false
@@ -3035,9 +3058,12 @@ struct RepositoriesFeature {
         _ = applyRepositories(
           mergedRepositories,
           roots: roots,
-          // Don't prune archived worktree ids while remotes are still resolving:
-          // their worktrees aren't in the roster yet.
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
+          // Don't prune archived worktree ids while remotes are still resolving
+          // (their worktrees aren't in the roster yet) or while git is
+          // environment-blocked (the suppressed repos' worktrees are absent, so
+          // pruning would drop their curation for a transient failure).
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty
+            && state.gitEnvironmentError == nil,
           state: &state,
           animated: animated
         )
@@ -3152,23 +3178,18 @@ struct RepositoriesFeature {
               let root = try await gitClient.repoRoot(url)
               resolvedRoots.append(root)
             } catch {
-              // `gitClient.repoRoot` throws for non-git paths, but
-              // also for transient `wt` / subprocess failures. To
-              // avoid silently reclassifying a git repo as a folder
-              // on transient errors, double-check via the injected
-              // `gitClient.isGitRepository`: if the path actually
-              // has `.git`, surface the original error as an invalid
-              // root. Non-git readable directories are accepted as
-              // folder-kind repositories.
+              // `repoRoot` failed. A readable directory is still worth keeping: a
+              // plain folder repo, or a real git repo we can't resolve because git
+              // is environment-blocked. Either way persist it and let the load
+              // classify it (folder, blocked warning row, or a real failure once
+              // git returns). A non-directory is genuinely invalid.
               let standardized = url.standardizedFileURL
               var isDirectory: ObjCBool = false
               let exists = FileManager.default.fileExists(
                 atPath: standardized.path(percentEncoded: false),
                 isDirectory: &isDirectory
               )
-              if exists, isDirectory.boolValue,
-                await !gitClient.isGitRepository(standardized)
-              {
+              if exists, isDirectory.boolValue {
                 resolvedRoots.append(standardized)
               } else {
                 invalidRoots.append(url.path(percentEncoded: false))
@@ -3181,11 +3202,12 @@ struct RepositoriesFeature {
           let mergedPaths = RepositoryPathNormalizer.normalize(existingRootPaths + resolvedRootPaths)
           let mergedRoots = mergedPaths.map { URL(fileURLWithPath: $0) }
           await repositoryPersistence.saveRoots(mergedPaths)
-          let (repositories, failures) = await loadRepositoriesData(mergedRoots)
+          let loadResult = await loadRepositoriesData(mergedRoots)
+          await send(.gitEnvironmentChanged(loadResult.environmentError))
           await send(
             .openRepositoriesFinished(
-              repositories,
-              failures: failures,
+              loadResult.repositories,
+              failures: loadResult.failures,
               invalidRoots: invalidRoots,
               roots: mergedRoots
             )
@@ -3201,7 +3223,10 @@ struct RepositoriesFeature {
         _ = applyRepositories(
           mergedRemote.repositories,
           roots: roots,
-          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty,
+          // Keep archived curation while git is environment-blocked: the
+          // suppressed repos' worktrees are absent from the roster.
+          shouldPruneArchivedWorktreeIDs: failures.isEmpty && mergedRemote.resolvingIDs.isEmpty
+            && state.gitEnvironmentError == nil,
           state: &state,
           animated: false
         )
@@ -3276,6 +3301,30 @@ struct RepositoriesFeature {
           }
           section.buckets[bucketID] = bucket
           sidebar.sections[repositoryID] = section
+        }
+        return .none
+
+      case .setAllSidebarGroupsExpanded(let isExpanded):
+        // Iterate the full roster, not just `sidebar.sections.keys`: the section
+        // map is sparse (a repo renders expanded until something writes an
+        // entry), so collapsing must materialize one for every repo.
+        let repositoryIDs = state.repositories.map(\.id)
+        state.$sidebar.withLock { sidebar in
+          for repositoryID in repositoryIDs {
+            guard isExpanded else {
+              // Collapse keeps branch-group prefixes so each group's layout
+              // survives when its section reopens.
+              sidebar.sections[repositoryID, default: .init()].collapsed = true
+              continue
+            }
+            // A repo with no entry is already fully open, so nothing to undo.
+            guard var section = sidebar.sections[repositoryID] else { continue }
+            section.collapsed = false
+            for bucketID in Array(section.buckets.keys) {
+              section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+            }
+            sidebar.sections[repositoryID] = section
+          }
         }
         return .none
 
@@ -3901,6 +3950,7 @@ struct RepositoriesFeature {
         return .none
 
       case .requestCustomizeWorktree,
+        .setWorktreeAppearance,
         .worktreeCustomization:
         // Handled by `WorktreeCustomizationParentReducer` below; main switch is at type-checker
         // capacity, so the customization arms are split out into a dedicated reducer.
@@ -4090,11 +4140,12 @@ struct RepositoriesFeature {
           group.addTask { await gitClient.reconcileSupacodeLocks(root) }
         }
       }
-      let (repositories, failures) = await loadRepositoriesData(roots)
+      let loadResult = await loadRepositoriesData(roots)
+      await send(.gitEnvironmentChanged(loadResult.environmentError))
       await send(
         .repositoriesLoaded(
-          repositories,
-          failures: failures,
+          loadResult.repositories,
+          failures: loadResult.failures,
           roots: roots,
           animated: animated
         )
@@ -4231,7 +4282,8 @@ struct RepositoriesFeature {
     // filesystem.
     let isGit = await gitClient.isGitRepository(root)
     guard isGit else {
-      return WorktreesFetchResult(root: root, isGitRepository: false, worktrees: [], errorMessage: nil)
+      return WorktreesFetchResult(
+        root: root, isGitRepository: false, worktrees: [], errorMessage: nil)
     }
     do {
       let worktrees = try await gitClient.worktrees(root)
@@ -4246,8 +4298,12 @@ struct RepositoriesFeature {
           errorMessage: duplicateWorktreePathMessage(path: duplicate.rawValue)
         )
       }
-      return WorktreesFetchResult(root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
+      return WorktreesFetchResult(
+        root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
     } catch {
+      // Any git listing failure (blocked binary, transient error, or a real repo
+      // problem). Report it as a failed git root and let the loader's
+      // `git --version` probe decide, once, whether git itself is blocked.
       return WorktreesFetchResult(
         root: root,
         isGitRepository: true,
@@ -4257,7 +4313,23 @@ struct RepositoriesFeature {
     }
   }
 
-  private func loadRepositoriesData(_ roots: [URL]) async -> ([Repository], [LoadFailure]) {
+  /// A git root whose listing failed, held until the `git --version` probe
+  /// decides if git is really blocked (suppress under the banner) or working
+  /// (surface `message` as a real failure row).
+  private struct DeferredGitFailure {
+    let rootID: Repository.ID
+    let message: String
+  }
+
+  /// Result of a local repository load. A struct rather than a tuple so the
+  /// three payloads travel together without tripping the `large_tuple` lint.
+  private struct RepositoriesLoadResult {
+    let repositories: [Repository]
+    let failures: [LoadFailure]
+    let environmentError: GitEnvironmentError?
+  }
+
+  private func loadRepositoriesData(_ roots: [URL]) async -> RepositoriesLoadResult {
     let fetchResults = await withTaskGroup(of: WorktreesFetchResult.self) { group in
       for root in roots {
         let gitClient = self.gitClient
@@ -4276,6 +4348,9 @@ struct RepositoriesFeature {
 
     var loaded: [Repository] = []
     var failures: [LoadFailure] = []
+    // Git roots that failed to list, deferred until the probe decides whether
+    // git itself is blocked (see below).
+    var deferredGitFailures: [DeferredGitFailure] = []
     for root in roots {
       let normalizedRoot = root.standardizedFileURL
       let rootID = RepositoryID(normalizedRoot.path(percentEncoded: false))
@@ -4292,15 +4367,13 @@ struct RepositoriesFeature {
           )
           loaded.append(repository)
         } else {
-          failures.append(
-            LoadFailure(
-              rootID: rootID,
-              message: result.errorMessage ?? "Unknown error"
-            )
-          )
+          // A real block fails every git root, and we can't judge a repo broken
+          // while git is down, so defer the verdict to the probe below.
+          deferredGitFailures.append(
+            DeferredGitFailure(rootID: rootID, message: result.errorMessage ?? "Unknown error"))
         }
       } else if let errorMessage = result.errorMessage {
-        // Non-git root with an error — classifier couldn't open
+        // Non-git root with an error: the classifier couldn't open
         // the directory (missing / unmounted / unreadable).
         // Route through the same `LoadFailure` pipeline git
         // repos use so the sidebar shows the error row.
@@ -4308,7 +4381,7 @@ struct RepositoriesFeature {
           LoadFailure(rootID: rootID, message: errorMessage)
         )
       } else {
-        // Folder repository — synthesize a single main-like worktree
+        // Folder repository: synthesize a single main-like worktree
         // so the existing sidebar selection + terminal plumbing keeps
         // working without new entity types.
         let synthetic = Worktree(
@@ -4330,11 +4403,31 @@ struct RepositoriesFeature {
         loaded.append(repository)
       }
     }
+    // If any git repo loaded, git demonstrably works. Otherwise a direct
+    // `git --version` probe is the ground truth for whether git is
+    // environment-blocked: locale-independent (so it doesn't depend on a repo's
+    // stderr being English-matchable), and it disconfirms a repo error that
+    // merely echoes a gate phrase. It also covers a folder-only / empty roster.
+    // Blocked -> the deferred git failures become suppressed warning rows;
+    // working -> they were real repo problems and surface as failure rows.
+    var environmentError: GitEnvironmentError?
+    if !loaded.contains(where: \.isGitRepository) {
+      environmentError = await gitClient.checkGitEnvironment()
+    }
+    if environmentError == nil {
+      for failure in deferredGitFailures {
+        failures.append(LoadFailure(rootID: failure.rootID, message: failure.message))
+      }
+    }
     // Remote repositories are NOT resolved here: that SSH work runs
     // asynchronously after the load (`.resolveRemoteRepositories`) so an
     // unreachable host never blocks the initial sidebar. The `.repositoriesLoaded`
     // handler merges in their placeholders and triggers resolution.
-    return (loaded, failures)
+    return RepositoriesLoadResult(
+      repositories: loaded,
+      failures: failures,
+      environmentError: environmentError
+    )
   }
 
   /// Customization transfer record produced by `prunedPendingWorktrees` and
@@ -5667,33 +5760,16 @@ extension RepositoriesFeature.State {
       let isUnresolvedRemotePlaceholder = repository.host != nil && repository.worktrees.isEmpty
       let pruneAgainstRoster = pruneLivenessAgainstRoster && !isUnresolvedRemotePlaceholder
       var copy = section
-      var seenInCuratedBuckets: Set<Worktree.ID> = []
-      for (bucketID, bucket) in copy.buckets {
-        if bucketID == .archived { continue }
-        var prunedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
-        for (worktreeID, item) in bucket.items {
-          if let mainID, worktreeID == mainID { continue }
-          if pruneAgainstRoster, !worktreeIDs.contains(worktreeID) { continue }
-          prunedItems[worktreeID] = item
-          seenInCuratedBuckets.insert(worktreeID)
-        }
-        var prunedBucket = bucket
-        prunedBucket.items = prunedItems
-        copy.buckets[bucketID] = prunedBucket
-      }
-      var archivedIDs: Set<Worktree.ID> = []
-      if let archivedBucket = copy.buckets[.archived] {
-        archivedIDs = Set(archivedBucket.items.keys)
-      }
-      // Seed every live non-main worktree that isn't already curated. Mutation
-      // actions assume every live worktree has a bucket and skip fallback paths.
-      for worktree in repository.worktrees {
-        if let mainID, worktree.id == mainID { continue }
-        if seenInCuratedBuckets.contains(worktree.id) || archivedIDs.contains(worktree.id) { continue }
+      let mainCustomization = mainID.flatMap { Self.mainWorktreeCustomization(in: copy, mainID: $0) }
+      let seenInCuratedBuckets = Self.pruneCuratedBuckets(
+        in: &copy, mainID: mainID, liveWorktreeIDs: worktreeIDs, pruneAgainstRoster: pruneAgainstRoster)
+      if let mainID, let mainCustomization {
         var unpinned = copy.buckets[.unpinned] ?? .init()
-        unpinned.items[worktree.id] = .init()
+        unpinned.items[mainID] = mainCustomization
         copy.buckets[.unpinned] = unpinned
       }
+      Self.seedLiveWorktrees(
+        into: &copy, repository: repository, mainID: mainID, seenInCuratedBuckets: seenInCuratedBuckets)
       // Same carve-out: a disconnected remote's empty roster would otherwise drop
       // every stored branch-collapse prefix.
       if !isUnresolvedRemotePlaceholder {
@@ -5719,6 +5795,71 @@ extension RepositoriesFeature.State {
     // `sidebar.json` on every tick.
     guard rebuilt != sidebar.sections else { return }
     $sidebar.withLock { sidebar in sidebar.sections = rebuilt }
+  }
+
+  /// Prunes each curated bucket in place: drops the main worktree (it renders in
+  /// the main slot) and, when `pruneAgainstRoster`, any row no longer live.
+  /// Returns the worktree IDs kept, so the caller can skip re-seeding them.
+  private static func pruneCuratedBuckets(
+    in copy: inout SidebarState.Section,
+    mainID: Worktree.ID?,
+    liveWorktreeIDs: Set<Worktree.ID>,
+    pruneAgainstRoster: Bool
+  ) -> Set<Worktree.ID> {
+    var seen: Set<Worktree.ID> = []
+    for (bucketID, bucket) in copy.buckets {
+      if bucketID == .archived { continue }
+      var prunedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
+      for (worktreeID, item) in bucket.items {
+        if let mainID, worktreeID == mainID { continue }
+        if pruneAgainstRoster, !liveWorktreeIDs.contains(worktreeID) { continue }
+        prunedItems[worktreeID] = item
+        seen.insert(worktreeID)
+      }
+      var prunedBucket = bucket
+      prunedBucket.items = prunedItems
+      copy.buckets[bucketID] = prunedBucket
+    }
+    return seen
+  }
+
+  /// Seeds every live non-main worktree that isn't already curated or archived into
+  /// `.unpinned`. Mutation actions assume every live worktree has a bucket and skip
+  /// fallback paths.
+  private static func seedLiveWorktrees(
+    into copy: inout SidebarState.Section,
+    repository: Repository,
+    mainID: Worktree.ID?,
+    seenInCuratedBuckets: Set<Worktree.ID>
+  ) {
+    var archivedIDs: Set<Worktree.ID> = []
+    if let archivedBucket = copy.buckets[.archived] {
+      archivedIDs = Set(archivedBucket.items.keys)
+    }
+    for worktree in repository.worktrees {
+      if let mainID, worktree.id == mainID { continue }
+      if seenInCuratedBuckets.contains(worktree.id) || archivedIDs.contains(worktree.id) { continue }
+      var unpinned = copy.buckets[.unpinned] ?? .init()
+      unpinned.items[worktree.id] = .init()
+      copy.buckets[.unpinned] = unpinned
+    }
+  }
+
+  /// Returns a git main worktree's CLI-set appearance override, if any.
+  /// Reconciliation reprojects it into `.unpinned` so the tint / rename survives
+  /// roster reloads without making the main worktree user-pinned.
+  private static func mainWorktreeCustomization(
+    in section: SidebarState.Section,
+    mainID: Worktree.ID
+  ) -> SidebarState.Item? {
+    for bucketID in [SidebarState.BucketID.unpinned, .pinned] {
+      guard var item = section.buckets[bucketID]?.items[mainID],
+        item.title != nil || item.color != nil
+      else { continue }
+      item.archivedAt = nil
+      return item
+    }
+    return nil
   }
 
   /// Drop persisted `collapsedBranchPrefixes` entries no longer covered by any

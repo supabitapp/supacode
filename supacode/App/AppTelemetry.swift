@@ -30,6 +30,25 @@ enum AppTelemetry {
     settings.analyticsEnabled && !isDebugBuild
   }
 
+  static func makeConfig(configuration: Configuration) -> PostHogConfig {
+    let config = PostHogConfig(apiKey: configuration.apiKey, host: configuration.host)
+    config.captureApplicationLifecycleEvents = true
+    config.enableSwizzling = false
+    config.setBeforeSend { event in
+      shouldSend(eventName: event.event) ? event : nil
+    }
+    return config
+  }
+
+  static func shouldSend(eventName: String) -> Bool {
+    switch eventName {
+    case "Application Opened", "Application Backgrounded":
+      return false
+    default:
+      return true
+    }
+  }
+
   @MainActor
   static func setup(
     settings: GlobalSettings,
@@ -41,12 +60,12 @@ enum AppTelemetry {
     #else
       guard isEnabled(settings: settings, isDebugBuild: false) else { return }
       guard let configuration = Configuration(infoDictionary: infoDictionary) else { return }
-      let config = PostHogConfig(apiKey: configuration.apiKey, host: configuration.host)
-      config.enableSwizzling = false
+      let config = makeConfig(configuration: configuration)
       PostHogSDK.shared.setup(config)
       if let hardwareUUID {
         PostHogSDK.shared.identify(hardwareUUID)
       }
+      PostHogSDK.shared.capture("app_launched")
     #endif
   }
 }

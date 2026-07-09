@@ -6,7 +6,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct WorktreeCreationPromptFeatureTests {
   private func makeState(
     automaticBaseRef: String = "origin/main",

@@ -534,6 +534,21 @@ struct SidebarStateTests {
     #expect(item?.color == .red)
   }
 
+  @Test func itemColorEncodesWireFormatAndRoundTrips() throws {
+    let predefined = SidebarState.Item(title: "Manual", color: .red)
+    let custom = SidebarState.Item(color: .custom("#A1B2C3"))
+
+    let predefinedData = try JSONEncoder().encode(predefined)
+    let customData = try JSONEncoder().encode(custom)
+
+    let predefinedJSON = try #require(String(bytes: predefinedData, encoding: .utf8))
+    let customJSON = try #require(String(bytes: customData, encoding: .utf8))
+    #expect(predefinedJSON.contains("\"red\""))
+    #expect(customJSON.contains("\"#A1B2C3\""))
+    #expect(try JSONDecoder().decode(SidebarState.Item.self, from: predefinedData) == predefined)
+    #expect(try JSONDecoder().decode(SidebarState.Item.self, from: customData) == custom)
+  }
+
   // MARK: - removeAnywhere(preferring:) ordering.
 
   @Test func removeAnywhereHonorsPreferringOrderWhenRowExistsInMultipleBuckets() {

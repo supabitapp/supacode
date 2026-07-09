@@ -62,6 +62,13 @@ extension RepositoriesFeature {
         state.worktreeCustomization = nil
         return .none
 
+      case .setWorktreeAppearance(let worktreeID, let repositoryID, let title, let color):
+        state.$sidebar.withLock { sidebar in
+          sidebar.setCustomization(title: title, color: color, worktree: worktreeID, in: repositoryID)
+        }
+        syncSidebar(&state)
+        return .none
+
       default:
         return .none
       }

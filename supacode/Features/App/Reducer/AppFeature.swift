@@ -2,7 +2,6 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import OrderedCollections
-import PostHog
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI
@@ -33,6 +32,38 @@ private nonisolated let defaultCommandTimeoutSeconds = 180
 
 @Reducer
 struct AppFeature {
+  private static let appLifecycleDebounceInterval: TimeInterval = 15 * 60
+
+  enum AppLifecycleEvent: String, Sendable {
+    case activatedDebounced = "app_activated_debounced"
+    case deactivatedDebounced = "app_deactivated_debounced"
+  }
+
+  struct AppLifecycleEventDebouncer: Equatable, Sendable {
+    var lastActivatedAt: Date?
+    var lastDeactivatedAt: Date?
+
+    mutating func shouldCapture(event: AppLifecycleEvent, now: Date) -> Bool {
+      switch event {
+      case .activatedDebounced:
+        return Self.shouldCapture(lastCapturedAt: &lastActivatedAt, now: now)
+      case .deactivatedDebounced:
+        return Self.shouldCapture(lastCapturedAt: &lastDeactivatedAt, now: now)
+      }
+    }
+
+    private static func canCapture(lastCapturedAt: Date?, now: Date) -> Bool {
+      guard let lastCapturedAt else { return true }
+      return now.timeIntervalSince(lastCapturedAt) >= AppFeature.appLifecycleDebounceInterval
+    }
+
+    private static func shouldCapture(lastCapturedAt: inout Date?, now: Date) -> Bool {
+      guard canCapture(lastCapturedAt: lastCapturedAt, now: now) else { return false }
+      lastCapturedAt = now
+      return true
+    }
+  }
+
   @ObservableState
   struct State: Equatable {
     var agentPresence = AgentPresenceFeature.State()
@@ -73,6 +104,7 @@ struct AppFeature {
     /// Monotonic generation stamped on each socket-backed confirmation so a stale
     /// timeout action can't fire against a dialog that recycled the same fd.
     var confirmationGeneration: Int = 0
+    var appLifecycleEventDebouncer = AppLifecycleEventDebouncer()
 
     init(
       repositories: RepositoriesFeature.State = .init(),
@@ -156,6 +188,8 @@ struct AppFeature {
   enum Action {
     case agentPresence(AgentPresenceFeature.Action)
     case terminals(TerminalsFeature.Action)
+    case applicationDidBecomeActive
+    case applicationDidResignActive
     case appLaunched
     case scenePhaseChanged(ScenePhase)
     case repositories(RepositoriesFeature.Action)
@@ -214,11 +248,20 @@ struct AppFeature {
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(TerminalClient.self) private var terminalClient
   @Dependency(WorktreeInfoWatcherClient.self) private var worktreeInfoWatcher
+  @Dependency(\.date.now) private var now
   @Dependency(\.continuousClock) private var clock
 
   var body: some Reducer<State, Action> {
     let core = Reduce<State, Action> { state, action in
       switch action {
+      case .applicationDidBecomeActive:
+        captureAppLifecycleEvent(.activatedDebounced, state: &state)
+        return .none
+
+      case .applicationDidResignActive:
+        captureAppLifecycleEvent(.deactivatedDebounced, state: &state)
+        return .none
+
       case .appLaunched:
         return .merge(
           .send(.repositories(.task)),
@@ -258,6 +301,7 @@ struct AppFeature {
         let agentsBySurface = state.agentPresence.agentsBySurface()
         return .merge(
           agentPresenceFanOutEffect(surfaces: surfaces, state: state),
+          imagePasteAgentFanOutEffect(surfaces: surfaces, state: state),
           .run { [clock] _ in
             try await clock.sleep(for: .seconds(1))
             await MainActor.run {
@@ -273,7 +317,6 @@ struct AppFeature {
       case .scenePhaseChanged(let phase):
         switch phase {
         case .active:
-          analyticsClient.capture("app_activated", nil)
           return .merge(
             .send(.repositories(.refreshWorktrees)),
             // Re-probe agent integrations on activation so the sidebar
@@ -404,7 +447,10 @@ struct AppFeature {
         // remote layouts and kill their zmx sessions before resolution lands.
         if state.repositories.resolvingRemoteRepositoryIDs.isEmpty {
           // Failed/loading repos have no worktree rows yet, so shield their restored zmx sessions from prune.
+          // Environment-blocked git repos are suppressed with no rows either, so shield them too: a transient
+          // license/tools gate must not tear down their live terminal layouts.
           let protectedRepositoryIDs = Set(state.repositories.loadFailuresByID.keys)
+            .union(state.repositories.environmentBlockedRepositoryIDs)
           effects.append(
             .run { [allowed, protectedRepositoryIDs] _ in
               await terminalClient.send(
@@ -420,7 +466,12 @@ struct AppFeature {
         state.repositories.pendingAgentRehydrateSurfaces.removeAll()
         let rehydrate = pendingRehydrate.intersection(state.agentPresence.bySurface.keys)
         if !rehydrate.isEmpty {
-          effects.append(agentPresenceFanOutEffect(surfaces: rehydrate, state: state))
+          effects.append(
+            .merge(
+              agentPresenceFanOutEffect(surfaces: rehydrate, state: state),
+              imagePasteAgentFanOutEffect(surfaces: rehydrate, state: state)
+            )
+          )
         }
         if !state.pendingDeeplinks.isEmpty {
           let pending = state.pendingDeeplinks
@@ -1273,14 +1324,17 @@ struct AppFeature {
 
       case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
         guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
+        let projectedSurfaces = Set(projection.surfaceIDs)
         // Re-fan-out only for surfaces this projection ADDS to the row;
         // steady-state churn (notification arrival, focus changes) keeps the
         // surfaceIDs set stable and skips this entirely.
-        let addedSurfaces = Set(projection.surfaceIDs).subtracting(row.surfaceIDs)
+        let addedSurfaces = projectedSurfaces.subtracting(row.surfaceIDs)
+        let pendingProjectedSurfaces = projectedSurfaces.intersection(state.repositories.pendingAgentRehydrateSurfaces)
+        state.repositories.pendingAgentRehydrateSurfaces.subtract(pendingProjectedSurfaces)
         let restoredAddedSurfaces: Set<UUID> =
-          addedSurfaces.isEmpty || state.agentPresence.bySurface.isEmpty
+          addedSurfaces.isEmpty && pendingProjectedSurfaces.isEmpty || state.agentPresence.bySurface.isEmpty
           ? []
-          : addedSurfaces.filter { state.agentPresence.bySurface[$0] != nil }
+          : addedSurfaces.union(pendingProjectedSurfaces).filter { state.agentPresence.bySurface[$0] != nil }
         let projectionEffect: Effect<Action> = .send(
           .repositories(
             .sidebarItems(
@@ -1433,6 +1487,23 @@ struct AppFeature {
       affectedRowIDs.insert(rowID)
     }
     return agentSnapshotEffects(for: affectedRowIDs, state: state, badgesEnabled: badgesEnabled)
+  }
+
+  // Per-surface fan-out, deliberately separate from `agentPresenceFanOutEffect`:
+  // it pushes the raw agent set to each `GhosttySurfaceView` for paste routing and
+  // must not inherit the badge (`agentPresenceBadgesEnabled`) gate.
+  private func imagePasteAgentFanOutEffect(
+    surfaces: Set<UUID>,
+    state: State
+  ) -> Effect<Action> {
+    .merge(
+      surfaces.map { surfaceID in
+        let agents = state.agentPresence.bySurface[surfaceID] ?? []
+        return .run { _ in
+          await terminalClient.send(.setImagePasteAgents(surfaceID: surfaceID, agents: agents))
+        }
+      }
+    )
   }
 
   /// Re-broadcasts every row's agent snapshot under the supplied badge gate.
@@ -1751,8 +1822,11 @@ struct AppFeature {
     }
 
     let policyBypass = state.settings.automatedActionPolicy.allowsBypass(from: source)
+    // Appearance is a metadata-only update; don't steal focus for a tint / title change.
     let selectEffect: Effect<Action> =
-      .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
+      action.selectsWorktree
+      ? .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
+      : .none
     let actionEffect = worktreeActionEffect(
       worktreeID: worktreeID,
       action: action,
@@ -1784,7 +1858,7 @@ struct AppFeature {
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
     case .select, .stop, .stopScript, .tab, .tabDestroy, .surfaceDestroy,
-      .archive, .unarchive, .delete, .pin, .unpin:
+      .archive, .unarchive, .delete, .pin, .unpin, .appearance:
       spawnsShell = false
     }
     if spawnsShell, let worktree = state.repositories.worktree(for: worktreeID), worktree.isMissing {
@@ -1843,6 +1917,57 @@ struct AppFeature {
       return .send(.repositories(.pinWorktree(worktreeID)))
     case .unpin:
       return .send(.repositories(.unpinWorktree(worktreeID)))
+    case .appearance(let title, let colorValue):
+      guard title != nil || colorValue != nil else {
+        // Unreachable: the parser guarantees at least one field.
+        // Log so contract drift can't silently ack ok=true.
+        deeplinkLogger.warning("Appearance deeplink resolved with neither title nor color")
+        return .none
+      }
+      guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "appearance", state: &state) else {
+        return .none
+      }
+      let stored = storedWorktreeAppearance(worktreeID: worktreeID, repositoryID: repositoryID, state: state)
+      let resolvedTitle = title.map(Self.normalizedWorktreeTitle) ?? stored.title
+      var resolvedColor = stored.color
+      var rejectedColor: String?
+      if let colorValue {
+        if colorValue.lowercased() == "none" {
+          resolvedColor = nil
+        } else if let color = RepositoryColor.parse(colorValue) {
+          resolvedColor = color
+        } else {
+          rejectedColor = colorValue
+        }
+      }
+      if let rejectedColor {
+        deeplinkLogger.warning("Unrecognized worktree appearance color value: \(rejectedColor)")
+        // Alert doubles as the socket-ack failure signal, so the CLI gets ok=false.
+        state.alert = AlertState {
+          TextState("Invalid color value")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState(
+            "\(rejectedColor) is not a recognized color. Use red, orange, yellow, green, teal, blue, purple, "
+              + "#RRGGBB[AA] hex, or none. The tint was left unchanged."
+          )
+        }
+        // Nothing valid to apply when only an invalid color was supplied; a valid title still lands.
+        guard title != nil else { return .none }
+      }
+      return .send(
+        .repositories(
+          .setWorktreeAppearance(
+            worktreeID,
+            repositoryID,
+            title: resolvedTitle,
+            color: resolvedColor
+          )
+        )
+      )
     case .tab(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
@@ -2249,6 +2374,26 @@ struct AppFeature {
     return repositoryID
   }
 
+  private func storedWorktreeAppearance(
+    worktreeID: Worktree.ID,
+    repositoryID: Repository.ID,
+    state: State
+  ) -> (title: String?, color: RepositoryColor?) {
+    let bucket = state.repositories.sidebar.currentBucket(of: worktreeID, in: repositoryID)
+    let item = bucket.flatMap {
+      state.repositories.sidebar.sections[repositoryID]?.buckets[$0]?.items[worktreeID]
+    }
+    return (item?.title, item?.color)
+  }
+
+  private static func normalizedWorktreeTitle(_ title: String) -> String? {
+    // Collapse control whitespace so the stored title round-trips through the
+    // CLI's line-based read output (which strips tab / newline / CR).
+    let collapsed = title.replacing("\t", with: " ").replacing("\n", with: " ").replacing("\r", with: " ")
+    let trimmed = collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
   // MARK: Confirmation helpers.
 
   /// Returns `true` when confirmation has not been bypassed (via policy or re-dispatch).
@@ -2367,6 +2512,11 @@ struct AppFeature {
       appLifecycleClient.terminate()
     }
     return .concatenate(pendingFDEffect, pendingAcksEffect, terminateEffect)
+  }
+
+  private func captureAppLifecycleEvent(_ event: AppLifecycleEvent, state: inout State) {
+    guard state.appLifecycleEventDebouncer.shouldCapture(event: event, now: now) else { return }
+    analyticsClient.capture(event.rawValue, nil)
   }
 
   /// Extracts a human-readable message from an alert state for CLI error responses.

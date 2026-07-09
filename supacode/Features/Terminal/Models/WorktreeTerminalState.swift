@@ -709,6 +709,13 @@ final class WorktreeTerminalState {
     return true
   }
 
+  @discardableResult
+  func setImagePasteAgents(_ agents: Set<SkillAgent>, onSurfaceID surfaceID: UUID) -> Bool {
+    guard let surface = surfaces[surfaceID] else { return false }
+    surface.imagePasteAgents = agents
+    return true
+  }
+
   private func performBindingAction(_ action: String, on surface: GhosttySurfaceView) {
     if action == "close_surface" {
       pendingExplicitSurfaceCloseIDs.insert(surface.id)
@@ -1207,6 +1214,18 @@ final class WorktreeTerminalState {
       }
 
       onTabCreated?()
+    }
+
+    // Seed image-paste routing from the snapshot's per-surface agent records, matching
+    // the presence restore's liveness filter: an unopened worktree drains its rehydrate
+    // fan-out before the surface exists, and a dead-pid record never gets a corrective
+    // empty fan-out, so seeding only live agents keeps Cmd+V from routing into a stale shell.
+    for record in snapshot.allAgentRecords() {
+      let liveAgents = record.records.compactMap {
+        $0.pids.contains(where: AgentPresenceFeature.isAlive) ? SkillAgent(rawValue: $0.agent) : nil
+      }
+      guard !liveAgents.isEmpty else { continue }
+      surfaces[record.surfaceID]?.imagePasteAgents = Set(liveAgents)
     }
 
     // Select the correct tab.

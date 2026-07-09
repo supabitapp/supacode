@@ -1,0 +1,55 @@
+name: Issue ready
+
+# Comments on an issue once it is marked `ready`, so the reporter knows they can open a pull
+# request without having to watch the label. Covers both paths: a bug that is `ready` on
+# creation, and a feature a maintainer marks `ready` later. Comments once, via a hidden marker.
+on:
+  issues:
+    types: [opened, labeled]
+
+concurrency:
+  # No cancel-in-progress: the `opened` and `labeled` events for the same issue serialize so the
+  # idempotent comment check sees the first run's comment.
+  group: issue-ready-${{ github.event.issue.number }}
+
+permissions:
+  issues: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- supacode-issue-ready -->';
+            const issue = context.payload.issue;
+            const { owner, repo } = context.repo;
+
+            if (issue.pull_request || issue.state !== 'open') return; // Issues only, still open.
+
+            const hasLabel = (name) =>
+              issue.labels.some((l) => (typeof l === 'string' ? l : l.name).toLowerCase() === name);
+            if (!hasLabel('ready')) return;
+
+            // On a `labeled` event, react only to `ready` being added, not other label churn.
+            if (context.payload.action === 'labeled') {
+              const added = context.payload.label && context.payload.label.name.toLowerCase();
+              if (added !== 'ready') return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: issue.number, per_page: 100,
+            });
+            if (comments.some((c) => c.body && c.body.includes(marker))) return; // Already notified.
+
+            const lead = hasLabel('enhancement')
+              ? 'Thanks for your patience. This feature is approved and marked `ready`, so it is now open for a pull request.'
+              : 'This is marked `ready`, so it is open for a pull request.';
+            const body =
+              `${marker}\n\n` +
+              `${lead} If you'd like to work on it, open a pull request and link it with \`Closes #${issue.number}\` ` +
+              'in the description. If the issue is assigned to someone, it is reserved for them; otherwise anyone is ' +
+              'welcome to pick it up.\n\n' +
+              'See [CONTRIBUTING.md](https://github.com/supabitapp/supacode/blob/main/CONTRIBUTING.md) for the full flow.';
+            await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body });

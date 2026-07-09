@@ -17,7 +17,9 @@ TUIST_INSTALL_STAMP := $(TUIST_GENERATION_STAMP_DIR)/.installed
 TUIST_DEVELOPMENT_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/development
 TUIST_SOURCE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/none
 TUIST_RELEASE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/development-release
-TUIST_GENERATION_INPUTS := Project.swift Workspace.swift Tuist.swift Tuist/Package.swift $(wildcard Tuist/Package.resolved) $(PROJECT_CONFIG_PATH) mise.toml scripts/build-ghostty.sh scripts/build-zmx.sh
+# Test targets use explicit source globs expanded at generation time, so a new
+# test file must trigger a regen or it would silently run in no bundle.
+TUIST_GENERATION_INPUTS := Project.swift Workspace.swift Tuist.swift Tuist/Package.swift $(wildcard Tuist/Package.resolved) $(PROJECT_CONFIG_PATH) mise.toml scripts/build-ghostty.sh scripts/build-zmx.sh $(wildcard supacodeTests/*.swift)
 TUIST_GENERATE_CACHE_PROFILE ?= development
 TUIST_CACHE_CONFIGURATION ?= Debug
 VERSION ?=
@@ -28,6 +30,12 @@ BODY ?=
 export VERSION BUILD TITLE BODY
 XCODEBUILD_FLAGS ?=
 SUPACODE_SKIP_PREFLIGHT ?=
+# Parallel test execution (Swift Testing in-process + one process per test bundle).
+# Escape hatch: make test TEST_PARALLEL=NO.
+TEST_PARALLEL ?= YES
+# The explicit workspace scheme carries every test bundle; the auto-generated
+# app scheme only tests supacodeTests.
+TEST_SCHEME := supacode-tests
 
 # Export a Zig-linkable Xcode per build recipe (no global xcode-select -s). Plain
 # assignment so a missing Xcode aborts the recipe under -e.
@@ -141,9 +149,9 @@ export-archive: # Export xarchive
 test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	@$(SELECT_DEVELOPER_DIR); \
 	if [ -t 1 ]; then \
-		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \
+		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \
 	else \
-		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled NO; \
+		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL); \
 	fi
 
 format: # Format code with swift-format (mise-pinned for reproducibility).

@@ -7,7 +7,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct WorktreeCreationPromptParentTests {
   private let repoID: Repository.ID = "/tmp/create-wt-repo"
 
