@@ -1,3 +1,4 @@
+import ConcurrencyExtras
 import Darwin
 import Foundation
 import Testing
@@ -187,6 +188,109 @@ struct AgentHookSocketServerTests {
       #expect(
         (try? JSONDecoder().decode(AgentHookEvent.self, from: Data(json.utf8))) == nil,
         "Expected nil for pid=\(badPid)")
+    }
+  }
+
+  // MARK: - Accept-loop lifecycle.
+
+  @Test func acceptLoopDispatchesCommandAndWritesResponse() async throws {
+    let path = "/tmp/supacode-tests/\(UUID().uuidString)"
+    let server = AgentHookSocketServer(socketPathOverride: path)
+    #expect(server.socketPath == path)
+    let received = LockIsolated<URL?>(nil)
+    server.onCommand = { url, clientFD in
+      received.setValue(url)
+      AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: true)
+    }
+
+    let payload = #"{"deeplink":"supacode://worktree/%2Ftmp%2Frepo/run"}"#
+    let response = try #require(await Self.sendAndReceive(path: path, payload: payload))
+
+    #expect(response.contains(#""ok":true"#))
+    #expect(received.value?.scheme == "supacode")
+    server.shutdown()
+  }
+
+  @Test func commandWithoutHandlerGetsNotReadyResponse() async throws {
+    let path = "/tmp/supacode-tests/\(UUID().uuidString)"
+    let server = AgentHookSocketServer(socketPathOverride: path)
+    #expect(server.socketPath == path)
+
+    let payload = #"{"deeplink":"supacode://worktree/%2Ftmp%2Frepo/run"}"#
+    let response = try #require(await Self.sendAndReceive(path: path, payload: payload))
+
+    #expect(response.contains(#""ok":false"#))
+    #expect(response.contains("Not ready."))
+    server.shutdown()
+  }
+
+  @Test func shutdownRemovesSocketAndRefusesNewConnections() async throws {
+    let path = "/tmp/supacode-tests/\(UUID().uuidString)"
+    let server = AgentHookSocketServer(socketPathOverride: path)
+    #expect(server.socketPath == path)
+
+    server.shutdown()
+
+    #expect(server.socketPath == nil)
+    #expect(!FileManager.default.fileExists(atPath: path))
+    let response = await Self.sendAndReceive(path: path, payload: "{}")
+    #expect(response == nil)
+  }
+
+  /// Connects, writes `payload`, half-closes, and reads the response to EOF,
+  /// all off the main actor so the server's main-actor dispatch can run while
+  /// the client blocks. Returns nil when the connection fails.
+  private nonisolated static func sendAndReceive(path: String, payload: String) async -> String? {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global().async {
+        let clientFD = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard clientFD >= 0 else {
+          continuation.resume(returning: nil)
+          return
+        }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = path.utf8CString
+        guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
+          close(clientFD)
+          continuation.resume(returning: nil)
+          return
+        }
+        _ = withUnsafeMutablePointer(to: &addr.sun_path) { sunPath in
+          pathBytes.withUnsafeBufferPointer { buffer in
+            memcpy(sunPath, buffer.baseAddress!, buffer.count)
+          }
+        }
+        let addrLen = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
+        let connected = withUnsafePointer(to: &addr) { pointer in
+          pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+            Darwin.connect(clientFD, sockaddrPointer, addrLen)
+          }
+        }
+        guard connected == 0 else {
+          close(clientFD)
+          continuation.resume(returning: nil)
+          return
+        }
+        let bytes = Array(payload.utf8)
+        _ = bytes.withUnsafeBufferPointer { buffer in
+          write(clientFD, buffer.baseAddress, buffer.count)
+        }
+        // Half-close so the server's read-to-EOF loop completes while the
+        // response can still come back.
+        Darwin.shutdown(clientFD, SHUT_WR)
+        var data = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+          let count = chunk.withUnsafeMutableBufferPointer { buffer in
+            read(clientFD, buffer.baseAddress, buffer.count)
+          }
+          guard count > 0 else { break }
+          data.append(contentsOf: chunk.prefix(count))
+        }
+        close(clientFD)
+        continuation.resume(returning: String(data: data, encoding: .utf8))
+      }
     }
   }
 }

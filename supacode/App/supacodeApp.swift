@@ -80,6 +80,7 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
+    appStore?.send(.applicationDidBecomeActive)
     let app = NSApplication.shared
     // Filter `NSPanel` out of the visibility check — the system
     // color / font panels (and any sheet-attached child panels) are
@@ -89,6 +90,10 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     }
     guard !hasVisibleMainWindow else { return }
     app.surfaceMainWindow()
+  }
+
+  func applicationDidResignActive(_ notification: Notification) {
+    appStore?.send(.applicationDidResignActive)
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

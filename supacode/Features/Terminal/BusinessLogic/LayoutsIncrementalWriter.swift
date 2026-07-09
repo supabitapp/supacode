@@ -24,6 +24,10 @@ actor LayoutsIncrementalWriter {
   }
 
   private static let logger = SupaLogger("Layouts")
+  /// Dedicated executor so the sync disk I/O never runs on the cooperative
+  /// pool, and never on main when the test main serial executor is active.
+  private nonisolated let executorQueue = DispatchSerialQueue(label: "app.supabit.supacode.layouts-writer")
+  nonisolated var unownedExecutor: UnownedSerialExecutor { executorQueue.asUnownedSerialExecutor() }
   private let storage: SettingsFileStorage
   private let url: URL
   /// Guards the read-modify-write so the off-actor `flushSync` (on-quit) and the

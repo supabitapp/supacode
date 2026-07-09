@@ -3250,7 +3250,7 @@ struct RepositoriesFeatureTests {
     (137, "Script killed by signal 9 (exit code 137)."),
   ]
 
-  @Test(arguments: archiveExitCodeCases)
+  @Test(.dependencies, arguments: archiveExitCodeCases)
   func archiveScriptCompletedShowsExpectedMessage(exitCode: Int, expectedMessage: String) async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)

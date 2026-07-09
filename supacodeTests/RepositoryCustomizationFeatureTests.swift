@@ -6,7 +6,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct RepositoryCustomizationFeatureTests {
   private func makeState(
     title: String = "",

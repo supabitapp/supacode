@@ -8,7 +8,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct WorktreeCustomizationParentTests {
   private let repoID: RepositoryID = "/tmp/customize-wt-repo"
   private let worktreeID: WorktreeID = "/tmp/customize-wt-repo/feature-x"

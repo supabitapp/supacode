@@ -342,7 +342,7 @@ struct ZmxAttachRemoteTests {
     #expect(ZmxAttach.loginShellRun("echo 'hi'") == "exec \"$SHELL\" -l -c 'echo '\\''hi'\\'''")
   }
 
-  @Test func bannerConstantsAreSelfTerminatedPrintfStatements() throws {
+  @Test func bannerConstantsAreSelfTerminatedPrintfStatements() async throws {
     // Every banner must be a complete `printf '...'; ` statement: script
     // builders concatenate them blindly, and a missing trailing separator
     // would merge the banner into the next command by word concatenation,
@@ -366,8 +366,7 @@ struct ZmxAttachRemoteTests {
     run.arguments = ["-c", ZmxAttach.betaBanner + ZmxAttach.persistentBanner + "exit 42"]
     run.standardOutput = FileHandle.nullDevice
     run.standardError = FileHandle.nullDevice
-    try run.run()
-    run.waitUntilExit()
+    try await run.runToExit()
     #expect(run.terminationStatus == 42)
   }
 
@@ -392,7 +391,7 @@ struct ZmxAttachRemoteTests {
     #expect(script.ranges(of: reconnect).count == 1)
   }
 
-  @Test func reconnectLoopScriptsAreValidShAndPassExitCodesThrough() throws {
+  @Test func reconnectLoopScriptsAreValidShAndPassExitCodesThrough() async throws {
     // `sh -n` catches an unbalanced quote or broken test that a golden-string
     // rewrite could smuggle in; the run asserts non-255 passthrough without
     // ever reaching `sleep`.
@@ -410,8 +409,7 @@ struct ZmxAttachRemoteTests {
       let check = Process()
       check.executableURL = URL(fileURLWithPath: "/bin/sh")
       check.arguments = ["-n", "-c", script]
-      try check.run()
-      check.waitUntilExit()
+      try await check.runToExit()
       #expect(check.terminationStatus == 0, "sh -n rejected: \(script)")
     }
     let run = Process()
@@ -419,8 +417,7 @@ struct ZmxAttachRemoteTests {
     run.arguments = ["-c", loop]
     run.standardOutput = FileHandle.nullDevice
     run.standardError = FileHandle.nullDevice
-    try run.run()
-    run.waitUntilExit()
+    try await run.runToExit()
     #expect(run.terminationStatus == 7)
   }
 

@@ -5,7 +5,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct RenameBranchFeatureTests {
   private let repoRoot = URL(fileURLWithPath: "/tmp/rename-repo")
 

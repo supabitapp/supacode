@@ -375,7 +375,7 @@ struct AgentHookCommandTests {
 
   // MARK: - Runtime behaviour (real shell).
 
-  @Test func presenceCarriesLocalPidButNotRemote() throws {
+  @Test func presenceCarriesLocalPidButNotRemote() async throws {
     // The pid suffix is the local/remote discriminator: present when
     // SUPACODE_SOCKET_PATH is set (local host), absent over SSH. A regression
     // that always or never emitted it would silently break the liveness sweep.
@@ -384,32 +384,32 @@ struct AgentHookCommandTests {
       events: [.busy], forwardStdinAsNotification: false, agent: .claude)
 
     // Local (socket present): the presence OSC carries a positive pid.
-    let local = try runHookCommandCapturingTTY(
+    let local = try await runHookCommandCapturingTTY(
       command, env: base.merging(["SUPACODE_SOCKET_PATH": "/tmp/sock-\(UUID().uuidString)"]) { $1 })
     let localSignal = try #require(Self.parsePresence(fromTTY: local))
     #expect(localSignal.eventRawValue == "busy")
     #expect((localSignal.pid ?? 0) > 0)
 
     // Remote (socket absent): the presence OSC lands but carries no pid.
-    let remote = try runHookCommandCapturingTTY(command, env: base)
+    let remote = try await runHookCommandCapturingTTY(command, env: base)
     let remoteSignal = try #require(Self.parsePresence(fromTTY: remote))
     #expect(remoteSignal.eventRawValue == "busy")
     #expect(remoteSignal.pid == nil)
   }
 
-  @Test func notifyExtractsBodyFromStdinThroughAwk() throws {
+  @Test func notifyExtractsBodyFromStdinThroughAwk() async throws {
     // End-to-end: the real shell hook runs the awk extractor over Claude's stdin
     // JSON and the resulting OSC parses back with the body intact.
     let json = #"{"hook_event_name":"Stop","message":"hi there"}"#
     let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [], forwardStdinAsNotification: true, agent: .claude)
-    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
     let signal = try #require(Self.parseNotify(fromTTY: tty))
     #expect(signal.body == "hi there")
   }
 
-  @Test func notifyAwkPreservesEscapedQuotesNewlinesAndUnicode() throws {
+  @Test func notifyAwkPreservesEscapedQuotesNewlinesAndUnicode() async throws {
     // The awk extractor must copy the escaped JSON value verbatim so embedded
     // quotes / newlines / unicode survive the round-trip, and pick the body via
     // the precedence list (here `last_assistant_message`, with `message` empty).
@@ -418,7 +418,7 @@ struct AgentHookCommandTests {
     let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [.idle], forwardStdinAsNotification: true, agent: .claude)
-    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
     #expect(tty.contains("]3008;start=claude;event=idle"))
     let signal = try #require(Self.parseNotify(fromTTY: tty))
     #expect(signal.title == "Done")
@@ -435,16 +435,16 @@ struct AgentHookCommandTests {
     (#"{"message":42,"assistant_response":"kiro body"}"#, "kiro body"),
     (#"{"assistant_response":"kiro body"}"#, "kiro body"),
   ])
-  func notifyAwkResolvesBodyByPrecedence(json: String, expectedBody: String) throws {
+  func notifyAwkResolvesBodyByPrecedence(json: String, expectedBody: String) async throws {
     let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [], forwardStdinAsNotification: true, agent: .claude)
-    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
     let signal = try #require(Self.parseNotify(fromTTY: tty))
     #expect(signal.body == expectedBody)
   }
 
-  @Test func notifyByteCapFiresAndWireStaysUnderOSCCeiling() throws {
+  @Test func notifyByteCapFiresAndWireStaysUnderOSCCeiling() async throws {
     // Drive a body past notifyBodyByteBudget through the REAL awk and assert the
     // emitted metadata stays under libghostty's 2048-byte OSC ceiling (the headline
     // guarantee) and the decoded body is a sane truncated prefix. Exercises the
@@ -454,7 +454,7 @@ struct AgentHookCommandTests {
     let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [], forwardStdinAsNotification: true, agent: .claude)
-    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
     // Metadata is everything after `]3008;` up to ST; assert it is under the cap.
     let marker = try #require(tty.range(of: "]3008;"))
     let afterMarker = tty[marker.upperBound...]
@@ -465,7 +465,7 @@ struct AgentHookCommandTests {
     #expect(signal.body?.allSatisfy { $0 == "a" } == true)
   }
 
-  @Test func notifyMultibyteBodyCapDecodesToCleanPrefix() throws {
+  @Test func notifyMultibyteBodyCapDecodesToCleanPrefix() async throws {
     // A multibyte (non-ASCII) body driven past the byte budget is the realistic
     // silent-drop risk for non-English agent output: LC_ALL=C makes the awk cap
     // byte-based, so it can sever a 3-byte codepoint mid-sequence. The shed loop
@@ -477,14 +477,14 @@ struct AgentHookCommandTests {
     let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [], forwardStdinAsNotification: true, agent: .claude)
-    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
     let signal = try #require(Self.parseNotify(fromTTY: tty))
     #expect(signal.body?.isEmpty == false)
     // Every surviving character is a whole "日": no partial codepoint, no U+FFFD.
     #expect(signal.body?.allSatisfy { $0 == "日" } == true)
   }
 
-  @Test func notifyAwkIgnoresKeyTextEscapedInsideAnEarlierValue() throws {
+  @Test func notifyAwkIgnoresKeyTextEscapedInsideAnEarlierValue() async throws {
     // The awk matches the first `"message":` occurrence. An earlier value that
     // mentions the key can only do so with escaped quotes (valid JSON), so the
     // `"message"` token (quote-key-quote) never matches inside it: the real
@@ -493,29 +493,29 @@ struct AgentHookCommandTests {
     let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [], forwardStdinAsNotification: true, agent: .claude)
-    let tty = try runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
     let signal = try #require(Self.parseNotify(fromTTY: tty))
     #expect(signal.title == #"see "message": here"#)
     #expect(signal.body == "real body")
   }
 
-  @Test func emitsNothingOutsideSupacode() throws {
+  @Test func emitsNothingOutsideSupacode() async throws {
     // No SUPACODE_SURFACE_ID = not a Supacode surface: the guard short-circuits
     // and the command writes nothing to the tty (the inert-outside-Supacode
     // contract).
     let command = AgentHookSettingsCommand.compositeCommand(
       events: [.busy], forwardStdinAsNotification: true, agent: .claude)
-    let tty = try runHookCommandCapturingTTY(command, env: [:], stdin: "{}")
+    let tty = try await runHookCommandCapturingTTY(command, env: [:], stdin: "{}")
     #expect(tty.isEmpty)
   }
 
   // MARK: - OSC presence round-trip.
 
-  @Test func presenceOSCRoundTripsThroughParser() throws {
+  @Test func presenceOSCRoundTripsThroughParser() async throws {
     // The shell-produced OSC must parse back into a well-formed, pid-bearing
     // signal. A guard against a template change that subtly breaks the wire.
     let surfaceID = UUID()
-    let captured = try runHookCommandCapturingTTY(
+    let captured = try await runHookCommandCapturingTTY(
       AgentHookSettingsCommand.compositeCommand(
         events: [.sessionStart], forwardStdinAsNotification: false, agent: .claude),
       env: [
@@ -615,7 +615,7 @@ struct AgentHookCommandTests {
   /// optionally feeding `stdin`, and returns the text written to the fake tty.
   private func runHookCommandCapturingTTY(
     _ command: String, env: [String: String], stdin: String = ""
-  ) throws -> String {
+  ) async throws -> String {
     let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("supacode-hook-tty-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
@@ -639,10 +639,18 @@ struct AgentHookCommandTests {
     process.environment = environment
     let stdinPipe = Pipe()
     process.standardInput = stdinPipe
+    let (exited, exitContinuation) = AsyncStream<Void>.makeStream()
+    process.terminationHandler = { _ in exitContinuation.finish() }
     try process.run()
     stdinPipe.fileHandleForWriting.write(Data(stdin.utf8))
     try? stdinPipe.fileHandleForWriting.close()
-    process.waitUntilExit()
-    return (try? String(contentsOf: captureFile, encoding: .utf8)) ?? ""
+    for await _ in exited {}
+    // Cancellation ends the iteration early; returning here would read an
+    // empty capture file and let emptiness assertions pass vacuously.
+    guard !Task.isCancelled else {
+      if process.isRunning { process.terminate() }
+      throw CancellationError()
+    }
+    return try String(contentsOf: captureFile, encoding: .utf8)
   }
 }

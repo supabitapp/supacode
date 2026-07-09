@@ -8,7 +8,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct AppFeatureJumpToLatestUnreadTests {
   @Test(.dependencies) func noOpWhenNoUnreadNotifications() async {
     let worktree = makeWorktree()

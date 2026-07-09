@@ -9,7 +9,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct RepositoriesFeatureCustomizationTests {
   private let repoID: RepositoryID = "/tmp/customize-repo"
 

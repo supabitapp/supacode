@@ -12,7 +12,6 @@ import Testing
 /// response open until the operation is observably complete (or the timeout
 /// watchdog fires), then drains the client fd.
 @MainActor
-@Suite(.serialized)
 struct AppFeatureCommandAckTests {
   // MARK: - Transport.
 

@@ -5,9 +5,9 @@ import Testing
 
 struct GitClientSupacodeLockTests {
   @Test func reconcileBackfillsLockOnUnmanagedWorktree() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    try fixture.addLinkedWorktree(named: "feature-a")
+    try await fixture.addLinkedWorktree(named: "feature-a")
     let adminDir = fixture.adminDirectory(for: "feature-a")
     let lockFile = adminDir.appending(path: "locked")
     #expect(!FileManager.default.fileExists(atPath: lockFile.path(percentEncoded: false)))
@@ -21,9 +21,9 @@ struct GitClientSupacodeLockTests {
   }
 
   @Test func reconcilePreservesSupacodeLockWhenWorktreeMissing() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    let worktreeURL = try fixture.addLinkedWorktree(named: "feature-offline")
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-offline")
     let adminDir = fixture.adminDirectory(for: "feature-offline")
     GitClient.writeSupacodeLock(at: adminDir)
     try FileManager.default.removeItem(at: worktreeURL)
@@ -38,9 +38,9 @@ struct GitClientSupacodeLockTests {
   }
 
   @Test func reconcileLeavesUserLockUntouched() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    try fixture.addLinkedWorktree(named: "feature-user-lock")
+    try await fixture.addLinkedWorktree(named: "feature-user-lock")
     let adminDir = fixture.adminDirectory(for: "feature-user-lock")
     let lockFile = adminDir.appending(path: "locked")
     try "user-set".write(to: lockFile, atomically: true, encoding: .utf8)
@@ -52,9 +52,9 @@ struct GitClientSupacodeLockTests {
   }
 
   @Test func reconcileHandlesRelativePathGitdir() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    try fixture.addLinkedWorktree(named: "feature-relative", useRelativePaths: true)
+    try await fixture.addLinkedWorktree(named: "feature-relative", useRelativePaths: true)
     let adminDir = fixture.adminDirectory(for: "feature-relative")
     let lockFile = adminDir.appending(path: "locked")
 
@@ -69,9 +69,9 @@ struct GitClientSupacodeLockTests {
   }
 
   @Test func reconcileWorksWithProductionStyleRootURL() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    try fixture.addLinkedWorktree(named: "feature-bare-url")
+    try await fixture.addLinkedWorktree(named: "feature-bare-url")
     let adminDir = fixture.adminDirectory(for: "feature-bare-url")
     let lockFile = adminDir.appending(path: "locked")
     // Production builds the root via `URL(fileURLWithPath: $0)` without
@@ -84,13 +84,14 @@ struct GitClientSupacodeLockTests {
   }
 
   @Test func removeWorktreeReleasesSupacodeLock() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    let worktreeURL = try fixture.addLinkedWorktree(named: "feature-remove")
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-remove")
     let adminDir = fixture.adminDirectory(for: "feature-remove")
     GitClient.writeSupacodeLock(at: adminDir)
     let worktree = Worktree(
       id: WorktreeID(worktreeURL.path(percentEncoded: false)),
+      kind: .git,
       name: "feature-remove",
       detail: "feature-remove",
       workingDirectory: worktreeURL,
@@ -104,14 +105,15 @@ struct GitClientSupacodeLockTests {
   }
 
   @Test func removeWorktreeCleansLockedOrphan() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    let worktreeURL = try fixture.addLinkedWorktree(named: "feature-orphan-delete")
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-orphan-delete")
     let adminDir = fixture.adminDirectory(for: "feature-orphan-delete")
     GitClient.writeSupacodeLock(at: adminDir)
     try FileManager.default.removeItem(at: worktreeURL)
     let worktree = Worktree(
       id: WorktreeID(worktreeURL.path(percentEncoded: false)),
+      kind: .git,
       name: "feature-orphan-delete",
       detail: "feature-orphan-delete",
       workingDirectory: worktreeURL,
@@ -126,14 +128,15 @@ struct GitClientSupacodeLockTests {
   }
 
   @Test func removeWorktreeCleansLockedOrphanWithBranchDelete() async throws {
-    let fixture = try GitWorktreeFixture()
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    let worktreeURL = try fixture.addLinkedWorktree(named: "feature-orphan-branch")
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-orphan-branch")
     let adminDir = fixture.adminDirectory(for: "feature-orphan-branch")
     GitClient.writeSupacodeLock(at: adminDir)
     try FileManager.default.removeItem(at: worktreeURL)
     let worktree = Worktree(
       id: WorktreeID(worktreeURL.path(percentEncoded: false)),
+      kind: .git,
       name: "feature-orphan-branch",
       detail: "feature-orphan-branch",
       workingDirectory: worktreeURL,
@@ -149,10 +152,10 @@ struct GitClientSupacodeLockTests {
     #expect(!branches.contains("feature-orphan-branch"))
   }
 
-  @Test func writeSupacodeLockProducesParseableMetadata() throws {
-    let fixture = try GitWorktreeFixture()
+  @Test func writeSupacodeLockProducesParseableMetadata() async throws {
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    try fixture.addLinkedWorktree(named: "feature-lock-on-create")
+    try await fixture.addLinkedWorktree(named: "feature-lock-on-create")
     let worktreeURL = fixture.containerURL.appending(path: "feature-lock-on-create")
     let adminDir = try #require(GitClient.adminDirectory(forWorktreeAt: worktreeURL))
 
@@ -192,24 +195,24 @@ struct GitClientSupacodeLockTests {
     let worktreeURL = containerURL.appending(path: "feature", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: containerURL, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: containerURL) }
-    try GitWorktreeFixture.git(["init", seedURL.path(percentEncoded: false)])
-    try GitWorktreeFixture.git([
+    try await GitWorktreeFixture.git(["init", seedURL.path(percentEncoded: false)])
+    try await GitWorktreeFixture.git([
       "-C", seedURL.path(percentEncoded: false), "config", "user.email", "test@example.com",
     ])
-    try GitWorktreeFixture.git([
+    try await GitWorktreeFixture.git([
       "-C", seedURL.path(percentEncoded: false), "config", "user.name", "Test User",
     ])
     let readme = seedURL.appending(path: "README.md")
     try "hello".write(to: readme, atomically: true, encoding: .utf8)
-    try GitWorktreeFixture.git(["-C", seedURL.path(percentEncoded: false), "add", "README.md"])
-    try GitWorktreeFixture.git(["-C", seedURL.path(percentEncoded: false), "commit", "-m", "init"])
-    try GitWorktreeFixture.git(["-C", seedURL.path(percentEncoded: false), "branch", "-M", "main"])
-    try GitWorktreeFixture.git(["init", "--bare", bareURL.path(percentEncoded: false)])
-    try GitWorktreeFixture.git([
+    try await GitWorktreeFixture.git(["-C", seedURL.path(percentEncoded: false), "add", "README.md"])
+    try await GitWorktreeFixture.git(["-C", seedURL.path(percentEncoded: false), "commit", "-m", "init"])
+    try await GitWorktreeFixture.git(["-C", seedURL.path(percentEncoded: false), "branch", "-M", "main"])
+    try await GitWorktreeFixture.git(["init", "--bare", bareURL.path(percentEncoded: false)])
+    try await GitWorktreeFixture.git([
       "-C", seedURL.path(percentEncoded: false),
       "push", bareURL.path(percentEncoded: false), "main",
     ])
-    try GitWorktreeFixture.git([
+    try await GitWorktreeFixture.git([
       "-C", bareURL.path(percentEncoded: false), "worktree", "add",
       worktreeURL.path(percentEncoded: false), "main",
     ])
@@ -227,10 +230,10 @@ struct GitClientSupacodeLockTests {
     #expect(metadata?.owner == GitClient.supacodeLockOwner)
   }
 
-  @Test func adminDirectoryResolvesPointerFile() throws {
-    let fixture = try GitWorktreeFixture()
+  @Test func adminDirectoryResolvesPointerFile() async throws {
+    let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
-    let worktreeURL = try fixture.addLinkedWorktree(named: "feature-resolve")
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-resolve")
     let expected = fixture.adminDirectory(for: "feature-resolve")
 
     let resolved = GitClient.adminDirectory(forWorktreeAt: worktreeURL)
@@ -243,7 +246,7 @@ private struct GitWorktreeFixture {
   let containerURL: URL
   let workURL: URL
 
-  init() throws {
+  init() async throws {
     let tempRoot = URL(filePath: "/tmp", directoryHint: .isDirectory)
     let id = UUID().uuidString
     containerURL = tempRoot.appending(
@@ -252,18 +255,18 @@ private struct GitWorktreeFixture {
     )
     try FileManager.default.createDirectory(at: containerURL, withIntermediateDirectories: true)
     workURL = containerURL.appending(path: "main", directoryHint: .isDirectory)
-    try Self.git(["init", workURL.path(percentEncoded: false)])
-    try Self.git([
+    try await Self.git(["init", workURL.path(percentEncoded: false)])
+    try await Self.git([
       "-C", workURL.path(percentEncoded: false), "config", "user.email", "test@example.com",
     ])
-    try Self.git([
+    try await Self.git([
       "-C", workURL.path(percentEncoded: false), "config", "user.name", "Test User",
     ])
     let readmeURL = workURL.appending(path: "README.md")
     try "hello".write(to: readmeURL, atomically: true, encoding: .utf8)
-    try Self.git(["-C", workURL.path(percentEncoded: false), "add", "README.md"])
-    try Self.git(["-C", workURL.path(percentEncoded: false), "commit", "-m", "init"])
-    try Self.git(["-C", workURL.path(percentEncoded: false), "branch", "-M", "main"])
+    try await Self.git(["-C", workURL.path(percentEncoded: false), "add", "README.md"])
+    try await Self.git(["-C", workURL.path(percentEncoded: false), "commit", "-m", "init"])
+    try await Self.git(["-C", workURL.path(percentEncoded: false), "branch", "-M", "main"])
   }
 
   func cleanup() {
@@ -271,14 +274,14 @@ private struct GitWorktreeFixture {
   }
 
   @discardableResult
-  func addLinkedWorktree(named name: String, useRelativePaths: Bool = false) throws -> URL {
+  func addLinkedWorktree(named name: String, useRelativePaths: Bool = false) async throws -> URL {
     let worktreeURL = containerURL.appending(path: name, directoryHint: .isDirectory)
     var args = ["-C", workURL.path(percentEncoded: false)]
     if useRelativePaths {
       args += ["-c", "worktree.useRelativePaths=true"]
     }
     args += ["worktree", "add", "-b", name, worktreeURL.path(percentEncoded: false)]
-    try Self.git(args)
+    try await Self.git(args)
     return worktreeURL.standardizedFileURL
   }
 
@@ -291,15 +294,20 @@ private struct GitWorktreeFixture {
   }
 
   @discardableResult
-  static func git(_ arguments: [String]) throws -> String {
+  static func git(_ arguments: [String]) async throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = arguments
+    // Hermetic git: the user's global config must not leak in (gpg signing
+    // in particular fails under concurrent test load).
+    process.environment = ProcessInfo.processInfo.environment.merging([
+      "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_CONFIG_SYSTEM": "/dev/null",
+    ]) { _, override in override }
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe
-    try process.run()
-    process.waitUntilExit()
+    try await process.runToExit()
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     let output = String(data: data, encoding: .utf8) ?? ""
     if process.terminationStatus != 0 {

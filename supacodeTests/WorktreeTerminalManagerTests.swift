@@ -9,7 +9,10 @@ import Testing
 
 @testable import supacode
 
+// Serialized: these tests spin real GhosttyRuntime surfaces and fake zmx
+// processes whose event-driven waits flake when interleaved with each other.
 @MainActor
+@Suite(.serialized)
 struct WorktreeTerminalManagerTests {
   @Test func reusesExistingStateAndReloadsSnapshotAfterRestoreIsEnabled() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
@@ -133,7 +136,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func unavailableSocketServerIsDiscarded() {
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     server.shutdown()
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
@@ -145,7 +148,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func oscHookActivityEventRoutesToWorktreeState() async {
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server)
     let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
 
@@ -168,7 +171,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscIdleEventIsDebouncedAcrossToolStorm() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -199,7 +202,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscIdleCommitsAfterDebounceWindow() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -227,7 +230,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscIdleDebouncesPerAgentIndependently() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -260,7 +263,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscSessionEndCancelsPendingIdle() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -288,7 +291,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscSurfaceClosedWhileIdlePendingIsHarmless() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 

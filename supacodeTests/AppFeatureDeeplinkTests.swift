@@ -11,7 +11,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct AppFeatureDeeplinkTests {
   // MARK: - Routing after load.
 
