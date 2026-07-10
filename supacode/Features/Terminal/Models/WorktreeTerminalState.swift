@@ -50,12 +50,12 @@ final class WorktreeTerminalState {
     let isFocused: Bool
   }
 
-  private struct SurfaceLaunchMetadata {
-    let usesZmx: Bool
-    let context: ghostty_surface_context_e
-  }
-
   let tabManager: TerminalTabManager
+  /// Terminal-kind store: Ghostty view map, zmx/launch bookkeeping, blocking
+  /// scripts, setup-script flag, env injection, agent-OSC dedupe. The private
+  /// accessors below keep the generic-core method bodies unchanged while the
+  /// state itself lives per-kind; a future surface kind adds a sibling store.
+  @ObservationIgnored let terminal: TerminalSurfaceStore
   private let runtime: GhosttyRuntime
   @ObservationIgnored private let splitPreserveZoomOnNavigation: () -> Bool
   private let worktree: Worktree
@@ -65,15 +65,10 @@ final class WorktreeTerminalState {
   // from user-initiated structural changes; per-surface churn must stay on
   // `surfaceStates` / `WorktreeTabProjection` to keep agent storms cold.
   private var trees: [TerminalTabID: SplitTree<SurfaceView>] = [:]
-  @ObservationIgnored private var surfaces: [UUID: GhosttySurfaceView] = [:]
   /// Owns pane-rearrange drag state for this worktree's terminal area. The view
   /// layer reads `isDragging` to mount drop catchers; `onDrop` (wired in `init`)
   /// routes a landed drop back into `performSplitOperation`.
   @ObservationIgnored let dragCoordinator = SurfaceDragCoordinator()
-  // `usesZmx` + `context` retained per surface so an unexpected zmx exit can recreate it on reattach.
-  @ObservationIgnored private var surfaceLaunchMetadata: [UUID: SurfaceLaunchMetadata] = [:]
-  // Surfaces the user explicitly closed, so an unexpected zmx exit isn't mistaken for one and reattached.
-  @ObservationIgnored private var pendingExplicitSurfaceCloseIDs: Set<UUID> = []
   @ObservationIgnored private var surfaceGenerationByTab: [TerminalTabID: Int] = [:]
   @ObservationIgnored private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   /// Per-tab projection cache. `WorktreeTerminalState` recomputes from `trees`
@@ -84,20 +79,11 @@ final class WorktreeTerminalState {
   /// Per-tab progress-display cache. Tracks the focused-surface or worst-of
   /// aggregate so `onTabProgressDisplayChanged` only fires on diff.
   @ObservationIgnored private var lastTabProgressDisplays: [TerminalTabID: TerminalTabProgressDisplay?] = [:]
-  var socketPath: String?
   private(set) var shouldHideTabBar = false
-  // Every mutation schedules a coalesced row-projection emit so the TCA
-  // mirror of running scripts reconciles from this single source of truth (#573).
-  private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:] {
-    didSet { scheduleRunningScriptsProjectionEmit() }
-  }
-  /// Coalesces the per-mutation `didSet` into one next-tick emit so
+  /// Coalesces the per-mutation running-scripts emit into one next-tick emit so
   /// mid-operation states (e.g. the supersede clear-then-record in
   /// `runBlockingScript`) never reach TCA.
   @ObservationIgnored private var pendingRunningScriptsProjectionEmit = false
-  private var blockingScriptLaunchDirectories: [TerminalTabID: URL] = [:]
-  private var lastBlockingScriptTabByKind: [BlockingScriptKind: TerminalTabID] = [:]
-  private var pendingSetupScript: Bool
   /// Sticky after first attempt so a reselect after `closeAllTabs` doesn't auto-recreate.
   /// Intentionally never reset; resetting would re-arm the bug.
   @ObservationIgnored private(set) var hasAttemptedInitialTab = false
@@ -119,12 +105,6 @@ final class WorktreeTerminalState {
   @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
   @ObservationIgnored @Dependency(\.analyticsClient) private var analyticsClient
   @ObservationIgnored @Dependency(\.continuousClock) private var clock
-  /// When a custom (hook / OSC 3008) notification last committed per surface.
-  /// Stored as a monotonic instant so the suppression window and the OSC-9 hold
-  /// share one clock source and can't desync on an NTP step / manual clock change.
-  private var lastCustomNotificationAt: [UUID: any InstantProtocol<Duration>] = [:]
-  /// Agent OSC 9 notifications held to see if a custom notification supersedes them.
-  private var pendingAgentOSCNotifications: [UUID: Task<Void, Never>] = [:]
   /// How long after a custom notification the agent's own OSC 9 is suppressed.
   /// Split from `oscHoldWindow` so tuning the suppression side cannot silently
   /// change the hold side.
@@ -153,6 +133,52 @@ final class WorktreeTerminalState {
     var debugCustomNotificationTimestampCount: Int { lastCustomNotificationAt.count }
     var debugPendingOSCCount: Int { pendingAgentOSCNotifications.count }
   #endif
+  // MARK: - Terminal-kind state accessors (storage lives in `terminal`).
+
+  var socketPath: String? {
+    get { terminal.socketPath }
+    set { terminal.socketPath = newValue }
+  }
+  private var surfaces: [UUID: GhosttySurfaceView] {
+    get { terminal.surfaces }
+    set { terminal.surfaces = newValue }
+  }
+  private var surfaceLaunchMetadata: [UUID: TerminalSurfaceStore.SurfaceLaunchMetadata] {
+    get { terminal.surfaceLaunchMetadata }
+    set { terminal.surfaceLaunchMetadata = newValue }
+  }
+  private var pendingExplicitSurfaceCloseIDs: Set<UUID> {
+    get { terminal.pendingExplicitSurfaceCloseIDs }
+    set { terminal.pendingExplicitSurfaceCloseIDs = newValue }
+  }
+  // Every mutation schedules a coalesced row-projection emit so the TCA
+  // mirror of running scripts reconciles from this single source of truth
+  // (#573). All writes flow through this accessor; the store never mutates
+  // its copy directly.
+  private var blockingScripts: [TerminalTabID: BlockingScriptKind] {
+    get { terminal.blockingScripts }
+    set {
+      terminal.blockingScripts = newValue
+      scheduleRunningScriptsProjectionEmit()
+    }
+  }
+  private var lastBlockingScriptTabByKind: [BlockingScriptKind: TerminalTabID] {
+    get { terminal.lastBlockingScriptTabByKind }
+    set { terminal.lastBlockingScriptTabByKind = newValue }
+  }
+  private var pendingSetupScript: Bool {
+    get { terminal.pendingSetupScript }
+    set { terminal.pendingSetupScript = newValue }
+  }
+  private var lastCustomNotificationAt: [UUID: any InstantProtocol<Duration>] {
+    get { terminal.lastCustomNotificationAt }
+    set { terminal.lastCustomNotificationAt = newValue }
+  }
+  private var pendingAgentOSCNotifications: [UUID: Task<Void, Never>] {
+    get { terminal.pendingAgentOSCNotifications }
+    set { terminal.pendingAgentOSCNotifications = newValue }
+  }
+
   var hasUnseenNotification: Bool {
     notifications.contains { !$0.isRead }
   }
@@ -222,7 +248,7 @@ final class WorktreeTerminalState {
     self.runtime = runtime
     self.splitPreserveZoomOnNavigation = splitPreserveZoomOnNavigation ?? { runtime.splitPreserveZoomOnNavigation() }
     self.worktree = worktree
-    self.pendingSetupScript = runSetupScript
+    self.terminal = TerminalSurfaceStore(worktree: worktree, pendingSetupScript: runSetupScript)
     self.tabManager = TerminalTabManager()
     _repositorySettings = SharedReader(
       wrappedValue: RepositorySettings.default,
@@ -353,7 +379,7 @@ final class WorktreeTerminalState {
       : GHOSTTY_SURFACE_CONTEXT_TAB
     let resolvedInheritanceSurfaceId = inheritingFromSurfaceId ?? currentFocusedSurfaceId()
     let title = "\(worktree.name) \(nextTabIndex())"
-    let setupInput = setupScriptInput(setupScript: setupScript)
+    let setupInput = terminal.setupScriptInput(setupScript: setupScript)
     let commandInput = initialInput.flatMap { BlockingScriptRunner.makeCommandInput(script: $0) }
     let resolvedInput: String?
     switch (setupInput, commandInput) {
@@ -449,7 +475,7 @@ final class WorktreeTerminalState {
           host: host,
           script: script,
           remoteWorktreePath: worktree.workingDirectory.path(percentEncoded: false),
-          environment: blockingScriptEnvironment(for: kind)
+          environment: terminal.blockingScriptEnvironment(for: kind)
         )
       else {
         reportBlockingScriptLaunchFailure(kind, "Failed to build remote \(kind.tabTitle) for worktree \(worktree.id)")
@@ -461,7 +487,7 @@ final class WorktreeTerminalState {
     } else {
       let launch: BlockingScriptRunner.LaunchArtifacts
       do {
-        guard let prepared = try blockingScriptLaunch(script) else {
+        guard let prepared = try terminal.blockingScriptLaunch(script) else {
           reportBlockingScriptLaunchFailure(
             kind, "Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): empty script")
           return nil
@@ -505,13 +531,13 @@ final class WorktreeTerminalState {
     )
     guard let tabId else {
       if let launchDirectory {
-        cleanupBlockingScriptLaunchDirectory(at: launchDirectory)
+        terminal.cleanupBlockingScriptLaunchDirectory(at: launchDirectory)
       }
       reportBlockingScriptLaunchFailure(kind, "Failed to create \(kind.tabTitle) tab for worktree \(worktree.id)")
       return nil
     }
     if let launchDirectory {
-      blockingScriptLaunchDirectories[tabId] = launchDirectory
+      terminal.blockingScriptLaunchDirectories[tabId] = launchDirectory
     }
     lastBlockingScriptTabByKind[kind] = tabId
     tabManager.updateDirty(tabId, isDirty: true)
@@ -817,7 +843,7 @@ final class WorktreeTerminalState {
 
   func closeTab(_ tabId: TerminalTabID) {
     let closedBlockingKind = blockingScripts.removeValue(forKey: tabId)
-    cleanupBlockingScriptLaunchDirectory(for: tabId)
+    terminal.cleanupBlockingScriptLaunchDirectory(for: tabId)
     // Clear lingering tab tracking for completed or non-blocking tabs.
     for (kind, tracked) in lastBlockingScriptTabByKind where tracked == tabId {
       lastBlockingScriptTabByKind.removeValue(forKey: kind)
@@ -1049,7 +1075,7 @@ final class WorktreeTerminalState {
     for surfaceID in closingSurfaceIDs {
       discardSurfaceBookkeeping(for: surfaceID)
     }
-    cleanupBlockingScriptLaunchDirectories()
+    terminal.cleanupBlockingScriptLaunchDirectories()
     trees.removeAll()
     surfaceGenerationByTab.removeAll()
     focusedSurfaceIdByTab.removeAll()
@@ -1410,44 +1436,6 @@ final class WorktreeTerminalState {
     }
   }
 
-  private func setupScriptInput(setupScript: String?) -> String? {
-    guard pendingSetupScript, let script = setupScript else { return nil }
-    return BlockingScriptRunner.makeCommandInput(script: script)
-  }
-
-  private func cleanupBlockingScriptLaunchDirectory(for tabId: TerminalTabID) {
-    guard let directoryURL = blockingScriptLaunchDirectories.removeValue(forKey: tabId) else { return }
-    cleanupBlockingScriptLaunchDirectory(at: directoryURL)
-  }
-
-  private func cleanupBlockingScriptLaunchDirectories() {
-    let directoryURLs = blockingScriptLaunchDirectories.values
-    blockingScriptLaunchDirectories.removeAll()
-    for directoryURL in directoryURLs {
-      cleanupBlockingScriptLaunchDirectory(at: directoryURL)
-    }
-  }
-
-  private func cleanupBlockingScriptLaunchDirectory(at directoryURL: URL) {
-    do {
-      try FileManager.default.removeItem(at: directoryURL)
-    } catch {
-      blockingScriptLogger.warning(
-        "Failed to remove blocking script launch directory \(directoryURL.path(percentEncoded: false)): \(error)"
-      )
-    }
-  }
-
-  // The typed command stays shell-portable by invoking a generated wrapper file
-  // that reads the shell path from a sibling file and launches the user script,
-  // rather than serializing it into a shell-escaped `-c` string.
-  private func blockingScriptLaunch(_ script: String) throws -> BlockingScriptRunner.LaunchArtifacts? {
-    try BlockingScriptRunner.makeLaunch(
-      script: script,
-      shellPath: defaultShellPath()
-    )
-  }
-
   // Fires when the blocking command finishes. The shell stays alive
   // so the user can inspect output. Completion is reported here for
   // all exit codes. `handleBlockingScriptChildExited` covers the
@@ -1510,67 +1498,6 @@ final class WorktreeTerminalState {
     }
   }
 
-  private func surfaceEnvironment(tabId: TerminalTabID, surfaceID: UUID) -> [String: String] {
-    var env = worktree.scriptEnvironment
-    let percentEncodingSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
-    let repoPath = worktree.repositoryRootURL.path(percentEncoded: false)
-    env["SUPACODE_REPO_ID"] = percentEncode(repoPath, allowedCharacters: percentEncodingSet, label: "SUPACODE_REPO_ID")
-    env["SUPACODE_WORKTREE_ID"] = percentEncode(
-      worktree.id.rawValue, allowedCharacters: percentEncodingSet, label: "SUPACODE_WORKTREE_ID")
-    env["SUPACODE_TAB_ID"] = tabId.rawValue.uuidString
-    env["SUPACODE_SURFACE_ID"] = surfaceID.uuidString
-    if let socketPath {
-      env["SUPACODE_SOCKET_PATH"] = socketPath
-    }
-    // Mark blocking-script surfaces so the user's shell profile can skip its
-    // interactive init (prompt, plugins, banners) for these transient tabs.
-    if let blockingScriptKind = blockingScripts[tabId] {
-      env.merge(blockingScriptEnvironment(for: blockingScriptKind)) { _, new in new }
-    }
-    // Lock ZMX_DIR to the value the app's probe used so the shell can't
-    // re-export a different value from .zshrc / .zprofile and silently
-    // overflow `sockaddr_un.sun_path` past the probe's check.
-    env["ZMX_DIR"] = ZmxSocketBudget.socketDir()
-    // Prepend the bundled CLI binary directory to PATH so that `supacode`
-    // resolves to the CLI tool, not the app binary added by Ghostty.
-    if let cliBinDir = Bundle.main.resourceURL?
-      .appending(path: "bin", directoryHint: .isDirectory)
-      .path(percentEncoded: false)
-    {
-      let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
-      env["PATH"] = currentPath.isEmpty ? cliBinDir : "\(cliBinDir):\(currentPath)"
-    }
-    return env
-  }
-
-  /// Blocking-script marker env vars for a kind, with scope resolved against
-  /// this worktree's settings. Shared by the local surface environment and the
-  /// remote runner export so both hosts expose the same signal.
-  private func blockingScriptEnvironment(for kind: BlockingScriptKind) -> [String: String] {
-    let scope = kind.scriptDefinitionID.flatMap(scriptScope(forDefinitionID:))
-    return kind.surfaceEnvironmentVariables(scope: scope)
-  }
-
-  /// Resolves whether a user-defined script is repo- or global-owned, mirroring
-  /// the repo-wins merge: an ID present in repo settings is `.repo`, otherwise
-  /// `.global`. Returns `nil` for a script that resolves to neither (e.g. a
-  /// since-deleted deeplink target).
-  private func scriptScope(forDefinitionID id: UUID) -> ScriptScope? {
-    if repositorySettings.scripts.contains(where: { $0.id == id }) { return .repo }
-    @Shared(.settingsFile) var settingsFile
-    if settingsFile.global.globalScripts.contains(where: { $0.id == id }) { return .global }
-    return nil
-  }
-
-  private func percentEncode(_ value: String, allowedCharacters: CharacterSet, label: String) -> String {
-    guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowedCharacters) else {
-      terminalStateLogger.warning(
-        "Failed to percent-encode \(label): \(value). Downstream deeplinks using this value may be malformed.")
-      return value
-    }
-    return encoded
-  }
-
   private func createSurface(
     tabId: TerminalTabID,
     command: String? = nil,
@@ -1596,7 +1523,7 @@ final class WorktreeTerminalState {
     let surfaceID = resolvedID
     terminalStateLogger.info("createSurface: resolved=\(surfaceID)")
     let inherited = inheritedSurfaceConfig(fromSurfaceId: inheritingFromSurfaceId, context: context)
-    let launch = resolveLaunch(
+    let launch = terminal.resolveLaunch(
       surfaceID: surfaceID,
       command: command,
       initialInput: initialInput,
@@ -1615,7 +1542,7 @@ final class WorktreeTerminalState {
       workingDirectory: resolvedWorkingDirectory,
       command: launch.command,
       initialInput: launch.initialInput,
-      environmentVariables: surfaceEnvironment(tabId: tabId, surfaceID: surfaceID),
+      environmentVariables: terminal.surfaceEnvironment(tabId: tabId, surfaceID: surfaceID),
       commandWrapper: launch.commandWrapper,
       // Blocking-script runners (bypassZmx) emit their own OSC 133/7 and must
       // not get Ghostty's shell integration injected into the host shell.
@@ -1625,7 +1552,7 @@ final class WorktreeTerminalState {
     )
     wireSurfaceCallbacks(view: view, tabId: tabId)
     surfaces[view.id] = view
-    surfaceLaunchMetadata[view.id] = SurfaceLaunchMetadata(usesZmx: launch.usesZmx, context: context)
+    surfaceLaunchMetadata[view.id] = .init(usesZmx: launch.usesZmx, context: context)
     surfaceStates[view.id] = WorktreeSurfaceState()
     return view
   }
@@ -1901,83 +1828,6 @@ final class WorktreeTerminalState {
     return String(scalars).trimmingCharacters(in: .whitespaces)
   }
 
-  struct ResolvedLaunch {
-    var command: String?
-    var initialInput: String?
-    var commandWrapper: [String]
-    var usesZmx: Bool
-  }
-
-  /// Routes a surface through zmx so the underlying shell survives app quit.
-  ///
-  /// Interactive surfaces (no explicit `command`) keep `command` nil and inject
-  /// `zmx attach <id>` as a Ghostty `command-wrapper`, so Ghostty resolves and
-  /// integrates the user's real shell exactly as it would without zmx, with zmx
-  /// wrapping the whole resolved (login + integrated) argv.
-  ///
-  /// Explicit commands (scripts) instead wrap the command string itself, since
-  /// they don't want shell resolution / integration. `initialInput` is always
-  /// passed through; zmx is authoritative for attach-vs-create.
-  private func resolveLaunch(
-    surfaceID: UUID,
-    command: String?,
-    initialInput: String?,
-    bypassZmx: Bool
-  ) -> ResolvedLaunch {
-    if bypassZmx {
-      return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [], usesZmx: false)
-    }
-    let zmxExecutablePath = zmxClient.executableURL()?.path(percentEncoded: false)
-    // Remote worktree: a *local* zmx session wraps a reconnect loop around the
-    // SSH connection, and the remote reattaches its own zmx session when the
-    // host has zmx (host persistence). The surface command is always the
-    // reconnect-loop script (no command-wrapper, since Ghostty wraps the
-    // local argv, not the loop). When the caller has no explicit command,
-    // default to cd-into-the-remote-dir so a freshly created session lands in
-    // the project.
-    if let host = worktree.host {
-      @Shared(.settingsFile) var settingsFile
-      let hostPersistence = settingsFile.global.remoteSessionPersistenceEnabled
-      let launch = ZmxAttach.RemoteSurfaceLaunch(
-        host: host,
-        surfaceID: surfaceID,
-        userCommand: command,
-        defaultCommand: Self.remoteDefaultShellCommand(
-          remotePath: worktree.workingDirectory.path(percentEncoded: false)),
-        hostPersistenceEnabled: hostPersistence,
-      )
-      return ResolvedLaunch(
-        command: ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: zmxExecutablePath),
-        initialInput: initialInput,
-        commandWrapper: [],
-        usesZmx: zmxExecutablePath != nil,
-      )
-    }
-    let resolved = ZmxAttach.resolveLaunch(
-      executablePath: zmxExecutablePath,
-      sessionID: ZmxSessionID.make(surfaceID: surfaceID),
-      command: command,
-    )
-    return ResolvedLaunch(
-      command: resolved.command,
-      initialInput: initialInput,
-      commandWrapper: resolved.commandWrapper,
-      usesZmx: zmxExecutablePath != nil,
-    )
-  }
-
-  /// Connect default and reconnect fallback for a remote surface: `cd` into
-  /// the remote project dir, then exec a login shell. The `cd` failure is
-  /// swallowed so a stale path still drops the user into a usable shell. Nil
-  /// for an empty/root path falls back to a bare login shell. The path is
-  /// single-quoted for the login shell that re-parses the session command.
-  static func remoteDefaultShellCommand(remotePath: String) -> String? {
-    let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty, trimmed != "/" else { return nil }
-    let quoted = "'" + trimmed.replacing("'", with: "'\\''") + "'"
-    return "cd \(quoted) 2>/dev/null; exec \"$SHELL\" -l"
-  }
-
   private struct InheritedSurfaceConfig: Equatable {
     let workingDirectory: URL?
     let fontSize: Float32?
@@ -2187,42 +2037,6 @@ final class WorktreeTerminalState {
     onSurfacesClosed?([surfaceID])
   }
 
-  /// Tears down persistent zmx sessions for surfaces the user just closed.
-  /// `isBundled` (not `executableURL`) is the gate so sessions created on a
-  /// previous under-budget launch still tear down when this launch exceeds the
-  /// socket budget. One analytics event + one `withTaskGroup` per call.
-  /// `includeRemote` also tears down the host-side sessions of a remote
-  /// worktree; only explicit close paths set it, so a non-explicit end (clean
-  /// remote exit, deliberate host-side detach, or a reconnect abort) spares
-  /// the host session. The remote kill is unconditional on explicit close (no
-  /// per-surface persistence gate): a host session may exist from an earlier
-  /// launch regardless of the current toggle, and the kill invocation is a
-  /// silent no-op when nothing exists.
-  private func killZmxSessions(forSurfaceIDs surfaceIDs: [UUID], includeRemote: Bool = false) {
-    guard !surfaceIDs.isEmpty else { return }
-    let killLocal = zmxClient.isBundled()
-    let host = includeRemote ? worktree.host : nil
-    guard killLocal || host != nil else { return }
-    let sessionIDs = surfaceIDs.map(ZmxSessionID.make(surfaceID:))
-    let client = zmxClient
-    analyticsClient.capture(
-      "terminal_persistence_session_killed",
-      [
-        "reason": "user_close", "count": killLocal ? sessionIDs.count : 0,
-        "remote_count": host == nil ? 0 : sessionIDs.count,
-      ]
-    )
-    Task.detached {
-      await withTaskGroup(of: Void.self) { group in
-        for id in sessionIDs {
-          group.addTask {
-            await client.killSurfaceSessions(sessionID: id, remoteHost: host, killLocal: killLocal)
-          }
-        }
-      }
-    }
-  }
-
   private func removeTree(for tabId: TerminalTabID) {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
     surfaceGenerationByTab.removeValue(forKey: tabId)
@@ -2234,7 +2048,7 @@ final class WorktreeTerminalState {
         cleanupSurfaceState(for: surface.id)
       }
     }
-    killZmxSessions(forSurfaceIDs: leafIDs, includeRemote: true)
+    terminal.killZmxSessions(forSurfaceIDs: leafIDs, includeRemote: true)
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     if lastTabProjections.removeValue(forKey: tabId) != nil {
       onTabRemoved?(tabId)
@@ -2618,7 +2432,7 @@ final class WorktreeTerminalState {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
       if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
+        terminal.killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
       }
       return
     }
@@ -2626,7 +2440,7 @@ final class WorktreeTerminalState {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
       if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
+        terminal.killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
       }
       return
     }
@@ -2638,12 +2452,12 @@ final class WorktreeTerminalState {
     view.closeSurface()
     cleanupSurfaceState(for: view.id)
     if killZmxSession {
-      killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
+      terminal.killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
     }
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
-      cleanupBlockingScriptLaunchDirectory(for: tabId)
+      terminal.cleanupBlockingScriptLaunchDirectory(for: tabId)
       tabManager.closeTab(tabId)
       updateShouldHideTabBar()
       if let kind = blockingScripts.removeValue(forKey: tabId) {

@@ -397,21 +397,21 @@ struct RemoteDisconnectCurationTests {
 struct RemoteDefaultShellCommandTests {
   @Test func buildsCdIntoRemotePathThenExecLoginShell() {
     #expect(
-      WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/home/me/proj")
+      TerminalSurfaceStore.remoteDefaultShellCommand(remotePath: "/home/me/proj")
         == "cd '/home/me/proj' 2>/dev/null; exec \"$SHELL\" -l"
     )
   }
 
   @Test func escapesSingleQuotesInRemotePath() {
     #expect(
-      WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/home/o'brien/proj")
+      TerminalSurfaceStore.remoteDefaultShellCommand(remotePath: "/home/o'brien/proj")
         == "cd '/home/o'\\''brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
     )
   }
 
   @Test func nilForRootOrEmptyPath() {
-    #expect(WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/") == nil)
-    #expect(WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "   ") == nil)
+    #expect(TerminalSurfaceStore.remoteDefaultShellCommand(remotePath: "/") == nil)
+    #expect(TerminalSurfaceStore.remoteDefaultShellCommand(remotePath: "   ") == nil)
   }
 }
 
