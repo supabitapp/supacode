@@ -278,11 +278,17 @@ final class WorktreeTerminalManager {
   // swiftlint:disable:next cyclomatic_complexity
   private func handleTabCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
-    case .createTab(let worktree, let runSetupScriptIfNew, let id):
-      Task { createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, tabID: id) }
-    case .createTabWithInput(let worktree, let input, let runSetupScriptIfNew, let id):
-      Task {
-        createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, initialInput: input, tabID: id)
+    case .createTab(let worktree, let spec, let id):
+      switch spec {
+      case .terminal(let terminalSpec):
+        Task {
+          createTabAsync(
+            in: worktree,
+            runSetupScriptIfNew: terminalSpec.runSetupScriptIfNew,
+            initialInput: terminalSpec.input,
+            tabID: id
+          )
+        }
       }
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
@@ -315,16 +321,20 @@ final class WorktreeTerminalManager {
       if let input, !input.isEmpty {
         terminal.focusAndInsertText(input + "\r")
       }
-    case .splitSurface(let worktree, let tabID, let surfaceID, let direction, let input, let id):
+    case .splitSurface(let worktree, let tabID, let surfaceID, let direction, let spec, let id):
       let terminal = state(for: worktree)
       terminal.selectTab(tabID)
       let ghosttyDirection: GhosttySplitAction.NewDirection = direction == .vertical ? .down : .right
-      let resolvedInput = BlockingScriptRunner.makeCommandInput(script: input ?? "")
+      let initialInput: String?
+      switch spec {
+      case .terminal(let terminalSpec):
+        initialInput = BlockingScriptRunner.makeCommandInput(script: terminalSpec.input ?? "")
+      }
       let splitSucceeded = terminal.performSplitAction(
         .newSplit(direction: ghosttyDirection),
         for: surfaceID,
         newSurfaceID: id,
-        initialInput: resolvedInput
+        initialInput: initialInput
       )
       guard splitSucceeded else {
         terminalLogger.warning("splitSurface: failed for surface \(surfaceID) in worktree \(worktree.id).")
@@ -373,7 +383,7 @@ final class WorktreeTerminalManager {
       state(for: worktree).navigateSearchOnFocusedSurface(.previous)
     case .endSearch(let worktree):
       state(for: worktree).performBindingActionOnFocusedSurface("end_search")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .setImagePasteAgents, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
@@ -391,7 +401,7 @@ final class WorktreeTerminalManager {
       state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
@@ -429,7 +439,7 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,

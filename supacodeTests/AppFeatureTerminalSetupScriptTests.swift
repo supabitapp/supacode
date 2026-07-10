@@ -38,7 +38,7 @@ struct AppFeatureTerminalSetupScriptTests {
       $0.repositories.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
     await store.finish()
-    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true, id: nil)])
+    #expect(sent.value == [.createTab(worktree, spec: .terminal(runSetupScriptIfNew: true), id: nil)])
   }
 
   @Test(.dependencies) func newTerminalWithoutSetupScriptDoesNotConsume() async {
@@ -64,7 +64,7 @@ struct AppFeatureTerminalSetupScriptTests {
 
     await store.send(.newTerminal)
     await store.finish()
-    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: false, id: nil)])
+    #expect(sent.value == [.createTab(worktree, spec: .terminal(runSetupScriptIfNew: false), id: nil)])
   }
 
   @Test(.dependencies) func tabCreatedDoesNotConsumeSetupScript() async {

@@ -33,8 +33,7 @@ struct TerminalClient {
     ) -> Void
 
   enum Command: Equatable {
-    case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil)
-    case createTabWithInput(Worktree, input: String, runSetupScriptIfNew: Bool, id: UUID? = nil)
+    case createTab(Worktree, spec: SurfaceSpec, id: UUID? = nil)
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case stopRunScript(Worktree)
     case stopScript(Worktree, definitionID: UUID)
@@ -54,7 +53,7 @@ struct TerminalClient {
     case focusSurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, input: String? = nil)
     case splitSurface(
       Worktree, tabID: TerminalTabID, surfaceID: UUID, direction: SplitDirection,
-      input: String?, id: UUID? = nil)
+      spec: SurfaceSpec, id: UUID? = nil)
     case destroyTab(Worktree, tabID: TerminalTabID)
     case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID)
     case beginTabRename(Worktree, tabID: TerminalTabID? = nil)

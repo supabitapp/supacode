@@ -1267,7 +1267,7 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.deeplinkInputConfirmation == nil)
     #expect(
       sent.value.contains(
-        .createTabWithInput(worktree, input: "echo hello", runSetupScriptIfNew: false, id: nil)
+        .createTab(worktree, spec: .terminal(input: "echo hello"), id: nil)
       )
     )
   }
@@ -1302,7 +1302,7 @@ struct AppFeatureDeeplinkTests {
     }
     #expect(
       sent.value.contains(
-        .createTabWithInput(worktree, input: "echo hello", runSetupScriptIfNew: false, id: nil)
+        .createTab(worktree, spec: .terminal(input: "echo hello"), id: nil)
       )
     )
     await store.finish()
@@ -2081,7 +2081,7 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.deeplinkInputConfirmation == nil)
     #expect(
       sent.value.contains(
-        .createTabWithInput(worktree, input: "echo test", runSetupScriptIfNew: false, id: nil)
+        .createTab(worktree, spec: .terminal(input: "echo test"), id: nil)
       )
     )
   }
@@ -2506,7 +2506,7 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.deeplinkInputConfirmation == nil)
     #expect(
       sent.value.contains(
-        .createTabWithInput(worktree, input: "echo test", runSetupScriptIfNew: false, id: nil)
+        .createTab(worktree, spec: .terminal(input: "echo test"), id: nil)
       )
     )
   }

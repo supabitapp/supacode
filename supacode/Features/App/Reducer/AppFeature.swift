@@ -695,7 +695,7 @@ struct AppFeature {
         let shouldRunSetupScript =
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
-          await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+          await terminalClient.send(.createTab(worktree, spec: .terminal(runSetupScriptIfNew: shouldRunSetupScript)))
         }
 
       case .selectTerminalTabAtIndex(let tabNumber):
@@ -1622,10 +1622,9 @@ struct AppFeature {
       state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
     return .run { _ in
       await terminalClient.send(
-        .createTabWithInput(
+        .createTab(
           worktree,
-          input: "$EDITOR",
-          runSetupScriptIfNew: shouldRunSetupScript
+          spec: .terminal(input: "$EDITOR", runSetupScriptIfNew: shouldRunSetupScript)
         )
       )
     }
@@ -2000,7 +1999,7 @@ struct AppFeature {
       }
       guard let input, !input.isEmpty else {
         let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
-          .createTab(worktree, runSetupScriptIfNew: true, id: id)
+          .createTab(worktree, spec: .terminal(runSetupScriptIfNew: true), id: id)
         }
         return awaitingCompletion(
           effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2012,7 +2011,7 @@ struct AppFeature {
           message: .command(input), action: action, state: &state)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
-        .createTabWithInput(worktree, input: input, runSetupScriptIfNew: false, id: id)
+        .createTab(worktree, spec: .terminal(input: input), id: id)
       }
       return awaitingCompletion(
         effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2079,7 +2078,7 @@ struct AppFeature {
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .splitSurface(
           worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
-          direction: direction, input: input, id: id)
+          direction: direction, spec: .terminal(input: input), id: id)
       }
       return awaitingCompletion(
         effect, match: id.map { .surfaceSplit(worktreeID: worktreeID, surfaceID: $0) },
