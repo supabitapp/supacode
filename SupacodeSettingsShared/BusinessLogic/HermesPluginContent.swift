@@ -124,6 +124,7 @@ nonisolated enum HermesPluginContent {
 
 
     def _on_session_end(**_kwargs):
+        # on_session_end fires per turn in Hermes, so emit idle (not session_end) to stay present between turns.
         _emit_presence("idle")
     """
   }

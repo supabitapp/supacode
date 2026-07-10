@@ -214,7 +214,9 @@ struct AgentPresenceFeature {
   /// `awaiting_input` with no prior `session_start`, but an `idle` arriving
   /// after the `session_end` + `idle` composite shutdown emit must NOT
   /// re-create the record. A pid-less idle re-seed would be skipped by the
-  /// liveness sweep and pinned until surface close.
+  /// liveness sweep and pinned until surface close. Hermes is the exception:
+  /// its per-turn `on_session_end` emits idle only (no `session_end`), so over
+  /// SSH its badge clears on surface close rather than at process exit.
   private static func applyActivity(
     _ activity: Activity, event: AgentHookEvent, key: PresenceKey, into state: inout State
   ) -> Bool {
