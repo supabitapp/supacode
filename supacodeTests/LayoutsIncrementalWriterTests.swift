@@ -17,7 +17,7 @@ struct LayoutsIncrementalWriterTests {
           icon: nil,
           tintColor: nil,
           layout: .leaf(
-            TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: dir)
+            TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: dir)
           ),
           focusedLeafIndex: 0
         )
@@ -72,7 +72,7 @@ struct LayoutsIncrementalWriterTests {
     let dict = readDict(storage, url)
     #expect(dict["w2"] != nil)
     let leaf = dict["w1"]?.tabs.first?.layout
-    if case .leaf(let surface) = leaf {
+    if case .leaf(.terminal(let surface)) = leaf {
       #expect(surface.workingDirectory == "/new")
     } else {
       Issue.record("Expected a leaf layout for w1")

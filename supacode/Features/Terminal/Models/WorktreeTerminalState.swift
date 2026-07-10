@@ -1252,7 +1252,7 @@ final class WorktreeTerminalState {
       switch view.content {
       case .terminal(let surface):
         return .leaf(
-          TerminalLayoutSnapshot.SurfaceSnapshot(
+          .terminal(
             id: surface.id,
             workingDirectory: surface.bridge.state.pwd,
             agents: agentsBySurface[surface.id]
@@ -1286,8 +1286,12 @@ final class WorktreeTerminalState {
     pendingSetupScript = false
 
     for (index, tabSnapshot) in snapshot.tabs.enumerated() {
-      let firstLeafPwd = tabSnapshot.layout.firstLeaf.workingDirectory
-      let workingDir = firstLeafPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
+      // Kind dispatch on the persisted leaf; a new snapshot kind adds a case.
+      let firstLeaf: TerminalLayoutSnapshot.TerminalSurfaceSnapshot
+      switch tabSnapshot.layout.firstLeaf {
+      case .terminal(let leaf): firstLeaf = leaf
+      }
+      let workingDir = firstLeaf.workingDirectory.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
       let context: ghostty_surface_context_e =
         index == 0 ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB
       let tabId = tabManager.createTab(
@@ -1306,7 +1310,7 @@ final class WorktreeTerminalState {
         workingDirectoryOverride: workingDir,
         inheritingFromSurfaceId: nil,
         context: context,
-        surfaceID: tabSnapshot.layout.firstLeaf.id,
+        surfaceID: firstLeaf.id,
       )
       let tree = SplitTree<SurfaceView>(view: surface)
       setTree(tree, for: tabId)
@@ -1369,9 +1373,13 @@ final class WorktreeTerminalState {
   ) {
     guard case .split(let split) = node else { return }
 
-    // Create the right child by splitting the anchor.
-    let rightPwd = split.right.firstLeaf.workingDirectory
-    let rightWorkingDir = rightPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
+    // Create the right child by splitting the anchor. Kind dispatch on the
+    // persisted leaf; a new snapshot kind adds a case.
+    let rightLeaf: TerminalLayoutSnapshot.TerminalSurfaceSnapshot
+    switch split.right.firstLeaf {
+    case .terminal(let leaf): rightLeaf = leaf
+    }
+    let rightWorkingDir = rightLeaf.workingDirectory.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
     let direction: SplitTree<SurfaceView>.NewDirection =
       split.direction == .horizontal ? .right : .down
 
@@ -1382,7 +1390,7 @@ final class WorktreeTerminalState {
         ratio: split.ratio,
         workingDirectory: rightWorkingDir,
         tabId: tabId,
-        surfaceID: split.right.firstLeaf.id,
+        surfaceID: rightLeaf.id,
       )
     else {
       layoutLogger.warning("Skipping subtree restoration for tab \(tabId.rawValue)")

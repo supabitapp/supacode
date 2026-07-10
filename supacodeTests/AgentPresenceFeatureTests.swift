@@ -922,7 +922,7 @@ struct AgentPresenceFeatureTests {
         icon: nil,
         tintColor: nil,
         layout: .leaf(
-          TerminalLayoutSnapshot.SurfaceSnapshot(
+          TerminalLayoutSnapshot.SurfaceSnapshot.terminal(
             id: surface.id,
             workingDirectory: nil,
             agents: surface.agents

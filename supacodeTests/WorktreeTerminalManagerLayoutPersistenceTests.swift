@@ -240,7 +240,7 @@ struct LayoutPersistenceManagerTests {
     await waitUntil { readDict(harness)[worktree.id.rawValue]?.tabs.first?.layout != nil }
 
     let leaf = readDict(harness)[worktree.id.rawValue]?.tabs.first?.layout
-    guard case .leaf(let persisted) = leaf else {
+    guard case .leaf(.terminal(let persisted)) = leaf else {
       Issue.record("Expected a leaf layout")
       return
     }

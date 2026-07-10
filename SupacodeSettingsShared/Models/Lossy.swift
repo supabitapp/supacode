@@ -33,4 +33,28 @@ extension KeyedDecodingContainer {
     }
     return wrappers.compactMap(\.value)
   }
+
+  /// Like `decodeLossyArrayIfPresent`, but also reports the ORIGINAL indices of
+  /// dropped elements so callers can remap positional fields (e.g. a persisted
+  /// selected-index) into the surviving array's coordinate space.
+  public nonisolated func decodeLossyArrayWithDroppedIndices<T: Decodable & Sendable>(
+    _ type: [T].Type = [T].self,
+    forKey key: Key
+  ) -> (elements: [T], droppedIndices: [Int])? {
+    guard contains(key) else { return nil }
+    guard let wrappers = try? decode([Lossy<T>].self, forKey: key) else {
+      lossyLogger.warning("Could not decode lossy array at '\(key.stringValue)'; returning empty.")
+      return ([], [])
+    }
+    var elements: [T] = []
+    var droppedIndices: [Int] = []
+    for (index, wrapper) in wrappers.enumerated() {
+      if let value = wrapper.value {
+        elements.append(value)
+      } else {
+        droppedIndices.append(index)
+      }
+    }
+    return (elements, droppedIndices)
+  }
 }

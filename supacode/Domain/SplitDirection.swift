@@ -1,6 +1,6 @@
 /// Direction for terminal surface splits.
 /// Keep in sync with `CLISplitDirection` in `supacode-cli/Helpers/CLISplitDirection.swift`.
-enum SplitDirection: Equatable, Sendable {
+nonisolated enum SplitDirection: Equatable, Sendable {
   case horizontal
   case vertical
 
@@ -69,7 +69,7 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
 
 // Explicit Codable using raw strings to preserve backward compatibility
 // with the previous `String`-backed enum encoding.
-extension SplitDirection: Codable {
+nonisolated extension SplitDirection: Codable {
   init(from decoder: Decoder) throws {
     let container = try decoder.singleValueContainer()
     let value = try container.decode(String.self)

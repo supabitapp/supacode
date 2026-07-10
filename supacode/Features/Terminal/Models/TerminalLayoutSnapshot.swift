@@ -1,9 +1,31 @@
 import Foundation
 import SupacodeSettingsShared
 
-struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
+nonisolated struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
   let tabs: [TabSnapshot]
   let selectedTabIndex: Int
+
+  init(tabs: [TabSnapshot], selectedTabIndex: Int) {
+    self.tabs = tabs
+    self.selectedTabIndex = selectedTabIndex
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case tabs, selectedTabIndex
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    // Lossy so one undecodable tab (e.g. a leaf kind this build doesn't know)
+    // drops that tab, not the whole layout. Restore already clamps
+    // `selectedTabIndex` and skips empty snapshots.
+    let decoded = container.decodeLossyArrayWithDroppedIndices([TabSnapshot].self, forKey: .tabs) ?? ([], [])
+    tabs = decoded.elements
+    let rawIndex = try container.decodeIfPresent(Int.self, forKey: .selectedTabIndex) ?? 0
+    // The persisted index is in the ORIGINAL array's coordinates; every dropped
+    // tab before it shifts the surviving selection left by one.
+    selectedTabIndex = rawIndex - decoded.droppedIndices.count(where: { $0 < rawIndex })
+  }
 
   struct TabSnapshot: Codable, Equatable, Sendable {
     let id: UUID?
@@ -62,7 +84,50 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
     let right: LayoutNode
   }
 
-  struct SurfaceSnapshot: Codable, Equatable, Sendable {
+  /// Kind-tagged persisted leaf. The terminal case encodes in the legacy flat
+  /// shape (no `kind` tag) so layouts written by this build still decode on
+  /// older builds; a future kind encodes a `kind` discriminator that this
+  /// build's decoder rejects, and the lossy `tabs` decode above drops just the
+  /// affected tab.
+  enum SurfaceSnapshot: Codable, Equatable, Sendable {
+    case terminal(TerminalSurfaceSnapshot)
+
+    /// Convenience mirroring the terminal payload's initializer.
+    static func terminal(
+      id: UUID?, workingDirectory: String?, agents: [SurfaceAgentRecord]? = nil
+    ) -> SurfaceSnapshot {
+      .terminal(TerminalSurfaceSnapshot(id: id, workingDirectory: workingDirectory, agents: agents))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+      case kind
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      let kind = try container.decodeIfPresent(String.self, forKey: .kind)
+      switch kind {
+      case nil, "terminal":
+        self = .terminal(try TerminalSurfaceSnapshot(from: decoder))
+      default:
+        throw DecodingError.dataCorrupted(
+          DecodingError.Context(
+            codingPath: decoder.codingPath,
+            debugDescription: "Unknown surface snapshot kind: \(kind ?? "nil")"
+          )
+        )
+      }
+    }
+
+    func encode(to encoder: any Encoder) throws {
+      switch self {
+      case .terminal(let terminal):
+        try terminal.encode(to: encoder)
+      }
+    }
+  }
+
+  struct TerminalSurfaceSnapshot: Codable, Equatable, Sendable {
     let id: UUID?
     let workingDirectory: String?
     /// Agent presence captured at quit, restored on next launch after an
@@ -124,7 +189,7 @@ nonisolated extension TerminalLayoutSnapshot.LayoutNode {
   /// reaper to know which zmx sessions are still "owned" by persisted layouts.
   var leafSurfaceIDs: [UUID] {
     switch self {
-    case .leaf(let surface):
+    case .leaf(.terminal(let surface)):
       return surface.id.map { [$0] } ?? []
     case .split(let split):
       return split.left.leafSurfaceIDs + split.right.leafSurfaceIDs
@@ -152,7 +217,7 @@ nonisolated extension TerminalLayoutSnapshot {
 nonisolated extension TerminalLayoutSnapshot.LayoutNode {
   fileprivate func leafAgents() -> [(surfaceID: UUID, records: [TerminalLayoutSnapshot.SurfaceAgentRecord])] {
     switch self {
-    case .leaf(let surface):
+    case .leaf(.terminal(let surface)):
       guard let id = surface.id, let agents = surface.agents, !agents.isEmpty else { return [] }
       return [(id, agents)]
     case .split(let split):

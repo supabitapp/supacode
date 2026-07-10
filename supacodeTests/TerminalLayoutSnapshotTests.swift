@@ -63,13 +63,14 @@ struct TerminalLayoutSnapshotTests {
             TerminalLayoutSnapshot.SplitSnapshot(
               direction: .horizontal,
               ratio: 0.7,
-              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/Users/test/project")),
+              left: .leaf(
+                TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/Users/test/project")),
               right: .split(
                 TerminalLayoutSnapshot.SplitSnapshot(
                   direction: .vertical,
                   ratio: 0.4,
-                  left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/tmp")),
-                  right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil))
+                  left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/tmp")),
+                  right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: nil))
                 )
               )
             )
@@ -82,7 +83,7 @@ struct TerminalLayoutSnapshotTests {
           customTitle: nil,
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/Users/test")),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/Users/test")),
           focusedLeafIndex: 0
         ),
       ],
@@ -101,11 +102,11 @@ struct TerminalLayoutSnapshotTests {
       TerminalLayoutSnapshot.SplitSnapshot(
         direction: .horizontal,
         ratio: 0.5,
-        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/first")),
-        right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/second"))
+        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/first")),
+        right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/second"))
       )
     )
-    #expect(node.firstLeaf.workingDirectory == "/first")
+    #expect(node.firstLeaf.terminal.workingDirectory == "/first")
   }
 
   @Test func leafCountCountsAllLeaves() {
@@ -113,13 +114,13 @@ struct TerminalLayoutSnapshotTests {
       TerminalLayoutSnapshot.SplitSnapshot(
         direction: .horizontal,
         ratio: 0.5,
-        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil)),
+        left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: nil)),
         right: .split(
           TerminalLayoutSnapshot.SplitSnapshot(
             direction: .vertical,
             ratio: 0.5,
-            left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil)),
-            right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil))
+            left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: nil)),
+            right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: nil))
           )
         )
       )
@@ -134,7 +135,7 @@ struct TerminalLayoutSnapshotTests {
       customTitle: "my-tab",
       icon: nil,
       tintColor: nil,
-      layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: UUID(), workingDirectory: nil)),
+      layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: UUID(), workingDirectory: nil)),
       focusedLeafIndex: 0
     )
     let snapshot = TerminalLayoutSnapshot(tabs: [tabSnapshot], selectedTabIndex: 0)
@@ -163,7 +164,7 @@ struct TerminalLayoutSnapshotTests {
           customTitle: nil,
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/home")),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/home")),
           focusedLeafIndex: 0
         )
       ],
@@ -173,7 +174,7 @@ struct TerminalLayoutSnapshotTests {
     let data = try JSONEncoder().encode(snapshot)
     let decoded = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: data)
     #expect(decoded.tabs.count == 1)
-    #expect(decoded.tabs[0].layout.firstLeaf.workingDirectory == "/home")
+    #expect(decoded.tabs[0].layout.firstLeaf.terminal.workingDirectory == "/home")
     #expect(decoded.tabs[0].layout.leafCount == 1)
   }
 
@@ -193,8 +194,8 @@ struct TerminalLayoutSnapshotTests {
             TerminalLayoutSnapshot.SplitSnapshot(
               direction: .horizontal,
               ratio: 0.5,
-              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: leftSurface, workingDirectory: nil)),
-              right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: rightSurface, workingDirectory: nil))
+              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: leftSurface, workingDirectory: nil)),
+              right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: rightSurface, workingDirectory: nil))
             )
           ),
           focusedLeafIndex: 0
@@ -205,7 +206,7 @@ struct TerminalLayoutSnapshotTests {
           customTitle: nil,
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: secondTabSurface, workingDirectory: nil)),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: secondTabSurface, workingDirectory: nil)),
           focusedLeafIndex: 0
         ),
       ],
@@ -229,7 +230,7 @@ struct TerminalLayoutSnapshotTests {
           icon: nil,
           tintColor: nil,
           layout: .leaf(
-            TerminalLayoutSnapshot.SurfaceSnapshot(
+            TerminalLayoutSnapshot.SurfaceSnapshot.terminal(
               id: surfaceID,
               workingDirectory: "/repo",
               agents: [
@@ -256,7 +257,7 @@ struct TerminalLayoutSnapshotTests {
     let decoded = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: data)
 
     #expect(decoded == snapshot)
-    let leaf = decoded.tabs[0].layout.firstLeaf
+    let leaf = decoded.tabs[0].layout.firstLeaf.terminal
     #expect(leaf.agents?.count == 2)
     #expect(leaf.agents?[0].pids == [12345, 67890])
     #expect(leaf.agents?[1].activity == "idle")
@@ -285,7 +286,7 @@ struct TerminalLayoutSnapshotTests {
       TerminalLayoutSnapshot.self,
       from: Data(json.utf8)
     )
-    let leaf = decoded.tabs[0].layout.firstLeaf
+    let leaf = decoded.tabs[0].layout.firstLeaf.terminal
     #expect(leaf.agents == nil)
     #expect(leaf.id == UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
   }
@@ -318,7 +319,7 @@ struct TerminalLayoutSnapshotTests {
       TerminalLayoutSnapshot.self,
       from: Data(json.utf8)
     )
-    let leaf = decoded.tabs[0].layout.firstLeaf
+    let leaf = decoded.tabs[0].layout.firstLeaf.terminal
     #expect(leaf.agents == nil)
   }
 
@@ -338,7 +339,7 @@ struct TerminalLayoutSnapshotTests {
               direction: .horizontal,
               ratio: 0.5,
               left: .leaf(
-                TerminalLayoutSnapshot.SurfaceSnapshot(
+                TerminalLayoutSnapshot.SurfaceSnapshot.terminal(
                   id: surfaceA,
                   workingDirectory: nil,
                   agents: [
@@ -349,7 +350,7 @@ struct TerminalLayoutSnapshotTests {
                 )
               ),
               right: .leaf(
-                TerminalLayoutSnapshot.SurfaceSnapshot(id: surfaceB, workingDirectory: nil, agents: nil)
+                TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: surfaceB, workingDirectory: nil, agents: nil)
               )
             )
           ),
@@ -381,8 +382,8 @@ struct TerminalLayoutSnapshotTests {
             TerminalLayoutSnapshot.SplitSnapshot(
               direction: .horizontal,
               ratio: 0.5,
-              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil)),
-              right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: real, workingDirectory: nil))
+              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: nil)),
+              right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: real, workingDirectory: nil))
             )
           ),
           focusedLeafIndex: 0
@@ -392,5 +393,117 @@ struct TerminalLayoutSnapshotTests {
     )
 
     #expect(snapshot.allSurfaceIDs == [real])
+  }
+}
+
+extension TerminalLayoutSnapshot.SurfaceSnapshot {
+  /// Test convenience: the terminal payload (every leaf in these fixtures is terminal).
+  fileprivate var terminal: TerminalLayoutSnapshot.TerminalSurfaceSnapshot {
+    switch self {
+    case .terminal(let terminal): terminal
+    }
+  }
+}
+
+struct SurfaceSnapshotKindTests {
+  /// A leaf kind this build doesn't know (written by a future build) must drop
+  /// only the tab containing it; sibling tabs survive.
+  @Test func unknownLeafKindDropsOnlyThatTab() throws {
+    let json = """
+      {
+        "tabs": [
+          {
+            "title": "future",
+            "layout": { "leaf": { "_0": { "kind": "browser", "url": "https://example.com" } } },
+            "focusedLeafIndex": 0
+          },
+          {
+            "title": "terminal",
+            "layout": { "leaf": { "_0": { "id": null, "workingDirectory": "/home" } } },
+            "focusedLeafIndex": 0
+          }
+        ],
+        "selectedTabIndex": 0
+      }
+      """
+    let decoded = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: Data(json.utf8))
+    #expect(decoded.tabs.count == 1)
+    #expect(decoded.tabs.first?.title == "terminal")
+  }
+
+  /// Dropping an unknown-kind tab must remap `selectedTabIndex` into the
+  /// surviving array's coordinates, or restore selects the wrong tab.
+  @Test func unknownLeafKindBeforeSelectionRemapsSelectedIndex() throws {
+    let json = """
+      {
+        "tabs": [
+          {
+            "title": "future",
+            "layout": { "leaf": { "_0": { "kind": "browser" } } },
+            "focusedLeafIndex": 0
+          },
+          {
+            "title": "selected",
+            "layout": { "leaf": { "_0": { "id": null, "workingDirectory": null } } },
+            "focusedLeafIndex": 0
+          },
+          {
+            "title": "other",
+            "layout": { "leaf": { "_0": { "id": null, "workingDirectory": null } } },
+            "focusedLeafIndex": 0
+          }
+        ],
+        "selectedTabIndex": 1
+      }
+      """
+    let decoded = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: Data(json.utf8))
+    #expect(decoded.tabs.map(\.title) == ["selected", "other"])
+    #expect(decoded.selectedTabIndex == 0)
+  }
+
+  /// A dropped tab AFTER the selection must not shift it.
+  @Test func unknownLeafKindAfterSelectionKeepsSelectedIndex() throws {
+    let json = """
+      {
+        "tabs": [
+          {
+            "title": "selected",
+            "layout": { "leaf": { "_0": { "id": null, "workingDirectory": null } } },
+            "focusedLeafIndex": 0
+          },
+          {
+            "title": "future",
+            "layout": { "leaf": { "_0": { "kind": "browser" } } },
+            "focusedLeafIndex": 0
+          }
+        ],
+        "selectedTabIndex": 0
+      }
+      """
+    let decoded = try JSONDecoder().decode(TerminalLayoutSnapshot.self, from: Data(json.utf8))
+    #expect(decoded.tabs.map(\.title) == ["selected"])
+    #expect(decoded.selectedTabIndex == 0)
+  }
+
+  /// The terminal case encodes in the legacy flat shape (no `kind` tag) so
+  /// layouts written by this build still decode on older builds.
+  @Test func terminalLeafEncodesWithoutKindTag() throws {
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
+          title: "tab",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(.terminal(id: nil, workingDirectory: "/home")),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let data = try JSONEncoder().encode(snapshot)
+    let text = String(bytes: data, encoding: .utf8) ?? ""
+    #expect(!text.contains("\"kind\""))
   }
 }

@@ -1013,10 +1013,12 @@ struct WorktreeTerminalManagerTests {
           icon: nil,
           tintColor: nil,
           layout: .leaf(
-            TerminalLayoutSnapshot.SurfaceSnapshot(
-              id: surfaceID,
-              workingDirectory: "/tmp/repo/wt-1",
-              agents: agents
+            .terminal(
+              TerminalLayoutSnapshot.TerminalSurfaceSnapshot(
+                id: surfaceID,
+                workingDirectory: "/tmp/repo/wt-1",
+                agents: agents
+              )
             )
           ),
           focusedLeafIndex: 0
@@ -1801,7 +1803,7 @@ struct WorktreeTerminalManagerTests {
           icon: nil,
           tintColor: nil,
           layout: .leaf(
-            TerminalLayoutSnapshot.SurfaceSnapshot(
+            TerminalLayoutSnapshot.SurfaceSnapshot.terminal(
               id: knownSurfaceID,
               workingDirectory: "/tmp/repo/wt-1"
             )
@@ -3257,7 +3259,7 @@ struct WorktreeTerminalManagerTests {
           customTitle: "   ",
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/tmp/repo/wt-1")),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/tmp/repo/wt-1")),
           focusedLeafIndex: 0
         )
       ],
@@ -3284,7 +3286,7 @@ struct WorktreeTerminalManagerTests {
           customTitle: "foo",
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: "/tmp/repo/wt-1")),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: nil, workingDirectory: "/tmp/repo/wt-1")),
           focusedLeafIndex: 0
         )
       ],
@@ -3306,7 +3308,7 @@ struct WorktreeTerminalManagerTests {
           icon: nil,
           tintColor: nil,
           layout: .leaf(
-            TerminalLayoutSnapshot.SurfaceSnapshot(
+            TerminalLayoutSnapshot.SurfaceSnapshot.terminal(
               id: nil,
               workingDirectory: "/tmp/repo/wt-1"
             )

@@ -248,8 +248,8 @@ struct RepositoriesFeatureSidebarTests {
             TerminalLayoutSnapshot.SplitSnapshot(
               direction: .horizontal,
               ratio: 0.5,
-              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: surfaceA, workingDirectory: nil)),
-              right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: surfaceB, workingDirectory: nil))
+              left: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: surfaceA, workingDirectory: nil)),
+              right: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: surfaceB, workingDirectory: nil))
             )
           ),
           focusedLeafIndex: 0
@@ -308,7 +308,7 @@ struct RepositoriesFeatureSidebarTests {
           customTitle: nil,
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: surfaceA, workingDirectory: nil)),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: surfaceA, workingDirectory: nil)),
           focusedLeafIndex: 0
         )
       ],
@@ -364,7 +364,7 @@ struct RepositoriesFeatureSidebarTests {
           customTitle: nil,
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: staleSurface, workingDirectory: nil)),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: staleSurface, workingDirectory: nil)),
           focusedLeafIndex: 0
         )
       ],
@@ -423,7 +423,7 @@ struct RepositoriesFeatureSidebarTests {
           customTitle: nil,
           icon: nil,
           tintColor: nil,
-          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: staleSurface, workingDirectory: nil)),
+          layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot.terminal(id: staleSurface, workingDirectory: nil)),
           focusedLeafIndex: 0
         )
       ],
