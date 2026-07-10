@@ -74,7 +74,10 @@ struct CLIReferenceView: View {
       command: "supacode worktree script list [-w <id>]",
       description: "List configured scripts. Underlined rows are currently running."
     ),
-    .init(command: "supacode worktree archive [-w <id>]", description: "Archive the worktree."),
+    .init(
+      command: "supacode worktree archive [-w <id>] [--force]",
+      description: "Archive the worktree. --force skips confirmation."
+    ),
     .init(command: "supacode worktree unarchive [-w <id>]", description: "Unarchive the worktree."),
     .init(command: "supacode worktree delete [-w <id>]", description: "Delete the worktree."),
     .init(command: "supacode worktree pin [-w <id>]", description: "Pin the worktree."),

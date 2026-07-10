@@ -126,12 +126,15 @@ extension WorktreeCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @Flag(help: "Archive without confirmation.")
+    var force = false
+
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
       let id = try resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.worktreeAction("archive", worktreeID: id),
+        deeplinkURL: DeeplinkURLBuilder.worktreeArchive(worktreeID: id, force: force),
         timeoutSeconds: timeoutOption.timeout
       )
     }

@@ -35,7 +35,13 @@ struct DeeplinkClientTests {
   @Test func worktreeArchive() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let url = URL(string: "supacode://worktree/\(encoded)/archive")!
-    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .archive))
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .archive(force: false)))
+  }
+
+  @Test func worktreeArchiveForced() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/archive?force=true")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .archive(force: true)))
   }
 
   @Test func worktreeUnarchive() {

@@ -378,7 +378,7 @@ struct RepositoriesFeature {
     case consumeTerminalFocus(Worktree.ID)
     case scriptCompleted(
       worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
-    case requestArchiveWorktree(Worktree.ID, Repository.ID)
+    case requestArchiveWorktree(Worktree.ID, Repository.ID, force: Bool = false)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID)
     case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
@@ -592,7 +592,7 @@ struct RepositoriesFeature {
   var worktreeArchiveReducer: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
-      case .requestArchiveWorktree(let worktreeID, let repositoryID):
+      case .requestArchiveWorktree(let worktreeID, let repositoryID, let force):
         if state.removingRepositoryIDs[repositoryID] != nil {
           return .none
         }
@@ -622,7 +622,7 @@ struct RepositoriesFeature {
         if state.isWorktreeArchived(worktree.id) {
           return .none
         }
-        if state.isWorktreeMerged(worktree) {
+        if force || state.isWorktreeMerged(worktree) {
           return .send(.archiveWorktreeConfirmed(worktree.id, repository.id))
         }
         @Shared(.settingsFile) var settingsFile

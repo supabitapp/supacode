@@ -1890,11 +1890,11 @@ struct AppFeature {
       )
     case .stopScript(let scriptID):
       return stopScriptDeeplinkEffect(worktreeID: worktreeID, scriptID: scriptID, state: &state)
-    case .archive:
+    case .archive(let force):
       guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
         return .none
       }
-      return .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
+      return .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID, force: force)))
     case .unarchive:
       return .send(.repositories(.unarchiveWorktree(worktreeID)))
     case .delete:

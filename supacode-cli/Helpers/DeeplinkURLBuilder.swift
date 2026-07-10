@@ -18,6 +18,12 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/\(action)"
   }
 
+  static func worktreeArchive(worktreeID: String, force: Bool) -> String {
+    var url = worktreeAction("archive", worktreeID: worktreeID)
+    if force { url += "?force=true" }
+    return url
+  }
+
   static func worktreeAppearance(worktreeID: String, title: String?, color: String?) -> String {
     var url = "supacode://worktree/\(worktreeID)/appearance"
     var params: [String] = []

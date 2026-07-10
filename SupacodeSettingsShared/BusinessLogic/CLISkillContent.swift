@@ -98,7 +98,7 @@ nonisolated enum CLISkillContent {
     supacode worktree run [-w <id>] [-c <uuid>]         # Run script (default: primary run-kind; -c for a specific UUID).
     supacode worktree stop [-w <id>] [-c <uuid>]        # Stop script (default: all run-kind; -c for a specific UUID).
     supacode worktree script list [-w <id>]             # List configured scripts (id / kind / name). Running rows are underlined.
-    supacode worktree archive [-w <id>]                 # Archive worktree.
+    supacode worktree archive [-w <id>] [--force]       # Archive worktree (--force skips confirmation).
     supacode worktree unarchive [-w <id>]               # Unarchive worktree.
     supacode worktree delete [-w <id>]                  # Delete worktree.
     supacode worktree pin [-w <id>]                     # Pin worktree.
@@ -204,7 +204,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive [--force]|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -301,7 +301,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive [--force]|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -361,7 +361,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive [--force]|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -477,7 +477,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive [--force]|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -535,7 +535,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive [--force]|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`

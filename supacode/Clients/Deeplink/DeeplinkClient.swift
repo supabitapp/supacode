@@ -113,7 +113,8 @@ private nonisolated enum DeeplinkParser {
     case "stop":
       return .worktree(id: worktreeID, action: .stop)
     case "archive":
-      return .worktree(id: worktreeID, action: .archive)
+      let force = queryItems.first(where: { $0.name == "force" })?.value == "true"
+      return .worktree(id: worktreeID, action: .archive(force: force))
     case "unarchive":
       return .worktree(id: worktreeID, action: .unarchive)
     case "delete":

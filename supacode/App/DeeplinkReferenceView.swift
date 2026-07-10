@@ -56,7 +56,11 @@ struct DeeplinkReferenceView: View {
       url: "supacode://worktree/<worktree_id>/script/<script_id>/stop",
       description: "Stop a specific running script by UUID."
     ),
-    .init(url: "supacode://worktree/<worktree_id>/archive", description: "Archive the worktree."),
+    .init(
+      url: "supacode://worktree/<worktree_id>/archive",
+      description: "Archive the worktree.",
+      params: "?force=true"
+    ),
     .init(url: "supacode://worktree/<worktree_id>/unarchive", description: "Unarchive the worktree."),
     .init(url: "supacode://worktree/<worktree_id>/delete", description: "Delete the worktree."),
     .init(url: "supacode://worktree/<worktree_id>/pin", description: "Pin the worktree."),

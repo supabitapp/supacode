@@ -243,15 +243,26 @@ struct AppFeatureDeeplinkTests {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)
 
-    await store.send(.deeplink(.worktree(id: worktree.id, action: .archive)))
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .archive(force: false))))
     await store.receive(\.repositories.requestArchiveWorktree)
+  }
+
+  @Test(.dependencies) func forcedArchiveWorktreeDeeplinkSkipsConfirmation() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+    store.dependencies.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .archive(force: true))))
+    await store.receive(\.repositories.requestArchiveWorktree)
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+    #expect(store.state.repositories.alert == nil)
   }
 
   @Test(.dependencies) func archiveWorktreeDeeplinkWithUnknownIDShowsAlert() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)
 
-    await store.send(.deeplink(.worktree(id: "/nonexistent", action: .archive)))
+    await store.send(.deeplink(.worktree(id: "/nonexistent", action: .archive(force: false))))
     #expect(store.state.alert != nil)
   }
 
