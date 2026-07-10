@@ -118,7 +118,7 @@ struct AppFeatureCommandPaletteTests {
 
     #expect(
       sent.value == [
-        .performBindingActionOnSurface(worktree, surfaceID: surfaceID, action: "goto_split:right")
+        .terminal(worktree, .performBindingActionOnSurface(surfaceID: surfaceID, action: "goto_split:right"))
       ]
     )
   }
@@ -151,7 +151,7 @@ struct AppFeatureCommandPaletteTests {
     await store.send(.commandPalette(.delegate(.ghosttyCommand("goto_split:right"))))
     await store.finish()
 
-    #expect(sent.value == [.performBindingAction(worktree, action: "goto_split:right")])
+    #expect(sent.value == [.terminal(worktree, .performBindingAction("goto_split:right"))])
   }
 
   @Test(.dependencies) func ghosttyCommandCapturesSelectedSurfaceBeforeAsyncDispatch() async {
@@ -190,7 +190,7 @@ struct AppFeatureCommandPaletteTests {
 
     #expect(
       sent.value == [
-        .performBindingActionOnSurface(worktree, surfaceID: firstSurface, action: "toggle_split_zoom")
+        .terminal(worktree, .performBindingActionOnSurface(surfaceID: firstSurface, action: "toggle_split_zoom"))
       ]
     )
   }
@@ -355,7 +355,7 @@ struct AppFeatureCommandPaletteTests {
     await store.send(.commandPalette(.delegate(.ghosttyCommand("new_split:right"))))
     await store.finish()
 
-    #expect(sent.value == [.performBindingAction(worktree, action: "new_split:right")])
+    #expect(sent.value == [.terminal(worktree, .performBindingAction("new_split:right"))])
   }
 
   @Test(.dependencies) func closePullRequestDispatchesAction() async {

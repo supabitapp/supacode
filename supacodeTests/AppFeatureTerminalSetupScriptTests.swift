@@ -31,7 +31,7 @@ struct AppFeatureTerminalSetupScriptTests {
     }
 
     await store.send(.newTerminal)
-    await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
+    await store.send(.terminalEvent(.terminal(.setupScriptConsumed(worktreeID: worktree.id))))
     await store.receive(\.repositories.consumeSetupScript)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
@@ -104,7 +104,7 @@ struct AppFeatureTerminalSetupScriptTests {
       AppFeature()
     }
 
-    await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
+    await store.send(.terminalEvent(.terminal(.setupScriptConsumed(worktreeID: worktree.id))))
     await store.receive(\.repositories.consumeSetupScript)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle

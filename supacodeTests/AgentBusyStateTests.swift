@@ -60,8 +60,8 @@ struct AgentBusyStateTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo a"))
-    manager.handleCommand(.runBlockingScript(worktree, kind: .delete, script: "echo b"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo a")))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .delete, script: "echo b")))
 
     guard let state = manager.stateIfExists(for: worktree.id) else {
       Issue.record("Expected worktree state")

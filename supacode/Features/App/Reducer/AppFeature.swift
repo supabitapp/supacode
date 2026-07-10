@@ -508,7 +508,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.runBlockingScript(worktree, kind: kind, script: script))
+          await terminalClient.send(.terminal(worktree, .runBlockingScript(kind: kind, script: script)))
         }
 
       case .repositories(.delegate(.selectTerminalTab(let worktreeID, let tabId))):
@@ -718,7 +718,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.performBindingAction(worktree, action: direction.ghosttyBinding))
+          await terminalClient.send(.terminal(worktree, .performBindingAction(direction.ghosttyBinding)))
         }
 
       case .jumpToLatestUnread:
@@ -793,7 +793,7 @@ struct AppFeature {
         // once the script tab is tracked; no optimistic mirror write (#573).
         return .run { _ in
           await terminalClient.send(
-            .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+            .terminal(worktree, .runBlockingScript(kind: .script(definition), script: definition.command))
           )
         }
 
@@ -802,7 +802,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.stopScript(worktree, definitionID: definition.id))
+          await terminalClient.send(.terminal(worktree, .stopScript(definitionID: definition.id)))
         }
 
       case .stopRunScripts:
@@ -810,7 +810,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.stopRunScript(worktree))
+          await terminalClient.send(.terminal(worktree, .stopRunScript))
         }
 
       case .closeTab:
@@ -835,7 +835,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.startSearch(worktree))
+          await terminalClient.send(.terminal(worktree, .startSearch))
         }
 
       case .searchSelection:
@@ -843,7 +843,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.searchSelection(worktree))
+          await terminalClient.send(.terminal(worktree, .searchSelection))
         }
 
       case .navigateSearchNext:
@@ -851,7 +851,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.navigateSearchNext(worktree))
+          await terminalClient.send(.terminal(worktree, .navigateSearchNext))
         }
 
       case .navigateSearchPrevious:
@@ -859,7 +859,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.navigateSearchPrevious(worktree))
+          await terminalClient.send(.terminal(worktree, .navigateSearchPrevious))
         }
 
       case .endSearch:
@@ -867,7 +867,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.endSearch(worktree))
+          await terminalClient.send(.terminal(worktree, .endSearch))
         }
 
       case .settings(.repositorySettings(.delegate(.settingsChanged(let rootURL, let host)))):
@@ -1203,9 +1203,9 @@ struct AppFeature {
           let tabID = terminalClient.selectedTabID(worktree.id)
           command = .beginTabRename(worktree, tabID: tabID)
         } else if let surfaceID = terminalClient.selectedSurfaceID(worktree.id) {
-          command = .performBindingActionOnSurface(worktree, surfaceID: surfaceID, action: action)
+          command = .terminal(worktree, .performBindingActionOnSurface(surfaceID: surfaceID, action: action))
         } else {
-          command = .performBindingAction(worktree, action: action)
+          command = .terminal(worktree, .performBindingAction(action))
         }
         return .run { _ in
           await terminalClient.send(command)
@@ -1288,9 +1288,10 @@ struct AppFeature {
           }
         }
 
-      case .terminalEvent(.terminalHasAnySurfaceChanged(let hasAny)):
-        state.hasAnyTerminalSurface = hasAny
-        return .none
+      // Terminal-kind events regroup behind one arm; neutral lifecycle /
+      // projection events keep their own arms below.
+      case .terminalEvent(.terminal(let event)):
+        return handleTerminalSurfaceEvent(event, state: &state)
 
       case .terminalEvent(.commandPaletteToggleRequested(let worktreeID)):
         if state.commandPalette.isPresented {
@@ -1302,28 +1303,6 @@ struct AppFeature {
           .send(.repositories(.selectWorktree(worktreeID))),
           .send(.commandPalette(.presentInMode(.commands)))
         )
-      case .terminalEvent(.setupScriptConsumed(let worktreeID)):
-        return .send(.repositories(.consumeSetupScript(worktreeID)))
-
-      case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
-        switch kind {
-        case .script:
-          return .send(
-            .repositories(
-              .scriptCompleted(
-                worktreeID: worktreeID,
-                kind: kind,
-                exitCode: exitCode,
-                tabId: tabId
-              )
-            )
-          )
-        case .archive:
-          return .send(.repositories(.archiveScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
-        case .delete:
-          return .send(.repositories(.deleteScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
-        }
-
       case .terminalEvent(.worktreeProjectionChanged(let worktreeID, var projection)):
         guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
         // Archived rows render no running-state dots, so terminal truth must
@@ -1434,9 +1413,6 @@ struct AppFeature {
           : .send(.agentPresence(.surfacesClosed(ids)))
         return .merge(presenceEffect, ackEffect)
 
-      case .terminalEvent(.agentHookEventReceived(let event)):
-        return .send(.agentPresence(.hookEventReceived(event)))
-
       case .terminalEvent:
         return .none
       }
@@ -1513,6 +1489,49 @@ struct AppFeature {
         }
       }
     )
+  }
+
+  /// Terminal-kind event handling, delegated from the single
+  /// `.terminalEvent(.terminal(_))` reducer arm. A future surface kind adds a
+  /// sibling handler behind its own wrapper arm; the neutral arms never grow
+  /// kind-specific cases.
+  private func handleTerminalSurfaceEvent(
+    _ event: TerminalSurfaceEvent,
+    state: inout State
+  ) -> Effect<Action> {
+    switch event {
+    case .hasAnySurfaceChanged(let hasAny):
+      state.hasAnyTerminalSurface = hasAny
+      return .none
+
+    case .setupScriptConsumed(let worktreeID):
+      return .send(.repositories(.consumeSetupScript(worktreeID)))
+
+    case .blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId):
+      switch kind {
+      case .script:
+        return .send(
+          .repositories(
+            .scriptCompleted(
+              worktreeID: worktreeID,
+              kind: kind,
+              exitCode: exitCode,
+              tabId: tabId
+            )
+          )
+        )
+      case .archive:
+        return .send(.repositories(.archiveScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
+      case .delete:
+        return .send(.repositories(.deleteScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
+      }
+
+    case .agentHookEventReceived(let event):
+      return .send(.agentPresence(.hookEventReceived(event)))
+
+    case .taskStatusChanged:
+      return .none
+    }
   }
 
   /// Re-broadcasts every row's agent snapshot under the supplied badge gate.
@@ -2156,7 +2175,7 @@ struct AppFeature {
     // once the script tab is tracked; no optimistic mirror write (#573).
     return .run { _ in
       await terminalClient.send(
-        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+        .terminal(worktree, .runBlockingScript(kind: .script(definition), script: definition.command))
       )
     }
   }
@@ -2188,7 +2207,7 @@ struct AppFeature {
     }
     let terminalClient = terminalClient
     return .run { _ in
-      await terminalClient.send(.stopScript(worktree, definitionID: scriptID))
+      await terminalClient.send(.terminal(worktree, .stopScript(definitionID: scriptID)))
     }
   }
 

@@ -92,7 +92,7 @@ final class PresenceTestHarness {
         self.parkCount += 1
         guard let event = await iterator.next() else { return }
         switch event {
-        case .agentHookEventReceived(let payload):
+        case .terminal(.agentHookEventReceived(let payload)):
           self.reduce(.hookEventReceived(payload))
         case .surfacesClosed(_, let ids):
           if ids.count == 1, let id = ids.first {

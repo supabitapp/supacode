@@ -35,19 +35,9 @@ struct TerminalClient {
   enum Command: Equatable {
     case createTab(Worktree, spec: SurfaceSpec, id: UUID? = nil)
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
-    case stopRunScript(Worktree)
-    case stopScript(Worktree, definitionID: UUID)
-    case runBlockingScript(Worktree, kind: BlockingScriptKind, script: String)
     case closeFocusedTab(Worktree)
     case closeFocusedSurface(Worktree)
-    case performBindingAction(Worktree, action: String)
-    case performBindingActionOnSurface(Worktree, surfaceID: UUID, action: String)
     case setImagePasteAgents(surfaceID: UUID, agents: Set<SkillAgent>)
-    case startSearch(Worktree)
-    case searchSelection(Worktree)
-    case navigateSearchNext(Worktree)
-    case navigateSearchPrevious(Worktree)
-    case endSearch(Worktree)
     case selectTab(Worktree, tabID: TerminalTabID)
     case selectTabAtIndex(Worktree, index: Int)
     case focusSurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, input: String? = nil)
@@ -61,6 +51,9 @@ struct TerminalClient {
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
     case refreshTabBarVisibility
+    /// Terminal-kind commands. Exactly one arm per surface kind; the payload is
+    /// a kind-scoped enum so the neutral surface never grows kind-specific verbs.
+    case terminal(Worktree, TerminalSurfaceCommand)
   }
 
   enum Event: Equatable {
@@ -70,11 +63,7 @@ struct TerminalClient {
     case tabCreated(worktreeID: Worktree.ID)
     case tabClosed(worktreeID: Worktree.ID)
     case focusChanged(worktreeID: Worktree.ID, surfaceID: UUID)
-    case taskStatusChanged(worktreeID: Worktree.ID, status: WorktreeTaskStatus)
-    case blockingScriptCompleted(
-      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
     case commandPaletteToggleRequested(worktreeID: Worktree.ID)
-    case setupScriptConsumed(worktreeID: Worktree.ID)
     /// Per-worktree projection emitted when surfaces / task-running / unseen / notifications drift.
     /// Routed by the parent into the matching `SidebarItemFeature` via the row's id.
     case worktreeProjectionChanged(Worktree.ID, WorktreeRowProjection)
@@ -96,17 +85,13 @@ struct TerminalClient {
     /// `AppFeature` translates this into `agentPresence(.surfaceClosed/surfacesClosed)`.
     /// `worktreeID` scopes the CLI close ack so a duplicate id elsewhere can't cross-resolve.
     case surfacesClosed(worktreeID: Worktree.ID, Set<UUID>)
-    /// Forwarded from the terminal manager for hook events received over the socket.
-    /// `AppFeature` translates this into `agentPresence(.hookEventReceived)`.
-    case agentHookEventReceived(AgentHookEvent)
-    /// Flips when the "any live surface anywhere" aggregate changes. Lets
-    /// menu / focused-action gates read one Bool instead of iterating
-    /// `sidebarItems` from a view body.
-    case terminalHasAnySurfaceChanged(hasAny: Bool)
     /// A surface split failed to materialize (target raced away, target was a
     /// blocking-script tab, or the layout insert threw). Lets a CLI completion
     /// ack report the failure instead of waiting for its timeout.
     case surfaceCreationFailed(worktreeID: Worktree.ID, attemptedID: UUID, message: String)
+    /// Terminal-kind events. Mirror of `Command.terminal`: one arm per kind,
+    /// kind-scoped payload.
+    case terminal(TerminalSurfaceEvent)
   }
 }
 

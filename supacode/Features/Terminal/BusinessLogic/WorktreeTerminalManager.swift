@@ -100,10 +100,10 @@ final class WorktreeTerminalManager {
     case .worktreeProjectionChanged(let worktreeID, _): .worktreeProjection(worktreeID)
     case .tabProjectionChanged(_, let projection): .tabProjection(projection.tabID)
     case .tabProgressDisplayChanged(_, let tabID, _): .tabProgress(tabID)
-    case .taskStatusChanged(let worktreeID, _): .taskStatus(worktreeID)
+    case .terminal(.taskStatusChanged(let worktreeID, _)): .taskStatus(worktreeID)
     case .focusChanged(let worktreeID, _): .focus(worktreeID)
     case .notificationIndicatorChanged: .notificationIndicator
-    case .terminalHasAnySurfaceChanged: .hasAnySurface
+    case .terminal(.hasAnySurfaceChanged): .hasAnySurface
     default: nil
     }
   }
@@ -230,7 +230,7 @@ final class WorktreeTerminalManager {
   }
 
   private func applyHookEvent(_ event: AgentHookEvent) {
-    emit(.agentHookEventReceived(event))
+    emit(.terminal(.agentHookEventReceived(event)))
   }
 
   #if DEBUG
@@ -263,16 +263,44 @@ final class WorktreeTerminalManager {
   }
 
   func handleCommand(_ command: TerminalClient.Command) {
+    // Kind-scoped commands dispatch straight to their kind's handler; the
+    // neutral handlers below never see them.
+    if case .terminal(let worktree, let surfaceCommand) = command {
+      handleTerminalSurfaceCommand(surfaceCommand, in: worktree)
+      return
+    }
     if handleTabCommand(command) {
       return
     }
-    if handleBindingActionCommand(command) {
-      return
-    }
-    if handleSearchCommand(command) {
-      return
-    }
     handleManagementCommand(command)
+  }
+
+  /// Terminal-kind command handler. A future kind adds a sibling handler and
+  /// one dispatch arm in `handleCommand`; nothing here is shared.
+  private func handleTerminalSurfaceCommand(_ command: TerminalSurfaceCommand, in worktree: Worktree) {
+    let terminal = state(for: worktree)
+    switch command {
+    case .runBlockingScript(let kind, let script):
+      _ = terminal.runBlockingScript(kind: kind, script)
+    case .stopRunScript:
+      stopBlockingScripts(in: worktree) { $0.stopRunScripts() }
+    case .stopScript(let definitionID):
+      stopBlockingScripts(in: worktree) { $0.stopScript(definitionID: definitionID) }
+    case .performBindingAction(let action):
+      terminal.performBindingActionOnFocusedSurface(action)
+    case .performBindingActionOnSurface(let surfaceID, let action):
+      terminal.performBindingAction(action, onSurfaceID: surfaceID)
+    case .startSearch:
+      terminal.performBindingActionOnFocusedSurface("start_search")
+    case .searchSelection:
+      terminal.performBindingActionOnFocusedSurface("search_selection")
+    case .navigateSearchNext:
+      terminal.navigateSearchOnFocusedSurface(.next)
+    case .navigateSearchPrevious:
+      terminal.navigateSearchOnFocusedSurface(.previous)
+    case .endSearch:
+      terminal.performBindingActionOnFocusedSurface("end_search")
+    }
   }
 
   // swiftlint:disable:next cyclomatic_complexity
@@ -293,12 +321,6 @@ final class WorktreeTerminalManager {
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
-    case .stopRunScript(let worktree):
-      stopBlockingScripts(in: worktree) { $0.stopRunScripts() }
-    case .stopScript(let worktree, let definitionID):
-      stopBlockingScripts(in: worktree) { $0.stopScript(definitionID: definitionID) }
-    case .runBlockingScript(let worktree, let kind, let script):
-      _ = state(for: worktree).runBlockingScript(kind: kind, script)
     case .closeFocusedTab(let worktree):
       _ = closeFocusedTab(in: worktree)
     case .closeFocusedSurface(let worktree):
@@ -371,46 +393,6 @@ final class WorktreeTerminalManager {
     return true
   }
 
-  private func handleSearchCommand(_ command: TerminalClient.Command) -> Bool {
-    switch command {
-    case .startSearch(let worktree):
-      state(for: worktree).performBindingActionOnFocusedSurface("start_search")
-    case .searchSelection(let worktree):
-      state(for: worktree).performBindingActionOnFocusedSurface("search_selection")
-    case .navigateSearchNext(let worktree):
-      state(for: worktree).navigateSearchOnFocusedSurface(.next)
-    case .navigateSearchPrevious(let worktree):
-      state(for: worktree).navigateSearchOnFocusedSurface(.previous)
-    case .endSearch(let worktree):
-      state(for: worktree).performBindingActionOnFocusedSurface("end_search")
-    case .createTab, .ensureInitialTab, .stopRunScript, .stopScript,
-      .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
-      .destroyTab, .destroySurface, .setImagePasteAgents, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
-      .refreshTabBarVisibility, .beginTabRename:
-      return false
-    }
-    return true
-  }
-
-  private func handleBindingActionCommand(_ command: TerminalClient.Command) -> Bool {
-    switch command {
-    case .performBindingAction(let worktree, let action):
-      state(for: worktree).performBindingActionOnFocusedSurface(action)
-    case .performBindingActionOnSurface(let worktree, let surfaceID, let action):
-      state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
-    case .setImagePasteAgents(let surfaceID, let agents):
-      setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .ensureInitialTab, .stopRunScript, .stopScript,
-      .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
-      .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
-      .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
-      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
-      return false
-    }
-    return true
-  }
-
   private func setImagePasteAgents(_ agents: Set<SkillAgent>, onSurfaceID surfaceID: UUID) {
     for state in states.values where state.setImagePasteAgents(agents, onSurfaceID: surfaceID) {
       return
@@ -439,11 +421,11 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .ensureInitialTab, .stopRunScript, .stopScript,
-      .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
-      .splitSurface, .destroyTab, .destroySurface, .beginTabRename:
+    case .setImagePasteAgents(let surfaceID, let agents):
+      setImagePasteAgents(agents, onSurfaceID: surfaceID)
+    case .createTab, .ensureInitialTab, .closeFocusedTab, .closeFocusedSurface, .selectTab,
+      .selectTabAtIndex, .focusSurface, .splitSurface, .destroyTab, .destroySurface,
+      .beginTabRename, .terminal:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
   }
@@ -577,11 +559,12 @@ final class WorktreeTerminalManager {
       self?.refreshFocusedSurfaceBackground()
     }
     state.onTaskStatusChanged = { [weak self] status in
-      self?.emit(.taskStatusChanged(worktreeID: worktree.id, status: status))
+      self?.emit(.terminal(.taskStatusChanged(worktreeID: worktree.id, status: status)))
       self?.emitProjection(for: worktree.id)
     }
     state.onBlockingScriptCompleted = { [weak self] kind, exitCode, tabId in
-      self?.emit(.blockingScriptCompleted(worktreeID: worktree.id, kind: kind, exitCode: exitCode, tabId: tabId))
+      self?.emit(
+        .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: kind, exitCode: exitCode, tabId: tabId)))
     }
     state.onRunningScriptsChanged = { [weak self] in
       // Force past the projection dedupe: an archived-strip can clear the row while
@@ -592,7 +575,7 @@ final class WorktreeTerminalManager {
       self?.emit(.commandPaletteToggleRequested(worktreeID: worktree.id))
     }
     state.onSetupScriptConsumed = { [weak self] in
-      self?.emit(.setupScriptConsumed(worktreeID: worktree.id))
+      self?.emit(.terminal(.setupScriptConsumed(worktreeID: worktree.id)))
     }
     state.onTabProjectionChanged = { [weak self] projection in
       self?.emit(.tabProjectionChanged(worktreeID: worktree.id, projection))
@@ -1214,7 +1197,7 @@ final class WorktreeTerminalManager {
       lastEmittedProjections.removeValue(forKey: worktreeID)
     case .notificationIndicatorChanged:
       lastNotificationIndicatorCount = nil
-    case .terminalHasAnySurfaceChanged(let hasAny):
+    case .terminal(.hasAnySurfaceChanged(let hasAny)):
       // Invert instead of nil: the gate defaults nil to false, which would
       // mask a shed `false` and strand a consumer at `true`.
       lastEmittedHasAnyTerminalSurface = !hasAny
@@ -1288,7 +1271,7 @@ final class WorktreeTerminalManager {
     let previous = lastEmittedHasAnyTerminalSurface ?? false
     guard hasAny != previous else { return }
     lastEmittedHasAnyTerminalSurface = hasAny
-    emit(.terminalHasAnySurfaceChanged(hasAny: hasAny))
+    emit(.terminal(.hasAnySurfaceChanged(hasAny: hasAny)))
   }
 
   /// Runs `stop` on the worktree's existing terminal state, never minting one.

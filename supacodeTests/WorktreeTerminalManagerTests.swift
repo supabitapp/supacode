@@ -105,13 +105,13 @@ struct WorktreeTerminalManagerTests {
 
     let stream = manager.eventStream()
     let event = await nextEvent(stream) { event in
-      if case .setupScriptConsumed = event {
+      if case .terminal(.setupScriptConsumed) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .setupScriptConsumed(worktreeID: worktree.id))
+    #expect(event == .terminal(.setupScriptConsumed(worktreeID: worktree.id)))
   }
 
   @Test func emitsEventsAfterStreamCreated() async {
@@ -122,7 +122,7 @@ struct WorktreeTerminalManagerTests {
     let stream = manager.eventStream()
     let eventTask = Task {
       await nextEvent(stream) { event in
-        if case .setupScriptConsumed = event {
+        if case .terminal(.setupScriptConsumed) = event {
           return true
         }
         return false
@@ -132,7 +132,7 @@ struct WorktreeTerminalManagerTests {
     state.onSetupScriptConsumed?()
 
     let event = await eventTask.value
-    #expect(event == .setupScriptConsumed(worktreeID: worktree.id))
+    #expect(event == .terminal(.setupScriptConsumed(worktreeID: worktree.id)))
   }
 
   @Test func unavailableSocketServerIsDiscarded() {
@@ -152,7 +152,7 @@ struct WorktreeTerminalManagerTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server)
     let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -175,7 +175,7 @@ struct WorktreeTerminalManagerTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
@@ -206,7 +206,7 @@ struct WorktreeTerminalManagerTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
@@ -234,7 +234,7 @@ struct WorktreeTerminalManagerTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
@@ -267,7 +267,7 @@ struct WorktreeTerminalManagerTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
@@ -295,7 +295,7 @@ struct WorktreeTerminalManagerTests {
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
@@ -323,7 +323,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id) else {
       Issue.record("Expected terminal state for worktree")
       return
@@ -335,11 +335,11 @@ struct WorktreeTerminalManagerTests {
     )
 
     // Lifecycle kinds carry no definition ID and never surface as running scripts.
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     #expect(state.currentProjection().runningScripts.map(\.id) == [definition.id])
 
     // Stopping the script reconciles the projection back to empty (#573).
-    manager.handleCommand(.stopScript(worktree, definitionID: definition.id))
+    manager.handleCommand(.terminal(worktree, .stopScript(definitionID: definition.id)))
     #expect(state.currentProjection().runningScripts.isEmpty)
   }
 
@@ -353,11 +353,11 @@ struct WorktreeTerminalManagerTests {
     // A double resume would trap, so each leg also pins "one callback per turn".
     await withCheckedContinuation { continuation in
       state.onRunningScriptsChanged = { continuation.resume() }
-      manager.handleCommand(.runBlockingScript(worktree, kind: .script(first), script: "echo ok"))
+      manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(first), script: "echo ok")))
     }
     await withCheckedContinuation { continuation in
       state.onRunningScriptsChanged = { continuation.resume() }
-      manager.handleCommand(.runBlockingScript(worktree, kind: .script(second), script: "echo ok"))
+      manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(second), script: "echo ok")))
     }
     #expect(Set(state.currentProjection().runningScripts.map(\.id)) == [first.id, second.id])
 
@@ -382,11 +382,11 @@ struct WorktreeTerminalManagerTests {
 
     await withCheckedContinuation { continuation in
       state.onRunningScriptsChanged = { continuation.resume() }
-      manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+      manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "echo ok")))
     }
     let tabsBefore = state.tabManager.tabs.map(\.id)
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "echo ok")))
 
     #expect(state.tabManager.tabs.map(\.id) == tabsBefore)
     #expect(state.currentProjection().runningScripts.map(\.id) == [definition.id])
@@ -426,13 +426,13 @@ struct WorktreeTerminalManagerTests {
     _ = manager.state(for: worktree)
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "echo ok")))
     var running = await nextRunningScripts(stream)
     while running?.isEmpty == true { running = await nextRunningScripts(stream) }
     #expect(running?.map(\.id) == [definition.id])
 
     // Duplicate run: the running set is unchanged, so a plain emit would dedupe.
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "echo ok")))
     var reAsserted = await nextRunningScripts(stream)
     while reAsserted?.isEmpty == true { reAsserted = await nextRunningScripts(stream) }
     #expect(reAsserted?.map(\.id) == [definition.id])
@@ -460,12 +460,12 @@ struct WorktreeTerminalManagerTests {
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "echo ok")))
     var started = await nextRunningScripts(stream)
     while started?.isEmpty == true { started = await nextRunningScripts(stream) }
     #expect(started?.map(\.id) == [definition.id])
 
-    manager.handleCommand(.stopScript(worktree, definitionID: definition.id))
+    manager.handleCommand(.terminal(worktree, .stopScript(definitionID: definition.id)))
     var stopped = await nextRunningScripts(stream)
     while stopped?.isEmpty == false { stopped = await nextRunningScripts(stream) }
     #expect(stopped?.isEmpty == true)
@@ -482,7 +482,7 @@ struct WorktreeTerminalManagerTests {
     // forced re-emit (without it, this await hangs).
     _ = await nextRunningScripts(stream)
 
-    manager.handleCommand(.stopScript(worktree, definitionID: UUID()))
+    manager.handleCommand(.terminal(worktree, .stopScript(definitionID: UUID())))
     let reEmitted = await nextRunningScripts(stream)
     #expect(reEmitted?.isEmpty == true)
   }
@@ -591,8 +591,8 @@ struct WorktreeTerminalManagerTests {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
 
-    manager.handleCommand(.stopScript(worktree, definitionID: UUID()))
-    manager.handleCommand(.stopRunScript(worktree))
+    manager.handleCommand(.terminal(worktree, .stopScript(definitionID: UUID())))
+    manager.handleCommand(.terminal(worktree, .stopRunScript))
 
     #expect(manager.stateIfExists(for: worktree.id) == nil)
   }
@@ -605,7 +605,7 @@ struct WorktreeTerminalManagerTests {
       let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
 
-      manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+      manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
       guard let state = manager.stateIfExists(for: worktree.id),
         let tabId = state.tabManager.selectedTabId,
@@ -662,7 +662,7 @@ struct WorktreeTerminalManagerTests {
     while case .worktreeProjectionChanged = second { second = await iterator.next() }
 
     #expect(first == .notificationIndicatorChanged(count: 0))
-    #expect(second == .setupScriptConsumed(worktreeID: worktree.id))
+    #expect(second == .terminal(.setupScriptConsumed(worktreeID: worktree.id)))
   }
 
   @Test func presenceHasActivityReflectsAnyBusySurface() {
@@ -1768,7 +1768,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe)
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
     else {
@@ -1863,7 +1863,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "exit 1"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "exit 1")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -1876,13 +1876,14 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onCommandFinished?(1)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 1, tabId: tabId))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 1, tabId: tabId)))
   }
 
   @Test func blockingScriptCompletionPassesNilExitCodeWhenCommandFinishedReportsNil() async {
@@ -1890,7 +1891,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -1903,13 +1904,15 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onCommandFinished?(nil)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: tabId))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: tabId))
+    )
   }
 
   @Test func blockingScriptCommandFinishedFollowedByChildExitDoesNotDoubleFire() async {
@@ -1917,7 +1920,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -1933,12 +1936,13 @@ struct WorktreeTerminalManagerTests {
 
     // First completion event should arrive.
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 0, tabId: tabId))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 0, tabId: tabId)))
 
     // The child exit should NOT produce a second completion.
     #expect(!manager.isBlockingScriptRunning(kind: .archive, for: worktree.id))
@@ -1949,7 +1953,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -1962,13 +1966,14 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onChildExited?(1)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: nil))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: nil)))
   }
 
   @Test func remoteBlockingScriptChildExitReportsFailure() async {
@@ -1979,7 +1984,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeRemoteWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -1992,13 +1997,14 @@ struct WorktreeTerminalManagerTests {
     surface.terminalForTesting.bridge.onChildExited?(0)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 1, tabId: nil))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 1, tabId: nil)))
   }
 
   @Test func blockingScriptSignalBasedTerminationReportsImmediately() async {
@@ -2006,7 +2012,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -2021,13 +2027,15 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onCommandFinished?(130)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 130, tabId: tabId))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 130, tabId: tabId))
+    )
   }
 
   @Test func blockingScriptRerunClosesOldTabWithoutFiringCompletion() async {
@@ -2035,7 +2043,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let firstTabId = state.tabManager.selectedTabId
@@ -2045,7 +2053,7 @@ struct WorktreeTerminalManagerTests {
     }
 
     // Re-run the same kind — old tab should close silently.
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let secondTabId = state.tabManager.selectedTabId else {
       Issue.record("Expected second blocking script tab")
@@ -2063,13 +2071,16 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onCommandFinished?(0)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 0, tabId: secondTabId))
+    #expect(
+      event
+        == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 0, tabId: secondTabId))
+    )
   }
 
   @Test func blockingScriptTabClosedManuallyReportsCancellation() async {
@@ -2077,7 +2088,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId
@@ -2090,13 +2101,14 @@ struct WorktreeTerminalManagerTests {
     state.closeTab(tabId)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: nil))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: nil)))
   }
 
   @Test func closeAllSurfacesCancelsPendingBlockingScripts() async {
@@ -2104,7 +2116,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
 
     guard let state = manager.stateIfExists(for: worktree.id) else {
       Issue.record("Expected worktree state")
@@ -2114,13 +2126,14 @@ struct WorktreeTerminalManagerTests {
     state.closeAllSurfaces()
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: nil))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: nil)))
   }
 
   @Test func blockingScriptSuccessKeepsTabOpen() async {
@@ -2128,7 +2141,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -2143,13 +2156,14 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.onCommandFinished?(0)
 
     let event = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event {
+      if case .terminal(.blockingScriptCompleted) = event {
         return true
       }
       return false
     }
 
-    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 0, tabId: tabId))
+    #expect(
+      event == .terminal(.blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 0, tabId: tabId)))
     // Tab stays open so the user can inspect output.
     #expect(state.tabManager.tabs.map(\.id).contains(tabId))
   }
@@ -2161,7 +2175,7 @@ struct WorktreeTerminalManagerTests {
 
     #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == false)
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo hi"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "echo hi")))
 
     #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == true)
   }
@@ -2171,10 +2185,10 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, command: "sleep 10")
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "sleep 10")))
     #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == true)
 
-    manager.handleCommand(.stopRunScript(worktree))
+    manager.handleCommand(.terminal(worktree, .stopRunScript))
     #expect(manager.isBlockingScriptRunning(kind: .script(definition), for: worktree.id) == false)
   }
 
@@ -2184,7 +2198,7 @@ struct WorktreeTerminalManagerTests {
     let stream = manager.eventStream()
     let definition = ScriptDefinition(kind: .run, command: "sleep 10")
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .script(definition), script: "sleep 10")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -2206,7 +2220,7 @@ struct WorktreeTerminalManagerTests {
 
     // Wait for completion event.
     _ = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event { return true }
+      if case .terminal(.blockingScriptCompleted) = event { return true }
       return false
     }
 
@@ -2229,7 +2243,7 @@ struct WorktreeTerminalManagerTests {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "exit 1"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "exit 1")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -2259,7 +2273,7 @@ struct WorktreeTerminalManagerTests {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     // First archive run, complete it, and confirm the tab is frozen.
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo first"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo first")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let firstTabId = state.tabManager.selectedTabId,
       let firstSurface = state.splitTree(for: firstTabId).root?.leftmostLeaf().terminalForTesting
@@ -2274,7 +2288,7 @@ struct WorktreeTerminalManagerTests {
     // Re-run archive: the lingering frozen tab must be closed and a fresh tab
     // minted. Without the cleanup the old tab would still be selected and the
     // user would never see the new run.
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo second"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo second")))
     let secondTabId = state.tabManager.selectedTabId
     #expect(secondTabId != nil)
     #expect(secondTabId != firstTabId)
@@ -2285,7 +2299,7 @@ struct WorktreeTerminalManagerTests {
   @Test func residualProgressReportDoesNotResurrectDirtyOnFrozenTab() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
@@ -2311,8 +2325,8 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
 
     // Create two blocking script tabs so we have two tabs to switch between.
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo archive"))
-    manager.handleCommand(.runBlockingScript(worktree, kind: .delete, script: "echo delete"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo archive")))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .delete, script: "echo delete")))
 
     guard let state = manager.stateIfExists(for: worktree.id) else {
       Issue.record("Expected worktree state")
@@ -2340,7 +2354,7 @@ struct WorktreeTerminalManagerTests {
     let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
     let worktree = makeWorktree()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId
@@ -2616,7 +2630,7 @@ struct WorktreeTerminalManagerTests {
 
     var statuses: [WorktreeTaskStatus] = []
     for await event in stream {
-      guard case .taskStatusChanged(_, let status) = event else { continue }
+      guard case .terminal(.taskStatusChanged(_, let status)) = event else { continue }
       statuses.append(status)
     }
 
@@ -2664,7 +2678,7 @@ struct WorktreeTerminalManagerTests {
 
     var count = 0
     for await event in stream {
-      if case .setupScriptConsumed = event { count += 1 }
+      if case .terminal(.setupScriptConsumed) = event { count += 1 }
     }
 
     #expect(count == manager.eventBufferCap)
@@ -2736,7 +2750,7 @@ struct WorktreeTerminalManagerTests {
 
     var statuses: [WorktreeTaskStatus] = []
     for await event in stream {
-      guard case .taskStatusChanged(_, let status) = event else { continue }
+      guard case .terminal(.taskStatusChanged(_, let status)) = event else { continue }
       statuses.append(status)
     }
 
@@ -2759,7 +2773,7 @@ struct WorktreeTerminalManagerTests {
 
     var count = 0
     for await event in stream {
-      if case .setupScriptConsumed = event { count += 1 }
+      if case .terminal(.setupScriptConsumed) = event { count += 1 }
     }
 
     #expect(count == WorktreeTerminalManager.pendingEventCap)
@@ -2780,7 +2794,7 @@ struct WorktreeTerminalManagerTests {
 
     var statuses: [WorktreeTaskStatus] = []
     for await event in stream {
-      guard case .taskStatusChanged(_, let status) = event else { continue }
+      guard case .terminal(.taskStatusChanged(_, let status)) = event else { continue }
       statuses.append(status)
     }
 
@@ -3111,7 +3125,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     _ = state.createTab()
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
 
     #expect(state.tabManager.tabs.count == 2)
 
@@ -3130,7 +3144,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
 
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
@@ -3142,7 +3156,7 @@ struct WorktreeTerminalManagerTests {
 
     surface.bridge.onCommandFinished?(0)
     _ = await nextEvent(stream) { event in
-      if case .blockingScriptCompleted = event { return true }
+      if case .terminal(.blockingScriptCompleted) = event { return true }
       return false
     }
     // After completion the tab keeps its title / icon / lock and stays
@@ -3159,7 +3173,7 @@ struct WorktreeTerminalManagerTests {
       Issue.record("Expected first regular tab")
       return
     }
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
     guard let tabB = state.tabManager.selectedTabId else {
       Issue.record("Expected blocking-script tab selected after runBlockingScript")
       return
@@ -3187,7 +3201,7 @@ struct WorktreeTerminalManagerTests {
   @Test func performSplitActionRefusesNewSplitOnBlockingScriptTab() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
     guard let state = manager.stateIfExists(for: worktree.id),
       let tabId = state.tabManager.selectedTabId,
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf().terminalForTesting
@@ -3212,7 +3226,7 @@ struct WorktreeTerminalManagerTests {
       Issue.record("Expected regular tab and surface")
       return
     }
-    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "sleep 10"))
+    manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
     guard let blockingTab = state.tabManager.selectedTabId,
       let blockingSurface = state.splitTree(for: blockingTab).root?.leftmostLeaf().terminalForTesting
     else {

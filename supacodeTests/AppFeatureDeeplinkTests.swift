@@ -447,7 +447,7 @@ struct AppFeatureDeeplinkTests {
 
     #expect(store.state.deeplinkInputConfirmation == nil)
     let hasRun = sent.value.contains(where: {
-      if case .runBlockingScript(_, .script(let sentDefinition), _) = $0 {
+      if case .terminal(_, .runBlockingScript(.script(let sentDefinition), _)) = $0 {
         return sentDefinition.id == definition.id
       }
       return false
@@ -492,7 +492,7 @@ struct AppFeatureDeeplinkTests {
 
     #expect(store.state.deeplinkInputConfirmation == nil)
     let hasStop = sent.value.contains(where: {
-      if case .stopScript(_, let definitionID) = $0 { return definitionID == definition.id }
+      if case .terminal(_, .stopScript(let definitionID)) = $0 { return definitionID == definition.id }
       return false
     })
     #expect(hasStop)
@@ -533,7 +533,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let hasRun = sent.value.contains(where: {
-      if case .runBlockingScript(_, .script(let definition), _) = $0 {
+      if case .terminal(_, .runBlockingScript(.script(let definition), _)) = $0 {
         return definition.id == globalScript.id
       }
       return false
@@ -568,7 +568,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let hasStop = sent.value.contains(where: {
-      if case .stopScript(_, let definitionID) = $0 { return definitionID == globalScript.id }
+      if case .terminal(_, .stopScript(let definitionID)) = $0 { return definitionID == globalScript.id }
       return false
     })
     #expect(hasStop)
@@ -608,7 +608,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let runCommands = sent.value.compactMap { command -> ScriptDefinition? in
-      if case .runBlockingScript(_, .script(let def), _) = command { return def }
+      if case .terminal(_, .runBlockingScript(.script(let def), _)) = command { return def }
       return nil
     }
     #expect(runCommands.count == 1)
@@ -643,7 +643,7 @@ struct AppFeatureDeeplinkTests {
     await store.send(.deeplink(.worktree(id: worktree.id, action: .stopScript(scriptID: definition.id))))
     #expect(store.state.alert != nil)
     let didStop = sent.value.contains(where: {
-      if case .stopScript = $0 { return true }
+      if case .terminal(_, .stopScript) = $0 { return true }
       return false
     })
     #expect(!didStop)
@@ -676,7 +676,7 @@ struct AppFeatureDeeplinkTests {
     await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
     #expect(store.state.alert != nil)
     let didRun = sent.value.contains(where: {
-      if case .runBlockingScript = $0 { return true }
+      if case .terminal(_, .runBlockingScript) = $0 { return true }
       return false
     })
     #expect(!didRun)
@@ -710,7 +710,7 @@ struct AppFeatureDeeplinkTests {
     await store.send(.deeplink(.worktree(id: worktree.id, action: .runScript(scriptID: definition.id))))
     #expect(store.state.alert != nil)
     let didRun = sent.value.contains(where: {
-      if case .runBlockingScript = $0 { return true }
+      if case .terminal(_, .runBlockingScript) = $0 { return true }
       return false
     })
     #expect(!didRun)
@@ -758,7 +758,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let hasRun = sent.value.contains(where: {
-      if case .runBlockingScript(_, .script(let sentDefinition), _) = $0 {
+      if case .terminal(_, .runBlockingScript(.script(let sentDefinition), _)) = $0 {
         return sentDefinition.id == definition.id
       }
       return false

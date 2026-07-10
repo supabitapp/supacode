@@ -39,7 +39,7 @@ struct AppFeatureSplitTerminalTests {
 
     await store.send(.splitTerminal(direction))
     await store.finish()
-    #expect(sent.value == [.performBindingAction(worktree, action: direction.ghosttyBinding)])
+    #expect(sent.value == [.terminal(worktree, .performBindingAction(direction.ghosttyBinding))])
   }
 
   @Test(.dependencies) func splitTerminalWithoutSelectionIsNoop() async {
