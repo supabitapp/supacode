@@ -97,7 +97,7 @@ extension AppFeature.Action {
     case .settings:
       return true
     // Only `notificationIndicatorChanged` writes the snapshot's count field.
-    case .terminalEvent(let event):
+    case .surfaceEvent(let event):
       switch event {
       case .notificationIndicatorChanged:
         return true
@@ -110,7 +110,7 @@ extension AppFeature.Action {
     // Hot agent-storm paths: per-tab churn never mutates snapshot inputs.
     // `.terminals` is safe because it owns only per-tab feature state; any
     // change that DOES affect a snapshot input flows back through a separate
-    // `.terminalEvent.notificationIndicatorChanged` (counted above) or a
+    // `.surfaceEvent.notificationIndicatorChanged` (counted above) or a
     // `.repositories` cache invalidation (the cacheInvalidations gate above).
     case .agentPresence, .terminals, .commandPalette, .updates:
       return false

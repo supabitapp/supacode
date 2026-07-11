@@ -5,13 +5,13 @@ import Testing
 @testable import supacode
 
 @MainActor
-struct WorktreeTerminalManagerReaperTests {
+struct WorktreeSurfaceManagerReaperTests {
   /// Builds a manager whose injected zmx client records every kill and serves
   /// the supplied `ls` listing (nil = probe failed).
   private func makeManager(
     listing: [ZmxSessionListParser.Entry]?,
     killed: LockIsolated<[String]>
-  ) -> WorktreeTerminalManager {
+  ) -> WorktreeSurfaceManager {
     withDependencies {
       $0.zmxClient = ZmxClient(
         executableURL: { nil },
@@ -21,7 +21,7 @@ struct WorktreeTerminalManagerReaperTests {
         listSessionsWithClients: { listing }
       )
     } operation: {
-      WorktreeTerminalManager(runtime: GhosttyRuntime())
+      WorktreeSurfaceManager(runtime: GhosttyRuntime())
     }
   }
 
@@ -81,7 +81,7 @@ struct WorktreeTerminalManagerReaperTests {
         listSessionsWithClients: { listing.value }
       )
     } operation: {
-      WorktreeTerminalManager(runtime: GhosttyRuntime())
+      WorktreeSurfaceManager(runtime: GhosttyRuntime())
     }
 
     let worktree = makeWorktree()

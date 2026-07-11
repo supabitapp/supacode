@@ -17,15 +17,15 @@ import UniformTypeIdentifiers
 struct ContentView: View {
   @Bindable var store: StoreOf<AppFeature>
   @Bindable var repositoriesStore: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   @Environment(\.scenePhase) private var scenePhase
   @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
   @State private var leftSidebarVisibility: NavigationSplitViewVisibility = .all
 
-  init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager) {
+  init(store: StoreOf<AppFeature>, surfaceManager: WorktreeSurfaceManager) {
     self.store = store
     repositoriesStore = store.scope(state: \.repositories, action: \.repositories)
-    self.terminalManager = terminalManager
+    self.surfaceManager = surfaceManager
   }
 
   var body: some View {
@@ -33,13 +33,13 @@ struct ContentView: View {
       let _ = contentRenderLogger.info("ContentView.body re-rendered")
     #endif
     return NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
-      SidebarView(store: repositoriesStore, terminalManager: terminalManager)
+      SidebarView(store: repositoriesStore, surfaceManager: surfaceManager)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         .safeAreaInset(edge: .bottom, spacing: 0) {
           SidebarBottomCardView(store: store)
         }
     } detail: {
-      WorktreeDetailView(store: store, terminalManager: terminalManager)
+      WorktreeDetailView(store: store, surfaceManager: surfaceManager)
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!repositoriesStore.isInitialLoadComplete)
@@ -141,12 +141,12 @@ struct ContentView: View {
       )
     }
     .background(WindowTabbingDisabler())
-    .background(WindowTintBackdrop(runtime: terminalManager.ghosttyRuntime))
-    .background(WindowChromeObserver(runtime: terminalManager.ghosttyRuntime))
+    .background(WindowTintBackdrop(runtime: surfaceManager.ghosttyRuntime))
+    .background(WindowChromeObserver(runtime: surfaceManager.ghosttyRuntime))
     .background(
       WindowTitleHost(
         repositoriesStore: repositoriesStore,
-        terminalManager: terminalManager
+        surfaceManager: surfaceManager
       )
     )
   }
@@ -185,7 +185,7 @@ private struct CommandPaletteOverlayHost: View {
 /// invalidations from tab renames or section title edits.
 private struct WindowTitleHost: View {
   let repositoriesStore: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
 
   var body: some View {
     #if DEBUG
@@ -195,7 +195,7 @@ private struct WindowTitleHost: View {
       .navigationTitle(
         WindowTitle.compute(
           repositories: repositoriesStore.state,
-          terminalManager: terminalManager
+          surfaceManager: surfaceManager
         )
       )
   }

@@ -126,7 +126,7 @@ struct AppFeatureDefaultEditorTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in }
+      $0.surfaceClient.send = { _ in }
       $0.worktreeInfoWatcher.send = { command in
         watcherCommands.withValue { $0.append(command) }
       }

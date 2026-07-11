@@ -57,7 +57,7 @@ struct AgentBusyStateTests {
   }
 
   @Test func multipleSurfacesBusyInDifferentTabs() {
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo a")))
@@ -378,9 +378,9 @@ struct AgentBusyStateTests {
 
   @MainActor
   private struct SurfaceFixture {
-    let manager: WorktreeTerminalManager
+    let manager: WorktreeSurfaceManager
     let presence: PresenceTestHarness
-    let state: WorktreeTerminalState
+    let state: WorktreeSurfaceState
     let tabId: TerminalTabID
     let surface: GhosttySurfaceView
 
@@ -431,7 +431,7 @@ struct AgentBusyStateTests {
   }
 
   private func makeStateWithSurface(worktree: Worktree? = nil) -> SurfaceFixture {
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness()
     let resolvedWorktree = worktree ?? makeWorktree()
 
     let state = manager.state(for: resolvedWorktree) { false }
@@ -441,9 +441,9 @@ struct AgentBusyStateTests {
   }
 
   private func nextEvent(
-    _ stream: AsyncStream<TerminalClient.Event>,
-    matching predicate: (TerminalClient.Event) -> Bool
-  ) async -> TerminalClient.Event? {
+    _ stream: AsyncStream<SurfaceClient.Event>,
+    matching predicate: (SurfaceClient.Event) -> Bool
+  ) async -> SurfaceClient.Event? {
     for await event in stream where predicate(event) {
       return event
     }

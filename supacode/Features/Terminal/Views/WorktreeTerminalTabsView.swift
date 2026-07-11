@@ -4,7 +4,7 @@ import SwiftUI
 
 struct WorktreeTerminalTabsView: View {
   let worktree: Worktree
-  let manager: WorktreeTerminalManager
+  let manager: WorktreeSurfaceManager
   /// Narrowed terminal-orchestration store. The tab bar scopes per-tab
   /// `TerminalTabFeature` stores via `\.terminalTabs[id:]` from here, so the
   /// tab-bar surface area stays bounded to terminal state.
@@ -112,12 +112,12 @@ struct WorktreeTerminalTabsView: View {
 }
 
 /// Reads the per-tab projection so SwiftUI invalidates whenever the tab's surface
-/// set or focus changes. `WorktreeTerminalState.trees` and `focusedSurfaceIdByTab`
+/// set or focus changes. `WorktreeSurfaceState.trees` and `focusedSurfaceIdByTab`
 /// are `@ObservationIgnored`, so without this dependency Cmd+D / Cmd+W would not
 /// re-render until something else (a worktree switch) forced a body recompute.
 private struct TerminalSplitTreePane: View {
   let tabId: TerminalTabID
-  let terminalState: WorktreeTerminalState
+  let terminalState: WorktreeSurfaceState
   let terminalsStore: StoreOf<TerminalsFeature>
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
 

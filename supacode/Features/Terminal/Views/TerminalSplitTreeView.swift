@@ -3,9 +3,9 @@ import SwiftUI
 
 struct TerminalSplitTreeView: View {
   let tree: SplitTree<SurfaceView>
-  // Owns the per-surface `WorktreeSurfaceState` map; leaves resolve their
+  // Owns the per-surface `SurfaceIndicatorState` map; leaves resolve their
   // notification flag through `terminalState.surfaceStates[id]`.
-  let terminalState: WorktreeTerminalState
+  let terminalState: WorktreeSurfaceState
   // Single source of truth for which pane is active in this tab. Any surface
   // whose id does not match this gets the unfocused-split dim overlay.
   let activeSurfaceID: UUID?
@@ -39,7 +39,7 @@ struct TerminalSplitTreeView: View {
   struct SubtreeView: View {
     let node: SplitTree<SurfaceView>.Node
     var isRoot: Bool = false
-    let terminalState: WorktreeTerminalState
+    let terminalState: WorktreeSurfaceState
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
     let action: (Operation) -> Void
@@ -104,7 +104,7 @@ struct TerminalSplitTreeView: View {
 
   struct LeafView: View {
     let surfaceView: GhosttySurfaceView
-    let surfaceState: WorktreeSurfaceState?
+    let surfaceState: SurfaceIndicatorState?
     let isSplit: Bool
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
@@ -186,7 +186,7 @@ struct TerminalSplitTreeView: View {
 /// on this surface invalidates only this overlay, not the entire split tree.
 /// Nil while a surface is mid-registration; renders nothing in that window.
 private struct SurfaceNotificationDotIndicator: View {
-  let state: WorktreeSurfaceState?
+  let state: SurfaceIndicatorState?
 
   var body: some View {
     let isShowing = state?.hasUnseenNotification == true
@@ -219,7 +219,7 @@ private struct SurfaceNotificationDot: View {
 /// list of terminal panes to assistive technologies.
 struct TerminalSplitTreeAXContainer: NSViewRepresentable {
   let tree: SplitTree<SurfaceView>
-  let terminalState: WorktreeTerminalState
+  let terminalState: WorktreeSurfaceState
   let activeSurfaceID: UUID?
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
   let action: (TerminalSplitTreeView.Operation) -> Void

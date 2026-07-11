@@ -17,7 +17,7 @@ extension RepositoriesFeature {
     let previousByID = state.sidebarItems
     var rebuilt: IdentifiedArrayOf<SidebarItemFeature.State> = []
     // Seed `surfaceIDs` from persisted layout so the surface-to-row index is
-    // populated before the lazy `WorktreeTerminalState` ever exists.
+    // populated before the lazy `WorktreeSurfaceState` ever exists.
     let layouts = state.persistedLayouts
     var seededSurfaces: Set<UUID> = []
 

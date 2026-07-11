@@ -1,6 +1,6 @@
 import Foundation
 
-/// Terminal-only commands, carried by `TerminalClient.Command.terminal`. The
+/// Terminal-only commands, carried by `SurfaceClient.Command.terminal`. The
 /// shared command surface stays kind-neutral; everything that only makes sense
 /// for a terminal (scripts, Ghostty binding actions, scrollback search) lives
 /// here, and a future surface kind adds a sibling enum + one wrapper case
@@ -18,9 +18,9 @@ enum TerminalSurfaceCommand: Equatable {
   case endSearch
 }
 
-/// Terminal-only events, carried by `TerminalClient.Event.terminal`. Mirror of
+/// Terminal-only events, carried by `SurfaceClient.Event.terminal`. Mirror of
 /// `TerminalSurfaceCommand` on the event side: neutral lifecycle / projection
-/// events stay top-level on `TerminalClient.Event`.
+/// events stay top-level on `SurfaceClient.Event`.
 enum TerminalSurfaceEvent: Equatable {
   case taskStatusChanged(worktreeID: Worktree.ID, status: WorktreeTaskStatus)
   case blockingScriptCompleted(

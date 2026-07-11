@@ -10,7 +10,7 @@ struct WorktreeStatusInspectorContainer: View {
   let isCheckingPullRequest: Bool
   let pullRequest: GithubPullRequest?
   let repositoriesStore: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
@@ -27,12 +27,12 @@ struct WorktreeStatusInspectorContainer: View {
       case .notifications:
         WorktreeNotificationsInspectorView(
           repositoriesStore: repositoriesStore,
-          terminalManager: terminalManager,
+          surfaceManager: surfaceManager,
           onSelectNotification: onSelectNotification
         )
       }
     }
-    .inspectorForcedAppearance(terminalManager.surfaceBackgroundColorScheme())
+    .inspectorForcedAppearance(surfaceManager.surfaceBackgroundColorScheme())
   }
 }
 
@@ -405,7 +405,7 @@ private struct PullRequestMergeQueueRow: View {
 /// toolbar bell host.
 struct WorktreeNotificationsInspectorView: View {
   let repositoriesStore: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
 
   var body: some View {
@@ -416,7 +416,7 @@ struct WorktreeNotificationsInspectorView: View {
       onDismissAll: {
         for repositoryGroup in groups {
           for worktreeGroup in repositoryGroup.worktrees {
-            terminalManager.stateIfExists(for: worktreeGroup.id)?
+            surfaceManager.stateIfExists(for: worktreeGroup.id)?
               .dismissAllNotifications()
           }
         }

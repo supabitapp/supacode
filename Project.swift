@@ -108,7 +108,7 @@ let terminalTestSources: [Path] = [
   "supacodeTests/Ghostty*.swift",
   "supacodeTests/Layouts*.swift",
   "supacodeTests/SplitTree*.swift",
-  "supacodeTests/WorktreeTerminalManager*.swift",
+  "supacodeTests/WorktreeSurfaceManager*.swift",
   "supacodeTests/Zmx*.swift",
 ]
 

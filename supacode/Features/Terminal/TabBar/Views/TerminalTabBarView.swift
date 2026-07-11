@@ -4,7 +4,7 @@ import SwiftUI
 
 struct TerminalTabBarView: View {
   @Bindable var manager: TerminalTabManager
-  let terminalState: WorktreeTerminalState
+  let terminalState: WorktreeSurfaceState
   let terminalsStore: StoreOf<TerminalsFeature>
   let createTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void

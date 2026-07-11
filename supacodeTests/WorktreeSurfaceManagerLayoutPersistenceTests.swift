@@ -13,7 +13,7 @@ struct LayoutPersistenceManagerTests {
   /// the app performs, so a test can assert both coalescing and final on-disk
   /// state from one storage.
   private struct Harness {
-    let manager: WorktreeTerminalManager
+    let manager: WorktreeSurfaceManager
     let clock: TestClock<Duration>
     let saveCount: LockIsolated<Int>
     let storage: SettingsFileStorage
@@ -56,7 +56,7 @@ struct LayoutPersistenceManagerTests {
     let manager = withDependencies {
       $0.settingsFileStorage = storage
     } operation: {
-      WorktreeTerminalManager(runtime: GhosttyRuntime(), clock: clock)
+      WorktreeSurfaceManager(runtime: GhosttyRuntime(), clock: clock)
     }
     // Mirror the app's in-memory dict mutation; the writer's storage is the
     // on-disk source of truth these tests assert against.
@@ -268,7 +268,7 @@ struct LayoutPersistenceManagerTests {
     let manager = withDependencies {
       $0.settingsFileStorage = storage
     } operation: {
-      WorktreeTerminalManager(runtime: GhosttyRuntime(), clock: clock)
+      WorktreeSurfaceManager(runtime: GhosttyRuntime(), clock: clock)
     }
     manager.saveLayoutSnapshot = { _, _ in }
 

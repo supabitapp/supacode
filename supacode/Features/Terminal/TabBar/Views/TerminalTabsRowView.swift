@@ -4,7 +4,7 @@ import SwiftUI
 
 struct TerminalTabsRowView: View {
   @Bindable var manager: TerminalTabManager
-  let terminalState: WorktreeTerminalState
+  let terminalState: WorktreeSurfaceState
   let terminalsStore: StoreOf<TerminalsFeature>
   @Binding var openedTabs: [TerminalTabID]
   @Binding var tabLocations: [TerminalTabID: CGRect]
@@ -41,7 +41,7 @@ struct TerminalTabsRowView: View {
               fixedWidth: fixedTabWidth,
               tabStore: tabStore,
               onSelect: {
-                // Route through WorktreeTerminalState so selecting a tab also focuses its focused surface.
+                // Route through WorktreeSurfaceState so selecting a tab also focuses its focused surface.
                 terminalState.selectTab(id)
               },
               onClose: {

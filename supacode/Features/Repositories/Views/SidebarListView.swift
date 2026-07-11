@@ -7,7 +7,7 @@ import SwiftUI
 
 struct SidebarListView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   @FocusState private var isSidebarFocused: Bool
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Shared(.settingsFile) private var settingsFile
@@ -54,7 +54,7 @@ struct SidebarListView: View {
             shortcutHintByID: shortcutHintByID,
             selectedWorktreeIDs: selectedWorktreeIDs,
             store: store,
-            terminalManager: terminalManager
+            surfaceManager: surfaceManager
           )
         }
         .onMove { offsets, destination in
@@ -95,7 +95,7 @@ struct SidebarListView: View {
         guard let worktreeID = store.selectedWorktreeID,
           state.sidebarSelectedWorktreeIDs.count == 1,
           state.sidebarSelectedWorktreeIDs.contains(worktreeID),
-          let terminalState = terminalManager.stateIfExists(for: worktreeID)
+          let terminalState = surfaceManager.stateIfExists(for: worktreeID)
         else { return .ignored }
         terminalState.focusAndInsertText(keyPress.characters)
         return .handled
@@ -106,7 +106,7 @@ struct SidebarListView: View {
           guard let worktreeID = store.selectedWorktreeID,
             state.sidebarSelectedWorktreeIDs.count == 1,
             state.sidebarSelectedWorktreeIDs.contains(worktreeID),
-            let terminalState = terminalManager.stateIfExists(for: worktreeID)
+            let terminalState = surfaceManager.stateIfExists(for: worktreeID)
           else { return false }
           terminalState.focusSelectedTab()
           return true
@@ -196,7 +196,7 @@ private struct SidebarSectionDispatcher: View {
   let shortcutHintByID: [Worktree.ID: String]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
 
   var body: some View {
     switch section {
@@ -208,7 +208,7 @@ private struct SidebarSectionDispatcher: View {
         kind: kind,
         rowIDs: rowIDs,
         store: store,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         selectedWorktreeIDs: selectedWorktreeIDs,
         repositoryHighlightByID: structure.repositoryHighlightByID,
         shortcutHintByID: shortcutHintByID
@@ -242,7 +242,7 @@ private struct SidebarSectionDispatcher: View {
             shortcutHint: shortcutHintByID[rowID],
             selectedWorktreeIDs: selectedWorktreeIDs,
             store: store,
-            terminalManager: terminalManager
+            surfaceManager: surfaceManager
           )
         } header: {
           EmptyView()
@@ -257,7 +257,7 @@ private struct SidebarSectionDispatcher: View {
           shortcutHintByID: shortcutHintByID,
           selectedWorktreeIDs: selectedWorktreeIDs,
           store: store,
-          terminalManager: terminalManager
+          surfaceManager: surfaceManager
         )
       }
     }
@@ -273,7 +273,7 @@ private struct SidebarGitRepositorySection: View {
   let shortcutHintByID: [Worktree.ID: String]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   var body: some View {
     let isRemovingRepository = store.state.isRemovingRepository(repository)
     let isResolvingRemote = store.state.resolvingRemoteRepositoryIDs.contains(repository.id)
@@ -285,7 +285,7 @@ private struct SidebarGitRepositorySection: View {
         shortcutHintByID: shortcutHintByID,
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
-        terminalManager: terminalManager
+        surfaceManager: surfaceManager
       )
       if let hoistSummary {
         SidebarHoistSummaryRow(

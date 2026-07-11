@@ -11,10 +11,10 @@ import Testing
 struct AppFeatureJumpToLatestUnreadTests {
   @Test(.dependencies) func noOpWhenNoUnreadNotifications() async {
     let worktree = makeWorktree()
-    let focused = LockIsolated<[TerminalClient.Command]>([])
+    let focused = LockIsolated<[SurfaceClient.Command]>([])
     let store = makeStore(worktree: worktree) {
-      $0.terminalClient.latestUnreadNotification = { nil }
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.latestUnreadNotification = { nil }
+      $0.surfaceClient.send = { command in
         focused.withValue { $0.append(command) }
       }
     }
@@ -30,10 +30,10 @@ struct AppFeatureJumpToLatestUnreadTests {
     let tabUUID = UUID()
     let surfaceUUID = UUID()
     let notificationUUID = UUID()
-    let focused = LockIsolated<[TerminalClient.Command]>([])
+    let focused = LockIsolated<[SurfaceClient.Command]>([])
     let marked = LockIsolated<[(Worktree.ID, UUID)]>([])
     let store = makeStore(worktree: worktree) {
-      $0.terminalClient.latestUnreadNotification = {
+      $0.surfaceClient.latestUnreadNotification = {
         NotificationLocation(
           worktreeID: worktree.id,
           tabID: TerminalTabID(rawValue: tabUUID),
@@ -41,10 +41,10 @@ struct AppFeatureJumpToLatestUnreadTests {
           notificationID: notificationUUID,
         )
       }
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         focused.withValue { $0.append(command) }
       }
-      $0.terminalClient.markNotificationRead = { worktreeID, notificationID in
+      $0.surfaceClient.markNotificationRead = { worktreeID, notificationID in
         marked.withValue { $0.append((worktreeID, notificationID)) }
       }
     }
@@ -53,7 +53,7 @@ struct AppFeatureJumpToLatestUnreadTests {
     await store.receive(\.repositories.selectWorktree)
     await store.finish()
 
-    let expectedFocus = TerminalClient.Command.focusSurface(
+    let expectedFocus = SurfaceClient.Command.focusSurface(
       worktree,
       tabID: TerminalTabID(rawValue: tabUUID),
       surfaceID: surfaceUUID,
@@ -76,9 +76,9 @@ struct AppFeatureJumpToLatestUnreadTests {
   @Test(.dependencies) func dropsJumpWhenTargetWorktreeMissing() async {
     let worktree = makeWorktree()
     let missingID = "/tmp/repo/does-not-exist"
-    let focused = LockIsolated<[TerminalClient.Command]>([])
+    let focused = LockIsolated<[SurfaceClient.Command]>([])
     let store = makeStore(worktree: worktree) {
-      $0.terminalClient.latestUnreadNotification = {
+      $0.surfaceClient.latestUnreadNotification = {
         NotificationLocation(
           worktreeID: WorktreeID(missingID),
           tabID: TerminalTabID(rawValue: UUID()),
@@ -86,7 +86,7 @@ struct AppFeatureJumpToLatestUnreadTests {
           notificationID: UUID(),
         )
       }
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         focused.withValue { $0.append(command) }
       }
     }
@@ -135,8 +135,8 @@ struct AppFeatureJumpToLatestUnreadTests {
     ) {
       AppFeature()
     } withDependencies: { values in
-      values.terminalClient.tabExists = { _, _ in true }
-      values.terminalClient.surfaceExists = { _, _, _ in true }
+      values.surfaceClient.tabExists = { _, _ in true }
+      values.surfaceClient.surfaceExists = { _, _, _ in true }
       withAdditionalDependencies(&values)
     }
     store.exhaustivity = .off

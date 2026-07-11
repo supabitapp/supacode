@@ -12,7 +12,7 @@ private let storeLogger = SupaLogger("Terminal")
 /// launch/session bookkeeping, blocking scripts, setup-script consumption,
 /// working-dir/environment injection, and agent-OSC notification dedupe.
 ///
-/// `WorktreeTerminalState`'s generic core (tree / tab / focus / occlusion /
+/// `WorktreeSurfaceState`'s generic core (tree / tab / focus / occlusion /
 /// zoom / persistence scheduling) reaches terminal-only state exclusively
 /// through this store, so a future surface kind adds a sibling store instead
 /// of new fields on the shared class. Everything here is keyed by surface or

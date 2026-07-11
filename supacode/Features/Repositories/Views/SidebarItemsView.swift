@@ -18,7 +18,7 @@ struct SidebarItemsView: View {
   let shortcutHintByID: [Worktree.ID: String]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
 
   var body: some View {
@@ -28,7 +28,7 @@ struct SidebarItemsView: View {
       groups: groups,
       selectedWorktreeIDs: selectedWorktreeIDs,
       store: store,
-      terminalManager: terminalManager,
+      surfaceManager: surfaceManager,
       isRepositoryRemoving: isRepositoryRemoving,
       shortcutHintByID: shortcutHintByID,
       nestWorktreesByBranch: nestWorktreesByBranch && repository.isGitRepository
@@ -43,7 +43,7 @@ private struct SidebarItemsDragOverlay: View {
   let groups: [SidebarItemGroup]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let isRepositoryRemoving: Bool
   let shortcutHintByID: [Worktree.ID: String]
   let nestWorktreesByBranch: Bool
@@ -55,7 +55,7 @@ private struct SidebarItemsDragOverlay: View {
         rowIDs: group.rowIDs,
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: group.hideSubtitle,
         moveBehavior: group.moveBehavior,
@@ -71,7 +71,7 @@ private struct SidebarItemGroupView: View {
   let rowIDs: [SidebarItemID]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
   let moveBehavior: SidebarItemGroup.MoveBehavior
@@ -108,7 +108,7 @@ private struct SidebarItemGroupView: View {
           bucketID: moveBehavior.bucketID,
           row: row,
           store: store,
-          terminalManager: terminalManager,
+          surfaceManager: surfaceManager,
           selectedWorktreeIDs: selectedWorktreeIDs,
           isRepositoryRemoving: isRepositoryRemoving,
           hideSubtitle: hideSubtitle,
@@ -124,7 +124,7 @@ private struct SidebarItemGroupView: View {
             bucketID: moveBehavior.bucketID,
             row: row,
             store: store,
-            terminalManager: terminalManager,
+            surfaceManager: surfaceManager,
             selectedWorktreeIDs: selectedWorktreeIDs,
             isRepositoryRemoving: isRepositoryRemoving,
             hideSubtitle: hideSubtitle,
@@ -139,7 +139,7 @@ private struct SidebarItemGroupView: View {
             bucketID: moveBehavior.bucketID,
             row: row,
             store: store,
-            terminalManager: terminalManager,
+            surfaceManager: surfaceManager,
             selectedWorktreeIDs: selectedWorktreeIDs,
             isRepositoryRemoving: isRepositoryRemoving,
             hideSubtitle: hideSubtitle,
@@ -217,7 +217,7 @@ private struct SidebarBranchNestingRowView: View {
   let bucketID: SidebarBucket?
   let row: SidebarBranchNesting.Row
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let selectedWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
@@ -230,7 +230,7 @@ private struct SidebarBranchNestingRowView: View {
       SidebarItemRow(
         rowID: id,
         store: store,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         selectedWorktreeIDs: selectedWorktreeIDs,
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: hideSubtitle,
@@ -408,7 +408,7 @@ enum SidebarRowMoveMode {
 struct SidebarItemRow: View {
   let rowID: SidebarItemID
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let selectedWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
@@ -425,7 +425,7 @@ struct SidebarItemRow: View {
       SidebarItemContainer(
         store: itemStore,
         parentStore: store,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         selectedWorktreeIDs: selectedWorktreeIDs,
         isRepositoryRemoving: isRepositoryRemoving,
         hideSubtitle: hideSubtitle,
@@ -442,7 +442,7 @@ struct SidebarItemRow: View {
 private struct SidebarItemContainer: View {
   let store: StoreOf<SidebarItemFeature>
   @Bindable var parentStore: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let selectedWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
@@ -457,7 +457,7 @@ private struct SidebarItemContainer: View {
     SidebarItemBody(
       store: store,
       parentStore: parentStore,
-      terminalManager: terminalManager,
+      surfaceManager: surfaceManager,
       selectedWorktreeIDs: selectedWorktreeIDs,
       isRepositoryRemoving: isRepositoryRemoving,
       hideSubtitle: hideSubtitle,
@@ -474,7 +474,7 @@ private struct SidebarItemContainer: View {
 private struct SidebarItemBody: View {
   let store: StoreOf<SidebarItemFeature>
   @Bindable var parentStore: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   let selectedWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
@@ -506,7 +506,7 @@ private struct SidebarItemBody: View {
       highlightSubtitle: highlightSubtitle
     )
     .environment(\.focusNotificationAction) { notification in
-      guard let terminalState = terminalManager.stateIfExists(for: rowID) else {
+      guard let terminalState = surfaceManager.stateIfExists(for: rowID) else {
         notificationLogger.warning(
           "No terminal state for worktree \(rowID) when focusing notification \(notification.surfaceID).")
         return
@@ -560,14 +560,14 @@ struct SidebarFolderRow: View {
   let shortcutHint: String?
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
 
   var body: some View {
     let isRepositoryRemoving = store.state.isRemovingRepository(repository)
     SidebarItemRow(
       rowID: rowID,
       store: store,
-      terminalManager: terminalManager,
+      surfaceManager: surfaceManager,
       selectedWorktreeIDs: selectedWorktreeIDs,
       isRepositoryRemoving: isRepositoryRemoving,
       hideSubtitle: true,

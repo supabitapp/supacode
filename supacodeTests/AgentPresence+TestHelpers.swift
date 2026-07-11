@@ -13,9 +13,9 @@ import Foundation
 final class PresenceTestHarness {
   var state = AgentPresenceFeature.State()
   private let reducer = AgentPresenceFeature()
-  private var stream: AsyncStream<TerminalClient.Event>?
+  private var stream: AsyncStream<SurfaceClient.Event>?
   private var consumeTask: Task<Void, Never>?
-  private weak var manager: WorktreeTerminalManager?
+  private weak var manager: WorktreeSurfaceManager?
   /// Bumped each time the consume task reduces a stream event.
   private var processedCount = 0
   /// Bumped each time the consume task is about to wait for the next event, i.e.
@@ -81,7 +81,7 @@ final class PresenceTestHarness {
     await clock.advance(by: duration)
   }
 
-  func attach(to manager: WorktreeTerminalManager) {
+  func attach(to manager: WorktreeSurfaceManager) {
     self.manager = manager
     let stream = manager.eventStream()
     self.stream = stream
@@ -109,14 +109,14 @@ final class PresenceTestHarness {
   }
 }
 
-extension WorktreeTerminalManager {
+extension WorktreeSurfaceManager {
   @MainActor static func withPresenceHarness(
     runtime: GhosttyRuntime = GhosttyRuntime(),
     socketServer: AgentHookSocketServer? = nil,
     clock: some Clock<Duration> = ContinuousClock(),
-  ) -> (manager: WorktreeTerminalManager, presence: PresenceTestHarness) {
+  ) -> (manager: WorktreeSurfaceManager, presence: PresenceTestHarness) {
     let harness = PresenceTestHarness()
-    let manager = WorktreeTerminalManager(runtime: runtime, socketServer: socketServer, clock: clock)
+    let manager = WorktreeSurfaceManager(runtime: runtime, socketServer: socketServer, clock: clock)
     harness.attach(to: manager)
     return (manager, harness)
   }

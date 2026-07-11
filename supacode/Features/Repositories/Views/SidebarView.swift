@@ -5,7 +5,7 @@ import SwiftUI
 
 struct SidebarView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
@@ -34,7 +34,7 @@ struct SidebarView: View {
 
     return SidebarListView(
       store: store,
-      terminalManager: terminalManager
+      surfaceManager: surfaceManager
     )
     .toolbar {
       ToolbarItem(placement: .primaryAction) {

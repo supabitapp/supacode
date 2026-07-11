@@ -37,7 +37,7 @@ struct AppFeatureRunScriptTests {
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(
       repositories: repositories,
       settings: SettingsFeature.State()
@@ -46,7 +46,7 @@ struct AppFeatureRunScriptTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -89,7 +89,7 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(
-      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
+      .surfaceEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
     )
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
@@ -118,7 +118,7 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(
-      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [])))
+      .surfaceEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [])))
     )
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
@@ -140,11 +140,11 @@ struct AppFeatureRunScriptTests {
     initialState.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
     initialState.repositories.applyPostReduceCacheRecomputes()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -177,7 +177,7 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .terminal(
           .blockingScriptCompleted(
             worktreeID: worktree.id,
@@ -210,7 +210,7 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(
-      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
+      .surfaceEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
     )
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
@@ -239,7 +239,7 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(
-      .terminalEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
+      .surfaceEvent(.worktreeProjectionChanged(worktree.id, makeProjection(scripts: [definition])))
     )
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
@@ -249,10 +249,10 @@ struct AppFeatureRunScriptTests {
     }
   }
 
-  @Test(.dependencies) func stopRunScriptsCallsTerminalClient() async {
+  @Test(.dependencies) func stopRunScriptsCallsSurfaceClient() async {
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositories,
@@ -261,7 +261,7 @@ struct AppFeatureRunScriptTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -281,7 +281,7 @@ struct AppFeatureRunScriptTests {
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
     let definition = ScriptDefinition(kind: .test, name: "Test", command: "npm test")
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositories,
@@ -290,7 +290,7 @@ struct AppFeatureRunScriptTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -378,7 +378,7 @@ struct AppFeatureRunScriptTests {
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
     let globalScript = ScriptDefinition(kind: .custom, name: "Format", command: "swift-format")
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(
       repositories: repositories,
       settings: SettingsFeature.State()
@@ -387,7 +387,7 @@ struct AppFeatureRunScriptTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -469,14 +469,14 @@ struct AppFeatureRunScriptTests {
     let collidingGlobal = ScriptDefinition(id: sharedID, kind: .custom, name: "Global", command: "echo global")
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     initialState.repoScripts = [repoScript]
     initialState.globalScripts = [collidingGlobal]
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -501,14 +501,14 @@ struct AppFeatureRunScriptTests {
     let collidingGlobal = ScriptDefinition(id: sharedID, kind: .custom, name: "Global", command: "echo global")
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     initialState.repoScripts = [repoScript]
     initialState.globalScripts = [collidingGlobal]
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -530,14 +530,14 @@ struct AppFeatureRunScriptTests {
     let orphan = ScriptDefinition(kind: .custom, name: "Stale", command: "echo stale")
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     initialState.repoScripts = []
     initialState.globalScripts = []
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }

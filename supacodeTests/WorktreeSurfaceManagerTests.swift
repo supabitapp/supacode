@@ -13,9 +13,9 @@ import Testing
 // processes whose event-driven waits flake when interleaved with each other.
 @MainActor
 @Suite(.serialized)
-struct WorktreeTerminalManagerTests {
+struct WorktreeSurfaceManagerTests {
   @Test func reusesExistingStateAndReloadsSnapshotAfterRestoreIsEnabled() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let snapshot = makeLayoutSnapshot()
     var restoreEnabled = false
@@ -36,7 +36,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func reusingExistingStateDoesNotReloadSnapshotWhenSetupScriptBecomesPending() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let snapshot = makeLayoutSnapshot()
     var restoreEnabled = false
@@ -58,7 +58,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func ensureInitialTabCreatesTabSynchronously() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -70,7 +70,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func ensureInitialTabAfterCloseAllDoesNotAutoRecreate() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -84,7 +84,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func ensureInitialTabConsumesPendingSnapshotAndStickies() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     state.pendingLayoutSnapshot = makeLayoutSnapshot()
@@ -97,7 +97,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func buffersEventsUntilStreamCreated() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -115,7 +115,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func emitsEventsAfterStreamCreated() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -139,7 +139,7 @@ struct WorktreeTerminalManagerTests {
     let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     server.shutdown()
 
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime(), socketServer: server)
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -149,7 +149,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscHookActivityEventRoutesToWorktreeState() async {
     let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server)
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness(socketServer: server)
     let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -172,7 +172,7 @@ struct WorktreeTerminalManagerTests {
   @Test func oscIdleEventIsDebouncedAcrossToolStorm() async {
     let clock = TestClock()
     let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -203,7 +203,7 @@ struct WorktreeTerminalManagerTests {
   @Test func oscIdleCommitsAfterDebounceWindow() async {
     let clock = TestClock()
     let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -231,7 +231,7 @@ struct WorktreeTerminalManagerTests {
   @Test func oscIdleDebouncesPerAgentIndependently() async {
     let clock = TestClock()
     let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -264,7 +264,7 @@ struct WorktreeTerminalManagerTests {
   @Test func oscSessionEndCancelsPendingIdle() async {
     let clock = TestClock()
     let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -292,7 +292,7 @@ struct WorktreeTerminalManagerTests {
   @Test func oscSurfaceClosedWhileIdlePendingIsHarmless() async {
     let clock = TestClock()
     let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -319,7 +319,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func rowProjectionCarriesRunningScriptsFromBlockingScripts() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
 
@@ -344,7 +344,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func runningScriptsMutationsCoalesceIntoOneCallbackPerTurn() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let first = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
     let second = ScriptDefinition(kind: .test, name: "Test", command: "echo ok")
@@ -375,7 +375,7 @@ struct WorktreeTerminalManagerTests {
   @Test func runBlockingScriptIgnoresDuplicateOfActiveScript() async {
     // A second run racing the projection reconcile must keep the running
     // instance, not close and relaunch its tab (#573).
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
     let state = manager.state(for: worktree)
@@ -396,7 +396,7 @@ struct WorktreeTerminalManagerTests {
     // The ignored-duplicate path must still reconcile the row: if the original
     // running projection was shed, only a fresh emit un-sticks the dropdown from
     // Run. Without the emit the second continuation would never resume (#573).
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
     let state = manager.state(for: worktree)
@@ -420,7 +420,7 @@ struct WorktreeTerminalManagerTests {
     // re-deliver the running projection past the dedupe so the row heals; a
     // plain deduped emit would suppress the identical value and the second
     // await would hang (#573).
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
     _ = manager.state(for: worktree)
@@ -441,7 +441,7 @@ struct WorktreeTerminalManagerTests {
   @Test func lifecycleScriptRerunReplacesTab() {
     // The duplicate guard is scoped to user scripts; lifecycle kinds keep their
     // replace-on-rerun semantics, so a second archive run opens a fresh tab.
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -455,7 +455,7 @@ struct WorktreeTerminalManagerTests {
   @Test func runningScriptsFlowThroughRowProjectionEvents() async {
     // Pins the wiring the dropdown fix hangs on: `blockingScripts` mutations
     // reach TCA as `worktreeProjectionChanged` events carrying the set (#573).
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
     let stream = manager.eventStream()
@@ -474,7 +474,7 @@ struct WorktreeTerminalManagerTests {
   @Test func stopWithoutTrackedScriptForcesProjectionReEmit() async {
     // A stop that matches nothing means the caller acted on a stale mirror;
     // the forced re-emit is what lets a phantom Stop click self-heal (#573).
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     _ = manager.state(for: worktree)
     let stream = manager.eventStream()
@@ -490,7 +490,7 @@ struct WorktreeTerminalManagerTests {
   @Test func shedProjectionInvalidatesDedupeSoNextEmitLands() async {
     // A shed projection was never delivered, so its dedupe entries must not
     // suppress the next identical emit or the row strands desynced (#573).
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), eventBufferCap: 1)
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime(), eventBufferCap: 1)
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     // Relies on the projection being the last subscribe-time seed, so it is
@@ -511,7 +511,7 @@ struct WorktreeTerminalManagerTests {
     // A shed projection with no later terminal mutation must still redeliver, or
     // a completed script's clear transition strands the Run/Stop dropdown (#573).
     // Without the replay this await hangs: nothing else emits the row.
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), eventBufferCap: 1)
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime(), eventBufferCap: 1)
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let stream = manager.eventStream()
@@ -528,7 +528,7 @@ struct WorktreeTerminalManagerTests {
   @Test func shedNotificationIndicatorInvalidatesItsCountGate() async {
     // The indicator has its own check-before-emit cache; a shed event must
     // reset it or the dock count strands until the count actually changes.
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), eventBufferCap: 2)
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime(), eventBufferCap: 2)
     let worktree = makeWorktree()
     // Subscribe before any state exists so the buffer holds only the
     // subscribe-time indicator event.
@@ -553,7 +553,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func runBlockingScriptReportsFailureWhenLaunchCannotBeBuilt() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "   ")
 
     // Local: an unbuildable launch reports completion instead of a silent nil,
@@ -577,7 +577,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   private func nextRunningScripts(
-    _ stream: AsyncStream<TerminalClient.Event>
+    _ stream: AsyncStream<SurfaceClient.Event>
   ) async -> IdentifiedArrayOf<SidebarItemFeature.State.RunningScript>? {
     for await event in stream {
       if case .worktreeProjectionChanged(_, let projection) = event {
@@ -588,7 +588,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func stopScriptWithoutTerminalStateDoesNotMintOne() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .stopScript(definitionID: UUID())))
@@ -602,7 +602,7 @@ struct WorktreeTerminalManagerTests {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
       $0.continuousClock = ImmediateClock()
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
 
       manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -628,7 +628,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func notificationIndicatorUsesCurrentCountOnStreamStart() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -666,7 +666,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func presenceHasActivityReflectsAnyBusySurface() {
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -703,7 +703,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func hasUnseenNotificationsReflectsUnreadEntries() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -720,7 +720,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func markAllNotificationsReadEmitsUpdatedIndicatorCount() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -744,7 +744,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func markNotificationsReadOnlyAffectsMatchingSurface() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceA = UUID()
@@ -771,7 +771,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func setNotificationsDisabledMarksAllRead() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -787,7 +787,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func dismissAllNotificationsClearsState() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -808,7 +808,7 @@ struct WorktreeTerminalManagerTests {
     // projection refresh and the bell stayed showing them. Dismiss must signal
     // unconditionally so the sidebar row's `notifications` array (which the bell
     // group-existence check reads) clears.
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let state = manager.state(for: makeWorktree())
     state.setNotificationsForTesting([makeNotification(isRead: true), makeNotification(isRead: true)])
     var indicatorEmits = 0
@@ -821,7 +821,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func dismissReadNotificationRefreshesRow() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let state = manager.state(for: makeWorktree())
     let read = makeNotification(isRead: true)
     state.setNotificationsForTesting([read])
@@ -837,7 +837,7 @@ struct WorktreeTerminalManagerTests {
   // MARK: - Per-surface unseen flag
 
   @Test func setNotificationsForTestingHydratesPerSurfaceFlag() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceA = UUID()
@@ -855,7 +855,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func markNotificationsReadFlipsOnlyMatchingSurfaceFlag() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceA = UUID()
@@ -874,7 +874,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func markSingleNotificationReadKeepsFlagWhenOlderUnreadRemains() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceID = UUID()
@@ -893,7 +893,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func dismissAllNotificationsClearsPerSurfaceFlag() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceID = UUID()
@@ -909,7 +909,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func dismissSingleNotificationRefreshesPerSurfaceFlag() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceID = UUID()
@@ -930,7 +930,7 @@ struct WorktreeTerminalManagerTests {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
       $0.continuousClock = ImmediateClock()
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       guard let tabId = state.createTab(focusing: false),
@@ -951,7 +951,7 @@ struct WorktreeTerminalManagerTests {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
       $0.continuousClock = ImmediateClock()
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       state.isSelected = { true }
@@ -970,7 +970,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func createSurfaceInstallsSurfaceStateEntry() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard let tabId = state.createTab(focusing: false),
@@ -1000,7 +1000,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   private func restoreSurface(agents: [TerminalLayoutSnapshot.SurfaceAgentRecord]) -> GhosttySurfaceView? {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceID = UUID()
@@ -1040,7 +1040,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func cleanupSurfaceStateRemovesSurfaceStateEntry() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard let tabId = state.createTab(focusing: false),
@@ -1062,7 +1062,7 @@ struct WorktreeTerminalManagerTests {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
       $0.continuousClock = ImmediateClock()
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       guard let tabId = state.createTab(focusing: false),
@@ -1250,7 +1250,7 @@ struct WorktreeTerminalManagerTests {
     let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
     let state = manager.state(for: worktree)
     guard let tabID = state.createTab(focusing: true),
-      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf().terminalForTesting
     else {
       Issue.record("Expected a tab and surface")
       return
@@ -1311,7 +1311,7 @@ struct WorktreeTerminalManagerTests {
         listSessionsWithClients: { [] }
       )
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
       _ = manager.state(for: worktree)
       return manager
     }
@@ -1357,7 +1357,7 @@ struct WorktreeTerminalManagerTests {
     let devbox = RemoteHost(alias: "devbox")
     let other = RemoteHost(alias: "other")
 
-    let plan = WorktreeTerminalManager.killPlan(
+    let plan = WorktreeSurfaceManager.killPlan(
       localSessionIDs: ["local-only", "both", "local-only"],
       remoteSessions: [
         (host: devbox, sessionID: "both"),
@@ -1791,7 +1791,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func restoreLayoutSnapshotReDerivesPerSurfaceFlags() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let knownSurfaceID = UUID()
     let snapshot = TerminalLayoutSnapshot(
@@ -1832,7 +1832,7 @@ struct WorktreeTerminalManagerTests {
       $0.date.now = Date(timeIntervalSince1970: 1_234)
       $0.continuousClock = ImmediateClock()
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       state.notificationsEnabled = false
@@ -1849,19 +1849,19 @@ struct WorktreeTerminalManagerTests {
     }
   }
 
-  /// Installs a fresh `WorktreeSurfaceState` via the DEBUG-gated test seam.
+  /// Installs a fresh `SurfaceIndicatorState` via the DEBUG-gated test seam.
   @discardableResult
   private func installSurfaceState(
-    on state: WorktreeTerminalState,
+    on state: WorktreeSurfaceState,
     forSurfaceID surfaceID: UUID
-  ) -> WorktreeSurfaceState {
-    let surfaceState = WorktreeSurfaceState()
+  ) -> SurfaceIndicatorState {
+    let surfaceState = SurfaceIndicatorState()
     state.installSurfaceStateForTesting(surfaceState, forSurfaceID: surfaceID)
     return surfaceState
   }
 
   @Test func blockingScriptCompletionReportsExitCodeFromCommandFinished() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -1889,7 +1889,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptCompletionPassesNilExitCodeWhenCommandFinishedReportsNil() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -1918,7 +1918,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptCommandFinishedFollowedByChildExitDoesNotDoubleFire() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -1951,7 +1951,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptChildExitWithoutCommandFinishedIsCancellation() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -1982,7 +1982,7 @@ struct WorktreeTerminalManagerTests {
     // A remote surface's child is ssh itself; its death before the exit
     // frame is a failed run, not a cancellation (#573). Injecting a raw 0
     // pins the clamp: it must never reach the lifecycle success paths.
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeRemoteWorktree()
     let stream = manager.eventStream()
 
@@ -2010,7 +2010,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptSignalBasedTerminationReportsImmediately() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -2041,7 +2041,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptRerunClosesOldTabWithoutFiringCompletion() async {
-    let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, _) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -2086,7 +2086,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptTabClosedManuallyReportsCancellation() async {
-    let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, _) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -2114,7 +2114,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func closeAllSurfacesCancelsPendingBlockingScripts() async {
-    let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, _) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -2139,7 +2139,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptSuccessKeepsTabOpen() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -2171,7 +2171,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func runScriptBlockingScriptTracksRunningState() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, command: "echo hi")
 
@@ -2183,7 +2183,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func stopRunScriptClosesRunTab() {
-    let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, _) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
     let definition = ScriptDefinition(kind: .run, command: "sleep 10")
 
@@ -2195,7 +2195,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func runScriptTabTitleResetsAfterSignalInterruption() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
     let definition = ScriptDefinition(kind: .run, command: "sleep 10")
@@ -2242,7 +2242,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func blockingScriptTabTitleResetsAfterFailure() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "exit 1")))
@@ -2272,7 +2272,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func runBlockingScriptClosesLingeringFrozenTabOfSameKind() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     // First archive run, complete it, and confirm the tab is frozen.
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo first")))
@@ -2299,7 +2299,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func residualProgressReportDoesNotResurrectDirtyOnFrozenTab() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
     guard let state = manager.stateIfExists(for: worktree.id),
@@ -2323,7 +2323,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func selectTabWithValidIdChangesSelection() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
 
     // Create two blocking script tabs so we have two tabs to switch between.
@@ -2353,7 +2353,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func selectTabWithStaleIdIsNoOp() {
-    let (manager, _) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, _) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
 
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "echo ok")))
@@ -2378,7 +2378,7 @@ struct WorktreeTerminalManagerTests {
   // MARK: - CLI query methods.
 
   @Test func listTabsReturnsTabIDs() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -2405,12 +2405,12 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func listTabsReturnsNilForUnknownWorktree() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     #expect(manager.listTabs(worktreeID: "/nonexistent") == nil)
   }
 
   @Test func listSurfacesReturnsSortedSurfaceIDs() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -2435,19 +2435,19 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func listSurfacesReturnsNilForUnknownWorktree() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     #expect(manager.listSurfaces(worktreeID: "/nonexistent", tabID: UUID().uuidString) == nil)
   }
 
   @Test func listSurfacesReturnsNilForInvalidTabID() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     _ = manager.state(for: worktree)
     #expect(manager.listSurfaces(worktreeID: worktree.id.rawValue, tabID: "not-a-uuid") == nil)
   }
 
   @Test func latestUnreadNotificationPicksNewestAcrossWorktrees() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktreeA = makeWorktree(id: "/tmp/repo/wt-a")
     let worktreeB = makeWorktree(id: "/tmp/repo/wt-b")
     let stateA = manager.state(for: worktreeA)
@@ -2474,7 +2474,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func latestUnreadNotificationSkipsNotificationsWithClosedSurfaces() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard
@@ -2502,7 +2502,7 @@ struct WorktreeTerminalManagerTests {
     // Worktree B: only has a focusable unread at t=2, which is newer than
     // A's focusable fallback but older than A's orphaned newest.
     // Expected winner: B.
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktreeA = makeWorktree(id: "/tmp/repo/wt-a")
     let worktreeB = makeWorktree(id: "/tmp/repo/wt-b")
     let stateA = manager.state(for: worktreeA)
@@ -2533,7 +2533,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func latestUnreadNotificationReturnsNilWhenAllUnreadTargetClosedSurfaces() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     state.setNotificationsForTesting([
@@ -2543,7 +2543,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func hasUnseenNotificationForTabIDWalksSplitTree() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard
@@ -2582,7 +2582,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func markNotificationReadOnlyTouchesMatchingId() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let first = makeNotification(surfaceID: UUID(), isRead: false, createdAt: .distantPast)
@@ -2616,7 +2616,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func coalescesConsecutiveIdenticalTaskStatusEvents() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let stream = manager.eventStream()
@@ -2640,7 +2640,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func coalescesConsecutiveIdenticalFocusEvents() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let stream = manager.eventStream()
@@ -2664,7 +2664,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func capsTheLiveEventBufferUnderBackpressure() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let stream = manager.eventStream()
@@ -2687,7 +2687,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func purgesCoalesceKeyOnTabTeardownSoIdenticalEventRedelivers() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let stream = manager.eventStream()
@@ -2718,7 +2718,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func neverCoalescesConsecutiveLifecycleEvents() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let stream = manager.eventStream()
@@ -2737,7 +2737,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func coalescesPendingEventsBeforeSubscription() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -2760,12 +2760,12 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func capsPendingLifecycleEventsBeforeSubscription() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
     // No subscriber attached: lifecycle events fill pendingEvents and must cap.
-    let overflow = WorktreeTerminalManager.pendingEventCap + 50
+    let overflow = WorktreeSurfaceManager.pendingEventCap + 50
     for _ in 0..<overflow {
       state.onSetupScriptConsumed?()
     }
@@ -2778,11 +2778,11 @@ struct WorktreeTerminalManagerTests {
       if case .terminal(.setupScriptConsumed) = event { count += 1 }
     }
 
-    #expect(count == WorktreeTerminalManager.pendingEventCap)
+    #expect(count == WorktreeSurfaceManager.pendingEventCap)
   }
 
   @Test func seedsCoalesceCacheFromPendingReplaySoLiveDuplicateDedups() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -2831,7 +2831,7 @@ struct WorktreeTerminalManagerTests {
   /// `worktree` seeds the pre-created state INSIDE the dependency scope, so
   /// its `@Dependency(\.zmxClient)` captures the probe-backed client. Tests
   /// must fetch the state with the same worktree id.
-  private func makeZmxBackedManager(probe: ZmxTestProbe, worktree: Worktree? = nil) -> WorktreeTerminalManager {
+  private func makeZmxBackedManager(probe: ZmxTestProbe, worktree: Worktree? = nil) -> WorktreeSurfaceManager {
     let zmxURL = makeFakeZmxBinary()
 
     return withDependencies {
@@ -2843,7 +2843,7 @@ struct WorktreeTerminalManagerTests {
         listSessionsWithClients: { await probe.listSessionsWithClients() },
       )
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
       _ = manager.state(for: worktree ?? makeWorktree())
       return manager
     }
@@ -3044,9 +3044,9 @@ struct WorktreeTerminalManagerTests {
   }
 
   private func nextEvent(
-    _ stream: AsyncStream<TerminalClient.Event>,
-    matching predicate: (TerminalClient.Event) -> Bool
-  ) async -> TerminalClient.Event? {
+    _ stream: AsyncStream<SurfaceClient.Event>,
+    matching predicate: (SurfaceClient.Event) -> Bool
+  ) async -> SurfaceClient.Event? {
     for await event in stream where predicate(event) {
       return event
     }
@@ -3068,7 +3068,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func beginTabRenameCommandUsesSelectedTabWhenNoExplicitID() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3083,7 +3083,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func beginTabRenameCommandUsesExplicitTabID() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3101,7 +3101,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func beginTabRenameCommandIgnoresUnknownExplicitTabID() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3113,7 +3113,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func beginTabRenameCommandIsNoOpWhenWorktreeHasNoTabs() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3123,7 +3123,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func captureLayoutSnapshotExcludesBlockingScriptTabs() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     _ = state.createTab()
@@ -3142,7 +3142,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func captureLayoutSnapshotExcludesCompletedBlockingScriptTabs() async {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let stream = manager.eventStream()
 
@@ -3168,7 +3168,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func captureLayoutSnapshotSelectsLeftNeighborWhenSelectedTabIsExcluded() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard let tabA = state.createTab() else {
@@ -3201,7 +3201,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func performSplitActionRefusesNewSplitOnBlockingScriptTab() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     manager.handleCommand(.terminal(worktree, .runBlockingScript(kind: .archive, script: "sleep 10")))
     guard let state = manager.stateIfExists(for: worktree.id),
@@ -3219,7 +3219,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func performSplitOperationRefusesDropOntoBlockingScriptTab() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     guard let regularTab = state.createTab(),
@@ -3247,7 +3247,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func restoreFromSnapshotIgnoresWhitespaceOnlyCustomTitle() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3274,7 +3274,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func restoreFromSnapshotPreservesCustomTitle() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3328,7 +3328,7 @@ struct WorktreeTerminalManagerTests {
   // invalidation, they assert the underlying algebra stays per-tab pure.
 
   @Test func notificationOnTabBLeavesTabAUnseenCountUnchanged() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3357,7 +3357,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func agentPresenceOnTabBLeavesTabAAgentsUnchanged() {
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
+    let (manager, presence) = WorktreeSurfaceManager.withPresenceHarness()
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
 
@@ -3390,7 +3390,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func osc11BackgroundColorResolvesBackgroundKindToSRGB() {
-    let color = WorktreeTerminalManager.osc11BackgroundColor(
+    let color = WorktreeSurfaceManager.osc11BackgroundColor(
       kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
       red: 26,
       green: 42,
@@ -3405,35 +3405,35 @@ struct WorktreeTerminalManagerTests {
 
   @Test func osc11BackgroundColorIgnoresNonBackgroundKinds() {
     #expect(
-      WorktreeTerminalManager.osc11BackgroundColor(
+      WorktreeSurfaceManager.osc11BackgroundColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_FOREGROUND, red: 1, green: 2, blue: 3) == nil)
     #expect(
-      WorktreeTerminalManager.osc11BackgroundColor(
+      WorktreeSurfaceManager.osc11BackgroundColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_CURSOR, red: 1, green: 2, blue: 3) == nil)
     #expect(
-      WorktreeTerminalManager.osc11BackgroundColor(kind: nil, red: 1, green: 2, blue: 3) == nil)
+      WorktreeSurfaceManager.osc11BackgroundColor(kind: nil, red: 1, green: 2, blue: 3) == nil)
   }
 
   @Test func osc11BackgroundColorRequiresAllComponents() {
     #expect(
-      WorktreeTerminalManager.osc11BackgroundColor(
+      WorktreeSurfaceManager.osc11BackgroundColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, red: nil, green: 2, blue: 3) == nil)
     #expect(
-      WorktreeTerminalManager.osc11BackgroundColor(
+      WorktreeSurfaceManager.osc11BackgroundColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, red: 1, green: nil, blue: 3) == nil)
     #expect(
-      WorktreeTerminalManager.osc11BackgroundColor(
+      WorktreeSurfaceManager.osc11BackgroundColor(
         kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, red: 1, green: 2, blue: nil) == nil)
   }
 
   @Test func focusedSurfaceBackgroundInitializesToThemeFallback() {
     let runtime = GhosttyRuntime()
-    let manager = WorktreeTerminalManager(runtime: runtime)
+    let manager = WorktreeSurfaceManager(runtime: runtime)
     #expect(manager.focusedSurfaceBackground.matchesTint(runtime.backgroundColor()))
   }
 
   @Test func refreshFocusedSurfaceBackgroundDedupesUnchangedColor() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let notificationCount = LockIsolated(0)
     let observer = NotificationCenter.default.addObserver(
       forName: .ghosttyFocusedSurfaceBackgroundDidChange,
@@ -3454,7 +3454,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func switchingBetweenSelectionsDoesNotSpuriouslyPost() {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let notificationCount = LockIsolated(0)
     let observer = NotificationCenter.default.addObserver(
       forName: .ghosttyFocusedSurfaceBackgroundDidChange,

@@ -17,7 +17,7 @@ private let dragLogger = SupaLogger("SurfaceDrag")
 ///   always fires, including on cancel, which is why this is AppKit-driven and
 ///   not SwiftUI `.onDrag`, which has no end signal).
 /// - The catcher reports a landed drop through `completeDrop`, which forwards to
-///   `onDrop` (wired by `WorktreeTerminalState` to mutate the split tree).
+///   `onDrop` (wired by `WorktreeSurfaceState` to mutate the split tree).
 @MainActor
 @Observable
 final class SurfaceDragCoordinator {

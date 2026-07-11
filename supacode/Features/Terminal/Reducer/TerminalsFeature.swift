@@ -34,7 +34,7 @@ struct TerminalsFeature {
 
   enum Action {
     case terminalTabs(IdentifiedActionOf<TerminalTabFeature>)
-    /// Tab projection arrived from `WorktreeTerminalState`. Inserts a new
+    /// Tab projection arrived from `WorktreeSurfaceState`. Inserts a new
     /// per-tab state if missing, then forwards to the tab's reducer.
     case tabProjectionChanged(worktreeID: Worktree.ID, projection: WorktreeTabProjection)
     /// Tab destroyed in the worktree state. Drops the matching feature state.

@@ -140,7 +140,7 @@ struct SplitTreeTests {
     $settingsFile.withLock { $0.global.hideSingleTabBar = true }
     defer { $settingsFile.withLock { $0.global.hideSingleTabBar = originalHide } }
 
-    let state = WorktreeTerminalState(
+    let state = WorktreeSurfaceState(
       runtime: GhosttyRuntime(),
       worktree: Worktree(
         id: "/tmp/repo/wt-zoom",
@@ -210,7 +210,7 @@ struct SplitTreeTests {
   }
 
   private func makeWorktreeFixture(preserveZoomOnNavigation: Bool) -> WorktreeFixture {
-    let state = WorktreeTerminalState(
+    let state = WorktreeSurfaceState(
       runtime: GhosttyRuntime(),
       worktree: makeWorktree(),
       splitPreserveZoomOnNavigation: { preserveZoomOnNavigation }
@@ -239,7 +239,7 @@ struct SplitTreeTests {
 }
 
 private struct WorktreeFixture {
-  let state: WorktreeTerminalState
+  let state: WorktreeSurfaceState
   let tabId: TerminalTabID
   let first: GhosttySurfaceView
   let second: GhosttySurfaceView?

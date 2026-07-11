@@ -274,7 +274,7 @@ struct AppFeatureOpenWorktreeTests {
   private struct TestContext {
     let worktree: Worktree
     let openedActions: LockIsolated<[OpenWorktreeAction]>
-    let terminalCommands: LockIsolated<[TerminalClient.Command]>
+    let terminalCommands: LockIsolated<[SurfaceClient.Command]>
     let capturedEvents: LockIsolated<[CapturedEvent]>
   }
 
@@ -288,7 +288,7 @@ struct AppFeatureOpenWorktreeTests {
     repositoriesState.reconcileSidebarForTesting()
     mutate(&repositoriesState, worktree)
     let openedActions = LockIsolated<[OpenWorktreeAction]>([])
-    let terminalCommands = LockIsolated<[TerminalClient.Command]>([])
+    let terminalCommands = LockIsolated<[SurfaceClient.Command]>([])
     let capturedEvents = LockIsolated<[CapturedEvent]>([])
     let storage = SettingsTestStorage()
     let settingsFileURL = URL(
@@ -307,7 +307,7 @@ struct AppFeatureOpenWorktreeTests {
       $0.workspaceClient.open = { action, _, _ in
         openedActions.withValue { $0.append(action) }
       }
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         terminalCommands.withValue { $0.append(command) }
       }
       $0.analyticsClient.capture = { event, properties in

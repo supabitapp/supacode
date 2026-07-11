@@ -460,7 +460,7 @@ struct RepositoriesFeatureSidebarTests {
       RepositoriesFeature.syncSidebar(&state)
       // Simulate the empty projection that arrives when the user closes every
       // tab: surfaceIDs goes to [] but the row has now been claimed by the live
-      // `WorktreeTerminalState` (`hasTerminalProjection == true`).
+      // `WorktreeSurfaceState` (`hasTerminalProjection == true`).
       state.sidebarItems[id: worktreeID]?.surfaceIDs = []
       state.sidebarItems[id: worktreeID]?.hasTerminalProjection = true
       state.pendingAgentRehydrateSurfaces.removeAll()

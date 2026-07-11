@@ -5,9 +5,9 @@ import Testing
 @testable import supacode
 
 @MainActor
-struct WorktreeTerminalStateDropTests {
+struct WorktreeSurfaceStateDropTests {
   private struct SplitTab {
-    let state: WorktreeTerminalState
+    let state: WorktreeSurfaceState
     let tabId: TerminalTabID
     let paneA: GhosttySurfaceView
     let paneB: GhosttySurfaceView
@@ -58,7 +58,7 @@ struct WorktreeTerminalStateDropTests {
 
   /// A worktree state with one tab split into two terminal panes (A left, B right).
   private func makeSplitTab() -> SplitTab {
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let manager = WorktreeSurfaceManager(runtime: GhosttyRuntime())
     let state = manager.state(for: makeWorktree())
     state.ensureInitialTab(focusing: true)
 

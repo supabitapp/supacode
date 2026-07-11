@@ -87,7 +87,7 @@ struct AppFeatureCommandPaletteTests {
     await store.receive(\.updates.checkForUpdates)
   }
 
-  @Test(.dependencies) func ghosttyCommandDispatchesBindingActionToTerminalClient() async {
+  @Test(.dependencies) func ghosttyCommandDispatchesBindingActionToSurfaceClient() async {
     let worktree = makeWorktree(
       id: "/tmp/repo-ghostty/wt-1",
       name: "wt-1",
@@ -98,7 +98,7 @@ struct AppFeatureCommandPaletteTests {
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
     let surfaceID = UUID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -107,10 +107,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedSurfaceID = { _ in surfaceID }
+      $0.surfaceClient.selectedSurfaceID = { _ in surfaceID }
     }
 
     await store.send(.commandPalette(.delegate(.ghosttyCommand("goto_split:right"))))
@@ -133,7 +133,7 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -142,10 +142,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedSurfaceID = { _ in nil }
+      $0.surfaceClient.selectedSurfaceID = { _ in nil }
     }
 
     await store.send(.commandPalette(.delegate(.ghosttyCommand("goto_split:right"))))
@@ -167,7 +167,7 @@ struct AppFeatureCommandPaletteTests {
     let firstSurface = UUID()
     let secondSurface = UUID()
     let currentSurface = LockIsolated(firstSurface)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -176,10 +176,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedSurfaceID = { _ in currentSurface.value }
+      $0.surfaceClient.selectedSurfaceID = { _ in currentSurface.value }
     }
 
     let task = await store.send(.commandPalette(.delegate(.ghosttyCommand("toggle_split_zoom"))))
@@ -206,7 +206,7 @@ struct AppFeatureCommandPaletteTests {
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
     let capturedTabID = TerminalTabID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -215,10 +215,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedTabID = { _ in capturedTabID }
+      $0.surfaceClient.selectedTabID = { _ in capturedTabID }
     }
 
     await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_surface_title"))))
@@ -238,7 +238,7 @@ struct AppFeatureCommandPaletteTests {
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
     let capturedTabID = TerminalTabID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -247,10 +247,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedTabID = { _ in capturedTabID }
+      $0.surfaceClient.selectedTabID = { _ in capturedTabID }
     }
 
     await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_tab_title"))))
@@ -272,7 +272,7 @@ struct AppFeatureCommandPaletteTests {
     let firstTabID = TerminalTabID()
     let secondTabID = TerminalTabID()
     let currentTabID = LockIsolated(firstTabID)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -281,10 +281,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedTabID = { _ in currentTabID.value }
+      $0.surfaceClient.selectedTabID = { _ in currentTabID.value }
     }
 
     let task = await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_surface_title"))))
@@ -306,7 +306,7 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -315,10 +315,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedTabID = { _ in nil }
+      $0.surfaceClient.selectedTabID = { _ in nil }
     }
 
     await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_surface_title"))))
@@ -337,7 +337,7 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -346,10 +346,10 @@ struct AppFeatureCommandPaletteTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.selectedSurfaceID = { _ in nil }
+      $0.surfaceClient.selectedSurfaceID = { _ in nil }
     }
 
     await store.send(.commandPalette(.delegate(.ghosttyCommand("new_split:right"))))
@@ -575,7 +575,7 @@ struct AppFeatureCommandPaletteTests {
     store.exhaustivity = .off
 
     // Ghostty's toggle opens the command palette, never the last-used switcher.
-    await store.send(.terminalEvent(.commandPaletteToggleRequested(worktreeID: worktree.id)))
+    await store.send(.surfaceEvent(.commandPaletteToggleRequested(worktreeID: worktree.id)))
     await store.receive(\.commandPalette.presentInMode)
     #expect(store.state.commandPalette.mode == .commands)
     #expect(store.state.commandPalette.isPresented == true)

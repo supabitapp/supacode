@@ -7,7 +7,7 @@ import Testing
 struct TerminalRenderingPolicyTests {
   @Test func surfaceActivityForSelectedVisibleFocusedSurfaceIsFocused() {
     let focusedID = UUID()
-    let activity = WorktreeTerminalState.surfaceActivity(
+    let activity = WorktreeSurfaceState.surfaceActivity(
       isSurfaceVisibleInTree: true,
       isSelectedTab: true,
       windowIsVisible: true,
@@ -20,7 +20,7 @@ struct TerminalRenderingPolicyTests {
   }
 
   @Test func surfaceActivityForSelectedVisibleUnfocusedSurfaceIsNotFocused() {
-    let activity = WorktreeTerminalState.surfaceActivity(
+    let activity = WorktreeSurfaceState.surfaceActivity(
       isSurfaceVisibleInTree: true,
       isSelectedTab: true,
       windowIsVisible: true,
@@ -34,7 +34,7 @@ struct TerminalRenderingPolicyTests {
 
   @Test func surfaceActivityForSelectedTabInBackgroundWindowIsVisibleButNotFocused() {
     let surfaceID = UUID()
-    let activity = WorktreeTerminalState.surfaceActivity(
+    let activity = WorktreeSurfaceState.surfaceActivity(
       isSurfaceVisibleInTree: true,
       isSelectedTab: true,
       windowIsVisible: true,
@@ -48,7 +48,7 @@ struct TerminalRenderingPolicyTests {
 
   @Test func surfaceActivityForOccludedWindowIsHiddenAndUnfocused() {
     let surfaceID = UUID()
-    let activity = WorktreeTerminalState.surfaceActivity(
+    let activity = WorktreeSurfaceState.surfaceActivity(
       isSurfaceVisibleInTree: true,
       isSelectedTab: true,
       windowIsVisible: false,
@@ -62,7 +62,7 @@ struct TerminalRenderingPolicyTests {
 
   @Test func surfaceActivityForUnselectedTabIsHiddenAndUnfocused() {
     let surfaceID = UUID()
-    let activity = WorktreeTerminalState.surfaceActivity(
+    let activity = WorktreeSurfaceState.surfaceActivity(
       isSurfaceVisibleInTree: true,
       isSelectedTab: false,
       windowIsVisible: true,
@@ -76,7 +76,7 @@ struct TerminalRenderingPolicyTests {
 
   @Test func surfaceActivityForZoomHiddenSurfaceIsHiddenAndUnfocused() {
     let surfaceID = UUID()
-    let activity = WorktreeTerminalState.surfaceActivity(
+    let activity = WorktreeSurfaceState.surfaceActivity(
       isSurfaceVisibleInTree: false,
       isSelectedTab: true,
       windowIsVisible: true,

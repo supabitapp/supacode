@@ -12,7 +12,7 @@ import SwiftUI
 
 struct WorktreeDetailView: View {
   @Bindable var store: StoreOf<AppFeature>
-  let terminalManager: WorktreeTerminalManager
+  let surfaceManager: WorktreeSurfaceManager
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
   @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var agentBadgesEnabled: Bool { settingsFile.global.agentPresenceBadgesEnabled }
@@ -69,7 +69,7 @@ struct WorktreeDetailView: View {
     // Read the manager's stored color here (tracked body evaluation, not the
     // deferred toolbar closure) so the toolbar scheme invalidates on change.
     let toolbarScheme: ColorScheme =
-      terminalManager.focusedSurfaceBackground.isLightColor ? .light : .dark
+      surfaceManager.focusedSurfaceBackground.isLightColor ? .light : .dark
     let content = detailContent(
       repositories: repositories,
       loadingInfo: loadingInfo,
@@ -82,7 +82,7 @@ struct WorktreeDetailView: View {
     .toolbar {
       WorktreeDetailToolbar(
         store: store,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         repositoriesStore: repositoriesStore,
         scheme: toolbarScheme,
         showsToolbarPlaceholder: showsToolbarPlaceholder,
@@ -109,7 +109,7 @@ struct WorktreeDetailView: View {
         isCheckingPullRequest: isCheckingPullRequest,
         pullRequest: inspectorPullRequest,
         repositoriesStore: repositoriesStore,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         onSelectNotification: selectToolbarNotification,
         onPullRequestAction: { action in
           if let worktreeID = selectedWorktree?.id {
@@ -120,7 +120,7 @@ struct WorktreeDetailView: View {
       .inspectorColumnWidth(min: 280, ideal: 320, max: 480)
       // Match the inspector's accent to the terminal background; the appearance
       // is forced inside `WorktreeStatusInspectorContainer`.
-      .tint(terminalManager.chromeOverlayTint())
+      .tint(surfaceManager.chromeOverlayTint())
     }
     // Reveal in Finder is local-only; Open can target a remote worktree when the
     // resolved editor can express the host. `resolvedSelection` (nil when it
@@ -277,7 +277,7 @@ struct WorktreeDetailView: View {
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
         WorktreeTerminalTabsView(
           worktree: selectedWorktree,
-          manager: terminalManager,
+          manager: surfaceManager,
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           shouldRunSetupScript: shouldRunSetupScript,
           forceAutoFocus: shouldFocusTerminal,
@@ -359,7 +359,7 @@ struct WorktreeDetailView: View {
     _ notification: WorktreeTerminalNotification
   ) {
     store.send(.repositories(.selectWorktree(worktreeID)))
-    if let terminalState = terminalManager.stateIfExists(for: worktreeID) {
+    if let terminalState = surfaceManager.stateIfExists(for: worktreeID) {
       _ = terminalState.focusSurface(id: notification.surfaceID)
     }
   }
@@ -525,7 +525,7 @@ struct WorktreeDetailView: View {
 
   fileprivate struct WorktreeDetailToolbar: ToolbarContent {
     let store: StoreOf<AppFeature>
-    let terminalManager: WorktreeTerminalManager
+    let surfaceManager: WorktreeSurfaceManager
     let repositoriesStore: StoreOf<RepositoriesFeature>
     /// Terminal-derived scheme for the `.navigation` item, whose detached host
     /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
@@ -553,7 +553,7 @@ struct WorktreeDetailView: View {
               selectedRow: selectedRow
             ),
             repositoriesStore: repositoriesStore,
-            terminalManager: terminalManager,
+            surfaceManager: surfaceManager,
             inspectorPane: inspectorPane,
             inspectorPresented: inspectorPresented,
             onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) }
@@ -582,7 +582,7 @@ struct WorktreeDetailView: View {
         WorktreeToolbarContent(
           scheme: scheme,
           toolbarState: toolbarState,
-          terminalManager: terminalManager,
+          surfaceManager: surfaceManager,
           repositoriesStore: repositoriesStore,
           inspectorPane: inspectorPane,
           inspectorPresented: inspectorPresented,
@@ -610,7 +610,7 @@ struct WorktreeDetailView: View {
     /// (`.sharedBackgroundVisibility(.hidden)`) ignores `window.appearance`.
     let scheme: ColorScheme
     let toolbarState: WorktreeToolbarState
-    let terminalManager: WorktreeTerminalManager
+    let surfaceManager: WorktreeSurfaceManager
     let repositoriesStore: StoreOf<RepositoriesFeature>?
     let inspectorPane: WorktreeInspectorPane
     let inspectorPresented: Bool
@@ -663,7 +663,7 @@ struct WorktreeDetailView: View {
       TrailingStatusToolbarContent(
         pullRequest: toolbarState.pullRequest,
         repositoriesStore: repositoriesStore,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         inspectorPane: inspectorPane,
         inspectorPresented: inspectorPresented,
         onActivateInspector: onActivateInspector
@@ -735,7 +735,7 @@ struct WorktreeDetailView: View {
   fileprivate struct TrailingStatusToolbarContent: ToolbarContent {
     let pullRequest: GithubPullRequest?
     let repositoriesStore: StoreOf<RepositoriesFeature>?
-    let terminalManager: WorktreeTerminalManager
+    let surfaceManager: WorktreeSurfaceManager
     let inspectorPane: WorktreeInspectorPane
     let inspectorPresented: Bool
     let onActivateInspector: (WorktreeInspectorPane) -> Void
@@ -744,7 +744,7 @@ struct WorktreeDetailView: View {
       ToolbarItemGroup {
         // Translucent chrome-tracking highlight (whiteish on a dark terminal);
         // full-opacity tint reads as a stark solid pill against the glass.
-        let chromeForeground = terminalManager.chromeOverlayTint()
+        let chromeForeground = surfaceManager.chromeOverlayTint()
         let chromeTint = chromeForeground.opacity(0.2)
         WorktreeGitStatusButton(
           pullRequest: pullRequest,
@@ -1350,7 +1350,7 @@ private struct WorktreeToolbarPreview: View {
       WorktreeDetailView.WorktreeToolbarContent(
         scheme: .light,
         toolbarState: toolbarState,
-        terminalManager: WorktreeTerminalManager(runtime: GhosttyRuntime()),
+        surfaceManager: WorktreeSurfaceManager(runtime: GhosttyRuntime()),
         repositoriesStore: nil,
         inspectorPane: .git,
         inspectorPresented: false,

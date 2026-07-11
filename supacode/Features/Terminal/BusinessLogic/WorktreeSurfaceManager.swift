@@ -11,10 +11,10 @@ private let terminalLogger = SupaLogger("Terminal")
 
 @MainActor
 @Observable
-final class WorktreeTerminalManager {
+final class WorktreeSurfaceManager {
   private let runtime: GhosttyRuntime
   private(set) var socketServer: AgentHookSocketServer?
-  private var states: [Worktree.ID: WorktreeTerminalState] = [:]
+  private var states: [Worktree.ID: WorktreeSurfaceState] = [:]
   @ObservationIgnored
   @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var notificationsEnabled = true
@@ -24,13 +24,13 @@ final class WorktreeTerminalManager {
   /// Per-worktree dedup of `worktreeProjectionChanged`; identical projections
   /// (common on hook storms) are dropped before they hit the AsyncStream.
   private var lastEmittedProjections: [Worktree.ID: WorktreeRowProjection] = [:]
-  private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
-  private var pendingEvents: [TerminalClient.Event] = []
+  private var eventContinuation: AsyncStream<SurfaceClient.Event>.Continuation?
+  private var pendingEvents: [SurfaceClient.Event] = []
   /// Latest-wins events deduped by identity: drops a value equal to the
   /// immediately-previous one per key (a burst of distinct values still passes),
   /// so per-tab projection / progress / task-status / focus repeats don't flood
   /// the stream. Cleared on resubscribe and purged on tab / worktree teardown.
-  private var lastEmittedCoalescable: [CoalesceKey: TerminalClient.Event] = [:]
+  private var lastEmittedCoalescable: [CoalesceKey: SurfaceClient.Event] = [:]
   /// Worktrees whose projection was shed under backpressure, awaiting next-tick
   /// redelivery. Coalesced so a shed storm replays each id at most once per tick.
   private var pendingShedProjectionReplays: Set<Worktree.ID> = []
@@ -95,7 +95,7 @@ final class WorktreeTerminalManager {
   /// Non-nil for state events that are safe to coalesce by identity. Lifecycle /
   /// one-shot events (tab create / close / remove, notifications, script
   /// completion, command-palette, teardown) return nil and are never dropped.
-  private static func coalesceKey(for event: TerminalClient.Event) -> CoalesceKey? {
+  private static func coalesceKey(for event: SurfaceClient.Event) -> CoalesceKey? {
     switch event {
     case .worktreeProjectionChanged(let worktreeID, _): .worktreeProjection(worktreeID)
     case .tabProjectionChanged(_, let projection): .tabProjection(projection.tabID)
@@ -111,7 +111,7 @@ final class WorktreeTerminalManager {
   /// Compact identity for a backpressure-drop log. Strips the payload-heavy
   /// cases (projections / notification bodies) to their key ids so a drop storm
   /// can't flood the log; the rest carry small payloads and describe themselves.
-  private static func label(for event: TerminalClient.Event) -> String {
+  private static func label(for event: SurfaceClient.Event) -> String {
     switch event {
     case .worktreeProjectionChanged(let worktreeID, _): "worktreeProjectionChanged(\(worktreeID))"
     case .tabProjectionChanged(let worktreeID, let projection):
@@ -142,7 +142,7 @@ final class WorktreeTerminalManager {
     runtime: GhosttyRuntime,
     socketServer: AgentHookSocketServer? = nil,
     clock: C = ContinuousClock(),
-    eventBufferCap: Int = WorktreeTerminalManager.defaultEventBufferCap,
+    eventBufferCap: Int = WorktreeSurfaceManager.defaultEventBufferCap,
   ) {
     self.eventBufferCap = eventBufferCap
     self.runtime = runtime
@@ -262,7 +262,7 @@ final class WorktreeTerminalManager {
     return state.listSurfaces(tabID: terminalTabID)
   }
 
-  func handleCommand(_ command: TerminalClient.Command) {
+  func handleCommand(_ command: SurfaceClient.Command) {
     // Kind-scoped commands dispatch straight to their kind's handler; the
     // neutral handlers below never see them.
     if case .terminal(let worktree, let surfaceCommand) = command {
@@ -304,7 +304,7 @@ final class WorktreeTerminalManager {
   }
 
   // swiftlint:disable:next cyclomatic_complexity
-  private func handleTabCommand(_ command: TerminalClient.Command) -> Bool {
+  private func handleTabCommand(_ command: SurfaceClient.Command) -> Bool {
     switch command {
     case .createTab(let worktree, let spec, let id):
       switch spec {
@@ -399,7 +399,7 @@ final class WorktreeTerminalManager {
     }
   }
 
-  private func handleManagementCommand(_ command: TerminalClient.Command) {
+  private func handleManagementCommand(_ command: SurfaceClient.Command) {
     switch command {
     case .prune(let ids, let protectedRepositoryIDs):
       prune(keeping: ids, protectingRepositoryIDs: protectedRepositoryIDs)
@@ -430,10 +430,10 @@ final class WorktreeTerminalManager {
     }
   }
 
-  func eventStream() -> AsyncStream<TerminalClient.Event> {
+  func eventStream() -> AsyncStream<SurfaceClient.Event> {
     eventContinuation?.finish()
     let (stream, continuation) = AsyncStream.makeStream(
-      of: TerminalClient.Event.self,
+      of: SurfaceClient.Event.self,
       bufferingPolicy: .bufferingNewest(eventBufferCap)
     )
     eventContinuation = continuation
@@ -481,7 +481,7 @@ final class WorktreeTerminalManager {
   func state(
     for worktree: Worktree,
     runSetupScriptIfNew: () -> Bool = { false }
-  ) -> WorktreeTerminalState {
+  ) -> WorktreeSurfaceState {
     if let existing = states[worktree.id] {
       if runSetupScriptIfNew() {
         existing.enableSetupScriptIfNeeded()
@@ -498,7 +498,7 @@ final class WorktreeTerminalManager {
       return existing
     }
     let runSetupScript = runSetupScriptIfNew()
-    let state = WorktreeTerminalState(
+    let state = WorktreeSurfaceState(
       runtime: runtime,
       worktree: worktree,
       runSetupScript: runSetupScript
@@ -632,10 +632,10 @@ final class WorktreeTerminalManager {
     keeping worktreeIDs: Set<Worktree.ID>,
     protectingRepositoryIDs protectedRepositoryIDs: Set<Repository.ID> = []
   ) {
-    let shouldKeep: (Worktree.ID, WorktreeTerminalState) -> Bool = { id, state in
+    let shouldKeep: (Worktree.ID, WorktreeSurfaceState) -> Bool = { id, state in
       worktreeIDs.contains(id) || protectedRepositoryIDs.contains(state.repositoryID)
     }
-    var removed: [(Worktree.ID, WorktreeTerminalState)] = []
+    var removed: [(Worktree.ID, WorktreeSurfaceState)] = []
     for (id, state) in states where !shouldKeep(id, state) {
       removed.append((id, state))
     }
@@ -673,7 +673,7 @@ final class WorktreeTerminalManager {
   /// session may exist from an earlier launch, and the kill invocation is a
   /// silent no-op when nothing exists.
   private static func remoteSessions(
-    in states: [WorktreeTerminalState]
+    in states: [WorktreeSurfaceState]
   ) -> [(host: RemoteHost, sessionID: String)] {
     states.flatMap { state -> [(host: RemoteHost, sessionID: String)] in
       guard let host = state.remoteHost else { return [] }
@@ -836,7 +836,7 @@ final class WorktreeTerminalManager {
     states[worktreeID]?.allSurfaceIDs ?? []
   }
 
-  func stateIfExists(for worktreeID: Worktree.ID) -> WorktreeTerminalState? {
+  func stateIfExists(for worktreeID: Worktree.ID) -> WorktreeSurfaceState? {
     states[worktreeID]
   }
 
@@ -852,7 +852,7 @@ final class WorktreeTerminalManager {
   /// hosts. zmx is a long-lived per-user daemon that outlives our app quit,
   /// so "Quit and Terminate" must explicitly sweep orphan sessions or they
   /// would survive forever.
-  func terminateAllSessions(killBudget: Duration = WorktreeTerminalManager.quitKillBudget) async {
+  func terminateAllSessions(killBudget: Duration = WorktreeSurfaceManager.quitKillBudget) async {
     let trackedSurfaceIDs = states.values.flatMap(\.allSurfaceIDs)
     let trackedSessionIDs = Set(trackedSurfaceIDs.map(ZmxSessionID.make(surfaceID:)))
     // "Quit and Terminate" promises nothing keeps running, so the host-side
@@ -1140,7 +1140,7 @@ final class WorktreeTerminalManager {
     (runtime.unfocusedSplitFill(), runtime.unfocusedSplitOverlayOpacity())
   }
 
-  private func emit(_ event: TerminalClient.Event) {
+  private func emit(_ event: SurfaceClient.Event) {
     guard let eventContinuation else {
       bufferPendingEvent(event)
       return
@@ -1166,7 +1166,7 @@ final class WorktreeTerminalManager {
 
   /// Redeliver a shed projection next tick; shedding cleared its dedupe entry
   /// without reaching TCA, so the row would otherwise stay stale (#573).
-  private func scheduleShedProjectionReplay(for shed: TerminalClient.Event) {
+  private func scheduleShedProjectionReplay(for shed: SurfaceClient.Event) {
     guard case .worktreeProjectionChanged(let worktreeID, _) = shed else { return }
     // A replay that itself sheds must not chain another, or a persistently full
     // buffer would loop and evict live events every tick (#573).
@@ -1189,7 +1189,7 @@ final class WorktreeTerminalManager {
 
   /// A shed event never reached the consumer, so its dedupe entries must not
   /// suppress the next identical emit (#573).
-  private func invalidateDedupe(for shed: TerminalClient.Event) {
+  private func invalidateDedupe(for shed: SurfaceClient.Event) {
     guard let key = Self.coalesceKey(for: shed) else { return }
     lastEmittedCoalescable.removeValue(forKey: key)
     switch shed {
@@ -1209,7 +1209,7 @@ final class WorktreeTerminalManager {
   /// Buffers an event emitted before a subscriber attaches. Coalescable state
   /// keeps only its latest value per key; lifecycle events accumulate up to a
   /// cap, dropping the oldest so the pre-subscription buffer stays bounded.
-  private func bufferPendingEvent(_ event: TerminalClient.Event) {
+  private func bufferPendingEvent(_ event: SurfaceClient.Event) {
     if let key = Self.coalesceKey(for: event) {
       pendingEvents.removeAll { Self.coalesceKey(for: $0) == key }
       pendingEvents.append(event)
@@ -1233,7 +1233,7 @@ final class WorktreeTerminalManager {
   /// Coalesce keys a teardown event invalidates. A coalesced value for a removed
   /// tab / worktree must not linger: a same-id reuse (snapshot restore reuses
   /// persisted tab UUIDs) would otherwise be wrongly deduped and dropped.
-  private static func invalidatedCoalesceKeys(by event: TerminalClient.Event) -> [CoalesceKey] {
+  private static func invalidatedCoalesceKeys(by event: SurfaceClient.Event) -> [CoalesceKey] {
     switch event {
     case .tabRemoved(_, let tabID): [.tabProjection(tabID), .tabProgress(tabID)]
     case .worktreeStateTornDown(let worktreeID):
@@ -1277,7 +1277,7 @@ final class WorktreeTerminalManager {
   /// Runs `stop` on the worktree's existing terminal state, never minting one.
   /// A miss with a live state means the caller acted on a stale mirror, so force
   /// a fresh projection emit past the dedupe cache to reconcile it (#573).
-  private func stopBlockingScripts(in worktree: Worktree, using stop: (WorktreeTerminalState) -> Bool) {
+  private func stopBlockingScripts(in worktree: Worktree, using stop: (WorktreeSurfaceState) -> Bool) {
     guard let state = stateIfExists(for: worktree.id) else {
       terminalLogger.warning("Stop requested for \(worktree.id) with no terminal state")
       return

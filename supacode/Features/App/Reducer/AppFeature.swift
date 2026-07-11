@@ -229,7 +229,7 @@ struct AppFeature {
     case deeplinkReferenceOpened
     case alert(PresentationAction<Alert>)
     case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
-    case terminalEvent(TerminalClient.Event)
+    case surfaceEvent(SurfaceClient.Event)
   }
 
   enum Alert: Equatable {
@@ -246,7 +246,7 @@ struct AppFeature {
   @Dependency(WorkspaceClient.self) private var workspaceClient
   @Dependency(NotificationSoundClient.self) private var notificationSoundClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
-  @Dependency(TerminalClient.self) private var terminalClient
+  @Dependency(SurfaceClient.self) private var surfaceClient
   @Dependency(WorktreeInfoWatcherClient.self) private var worktreeInfoWatcher
   @Dependency(\.date.now) private var now
   @Dependency(\.continuousClock) private var clock
@@ -272,8 +272,8 @@ struct AppFeature {
             }
           },
           .run { send in
-            for await event in await terminalClient.events() {
-              await send(.terminalEvent(event))
+            for await event in await surfaceClient.events() {
+              await send(.surfaceEvent(event))
             }
           },
           .run { send in
@@ -288,7 +288,7 @@ struct AppFeature {
             @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
             let known = Set(layouts.values.flatMap { $0.allSurfaceIDs })
             let staged = AgentPresenceFeature.stageRestore(fromLayouts: layouts.values)
-            await terminalClient.reapOrphanSessions(known)
+            await surfaceClient.reapOrphanSessions(known)
             await send(.agentPresence(.restoreFromSnapshot(staged: staged)))
           }
         )
@@ -296,7 +296,7 @@ struct AppFeature {
       case .agentPresence(.delegate(.surfacesChanged(let surfaces))):
         // Persist on every presence delta, debounced, so a crash mid-session
         // doesn't lose the most recent agent state. The save only touches
-        // worktrees with a live `WorktreeTerminalState`, so it can't write
+        // worktrees with a live `WorktreeSurfaceState`, so it can't write
         // rows the user hasn't selected yet.
         let agentsBySurface = state.agentPresence.agentsBySurface()
         return .merge(
@@ -305,7 +305,7 @@ struct AppFeature {
           .run { [clock] _ in
             try await clock.sleep(for: .seconds(1))
             await MainActor.run {
-              terminalClient.saveLayoutsWithAgents(agentsBySurface)
+              surfaceClient.saveLayoutsWithAgents(agentsBySurface)
             }
           }
           .cancellable(id: CancelID.agentPresencePersist, cancelInFlight: true)
@@ -342,7 +342,7 @@ struct AppFeature {
             .run { [clock] _ in
               try await clock.sleep(for: .seconds(1))
               await MainActor.run {
-                terminalClient.saveLayoutsWithAgents(agentsBySurface)
+                surfaceClient.saveLayoutsWithAgents(agentsBySurface)
               }
             }
             .cancellable(id: CancelID.backgroundPersist, cancelInFlight: true)
@@ -368,7 +368,7 @@ struct AppFeature {
           }
           return .merge(
             .run { _ in
-              await terminalClient.send(.setSelectedWorktreeID(nil))
+              await surfaceClient.send(.setSelectedWorktreeID(nil))
             },
             .run { _ in
               await worktreeInfoWatcher.send(.setSelectedWorktreeID(nil))
@@ -384,7 +384,7 @@ struct AppFeature {
         let settings = repositorySettings
         return .merge(
           .run { _ in
-            await terminalClient.send(.setSelectedWorktreeID(worktree.id))
+            await surfaceClient.send(.setSelectedWorktreeID(worktree.id))
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktree.id))
@@ -396,7 +396,7 @@ struct AppFeature {
         let shouldRunSetupScript =
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
-          await terminalClient.send(
+          await surfaceClient.send(
             .ensureInitialTab(
               worktree,
               runSetupScriptIfNew: shouldRunSetupScript,
@@ -453,7 +453,7 @@ struct AppFeature {
             .union(state.repositories.environmentBlockedRepositoryIDs)
           effects.append(
             .run { [allowed, protectedRepositoryIDs] _ in
-              await terminalClient.send(
+              await surfaceClient.send(
                 .prune(keeping: allowed, protectingRepositoryIDs: protectedRepositoryIDs)
               )
             }
@@ -508,13 +508,13 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .runBlockingScript(kind: kind, script: script)))
+          await surfaceClient.send(.terminal(worktree, .runBlockingScript(kind: kind, script: script)))
         }
 
       case .repositories(.delegate(.selectTerminalTab(let worktreeID, let tabId))):
         guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
         return .run { _ in
-          await terminalClient.send(.selectTab(worktree, tabID: tabId))
+          await surfaceClient.send(.selectTab(worktree, tabID: tabId))
         }
 
       case .settings(.delegate(.settingsChanged(let settings))):
@@ -552,10 +552,10 @@ struct AppFeature {
             )
           ),
           .run { _ in
-            await terminalClient.send(.setNotificationsEnabled(settings.inAppNotificationsEnabled))
+            await surfaceClient.send(.setNotificationsEnabled(settings.inAppNotificationsEnabled))
           },
           .run { _ in
-            await terminalClient.send(.refreshTabBarVisibility)
+            await surfaceClient.send(.refreshTabBarVisibility)
           },
           .run { _ in
             await worktreeInfoWatcher.send(
@@ -647,7 +647,7 @@ struct AppFeature {
         }
         state.alert = quitConfirmationAlert(
           terminateOnQuit: state.settings.terminateSessionsOnQuit,
-          hasBlockingScripts: terminalClient.hasInflightBlockingScripts()
+          hasBlockingScripts: surfaceClient.hasInflightBlockingScripts()
         )
         // Without surfacing the main window, an alert raised from Cmd+Q
         // when no window is up has no scene to anchor to and `terminate()`
@@ -682,7 +682,7 @@ struct AppFeature {
         state.alert = nil
         analyticsClient.capture("terminal_sessions_terminated_via_menu", nil)
         return .run { _ in
-          await terminalClient.terminateAllSessions()
+          await surfaceClient.terminateAllSessions()
         }
 
       case .newTerminal:
@@ -695,7 +695,7 @@ struct AppFeature {
         let shouldRunSetupScript =
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
-          await terminalClient.send(.createTab(worktree, spec: .terminal(runSetupScriptIfNew: shouldRunSetupScript)))
+          await surfaceClient.send(.createTab(worktree, spec: .terminal(runSetupScriptIfNew: shouldRunSetupScript)))
         }
 
       case .selectTerminalTabAtIndex(let tabNumber):
@@ -708,7 +708,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.selectTabAtIndex(worktree, index: tabNumber))
+          await surfaceClient.send(.selectTabAtIndex(worktree, index: tabNumber))
         }
 
       case .splitTerminal(let direction):
@@ -718,11 +718,11 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .performBindingAction(direction.ghosttyBinding)))
+          await surfaceClient.send(.terminal(worktree, .performBindingAction(direction.ghosttyBinding)))
         }
 
       case .jumpToLatestUnread:
-        guard let location = terminalClient.latestUnreadNotification() else {
+        guard let location = surfaceClient.latestUnreadNotification() else {
           jumpLogger.debug("jumpToLatestUnread invoked with no unread notifications.")
           return .none
         }
@@ -739,10 +739,10 @@ struct AppFeature {
         return .merge(
           .send(.repositories(.selectWorktree(location.worktreeID, focusTerminal: true))),
           .run { _ in
-            await terminalClient.send(
+            await surfaceClient.send(
               .focusSurface(worktree, tabID: location.tabID, surfaceID: location.surfaceID)
             )
-            await terminalClient.markNotificationRead(location.worktreeID, location.notificationID)
+            await surfaceClient.markNotificationRead(location.worktreeID, location.notificationID)
           }
         )
 
@@ -792,7 +792,7 @@ struct AppFeature {
         // The row's `runningScripts` reconciles from the terminal's projection
         // once the script tab is tracked; no optimistic mirror write (#573).
         return .run { _ in
-          await terminalClient.send(
+          await surfaceClient.send(
             .terminal(worktree, .runBlockingScript(kind: .script(definition), script: definition.command))
           )
         }
@@ -802,7 +802,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .stopScript(definitionID: definition.id)))
+          await surfaceClient.send(.terminal(worktree, .stopScript(definitionID: definition.id)))
         }
 
       case .stopRunScripts:
@@ -810,7 +810,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .stopRunScript))
+          await surfaceClient.send(.terminal(worktree, .stopRunScript))
         }
 
       case .closeTab:
@@ -819,7 +819,7 @@ struct AppFeature {
         }
         analyticsClient.capture("terminal_tab_closed", nil)
         return .run { _ in
-          await terminalClient.send(.closeFocusedTab(worktree))
+          await surfaceClient.send(.closeFocusedTab(worktree))
         }
 
       case .closeSurface:
@@ -827,7 +827,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.closeFocusedSurface(worktree))
+          await surfaceClient.send(.closeFocusedSurface(worktree))
         }
 
       case .startSearch:
@@ -835,7 +835,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .startSearch))
+          await surfaceClient.send(.terminal(worktree, .startSearch))
         }
 
       case .searchSelection:
@@ -843,7 +843,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .searchSelection))
+          await surfaceClient.send(.terminal(worktree, .searchSelection))
         }
 
       case .navigateSearchNext:
@@ -851,7 +851,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .navigateSearchNext))
+          await surfaceClient.send(.terminal(worktree, .navigateSearchNext))
         }
 
       case .navigateSearchPrevious:
@@ -859,7 +859,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .navigateSearchPrevious))
+          await surfaceClient.send(.terminal(worktree, .navigateSearchPrevious))
         }
 
       case .endSearch:
@@ -867,7 +867,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.terminal(worktree, .endSearch))
+          await surfaceClient.send(.terminal(worktree, .endSearch))
         }
 
       case .settings(.repositorySettings(.delegate(.settingsChanged(let rootURL, let host)))):
@@ -1196,19 +1196,19 @@ struct AppFeature {
           return .none
         }
         // Ghostty void actions emit bare tag names; no colon.
-        let command: TerminalClient.Command
+        let command: SurfaceClient.Command
         if action == "prompt_surface_title" || action == "prompt_tab_title" {
           // Capture the focused tab synchronously so a fast tab switch between dispatch
           // and effect execution can't redirect the rename to the wrong tab.
-          let tabID = terminalClient.selectedTabID(worktree.id)
+          let tabID = surfaceClient.selectedTabID(worktree.id)
           command = .beginTabRename(worktree, tabID: tabID)
-        } else if let surfaceID = terminalClient.selectedSurfaceID(worktree.id) {
+        } else if let surfaceID = surfaceClient.selectedSurfaceID(worktree.id) {
           command = .terminal(worktree, .performBindingActionOnSurface(surfaceID: surfaceID, action: action))
         } else {
           command = .terminal(worktree, .performBindingAction(action))
         }
         return .run { _ in
-          await terminalClient.send(command)
+          await surfaceClient.send(command)
         }
 
       case .commandPalette(.delegate(.openPullRequest(let worktreeID))):
@@ -1256,7 +1256,7 @@ struct AppFeature {
       case .commandPalette:
         return .none
 
-      case .terminalEvent(
+      case .surfaceEvent(
         .notificationReceived(let worktreeID, let surfaceID, let title, let body, let isViewed)):
         var effects: [Effect<Action>] = [
           .send(.repositories(.worktreeNotificationReceived(worktreeID)))
@@ -1280,7 +1280,7 @@ struct AppFeature {
         }
         return .merge(effects)
 
-      case .terminalEvent(.notificationIndicatorChanged(let count)):
+      case .surfaceEvent(.notificationIndicatorChanged(let count)):
         state.notificationIndicatorCount = count
         return .run { _ in
           await MainActor.run {
@@ -1290,10 +1290,10 @@ struct AppFeature {
 
       // Terminal-kind events regroup behind one arm; neutral lifecycle /
       // projection events keep their own arms below.
-      case .terminalEvent(.terminal(let event)):
+      case .surfaceEvent(.terminal(let event)):
         return handleTerminalSurfaceEvent(event, state: &state)
 
-      case .terminalEvent(.commandPaletteToggleRequested(let worktreeID)):
+      case .surfaceEvent(.commandPaletteToggleRequested(let worktreeID)):
         if state.commandPalette.isPresented {
           return .send(.commandPalette(.setPresented(false)))
         }
@@ -1303,7 +1303,7 @@ struct AppFeature {
           .send(.repositories(.selectWorktree(worktreeID))),
           .send(.commandPalette(.presentInMode(.commands)))
         )
-      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, var projection)):
+      case .surfaceEvent(.worktreeProjectionChanged(let worktreeID, var projection)):
         guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
         // Archived rows render no running-state dots, so terminal truth must
         // not re-inject them (see `stripsArchivedRunningScripts`).
@@ -1340,7 +1340,7 @@ struct AppFeature {
           .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))
         )
 
-      case .terminalEvent(.tabProjectionChanged(let worktreeID, let projection)):
+      case .surfaceEvent(.tabProjectionChanged(let worktreeID, let projection)):
         // Resolve tab-new / surface-split acks once the supplied id appears.
         let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
           switch match {
@@ -1356,7 +1356,7 @@ struct AppFeature {
           .send(.terminals(.tabProjectionChanged(worktreeID: worktreeID, projection: projection))),
           ackEffect)
 
-      case .terminalEvent(.tabCreated(let worktreeID)):
+      case .surfaceEvent(.tabCreated(let worktreeID)):
         // Resolve worktree-new acks once the new worktree's first tab exists,
         // returning the created worktree id to the CLI.
         return resolveCommandAcks(
@@ -1366,7 +1366,7 @@ struct AppFeature {
           return false
         }
 
-      case .terminalEvent(.surfaceCreationFailed(let worktreeID, let attemptedID, let message)):
+      case .surfaceEvent(.surfaceCreationFailed(let worktreeID, let attemptedID, let message)):
         return resolveCommandAcks(ok: false, error: message, state: &state) { match in
           switch match {
           case .tabInWorktree(let ackWorktree, let tabID):
@@ -1378,7 +1378,7 @@ struct AppFeature {
           }
         }
 
-      case .terminalEvent(.tabRemoved(let worktreeID, let tabID)):
+      case .surfaceEvent(.tabRemoved(let worktreeID, let tabID)):
         let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
           if case .tabRemoved(let ackWorktree, let removed) = match {
             return ackWorktree == worktreeID && removed == tabID
@@ -1388,10 +1388,10 @@ struct AppFeature {
         return .merge(
           .send(.terminals(.tabRemoved(worktreeID: worktreeID, tabID: tabID))), ackEffect)
 
-      case .terminalEvent(.worktreeStateTornDown(let worktreeID)):
+      case .surfaceEvent(.worktreeStateTornDown(let worktreeID)):
         return .send(.terminals(.worktreeStateTornDown(worktreeID: worktreeID)))
 
-      case .terminalEvent(.tabProgressDisplayChanged(_, let tabID, let display)):
+      case .surfaceEvent(.tabProgressDisplayChanged(_, let tabID, let display)):
         return .send(
           .terminals(.terminalTabs(.element(id: tabID, action: .progressDisplayChanged(display))))
         )
@@ -1399,7 +1399,7 @@ struct AppFeature {
       case .terminals:
         return .none
 
-      case .terminalEvent(.surfacesClosed(let worktreeID, let ids)):
+      case .surfaceEvent(.surfacesClosed(let worktreeID, let ids)):
         guard !ids.isEmpty else { return .none }
         let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
           if case .surfaceClosed(let ackWorktree, let surfaceID) = match {
@@ -1413,7 +1413,7 @@ struct AppFeature {
           : .send(.agentPresence(.surfacesClosed(ids)))
         return .merge(presenceEffect, ackEffect)
 
-      case .terminalEvent:
+      case .surfaceEvent:
         return .none
       }
     }
@@ -1485,14 +1485,14 @@ struct AppFeature {
       surfaces.map { surfaceID in
         let agents = state.agentPresence.bySurface[surfaceID] ?? []
         return .run { _ in
-          await terminalClient.send(.setImagePasteAgents(surfaceID: surfaceID, agents: agents))
+          await surfaceClient.send(.setImagePasteAgents(surfaceID: surfaceID, agents: agents))
         }
       }
     )
   }
 
   /// Terminal-kind event handling, delegated from the single
-  /// `.terminalEvent(.terminal(_))` reducer arm. A future surface kind adds a
+  /// `.surfaceEvent(.terminal(_))` reducer arm. A future surface kind adds a
   /// sibling handler behind its own wrapper arm; the neutral arms never grow
   /// kind-specific cases.
   private func handleTerminalSurfaceEvent(
@@ -1640,7 +1640,7 @@ struct AppFeature {
     let shouldRunSetupScript =
       state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
     return .run { _ in
-      await terminalClient.send(
+      await surfaceClient.send(
         .createTab(
           worktree,
           spec: .terminal(input: "$EDITOR", runSetupScriptIfNew: shouldRunSetupScript)
@@ -2004,7 +2004,7 @@ struct AppFeature {
       // Reject explicit IDs that collide with an existing or in-flight tab, so a
       // duplicate id can't have one creation resolve the other's ack.
       if let id,
-        terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: id))
+        surfaceClient.tabExists(worktreeID, TerminalTabID(rawValue: id))
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {
@@ -2075,7 +2075,7 @@ struct AppFeature {
       // Reject explicit IDs that collide with an existing or in-flight surface, so
       // a duplicate id can't have one split resolve the other's ack.
       if let id,
-        terminalClient.surfaceExistsInWorktree(worktreeID, id)
+        surfaceClient.surfaceExistsInWorktree(worktreeID, id)
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {
@@ -2170,11 +2170,11 @@ struct AppFeature {
       )
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-    let terminalClient = terminalClient
+    let surfaceClient = surfaceClient
     // The row's `runningScripts` reconciles from the terminal's projection
     // once the script tab is tracked; no optimistic mirror write (#573).
     return .run { _ in
-      await terminalClient.send(
+      await surfaceClient.send(
         .terminal(worktree, .runBlockingScript(kind: .script(definition), script: definition.command))
       )
     }
@@ -2205,9 +2205,9 @@ struct AppFeature {
       )
       return .none
     }
-    let terminalClient = terminalClient
+    let surfaceClient = surfaceClient
     return .run { _ in
-      await terminalClient.send(.terminal(worktree, .stopScript(definitionID: scriptID)))
+      await surfaceClient.send(.terminal(worktree, .stopScript(definitionID: scriptID)))
     }
   }
 
@@ -2423,15 +2423,15 @@ struct AppFeature {
   private func sendTerminalCommand(
     worktreeID: Worktree.ID,
     state: State,
-    command: (Worktree) -> TerminalClient.Command
+    command: (Worktree) -> SurfaceClient.Command
   ) -> Effect<Action> {
     guard let worktree = state.repositories.worktree(for: worktreeID) else {
       deeplinkLogger.warning("Worktree \(worktreeID) vanished before terminal command could be dispatched.")
       return .none
     }
     let cmd = command(worktree)
-    let terminalClient = terminalClient
-    return .run { _ in await terminalClient.send(cmd) }
+    let surfaceClient = surfaceClient
+    return .run { _ in await surfaceClient.send(cmd) }
   }
 
   /// True when in-flight work would not survive a quit. Steady-state
@@ -2440,7 +2440,7 @@ struct AppFeature {
   /// prompt-waiting (`.awaitingInput`) agents are at risk. Running user
   /// scripts also block because their stdout history dies with the shell.
   private func hasActiveWorkBlockingQuit(state: State) -> Bool {
-    if terminalClient.hasInflightBlockingScripts() { return true }
+    if surfaceClient.hasInflightBlockingScripts() { return true }
     return state.repositories.sidebarItems.contains { item in
       if item.lifecycle.isTerminating || item.lifecycle == .pending { return true }
       if !item.runningScripts.isEmpty { return true }
@@ -2519,9 +2519,9 @@ struct AppFeature {
     analyticsClient.capture("app_quit", ["terminate_sessions": terminateSessions])
     let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
     let pendingAcksEffect = drainAllCommandAcks(state: &state, error: "Supacode is quitting.")
-    let terminateEffect: Effect<Action> = .run { @MainActor [terminalClient, appLifecycleClient] _ in
+    let terminateEffect: Effect<Action> = .run { @MainActor [surfaceClient, appLifecycleClient] _ in
       if terminateSessions {
-        await terminalClient.terminateAllSessions()
+        await surfaceClient.terminateAllSessions()
       }
       appLifecycleClient.terminate()
     }
@@ -2750,7 +2750,7 @@ struct AppFeature {
     tabID: UUID,
     state: inout State
   ) -> Bool {
-    guard terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: tabID)) else {
+    guard surfaceClient.tabExists(worktreeID, TerminalTabID(rawValue: tabID)) else {
       deeplinkLogger.warning("Tab \(tabID) not found in worktree \(worktreeID)")
       state.alert = AlertState {
         TextState("Tab not found")
@@ -2774,7 +2774,7 @@ struct AppFeature {
     state: inout State
   ) -> Bool {
     guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return false }
-    guard terminalClient.surfaceExists(worktreeID, TerminalTabID(rawValue: tabID), surfaceID) else {
+    guard surfaceClient.surfaceExists(worktreeID, TerminalTabID(rawValue: tabID), surfaceID) else {
       deeplinkLogger.warning("Surface \(surfaceID) not found in tab \(tabID) of worktree \(worktreeID)")
       state.alert = AlertState {
         TextState("Surface not found")
@@ -2829,7 +2829,7 @@ struct AppFeature {
     let percentEncodingSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
     let encodedWorktreeID =
       worktreeID.rawValue.addingPercentEncoding(withAllowedCharacters: percentEncodingSet) ?? worktreeID.rawValue
-    guard let tabID = terminalClient.tabID(worktreeID, surfaceID) else {
+    guard let tabID = surfaceClient.tabID(worktreeID, surfaceID) else {
       notificationsLogger.debug(
         "Surface \(surfaceID) is no longer attached to a tab in \(worktreeID); "
           + "degrading tap deeplink to the worktree root."

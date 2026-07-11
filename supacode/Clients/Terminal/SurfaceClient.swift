@@ -2,7 +2,7 @@ import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
 
-struct TerminalClient {
+struct SurfaceClient {
   var send: @MainActor @Sendable (Command) -> Void
   var events: @MainActor @Sendable () -> AsyncStream<Event>
   var tabExists: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
@@ -73,7 +73,7 @@ struct TerminalClient {
     /// A tab was destroyed in the worktree state. Parent removes the matching
     /// `TerminalTabFeature.State` from `terminalTabs`.
     case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
-    /// The entire `WorktreeTerminalState` was torn down (worktree pruned).
+    /// The entire `WorktreeSurfaceState` was torn down (worktree pruned).
     /// Parent drops any orphan `terminalTabs` entries and removed-tab FIFO
     /// records owned by this worktree so a fresh re-attach starts clean.
     case worktreeStateTornDown(worktreeID: Worktree.ID)
@@ -95,45 +95,45 @@ struct TerminalClient {
   }
 }
 
-extension TerminalClient: DependencyKey {
-  static let liveValue = TerminalClient(
-    send: { _ in fatalError("TerminalClient.send not configured") },
-    events: { fatalError("TerminalClient.events not configured") },
-    tabExists: { _, _ in fatalError("TerminalClient.tabExists not configured") },
-    surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
-    surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
-    tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
-    selectedTabID: { _ in fatalError("TerminalClient.selectedTabID not configured") },
-    selectedSurfaceID: { _ in fatalError("TerminalClient.selectedSurfaceID not configured") },
-    latestUnreadNotification: { fatalError("TerminalClient.latestUnreadNotification not configured") },
-    markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") },
-    hasInflightBlockingScripts: { fatalError("TerminalClient.hasInflightBlockingScripts not configured") },
-    terminateAllSessions: { fatalError("TerminalClient.terminateAllSessions not configured") },
-    reapOrphanSessions: { _ in fatalError("TerminalClient.reapOrphanSessions not configured") },
-    saveLayoutsWithAgents: { _ in fatalError("TerminalClient.saveLayoutsWithAgents not configured") }
+extension SurfaceClient: DependencyKey {
+  static let liveValue = SurfaceClient(
+    send: { _ in fatalError("SurfaceClient.send not configured") },
+    events: { fatalError("SurfaceClient.events not configured") },
+    tabExists: { _, _ in fatalError("SurfaceClient.tabExists not configured") },
+    surfaceExists: { _, _, _ in fatalError("SurfaceClient.surfaceExists not configured") },
+    surfaceExistsInWorktree: { _, _ in fatalError("SurfaceClient.surfaceExistsInWorktree not configured") },
+    tabID: { _, _ in fatalError("SurfaceClient.tabID not configured") },
+    selectedTabID: { _ in fatalError("SurfaceClient.selectedTabID not configured") },
+    selectedSurfaceID: { _ in fatalError("SurfaceClient.selectedSurfaceID not configured") },
+    latestUnreadNotification: { fatalError("SurfaceClient.latestUnreadNotification not configured") },
+    markNotificationRead: { _, _ in fatalError("SurfaceClient.markNotificationRead not configured") },
+    hasInflightBlockingScripts: { fatalError("SurfaceClient.hasInflightBlockingScripts not configured") },
+    terminateAllSessions: { fatalError("SurfaceClient.terminateAllSessions not configured") },
+    reapOrphanSessions: { _ in fatalError("SurfaceClient.reapOrphanSessions not configured") },
+    saveLayoutsWithAgents: { _ in fatalError("SurfaceClient.saveLayoutsWithAgents not configured") }
   )
 
-  static let testValue = TerminalClient(
+  static let testValue = SurfaceClient(
     send: { _ in },
     events: { AsyncStream { $0.finish() } },
-    tabExists: unimplemented("TerminalClient.tabExists", placeholder: true),
-    surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true),
-    surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
-    tabID: unimplemented("TerminalClient.tabID", placeholder: nil),
-    selectedTabID: unimplemented("TerminalClient.selectedTabID", placeholder: nil),
-    selectedSurfaceID: unimplemented("TerminalClient.selectedSurfaceID", placeholder: nil),
-    latestUnreadNotification: unimplemented("TerminalClient.latestUnreadNotification", placeholder: nil),
-    markNotificationRead: unimplemented("TerminalClient.markNotificationRead"),
-    hasInflightBlockingScripts: unimplemented("TerminalClient.hasInflightBlockingScripts", placeholder: false),
-    terminateAllSessions: unimplemented("TerminalClient.terminateAllSessions"),
-    reapOrphanSessions: unimplemented("TerminalClient.reapOrphanSessions"),
-    saveLayoutsWithAgents: unimplemented("TerminalClient.saveLayoutsWithAgents")
+    tabExists: unimplemented("SurfaceClient.tabExists", placeholder: true),
+    surfaceExists: unimplemented("SurfaceClient.surfaceExists", placeholder: true),
+    surfaceExistsInWorktree: unimplemented("SurfaceClient.surfaceExistsInWorktree", placeholder: true),
+    tabID: unimplemented("SurfaceClient.tabID", placeholder: nil),
+    selectedTabID: unimplemented("SurfaceClient.selectedTabID", placeholder: nil),
+    selectedSurfaceID: unimplemented("SurfaceClient.selectedSurfaceID", placeholder: nil),
+    latestUnreadNotification: unimplemented("SurfaceClient.latestUnreadNotification", placeholder: nil),
+    markNotificationRead: unimplemented("SurfaceClient.markNotificationRead"),
+    hasInflightBlockingScripts: unimplemented("SurfaceClient.hasInflightBlockingScripts", placeholder: false),
+    terminateAllSessions: unimplemented("SurfaceClient.terminateAllSessions"),
+    reapOrphanSessions: unimplemented("SurfaceClient.reapOrphanSessions"),
+    saveLayoutsWithAgents: unimplemented("SurfaceClient.saveLayoutsWithAgents")
   )
 }
 
 extension DependencyValues {
-  var terminalClient: TerminalClient {
-    get { self[TerminalClient.self] }
-    set { self[TerminalClient.self] = newValue }
+  var surfaceClient: SurfaceClient {
+    get { self[SurfaceClient.self] }
+    set { self[SurfaceClient.self] = newValue }
   }
 }

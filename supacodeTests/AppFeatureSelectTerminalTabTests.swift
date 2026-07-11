@@ -11,7 +11,7 @@ struct AppFeatureSelectTerminalTabTests {
   @Test(.dependencies, arguments: [1, 3, 9])
   func selectTerminalTabForwardsIndexToSelectedWorktree(tabNumber: Int) async {
     let worktree = makeWorktree()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -20,7 +20,7 @@ struct AppFeatureSelectTerminalTabTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -39,8 +39,8 @@ struct AppFeatureSelectTerminalTabTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in
-        Issue.record("terminalClient.send should not be called without a selected worktree")
+      $0.surfaceClient.send = { _ in
+        Issue.record("surfaceClient.send should not be called without a selected worktree")
       }
     }
 

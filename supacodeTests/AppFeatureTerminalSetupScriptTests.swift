@@ -16,7 +16,7 @@ struct AppFeatureTerminalSetupScriptTests {
       pendingSetupScript: true,
       selected: true
     )
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -25,13 +25,13 @@ struct AppFeatureTerminalSetupScriptTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
 
     await store.send(.newTerminal)
-    await store.send(.terminalEvent(.terminal(.setupScriptConsumed(worktreeID: worktree.id))))
+    await store.send(.surfaceEvent(.terminal(.setupScriptConsumed(worktreeID: worktree.id))))
     await store.receive(\.repositories.consumeSetupScript)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
@@ -48,7 +48,7 @@ struct AppFeatureTerminalSetupScriptTests {
       pendingSetupScript: false,
       selected: true
     )
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -57,7 +57,7 @@ struct AppFeatureTerminalSetupScriptTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -83,7 +83,7 @@ struct AppFeatureTerminalSetupScriptTests {
       AppFeature()
     }
 
-    await store.send(.terminalEvent(.tabCreated(worktreeID: worktree.id)))
+    await store.send(.surfaceEvent(.tabCreated(worktreeID: worktree.id)))
     #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending)
     await store.finish()
   }
@@ -104,7 +104,7 @@ struct AppFeatureTerminalSetupScriptTests {
       AppFeature()
     }
 
-    await store.send(.terminalEvent(.terminal(.setupScriptConsumed(worktreeID: worktree.id))))
+    await store.send(.surfaceEvent(.terminal(.setupScriptConsumed(worktreeID: worktree.id))))
     await store.receive(\.repositories.consumeSetupScript)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
@@ -120,7 +120,7 @@ struct AppFeatureTerminalSetupScriptTests {
       pendingSetupScript: true,
       selected: false
     )
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -129,7 +129,7 @@ struct AppFeatureTerminalSetupScriptTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -150,7 +150,7 @@ struct AppFeatureTerminalSetupScriptTests {
       pendingSetupScript: false,
       selected: false
     )
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
@@ -159,7 +159,7 @@ struct AppFeatureTerminalSetupScriptTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }

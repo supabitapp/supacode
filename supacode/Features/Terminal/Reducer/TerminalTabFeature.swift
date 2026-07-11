@@ -16,7 +16,7 @@ struct TerminalTabFeature {
     let worktreeID: Worktree.ID
 
     /// Surface IDs in this tab in split-tree order. Mirrored from
-    /// `WorktreeTerminalState`'s `onTabProjectionChanged`.
+    /// `WorktreeSurfaceState`'s `onTabProjectionChanged`.
     var surfaceIDs: [UUID] = []
     /// Focused pane in this tab. Drives the stripe-progress's per-tab source
     /// (focused tab → focused surface; non-focused → worst-of aggregate).

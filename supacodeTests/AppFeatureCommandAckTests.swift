@@ -51,7 +51,7 @@ struct AppFeatureCommandAckTests {
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .tabProjectionChanged(
           worktreeID: worktree.id,
           WorktreeTabProjection(
@@ -149,7 +149,7 @@ struct AppFeatureCommandAckTests {
     let store = TestStore(initialState: initial) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in }
+      $0.surfaceClient.send = { _ in }
     }
     store.exhaustivity = .off
 
@@ -160,7 +160,7 @@ struct AppFeatureCommandAckTests {
         .createRandomWorktreeSucceeded(created, repositoryID: "/tmp/repo", pendingID: pendingID)))
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
-    await store.send(.terminalEvent(.tabCreated(worktreeID: created.id)))
+    await store.send(.surfaceEvent(.tabCreated(worktreeID: created.id)))
     await store.finish()
 
     #expect(store.state.pendingCommandAcks.isEmpty)
@@ -330,7 +330,7 @@ struct AppFeatureCommandAckTests {
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
     await store.send(
-      .terminalEvent(.tabRemoved(worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID)))
+      .surfaceEvent(.tabRemoved(worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID)))
     )
     await store.finish()
 
@@ -348,7 +348,7 @@ struct AppFeatureCommandAckTests {
     // save so `store.finish()` isn't left with an in-flight effect.
     let store = makeStore(worktree: worktree, tabExists: true) {
       $0.continuousClock = ImmediateClock()
-      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.surfaceClient.saveLayoutsWithAgents = { _ in }
     }
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }
@@ -363,7 +363,7 @@ struct AppFeatureCommandAckTests {
     )
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
-    await store.send(.terminalEvent(.surfacesClosed(worktreeID: worktree.id, [surfaceID])))
+    await store.send(.surfaceEvent(.surfacesClosed(worktreeID: worktree.id, [surfaceID])))
     await store.finish()
 
     #expect(store.state.pendingCommandAcks.isEmpty)
@@ -467,7 +467,7 @@ struct AppFeatureCommandAckTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in }
+      $0.surfaceClient.send = { _ in }
     }
     store.exhaustivity = .off
 
@@ -540,7 +540,7 @@ struct AppFeatureCommandAckTests {
     defer { close(store.readFD) }
 
     await store.store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .surfaceCreationFailed(
           worktreeID: worktree.id, attemptedID: surfaceID, message: "Could not create the split surface."
         )))
@@ -609,10 +609,10 @@ struct AppFeatureCommandAckTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.tabExists = { _, _ in tabExists }
-      $0.terminalClient.surfaceExists = { _, _, _ in tabExists }
-      $0.terminalClient.surfaceExistsInWorktree = { _, _ in tabExists }
-      $0.terminalClient.send = { _ in }
+      $0.surfaceClient.tabExists = { _, _ in tabExists }
+      $0.surfaceClient.surfaceExists = { _, _, _ in tabExists }
+      $0.surfaceClient.surfaceExistsInWorktree = { _, _ in tabExists }
+      $0.surfaceClient.send = { _ in }
       extraDependencies(&$0)
     }
     store.exhaustivity = .off

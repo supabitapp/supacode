@@ -49,7 +49,7 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
       }
     }
   }
-  var terminalManager: WorktreeTerminalManager?
+  var surfaceManager: WorktreeSurfaceManager?
   private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -59,10 +59,10 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     // embeds agent records so badges survive relaunch (agents only emit
     // session_start once per process lifetime), and a second concurrent instance
     // overwriting the file is an accepted dev-only last-writer-wins window.
-    terminalManager?.cancelPendingLayoutSaves()
+    surfaceManager?.cancelPendingLayoutSaves()
     let agentsBySurface = appStore?.state.agentPresence.agentsBySurface() ?? [:]
-    terminalManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
-    terminalManager?.rememberSelectedWorktreeZoomOnQuit()
+    surfaceManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
+    surfaceManager?.rememberSelectedWorktreeZoomOnQuit()
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -123,7 +123,7 @@ struct SupacodeApp: App {
   @NSApplicationDelegateAdaptor(SupacodeAppDelegate.self) private var appDelegate
   @State private var ghostty: GhosttyRuntime
   @State private var ghosttyShortcuts: GhosttyShortcutManager
-  @State private var terminalManager: WorktreeTerminalManager
+  @State private var surfaceManager: WorktreeSurfaceManager
   @State private var worktreeInfoWatcher: WorktreeInfoWatcherManager
   @State private var commandKeyObserver: CommandKeyObserver
   @State private var store: StoreOf<AppFeature>
@@ -177,35 +177,35 @@ struct SupacodeApp: App {
     _ghostty = State(initialValue: runtime)
     let shortcuts = GhosttyShortcutManager(runtime: runtime)
     _ghosttyShortcuts = State(initialValue: shortcuts)
-    let terminalManager = Self.makeTerminalManager(runtime: runtime)
-    _terminalManager = State(initialValue: terminalManager)
+    let surfaceManager = Self.makeTerminalManager(runtime: runtime)
+    _surfaceManager = State(initialValue: surfaceManager)
     let worktreeInfoWatcher = WorktreeInfoWatcherManager()
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()
     _commandKeyObserver = State(initialValue: keyObserver)
     let appStore = Self.makeStore(
       initialSettings: initialSettings,
-      terminalManager: terminalManager,
+      surfaceManager: surfaceManager,
       worktreeInfoWatcher: worktreeInfoWatcher
     )
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
-    appDelegate.terminalManager = terminalManager
+    appDelegate.surfaceManager = surfaceManager
     // Source live agent badge records for incremental layout captures; the [:]
     // default would clobber badges that share a surface key on every save.
-    terminalManager.currentAgentsBySurface = { [weak appStore] in
+    surfaceManager.currentAgentsBySurface = { [weak appStore] in
       appStore?.state.agentPresence.agentsBySurface() ?? [:]
     }
-    Self.configureSocketHandlers(terminalManager: terminalManager, store: appStore)
+    Self.configureSocketHandlers(surfaceManager: surfaceManager, store: appStore)
   }
 
   @MainActor
-  private static func makeTerminalManager(runtime: GhosttyRuntime) -> WorktreeTerminalManager {
-    let terminalManager = WorktreeTerminalManager(runtime: runtime)
-    runtime.focusedSurfaceBackgroundColorProvider = { [weak terminalManager] in
-      terminalManager?.focusedSurfaceBackground
+  private static func makeTerminalManager(runtime: GhosttyRuntime) -> WorktreeSurfaceManager {
+    let surfaceManager = WorktreeSurfaceManager(runtime: runtime)
+    runtime.focusedSurfaceBackgroundColorProvider = { [weak surfaceManager] in
+      surfaceManager?.focusedSurfaceBackground
     }
-    terminalManager.saveLayoutSnapshot = { worktreeID, snapshot in
+    surfaceManager.saveLayoutSnapshot = { worktreeID, snapshot in
       @Shared(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
       $layouts.withLock { dict in
         if let snapshot {
@@ -215,68 +215,68 @@ struct SupacodeApp: App {
         }
       }
     }
-    terminalManager.loadLayoutSnapshot = { worktreeID in
+    surfaceManager.loadLayoutSnapshot = { worktreeID in
       @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
       return layouts[worktreeID.rawValue]
     }
-    return terminalManager
+    return surfaceManager
   }
 
   @MainActor
   private static func makeStore(
     initialSettings: GlobalSettings,
-    terminalManager: WorktreeTerminalManager,
+    surfaceManager: WorktreeSurfaceManager,
     worktreeInfoWatcher: WorktreeInfoWatcherManager
   ) -> StoreOf<AppFeature> {
     Store(initialState: AppFeature.State(settings: SettingsFeature.State(settings: initialSettings))) {
       AppFeature()
         .logActions()
     } withDependencies: { values in
-      values.terminalClient = TerminalClient(
+      values.surfaceClient = SurfaceClient(
         send: { command in
-          terminalManager.handleCommand(command)
+          surfaceManager.handleCommand(command)
         },
         events: {
-          terminalManager.eventStream()
+          surfaceManager.eventStream()
         },
         tabExists: { worktreeID, tabID in
-          terminalManager.tabExists(worktreeID: worktreeID, tabID: tabID)
+          surfaceManager.tabExists(worktreeID: worktreeID, tabID: tabID)
         },
         surfaceExists: { worktreeID, tabID, surfaceID in
-          terminalManager.surfaceExists(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID)
+          surfaceManager.surfaceExists(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID)
         },
         surfaceExistsInWorktree: { worktreeID, surfaceID in
-          terminalManager.surfaceExistsInWorktree(worktreeID: worktreeID, surfaceID: surfaceID)
+          surfaceManager.surfaceExistsInWorktree(worktreeID: worktreeID, surfaceID: surfaceID)
         },
         tabID: { worktreeID, surfaceID in
-          terminalManager.tabID(forWorktreeID: worktreeID, surfaceID: surfaceID)
+          surfaceManager.tabID(forWorktreeID: worktreeID, surfaceID: surfaceID)
         },
         selectedTabID: { worktreeID in
-          terminalManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
+          surfaceManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
         },
         selectedSurfaceID: { worktreeID in
-          guard let state = terminalManager.stateIfExists(for: worktreeID),
+          guard let state = surfaceManager.stateIfExists(for: worktreeID),
             let tabID = state.tabManager.selectedTabId
           else { return nil }
           return state.activeSurfaceID(for: tabID)
         },
         latestUnreadNotification: {
-          terminalManager.latestUnreadNotificationLocation()
+          surfaceManager.latestUnreadNotificationLocation()
         },
         markNotificationRead: { worktreeID, notificationID in
-          terminalManager.markNotificationRead(worktreeID: worktreeID, notificationID: notificationID)
+          surfaceManager.markNotificationRead(worktreeID: worktreeID, notificationID: notificationID)
         },
         hasInflightBlockingScripts: {
-          terminalManager.hasInflightBlockingScripts
+          surfaceManager.hasInflightBlockingScripts
         },
         terminateAllSessions: {
-          await terminalManager.terminateAllSessions()
+          await surfaceManager.terminateAllSessions()
         },
         reapOrphanSessions: { knownSurfaceIDs in
-          await terminalManager.reapOrphanSessions(knownSurfaceIDs: knownSurfaceIDs)
+          await surfaceManager.reapOrphanSessions(knownSurfaceIDs: knownSurfaceIDs)
         },
         saveLayoutsWithAgents: { agentsBySurface in
-          terminalManager.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
+          surfaceManager.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
         }
       )
       values.worktreeInfoWatcher = WorktreeInfoWatcherClient(
@@ -310,18 +310,18 @@ struct SupacodeApp: App {
 
   @MainActor
   private static func configureSocketHandlers(
-    terminalManager: WorktreeTerminalManager,
+    surfaceManager: WorktreeSurfaceManager,
     store: StoreOf<AppFeature>
   ) {
-    terminalManager.onDeeplinkCommand = { url, clientFD in
+    surfaceManager.onDeeplinkCommand = { url, clientFD in
       store.send(.deeplinkReceived(url, source: .socket, responseFD: clientFD))
     }
-    terminalManager.onQuery = { resource, params, clientFD in
+    surfaceManager.onQuery = { resource, params, clientFD in
       Self.handleQuery(
         resource: resource,
         params: params,
         clientFD: clientFD,
-        terminalManager: terminalManager,
+        surfaceManager: surfaceManager,
         store: store
       )
     }
@@ -337,7 +337,7 @@ struct SupacodeApp: App {
     resource: String,
     params: [String: String],
     clientFD: Int32,
-    terminalManager: WorktreeTerminalManager,
+    surfaceManager: WorktreeSurfaceManager,
     store: StoreOf<AppFeature>
   ) {
     let repos = store.repositories.repositories
@@ -367,7 +367,7 @@ struct SupacodeApp: App {
           clientFD: clientFD, ok: false, error: "Missing worktreeID for tab list.")
         return
       }
-      let tabs = terminalManager.listTabs(worktreeID: worktreeID)
+      let tabs = surfaceManager.listTabs(worktreeID: worktreeID)
       if tabs == nil {
         let decoded = worktreeID.removingPercentEncoding ?? worktreeID
         let worktreeExists = repos.contains { $0.worktrees.contains { $0.id.rawValue == decoded } }
@@ -384,7 +384,7 @@ struct SupacodeApp: App {
           clientFD: clientFD, ok: false, error: "Missing worktreeID/tabID for surface list.")
         return
       }
-      guard let surfaces = terminalManager.listSurfaces(worktreeID: worktreeID, tabID: tabID) else {
+      guard let surfaces = surfaceManager.listSurfaces(worktreeID: worktreeID, tabID: tabID) else {
         AgentHookSocketServer.sendCommandResponse(
           clientFD: clientFD, ok: false, error: "Worktree or tab not found.")
         return
@@ -486,7 +486,7 @@ struct SupacodeApp: App {
   var body: some Scene {
     Window("Supacode", id: WindowID.main) {
       GhosttyColorSchemeSyncView(ghostty: ghostty) {
-        ContentView(store: store, terminalManager: terminalManager)
+        ContentView(store: store, surfaceManager: surfaceManager)
           .environment(ghosttyShortcuts)
           .environment(commandKeyObserver)
       }

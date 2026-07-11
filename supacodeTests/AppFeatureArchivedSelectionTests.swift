@@ -38,7 +38,7 @@ struct AppFeatureArchivedSelectionTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in }
+      $0.surfaceClient.send = { _ in }
       $0.worktreeInfoWatcher.send = { _ in }
     }
 
@@ -98,11 +98,11 @@ struct AppFeatureArchivedSelectionTests {
       .init(id: scriptID, tint: activeTint)
     appState.repositories.sidebarItems[id: archivedWorktree.id]?.runningScripts[id: scriptID] =
       .init(id: scriptID, tint: archivedTint)
-    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let sentCommands = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sentCommands.withValue { $0.append(command) }
       }
       $0.worktreeInfoWatcher.send = { _ in }
@@ -132,11 +132,11 @@ struct AppFeatureArchivedSelectionTests {
       repositories: repositoriesState,
       settings: SettingsFeature.State()
     )
-    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let sentCommands = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sentCommands.withValue { $0.append(command) }
       }
       $0.worktreeInfoWatcher.send = { _ in }
@@ -165,11 +165,11 @@ struct AppFeatureArchivedSelectionTests {
       repositories: repositoriesState,
       settings: SettingsFeature.State()
     )
-    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let sentCommands = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sentCommands.withValue { $0.append(command) }
       }
       $0.worktreeInfoWatcher.send = { _ in }
@@ -218,12 +218,12 @@ struct AppFeatureArchivedSelectionTests {
     appState.agentPresence.records[
       AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
     ] = AgentPresenceFeature.PresenceRecord(activity: .awaitingInput, pids: [42])
-    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let sentCommands = LockIsolated<[SurfaceClient.Command]>([])
 
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sentCommands.withValue { $0.append(command) }
       }
       $0.worktreeInfoWatcher.send = { _ in }
@@ -291,22 +291,22 @@ struct AppFeatureArchivedSelectionTests {
     appState.agentPresence.records[
       AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
     ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
-    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let sentCommands = LockIsolated<[SurfaceClient.Command]>([])
     let clock = TestClock()
 
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
       $0.continuousClock = clock
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sentCommands.withValue { $0.append(command) }
       }
-      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.surfaceClient.saveLayoutsWithAgents = { _ in }
     }
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .worktreeProjectionChanged(
           worktree.id,
           WorktreeRowProjection(
@@ -349,7 +349,7 @@ struct AppFeatureArchivedSelectionTests {
       AppFeature()
     } withDependencies: {
       $0.continuousClock = clock
-      $0.terminalClient.saveLayoutsWithAgents = { agents in
+      $0.surfaceClient.saveLayoutsWithAgents = { agents in
         savedAgents.setValue(agents)
       }
     }
@@ -372,17 +372,17 @@ struct AppFeatureArchivedSelectionTests {
       settings: SettingsFeature.State()
     )
     appState.agentPresence.bySurface[surfaceID] = [.claude]
-    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let sentCommands = LockIsolated<[SurfaceClient.Command]>([])
     let clock = TestClock()
 
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
       $0.continuousClock = clock
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sentCommands.withValue { $0.append(command) }
       }
-      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.surfaceClient.saveLayoutsWithAgents = { _ in }
     }
     store.exhaustivity = .off
 
@@ -401,17 +401,17 @@ struct AppFeatureArchivedSelectionTests {
       repositories: RepositoriesFeature.State(),
       settings: SettingsFeature.State()
     )
-    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let sentCommands = LockIsolated<[SurfaceClient.Command]>([])
     let clock = TestClock()
 
     let store = TestStore(initialState: appState) {
       AppFeature()
     } withDependencies: {
       $0.continuousClock = clock
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sentCommands.withValue { $0.append(command) }
       }
-      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.surfaceClient.saveLayoutsWithAgents = { _ in }
     }
     store.exhaustivity = .off
 
@@ -439,7 +439,7 @@ struct AppFeatureArchivedSelectionTests {
       AppFeature()
     } withDependencies: {
       $0.continuousClock = clock
-      $0.terminalClient.saveLayoutsWithAgents = { _ in
+      $0.surfaceClient.saveLayoutsWithAgents = { _ in
         writeCount.withValue { $0 += 1 }
       }
     }

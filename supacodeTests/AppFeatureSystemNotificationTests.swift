@@ -131,12 +131,12 @@ struct AppFeatureSystemNotificationTests {
       $0.systemNotificationClient.send = { title, body, _ in
         sends.withValue { $0.append((title, body)) }
       }
-      $0.terminalClient.tabID = { _, _ in nil }
+      $0.surfaceClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -167,12 +167,12 @@ struct AppFeatureSystemNotificationTests {
       $0.systemNotificationClient.send = { _, _, _ in
         sends.withValue { $0 += 1 }
       }
-      $0.terminalClient.tabID = { _, _ in nil }
+      $0.surfaceClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -204,12 +204,12 @@ struct AppFeatureSystemNotificationTests {
       $0.systemNotificationClient.send = { _, _, _ in
         sends.withValue { $0 += 1 }
       }
-      $0.terminalClient.tabID = { _, _ in nil }
+      $0.surfaceClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -244,7 +244,7 @@ struct AppFeatureSystemNotificationTests {
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -278,7 +278,7 @@ struct AppFeatureSystemNotificationTests {
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -314,12 +314,12 @@ struct AppFeatureSystemNotificationTests {
       $0.notificationSoundClient.play = { _ in
         plays.withValue { $0 += 1 }
       }
-      $0.terminalClient.tabID = { _, _ in nil }
+      $0.surfaceClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -350,12 +350,12 @@ struct AppFeatureSystemNotificationTests {
         plays.withValue { $0 += 1 }
       }
       $0.systemNotificationClient.send = { _, _, _ in }
-      $0.terminalClient.tabID = { _, _ in nil }
+      $0.surfaceClient.tabID = { _, _ in nil }
     }
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -393,7 +393,7 @@ struct AppFeatureSystemNotificationTests {
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),
@@ -432,7 +432,7 @@ struct AppFeatureSystemNotificationTests {
     store.exhaustivity = .off
 
     await store.send(
-      .terminalEvent(
+      .surfaceEvent(
         .notificationReceived(
           worktreeID: "/tmp/repo/wt-1",
           surfaceID: UUID(),

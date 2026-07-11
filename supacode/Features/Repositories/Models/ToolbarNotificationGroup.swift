@@ -34,7 +34,7 @@ struct ToolbarNotificationWorktreeGroup: Identifiable, Equatable {
 extension RepositoriesFeature.State {
   /// Reads notification data off the per-row `SidebarItemFeature.State`
   /// (populated via `terminalProjectionChanged`) instead of the live
-  /// `WorktreeTerminalManager`, so this is a pure reducer-state computation.
+  /// `WorktreeSurfaceManager`, so this is a pure reducer-state computation.
   /// Cached on `toolbarNotificationGroupsCache`; views read the cache.
   func computeToolbarNotificationGroups() -> [ToolbarNotificationRepositoryGroup] {
     let repositoriesByID = Dictionary(uniqueKeysWithValues: repositories.map { ($0.id, $0) })

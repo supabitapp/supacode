@@ -4,7 +4,7 @@ import SwiftUI
 
 struct TerminalTabsView: View {
   @Bindable var manager: TerminalTabManager
-  let terminalState: WorktreeTerminalState
+  let terminalState: WorktreeSurfaceState
   let terminalsStore: StoreOf<TerminalsFeature>
   let closeTab: (TerminalTabID) -> Void
   let closeOthers: (TerminalTabID) -> Void

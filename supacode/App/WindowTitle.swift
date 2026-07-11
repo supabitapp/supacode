@@ -19,7 +19,7 @@ enum WindowTitle {
   @MainActor
   static func compute(
     repositories: RepositoriesFeature.State,
-    terminalManager: WorktreeTerminalManager
+    surfaceManager: WorktreeSurfaceManager
   ) -> String {
     switch repositories.selection {
     case .archivedWorktrees:
@@ -28,7 +28,7 @@ enum WindowTitle {
       return worktreeTitle(
         worktreeID: worktreeID,
         repositories: repositories,
-        terminalManager: terminalManager
+        surfaceManager: surfaceManager
       )
     case .failedRepository(let repositoryID):
       // A failed remote keeps a placeholder repository whose `name` is the
@@ -53,7 +53,7 @@ enum WindowTitle {
   private static func worktreeTitle(
     worktreeID: Worktree.ID,
     repositories: RepositoriesFeature.State,
-    terminalManager: WorktreeTerminalManager
+    surfaceManager: WorktreeSurfaceManager
   ) -> String {
     guard let repositoryID = repositories.repositoryID(containing: worktreeID),
       let repository = repositories.repositories[id: repositoryID]
@@ -65,7 +65,7 @@ enum WindowTitle {
       fallback: repository.name,
       repositories: repositories
     )
-    let tabTitle = terminalManager.stateIfExists(for: worktreeID).flatMap { state in
+    let tabTitle = surfaceManager.stateIfExists(for: worktreeID).flatMap { state in
       tabDisplayTitle(in: state)
     }
     return format(repo: repoTitle, tab: tabTitle)
@@ -84,7 +84,7 @@ enum WindowTitle {
   }
 
   @MainActor
-  private static func tabDisplayTitle(in state: WorktreeTerminalState) -> String? {
+  private static func tabDisplayTitle(in state: WorktreeSurfaceState) -> String? {
     guard let id = state.tabManager.selectedTabId,
       let tab = state.tabManager.tabs.first(where: { $0.id == id })
     else { return nil }

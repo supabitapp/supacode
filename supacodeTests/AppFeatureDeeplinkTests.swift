@@ -425,7 +425,7 @@ struct AppFeatureDeeplinkTests {
     @Shared(.repositorySettings(rootURL)) var persisted = .default
     $persisted.withLock { $0.scripts = [definition] }
     defer { $persisted.withLock { $0.scripts = [] } }
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
     let store = TestStore(
@@ -436,7 +436,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -475,13 +475,13 @@ struct AppFeatureDeeplinkTests {
     repositories.reconcileSidebarForTesting()
     repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -514,7 +514,7 @@ struct AppFeatureDeeplinkTests {
     defer { $settingsFile.withLock { $0.global.globalScripts = [] } }
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -523,7 +523,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -552,13 +552,13 @@ struct AppFeatureDeeplinkTests {
     repositories.reconcileSidebarForTesting()
     repositories.sidebarItems[id: worktree.id]?.runningScripts[id: globalScript.id] =
       .init(id: globalScript.id, tint: globalScript.resolvedTintColor)
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -589,7 +589,7 @@ struct AppFeatureDeeplinkTests {
     defer { $settingsFile.withLock { $0.global.globalScripts = [] } }
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -598,7 +598,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -625,7 +625,7 @@ struct AppFeatureDeeplinkTests {
     @Shared(.repositorySettings(rootURL)) var persisted = .default
     $persisted.withLock { $0.scripts = [definition] }
     defer { $persisted.withLock { $0.scripts = [] } }
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -634,7 +634,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -658,7 +658,7 @@ struct AppFeatureDeeplinkTests {
     defer { $persisted.withLock { $0.scripts = [] } }
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -667,7 +667,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -695,13 +695,13 @@ struct AppFeatureDeeplinkTests {
       .init(id: definition.id, tint: definition.resolvedTintColor)
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(repositories: repositories, settings: settings)
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -723,7 +723,7 @@ struct AppFeatureDeeplinkTests {
     @Shared(.repositorySettings(rootURL)) var persisted = .default
     $persisted.withLock { $0.scripts = [definition] }
     defer { $persisted.withLock { $0.scripts = [] } }
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(
       repositories: makeRepositoriesState(worktree: worktree),
       settings: SettingsFeature.State()
@@ -738,7 +738,7 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -875,7 +875,7 @@ struct AppFeatureDeeplinkTests {
   @Test(.dependencies) func tabDestroySkipsConfirmationWhenSettingEnabled() async {
     let worktree = makeWorktree()
     let tabUUID = UUID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
     let store = TestStore(
@@ -886,10 +886,10 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.tabExists = { _, _ in true }
+      $0.surfaceClient.tabExists = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -917,7 +917,7 @@ struct AppFeatureDeeplinkTests {
     let worktree = makeWorktree()
     let tabUUID = UUID()
     let surfaceUUID = UUID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
     let store = TestStore(
@@ -928,11 +928,11 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -980,7 +980,7 @@ struct AppFeatureDeeplinkTests {
     let worktree = makeWorktree()
     let tabUUID = UUID()
     let surfaceUUID = UUID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -989,11 +989,11 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1015,7 +1015,7 @@ struct AppFeatureDeeplinkTests {
     let worktree = makeWorktree()
     let tabUUID = UUID()
     let surfaceUUID = UUID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(
       repositories: makeRepositoriesState(worktree: worktree),
       settings: SettingsFeature.State(),
@@ -1031,11 +1031,11 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1210,7 +1210,7 @@ struct AppFeatureDeeplinkTests {
   @Test(.dependencies) func worktreeTabWithValidTabID() async {
     let worktree = makeWorktree()
     let tabUUID = UUID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -1219,16 +1219,16 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.tabExists = { _, _ in true }
+      $0.surfaceClient.tabExists = { _, _ in true }
     }
     store.exhaustivity = .off
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tab(tabID: tabUUID))))
     await store.receive(\.repositories.selectWorktree)
-    let expected = TerminalClient.Command.selectTab(worktree, tabID: TerminalTabID(rawValue: tabUUID))
+    let expected = SurfaceClient.Command.selectTab(worktree, tabID: TerminalTabID(rawValue: tabUUID))
     #expect(sent.value.contains(expected))
   }
 
@@ -1246,7 +1246,7 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func tabNewWithInputSkipsConfirmationWhenSettingEnabled() async {
     let worktree = makeWorktree()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .always
     let store = TestStore(
@@ -1257,7 +1257,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -1274,7 +1274,7 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func tabNewConfirmationAcceptedSendsTerminalCommand() async {
     let worktree = makeWorktree()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(
       repositories: makeRepositoriesState(worktree: worktree),
       settings: SettingsFeature.State(),
@@ -1283,7 +1283,7 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -1318,7 +1318,7 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in }
+      $0.surfaceClient.send = { _ in }
     }
     store.exhaustivity = .off
 
@@ -1342,7 +1342,7 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func tabNewConfirmationCancelledDoesNothing() async {
     let worktree = makeWorktree()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(
       repositories: makeRepositoriesState(worktree: worktree),
       settings: SettingsFeature.State(),
@@ -1351,7 +1351,7 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -1366,7 +1366,7 @@ struct AppFeatureDeeplinkTests {
   }
 
   @Test(.dependencies) func tabNewConfirmationWithDeletedWorktreeDoesNothing() async {
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var initialState = AppFeature.State(
       repositories: RepositoriesFeature.State(),
       settings: SettingsFeature.State(),
@@ -1380,7 +1380,7 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -1403,7 +1403,7 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func tabNewWithoutInputCreatesNewTerminal() async {
     let worktree = makeWorktree()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -1412,7 +1412,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -1746,7 +1746,7 @@ struct AppFeatureDeeplinkTests {
     let worktree = makeWorktree()
     let tabUUID = UUID()
     let surfaceUUID = UUID()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -1755,11 +1755,11 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1787,7 +1787,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.tabExists = { _, _ in false }
+      $0.surfaceClient.tabExists = { _, _ in false }
     }
     store.exhaustivity = .off
 
@@ -1807,8 +1807,8 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in false }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in false }
     }
     store.exhaustivity = .off
 
@@ -1830,8 +1830,8 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in false }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in false }
     }
     store.exhaustivity = .off
 
@@ -2032,7 +2032,7 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { _ in }
+      $0.surfaceClient.send = { _ in }
     }
     store.exhaustivity = .off
 
@@ -2055,7 +2055,7 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func cliOnlyPolicyBypassesConfirmationForSocket() async {
     let worktree = makeWorktree()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .cliOnly
     let store = TestStore(
@@ -2066,7 +2066,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -2177,8 +2177,8 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in true }
     }
     store.exhaustivity = .off
     return store
@@ -2229,7 +2229,7 @@ struct AppFeatureDeeplinkTests {
       AppFeature()
     } withDependencies: {
       $0.appLifecycleClient.terminate = { terminated.setValue(true) }
-      $0.terminalClient.hasInflightBlockingScripts = { false }
+      $0.surfaceClient.hasInflightBlockingScripts = { false }
     }
     store.exhaustivity = .off
 
@@ -2252,7 +2252,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.hasInflightBlockingScripts = { false }
+      $0.surfaceClient.hasInflightBlockingScripts = { false }
     }
     store.exhaustivity = .off
 
@@ -2272,7 +2272,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.hasInflightBlockingScripts = { true }
+      $0.surfaceClient.hasInflightBlockingScripts = { true }
     }
     store.exhaustivity = .off
 
@@ -2295,7 +2295,7 @@ struct AppFeatureDeeplinkTests {
       AppFeature()
     } withDependencies: {
       $0.appLifecycleClient.terminate = { terminated.setValue(true) }
-      $0.terminalClient.terminateAllSessions = { terminateSessionsCalled.setValue(true) }
+      $0.surfaceClient.terminateAllSessions = { terminateSessionsCalled.setValue(true) }
     }
     store.exhaustivity = .off
 
@@ -2359,7 +2359,7 @@ struct AppFeatureDeeplinkTests {
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.hasInflightBlockingScripts = { false }
+      $0.surfaceClient.hasInflightBlockingScripts = { false }
     }
     store.exhaustivity = .off
 
@@ -2392,7 +2392,7 @@ struct AppFeatureDeeplinkTests {
     } withDependencies: {
       $0.appLifecycleClient.terminate = { terminated.setValue(true) }
       // Active work, but `.never` shouldn't even consult it.
-      $0.terminalClient.hasInflightBlockingScripts = { true }
+      $0.surfaceClient.hasInflightBlockingScripts = { true }
     }
     store.exhaustivity = .off
 
@@ -2418,7 +2418,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.hasInflightBlockingScripts = { false }
+      $0.surfaceClient.hasInflightBlockingScripts = { false }
     }
     store.exhaustivity = .off
 
@@ -2441,7 +2441,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.hasInflightBlockingScripts = { false }
+      $0.surfaceClient.hasInflightBlockingScripts = { false }
     }
     store.exhaustivity = .off
 
@@ -2462,7 +2462,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.terminateAllSessions = { terminateCalled.setValue(true) }
+      $0.surfaceClient.terminateAllSessions = { terminateCalled.setValue(true) }
     }
     store.exhaustivity = .off
 
@@ -2480,7 +2480,7 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func deeplinksOnlyPolicyBypassesConfirmationForURLScheme() async {
     let worktree = makeWorktree()
-    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let sent = LockIsolated<[SurfaceClient.Command]>([])
     var settings = SettingsFeature.State()
     settings.automatedActionPolicy = .deeplinksOnly
     let store = TestStore(
@@ -2491,7 +2491,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.send = { command in
+      $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
     }
@@ -2573,7 +2573,7 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.tabExists = { _, tabID in tabID.rawValue == existingTabID }
+      $0.surfaceClient.tabExists = { _, tabID in tabID.rawValue == existingTabID }
     }
     store.exhaustivity = .off
 
@@ -2595,9 +2595,9 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.terminalClient.tabExists = { _, _ in true }
-      $0.terminalClient.surfaceExists = { _, _, _ in true }
-      $0.terminalClient.surfaceExistsInWorktree = { _, sID in sID == existingSurfaceID }
+      $0.surfaceClient.tabExists = { _, _ in true }
+      $0.surfaceClient.surfaceExists = { _, _, _ in true }
+      $0.surfaceClient.surfaceExistsInWorktree = { _, sID in sID == existingSurfaceID }
     }
     store.exhaustivity = .off
 
