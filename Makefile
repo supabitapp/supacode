@@ -131,13 +131,14 @@ run-app-dev: build-app-dev # Build then launch the isolated dev app
 	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_DEV_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
-	pkill -f "$$product/Contents/MacOS/" 2>/dev/null || true; \
+	pkill -f "$$build_dir/$$product/Contents/MacOS/" 2>/dev/null || true; \
 	open -n "$$build_dir/$$product"
 
 dev: # Watch sources; rebuild + relaunch the dev app on change
-	@pkill -f 'watchexec.*run-app-dev' || true
+	@pkill -f "watchexec.*$(CURRENT_MAKEFILE_DIR)" || true
 	mise exec -- watchexec --restart \
-		--watch supacode --watch supacode-cli --watch SupacodeSettingsShared --watch SupacodeSettingsFeature \
+		--watch "$(CURRENT_MAKEFILE_DIR)/supacode" --watch "$(CURRENT_MAKEFILE_DIR)/supacode-cli" \
+		--watch "$(CURRENT_MAKEFILE_DIR)/SupacodeSettingsShared" --watch "$(CURRENT_MAKEFILE_DIR)/SupacodeSettingsFeature" \
 		--exts swift,plist,json,svg,xcconfig \
 		-- $(MAKE) run-app-dev
 
