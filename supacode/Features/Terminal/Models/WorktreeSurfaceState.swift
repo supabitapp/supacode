@@ -1286,12 +1286,6 @@ final class WorktreeSurfaceState {
     pendingSetupScript = false
 
     for (index, tabSnapshot) in snapshot.tabs.enumerated() {
-      // Kind dispatch on the persisted leaf; a new snapshot kind adds a case.
-      let firstLeaf: TerminalLayoutSnapshot.TerminalSurfaceSnapshot
-      switch tabSnapshot.layout.firstLeaf {
-      case .terminal(let leaf): firstLeaf = leaf
-      }
-      let workingDir = firstLeaf.workingDirectory.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
       let context: ghostty_surface_context_e =
         index == 0 ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB
       let tabId = tabManager.createTab(
@@ -1304,14 +1298,7 @@ final class WorktreeSurfaceState {
       if let customTitle = tabSnapshot.customTitle {
         tabManager.setCustomTitle(tabId, title: customTitle)
       }
-      let surface = createSurface(
-        tabId: tabId,
-        initialInput: nil,
-        workingDirectoryOverride: workingDir,
-        inheritingFromSurfaceId: nil,
-        context: context,
-        surfaceID: firstLeaf.id,
-      )
+      let surface = makeSurface(from: tabSnapshot.layout.firstLeaf, tabId: tabId, context: context)
       let tree = SplitTree<SurfaceView>(view: surface)
       setTree(tree, for: tabId)
       setFocusedSurface(surface.id, for: tabId)
@@ -1368,18 +1355,11 @@ final class WorktreeSurfaceState {
 
   private func restoreLayoutNode(
     _ node: TerminalLayoutSnapshot.LayoutNode,
-    anchor: GhosttySurfaceView,
+    anchor: SurfaceView,
     tabId: TerminalTabID
   ) {
     guard case .split(let split) = node else { return }
 
-    // Create the right child by splitting the anchor. Kind dispatch on the
-    // persisted leaf; a new snapshot kind adds a case.
-    let rightLeaf: TerminalLayoutSnapshot.TerminalSurfaceSnapshot
-    switch split.right.firstLeaf {
-    case .terminal(let leaf): rightLeaf = leaf
-    }
-    let rightWorkingDir = rightLeaf.workingDirectory.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
     let direction: SplitTree<SurfaceView>.NewDirection =
       split.direction == .horizontal ? .right : .down
 
@@ -1388,9 +1368,8 @@ final class WorktreeSurfaceState {
         at: anchor,
         direction: direction,
         ratio: split.ratio,
-        workingDirectory: rightWorkingDir,
+        leaf: split.right.firstLeaf,
         tabId: tabId,
-        surfaceID: rightLeaf.id,
       )
     else {
       layoutLogger.warning("Skipping subtree restoration for tab \(tabId.rawValue)")
@@ -1403,31 +1382,49 @@ final class WorktreeSurfaceState {
   }
 
   private func createRestorationSplit(
-    at anchor: GhosttySurfaceView,
+    at anchor: SurfaceView,
     direction: SplitTree<SurfaceView>.NewDirection,
     ratio: Double,
-    workingDirectory: URL?,
-    tabId: TerminalTabID,
-    surfaceID: UUID? = nil
-  ) -> GhosttySurfaceView? {
+    leaf: TerminalLayoutSnapshot.SurfaceSnapshot,
+    tabId: TerminalTabID
+  ) -> SurfaceView? {
     guard var tree = trees[tabId] else { return nil }
-    let newSurface = createSurface(
-      tabId: tabId,
-      initialInput: nil,
-      workingDirectoryOverride: workingDirectory,
-      inheritingFromSurfaceId: anchor.id,
-      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
-      surfaceID: surfaceID,
-    )
+    let newSurface = makeSurface(
+      from: leaf, tabId: tabId, context: GHOSTTY_SURFACE_CONTEXT_SPLIT, inheritingFrom: anchor.id)
     do {
       tree = try tree.inserting(view: newSurface, at: anchor, direction: direction, ratio: ratio)
       setTree(tree, for: tabId)
       return newSurface
     } catch {
       layoutLogger.warning("Failed to restore split for tab \(tabId.rawValue): \(error)")
-      newSurface.closeSurface()
+      switch newSurface.content {
+      case .terminal(let surface): surface.closeSurface()
+      }
       discardSurfaceBookkeeping(for: newSurface.id)
       return nil
+    }
+  }
+
+  /// Materializes the restored view for one persisted leaf. The single kind
+  /// dispatch for snapshot restore: a future snapshot kind adds a case here
+  /// and both the first-leaf and split-restore paths pick it up.
+  private func makeSurface(
+    from leaf: TerminalLayoutSnapshot.SurfaceSnapshot,
+    tabId: TerminalTabID,
+    context: ghostty_surface_context_e,
+    inheritingFrom anchorID: UUID? = nil
+  ) -> SurfaceView {
+    switch leaf {
+    case .terminal(let terminal):
+      let workingDir = terminal.workingDirectory.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
+      return createSurface(
+        tabId: tabId,
+        initialInput: nil,
+        workingDirectoryOverride: workingDir,
+        inheritingFromSurfaceId: anchorID,
+        context: context,
+        surfaceID: terminal.id,
+      )
     }
   }
 
