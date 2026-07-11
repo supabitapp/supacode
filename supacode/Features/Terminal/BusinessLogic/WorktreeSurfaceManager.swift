@@ -137,6 +137,10 @@ final class WorktreeSurfaceManager {
   var onDeeplinkCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI via socket. Parameters: resource name, params, client FD.
   var onQuery: ((String, [String: String], Int32) -> Void)?
+  /// Terminal-kind command handling. The neutral core only routes to it and
+  /// never interprets the kind-scoped payload; a future kind adds a sibling.
+  /// Lazy solely for the `self` back-reference; there is no deferred-work intent.
+  @ObservationIgnored private lazy var terminalCommands = TerminalSurfaceManager(core: self)
 
   init<C: Clock<Duration>>(
     runtime: GhosttyRuntime,
@@ -263,47 +267,16 @@ final class WorktreeSurfaceManager {
   }
 
   func handleCommand(_ command: SurfaceClient.Command) {
-    // Kind-scoped commands dispatch straight to their kind's handler; the
+    // Kind-scoped commands dispatch straight to their kind's manager; the
     // neutral handlers below never see them.
     if case .terminal(let worktree, let surfaceCommand) = command {
-      handleTerminalSurfaceCommand(surfaceCommand, in: worktree)
+      terminalCommands.handle(surfaceCommand, in: worktree)
       return
     }
     if handleTabCommand(command) {
       return
     }
     handleManagementCommand(command)
-  }
-
-  /// Terminal-kind command handler. A future kind adds a sibling handler and
-  /// one dispatch arm in `handleCommand`; nothing here is shared.
-  ///
-  /// Resolve `state(for:)` per arm, never up front: the stop arms promise not
-  /// to mint state for a worktree that has none (`stopBlockingScripts` goes
-  /// through `stateIfExists`), and a hoisted lookup would break that promise.
-  private func handleTerminalSurfaceCommand(_ command: TerminalSurfaceCommand, in worktree: Worktree) {
-    switch command {
-    case .runBlockingScript(let kind, let script):
-      _ = state(for: worktree).runBlockingScript(kind: kind, script)
-    case .stopRunScript:
-      stopBlockingScripts(in: worktree) { $0.stopRunScripts() }
-    case .stopScript(let definitionID):
-      stopBlockingScripts(in: worktree) { $0.stopScript(definitionID: definitionID) }
-    case .performBindingAction(let action):
-      state(for: worktree).performBindingActionOnFocusedSurface(action)
-    case .performBindingActionOnSurface(let surfaceID, let action):
-      state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
-    case .startSearch:
-      state(for: worktree).performBindingActionOnFocusedSurface("start_search")
-    case .searchSelection:
-      state(for: worktree).performBindingActionOnFocusedSurface("search_selection")
-    case .navigateSearchNext:
-      state(for: worktree).navigateSearchOnFocusedSurface(.next)
-    case .navigateSearchPrevious:
-      state(for: worktree).navigateSearchOnFocusedSurface(.previous)
-    case .endSearch:
-      state(for: worktree).performBindingActionOnFocusedSurface("end_search")
-    }
   }
 
   // swiftlint:disable:next cyclomatic_complexity
@@ -1298,23 +1271,10 @@ final class WorktreeSurfaceManager {
     emit(.terminal(.hasAnySurfaceChanged(hasAny: hasAny)))
   }
 
-  /// Runs `stop` on the worktree's existing terminal state, never minting one.
-  /// A miss with a live state means the caller acted on a stale mirror, so force
-  /// a fresh projection emit past the dedupe cache to reconcile it (#573).
-  private func stopBlockingScripts(in worktree: Worktree, using stop: (WorktreeSurfaceState) -> Bool) {
-    guard let state = stateIfExists(for: worktree.id) else {
-      terminalLogger.warning("Stop requested for \(worktree.id) with no terminal state")
-      return
-    }
-    guard !stop(state) else { return }
-    terminalLogger.warning("Stop requested for \(worktree.id) with no matching script; re-emitting projection")
-    forceEmitProjection(for: worktree.id)
-  }
-
   /// Re-delivers a worktree's projection past both dedupe layers, so a row that
   /// diverged from the cache (a reducer-side archived-strip) is reconciled even
   /// when the projection value is unchanged (#573).
-  private func forceEmitProjection(for id: Worktree.ID) {
+  func forceEmitProjection(for id: Worktree.ID) {
     lastEmittedProjections.removeValue(forKey: id)
     lastEmittedCoalescable.removeValue(forKey: .worktreeProjection(id))
     emitProjection(for: id)
