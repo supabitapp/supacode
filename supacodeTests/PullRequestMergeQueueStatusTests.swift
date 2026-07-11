@@ -23,8 +23,13 @@ struct PullRequestMergeQueueStatusTests {
 
     #expect(status?.position == 3)
     #expect(status?.positionLabel == "Position 3")
-    #expect(status?.estimatedTimeLabel == "~10 min left")
-    #expect(status?.detail == "Position 3 · ~10 min left")
+    #expect(status?.estimatedTimeLabel == "~10 \(Self.abbreviatedMinutes) left")
+    #expect(status?.detail == "Position 3 · ~10 \(Self.abbreviatedMinutes) left")
+  }
+
+  // macOS 26.5 changed Duration.formatted's abbreviated plural minutes from "min" to "mins".
+  private static var abbreviatedMinutes: String {
+    if #available(macOS 26.5, *) { return "mins" } else { return "min" }
   }
 
   @Test func dropsEstimatedTimeWhenZeroOrMissing() {
