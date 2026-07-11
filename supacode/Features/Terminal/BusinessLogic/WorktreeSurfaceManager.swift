@@ -277,29 +277,32 @@ final class WorktreeSurfaceManager {
 
   /// Terminal-kind command handler. A future kind adds a sibling handler and
   /// one dispatch arm in `handleCommand`; nothing here is shared.
+  ///
+  /// Resolve `state(for:)` per arm, never up front: the stop arms promise not
+  /// to mint state for a worktree that has none (`stopBlockingScripts` goes
+  /// through `stateIfExists`), and a hoisted lookup would break that promise.
   private func handleTerminalSurfaceCommand(_ command: TerminalSurfaceCommand, in worktree: Worktree) {
-    let terminal = state(for: worktree)
     switch command {
     case .runBlockingScript(let kind, let script):
-      _ = terminal.runBlockingScript(kind: kind, script)
+      _ = state(for: worktree).runBlockingScript(kind: kind, script)
     case .stopRunScript:
       stopBlockingScripts(in: worktree) { $0.stopRunScripts() }
     case .stopScript(let definitionID):
       stopBlockingScripts(in: worktree) { $0.stopScript(definitionID: definitionID) }
     case .performBindingAction(let action):
-      terminal.performBindingActionOnFocusedSurface(action)
+      state(for: worktree).performBindingActionOnFocusedSurface(action)
     case .performBindingActionOnSurface(let surfaceID, let action):
-      terminal.performBindingAction(action, onSurfaceID: surfaceID)
+      state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .startSearch:
-      terminal.performBindingActionOnFocusedSurface("start_search")
+      state(for: worktree).performBindingActionOnFocusedSurface("start_search")
     case .searchSelection:
-      terminal.performBindingActionOnFocusedSurface("search_selection")
+      state(for: worktree).performBindingActionOnFocusedSurface("search_selection")
     case .navigateSearchNext:
-      terminal.navigateSearchOnFocusedSurface(.next)
+      state(for: worktree).navigateSearchOnFocusedSurface(.next)
     case .navigateSearchPrevious:
-      terminal.navigateSearchOnFocusedSurface(.previous)
+      state(for: worktree).navigateSearchOnFocusedSurface(.previous)
     case .endSearch:
-      terminal.performBindingActionOnFocusedSurface("end_search")
+      state(for: worktree).performBindingActionOnFocusedSurface("end_search")
     }
   }
 
