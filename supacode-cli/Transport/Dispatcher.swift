@@ -48,7 +48,16 @@ nonisolated enum Dispatcher {
   private static func launchApp() throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = ["-a", "Supacode"]
+    // Launch the app bundle this CLI is embedded in, so the dev build's CLI
+    // cold-launches the dev app. A bare binary (not inside an .app) falls
+    // back to the installed prod app.
+    if let executableURL = Bundle.main.executableURL,
+      let bundleURL = SocketDiscovery.enclosingAppBundle(of: executableURL.resolvingSymlinksInPath())
+    {
+      process.arguments = [bundleURL.path]
+    } else {
+      process.arguments = ["-a", "Supacode"]
+    }
     let stderrPipe = Pipe()
     process.standardError = stderrPipe
     try process.run()

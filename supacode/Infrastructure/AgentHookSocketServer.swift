@@ -38,7 +38,9 @@ final class AgentHookSocketServer {
     } else {
       let uid = getuid()
       let pid = ProcessInfo.processInfo.processIdentifier
-      directory = "/tmp/supacode-\(uid)"
+      // The dev build binds under its own directory so each build's CLI only
+      // ever discovers its own app (see SocketDiscovery in supacode-cli).
+      directory = SupacodePaths.isDevelopmentBuild ? "/tmp/supacode-dev-\(uid)" : "/tmp/supacode-\(uid)"
       path = "\(directory)/pid-\(pid)"
     }
 

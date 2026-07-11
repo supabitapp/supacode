@@ -258,9 +258,10 @@ let project = Project(
       bundleId: "app.supabit.supacode.cli",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
-      buildableFolders: [
-        "supacode-cli",
-      ],
+      // Explicit glob, not a buildable folder: supacodeTests compiles
+      // SocketDiscovery.swift too, and a file inside a buildable folder can't
+      // be added to a second target.
+      sources: ["supacode-cli/**"],
       dependencies: [
         .external(name: "ArgumentParser"),
       ],
@@ -357,6 +358,10 @@ let project = Project(
           "supacodeTests/**",
           excluding: featureTestSources + gitTestSources + terminalTestSources
         ),
+        // Under test by SocketDiscoveryTests: the CLI is a commandLineTool, so
+        // its module can't be imported; compile the sources in directly.
+        "supacode-cli/Transport/SocketDiscovery.swift",
+        "supacode-cli/Helpers/EnvironmentDefaults.swift",
       ]
     ),
     testBundle(
