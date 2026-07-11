@@ -21,8 +21,10 @@ struct AppFeatureSplitTerminalTests {
   }
 
   @Test(.dependencies, arguments: TerminalSplitMenuDirection.allCases)
-  func splitTerminalForwardsGhosttyBinding(direction: TerminalSplitMenuDirection) async {
+  func splitTerminalDispatchesAdjacentCreateAtFocusedSurface(direction: TerminalSplitMenuDirection) async {
     let worktree = makeWorktree()
+    let tabID = TerminalTabID()
+    let surfaceID = UUID()
     let sent = LockIsolated<[SurfaceClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -32,6 +34,8 @@ struct AppFeatureSplitTerminalTests {
     ) {
       AppFeature()
     } withDependencies: {
+      $0.surfaceClient.selectedTabID = { _ in tabID }
+      $0.surfaceClient.selectedSurfaceID = { _ in surfaceID }
       $0.surfaceClient.send = { command in
         sent.withValue { $0.append(command) }
       }
@@ -39,7 +43,33 @@ struct AppFeatureSplitTerminalTests {
 
     await store.send(.splitTerminal(direction))
     await store.finish()
-    #expect(sent.value == [.terminal(worktree, .performBindingAction(direction.ghosttyBinding))])
+    #expect(
+      sent.value == [
+        .create(
+          worktree, spec: .terminal(),
+          placement: .adjacent(tabID: tabID, anchor: surfaceID, direction: direction.placementDirection))
+      ])
+  }
+
+  @Test(.dependencies) func splitTerminalWithoutFocusedSurfaceIsNoop() async {
+    let worktree = makeWorktree()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.surfaceClient.selectedTabID = { _ in nil }
+      $0.surfaceClient.selectedSurfaceID = { _ in nil }
+      $0.surfaceClient.send = { _ in
+        Issue.record("surfaceClient.send should not be called without a focused surface")
+      }
+    }
+
+    await store.send(.splitTerminal(.right))
+    await store.finish()
   }
 
   @Test(.dependencies) func splitTerminalWithoutSelectionIsNoop() async {

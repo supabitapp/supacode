@@ -32,7 +32,13 @@ struct WorktreeTerminalTabsView: View {
           terminalsStore: terminalsStore,
           createTab: createTab,
           split: { direction in
-            _ = state.performBindingActionOnFocusedSurface(direction.ghosttyBinding)
+            guard let tabID = state.tabManager.selectedTabId,
+              let surfaceID = state.activeSurfaceID(for: tabID)
+            else { return }
+            manager.handleCommand(
+              .create(
+                worktree, spec: .terminal(),
+                placement: .adjacent(tabID: tabID, anchor: surfaceID, direction: direction.placementDirection)))
           },
           canSplit: state.tabManager.selectedTabId.flatMap { state.activeSurfaceID(for: $0) } != nil,
           closeTab: { tabId in

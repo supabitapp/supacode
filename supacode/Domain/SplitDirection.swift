@@ -37,6 +37,18 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
     }
   }
 
+  /// The neutral placement this menu direction dispatches through the
+  /// surface-creation verb. `ghosttyBinding` above stays purely for shortcut
+  /// display, mirroring the user's Ghostty keybinding on the menu item.
+  var placementDirection: SurfacePlacement.Direction {
+    switch self {
+    case .right: .right
+    case .left: .left
+    case .down: .down
+    case .up: .up
+    }
+  }
+
   var systemImage: String {
     switch self {
     case .right: "rectangle.righthalf.inset.filled"

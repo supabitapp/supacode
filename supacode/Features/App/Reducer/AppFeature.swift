@@ -718,8 +718,18 @@ struct AppFeature {
         else {
           return .none
         }
+        // Capture the anchor synchronously: an async dispatch would race
+        // AppKit focus reshuffle (e.g. a dismissing palette) for the target.
+        guard let tabID = surfaceClient.selectedTabID(worktree.id),
+          let surfaceID = surfaceClient.selectedSurfaceID(worktree.id)
+        else {
+          return .none
+        }
         return .run { _ in
-          await surfaceClient.send(.terminal(worktree, .performBindingAction(direction.ghosttyBinding)))
+          await surfaceClient.send(
+            .create(
+              worktree, spec: .terminal(),
+              placement: .adjacent(tabID: tabID, anchor: surfaceID, direction: direction.placementDirection)))
         }
 
       case .jumpToLatestUnread:
