@@ -33,7 +33,8 @@ struct SurfaceClient {
     ) -> Void
 
   enum Command: Equatable {
-    case createTab(Worktree, spec: SurfaceSpec, id: UUID? = nil)
+    /// Materialize a new leaf: `spec` says what kind, `placement` says where.
+    case create(Worktree, spec: SurfaceSpec, placement: SurfacePlacement, id: UUID? = nil)
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case closeFocusedTab(Worktree)
     case closeFocusedSurface(Worktree)
@@ -41,9 +42,6 @@ struct SurfaceClient {
     case selectTab(Worktree, tabID: TerminalTabID)
     case selectTabAtIndex(Worktree, index: Int)
     case focusSurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, input: String? = nil)
-    case splitSurface(
-      Worktree, tabID: TerminalTabID, surfaceID: UUID, direction: SplitDirection,
-      spec: SurfaceSpec, id: UUID? = nil)
     case destroyTab(Worktree, tabID: TerminalTabID)
     case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID)
     case beginTabRename(Worktree, tabID: TerminalTabID? = nil)

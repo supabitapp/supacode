@@ -1,8 +1,8 @@
 import Foundation
 
 /// Value-level "what to create" descriptor for a new surface, distinct from the
-/// view-level `SurfaceContent`. Creation verbs (`createTab`, `splitSurface`)
-/// carry one of these so "which kind" is data instead of verb spelling; adding
+/// view-level `SurfaceContent`. The creation verb carries one of these (plus a
+/// `SurfacePlacement`) so "which kind" is data instead of verb spelling; adding
 /// a surface kind adds a case here and the compiler forces every dispatch
 /// switch to handle it.
 enum SurfaceSpec: Equatable, Sendable {

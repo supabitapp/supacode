@@ -695,7 +695,8 @@ struct AppFeature {
         let shouldRunSetupScript =
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
-          await surfaceClient.send(.createTab(worktree, spec: .terminal(runSetupScriptIfNew: shouldRunSetupScript)))
+          await surfaceClient.send(
+            .create(worktree, spec: .terminal(runSetupScriptIfNew: shouldRunSetupScript), placement: .tab))
         }
 
       case .selectTerminalTabAtIndex(let tabNumber):
@@ -1641,9 +1642,10 @@ struct AppFeature {
       state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
     return .run { _ in
       await surfaceClient.send(
-        .createTab(
+        .create(
           worktree,
-          spec: .terminal(input: "$EDITOR", runSetupScriptIfNew: shouldRunSetupScript)
+          spec: .terminal(input: "$EDITOR", runSetupScriptIfNew: shouldRunSetupScript),
+          placement: .tab
         )
       )
     }
@@ -2018,7 +2020,7 @@ struct AppFeature {
       }
       guard let input, !input.isEmpty else {
         let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
-          .createTab(worktree, spec: .terminal(runSetupScriptIfNew: true), id: id)
+          .create(worktree, spec: .terminal(runSetupScriptIfNew: true), placement: .tab, id: id)
         }
         return awaitingCompletion(
           effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2030,7 +2032,7 @@ struct AppFeature {
           message: .command(input), action: action, state: &state)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
-        .createTab(worktree, spec: .terminal(input: input), id: id)
+        .create(worktree, spec: .terminal(input: input), placement: .tab, id: id)
       }
       return awaitingCompletion(
         effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2095,9 +2097,12 @@ struct AppFeature {
           message: .command(input), action: action, state: &state)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
-        .splitSurface(
-          worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
-          direction: direction, spec: .terminal(input: input), id: id)
+        .create(
+          worktree, spec: .terminal(input: input),
+          placement: .adjacent(
+            tabID: TerminalTabID(rawValue: tabID), anchor: surfaceID,
+            direction: direction == .vertical ? .down : .right),
+          id: id)
       }
       return awaitingCompletion(
         effect, match: id.map { .surfaceSplit(worktreeID: worktreeID, surfaceID: $0) },

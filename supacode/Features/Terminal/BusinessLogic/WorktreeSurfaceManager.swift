@@ -309,18 +309,8 @@ final class WorktreeSurfaceManager {
   // swiftlint:disable:next cyclomatic_complexity
   private func handleTabCommand(_ command: SurfaceClient.Command) -> Bool {
     switch command {
-    case .createTab(let worktree, let spec, let id):
-      switch spec {
-      case .terminal(let terminalSpec):
-        Task {
-          createTabAsync(
-            in: worktree,
-            runSetupScriptIfNew: terminalSpec.runSetupScriptIfNew,
-            initialInput: terminalSpec.input,
-            tabID: id
-          )
-        }
-      }
+    case .create(let worktree, let spec, let placement, let id):
+      handleCreate(in: worktree, spec: spec, placement: placement, id: id)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
@@ -346,31 +336,6 @@ final class WorktreeSurfaceManager {
       if let input, !input.isEmpty {
         terminal.focusAndInsertText(input + "\r")
       }
-    case .splitSurface(let worktree, let tabID, let surfaceID, let direction, let spec, let id):
-      let terminal = state(for: worktree)
-      terminal.selectTab(tabID)
-      let ghosttyDirection: GhosttySplitAction.NewDirection = direction == .vertical ? .down : .right
-      let initialInput: String?
-      switch spec {
-      case .terminal(let terminalSpec):
-        initialInput = BlockingScriptRunner.makeCommandInput(script: terminalSpec.input ?? "")
-      }
-      let splitSucceeded = terminal.performSplitAction(
-        .newSplit(direction: ghosttyDirection),
-        for: surfaceID,
-        newSurfaceID: id,
-        initialInput: initialInput
-      )
-      guard splitSucceeded else {
-        terminalLogger.warning("splitSurface: failed for surface \(surfaceID) in worktree \(worktree.id).")
-        if let id {
-          emit(
-            .surfaceCreationFailed(
-              worktreeID: worktree.id, attemptedID: id,
-              message: "Could not create the split surface."))
-        }
-        break
-      }
     case .destroyTab(let worktree, let tabID):
       let terminal = state(for: worktree)
       guard terminal.tabManager.tabs.contains(where: { $0.id == tabID }) else {
@@ -394,6 +359,62 @@ final class WorktreeSurfaceManager {
       return false
     }
     return true
+  }
+
+  /// One creation path for every spec × placement combination. A future
+  /// surface kind adds an arm to the inner spec switches; the placement
+  /// handling is kind-agnostic and stays untouched.
+  private func handleCreate(in worktree: Worktree, spec: SurfaceSpec, placement: SurfacePlacement, id: UUID?) {
+    switch placement {
+    case .tab:
+      switch spec {
+      case .terminal(let terminalSpec):
+        // Async: tab creation reads the repository setup script off-main first.
+        Task {
+          createTabAsync(
+            in: worktree,
+            runSetupScriptIfNew: terminalSpec.runSetupScriptIfNew,
+            initialInput: terminalSpec.input,
+            tabID: id
+          )
+        }
+      }
+    case .adjacent(let tabID, let surfaceID, let direction):
+      let terminal = state(for: worktree)
+      terminal.selectTab(tabID)
+      let initialInput: String?
+      switch spec {
+      case .terminal(let terminalSpec):
+        initialInput = BlockingScriptRunner.makeCommandInput(script: terminalSpec.input ?? "")
+      }
+      let splitSucceeded = terminal.performSplitAction(
+        .newSplit(direction: Self.ghosttyDirection(for: direction)),
+        for: surfaceID,
+        newSurfaceID: id,
+        initialInput: initialInput
+      )
+      guard splitSucceeded else {
+        terminalLogger.warning("create: split failed for surface \(surfaceID) in worktree \(worktree.id).")
+        if let id {
+          emit(
+            .surfaceCreationFailed(
+              worktreeID: worktree.id, attemptedID: id,
+              message: "Could not create the split surface."))
+        }
+        return
+      }
+    }
+  }
+
+  /// The neutral placement direction stays Ghostty-free; the mapping onto the
+  /// terminal's split primitive lives here at the dispatch boundary.
+  private static func ghosttyDirection(for direction: SurfacePlacement.Direction) -> GhosttySplitAction.NewDirection {
+    switch direction {
+    case .right: .right
+    case .left: .left
+    case .down: .down
+    case .up: .top
+    }
   }
 
   private func setImagePasteAgents(_ agents: Set<SkillAgent>, onSurfaceID surfaceID: UUID) {
@@ -426,8 +447,8 @@ final class WorktreeSurfaceManager {
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .ensureInitialTab, .closeFocusedTab, .closeFocusedSurface, .selectTab,
-      .selectTabAtIndex, .focusSurface, .splitSurface, .destroyTab, .destroySurface,
+    case .create, .ensureInitialTab, .closeFocusedTab, .closeFocusedSurface, .selectTab,
+      .selectTabAtIndex, .focusSurface, .destroyTab, .destroySurface,
       .beginTabRename, .terminal:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }

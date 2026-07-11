@@ -1005,7 +1005,7 @@ struct AppFeatureDeeplinkTests {
             tabID: tabUUID, surfaceID: surfaceUUID, direction: .vertical, input: nil, id: nil))))
     #expect(store.state.deeplinkInputConfirmation == nil)
     let hasSplit = sent.value.contains(where: {
-      if case .splitSurface = $0 { return true }
+      if case .create(_, _, .adjacent, _) = $0 { return true }
       return false
     })
     #expect(hasSplit)
@@ -1056,7 +1056,7 @@ struct AppFeatureDeeplinkTests {
       }
     }
     let hasSplit = sent.value.contains(where: {
-      if case .splitSurface = $0 { return true }
+      if case .create(_, _, .adjacent, _) = $0 { return true }
       return false
     })
     #expect(hasSplit)
@@ -1267,7 +1267,7 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.deeplinkInputConfirmation == nil)
     #expect(
       sent.value.contains(
-        .createTab(worktree, spec: .terminal(input: "echo hello"), id: nil)
+        .create(worktree, spec: .terminal(input: "echo hello"), placement: .tab, id: nil)
       )
     )
   }
@@ -1302,7 +1302,7 @@ struct AppFeatureDeeplinkTests {
     }
     #expect(
       sent.value.contains(
-        .createTab(worktree, spec: .terminal(input: "echo hello"), id: nil)
+        .create(worktree, spec: .terminal(input: "echo hello"), placement: .tab, id: nil)
       )
     )
     await store.finish()
@@ -1420,7 +1420,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tabNew(input: nil, id: nil))))
     let hasCreateTab = sent.value.contains(where: {
-      if case .createTab(let target, _, _) = $0 { return target.id == worktree.id }
+      if case .create(let target, _, _, _) = $0 { return target.id == worktree.id }
       return false
     })
     #expect(hasCreateTab)
@@ -2081,7 +2081,7 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.deeplinkInputConfirmation == nil)
     #expect(
       sent.value.contains(
-        .createTab(worktree, spec: .terminal(input: "echo test"), id: nil)
+        .create(worktree, spec: .terminal(input: "echo test"), placement: .tab, id: nil)
       )
     )
   }
@@ -2506,7 +2506,7 @@ struct AppFeatureDeeplinkTests {
     #expect(store.state.deeplinkInputConfirmation == nil)
     #expect(
       sent.value.contains(
-        .createTab(worktree, spec: .terminal(input: "echo test"), id: nil)
+        .create(worktree, spec: .terminal(input: "echo test"), placement: .tab, id: nil)
       )
     )
   }
