@@ -22,6 +22,12 @@ nonisolated enum AgentHookCommandOwnership {
     {
       return true
     }
+    // Early Grok presence helper installed under ~/.grok/hooks/bin/ without
+    // the ownership sentinel. Fingerprint the helper basename so install
+    // prunes dual legacy+composite hook maps left from pre-envelope Grok.
+    if command.contains(AgentHookSettingsCommand.legacyGrokOSCHelperMarker) {
+      return true
+    }
     // Pre-envelope hooks carry the verbatim 4-var presence-guard but
     // neither the sentinel nor the CLI shim. The guard is a Supacode-
     // specific fingerprint: a user following the documented single-var

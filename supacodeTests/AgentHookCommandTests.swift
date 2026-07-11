@@ -202,6 +202,15 @@ struct AgentHookCommandTests {
     #expect(AgentHookCommandOwnership.isLegacyCommand(legacy))
   }
 
+  @Test func legacyGrokOSCHelperCommandIsRecognized() {
+    // Early Grok presence used ~/.grok/hooks/bin/supacode-osc.sh without the
+    // ownership sentinel. Install must prune it so composite+env hooks replace
+    // dual legacy+managed maps rather than stacking beside them.
+    let legacy = "/Users/me/.grok/hooks/bin/supacode-osc.sh busy"
+    #expect(AgentHookCommandOwnership.isLegacyCommand(legacy))
+    #expect(AgentHookCommandOwnership.isSupacodeManagedCommand(legacy))
+  }
+
   @Test func managedCommandSilencesStdoutAndStderr() {
     // Codex parses SessionStart hook stdout as structured JSON output and
     // rejects anything that doesn't match its hook output schema, so the OSC

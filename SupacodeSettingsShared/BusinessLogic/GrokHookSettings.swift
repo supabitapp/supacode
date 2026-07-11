@@ -1,7 +1,5 @@
 import Foundation
 
-private nonisolated let grokHookSettingsLogger = SupaLogger("Settings")
-
 nonisolated enum GrokHookSettings {
   /// Canonical hook map for Grok. One composite command per (event,
   /// matcher) slot keeps the prune-and-replace cycle idempotent.
@@ -15,19 +13,11 @@ nonisolated enum GrokHookSettings {
   /// True when any Supacode-managed Grok hook is missing the canonical env
   /// passthrough map. Grok hook subprocesses do not inherit terminal env, so a
   /// missing env map means presence badges silently no-op.
-  static func managedHooksLackEnvPassthrough(at settingsURL: URL) -> Bool {
-    let root: JSONValue
-    do {
-      let data = try Data(contentsOf: settingsURL)
-      root = try JSONDecoder().decode(JSONValue.self, from: data)
-    } catch {
-      // Reached only if the file changed between the base installer's read and
-      // this one; log and defer to that read's `.installed` verdict.
-      grokHookSettingsLogger.warning(
-        "Failed to inspect Grok hook env passthrough at \(settingsURL.path): \(error)")
-      return false
-    }
-    guard let hooksObject = root.objectValue?["hooks"]?.objectValue else { return false }
+  ///
+  /// Operates on an already-parsed settings root (same snapshot as the
+  /// command-set check) so install-state never re-reads disk for this gate.
+  static func managedHooksLackEnvPassthrough(in settingsObject: [String: JSONValue]) -> Bool {
+    guard let hooksObject = settingsObject["hooks"]?.objectValue else { return false }
     let expected = AgentHookSettingsCommand.grokHookEnvPassthrough
     for (_, value) in hooksObject {
       guard let groups = value.arrayValue else { continue }
