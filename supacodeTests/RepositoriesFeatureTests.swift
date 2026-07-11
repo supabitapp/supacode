@@ -2808,18 +2808,16 @@ struct RepositoriesFeatureTests {
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
-    state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
-      .init(id: definition.id, tint: definition.resolvedTintColor)
-    state.applyPostReduceCacheRecomputes()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
+    // No seeded `runningScripts`: the alert must fire even when the row
+    // mirror already reconciled the removal (#573).
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: 1,
         tabId: nil
@@ -2832,10 +2830,6 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
-    }
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -2857,16 +2851,13 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: 0,
         tabId: nil
       )
     )
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.reconcileSidebarForTesting()
-    }
+    // The row keeps its entry: removal arrives via the terminal projection.
+    #expect(store.state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] != nil)
     #expect(store.state.alert == nil)
   }
 
@@ -2888,16 +2879,11 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: nil,
         tabId: nil
       )
     )
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.reconcileSidebarForTesting()
-    }
     #expect(store.state.alert == nil)
   }
 
@@ -2936,7 +2922,9 @@ struct RepositoriesFeatureTests {
     #expect(state.runningScriptColors(for: worktree.id) == [.purple, .orange])
   }
 
-  @Test(.dependencies) func scriptCompletedPartialCompletionPreservesSurvivors() async {
+  @Test(.dependencies) func scriptCompletedLeavesRunningScriptsUntouched() async {
+    // `runningScripts` reconciles from the terminal projection (single
+    // writer); completion must not mutate the row mirror.
     let repoRoot = "/tmp/repo"
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
@@ -2957,16 +2945,12 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: completing.id,
         kind: .script(completing),
         exitCode: 0,
         tabId: nil
       )
     )
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: completing.id)
-      $0.reconcileSidebarForTesting()
-    }
+    #expect(store.state.sidebarItems[id: worktree.id]?.runningScripts.count == 2)
     #expect(store.state.alert == nil)
   }
 
@@ -2991,7 +2975,6 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: 1,
         tabId: tabId

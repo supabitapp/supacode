@@ -164,52 +164,19 @@ private struct CommandPaletteQuery: View {
     _isTextFieldFocused = isTextFieldFocused
   }
 
+  // No hidden `.keyboardShortcut` buttons: they would stay registered app-wide
+  // for as long as any window retains this view, swallowing plain ↑ / ↓ / ⌃P / ⌃N
+  // everywhere. The panel's key monitor drives navigation while the palette is open.
   var body: some View {
-    ZStack {
-      Group {
-        Button {
-          onEvent?(.move(.up))
-        } label: {
-          Color.clear
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(.upArrow, modifiers: [])
-        Button {
-          onEvent?(.move(.down))
-        } label: {
-          Color.clear
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(.downArrow, modifiers: [])
-
-        Button {
-          onEvent?(.move(.up))
-        } label: {
-          Color.clear
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(.init("p"), modifiers: [.control])
-        Button {
-          onEvent?(.move(.down))
-        } label: {
-          Color.clear
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(.init("n"), modifiers: [.control])
-      }
-      .frame(width: 0, height: 0)
-      .accessibilityHidden(true)
-
-      TextField("Search for actions or branches...", text: $query)
-        .padding()
-        .font(.title3.weight(.light))
-        .frame(height: Self.fieldHeight)
-        .textFieldStyle(.plain)
-        .focused($isTextFieldFocused)
-        .onExitCommand { onEvent?(.exit) }
-        .onMoveCommand { onEvent?(.move($0)) }
-        .onSubmit { onEvent?(.submit) }
-    }
+    TextField("Search for actions or branches...", text: $query)
+      .padding()
+      .font(.title3.weight(.light))
+      .frame(height: Self.fieldHeight)
+      .textFieldStyle(.plain)
+      .focused($isTextFieldFocused)
+      .onExitCommand { onEvent?(.exit) }
+      .onMoveCommand { onEvent?(.move($0)) }
+      .onSubmit { onEvent?(.submit) }
   }
 }
 

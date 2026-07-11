@@ -2,7 +2,6 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import OrderedCollections
-import PostHog
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI
@@ -33,6 +32,38 @@ private nonisolated let defaultCommandTimeoutSeconds = 180
 
 @Reducer
 struct AppFeature {
+  private static let appLifecycleDebounceInterval: TimeInterval = 15 * 60
+
+  enum AppLifecycleEvent: String, Sendable {
+    case activatedDebounced = "app_activated_debounced"
+    case deactivatedDebounced = "app_deactivated_debounced"
+  }
+
+  struct AppLifecycleEventDebouncer: Equatable, Sendable {
+    var lastActivatedAt: Date?
+    var lastDeactivatedAt: Date?
+
+    mutating func shouldCapture(event: AppLifecycleEvent, now: Date) -> Bool {
+      switch event {
+      case .activatedDebounced:
+        return Self.shouldCapture(lastCapturedAt: &lastActivatedAt, now: now)
+      case .deactivatedDebounced:
+        return Self.shouldCapture(lastCapturedAt: &lastDeactivatedAt, now: now)
+      }
+    }
+
+    private static func canCapture(lastCapturedAt: Date?, now: Date) -> Bool {
+      guard let lastCapturedAt else { return true }
+      return now.timeIntervalSince(lastCapturedAt) >= AppFeature.appLifecycleDebounceInterval
+    }
+
+    private static func shouldCapture(lastCapturedAt: inout Date?, now: Date) -> Bool {
+      guard canCapture(lastCapturedAt: lastCapturedAt, now: now) else { return false }
+      lastCapturedAt = now
+      return true
+    }
+  }
+
   @ObservableState
   struct State: Equatable {
     var agentPresence = AgentPresenceFeature.State()
@@ -73,6 +104,7 @@ struct AppFeature {
     /// Monotonic generation stamped on each socket-backed confirmation so a stale
     /// timeout action can't fire against a dialog that recycled the same fd.
     var confirmationGeneration: Int = 0
+    var appLifecycleEventDebouncer = AppLifecycleEventDebouncer()
 
     init(
       repositories: RepositoriesFeature.State = .init(),
@@ -156,6 +188,8 @@ struct AppFeature {
   enum Action {
     case agentPresence(AgentPresenceFeature.Action)
     case terminals(TerminalsFeature.Action)
+    case applicationDidBecomeActive
+    case applicationDidResignActive
     case appLaunched
     case scenePhaseChanged(ScenePhase)
     case repositories(RepositoriesFeature.Action)
@@ -214,11 +248,20 @@ struct AppFeature {
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(TerminalClient.self) private var terminalClient
   @Dependency(WorktreeInfoWatcherClient.self) private var worktreeInfoWatcher
+  @Dependency(\.date.now) private var now
   @Dependency(\.continuousClock) private var clock
 
   var body: some Reducer<State, Action> {
     let core = Reduce<State, Action> { state, action in
       switch action {
+      case .applicationDidBecomeActive:
+        captureAppLifecycleEvent(.activatedDebounced, state: &state)
+        return .none
+
+      case .applicationDidResignActive:
+        captureAppLifecycleEvent(.deactivatedDebounced, state: &state)
+        return .none
+
       case .appLaunched:
         return .merge(
           .send(.repositories(.task)),
@@ -274,7 +317,6 @@ struct AppFeature {
       case .scenePhaseChanged(let phase):
         switch phase {
         case .active:
-          analyticsClient.capture("app_activated", nil)
           return .merge(
             .send(.repositories(.refreshWorktrees)),
             // Re-probe agent integrations on activation so the sidebar
@@ -747,26 +789,13 @@ struct AppFeature {
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-        let tint = definition.resolvedTintColor
-        var effects: [Effect<Action>] = [
-          .run { _ in
-            await terminalClient.send(
-              .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
-            )
-          }
-        ]
-        if state.repositories.sidebarItems[id: worktree.id] != nil {
-          effects.append(
-            .send(
-              .repositories(
-                .sidebarItems(
-                  .element(id: worktree.id, action: .runningScriptStarted(id: definition.id, tint: tint))
-                )
-              )
-            )
+        // The row's `runningScripts` reconciles from the terminal's projection
+        // once the script tab is tracked; no optimistic mirror write (#573).
+        return .run { _ in
+          await terminalClient.send(
+            .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
           )
         }
-        return .merge(effects)
 
       case .stopScript(let definition):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -1262,12 +1291,11 @@ struct AppFeature {
 
       case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
         switch kind {
-        case .script(let definition):
+        case .script:
           return .send(
             .repositories(
               .scriptCompleted(
                 worktreeID: worktreeID,
-                scriptID: definition.id,
                 kind: kind,
                 exitCode: exitCode,
                 tabId: tabId
@@ -1280,8 +1308,15 @@ struct AppFeature {
           return .send(.repositories(.deleteScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
         }
 
-      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
+      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, var projection)):
         guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
+        // Archived rows render no running-state dots, so terminal truth must
+        // not re-inject them (see `stripsArchivedRunningScripts`).
+        if !projection.runningScripts.isEmpty,
+          state.repositories.stripsArchivedRunningScripts(for: worktreeID, lifecycle: row.lifecycle)
+        {
+          projection.runningScripts = []
+        }
         let projectedSurfaces = Set(projection.surfaceIDs)
         // Re-fan-out only for surfaces this projection ADDS to the row;
         // steady-state churn (notification arrival, focus changes) keeps the
@@ -2101,27 +2136,14 @@ struct AppFeature {
       )
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-    let tint = definition.resolvedTintColor
     let terminalClient = terminalClient
-    var effects: [Effect<Action>] = [
-      .run { _ in
-        await terminalClient.send(
-          .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
-        )
-      }
-    ]
-    if state.repositories.sidebarItems[id: worktreeID] != nil {
-      effects.append(
-        .send(
-          .repositories(
-            .sidebarItems(
-              .element(id: worktreeID, action: .runningScriptStarted(id: scriptID, tint: tint))
-            )
-          )
-        )
+    // The row's `runningScripts` reconciles from the terminal's projection
+    // once the script tab is tracked; no optimistic mirror write (#573).
+    return .run { _ in
+      await terminalClient.send(
+        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
       )
     }
-    return .merge(effects)
   }
 
   private func stopScriptDeeplinkEffect(
@@ -2470,6 +2492,11 @@ struct AppFeature {
       appLifecycleClient.terminate()
     }
     return .concatenate(pendingFDEffect, pendingAcksEffect, terminateEffect)
+  }
+
+  private func captureAppLifecycleEvent(_ event: AppLifecycleEvent, state: inout State) {
+    guard state.appLifecycleEventDebouncer.shouldCapture(event: event, now: now) else { return }
+    analyticsClient.capture(event.rawValue, nil)
   }
 
   /// Extracts a human-readable message from an alert state for CLI error responses.

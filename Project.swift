@@ -64,6 +64,7 @@ let testDependencies: [TargetDependency] = [
   .external(name: "DependenciesTestSupport"),
   .external(name: "IdentifiedCollections"),
   .external(name: "OrderedCollections"),
+  .external(name: "PostHog"),
   .external(name: "Sharing"),
 ]
 

@@ -325,3 +325,34 @@ struct ToolbarNotificationGroupingTests {
     )
   }
 }
+
+@MainActor
+struct ScriptMenuIdentityTests {
+  // The running-script set drives the cached NSMenu's `.id`, so dropping it
+  // would let the toolbar dropdown go stale after a signal-based stop (#573).
+  @Test func runningScriptSetParticipatesInIdentity() {
+    let running = UUID()
+    let base = WorktreeDetailView.ScriptMenuIdentity(
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      repoFingerprints: [],
+      globalFingerprints: [],
+      runningScriptIDs: []
+    )
+    let withRunning = WorktreeDetailView.ScriptMenuIdentity(
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      repoFingerprints: [],
+      globalFingerprints: [],
+      runningScriptIDs: [running]
+    )
+
+    #expect(base != withRunning)
+    #expect(
+      base
+        == WorktreeDetailView.ScriptMenuIdentity(
+          rootURL: URL(fileURLWithPath: "/tmp/repo"),
+          repoFingerprints: [],
+          globalFingerprints: [],
+          runningScriptIDs: []
+        ))
+  }
+}
