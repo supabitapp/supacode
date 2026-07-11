@@ -200,8 +200,14 @@ struct GhosttySurfaceBridgeTests {
     #expect(bridge.state.progressValue == 10)
     #expect(callbackCount == 1)
 
-    // One throttle tick flushes only the latest coalesced value.
-    await settleThenAdvance(clock, by: .milliseconds(50))
+    // One throttle tick flushes only the latest coalesced value. The flush
+    // task can register its sleep after the advance under load, so keep
+    // advancing until the trailing flush lands; the bound only guards a
+    // regression. Extra ticks can't over-fire the callback: a flush task that
+    // wakes with nothing pending exits without applying or rescheduling.
+    for _ in 0..<50 where bridge.state.progressValue != 50 {
+      await settleThenAdvance(clock, by: .milliseconds(50))
+    }
     #expect(bridge.state.progressValue == 50)
     #expect(callbackCount == 2)
   }
