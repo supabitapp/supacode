@@ -22,9 +22,10 @@ nonisolated enum AgentHookCommandOwnership {
     {
       return true
     }
-    // Early Grok presence helper installed under ~/.grok/hooks/bin/ without
-    // the ownership sentinel. Fingerprint the helper basename so install
-    // prunes dual legacy+composite hook maps left from pre-envelope Grok.
+    // Early Grok presence helper under ~/.grok/hooks/bin/ without the
+    // ownership sentinel. Fingerprint the full relative path (not bare
+    // basename) so install prunes dual legacy+composite maps without
+    // claiming unrelated user commands that mention `supacode-osc.sh`.
     if command.contains(AgentHookSettingsCommand.legacyGrokOSCHelperMarker) {
       return true
     }

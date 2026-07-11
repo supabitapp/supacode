@@ -29,10 +29,12 @@ nonisolated enum AgentHookSettingsCommand {
   static let legacyCLIPathEnvVar = "SUPACODE_CLI_PATH"
   static let legacyAgentHookMarker = "agent-hook"
 
-  /// Basename of the early Grok-only OSC helper under `~/.grok/hooks/bin/`.
+  /// Path shape of the early Grok-only OSC helper under `~/.grok/hooks/bin/`.
   /// Pre-sentinel installs invoked this path directly; ownership treats it as
   /// legacy so prune-and-replace removes dual legacy+composite entries.
-  static let legacyGrokOSCHelperMarker = "supacode-osc.sh"
+  /// Full relative path (not bare basename) so a user-authored command that
+  /// merely mentions `supacode-osc.sh` is never classified as Supacode-owned.
+  static let legacyGrokOSCHelperMarker = ".grok/hooks/bin/supacode-osc.sh"
 
   /// Verbatim 4-var presence-guard at the head of every Supacode-installed
   /// hook. Carried forward unchanged across every command-shape revision,

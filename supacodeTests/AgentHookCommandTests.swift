@@ -211,6 +211,15 @@ struct AgentHookCommandTests {
     #expect(AgentHookCommandOwnership.isSupacodeManagedCommand(legacy))
   }
 
+  @Test func bareGrokOSCHelperBasenameIsNotOwned() {
+    // Ownership must match the Grok helper path shape, not the basename alone —
+    // otherwise any agent install/uninstall could strip a user-authored command
+    // that merely references `supacode-osc.sh`.
+    let userHook = #"/usr/local/bin/supacode-osc.sh --help || true"#
+    #expect(!AgentHookCommandOwnership.isLegacyCommand(userHook))
+    #expect(!AgentHookCommandOwnership.isSupacodeManagedCommand(userHook))
+  }
+
   @Test func managedCommandSilencesStdoutAndStderr() {
     // Codex parses SessionStart hook stdout as structured JSON output and
     // rejects anything that doesn't match its hook output schema, so the OSC
