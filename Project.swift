@@ -22,6 +22,7 @@ let appResources: ResourceFileElements = [
   "supacode/AppIcon.icon",
   "supacode/Assets.xcassets",
   "supacode/notification.wav",
+  "supacode/Resources/Localizable.xcstrings",
 ]
 
 let appBuildableFolders: [BuildableFolder] = [
@@ -303,6 +304,8 @@ let project = Project(
           "ENABLE_HARDENED_RUNTIME": "YES",
           "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/../Frameworks",
           "OTHER_LDFLAGS": "$(inherited) -lc++",
+          // Extract SwiftUI LocalizedStringKey literals into Localizable.xcstrings at build time.
+          "SWIFT_EMIT_LOC_STRINGS": "YES",
         ],
         debug: [
           "CODE_SIGN_ENTITLEMENTS": "supacode/supacodeDebug.entitlements",
