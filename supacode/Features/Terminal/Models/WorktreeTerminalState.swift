@@ -82,7 +82,15 @@ final class WorktreeTerminalState {
   @ObservationIgnored private var lastTabProgressDisplays: [TerminalTabID: TerminalTabProgressDisplay?] = [:]
   var socketPath: String?
   private(set) var shouldHideTabBar = false
-  private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:]
+  // Every mutation schedules a coalesced row-projection emit so the TCA
+  // mirror of running scripts reconciles from this single source of truth (#573).
+  private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:] {
+    didSet { scheduleRunningScriptsProjectionEmit() }
+  }
+  /// Coalesces the per-mutation `didSet` into one next-tick emit so
+  /// mid-operation states (e.g. the supersede clear-then-record in
+  /// `runBlockingScript`) never reach TCA.
+  @ObservationIgnored private var pendingRunningScriptsProjectionEmit = false
   private var blockingScriptLaunchDirectories: [TerminalTabID: URL] = [:]
   private var lastBlockingScriptTabByKind: [BlockingScriptKind: TerminalTabID] = [:]
   private var pendingSetupScript: Bool
@@ -178,6 +186,10 @@ final class WorktreeTerminalState {
   var onFocusedSurfaceColorChanged: (() -> Void)?
   var onTaskStatusChanged: ((WorktreeTaskStatus) -> Void)?
   var onBlockingScriptCompleted: ((BlockingScriptKind, Int?, TerminalTabID?) -> Void)?
+  /// Fires (coalesced, next tick) on any `blockingScripts` mutation; the
+  /// manager re-emits the Equatable-diffed row projection so TCA reconciles
+  /// to terminal truth.
+  var onRunningScriptsChanged: (() -> Void)?
   var onCommandPaletteToggle: (() -> Void)?
   var onSetupScriptConsumed: (() -> Void)?
   /// Forwarded to the manager so it can emit a `surfacesClosed` event into TCA.
@@ -237,7 +249,35 @@ final class WorktreeTerminalState {
       isProgressBusy: taskStatus == .running,
       hasUnseenNotifications: hasUnseenNotification,
       notifications: IdentifiedArray(uniqueElements: notifications),
+      runningScripts: runningScriptsProjection(),
     )
+  }
+
+  /// Order-stable snapshot of the user scripts currently tracked in
+  /// `blockingScripts`; lifecycle kinds (archive / delete) carry no
+  /// definition ID and are excluded by construction.
+  private func runningScriptsProjection() -> IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> {
+    var scripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = []
+    let definitions = blockingScripts.values
+      .compactMap { kind -> ScriptDefinition? in
+        guard case .script(let definition) = kind else { return nil }
+        return definition
+      }
+      .sorted { $0.id.uuidString < $1.id.uuidString }
+    for definition in definitions {
+      scripts.updateOrAppend(.init(id: definition.id, tint: definition.resolvedTintColor))
+    }
+    return scripts
+  }
+
+  private func scheduleRunningScriptsProjectionEmit() {
+    guard !pendingRunningScriptsProjectionEmit else { return }
+    pendingRunningScriptsProjectionEmit = true
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      self.pendingRunningScriptsProjectionEmit = false
+      self.onRunningScriptsChanged?()
+    }
   }
 
   func isBlockingScriptRunning(kind: BlockingScriptKind) -> Bool {
@@ -373,6 +413,17 @@ final class WorktreeTerminalState {
 
   @discardableResult
   func runBlockingScript(kind: BlockingScriptKind, _ script: String) -> TerminalTabID? {
+    // A re-run of an already-tracked user script is a duplicate request, not a
+    // restart: keep the running instance (#573). Lifecycle kinds (archive /
+    // delete) keep their replace-on-rerun semantics.
+    if case .script = kind,
+      let active = blockingScripts.first(where: { $0.value == kind })?.key
+    {
+      // The early return skips the `blockingScripts` didSet, so emit explicitly
+      // to unstick a row whose projection was shed or stripped.
+      scheduleRunningScriptsProjectionEmit()
+      return active
+    }
     // Resolve the surface command per host. A remote worktree runs the same
     // OSC 133 framing on the host over ssh (no local temp files, no zmx wrap),
     // so the script executes on the remote and not on a same-path local dir.
@@ -387,27 +438,34 @@ final class WorktreeTerminalState {
           remoteWorktreePath: worktree.workingDirectory.path(percentEncoded: false),
           environment: blockingScriptEnvironment(for: kind)
         )
-      else { return nil }
+      else {
+        reportBlockingScriptLaunchFailure(kind, "Failed to build remote \(kind.tabTitle) for worktree \(worktree.id)")
+        return nil
+      }
       command = remote
       initialInput = nil
       launchDirectory = nil
     } else {
       let launch: BlockingScriptRunner.LaunchArtifacts
       do {
-        guard let prepared = try blockingScriptLaunch(script) else { return nil }
+        guard let prepared = try blockingScriptLaunch(script) else {
+          reportBlockingScriptLaunchFailure(
+            kind, "Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): empty script")
+          return nil
+        }
         launch = prepared
       } catch {
-        blockingScriptLogger.warning("Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): \(error)")
-        onBlockingScriptCompleted?(kind, 1, nil)
+        reportBlockingScriptLaunchFailure(
+          kind, "Failed to prepare \(kind.tabTitle) for worktree \(worktree.id): \(error)")
         return nil
       }
       command = defaultShellPath()
       initialInput = launch.commandInput
       launchDirectory = launch.directoryURL
     }
-    // Close any previous tab of the same kind (active or lingering
-    // from a completed/cancelled run). Clear tracking state first
-    // so closeTab doesn't fire a premature completion callback.
+    // Close any previous tab of the same kind: lingering from a completed or
+    // cancelled run, or (lifecycle kinds only) still active. Clear tracking
+    // state first so closeTab doesn't fire a premature completion callback.
     if let active = blockingScripts.first(where: { $0.value == kind })?.key {
       blockingScripts.removeValue(forKey: active)
       lastBlockingScriptTabByKind.removeValue(forKey: kind)
@@ -436,8 +494,7 @@ final class WorktreeTerminalState {
       if let launchDirectory {
         cleanupBlockingScriptLaunchDirectory(at: launchDirectory)
       }
-      blockingScriptLogger.warning("Failed to create \(kind.tabTitle) tab for worktree \(worktree.id)")
-      onBlockingScriptCompleted?(kind, 1, nil)
+      reportBlockingScriptLaunchFailure(kind, "Failed to create \(kind.tabTitle) tab for worktree \(worktree.id)")
       return nil
     }
     if let launchDirectory {
@@ -449,6 +506,13 @@ final class WorktreeTerminalState {
 
     blockingScriptLogger.info("Started \(kind.tabTitle) for worktree \(worktree.id)")
     return tabId
+  }
+
+  /// Report a launch that never produced a tab: exit 1 and no tab id, so the
+  /// caller gets an alert and a completion instead of a silent nil (#573).
+  private func reportBlockingScriptLaunchFailure(_ kind: BlockingScriptKind, _ message: String) {
+    blockingScriptLogger.warning(message)
+    onBlockingScriptCompleted?(kind, 1, nil)
   }
 
   private struct TabCreation: Equatable {
@@ -1367,14 +1431,22 @@ final class WorktreeTerminalState {
     completeBlockingScript(kind, tabId: tabId, exitCode: exitCode, reportedTabId: tabId)
   }
 
-  // Fires when the shell process exits on its own (e.g. user types
-  // exit or presses Ctrl+D). If the command already finished, this
-  // is a no-op because `blockingScripts[tabId]` was cleared in
-  // `handleBlockingScriptCommandFinished`. Otherwise the script was
-  // interrupted before completing, so we treat it as cancellation.
+  // Shell self-exit. A finished command already cleared tracking in
+  // `handleBlockingScriptCommandFinished`, so this no-ops. Local: user quit
+  // (exit / Ctrl+D), a cancellation. Remote: the child is ssh, so a failed run.
   private func handleBlockingScriptChildExited(tabId: TerminalTabID, exitCode: UInt32) {
     guard let kind = blockingScripts.removeValue(forKey: tabId) else { return }
-    blockingScriptLogger.info("\(kind.tabTitle) cancelled (shell exited before command finished)")
+    // Remote ssh exit codes are unreliable (login wrapper); force failure so a
+    // raw 0 can't hit a lifecycle success path, and report no tab (ghostty
+    // already closed the surface).
+    guard worktree.host == nil else {
+      blockingScriptLogger.warning("\(kind.tabTitle) ssh exited before completion (raw exit code \(exitCode))")
+      completeBlockingScript(kind, tabId: tabId, exitCode: 1, reportedTabId: nil)
+      return
+    }
+    blockingScriptLogger.info(
+      "\(kind.tabTitle) cancelled (shell exited before command finished, raw exit code \(exitCode))"
+    )
     completeBlockingScript(kind, tabId: tabId, exitCode: nil, reportedTabId: nil)
   }
 

@@ -31,10 +31,18 @@ final class WorktreeTerminalManager {
   /// so per-tab projection / progress / task-status / focus repeats don't flood
   /// the stream. Cleared on resubscribe and purged on tab / worktree teardown.
   private var lastEmittedCoalescable: [CoalesceKey: TerminalClient.Event] = [:]
+  /// Worktrees whose projection was shed under backpressure, awaiting next-tick
+  /// redelivery. Coalesced so a shed storm replays each id at most once per tick.
+  private var pendingShedProjectionReplays: Set<Worktree.ID> = []
+  /// True while a replay drain is emitting, so a replay that itself sheds can't
+  /// schedule another and spin the buffer.
+  private var isDrainingShedProjectionReplays = false
   /// Hard cap on the live event buffer. Source coalescing keeps it near-empty in
   /// practice; this backstops a wedged consumer so memory stays bounded instead
   /// of growing without limit.
-  static let eventBufferCap = 2048
+  static let defaultEventBufferCap = 2048
+  /// Injectable so tests can force buffer shedding without 2k+ events.
+  let eventBufferCap: Int
   /// Cap for lifecycle events buffered before the first subscriber attaches.
   /// Coalescable state collapses per key and doesn't count, so this only bounds
   /// one-shot events; the sole consumer attaches at launch, well under the cap.
@@ -134,7 +142,9 @@ final class WorktreeTerminalManager {
     runtime: GhosttyRuntime,
     socketServer: AgentHookSocketServer? = nil,
     clock: C = ContinuousClock(),
+    eventBufferCap: Int = WorktreeTerminalManager.defaultEventBufferCap,
   ) {
+    self.eventBufferCap = eventBufferCap
     self.runtime = runtime
     self.focusedSurfaceBackground = runtime.backgroundColor()
     self.hookEventSleep = { duration in try await clock.sleep(for: duration) }
@@ -278,9 +288,9 @@ final class WorktreeTerminalManager {
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
     case .stopRunScript(let worktree):
-      _ = state(for: worktree).stopRunScripts()
+      stopBlockingScripts(in: worktree) { $0.stopRunScripts() }
     case .stopScript(let worktree, let definitionID):
-      _ = state(for: worktree).stopScript(definitionID: definitionID)
+      stopBlockingScripts(in: worktree) { $0.stopScript(definitionID: definitionID) }
     case .runBlockingScript(let worktree, let kind, let script):
       _ = state(for: worktree).runBlockingScript(kind: kind, script)
     case .closeFocusedTab(let worktree):
@@ -432,7 +442,7 @@ final class WorktreeTerminalManager {
     eventContinuation?.finish()
     let (stream, continuation) = AsyncStream.makeStream(
       of: TerminalClient.Event.self,
-      bufferingPolicy: .bufferingNewest(Self.eventBufferCap)
+      bufferingPolicy: .bufferingNewest(eventBufferCap)
     )
     eventContinuation = continuation
     lastNotificationIndicatorCount = nil
@@ -440,6 +450,7 @@ final class WorktreeTerminalManager {
     // fresh subscriber then has the latest value recorded for every key.
     lastEmittedProjections.removeAll()
     lastEmittedCoalescable.removeAll()
+    pendingShedProjectionReplays.removeAll()
     if !pendingEvents.isEmpty {
       let bufferedEvents = pendingEvents
       pendingEvents.removeAll()
@@ -561,6 +572,11 @@ final class WorktreeTerminalManager {
     }
     state.onBlockingScriptCompleted = { [weak self] kind, exitCode, tabId in
       self?.emit(.blockingScriptCompleted(worktreeID: worktree.id, kind: kind, exitCode: exitCode, tabId: tabId))
+    }
+    state.onRunningScriptsChanged = { [weak self] in
+      // Force past the projection dedupe: an archived-strip can clear the row while
+      // the cache still holds running, so a plain emit would dedupe and strand it (#573).
+      self?.forceEmitProjection(for: worktree.id)
     }
     state.onCommandPaletteToggle = { [weak self] in
       self?.emit(.commandPaletteToggleRequested(worktreeID: worktree.id))
@@ -1068,8 +1084,52 @@ final class WorktreeTerminalManager {
     let result = eventContinuation.yield(event)
     if case .dropped(let shed) = result {
       terminalLogger.error(
-        "Terminal event buffer full (cap \(Self.eventBufferCap)); shed oldest buffered event: \(Self.label(for: shed))."
+        "Terminal event buffer full (cap \(eventBufferCap)); shed oldest buffered event: \(Self.label(for: shed))."
       )
+      invalidateDedupe(for: shed)
+      scheduleShedProjectionReplay(for: shed)
+    }
+  }
+
+  /// Redeliver a shed projection next tick; shedding cleared its dedupe entry
+  /// without reaching TCA, so the row would otherwise stay stale (#573).
+  private func scheduleShedProjectionReplay(for shed: TerminalClient.Event) {
+    guard case .worktreeProjectionChanged(let worktreeID, _) = shed else { return }
+    // A replay that itself sheds must not chain another, or a persistently full
+    // buffer would loop and evict live events every tick (#573).
+    guard !isDrainingShedProjectionReplays else { return }
+    let wasIdle = pendingShedProjectionReplays.isEmpty
+    pendingShedProjectionReplays.insert(worktreeID)
+    guard wasIdle else { return }
+    Task { @MainActor [weak self] in self?.drainShedProjectionReplays() }
+  }
+
+  private func drainShedProjectionReplays() {
+    let ids = pendingShedProjectionReplays
+    pendingShedProjectionReplays.removeAll()
+    isDrainingShedProjectionReplays = true
+    defer { isDrainingShedProjectionReplays = false }
+    for id in ids {
+      emitProjection(for: id)
+    }
+  }
+
+  /// A shed event never reached the consumer, so its dedupe entries must not
+  /// suppress the next identical emit (#573).
+  private func invalidateDedupe(for shed: TerminalClient.Event) {
+    guard let key = Self.coalesceKey(for: shed) else { return }
+    lastEmittedCoalescable.removeValue(forKey: key)
+    switch shed {
+    case .worktreeProjectionChanged(let worktreeID, _):
+      lastEmittedProjections.removeValue(forKey: worktreeID)
+    case .notificationIndicatorChanged:
+      lastNotificationIndicatorCount = nil
+    case .terminalHasAnySurfaceChanged(let hasAny):
+      // Invert instead of nil: the gate defaults nil to false, which would
+      // mask a shed `false` and strand a consumer at `true`.
+      lastEmittedHasAnyTerminalSurface = !hasAny
+    default:
+      break
     }
   }
 
@@ -1113,6 +1173,7 @@ final class WorktreeTerminalManager {
   /// already cleared the coalesce keys, which this re-clears as a guard against drift.
   private func invalidateCaches(forPrunedWorktree id: Worktree.ID) {
     lastEmittedProjections.removeValue(forKey: id)
+    pendingShedProjectionReplays.remove(id)
     for key in Self.invalidatedCoalesceKeys(by: .worktreeStateTornDown(worktreeID: id)) {
       lastEmittedCoalescable.removeValue(forKey: key)
     }
@@ -1138,6 +1199,28 @@ final class WorktreeTerminalManager {
     guard hasAny != previous else { return }
     lastEmittedHasAnyTerminalSurface = hasAny
     emit(.terminalHasAnySurfaceChanged(hasAny: hasAny))
+  }
+
+  /// Runs `stop` on the worktree's existing terminal state, never minting one.
+  /// A miss with a live state means the caller acted on a stale mirror, so force
+  /// a fresh projection emit past the dedupe cache to reconcile it (#573).
+  private func stopBlockingScripts(in worktree: Worktree, using stop: (WorktreeTerminalState) -> Bool) {
+    guard let state = stateIfExists(for: worktree.id) else {
+      terminalLogger.warning("Stop requested for \(worktree.id) with no terminal state")
+      return
+    }
+    guard !stop(state) else { return }
+    terminalLogger.warning("Stop requested for \(worktree.id) with no matching script; re-emitting projection")
+    forceEmitProjection(for: worktree.id)
+  }
+
+  /// Re-delivers a worktree's projection past both dedupe layers, so a row that
+  /// diverged from the cache (a reducer-side archived-strip) is reconciled even
+  /// when the projection value is unchanged (#573).
+  private func forceEmitProjection(for id: Worktree.ID) {
+    lastEmittedProjections.removeValue(forKey: id)
+    lastEmittedCoalescable.removeValue(forKey: .worktreeProjection(id))
+    emitProjection(for: id)
   }
 
   /// Builds the row projection and emits only when it diverges from the last

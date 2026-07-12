@@ -355,12 +355,14 @@ struct CacheInvalidations: OptionSet {
 extension SidebarItemFeature.Action {
   var cacheInvalidations: CacheInvalidations {
     switch self {
-    case .lifecycleChanged, .runningScriptStarted, .runningScriptStopped:
+    case .lifecycleChanged:
       return [.sidebarStructure, .selectedWorktreeSlice]
     case .agentSnapshotChanged:
       return .sidebarStructure
+    // `.selectedWorktreeSlice` because the projection carries the focused row's
+    // `runningScripts` (toolbar Run/Stop state).
     case .terminalProjectionChanged:
-      return [.sidebarStructure, .toolbarNotificationGroups]
+      return .all
     case .pullRequestChanged:
       return .selectedWorktreeSlice
     case .diffStatsChanged, .pullRequestQueryStarted,

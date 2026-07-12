@@ -64,6 +64,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   case editor
   case finder
   case cursor
+  case trae
+  case traeCN
   case githubDesktop
   case fork
   case gitkraken
@@ -104,6 +106,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .androidStudio: "Android Studio"
     case .antigravity: "Antigravity"
     case .cursor: "Cursor"
+    case .trae: "Trae"
+    case .traeCN: "Trae CN"
     case .githubDesktop: "GitHub Desktop"
     case .gitkraken: "GitKraken"
     case .gitup: "GitUp"
@@ -142,9 +146,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .editor: "$EDITOR"
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
       .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm, .pycharm,
-      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
-      .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed,
-      .zedPreview:
+      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae,
+      .traeCN, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode,
+      .zed, .zedPreview:
       title
     }
   }
@@ -166,9 +170,9 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
       return true
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
       .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm, .pycharm,
-      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
-      .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode, .zed,
-      .zedPreview:
+      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae,
+      .traeCN, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode,
+      .zed, .zedPreview:
       return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
     }
   }
@@ -181,6 +185,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .androidStudio: "android-studio"
     case .antigravity: "antigravity"
     case .cursor: "cursor"
+    case .trae: "trae"
+    case .traeCN: "trae-cn"
     case .fork: "fork"
     case .githubDesktop: "github-desktop"
     case .gitkraken: "gitkraken"
@@ -221,6 +227,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .androidStudio: "com.google.android.studio"
     case .antigravity: "com.google.antigravity"
     case .cursor: "com.todesktop.230313mzl4w4u92"
+    case .trae: "com.trae.app"
+    case .traeCN: "cn.trae.app"
     case .fork: "com.DanPristupov.Fork"
     case .githubDesktop: "com.github.GitHubClient"
     case .gitkraken: "com.axosoft.gitkraken"
@@ -264,8 +272,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .alacritty, .androidStudio, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop,
       .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm,
       .pycharm, .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal,
-      .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .zed,
-      .zedPreview:
+      .trae, .traeCN, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf,
+      .zed, .zedPreview:
       [.default]
     }
   }
@@ -292,8 +300,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         .default,
       ]
     case .alacritty, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop, .gitkraken, .gitup,
-      .ghostty, .kitty, .nova, .smartgit, .sourcetree, .sublimeMerge, .terminal, .vscode,
-      .vscodeInsiders, .vscodium, .warp, .wezterm, .windsurf, .xcode:
+      .ghostty, .kitty, .nova, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae, .traeCN,
+      .vscode, .vscodeInsiders, .vscodium, .warp, .wezterm, .windsurf, .xcode:
       [.default]
     }
   }
@@ -308,7 +316,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
         executable: .appRelativePath("Contents/MacOS/cli"),
         arguments: [Self.zedSSHURL(host: host, remotePath: remotePath)]
       )
-    case .vscode, .vscodeInsiders, .vscodium, .cursor, .windsurf, .antigravity:
+    case .vscode, .vscodeInsiders, .vscodium, .cursor, .trae, .traeCN, .windsurf, .antigravity:
       // VS Code parses `ssh-remote+host:2222` as a literal hostname, so it has no
       // inline port syntax (microsoft/vscode-remote-release #515): a non-default
       // port is inexpressible, so return `nil`. The path is a literal positional
@@ -333,6 +341,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     case .vscodeInsiders: "code-insiders"
     case .vscodium: "codium"
     case .cursor: "cursor"
+    case .trae: "trae"
+    case .traeCN: "trae-cn"
     case .windsurf: "windsurf"
     case .antigravity: "antigravity"
     default: nil
@@ -365,6 +375,8 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
 
   public static let editorPriority: [OpenWorktreeAction] = [
     .cursor,
+    .trae,
+    .traeCN,
     .zed,
     .zedPreview,
     .vscode,

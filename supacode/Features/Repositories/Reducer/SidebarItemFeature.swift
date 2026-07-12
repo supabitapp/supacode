@@ -126,8 +126,6 @@ struct SidebarItemFeature {
     case diffStatsChanged(added: Int?, removed: Int?)
     case pullRequestQueryStarted(branch: String)
     case pullRequestChanged(GithubPullRequest?, branchAtQueryTime: String)
-    case runningScriptStarted(id: UUID, tint: RepositoryColor)
-    case runningScriptStopped(id: UUID)
     case agentSnapshotChanged([AgentPresenceFeature.AgentInstance], hasActivity: Bool)
     case terminalProjectionChanged(WorktreeRowProjection)
     case dragSessionChanged(isDragging: Bool)
@@ -167,19 +165,6 @@ struct SidebarItemFeature {
         state.pullRequestBranchAtQueryTime = nil
         return .none
 
-      case .runningScriptStarted(let id, let tint):
-        if state.runningScripts[id: id] == nil {
-          state.runningScripts.append(.init(id: id, tint: tint))
-        } else if state.runningScripts[id: id]?.tint != tint {
-          state.runningScripts[id: id]?.tint = tint
-        }
-        return .none
-
-      case .runningScriptStopped(let id):
-        guard state.runningScripts.contains(where: { $0.id == id }) else { return .none }
-        state.runningScripts.remove(id: id)
-        return .none
-
       case .agentSnapshotChanged(let agents, let hasActivity):
         guard state.agents != agents || state.hasAgentActivity != hasActivity else { return .none }
         state.agents = agents
@@ -196,6 +181,9 @@ struct SidebarItemFeature {
           state.hasUnseenNotifications = projection.hasUnseenNotifications
         }
         if state.notifications != projection.notifications { state.notifications = projection.notifications }
+        if state.runningScripts != projection.runningScripts {
+          state.runningScripts = projection.runningScripts
+        }
         return .none
 
       case .dragSessionChanged(let isDragging):
@@ -277,14 +265,17 @@ extension SidebarItemFeature.State.Lifecycle {
   var isDeleting: Bool { self == .deleting || self == .deletingScript }
 }
 
-/// Per-row terminal snapshot emitted by `WorktreeTerminalManager`'s 400 ms debounce.
-/// `isProgressBusy` reflects Ghostty progress state only; the parent overlays
-/// agent activity downstream of this event.
+/// Per-row terminal snapshot; the manager emits it Equatable-diffed, so
+/// identical snapshots never reach TCA. `isProgressBusy` reflects Ghostty
+/// progress state only; the parent overlays agent activity downstream.
 struct WorktreeRowProjection: Equatable, Sendable {
   let surfaceIDs: [UUID]
   let isProgressBusy: Bool
   let hasUnseenNotifications: Bool
   let notifications: IdentifiedArrayOf<WorktreeTerminalNotification>
+  /// Terminal-tracked user scripts; the sole populator of the row's
+  /// `runningScripts`, so the dropdown can't drift from process state (#573).
+  var runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = []
 }
 
 /// Value-typed projection of the focused row's display fields, cached on

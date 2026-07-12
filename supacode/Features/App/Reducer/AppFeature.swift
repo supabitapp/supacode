@@ -789,26 +789,13 @@ struct AppFeature {
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-        let tint = definition.resolvedTintColor
-        var effects: [Effect<Action>] = [
-          .run { _ in
-            await terminalClient.send(
-              .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
-            )
-          }
-        ]
-        if state.repositories.sidebarItems[id: worktree.id] != nil {
-          effects.append(
-            .send(
-              .repositories(
-                .sidebarItems(
-                  .element(id: worktree.id, action: .runningScriptStarted(id: definition.id, tint: tint))
-                )
-              )
-            )
+        // The row's `runningScripts` reconciles from the terminal's projection
+        // once the script tab is tracked; no optimistic mirror write (#573).
+        return .run { _ in
+          await terminalClient.send(
+            .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
           )
         }
-        return .merge(effects)
 
       case .stopScript(let definition):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -1304,12 +1291,11 @@ struct AppFeature {
 
       case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
         switch kind {
-        case .script(let definition):
+        case .script:
           return .send(
             .repositories(
               .scriptCompleted(
                 worktreeID: worktreeID,
-                scriptID: definition.id,
                 kind: kind,
                 exitCode: exitCode,
                 tabId: tabId
@@ -1322,8 +1308,15 @@ struct AppFeature {
           return .send(.repositories(.deleteScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
         }
 
-      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
+      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, var projection)):
         guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
+        // Archived rows render no running-state dots, so terminal truth must
+        // not re-inject them (see `stripsArchivedRunningScripts`).
+        if !projection.runningScripts.isEmpty,
+          state.repositories.stripsArchivedRunningScripts(for: worktreeID, lifecycle: row.lifecycle)
+        {
+          projection.runningScripts = []
+        }
         let projectedSurfaces = Set(projection.surfaceIDs)
         // Re-fan-out only for surfaces this projection ADDS to the row;
         // steady-state churn (notification arrival, focus changes) keeps the
@@ -2143,27 +2136,14 @@ struct AppFeature {
       )
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-    let tint = definition.resolvedTintColor
     let terminalClient = terminalClient
-    var effects: [Effect<Action>] = [
-      .run { _ in
-        await terminalClient.send(
-          .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
-        )
-      }
-    ]
-    if state.repositories.sidebarItems[id: worktreeID] != nil {
-      effects.append(
-        .send(
-          .repositories(
-            .sidebarItems(
-              .element(id: worktreeID, action: .runningScriptStarted(id: scriptID, tint: tint))
-            )
-          )
-        )
+    // The row's `runningScripts` reconciles from the terminal's projection
+    // once the script tab is tracked; no optimistic mirror write (#573).
+    return .run { _ in
+      await terminalClient.send(
+        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
       )
     }
-    return .merge(effects)
   }
 
   private func stopScriptDeeplinkEffect(
