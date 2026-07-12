@@ -865,6 +865,10 @@ final class WorktreeTerminalState {
     if let existing = trees[tabId] {
       return existing
     }
+    // A stale render of a just-closed tab (removal transition) must not lazily
+    // resurrect it: the replacement surface would be invisible, unclosable, and
+    // hold its local and host zmx sessions alive.
+    guard hasTab(tabId) else { return SplitTree() }
     let surface = createSurface(
       tabId: tabId,
       command: command,

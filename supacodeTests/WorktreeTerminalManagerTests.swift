@@ -1239,6 +1239,29 @@ struct WorktreeTerminalManagerTests {
     #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
   }
 
+  @Test func closedTabStaleRenderDoesNotResurrectSurface() {
+    // A SwiftUI pane can re-render its tab during the tab-close transition;
+    // the lazy splitTree(for:) create must not mint a replacement surface for
+    // the dead tab, or an invisible surface leaks a local+host session pair.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
+    surface.bridge.closeSurface(processAlive: true)
+
+    #expect(state.hasTab(tabID) == false)
+    #expect(state.splitTree(for: tabID).isEmpty)
+    #expect(state.allSurfaceIDs.isEmpty)
+  }
+
   @Test func closeKillsHostSessionBeforeLocalSession() async {
     // The host-side kill's SSH reuses the ControlMaster held open by the local
     // zmx session, so the local kill must not run until the remote kill has
