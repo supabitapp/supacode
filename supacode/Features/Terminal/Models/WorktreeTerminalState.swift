@@ -1688,9 +1688,9 @@ final class WorktreeTerminalState {
       guard self.isLiveSurface(view) else { return }
       self.handleContextSignal(surfaceID: view.id, id: id, metadata: metadata)
     }
-    view.bridge.onCloseRequest = { [weak self, weak view] processAlive in
+    view.bridge.onCloseRequest = { [weak self, weak view] _ in
       guard let self, let view else { return }
-      self.handleCloseRequest(for: view, processAlive: processAlive)
+      self.handleCloseRequest(for: view)
     }
     view.onFocusChange = { [weak self, weak view] focused in
       guard let self, let view, focused else { return }
@@ -2459,7 +2459,7 @@ final class WorktreeTerminalState {
     }
   }
 
-  private func handleCloseRequest(for view: GhosttySurfaceView, processAlive _: Bool) {
+  private func handleCloseRequest(for view: GhosttySurfaceView) {
     guard surfaces[view.id] === view else { return }
     let isExplicitClose = pendingExplicitSurfaceCloseIDs.remove(view.id) != nil
     if shouldHandleAsUnexpectedZmxClose(
