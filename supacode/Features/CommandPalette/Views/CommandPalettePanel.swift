@@ -254,6 +254,7 @@ final class CommandPalettePanelHostView: NSView {
     CommandPaletteFeature.filterItems(
       items: items,
       query: store.query,
+      mode: store.mode,
       recencyByID: store.recencyByItemID,
       now: .now
     )

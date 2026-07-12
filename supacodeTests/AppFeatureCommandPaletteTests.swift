@@ -490,6 +490,97 @@ struct AppFeatureCommandPaletteTests {
     }
   }
 
+  @Test(.dependencies) func selectWorktreeDelegateSelectsAndFocusesTerminal() async {
+    let worktree = makeWorktree(id: "/tmp/repo-goto/wt-1", name: "wt-1", repoRoot: "/tmp/repo-goto")
+    let repository = makeRepository(id: "/tmp/repo-goto", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    // Palette completion selects the worktree AND focuses its terminal
+    // (`focusTerminal: true`), so the selection change requests terminal focus.
+    await store.send(.commandPalette(.delegate(.selectWorktree(worktree.id))))
+    await store.receive(\.repositories.selectWorktree)
+    await store.receive(\.repositories.sidebarItems)
+  }
+
+  @Test(.dependencies) func dismissedWithoutSelectionRefocusesCurrentTerminal() async {
+    let worktree = makeWorktree(id: "/tmp/repo-dismiss/wt-1", name: "wt-1", repoRoot: "/tmp/repo-dismiss")
+    let repository = makeRepository(id: "/tmp/repo-dismiss", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.selection = .worktree(worktree.id)
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    // Cancelling the palette refocuses the current worktree's terminal.
+    await store.send(.commandPalette(.delegate(.dismissedWithoutSelection)))
+    await store.receive(\.repositories.sidebarItems)
+  }
+
+  @Test(.dependencies) func dismissedWithoutSelectionNoOpsWithoutSelection() async {
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    // No selected worktree: there is no terminal to refocus, so this is a no-op.
+    await store.send(.commandPalette(.delegate(.dismissedWithoutSelection)))
+  }
+
+  @Test(.dependencies) func dismissedWithoutSelectionNoOpsWhenSelectionMissingFromSidebar() async {
+    var repositoriesState = RepositoriesFeature.State()
+    // Selection points at a worktree that never made it into `sidebarItems`
+    // (e.g. just deleted); the guard's second branch must still no-op.
+    repositoriesState.selection = .worktree(WorktreeID("/tmp/ghost/wt"))
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.commandPalette(.delegate(.dismissedWithoutSelection)))
+  }
+
+  @Test(.dependencies) func terminalToggleAlwaysOpensCommandsMode() async {
+    let worktree = makeWorktree(id: "/tmp/repo-toggle/wt", name: "wt", repoRoot: "/tmp/repo-toggle")
+    let repository = makeRepository(id: "/tmp/repo-toggle", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    var appState = AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    // The palette was last used as the worktree switcher and is now closed.
+    appState.commandPalette.mode = .worktreeSwitcher
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    // Ghostty's toggle opens the command palette, never the last-used switcher.
+    await store.send(.terminalEvent(.commandPaletteToggleRequested(worktreeID: worktree.id)))
+    await store.receive(\.commandPalette.presentInMode)
+    #expect(store.state.commandPalette.mode == .commands)
+    #expect(store.state.commandPalette.isPresented == true)
+  }
+
 }
 
 private func makeWorktree(id: String, name: String, repoRoot: String = "/tmp/repo") -> Worktree {

@@ -1475,7 +1475,6 @@ struct RepositoriesFeatureTests {
       ]
       $0.selection = SidebarSelection.worktree(pendingID)
       $0.sidebarSelectedWorktreeIDs = [pendingID]
-      $0.worktreeMRU = [pendingID]
       $0.reconcileSidebarForTesting()
     }
 
@@ -2204,7 +2203,6 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.worktree(pendingID)])) {
       $0.selection = .worktree(pendingID)
       $0.sidebarSelectedWorktreeIDs = [pendingID]
-      $0.worktreeMRU = [pendingID]
       $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
     }
     // `worktree(for:)` doesn't surface pending entries; the delegate fires nil

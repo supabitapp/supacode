@@ -16,6 +16,36 @@ struct CommandPaletteItem: Identifiable, Equatable {
   /// ⌘P then Enter lands on the previous worktree instead of being a
   /// no-op. Always `false` outside the worktree switcher.
   let isCurrentWorktree: Bool
+  /// Presentation for a worktree-switcher row: text tints, leading icon, and
+  /// the remote host, mirroring the sidebar. `nil` for every non-switcher item.
+  let worktreeStyle: WorktreeRowStyle?
+
+  /// Tints, leading icon, and the remote host for a worktree-switcher row.
+  /// Colors are applied to the title / subtitle text directly, matching the
+  /// sidebar.
+  struct WorktreeRowStyle: Equatable {
+    /// Tints the title (the worktree name, or a folder row's own name).
+    var titleTint: RepositoryColor?
+    /// Tints the repo-name subtitle. `nil` for folder rows, which have no subtitle.
+    var repoTint: RepositoryColor?
+    /// SSH authority for a remote row; drives a `wifi` badge. `nil` when local.
+    var hostInfo: String?
+    /// Leading glyph, mirroring the sidebar row's icon. Every switcher row has one.
+    var icon: WorktreeRowIcon
+  }
+
+  /// Leading glyph for a worktree-switcher row, mirroring the sidebar. The
+  /// switcher lists only idle rows, so the sidebar's lifecycle variants collapse
+  /// to these three outcomes.
+  enum WorktreeRowIcon: Equatable {
+    /// Git worktree: a template asset (`git-branch` or a pull-request variant),
+    /// optionally badged with the pull request's aggregate check state.
+    case pullRequest(SidebarPullRequestIcon, checkBadge: SidebarCheckBadgeState?)
+    /// A folder row.
+    case folder
+    /// A worktree whose working directory is missing.
+    case missing
+  }
 
   init(
     id: String,
@@ -23,7 +53,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
     subtitle: String?,
     kind: Kind,
     priorityTier: Int = defaultPriorityTier,
-    isCurrentWorktree: Bool = false
+    isCurrentWorktree: Bool = false,
+    worktreeStyle: WorktreeRowStyle? = nil
   ) {
     self.id = id
     self.title = title
@@ -31,6 +62,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
     self.kind = kind
     self.priorityTier = priorityTier
     self.isCurrentWorktree = isCurrentWorktree
+    self.worktreeStyle = worktreeStyle
   }
 
   enum Kind: Equatable {

@@ -56,37 +56,33 @@ struct CommandPaletteOverlayView: View {
   }
 
   private func updateSelection(rows: [CommandPaletteItem]) {
-    store.send(.updateSelection(itemsCount: rows.count, defaultIndex: defaultSelectionIndex(rows: rows)))
+    store.send(
+      .updateSelection(
+        itemsCount: rows.count,
+        defaultIndex: CommandPaletteFeature.defaultSelectionIndex(rows: rows, query: store.query)
+      )
+    )
   }
 
   private func resetSelection(rows: [CommandPaletteItem]) {
-    store.send(.resetSelection(itemsCount: rows.count, defaultIndex: defaultSelectionIndex(rows: rows)))
+    store.send(
+      .resetSelection(
+        itemsCount: rows.count,
+        defaultIndex: CommandPaletteFeature.defaultSelectionIndex(rows: rows, query: store.query)
+      )
+    )
   }
 
   /// Query-field placeholder, matched to the active surface. The worktree
-  /// switcher (⌘P) only navigates to worktrees, so it must not promise
-  /// "actions"; the full command palette (⌘⇧P) keeps the actions-and-branches
-  /// wording.
+  /// switcher (⌘P) only navigates to worktrees; the full command palette (⌘⇧P)
+  /// lists actions (worktree navigation moved to the switcher).
   private var queryPlaceholder: String {
     switch store.mode {
     case .worktreeSwitcher:
       return "Go to worktree…"
     case .commands:
-      return "Search for actions or branches…"
+      return "Search for actions…"
     }
-  }
-
-  /// Where the cursor lands when there's no prior selection. Normally the
-  /// top row, but the worktree switcher skips its own current-worktree row
-  /// (rendered at index 0 with an empty query) so ⌘P then Enter switches
-  /// to the previous worktree instead of being a no-op. Once the user types,
-  /// the fuzzy-ranked top match wins again.
-  private func defaultSelectionIndex(rows: [CommandPaletteItem]) -> Int {
-    let trimmedQuery = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmedQuery.isEmpty, rows.count > 1, rows.first?.isCurrentWorktree == true else {
-      return 0
-    }
-    return 1
   }
 
   private func moveSelection(_ direction: MoveCommandDirection, rows: [CommandPaletteItem]) {
@@ -369,10 +365,24 @@ private struct CommandPaletteRowView: View {
     }
   }
 
+  /// Worktree-switcher title tint (else default), matching the sidebar.
+  private var titleForegroundStyle: AnyShapeStyle {
+    guard let tint = row.worktreeStyle?.titleTint else { return AnyShapeStyle(.primary) }
+    return AnyShapeStyle(tint.color)
+  }
+
+  /// Worktree-switcher repo-subtitle tint (else secondary), matching the sidebar.
+  private var subtitleForegroundStyle: AnyShapeStyle {
+    guard let tint = row.worktreeStyle?.repoTint else { return AnyShapeStyle(.secondary) }
+    return AnyShapeStyle(tint.color)
+  }
+
   var body: some View {
     Button(action: activate) {
       HStack(spacing: 8) {
-        if let leadingIcon {
+        if let worktreeIcon = row.worktreeStyle?.icon {
+          CommandPaletteWorktreeIcon(icon: worktreeIcon)
+        } else if let leadingIcon {
           Image(systemName: leadingIcon)
             .foregroundStyle(emphasis ? .primary : .secondary)
             .font(.subheadline.weight(.medium))
@@ -381,13 +391,27 @@ private struct CommandPaletteRowView: View {
         }
 
         VStack(alignment: .leading, spacing: 2) {
-          Text(titleText)
-            .fontWeight(emphasis ? .medium : .regular)
+          // Worktree rows tint the title / subtitle text and badge the remote
+          // host, mirroring the sidebar. The host icon rides with the repo
+          // subtitle for git rows and with the title for folders (no subtitle).
+          HStack(spacing: 3) {
+            Text(titleText)
+              .fontWeight(emphasis ? .medium : .regular)
+              .foregroundStyle(titleForegroundStyle)
+            if row.subtitle == nil, let hostInfo = row.worktreeStyle?.hostInfo {
+              CommandPaletteRemoteHostBadge(hostInfo: hostInfo)
+            }
+          }
 
           if let subtitle = row.subtitle {
-            Text(subtitle)
-              .font(.caption)
-              .foregroundStyle(.secondary)
+            HStack(spacing: 3) {
+              Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(subtitleForegroundStyle)
+              if let hostInfo = row.worktreeStyle?.hostInfo {
+                CommandPaletteRemoteHostBadge(hostInfo: hostInfo)
+              }
+            }
           }
         }
 
@@ -507,6 +531,79 @@ private struct CommandPaletteRowView: View {
 
   private var explicitShortcutLabel: String? {
     row.appShortcutLabel
+  }
+}
+
+/// Leading glyph for a worktree-switcher row, sized to the action-palette icon
+/// slot and colored to mirror the sidebar (`IconContent`).
+private struct CommandPaletteWorktreeIcon: View {
+  let icon: CommandPaletteItem.WorktreeRowIcon
+
+  var body: some View {
+    Group {
+      switch icon {
+      case .pullRequest(let prIcon, _):
+        Image(prIcon.assetName)
+          .renderingMode(.template)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .frame(width: 14, height: 14)
+          .foregroundStyle(prIcon.color)
+          .opacity(0.6)
+          .accessibilityHidden(true)
+      case .folder:
+        Image(systemName: "folder")
+          .font(.subheadline.weight(.medium))
+          .foregroundStyle(.secondary)
+          .opacity(0.6)
+          .accessibilityHidden(true)
+      case .missing:
+        Image(systemName: "exclamationmark.triangle.fill")
+          .font(.subheadline.weight(.medium))
+          .foregroundStyle(.orange)
+          .opacity(0.6)
+          .accessibilityHidden(true)
+      }
+    }
+    .frame(width: 16, height: 16, alignment: .center)
+    .overlay(alignment: .bottomTrailing) {
+      if case .pullRequest(_, let checkBadge?) = icon {
+        CommandPaletteCheckBadge(state: checkBadge)
+      }
+    }
+  }
+}
+
+/// CI check badge overlaid on a worktree-switcher pull-request icon, mirroring
+/// the sidebar's palette-rendered badge (glyph in the window color, disc in the
+/// status color).
+private struct CommandPaletteCheckBadge: View {
+  let state: SidebarCheckBadgeState
+
+  var body: some View {
+    Image(systemName: state.symbolName)
+      .resizable()
+      .aspectRatio(contentMode: .fit)
+      .symbolVariant(.circle.fill)
+      .symbolRenderingMode(.palette)
+      .fontWeight(.black)
+      .frame(width: 10, height: 10)
+      .foregroundStyle(.windowBackground, state.color)
+      .background(in: Circle())
+      .accessibilityLabel(state.statusDescription)
+      .offset(x: 2, y: 2)
+  }
+}
+
+private struct CommandPaletteRemoteHostBadge: View {
+  let hostInfo: String
+
+  var body: some View {
+    Image(systemName: "wifi")
+      .imageScale(.small)
+      .foregroundStyle(.secondary)
+      .help(hostInfo)
+      .accessibilityLabel("Remote host \(hostInfo)")
   }
 }
 

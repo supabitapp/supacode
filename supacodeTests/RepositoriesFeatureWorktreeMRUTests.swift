@@ -94,6 +94,61 @@ struct RepositoriesFeatureWorktreeMRUTests {
 
     #expect(state.worktreeMRU == [wtA.id, wtB.id])
   }
+
+  @Test func removeWorktree_dropsWorktreeFromMRU() {
+    let wtA = makeWorktree(id: "/tmp/repo-a/wt-a", name: "wt-a", repoRoot: "/tmp/repo-a")
+    let wtB = makeWorktree(id: "/tmp/repo-a/wt-b", name: "wt-b", repoRoot: "/tmp/repo-a")
+    let repo = makeRepository(rootPath: "/tmp/repo-a", name: "A", worktrees: [wtA, wtB])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    state.setSingleWorktreeSelection(wtA.id)
+    state.setSingleWorktreeSelection(wtB.id)
+    #expect(state.worktreeMRU == [wtB.id, wtA.id])
+
+    // Every delete path funnels through this primitive, so pruning here keeps a
+    // deleted worktree from lingering at the MRU head as a filtered-out ghost.
+    _ = state.removeWorktree(wtA.id, repositoryID: repo.id)
+
+    #expect(state.worktreeMRU == [wtB.id])
+  }
+
+  @Test func cleanupWorktreeState_dropsWorktreeFromMRU() {
+    let wt1 = makeWorktree(id: "/tmp/repo-a/wt-1", name: "wt-1", repoRoot: "/tmp/repo-a")
+    let wt2 = makeWorktree(id: "/tmp/repo-a/wt-2", name: "wt-2", repoRoot: "/tmp/repo-a")
+    let repo = makeRepository(rootPath: "/tmp/repo-a", name: "A", worktrees: [wt1, wt2])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    state.setSingleWorktreeSelection(wt1.id)
+    state.setSingleWorktreeSelection(wt2.id)
+    #expect(state.worktreeMRU == [wt2.id, wt1.id])
+
+    _ = state.cleanupWorktreeState(wt1.id, repositoryID: repo.id)
+
+    // A reused Worktree.ID must not linger and re-rank a fresh worktree at the same path.
+    #expect(state.worktreeMRU == [wt2.id])
+  }
+
+  @Test func recordWorktreeMRU_skipsPendingCreationIDs() {
+    var state = RepositoriesFeature.State(reconciledRepositories: [])
+    // A pending creation selection must not leave a ghost id in the MRU.
+    state.recordWorktreeMRU(worktreeID: WorktreeID("\(WorktreeID.pendingPrefix)creation-1"))
+    #expect(state.worktreeMRU.isEmpty)
+
+    // A real worktree still records normally.
+    state.recordWorktreeMRU(worktreeID: WorktreeID("/tmp/repo/wt"))
+    #expect(state.worktreeMRU == [WorktreeID("/tmp/repo/wt")])
+  }
+
+  @Test func recordWorktreeMRU_capsAtStackLimitDroppingOldest() {
+    var state = RepositoriesFeature.State(reconciledRepositories: [])
+    // Record 60 distinct worktrees; the MRU caps at the 50-entry stack limit.
+    for index in 0..<60 {
+      state.recordWorktreeMRU(worktreeID: WorktreeID("/tmp/repo/wt-\(index)"))
+    }
+    #expect(state.worktreeMRU.count == 50)
+    // Most-recent-first: the last recorded leads and the ten oldest are gone.
+    #expect(state.worktreeMRU.first == WorktreeID("/tmp/repo/wt-59"))
+    #expect(state.worktreeMRU.last == WorktreeID("/tmp/repo/wt-10"))
+    #expect(state.worktreeMRU.contains(WorktreeID("/tmp/repo/wt-9")) == false)
+  }
 }
 
 private func makeWorktree(
