@@ -302,4 +302,19 @@ struct ZmxClientKillSurfaceSessionsTests {
     #expect(await recorder.calls.isEmpty)
   }
 
+  @Test func skipsLocalKillUnderCancellation() async {
+    // A budget cancellation mid-remote-kill must not spawn a doomed local kill;
+    // the quit path's fallback sweep owns the retry.
+    let recorder = KillRecorder()
+    let client = makeClient(recording: recorder)
+
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      await client.killSurfaceSessions(
+        sessionID: "supa-s", remoteHost: RemoteHost(alias: "devbox"), killLocal: true)
+    }
+    await task.value
+
+    #expect(await recorder.calls == ["remote"])
+  }
 }

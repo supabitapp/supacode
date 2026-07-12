@@ -859,7 +859,7 @@ final class WorktreeTerminalManager {
   /// hosts. zmx is a long-lived per-user daemon that outlives our app quit,
   /// so "Quit and Terminate" must explicitly sweep orphan sessions or they
   /// would survive forever.
-  func terminateAllSessions() async {
+  func terminateAllSessions(killBudget: Duration = WorktreeTerminalManager.quitKillBudget) async {
     let trackedSurfaceIDs = states.values.flatMap(\.allSurfaceIDs)
     let trackedSessionIDs = Set(trackedSurfaceIDs.map(ZmxSessionID.make(surfaceID:)))
     // "Quit and Terminate" promises nothing keeps running, so the host-side
@@ -872,7 +872,9 @@ final class WorktreeTerminalManager {
     // This instance's tracked local sessions are killed. A remote surface's
     // local kill is gated behind its budgeted remote kill (see
     // `ZmxClient.killSurfaceSessions`); when the budget expires first, the
-    // local survivor is left to the next-launch orphan reap. The orphan subset (live and
+    // post-budget fallback retries it uncancelled. A kill that fails without
+    // cancellation (stuck daemon) is not retried; either way what remains
+    // locally is left to the next-launch orphan reap. The orphan subset (live and
     // untracked) is attach-aware: spared when a client is attached or the count
     // is unknown, so a concurrently-running instance keeps its sessions. Orphan
     // reaping is therefore eventually consistent: the last instance to quit
@@ -903,26 +905,59 @@ final class WorktreeTerminalManager {
     let client = zmxClient
     if !trackedRemoteSessions.isEmpty {
       terminalLogger.info(
-        "Quit: tearing down \(trackedRemoteSessions.count) host-side zmx session(s), bounded by \(Self.quitKillBudget)"
+        "Quit: tearing down \(trackedRemoteSessions.count) host-side zmx session(s), bounded by \(killBudget)"
       )
     }
     // Raced against a budget so an unreachable host cannot hold the quit path
     // for the full remote ssh timeout; stragglers are cancelled (best-effort).
     let plan = Self.killPlan(localSessionIDs: allSessions, remoteSessions: trackedRemoteSessions)
-    await withTaskGroup(of: Void.self) { group in
-      group.addTask {
-        await withTaskGroup(of: Void.self) { kills in
-          for entry in plan {
-            kills.addTask {
-              await client.killSurfaceSessions(
-                sessionID: entry.sessionID, remoteHost: entry.host, killLocal: entry.killLocal)
-            }
+    let attemptedLocalKills = LockIsolated<Set<String>>([])
+    await Self.raceKillBudget(killBudget) {
+      await withTaskGroup(of: Void.self) { kills in
+        for entry in plan {
+          kills.addTask {
+            await client.killSurfaceSessions(
+              sessionID: entry.sessionID, remoteHost: entry.host, killLocal: entry.killLocal)
+            guard entry.killLocal, !Task.isCancelled else { return }
+            attemptedLocalKills.withValue { _ = $0.insert(entry.sessionID) }
           }
         }
       }
-      group.addTask {
-        try? await Task.sleep(for: Self.quitKillBudget)
+    }
+    await killSurvivingLocalSessions(plan: plan, attempted: attemptedLocalKills.value)
+  }
+
+  /// Post-budget fallback: a local session whose gated kill lost the quit
+  /// budget would otherwise keep its ssh reconnect loop hammering the host
+  /// until the next-launch orphan reap. Ordering is moot by now (the paired
+  /// remote kill already ran or was cancelled), so kill the survivors directly,
+  /// bounded so a stuck daemon cannot re-hang quit.
+  private func killSurvivingLocalSessions(
+    plan: [SurfaceSessionKill],
+    attempted: Set<String>
+  ) async {
+    let survivors = plan.filter { $0.killLocal && !attempted.contains($0.sessionID) }.map(\.sessionID)
+    guard !survivors.isEmpty else { return }
+    terminalLogger.warning(
+      "Quit kill budget expired; retrying local kill for: \(survivors.joined(separator: ", "))")
+    let client = zmxClient
+    await Self.raceKillBudget(Self.quitLocalFallbackBudget) {
+      await withTaskGroup(of: Void.self) { kills in
+        for id in survivors {
+          kills.addTask { await client.killSession(id) }
+        }
       }
+    }
+  }
+
+  /// Runs `work` racing a `budget` timeout; whichever finishes first cancels
+  /// the other, so a stuck kill cannot outlast the budget.
+  private static func raceKillBudget(
+    _ budget: Duration, _ work: @escaping @Sendable () async -> Void
+  ) async {
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await work() }
+      group.addTask { try? await Task.sleep(for: budget) }
       defer { group.cancelAll() }
       await group.next()
     }
@@ -931,9 +966,14 @@ final class WorktreeTerminalManager {
   /// Cap on the quit-time kill sweep: comfortably above the local zmx cap (5s)
   /// so a local-only teardown is never truncated, well under the remote ssh cap
   /// (15s) so an unreachable host cannot make quit feel hung. A remote surface's
-  /// local kill is gated behind its remote kill, so on an unreachable host it
-  /// can be deferred to the next-launch orphan reap.
+  /// local kill is gated behind its remote kill; when the budget cuts it off,
+  /// `killSurvivingLocalSessions` retries it on its own short budget.
   static let quitKillBudget: Duration = .seconds(6)
+
+  /// Bound on the post-budget local retry: local kills land in well under the
+  /// local zmx cap (5s); 2s keeps worst-case quit around 8s, still under the
+  /// remote ssh cap (15s).
+  static let quitLocalFallbackBudget: Duration = .seconds(2)
 
   /// Reaps `supa-*` sessions zmx hosts that no persisted layout claims;
   /// catches orphans from crashes / force-quits. Attach-aware: a session with

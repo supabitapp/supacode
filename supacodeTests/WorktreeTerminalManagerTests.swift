@@ -1407,6 +1407,35 @@ struct WorktreeTerminalManagerTests {
     #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
   }
 
+  @Test func quitBudgetExpiryStillKillsLocalSessionViaFallback() async {
+    // An unreachable host outlives the quit budget; the gated local kill is
+    // cancelled with it, so the post-budget fallback must still kill the local
+    // session or its ssh reconnect loop survives quit.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    await probe.armRemoteKillGate()
+    let terminate = Task { await manager.terminateAllSessions(killBudget: .zero) }
+    await probe.waitForRemoteKillPending(atLeast: 1)
+    // Give the zero budget ample scheduling to expire and cancel the sweep.
+    for _ in 0..<50 { await Task.yield() }
+    await probe.releaseRemoteKillGate()
+    await terminate.value
+
+    #expect(await probe.killedSessions().contains(sessionID))
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
   @Test func unexpectedExitedZmxSurfaceWithLiveSessionReattachesAndKeepsTab() async {
     let probe = ZmxTestProbe(listing: [])
     let manager = makeZmxBackedManager(probe: probe)
