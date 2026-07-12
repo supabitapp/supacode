@@ -10,8 +10,6 @@ MAKEFLAGS += --no-builtin-rules
 CURRENT_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 CURRENT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(CURRENT_MAKEFILE_PATH)))
 PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/supacode.xcworkspace
-# In-tree DerivedData keeps builds worktree-scoped: regeneration in one worktree
-# must never touch another worktree's caches or in-flight builds.
 DERIVED_DATA_PATH := $(CURRENT_MAKEFILE_DIR)/.build/DerivedData
 APP_SCHEME := supacode
 PROJECT_CONFIG_PATH := Configurations/Project.xcconfig
