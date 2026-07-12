@@ -321,7 +321,7 @@ nonisolated enum CLISkillContent {
   // MARK: - Kimi.
 
   // Kimi uses SKILL.md with YAML frontmatter (same structure as Kiro/Codex).
-  // Discovered from `~/.kimi/skills/<name>/SKILL.md`.
+  // Discovered from `~/.kimi-code/skills/<name>/SKILL.md`.
   static let kimiSkillMd = """
     ---
     name: \(skillName)

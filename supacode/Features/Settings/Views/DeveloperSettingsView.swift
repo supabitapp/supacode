@@ -183,7 +183,7 @@ extension SkillAgent {
     case .copilot: "Hooks in `~/.copilot/hooks/supacode.json` and skill in `~/.copilot/skills/`."
     case .grok: "Hooks in `~/.grok/hooks/supacode.json` and skill in `~/.grok/skills/`."
     case .hermes: "Plugin in `~/.hermes/plugins/` and skill in `~/.hermes/skills/`."
-    case .kimi: "Hooks in `~/.kimi/config.toml` and skill in `~/.kimi/skills/`. Hooks system is in Beta."
+    case .kimi: "Hooks in `~/.kimi-code/config.toml` and skill in `~/.kimi-code/skills/`. Hooks system is in Beta."
     case .kiro: "Hooks in `~/.kiro/agents/` and skill in `~/.kiro/skills/`."
     case .omp: "Extension in `~/.omp/agent/extensions/` and skill in `~/.omp/agent/skills/`."
     case .opencode: "Plugin in `~/.config/opencode/plugins/` and skill in `~/.config/opencode/skills/`."
