@@ -131,6 +131,9 @@ struct SupacodeApp: App {
   @MainActor init() {
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
+    // Keep `AppleLanguages` in sync with the saved language choice so the
+    // bundle resolves the right localization on this (and every) launch.
+    AppLanguage.syncAtLaunch()
     // Fold the six legacy sidebar-state sources into `sidebar.json`
     // before any @Shared binding observes them:
     //   1. `@Shared(.appStorage("sidebarCollapsedRepositoryIDs"))`.

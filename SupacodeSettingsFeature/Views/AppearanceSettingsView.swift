@@ -31,6 +31,21 @@ public struct AppearanceSettingsView: View {
           Text("When off, honors your Ghostty config theme.")
         }
       }
+      Section("Language") {
+        Picker(selection: $store.preferredLanguage.sending(\.setPreferredLanguage)) {
+          ForEach(AppLanguage.allCases) { language in
+            languageLabel(for: language).tag(language)
+          }
+        } label: {
+          Text("Language")
+          Text("Changing the language requires relaunching Supacode.")
+        }
+        if store.languageNeedsRelaunch {
+          Button("Relaunch Supacode to Apply") {
+            store.send(.relaunchForLanguageChangeTapped)
+          }
+        }
+      }
       Section {
         Picker(selection: $store.confirmQuitMode) {
           ForEach(ConfirmQuitMode.allCases, id: \.self) { mode in
@@ -109,5 +124,16 @@ public struct AppearanceSettingsView: View {
     .padding(.trailing, -6)
 
     .navigationTitle("General")
+  }
+
+  /// Native names for concrete languages stay untranslated (convention); only
+  /// the "follow system" option is localized.
+  @ViewBuilder
+  private func languageLabel(for language: AppLanguage) -> some View {
+    switch language {
+    case .system: Text("Follow System")
+    case .english: Text(verbatim: "English")
+    case .simplifiedChinese: Text(verbatim: "简体中文")
+    }
   }
 }
