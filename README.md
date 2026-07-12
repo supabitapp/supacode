@@ -8,7 +8,7 @@ connection loses nothing.
 
 [supacode.sh](https://supacode.sh)
 
-![screenshot](https://www.supacode.sh/screenshot.png)
+<img width="3180" height="1788" alt="Supacode screenshot" src="https://github.com/user-attachments/assets/72a8dc95-020a-4dc2-9010-ba1adc9518ba" />
 
 ## Features
 
@@ -18,7 +18,7 @@ Each task gets its own git worktree and terminal, so agents run in parallel with
 Create one from the sidebar, a hotkey, the command palette, the CLI, or a deeplink. The sidebar
 refreshes branch, file, and pull request state live, nests rows by branch, and hoists the
 worktrees that need you (an agent awaiting input, a running script) to the top. Pin, archive,
-auto-delete after N days, and jump to any with ⌃1 to ⌃0.
+auto-delete after N days, and jump to any with ⌃1 to ⌃9.
 
 ### Background session persistence
 
