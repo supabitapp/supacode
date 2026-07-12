@@ -1,13 +1,18 @@
+import AppKit
 import Clocks
 import Dependencies
 import Foundation
 import GhosttyKit
+import IdentifiedCollections
 import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
 
+// Serialized: these tests spin real GhosttyRuntime surfaces and fake zmx
+// processes whose event-driven waits flake when interleaved with each other.
 @MainActor
+@Suite(.serialized)
 struct WorktreeTerminalManagerTests {
   @Test func reusesExistingStateAndReloadsSnapshotAfterRestoreIsEnabled() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
@@ -131,7 +136,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func unavailableSocketServerIsDiscarded() {
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     server.shutdown()
 
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)
@@ -143,7 +148,7 @@ struct WorktreeTerminalManagerTests {
   }
 
   @Test func oscHookActivityEventRoutesToWorktreeState() async {
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server)
     let worktree = makeWorktree(id: "/tmp/repo/wt with spaces")
 
@@ -166,7 +171,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscIdleEventIsDebouncedAcrossToolStorm() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -185,19 +190,19 @@ struct WorktreeTerminalManagerTests {
     #expect(presence.state.hasActivity(in: [surface.id]))
 
     state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
-    await clock.advance(by: .milliseconds(100))
+    await presence.advance(clock, by: .milliseconds(100))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
 
     state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
-    await clock.advance(by: .milliseconds(500))
+    await presence.advance(clock, by: .milliseconds(500))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
   }
 
   @Test func oscIdleCommitsAfterDebounceWindow() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -214,18 +219,18 @@ struct WorktreeTerminalManagerTests {
     state.onAgentHookEvent?(makeHookEvent(.busy, surfaceID: surface.id))
     state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
 
-    await clock.advance(by: .milliseconds(399))
+    await presence.advance(clock, by: .milliseconds(399))
     await presence.drain()
     #expect(presence.state.hasActivity(in: [surface.id]))
 
-    await clock.advance(by: .milliseconds(1))
+    await presence.advance(clock, by: .milliseconds(1))
     await presence.drain()
     #expect(!presence.state.hasActivity(in: [surface.id]))
   }
 
   @Test func oscIdleDebouncesPerAgentIndependently() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -245,7 +250,7 @@ struct WorktreeTerminalManagerTests {
 
     // Codex idles; Claude stays busy. After window, only Codex should commit idle.
     state.onAgentHookEvent?(makeHookEvent(.idle, agent: .codex, surfaceID: surface.id))
-    await clock.advance(by: .milliseconds(400))
+    await presence.advance(clock, by: .milliseconds(400))
 
     await presence.drain()
     let agents = presence.state.agents(across: [surface.id], badgesEnabled: true)
@@ -258,7 +263,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscSessionEndCancelsPendingIdle() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -277,7 +282,7 @@ struct WorktreeTerminalManagerTests {
     state.onAgentHookEvent?(makeHookEvent(.idle, surfaceID: surface.id))
     state.onAgentHookEvent?(makeHookEvent(.sessionEnd, surfaceID: surface.id, pid: pid))
 
-    await clock.advance(by: .milliseconds(500))
+    await presence.advance(clock, by: .milliseconds(500))
     await presence.drain()
 
     #expect(presence.state.agents(forSurface: surface.id, badgesEnabled: true).isEmpty)
@@ -286,7 +291,7 @@ struct WorktreeTerminalManagerTests {
 
   @Test func oscSurfaceClosedWhileIdlePendingIsHarmless() async {
     let clock = TestClock()
-    let server = AgentHookSocketServer()
+    let server = AgentHookSocketServer(socketPathOverride: "/tmp/supacode-tests/\(UUID().uuidString)")
     let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(socketServer: server, clock: clock)
     let worktree = makeWorktree()
 
@@ -307,10 +312,289 @@ struct WorktreeTerminalManagerTests {
     // busy can't resurrect activity after the surface is gone.
     await presence.drain()
     presence.send(.surfaceClosed(surface.id))
-    await clock.advance(by: .milliseconds(500))
+    await presence.advance(clock, by: .milliseconds(500))
     await presence.drain()
 
     #expect(!presence.state.hasActivity(in: [surface.id]))
+  }
+
+  @Test func rowProjectionCarriesRunningScriptsFromBlockingScripts() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
+
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    guard let state = manager.stateIfExists(for: worktree.id) else {
+      Issue.record("Expected terminal state for worktree")
+      return
+    }
+    #expect(
+      state.currentProjection().runningScripts == [
+        .init(id: definition.id, tint: definition.resolvedTintColor)
+      ]
+    )
+
+    // Lifecycle kinds carry no definition ID and never surface as running scripts.
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+    #expect(state.currentProjection().runningScripts.map(\.id) == [definition.id])
+
+    // Stopping the script reconciles the projection back to empty (#573).
+    manager.handleCommand(.stopScript(worktree, definitionID: definition.id))
+    #expect(state.currentProjection().runningScripts.isEmpty)
+  }
+
+  @Test func runningScriptsMutationsCoalesceIntoOneCallbackPerTurn() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let first = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
+    let second = ScriptDefinition(kind: .test, name: "Test", command: "echo ok")
+    let state = manager.state(for: worktree)
+
+    // A double resume would trap, so each leg also pins "one callback per turn".
+    await withCheckedContinuation { continuation in
+      state.onRunningScriptsChanged = { continuation.resume() }
+      manager.handleCommand(.runBlockingScript(worktree, kind: .script(first), script: "echo ok"))
+    }
+    await withCheckedContinuation { continuation in
+      state.onRunningScriptsChanged = { continuation.resume() }
+      manager.handleCommand(.runBlockingScript(worktree, kind: .script(second), script: "echo ok"))
+    }
+    #expect(Set(state.currentProjection().runningScripts.map(\.id)) == [first.id, second.id])
+
+    // Closing every tab removes both tracked scripts in one turn; the emit
+    // coalesces to a single callback observing only the final empty state.
+    await withCheckedContinuation { continuation in
+      state.onRunningScriptsChanged = {
+        #expect(state.currentProjection().runningScripts.isEmpty)
+        continuation.resume()
+      }
+      state.closeAllTabs()
+    }
+  }
+
+  @Test func runBlockingScriptIgnoresDuplicateOfActiveScript() async {
+    // A second run racing the projection reconcile must keep the running
+    // instance, not close and relaunch its tab (#573).
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
+    let state = manager.state(for: worktree)
+
+    await withCheckedContinuation { continuation in
+      state.onRunningScriptsChanged = { continuation.resume() }
+      manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    }
+    let tabsBefore = state.tabManager.tabs.map(\.id)
+
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+
+    #expect(state.tabManager.tabs.map(\.id) == tabsBefore)
+    #expect(state.currentProjection().runningScripts.map(\.id) == [definition.id])
+  }
+
+  @Test func duplicateRunReEmitsProjectionToHealStaleDropdown() async {
+    // The ignored-duplicate path must still reconcile the row: if the original
+    // running projection was shed, only a fresh emit un-sticks the dropdown from
+    // Run. Without the emit the second continuation would never resume (#573).
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
+    let state = manager.state(for: worktree)
+
+    await withCheckedContinuation { continuation in
+      state.onRunningScriptsChanged = { continuation.resume() }
+      _ = state.runBlockingScript(kind: .script(definition), "echo ok")
+    }
+    let tabsBefore = state.tabManager.tabs.map(\.id)
+
+    await withCheckedContinuation { continuation in
+      state.onRunningScriptsChanged = { continuation.resume() }
+      _ = state.runBlockingScript(kind: .script(definition), "echo ok")
+    }
+    #expect(state.tabManager.tabs.map(\.id) == tabsBefore)
+  }
+
+  @Test func duplicateRunReAssertsProjectionPastDedupe() async {
+    // Once the running projection is cached, an archived-strip can leave the
+    // manager asserting running while the row shows empty. A duplicate run must
+    // re-deliver the running projection past the dedupe so the row heals; a
+    // plain deduped emit would suppress the identical value and the second
+    // await would hang (#573).
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
+    _ = manager.state(for: worktree)
+    let stream = manager.eventStream()
+
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    var running = await nextRunningScripts(stream)
+    while running?.isEmpty == true { running = await nextRunningScripts(stream) }
+    #expect(running?.map(\.id) == [definition.id])
+
+    // Duplicate run: the running set is unchanged, so a plain emit would dedupe.
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    var reAsserted = await nextRunningScripts(stream)
+    while reAsserted?.isEmpty == true { reAsserted = await nextRunningScripts(stream) }
+    #expect(reAsserted?.map(\.id) == [definition.id])
+  }
+
+  @Test func lifecycleScriptRerunReplacesTab() {
+    // The duplicate guard is scoped to user scripts; lifecycle kinds keep their
+    // replace-on-rerun semantics, so a second archive run opens a fresh tab.
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+
+    let first = state.runBlockingScript(kind: .archive, "echo ok")
+    let second = state.runBlockingScript(kind: .archive, "echo ok")
+    #expect(first != nil)
+    #expect(second != nil)
+    #expect(first != second)
+  }
+
+  @Test func runningScriptsFlowThroughRowProjectionEvents() async {
+    // Pins the wiring the dropdown fix hangs on: `blockingScripts` mutations
+    // reach TCA as `worktreeProjectionChanged` events carrying the set (#573).
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "echo ok")
+    let stream = manager.eventStream()
+
+    manager.handleCommand(.runBlockingScript(worktree, kind: .script(definition), script: "echo ok"))
+    var started = await nextRunningScripts(stream)
+    while started?.isEmpty == true { started = await nextRunningScripts(stream) }
+    #expect(started?.map(\.id) == [definition.id])
+
+    manager.handleCommand(.stopScript(worktree, definitionID: definition.id))
+    var stopped = await nextRunningScripts(stream)
+    while stopped?.isEmpty == false { stopped = await nextRunningScripts(stream) }
+    #expect(stopped?.isEmpty == true)
+  }
+
+  @Test func stopWithoutTrackedScriptForcesProjectionReEmit() async {
+    // A stop that matches nothing means the caller acted on a stale mirror;
+    // the forced re-emit is what lets a phantom Stop click self-heal (#573).
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    _ = manager.state(for: worktree)
+    let stream = manager.eventStream()
+    // Drain the subscribe-time seed so the next projection can only be the
+    // forced re-emit (without it, this await hangs).
+    _ = await nextRunningScripts(stream)
+
+    manager.handleCommand(.stopScript(worktree, definitionID: UUID()))
+    let reEmitted = await nextRunningScripts(stream)
+    #expect(reEmitted?.isEmpty == true)
+  }
+
+  @Test func shedProjectionInvalidatesDedupeSoNextEmitLands() async {
+    // A shed projection was never delivered, so its dedupe entries must not
+    // suppress the next identical emit or the row strands desynced (#573).
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), eventBufferCap: 1)
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    // Relies on the projection being the last subscribe-time seed, so it is
+    // the resident event the overflow below sheds.
+    let stream = manager.eventStream()
+
+    // Overflow the single-slot buffer so the seeded projection is shed unseen.
+    state.onSetupScriptConsumed?()
+    // Identical re-emit: only the shed-time dedupe invalidation lets it
+    // through (without it, this await hangs).
+    state.onRunningScriptsChanged?()
+
+    let projection = await nextRunningScripts(stream)
+    #expect(projection?.isEmpty == true)
+  }
+
+  @Test func shedProjectionReplaysWithoutASubsequentEmit() async {
+    // A shed projection with no later terminal mutation must still redeliver, or
+    // a completed script's clear transition strands the Run/Stop dropdown (#573).
+    // Without the replay this await hangs: nothing else emits the row.
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), eventBufferCap: 1)
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let stream = manager.eventStream()
+
+    // Shed the subscribe-time projection with a filler and emit nothing
+    // further, so only the shed-driven replay can deliver the row. This is
+    // `shedProjectionInvalidatesDedupeSoNextEmitLands` minus its manual re-emit.
+    state.onSetupScriptConsumed?()
+
+    let projection = await nextRunningScripts(stream)
+    #expect(projection?.isEmpty == true)
+  }
+
+  @Test func shedNotificationIndicatorInvalidatesItsCountGate() async {
+    // The indicator has its own check-before-emit cache; a shed event must
+    // reset it or the dock count strands until the count actually changes.
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), eventBufferCap: 2)
+    let worktree = makeWorktree()
+    // Subscribe before any state exists so the buffer holds only the
+    // subscribe-time indicator event.
+    let stream = manager.eventStream()
+    let state = manager.state(for: worktree)
+
+    // Two fillers overflow the two-slot buffer and shed the indicator event.
+    state.onSetupScriptConsumed?()
+    state.onSetupScriptConsumed?()
+    // Identical recount: only the shed-time gate reset lets it re-emit
+    // (without it, this await hangs).
+    state.onNotificationIndicatorChanged?()
+
+    var count: Int?
+    for await event in stream {
+      if case .notificationIndicatorChanged(let emitted) = event {
+        count = emitted
+        break
+      }
+    }
+    #expect(count == 0)
+  }
+
+  @Test func runBlockingScriptReportsFailureWhenLaunchCannotBeBuilt() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let definition = ScriptDefinition(kind: .run, name: "Dev", command: "   ")
+
+    // Local: an unbuildable launch reports completion instead of a silent nil,
+    // with no tab (there is no surface, so a View Terminal button would be dead).
+    let local = manager.state(for: makeWorktree())
+    var localCompletions: [(Int?, TerminalTabID?)] = []
+    local.onBlockingScriptCompleted = { _, exitCode, tabId in localCompletions.append((exitCode, tabId)) }
+    #expect(local.runBlockingScript(kind: .script(definition), "   ") == nil)
+    #expect(localCompletions.map(\.0) == [1])
+    #expect(localCompletions.map(\.1) == [TerminalTabID?.none])
+    #expect(local.currentProjection().runningScripts.isEmpty)
+
+    // Remote: an unbuildable ssh command reports the same completion.
+    let remote = manager.state(for: makeRemoteWorktree())
+    var remoteCompletions: [(Int?, TerminalTabID?)] = []
+    remote.onBlockingScriptCompleted = { _, exitCode, tabId in remoteCompletions.append((exitCode, tabId)) }
+    #expect(remote.runBlockingScript(kind: .script(definition), "   ") == nil)
+    #expect(remoteCompletions.map(\.0) == [1])
+    #expect(remoteCompletions.map(\.1) == [TerminalTabID?.none])
+    #expect(remote.currentProjection().runningScripts.isEmpty)
+  }
+
+  private func nextRunningScripts(
+    _ stream: AsyncStream<TerminalClient.Event>
+  ) async -> IdentifiedArrayOf<SidebarItemFeature.State.RunningScript>? {
+    for await event in stream {
+      if case .worktreeProjectionChanged(_, let projection) = event {
+        return projection.runningScripts
+      }
+    }
+    return nil
+  }
+
+  @Test func stopScriptWithoutTerminalStateDoesNotMintOne() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+
+    manager.handleCommand(.stopScript(worktree, definitionID: UUID()))
+    manager.handleCommand(.stopRunScript(worktree))
+
+    #expect(manager.stateIfExists(for: worktree.id) == nil)
   }
 
   @Test func oscHookNotificationLandsInWorktreeState() {
@@ -671,6 +955,7 @@ struct WorktreeTerminalManagerTests {
       let worktree = makeWorktree()
       let state = manager.state(for: worktree)
       state.isSelected = { true }
+      state.syncFocus(windowIsKey: true, windowIsVisible: true)
       guard let tabId = state.createTab(focusing: true),
         let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
       else {
@@ -696,6 +981,60 @@ struct WorktreeTerminalManagerTests {
     }
 
     #expect(state.surfaceStates[surface.id] != nil)
+  }
+
+  @Test func restoreSeedsImagePasteAgentsForLiveAgentRecord() {
+    let surface = restoreSurface(
+      agents: [TerminalLayoutSnapshot.SurfaceAgentRecord(agent: "claude", pids: [getpid()], activity: "busy")]
+    )
+    #expect(surface?.imagePasteAgents == [.claude])
+  }
+
+  @Test func restoreSkipsImagePasteAgentsForStaleAgentRecord() {
+    // A pid-less (or dead-pid) record is dropped by the presence restore and never gets a
+    // corrective empty fan-out, so seeding it would strand Cmd+V routing into a stale shell.
+    let surface = restoreSurface(
+      agents: [TerminalLayoutSnapshot.SurfaceAgentRecord(agent: "claude", pids: [], activity: "busy")]
+    )
+    #expect(surface?.imagePasteAgents.isEmpty == true)
+  }
+
+  private func restoreSurface(agents: [TerminalLayoutSnapshot.SurfaceAgentRecord]) -> GhosttySurfaceView? {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    state.pendingLayoutSnapshot = TerminalLayoutSnapshot(
+      tabs: [
+        TerminalLayoutSnapshot.TabSnapshot(
+          id: nil,
+          title: "Terminal 1",
+          customTitle: nil,
+          icon: nil,
+          tintColor: nil,
+          layout: .leaf(
+            TerminalLayoutSnapshot.SurfaceSnapshot(
+              id: surfaceID,
+              workingDirectory: "/tmp/repo/wt-1",
+              agents: agents
+            )
+          ),
+          focusedLeafIndex: 0
+        )
+      ],
+      selectedTabIndex: 0
+    )
+
+    state.ensureInitialTab(focusing: false)
+
+    guard let tabID = state.tabManager.tabs.first?.id,
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a restored tab and surface")
+      return nil
+    }
+    #expect(surface.id == surfaceID)
+    return surface
   }
 
   @Test func cleanupSurfaceStateRemovesSurfaceStateEntry() {
@@ -796,6 +1135,163 @@ struct WorktreeTerminalManagerTests {
     let killed = await probe.killedSessions()
     #expect(killed.contains(session(for: removedSurfaceID)))
     #expect(!killed.contains(session(for: failedSurfaceID)))
+  }
+
+  private func makeRemoteWorktree(alias: String = "devbox") -> Worktree {
+    Worktree(
+      id: WorktreeID("\(alias)/home/dev/repo/wt-1"),
+      name: "wt-1",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/home/dev/repo/wt-1"),
+      repositoryRootURL: URL(fileURLWithPath: "/home/dev/repo"),
+      host: RemoteHost(alias: alias)
+    )
+  }
+
+  @Test func pruneKillsHostSessionsForRemoteWorktrees() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    manager.prune(keeping: [])
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+    let killed = await probe.killedSessions()
+    #expect(killed.contains(sessionID))
+  }
+
+  @Test func closeTabKillsHostSessionForRemoteWorktree() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    state.closeTab(tabID)
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
+  @Test func unexpectedRemoteSurfaceExitSparesHostSession() async {
+    // A non-explicit close (clean remote exit or a deliberate host-side
+    // detach) must not tear down the host session.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surface.id)
+    // Session already gone locally: close + local kill, remote spared.
+    await probe.setListing([])
+
+    surface.bridge.closeSurface(processAlive: false)
+
+    await probe.waitForKill { $0.contains(sessionID) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.isEmpty)
+  }
+
+  @Test func explicitSurfaceCloseKillsHostSessionForRemoteWorktree() async {
+    // Cmd-W path: performBindingAction marks the close explicit, so the
+    // host-side session dies alongside the local one.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surface.id)
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
+    surface.bridge.closeSurface(processAlive: false)
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
+  @Test func remoteKillFiresEvenWhenLocalZmxIsUnbundled() async {
+    // Over-budget / unbundled local zmx must not gate host-side teardown.
+    // `executableURL` still serves the inert fake binary so the surface never
+    // spawns a real ssh; `isBundled: false` is the guard under test.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let killed = LockIsolated<[String]>([])
+    let zmxURL = makeFakeZmxBinary()
+    let manager = withDependencies {
+      $0.zmxClient = ZmxClient(
+        executableURL: { zmxURL },
+        isBundled: { false },
+        killSession: { id in killed.withValue { $0.append(id) } },
+        killRemoteSession: { host, id in await probe.killRemoteSession(host: host, sessionID: id) },
+        listSessionsWithClients: { [] }
+      )
+    } operation: {
+      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      _ = manager.state(for: worktree)
+      return manager
+    }
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    state.closeTab(tabID)
+
+    await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+    #expect(killed.value.isEmpty)
+  }
+
+  @Test func terminateAllSessionsKillsHostSessionsForRemoteWorktrees() async {
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    await manager.terminateAllSessions()
+
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
   }
 
   @Test func unexpectedExitedZmxSurfaceWithLiveSessionReattachesAndKeepsTab() async {
@@ -1308,6 +1804,36 @@ struct WorktreeTerminalManagerTests {
     }
 
     #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: nil, tabId: nil))
+  }
+
+  @Test func remoteBlockingScriptChildExitReportsFailure() async {
+    // A remote surface's child is ssh itself; its death before the exit
+    // frame is a failed run, not a cancellation (#573). Injecting a raw 0
+    // pins the clamp: it must never reach the lifecycle success paths.
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeRemoteWorktree()
+    let stream = manager.eventStream()
+
+    manager.handleCommand(.runBlockingScript(worktree, kind: .archive, script: "echo ok"))
+
+    guard let state = manager.stateIfExists(for: worktree.id),
+      let tabId = state.tabManager.selectedTabId,
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected blocking script tab and surface")
+      return
+    }
+
+    surface.bridge.onChildExited?(0)
+
+    let event = await nextEvent(stream) { event in
+      if case .blockingScriptCompleted = event {
+        return true
+      }
+      return false
+    }
+
+    #expect(event == .blockingScriptCompleted(worktreeID: worktree.id, kind: .archive, exitCode: 1, tabId: nil))
   }
 
   @Test func blockingScriptSignalBasedTerminationReportsImmediately() async {
@@ -1964,7 +2490,7 @@ struct WorktreeTerminalManagerTests {
 
     // Lifecycle events are never coalesced, so each one occupies a buffer slot.
     // Emitting past the cap with nothing draining must shed the oldest, not grow.
-    let overflow = WorktreeTerminalManager.eventBufferCap + 50
+    let overflow = manager.eventBufferCap + 50
     for _ in 0..<overflow {
       state.onSetupScriptConsumed?()
     }
@@ -1976,7 +2502,7 @@ struct WorktreeTerminalManagerTests {
       if case .setupScriptConsumed = event { count += 1 }
     }
 
-    #expect(count == WorktreeTerminalManager.eventBufferCap)
+    #expect(count == manager.eventBufferCap)
   }
 
   @Test func purgesCoalesceKeyOnTabTeardownSoIdenticalEventRedelivers() async {
@@ -2107,7 +2633,9 @@ struct WorktreeTerminalManagerTests {
     )
   }
 
-  private func makeZmxBackedManager(probe: ZmxTestProbe) -> WorktreeTerminalManager {
+  /// Writes an inert fake zmx (`exec /bin/cat`) so wrapped surface commands
+  /// never spawn anything real.
+  private func makeFakeZmxBinary() -> URL {
     let zmxURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-test-zmx-\(UUID().uuidString)")
     let script = "#!/bin/sh\nexec /bin/cat\n"
     do {
@@ -2116,17 +2644,26 @@ struct WorktreeTerminalManagerTests {
     } catch {
       Issue.record("Failed to set up fake zmx binary: \(error)")
     }
+    return zmxURL
+  }
+
+  /// `worktree` seeds the pre-created state INSIDE the dependency scope, so
+  /// its `@Dependency(\.zmxClient)` captures the probe-backed client. Tests
+  /// must fetch the state with the same worktree id.
+  private func makeZmxBackedManager(probe: ZmxTestProbe, worktree: Worktree? = nil) -> WorktreeTerminalManager {
+    let zmxURL = makeFakeZmxBinary()
 
     return withDependencies {
       $0.zmxClient = ZmxClient(
         executableURL: { zmxURL },
         isBundled: { true },
         killSession: { id in await probe.killSession(id) },
+        killRemoteSession: { host, id in await probe.killRemoteSession(host: host, sessionID: id) },
         listSessionsWithClients: { await probe.listSessionsWithClients() },
       )
     } operation: {
       let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-      _ = manager.state(for: makeWorktree())
+      _ = manager.state(for: worktree ?? makeWorktree())
       return manager
     }
   }
@@ -2157,7 +2694,13 @@ struct WorktreeTerminalManagerTests {
 
     private enum Trigger {
       case kill(@Sendable ([String]) -> Bool)
+      case remoteKill(@Sendable ([RemoteKill]) -> Bool)
       case list(threshold: Int)
+    }
+
+    struct RemoteKill: Equatable, Sendable {
+      var authority: String
+      var sessionID: String
     }
 
     // Resumed exactly once: by the event or the timeout.
@@ -2170,6 +2713,7 @@ struct WorktreeTerminalManagerTests {
 
     private var listing: [ZmxSessionListParser.Entry]?
     private var killed: [String] = []
+    private var remoteKills: [RemoteKill] = []
     private var listCalls = 0
     private var waiters: [Waiter] = []
 
@@ -2196,6 +2740,15 @@ struct WorktreeTerminalManagerTests {
       killed
     }
 
+    func killRemoteSession(host: RemoteHost, sessionID: String) {
+      remoteKills.append(RemoteKill(authority: host.authority, sessionID: sessionID))
+      resumeWaiters()
+    }
+
+    func remoteKilledSessions() -> [RemoteKill] {
+      remoteKills
+    }
+
     func listCallCount() -> Int {
       listCalls
     }
@@ -2206,6 +2759,14 @@ struct WorktreeTerminalManagerTests {
       sourceLocation: SourceLocation = #_sourceLocation
     ) async -> Bool {
       await wait(for: .kill(predicate), description: "zmx session kill", sourceLocation: sourceLocation)
+    }
+
+    @discardableResult
+    func waitForRemoteKill(
+      where predicate: @escaping @Sendable ([RemoteKill]) -> Bool,
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) async -> Bool {
+      await wait(for: .remoteKill(predicate), description: "remote zmx session kill", sourceLocation: sourceLocation)
     }
 
     @discardableResult
@@ -2241,6 +2802,7 @@ struct WorktreeTerminalManagerTests {
     private func isSatisfied(_ trigger: Trigger) -> Bool {
       switch trigger {
       case .kill(let predicate): predicate(killed)
+      case .remoteKill(let predicate): predicate(remoteKills)
       case .list(let threshold): listCalls >= threshold
       }
     }
@@ -2604,5 +3166,91 @@ struct WorktreeTerminalManagerTests {
     // Sanity: a sibling mutation also doesn't drift A's surface set.
     _ = surfaceA
     #expect(state.surfaceIDs(inTab: tabA) == tabASurfaces)
+  }
+
+  @Test func osc11BackgroundColorResolvesBackgroundKindToSRGB() {
+    let color = WorktreeTerminalManager.osc11BackgroundColor(
+      kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND,
+      red: 26,
+      green: 42,
+      blue: 58
+    )
+    let srgb = color?.usingColorSpace(.sRGB)
+    #expect(srgb != nil)
+    #expect(abs((srgb?.redComponent ?? 0) - CGFloat(26) / 255) < 0.001)
+    #expect(abs((srgb?.greenComponent ?? 0) - CGFloat(42) / 255) < 0.001)
+    #expect(abs((srgb?.blueComponent ?? 0) - CGFloat(58) / 255) < 0.001)
+  }
+
+  @Test func osc11BackgroundColorIgnoresNonBackgroundKinds() {
+    #expect(
+      WorktreeTerminalManager.osc11BackgroundColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_FOREGROUND, red: 1, green: 2, blue: 3) == nil)
+    #expect(
+      WorktreeTerminalManager.osc11BackgroundColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_CURSOR, red: 1, green: 2, blue: 3) == nil)
+    #expect(
+      WorktreeTerminalManager.osc11BackgroundColor(kind: nil, red: 1, green: 2, blue: 3) == nil)
+  }
+
+  @Test func osc11BackgroundColorRequiresAllComponents() {
+    #expect(
+      WorktreeTerminalManager.osc11BackgroundColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, red: nil, green: 2, blue: 3) == nil)
+    #expect(
+      WorktreeTerminalManager.osc11BackgroundColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, red: 1, green: nil, blue: 3) == nil)
+    #expect(
+      WorktreeTerminalManager.osc11BackgroundColor(
+        kind: GHOSTTY_ACTION_COLOR_KIND_BACKGROUND, red: 1, green: 2, blue: nil) == nil)
+  }
+
+  @Test func focusedSurfaceBackgroundInitializesToThemeFallback() {
+    let runtime = GhosttyRuntime()
+    let manager = WorktreeTerminalManager(runtime: runtime)
+    #expect(manager.focusedSurfaceBackground.matchesTint(runtime.backgroundColor()))
+  }
+
+  @Test func refreshFocusedSurfaceBackgroundDedupesUnchangedColor() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let notificationCount = LockIsolated(0)
+    let observer = NotificationCenter.default.addObserver(
+      forName: .ghosttyFocusedSurfaceBackgroundDidChange,
+      object: manager,
+      queue: nil
+    ) { _ in
+      notificationCount.withValue { $0 += 1 }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    // The resolved color (theme fallback, no focused surface) matches the
+    // stored value, so neither a manual refresh nor a selection change posts.
+    manager.refreshFocusedSurfaceBackground()
+    manager.handleCommand(.setSelectedWorktreeID(makeWorktree().id))
+
+    #expect(notificationCount.value == 0)
+    #expect(manager.selectedWorktreeID == makeWorktree().id)
+  }
+
+  @Test func switchingBetweenSelectionsDoesNotSpuriouslyPost() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let notificationCount = LockIsolated(0)
+    let observer = NotificationCenter.default.addObserver(
+      forName: .ghosttyFocusedSurfaceBackgroundDidChange,
+      object: manager,
+      queue: nil
+    ) { _ in
+      notificationCount.withValue { $0 += 1 }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    let first = makeWorktree(id: "/tmp/repo/wt-a").id
+    let second = makeWorktree(id: "/tmp/repo/wt-b").id
+    manager.handleCommand(.setSelectedWorktreeID(first))
+    manager.handleCommand(.setSelectedWorktreeID(second))
+    manager.handleCommand(.setSelectedWorktreeID(first))
+
+    #expect(notificationCount.value == 0)
+    #expect(manager.selectedWorktreeID == first)
   }
 }

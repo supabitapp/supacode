@@ -62,6 +62,50 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .unpin))
   }
 
+  @Test func worktreeAppearanceTitleAndColor() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?title=Custom&color=red")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: "Custom", color: "red")))
+  }
+
+  @Test func worktreeAppearancePercentEncodedValues() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?title=Hello%20World&color=%23A1B2C3")!
+    #expect(
+      parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: "Hello World", color: "#A1B2C3"))
+    )
+  }
+
+  @Test func worktreeAppearanceColorOnly() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?color=none")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: nil, color: "none")))
+  }
+
+  @Test func worktreeAppearanceEmptyTitleIsPreservedForClearing() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?title=")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: "", color: nil)))
+  }
+
+  @Test func worktreeAppearanceMissingQueryReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreeAppearanceEmptyColorIsPreservedForValidation() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?color=")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: nil, color: "")))
+  }
+
+  @Test func worktreeAppearanceIDWithTrailingSlashIsNormalized() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1%2F"
+    let url = URL(string: "supacode://worktree/\(encoded)/appearance?color=red")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .appearance(title: nil, color: "red")))
+  }
+
   @Test func worktreeMissingActionDefaultsToSelect() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let url = URL(string: "supacode://worktree/\(encoded)")!

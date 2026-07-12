@@ -26,6 +26,10 @@ struct ZmxClient: Sendable {
   /// Tear down a session. No-op on missing. Bounded by a 5-second timeout so a
   /// stuck daemon can't hold the close path indefinitely.
   var killSession: @Sendable (_ sessionID: String) async -> Void
+  /// Best-effort kill of a host-side zmx session over SSH. No-op when the host
+  /// lacks zmx. Bounded so an unreachable host can't hold the close path; an
+  /// unreachable host leaks the session (no host-side reaper yet).
+  var killRemoteSession: @Sendable (_ host: RemoteHost, _ sessionID: String) async -> Void
   /// Returns each live Supacode session with its attached-client count, or nil
   /// when the probe failed/timed out. nil means UNKNOWN (never reap); `[]` means
   /// a successful empty listing. A `clients` of nil marks a session whose count
@@ -46,6 +50,10 @@ extension ZmxClient {
   /// completes in <100ms; if it doesn't, something is wrong and we'd rather log
   /// + continue than hang.
   nonisolated static let subprocessTimeout: Duration = .seconds(5)
+
+  /// Cap on a host-side kill over SSH: `ConnectTimeout=10` plus handshake
+  /// headroom, so a dead host fails fast without wedging teardown.
+  nonisolated static let remoteSubprocessTimeout: Duration = .seconds(15)
 
   nonisolated static let live: ZmxClient = {
     // Probe once per process. If the effective socket-dir is so long that
@@ -82,25 +90,23 @@ extension ZmxClient {
       cachedBundledURL
     }
 
-    /// Runs a zmx subcommand and returns captured stdout on success, or nil on
-    /// any failure path (unbundled, spawn error, timeout, non-zero exit). When
+    /// Runs a bounded subprocess and returns captured stdout on success, or nil
+    /// on any failure path (spawn error, timeout, non-zero exit). When
     /// `captureStdout` is false the stdout pipe is replaced with `/dev/null`
     /// so fire-and-forget callers can't deadlock the child on a full buffer.
-    @Sendable func runZmx(_ arguments: [String], captureStdout: Bool = false) async -> String? {
-      // Uses `bundledExecutable`, not the budget-gated `resolveExecutable`, so
-      // kill paths still tear down sessions from a previous under-budget launch
-      // even when this launch's `ZMX_DIR` is over budget.
-      guard let executable = bundledExecutable() else { return nil }
-      let command = "zmx " + arguments.joined(separator: " ")
+    @Sendable func runProcess(
+      invocation: (executableURL: URL, arguments: [String]),
+      environment: [String: String]?,
+      timeout: Duration,
+      commandLabel: String,
+      captureStdout: Bool
+    ) async -> String? {
       let process = Process()
-      process.executableURL = executable
-      process.arguments = arguments
-      // Pin `ZMX_DIR` so the subprocess resolves the same socket dir as the
-      // wrapped shell. Defense-in-depth against future env divergence even
-      // after the separator fix in `socketDir`.
-      var env = ProcessInfo.processInfo.environment
-      env["ZMX_DIR"] = ZmxSocketBudget.socketDir(env: env)
-      process.environment = env
+      process.executableURL = invocation.executableURL
+      process.arguments = invocation.arguments
+      if let environment {
+        process.environment = environment
+      }
       // macOS pipe buffer is ~64KB; a child that emits more without us draining
       // would deadlock on write while we wait for `terminationHandler`. Drain
       // captured stdout continuously, or redirect to `/dev/null` for callers
@@ -144,7 +150,7 @@ extension ZmxClient {
       do {
         try process.run()
       } catch {
-        zmxLogger.warning("\(command) failed: \(error)")
+        zmxLogger.warning("\(commandLabel) failed: \(error)")
         return nil
       }
       let exitStatus = await withTaskGroup(of: Int32?.self) { group -> Int32? in
@@ -153,7 +159,7 @@ extension ZmxClient {
           return nil
         }
         group.addTask {
-          try? await Task.sleep(for: subprocessTimeout)
+          try? await Task.sleep(for: timeout)
           return nil
         }
         defer { group.cancelAll() }
@@ -174,16 +180,44 @@ extension ZmxClient {
           defer { group.cancelAll() }
           await group.next()
         }
-        zmxLogger.warning("\(command) timed out after \(subprocessTimeout)")
+        if Task.isCancelled {
+          // Expected on the budgeted quit sweep; the child was SIGTERMed and
+          // given no reap window, so `isRunning` would be misleading here.
+          zmxLogger.info("\(commandLabel) cancelled; child terminated")
+        } else if process.isRunning {
+          zmxLogger.warning("\(commandLabel) timed out after \(timeout); child survived SIGTERM and was not reaped")
+        } else {
+          zmxLogger.warning("\(commandLabel) timed out after \(timeout)")
+        }
         return nil
       }
       if exitStatus != 0 {
         let stderr = stderrBuffer.withValue { String(data: $0, encoding: .utf8) ?? "" }
-        zmxLogger.warning("\(command) exit=\(exitStatus) stderr=\(stderr)")
+        zmxLogger.warning("\(commandLabel) exit=\(exitStatus) stderr=\(stderr)")
         return nil
       }
       guard captureStdout else { return nil }
       return stdoutBuffer.withValue { String(data: $0, encoding: .utf8) ?? "" }
+    }
+
+    /// Runs a bundled-zmx subcommand; nil when unbundled or on any failure.
+    @Sendable func runZmx(_ arguments: [String], captureStdout: Bool = false) async -> String? {
+      // Uses `bundledExecutable`, not the budget-gated `resolveExecutable`, so
+      // kill paths still tear down sessions from a previous under-budget launch
+      // even when this launch's `ZMX_DIR` is over budget.
+      guard let executable = bundledExecutable() else { return nil }
+      // Pin `ZMX_DIR` so the subprocess resolves the same socket dir as the
+      // wrapped shell. Defense-in-depth against future env divergence even
+      // after the separator fix in `socketDir`.
+      var env = ProcessInfo.processInfo.environment
+      env["ZMX_DIR"] = ZmxSocketBudget.socketDir(env: env)
+      return await runProcess(
+        invocation: (executableURL: executable, arguments: arguments),
+        environment: env,
+        timeout: subprocessTimeout,
+        commandLabel: "zmx " + arguments.joined(separator: " "),
+        captureStdout: captureStdout
+      )
     }
 
     return ZmxClient(
@@ -191,6 +225,15 @@ extension ZmxClient {
       isBundled: { bundledExecutable() != nil },
       killSession: { sessionID in
         _ = await runZmx(["kill", sessionID])
+      },
+      killRemoteSession: { host, sessionID in
+        _ = await runProcess(
+          invocation: ZmxAttach.remoteKillInvocation(host: host, sessionID: sessionID),
+          environment: nil,
+          timeout: remoteSubprocessTimeout,
+          commandLabel: "ssh \(host.sshDestination) zmx kill \(sessionID)",
+          captureStdout: false
+        )
       },
       listSessionsWithClients: {
         // nil from runZmx is the UNKNOWN signal (spawn error / timeout / non-zero
@@ -205,6 +248,7 @@ extension ZmxClient {
     executableURL: { nil },
     isBundled: { false },
     killSession: { _ in },
+    killRemoteSession: { _, _ in },
     listSessionsWithClients: { [] }
   )
 }
@@ -370,53 +414,255 @@ nonisolated enum ZmxAttach {
     return "'\(escaped)'"
   }
 
-  /// Remote surface command: a *local* zmx session whose child process is the
-  /// SSH connection to `host`. Session persistence (detach / reattach) lives on
-  /// the client; the remote just runs a plain login shell, so nothing has to be
-  /// installed on the host. `localZmxExecutablePath` is the budget-gated bundle
-  /// path (nil when zmx is unbundled or over budget), in which case the surface
-  /// is the bare ssh line with no persistence. The ssh line is single-quoted by
-  /// `buildCommand` for the local zmx-wrapping `/bin/sh -c`; its own inner
-  /// quoting (from `SSHCommand.commandLine`) survives that outer level.
-  static func buildRemoteCommand(
-    host: RemoteHost,
-    localZmxExecutablePath: String?,
-    sessionID: String,
-    userCommand: String?,
-    surfaceID: UUID
-  ) -> String {
-    let sshLine = SSHCommand.commandLine(
-      host: host,
-      remoteCommand: remoteShellCommand(userCommand: userCommand, surfaceID: surfaceID)
-    )
-    guard let localZmxExecutablePath else { return sshLine }
-    return buildCommand(executablePath: localZmxExecutablePath, sessionID: sessionID, userCommand: sshLine)
-  }
+  /// Everything the remote side needs to build a surface's connect and
+  /// reconnect scripts. `userCommand` is the explicit command (nil for an
+  /// interactive surface); `defaultCommand` is the cd-into-worktree login
+  /// shell (nil for a root path). Reconnects never re-run `userCommand`: a
+  /// one-shot command whose host session ended while disconnected must not
+  /// repeat its side effects.
+  struct RemoteSurfaceLaunch {
+    var host: RemoteHost
+    var surfaceID: UUID
+    var userCommand: String?
+    var defaultCommand: String?
+    var hostPersistenceEnabled: Bool
 
-  /// The command the *remote* shell runs over SSH: exports the surface id (so the
-  /// agent hook's in-band presence OSC is gated to a Supacode surface, see
-  /// `AgentPresenceOSC.emitShell`), prints the beta banner once at connection,
-  /// then runs the user command, or a login shell when there is none. No zmx on
-  /// the remote: persistence is the local zmx wrapping the whole ssh line. The
-  /// awaiting-input signal rides the terminal stream (OSC 3008), not a socket, so
-  /// no reverse forward / remote `SUPACODE_SOCKET_PATH` is needed (the pid suffix
-  /// is dropped over SSH).
-  static func remoteShellCommand(
-    userCommand: String?,
-    surfaceID: UUID
-  ) -> String {
-    let prelude = "export SUPACODE_SURFACE_ID=\(shellQuote(surfaceID.uuidString)); " + betaBanner
-    guard let command = userCommand?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty else {
-      return prelude + "exec \"$SHELL\" -l"
+    var sessionID: String { ZmxSessionID.make(surfaceID: surfaceID) }
+
+    var export: String {
+      "export SUPACODE_SURFACE_ID=\(ZmxAttach.shellQuote(surfaceID.uuidString)); "
     }
-    return prelude + command
+
+    /// Whitespace-only commands count as absent.
+    var normalizedUserCommand: String? {
+      Self.normalized(userCommand)
+    }
+
+    /// First-connect command: `userCommand`, else the worktree default, else a
+    /// bare login shell.
+    var connectCommand: String {
+      normalizedUserCommand ?? reconnectFallbackCommand
+    }
+
+    /// Reconnect fallback (no host session to reattach): the worktree default
+    /// shell, never the user command.
+    var reconnectFallbackCommand: String {
+      Self.normalized(defaultCommand) ?? "exec \"$SHELL\" -l"
+    }
+
+    private static func normalized(_ command: String?) -> String? {
+      let trimmed = command?.trimmingCharacters(in: .whitespacesAndNewlines)
+      return trimmed?.isEmpty == false ? trimmed : nil
+    }
   }
 
-  /// Dim banner printed at the top of a remote surface on connection, matching
-  /// the blocking-script read-only banner style. Remote surfaces are in beta and
-  /// some local-only features (Unix-socket agent hooks, worktree HEAD watching)
-  /// are unavailable, so the user gets an up-front heads-up. The session persists
-  /// across reattach, so this only prints on the first connect.
+  /// Remote surface command: a *local* zmx session whose child is a reconnect
+  /// loop around the SSH connection. The first attempt creates-or-attaches the
+  /// host-side session (see `remoteConnectScript`); retries after a 255 only
+  /// reattach an existing one (see `remoteReconnectScript`), restoring the
+  /// screen state. `localZmxExecutablePath` is the budget-gated bundle path
+  /// (nil when zmx is unbundled or over budget), in which case the surface is
+  /// the bare loop with no quit persistence, but reconnect still works. The
+  /// reconnect loop (ssh lines included) is single-quoted by `buildCommand`
+  /// for the local zmx-wrapping `/bin/sh -c`; the ssh lines' inner quoting
+  /// survives that outer level.
+  static func buildRemoteCommand(
+    _ launch: RemoteSurfaceLaunch,
+    localZmxExecutablePath: String?
+  ) -> String {
+    let connectLine = SSHCommand.commandLine(
+      host: launch.host,
+      remoteCommand: posixShellWrapped(remoteConnectScript(launch))
+    )
+    let reconnectLine = SSHCommand.commandLine(
+      host: launch.host,
+      remoteCommand: posixShellWrapped(remoteReconnectScript(launch))
+    )
+    let loop = SSHReconnectLoop.script(connect: connectLine, reconnect: reconnectLine)
+    guard let localZmxExecutablePath else { return loop }
+    // The local and host-side sessions share the `supa-<surfaceID>` name.
+    return buildCommand(
+      executablePath: localZmxExecutablePath,
+      sessionID: launch.sessionID,
+      userCommand: loop
+    )
+  }
+
+  /// Re-quotes a remote script behind `exec /bin/sh -c`, so the login shell
+  /// (which may be fish or csh) only has to parse that one portable line; the
+  /// POSIX `if/fi` script runs in /bin/sh with the login shell's exported
+  /// PATH already in place.
+  static func posixShellWrapped(_ script: String) -> String {
+    "exec /bin/sh -c " + shellQuote(script)
+  }
+
+  /// Runs a command under a fresh login shell. Commands must never execute in
+  /// the `posixShellWrapped` /bin/sh layer directly: on dash-as-/bin/sh hosts
+  /// that would break bash/zsh-isms that worked before the wrapper existed.
+  static func loginShellRun(_ command: String) -> String {
+    "exec \"$SHELL\" -l -c " + shellQuote(command)
+  }
+
+  /// The first-connect script: exports the surface id (so the agent hook's
+  /// in-band presence OSC is gated to a Supacode surface, see
+  /// `AgentPresenceOSC.emitShell`), then runs the connect command. When
+  /// `hostPersistenceEnabled` and the host has zmx on its login-shell PATH,
+  /// the command runs inside a host-side `zmx attach supa-<surfaceID>`
+  /// session (a login shell via `"$SHELL" -l`, so the session shell matches
+  /// the non-zmx branch on dash-as-/bin/sh hosts). The env export precedes
+  /// the attach, so the session inherits it on create. A failed attach falls
+  /// through to a plain run with a visible notice instead of an instant,
+  /// unreadable close. The awaiting-input signal rides the terminal stream
+  /// (OSC 3008), not a socket, so no reverse forward is needed.
+  static func remoteConnectScript(_ launch: RemoteSurfaceLaunch) -> String {
+    let command = launch.connectCommand
+    guard launch.hostPersistenceEnabled else {
+      return launch.export + betaBanner + loginShellRun(command)
+    }
+    // Always the `-c` form: the interactive default carries the cd into the
+    // worktree, so the created session must run it too, via a login shell so
+    // dash-as-/bin/sh hosts keep bash/zsh semantics. The banners ride INSIDE
+    // the session command: printed outside it they would be swallowed by
+    // zmx's screen takeover, inside it they land in the session's screen
+    // state and so also survive reattach restores.
+    let sessionCommand = "\"$SHELL\" -l -c " + shellQuote(betaBanner + persistentBanner + command)
+    // Newline separators keep a command with a trailing `;` from breaking
+    // the `fi`; the trailing fallback line serves only the no-zmx branch.
+    // The failed-attach fallthrough execs its own fresh default shell, never
+    // `command`: attach can fail AFTER the session started running it, and a
+    // second concurrent copy of a one-shot command must never spawn.
+    return launch.export
+      + "if command -v zmx >/dev/null 2>&1; then "
+      + "zmx attach \(launch.sessionID) \(sessionCommand)\n"
+      + "supa_rc=$?\n"
+      + "[ \"$supa_rc\" -eq 0 ] && exit 0\n"
+      + #"printf '\033[1;31m── zmx attach exited with status %s. "#
+      + #"Continuing without host persistence. ──\033[0m\r\n' "$supa_rc"; "#
+      + "\n"
+      + loginShellRun(launch.reconnectFallbackCommand) + "\n"
+      + "else "
+      + betaBanner + zmxInstallHintBanner
+      + "\n"
+      + "fi\n"
+      + loginShellRun(command)
+  }
+
+  /// The reconnect script, used by the loop after a dropped connection:
+  /// reattach the host session if it still exists, exit 0 (closing the pane
+  /// like a normal remote exit, with a notice) if it ended while
+  /// disconnected, and never re-run the user command. Without host zmx (or
+  /// with persistence off) it drops into the worktree default shell. If the
+  /// session dies between the list check and the attach, the upsert recreates
+  /// a blank shell session; accepted (the window is milliseconds).
+  static func remoteReconnectScript(_ launch: RemoteSurfaceLaunch) -> String {
+    guard launch.hostPersistenceEnabled else {
+      return launch.export + reconnectShellNotice + loginShellRun(launch.reconnectFallbackCommand)
+    }
+    return launch.export
+      + "if command -v zmx >/dev/null 2>&1; then "
+      + "if zmx list --short 2>/dev/null | grep -q '\(launch.sessionID)$'; then "
+      + "exec zmx attach \(launch.sessionID)\n"
+      + "fi\n"
+      + sessionEndedNotice + "exit 0\n"
+      + "fi\n"
+      + reconnectShellNotice
+      + loginShellRun(launch.reconnectFallbackCommand)
+  }
+
+  /// Best-effort teardown of the host-side session created by
+  /// `remoteConnectScript`. Rides the login shell (brew PATH) and the shared
+  /// control socket; the `command -v` guard keeps a host without zmx from
+  /// logging a spurious 127 warning on every close (a host whose zmx was
+  /// uninstalled mid-session leaks silently, joining the documented leak set).
+  static func remoteKillInvocation(
+    host: RemoteHost,
+    sessionID: String
+  ) -> (executableURL: URL, arguments: [String]) {
+    SSHCommand.invocation(
+      host: host,
+      executable: "/bin/sh",
+      // `|| exit 0`, not `&&`: a host without zmx must exit 0 (true no-op),
+      // or every close logs a spurious exit-1 warning. The trailing list
+      // re-check surfaces a kill that silently failed (`zmx kill` exits 0
+      // even when the session survives): a leftover session exits 1, which
+      // `runProcess` logs.
+      arguments: [
+        "-c",
+        "command -v zmx >/dev/null 2>&1 || exit 0; zmx kill \(sessionID); "
+          + "! zmx list --short 2>/dev/null | grep -q '\(sessionID)$'",
+      ],
+      workingDirectory: nil,
+      extraOptions: SSHCommand.backgroundProbeOptions
+    )
+  }
+
+  /// OSC 8 hyperlink to the zmx site (terminals without OSC 8 support just
+  /// render the plain "zmx" text).
+  static let zmxHyperlink = #"\033]8;;https://zmx.sh\033\\zmx\033]8;;\033\\"#
+
+  /// Dim banner with a bold "Beta", printed at the top of a remote surface on
+  /// first connect. Remote surfaces are in beta and some local-only features
+  /// (Unix-socket agent hooks, worktree HEAD watching) are unavailable, so
+  /// the user gets an up-front heads-up.
   static let betaBanner =
-    #"printf '\033[2m── Remote Supacode surfaces are in beta and may have reduced functionality. ──\033[0m\r\n'; "#
+    #"printf '\033[2m── Remote Supacode surfaces are in \033[0m\033[1mBeta\033[0m\033[2m "#
+    + #"and may have reduced functionality. ──\033[0m\r\n'; "#
+
+  /// Dim banner for a host-persisted surface, with a bold "persisted" and the
+  /// survival promise in green, plus a footnote on how to actually end it
+  /// (persistence inverts the close-kills-it default, so the exit paths are
+  /// not guessable). No zmx mention: the tool only matters when it is
+  /// missing. Runs inside the session command, never before `zmx attach`
+  /// (the attach redraw would swallow it).
+  static let persistentBanner =
+    #"printf '\033[2m── Remote session \033[0m\033[1mpersisted\033[0m\033[2m on this host.\033[0m "#
+    + #"\033[32mIt \033[1msurvives\033[0m\033[32m disconnects.\033[0m\033[2m ──\033[0m\r\n"#
+    + #"\033[2m   Type exit or close this surface to end it on the host.\033[0m\r\n'; "#
+
+  /// Dim hint with install suggestions, appended to the beta banner when the
+  /// host has no zmx. Same emphasis as `persistentBanner`: bold key phrase,
+  /// green benefit clause, dim everything else. "New sessions", not
+  /// "sessions": installing zmx cannot retroactively persist this one.
+  static let zmxInstallHintBanner =
+    #"printf '\033[2m── \033[0m\033[1mInstall "# + zmxHyperlink
+    + #"\033[0m\033[2m on this host to \033[0m\033[32mkeep \033[4mnew\033[24m sessions \033[1malive\033[0m\033[32m "#
+    + #"across disconnects.\033[0m\033[2m ──\033[0m\r\n"#
+    + #"\033[2m   macOS: brew install neurosnap/tap/zmx\033[0m\r\n"#
+    + #"\033[2m   Linux: https://zmx.sh (prebuilt binaries and packages)\033[0m\r\n'; "#
+
+  /// Bold yellow notice printed when a reconnect lands in a fresh shell
+  /// because there is no host session to resume.
+  static let reconnectShellNotice =
+    #"printf '\033[1;33m── Reconnected without a persistent session; starting a fresh shell. ──\033[0m\r\n'; "#
+
+  /// Dim notice printed right before the pane closes because the host
+  /// session ended while disconnected; without it the tab just vanishes.
+  static let sessionEndedNotice =
+    #"printf '\033[2m── Remote session ended while disconnected. ──\033[0m\r\n'; "#
+}
+
+/// Local `/bin/sh` retry loop around two ssh command lines: `connect` runs
+/// once (create-or-attach), `reconnect` runs on every retry (attach-only).
+/// ssh reserves exit 255 for its own connection errors, so 255 retries (with
+/// capped backoff, forever, so an overnight sleep still resumes) and every
+/// other exit passes through, closing the surface like a local shell exit.
+/// 255 also covers permanent ssh failures (auth, host key, DNS), which retry
+/// too; the banner names the exit code and ssh's own error text stays
+/// visible above it. Ctrl-C during the wait is the escape hatch (`trap`
+/// makes it deterministic; while ssh is live the tty is raw and Ctrl-C goes
+/// to the remote).
+nonisolated enum SSHReconnectLoop {
+  static let maxDelaySeconds = 15
+
+  static func script(connect: String, reconnect: String) -> String {
+    let passExitUnless255 = "; supa_rc=$?; [ \"$supa_rc\" -ne 255 ] && exit \"$supa_rc\""
+    return "trap 'exit 130' INT; "
+      + connect + passExitUnless255 + "; "
+      + "supa_delay=1; while :; do "
+      + #"printf '\033[1;33m── Connection failed (ssh exit 255). Retrying in %ss. "#
+      + #"Press Ctrl-C to stop. ──\033[0m\r\n' "$supa_delay"; "#
+      + "sleep \"$supa_delay\"; supa_delay=$((supa_delay * 2)); "
+      + "[ \"$supa_delay\" -gt \(maxDelaySeconds) ] && supa_delay=\(maxDelaySeconds); "
+      + reconnect + passExitUnless255 + "; done"
+  }
 }

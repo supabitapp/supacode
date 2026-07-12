@@ -7,14 +7,17 @@ import SwiftUI
 public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRepresentable {
   case commandPalette, worktreeSwitcher, openSettings, checkForUpdates, showMainWindow
   case toggleLeftSidebar, revealInSidebar
+  case expandAllSidebarGroups, collapseAllSidebarGroups
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
   case deleteWorktree, confirmWorktreeAction
   case selectNextWorktree, selectPreviousWorktree
   case worktreeHistoryBack, worktreeHistoryForward
   case selectWorktree(Int)
-  case openWorktree, revealInFinder, openRepository, addRemoteRepository, openPullRequest, copyPath
+  case selectTab(Int)
+  case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
   case runScript, stopRunScript
   case jumpToLatestUnread
+  case togglePullRequestInspector, toggleNotificationsInspector
 
   // Stable string key for JSON dictionary persistence.
   public var codingKey: CodingKey {
@@ -42,6 +45,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .showMainWindow: "showMainWindow"
     case .toggleLeftSidebar: "toggleLeftSidebar"
     case .revealInSidebar: "revealInSidebar"
+    case .expandAllSidebarGroups: "expandAllSidebarGroups"
+    case .collapseAllSidebarGroups: "collapseAllSidebarGroups"
     case .newWorktree: "newWorktree"
     case .refreshWorktrees: "refreshWorktrees"
     case .archivedWorktrees: "archivedWorktrees"
@@ -53,15 +58,19 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .worktreeHistoryBack: "worktreeHistoryBack"
     case .worktreeHistoryForward: "worktreeHistoryForward"
     case .selectWorktree(let index): "selectWorktree\(index)"
+    case .selectTab(let index): "selectTab\(index)"
     case .openWorktree: "openWorktree"
     case .revealInFinder: "revealInFinder"
     case .openRepository: "openRepository"
     case .addRemoteRepository: "addRemoteRepository"
+    case .cloneRepository: "cloneRepository"
     case .openPullRequest: "openPullRequest"
     case .copyPath: "copyPath"
     case .runScript: "runScript"
     case .stopRunScript: "stopRunScript"
     case .jumpToLatestUnread: "jumpToLatestUnread"
+    case .togglePullRequestInspector: "togglePullRequestInspector"
+    case .toggleNotificationsInspector: "toggleNotificationsInspector"
     }
   }
 
@@ -73,6 +82,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "showMainWindow": .showMainWindow,
     "toggleLeftSidebar": .toggleLeftSidebar,
     "revealInSidebar": .revealInSidebar,
+    "expandAllSidebarGroups": .expandAllSidebarGroups,
+    "collapseAllSidebarGroups": .collapseAllSidebarGroups,
     "newWorktree": .newWorktree,
     "refreshWorktrees": .refreshWorktrees,
     "archivedWorktrees": .archivedWorktrees,
@@ -88,11 +99,14 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "revealInFinder": .revealInFinder,
     "openRepository": .openRepository,
     "addRemoteRepository": .addRemoteRepository,
+    "cloneRepository": .cloneRepository,
     "openPullRequest": .openPullRequest,
     "copyPath": .copyPath,
     "runScript": .runScript,
     "stopRunScript": .stopRunScript,
     "jumpToLatestUnread": .jumpToLatestUnread,
+    "togglePullRequestInspector": .togglePullRequestInspector,
+    "toggleNotificationsInspector": .toggleNotificationsInspector,
   ]
 
   private init?(stableKey: String) {
@@ -100,6 +114,12 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
       let index = Int(String(stableKey.dropFirst("selectWorktree".count)))
     {
       self = .selectWorktree(index)
+      return
+    }
+    if stableKey.hasPrefix("selectTab"),
+      let index = Int(String(stableKey.dropFirst("selectTab".count)))
+    {
+      self = .selectTab(index)
       return
     }
     guard let id = Self.stableKeyMap[stableKey] else { return nil }
@@ -116,6 +136,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .showMainWindow: "Show Main Window"
     case .toggleLeftSidebar: "Toggle Left Sidebar"
     case .revealInSidebar: "Reveal in Sidebar"
+    case .expandAllSidebarGroups: "Expand All Sidebar Groups"
+    case .collapseAllSidebarGroups: "Collapse All Sidebar Groups"
     case .newWorktree: "New Worktree"
     case .refreshWorktrees: "Refresh Worktrees"
     case .archivedWorktrees: "Archived Worktrees"
@@ -127,15 +149,19 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .worktreeHistoryBack: "Back in Worktree History"
     case .worktreeHistoryForward: "Forward in Worktree History"
     case .selectWorktree(let index): "Select Worktree \(index == 0 ? 10 : index)"
+    case .selectTab(let index): "Select Tab \(index)"
     case .openWorktree: "Open Worktree"
     case .revealInFinder: "Reveal in Finder"
     case .openRepository: "Open Repository or Folder"
     case .addRemoteRepository: "Add Remote Repository or Folder"
+    case .cloneRepository: "Clone Repository to Local Folder"
     case .openPullRequest: "Open Pull Request"
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
     case .stopRunScript: "Stop Run Script"
     case .jumpToLatestUnread: "Jump to Latest Unread"
+    case .togglePullRequestInspector: "Toggle Pull Request Inspector"
+    case .toggleNotificationsInspector: "Toggle Notifications Inspector"
     }
   }
 }
@@ -150,11 +176,15 @@ public struct AppShortcut: Identifiable {
   public let modifiers: EventModifiers
   private let keyCode: UInt16?
   private let ghosttyKeyName: String
+  // Whether the binding is active with no user override; `false` ships the
+  // shortcut as a rebindable option that stays off until the user enables it.
+  public let isEnabledByDefault: Bool
 
-  public init(id: AppShortcutID, key: Character, modifiers: EventModifiers) {
+  public init(id: AppShortcutID, key: Character, modifiers: EventModifiers, isEnabledByDefault: Bool = true) {
     self.id = id
     self.keyEquivalent = KeyEquivalent(key)
     self.modifiers = modifiers
+    self.isEnabledByDefault = isEnabledByDefault
     let code = AppShortcutOverride.keyCode(forDisplayedKeyEquivalent: key) ?? AppShortcutOverride.keyCode(for: key)
     self.keyCode = code
     if let code {
@@ -165,12 +195,19 @@ public struct AppShortcut: Identifiable {
     }
   }
 
-  public init(id: AppShortcutID, keyEquivalent: KeyEquivalent, ghosttyKeyName: String, modifiers: EventModifiers) {
+  public init(
+    id: AppShortcutID,
+    keyEquivalent: KeyEquivalent,
+    ghosttyKeyName: String,
+    modifiers: EventModifiers,
+    isEnabledByDefault: Bool = true
+  ) {
     self.id = id
     self.keyEquivalent = keyEquivalent
     self.modifiers = modifiers
     self.keyCode = nil
     self.ghosttyKeyName = ghosttyKeyName
+    self.isEnabledByDefault = isEnabledByDefault
   }
 
   public var displayName: String { id.displayName }
@@ -200,12 +237,20 @@ public struct AppShortcut: Identifiable {
     return keyboardShortcut.displaySymbols
   }
 
-  // Resolves the effective shortcut considering user overrides.
-  // Returns `nil` when the user has disabled this shortcut.
+  // Resolves the effective shortcut considering user overrides. Returns `nil`
+  // when the user disabled it, or when it is disabled by default and unset.
   public func effective(from overrides: [AppShortcutID: AppShortcutOverride]) -> AppShortcut? {
-    guard let override = overrides[id] else { return self }
+    guard let override = overrides[id] else { return isEnabledByDefault ? self : nil }
     guard override.isEnabled else { return nil }
     return AppShortcut(id: id, override: override)
+  }
+
+  // The override that binds this shortcut's default key, enabled. Used to turn on
+  // a disabled-by-default shortcut from the settings toggle. nil for special keys
+  // with no resolvable key code.
+  public var enabledOverride: AppShortcutOverride? {
+    guard let keyCode else { return nil }
+    return AppShortcutOverride(keyCode: keyCode, modifiers: rawModifierFlags, isEnabled: true)
   }
 
   private init(id: AppShortcutID, override: AppShortcutOverride) {
@@ -214,6 +259,7 @@ public struct AppShortcut: Identifiable {
     self.modifiers = override.eventModifiers
     self.keyCode = override.keyCode
     self.ghosttyKeyName = AppShortcutOverride.resolvedGhosttyKeyName(for: override.keyCode)
+    self.isEnabledByDefault = true
   }
 
   private var ghosttyModifierParts: [String] {
@@ -243,6 +289,7 @@ public enum AppShortcutCategory: String, CaseIterable, Sendable {
   case sidebar
   case worktrees
   case worktreeSelection
+  case tabSelection
   case actions
 
   public var displayName: String {
@@ -251,6 +298,7 @@ public enum AppShortcutCategory: String, CaseIterable, Sendable {
     case .sidebar: "Sidebar"
     case .worktrees: "Worktrees"
     case .worktreeSelection: "Worktree Selection"
+    case .tabSelection: "Tab Selection"
     case .actions: "Actions"
     }
   }
@@ -281,6 +329,14 @@ public enum AppShortcuts {
 
   public static let toggleLeftSidebar = AppShortcut(id: .toggleLeftSidebar, key: "[", modifiers: .command)
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
+  // `]` expands (opens rightward), `[` collapses, mirroring the outline-view
+  // Right/Left arrow convention, and pairs with ⌘[ for the sidebar toggle.
+  public static let expandAllSidebarGroups = AppShortcut(
+    id: .expandAllSidebarGroups, key: "]", modifiers: [.command, .control]
+  )
+  public static let collapseAllSidebarGroups = AppShortcut(
+    id: .collapseAllSidebarGroups, key: "[", modifiers: [.command, .control]
+  )
 
   public static let newWorktree = AppShortcut(id: .newWorktree, key: "n", modifiers: .command)
   public static let refreshWorktrees = AppShortcut(id: .refreshWorktrees, key: "r", modifiers: [.command, .shift])
@@ -324,11 +380,24 @@ public enum AppShortcuts {
   public static let selectWorktree8 = AppShortcut(id: .selectWorktree(8), key: "8", modifiers: [.control])
   public static let selectWorktree9 = AppShortcut(id: .selectWorktree(9), key: "9", modifiers: [.control])
 
+  public static let selectTab1 = AppShortcut(id: .selectTab(1), key: "1", modifiers: [.command])
+  public static let selectTab2 = AppShortcut(id: .selectTab(2), key: "2", modifiers: [.command])
+  public static let selectTab3 = AppShortcut(id: .selectTab(3), key: "3", modifiers: [.command])
+  public static let selectTab4 = AppShortcut(id: .selectTab(4), key: "4", modifiers: [.command])
+  public static let selectTab5 = AppShortcut(id: .selectTab(5), key: "5", modifiers: [.command])
+  public static let selectTab6 = AppShortcut(id: .selectTab(6), key: "6", modifiers: [.command])
+  public static let selectTab7 = AppShortcut(id: .selectTab(7), key: "7", modifiers: [.command])
+  public static let selectTab8 = AppShortcut(id: .selectTab(8), key: "8", modifiers: [.command])
+  public static let selectTab9 = AppShortcut(id: .selectTab(9), key: "9", modifiers: [.command])
+
   public static let openWorktree = AppShortcut(id: .openWorktree, key: "o", modifiers: .command)
   public static let revealInFinder = AppShortcut(id: .revealInFinder, key: "r", modifiers: [.command, .option])
   public static let openRepository = AppShortcut(id: .openRepository, key: "o", modifiers: [.command, .shift])
   public static let addRemoteRepository = AppShortcut(
     id: .addRemoteRepository, key: "k", modifiers: [.command, .shift]
+  )
+  public static let cloneRepository = AppShortcut(
+    id: .cloneRepository, key: "o", modifiers: [.command, .option, .shift], isEnabledByDefault: false
   )
   public static let openPullRequest = AppShortcut(id: .openPullRequest, key: "g", modifiers: [.command, .control])
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
@@ -337,10 +406,21 @@ public enum AppShortcuts {
   public static let jumpToLatestUnread = AppShortcut(
     id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
   )
+  public static let togglePullRequestInspector = AppShortcut(
+    id: .togglePullRequestInspector, key: "g", modifiers: [.command, .option]
+  )
+  public static let toggleNotificationsInspector = AppShortcut(
+    id: .toggleNotificationsInspector, key: "n", modifiers: [.command, .option]
+  )
 
   public static let worktreeSelection: [AppShortcut] = [
     selectWorktree1, selectWorktree2, selectWorktree3, selectWorktree4, selectWorktree5,
     selectWorktree6, selectWorktree7, selectWorktree8, selectWorktree9,
+  ]
+
+  public static let tabSelection: [AppShortcut] = [
+    selectTab1, selectTab2, selectTab3, selectTab4, selectTab5,
+    selectTab6, selectTab7, selectTab8, selectTab9,
   ]
 
   public static func worktreeSelectionShortcutDisplay(
@@ -370,7 +450,10 @@ public enum AppShortcuts {
       category: .general,
       shortcuts: [worktreeSwitcher, commandPalette, openSettings, checkForUpdates, showMainWindow]
     ),
-    AppShortcutGroup(category: .sidebar, shortcuts: [toggleLeftSidebar, revealInSidebar]),
+    AppShortcutGroup(
+      category: .sidebar,
+      shortcuts: [toggleLeftSidebar, revealInSidebar, expandAllSidebarGroups, collapseAllSidebarGroups]
+    ),
     AppShortcutGroup(
       category: .worktrees,
       shortcuts: [
@@ -380,11 +463,13 @@ public enum AppShortcuts {
       ]
     ),
     AppShortcutGroup(category: .worktreeSelection, shortcuts: worktreeSelection),
+    AppShortcutGroup(category: .tabSelection, shortcuts: tabSelection),
     AppShortcutGroup(
       category: .actions,
       shortcuts: [
-        openWorktree, revealInFinder, openRepository, addRemoteRepository, openPullRequest,
-        copyPath, runScript, stopRunScript, jumpToLatestUnread,
+        openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
+        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread,
+        togglePullRequestInspector, toggleNotificationsInspector,
       ]
     ),
   ]
@@ -392,6 +477,14 @@ public enum AppShortcuts {
   // MARK: - All shortcuts.
 
   public static let all: [AppShortcut] = groups.flatMap(\.shortcuts)
+
+  // The enabled override binding a disabled-by-default shortcut to its default
+  // key, so the settings toggle can turn it on. nil for an enabled-by-default or
+  // unknown shortcut, which needs no override to be active.
+  public static func defaultEnabledOverride(for id: AppShortcutID) -> AppShortcutOverride? {
+    guard let shortcut = all.first(where: { $0.id == id }), !shortcut.isEnabledByDefault else { return nil }
+    return shortcut.enabledOverride
+  }
 
   // MARK: - Tab selection Ghostty bindings.
 

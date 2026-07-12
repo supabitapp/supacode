@@ -21,9 +21,9 @@ nonisolated struct PiSettingsInstaller {
     guard fileManager.fileExists(atPath: indexURL.path(percentEncoded: false)) else {
       return .notInstalled
     }
-    // Surface read failures (permissions, non-UTF8 contents) instead of
-    // conflating them with "not installed" — the UI would otherwise offer
-    // Install and fail only on the next write.
+    // Treat an unreadable file (permissions, non-UTF8 contents) as not-installed
+    // but log it, so a permission or encoding fault stays diagnosable. The next
+    // Install attempt rethrows the real read error to the reducer.
     do {
       let contents = try String(contentsOf: indexURL, encoding: .utf8)
       guard contents.contains(PiExtensionContent.ownershipMarker) else {

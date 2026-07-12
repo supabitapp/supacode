@@ -17,6 +17,7 @@ struct WorktreeTerminalManagerReaperTests {
         executableURL: { nil },
         isBundled: { true },
         killSession: { id in killed.withValue { $0.append(id) } },
+        killRemoteSession: { _, _ in },
         listSessionsWithClients: { listing }
       )
     } operation: {
@@ -76,6 +77,7 @@ struct WorktreeTerminalManagerReaperTests {
         executableURL: { nil },
         isBundled: { true },
         killSession: { id in killed.withValue { $0.append(id) } },
+        killRemoteSession: { _, _ in },
         listSessionsWithClients: { listing.value }
       )
     } operation: {

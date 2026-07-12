@@ -23,8 +23,13 @@ struct PullRequestMergeQueueStatusTests {
 
     #expect(status?.position == 3)
     #expect(status?.positionLabel == "Position 3")
-    #expect(status?.estimatedTimeLabel == "~10 min left")
-    #expect(status?.detail == "Position 3 · ~10 min left")
+    #expect(status?.estimatedTimeLabel == "~10 \(Self.abbreviatedMinutes) left")
+    #expect(status?.detail == "Position 3 · ~10 \(Self.abbreviatedMinutes) left")
+  }
+
+  // macOS 26.5 changed Duration.formatted's abbreviated plural minutes from "min" to "mins".
+  private static var abbreviatedMinutes: String {
+    if #available(macOS 26.5, *) { return "mins" } else { return "min" }
   }
 
   @Test func dropsEstimatedTimeWhenZeroOrMissing() {
@@ -92,13 +97,11 @@ struct PullRequestMergeQueueStatusTests {
     let queued = makePullRequest(mergeQueueEntry: entry)
     let open = makePullRequest(mergeStateStatus: "CLEAN")
 
-    // The toolbar accessory badge and the status button both tint brown to match the sidebar + popover.
+    // The toolbar accessory badge tints brown to match the sidebar + popover.
     #expect(
       WorktreePullRequestDisplay(worktreeName: "feature", pullRequest: queued).pullRequestBadgeStyle?.color == .brown)
     #expect(
       WorktreePullRequestDisplay(worktreeName: "feature", pullRequest: open).pullRequestBadgeStyle?.color == .green)
-    #expect(PullRequestStatusModel(pullRequest: queued)?.badgeColor == .brown)
-    #expect(PullRequestStatusModel(pullRequest: open)?.badgeColor == .green)
   }
 
   @Test func sidebarIconResolvesQueued() {

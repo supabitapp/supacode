@@ -1,3 +1,4 @@
+import ConcurrencyExtras
 import Darwin
 import Foundation
 import SupacodeSettingsShared
@@ -18,17 +19,28 @@ private nonisolated let socketLogger = SupaLogger("AgentHookSocket")
 final class AgentHookSocketServer {
   private(set) var socketPath: String?
 
-  private var listenTask: Task<Void, Never>?
+  /// Cancellation flag for the accept-loop thread; shared by reference so the
+  /// thread never retains `self`.
+  private let listenStopped = LockIsolated(false)
   /// Deeplink URL received from the CLI. Second parameter is the client FD for response.
   var onCommand: ((URL, Int32) -> Void)?
   /// Query received from the CLI. Parameters: resource name, extra params, client FD for response.
   var onQuery: ((String, [String: String], Int32) -> Void)?
 
-  init() {
-    let uid = getuid()
-    let pid = ProcessInfo.processInfo.processIdentifier
-    let directory = "/tmp/supacode-\(uid)"
-    let path = "\(directory)/pid-\(pid)"
+  /// `socketPathOverride` lets tests bind a unique path; the default is the
+  /// pid-derived path the CLI discovers.
+  init(socketPathOverride: String? = nil) {
+    let directory: String
+    let path: String
+    if let socketPathOverride {
+      path = socketPathOverride
+      directory = (socketPathOverride as NSString).deletingLastPathComponent
+    } else {
+      let uid = getuid()
+      let pid = ProcessInfo.processInfo.processIdentifier
+      directory = "/tmp/supacode-\(uid)"
+      path = "\(directory)/pid-\(pid)"
+    }
 
     do {
       try FileManager.default.createDirectory(
@@ -41,7 +53,9 @@ final class AgentHookSocketServer {
       return
     }
 
-    Self.pruneStaleSocketFiles(in: directory)
+    if socketPathOverride == nil {
+      Self.pruneStaleSocketFiles(in: directory)
+    }
     unlink(path)
     guard startListening(path: path) else { return }
     socketPath = path
@@ -65,15 +79,18 @@ final class AgentHookSocketServer {
   }
 
   deinit {
-    listenTask?.cancel()
+    listenStopped.setValue(true)
     if let socketPath {
       unlink(socketPath)
     }
   }
 
   func shutdown() {
-    listenTask?.cancel()
-    listenTask = nil
+    listenStopped.setValue(true)
+    // A connection accepted in the final poll window must get "Not ready."
+    // instead of running against state the owner is tearing down.
+    onCommand = nil
+    onQuery = nil
     if let socketPath {
       unlink(socketPath)
     }
@@ -87,16 +104,28 @@ final class AgentHookSocketServer {
     let socketFD = Self.createSocket(path: path)
     guard socketFD >= 0 else { return false }
 
-    listenTask = Task.detached { [weak self] in
+    // The accept loop blocks in poll(), so it runs on a dedicated thread: on
+    // the cooperative pool it would pin a thread, and under the test main
+    // serial executor it would starve the main thread outright. The thread
+    // captures the stop flag, never `self`, so deinit stays reachable.
+    let stopped = listenStopped
+    let thread = Thread { [weak self] in
       socketLogger.info("Listening on \(path)")
       defer { close(socketFD) }
 
-      while !Task.isCancelled {
+      while !stopped.value {
         var pollFD = pollfd(fd: socketFD, events: Int16(POLLIN), revents: 0)
         let ready = poll(&pollFD, 1, 200)
         if ready < 0 {
           guard errno == EINTR else {
             socketLogger.warning("poll() failed: \(String(cString: strerror(errno)))")
+            // Remove the advertised path so the CLI sees "not running"
+            // instead of a confusing refused connection, and stop new
+            // terminals from exporting a dead socket path.
+            unlink(path)
+            Task { @MainActor [weak self] in
+              self?.socketPath = nil
+            }
             break
           }
           continue
@@ -107,25 +136,33 @@ final class AgentHookSocketServer {
           continue
         }
 
-        await MainActor.run { [weak self] in
-          switch message {
-          case .command(let deeplinkURL, let clientFD):
-            guard let self, let handler = self.onCommand else {
-              Self.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
-              return
-            }
-            handler(deeplinkURL, clientFD)
-          case .query(let resource, let params, let clientFD):
-            guard let self, let handler = self.onQuery else {
-              Self.sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
-              return
-            }
-            handler(resource, params, clientFD)
-          }
+        Task { @MainActor [weak self] in
+          Self.dispatch(message: message, to: self)
         }
       }
     }
+    thread.name = "supacode.agent-hook-socket"
+    thread.start()
     return true
+  }
+
+  /// Routes an accepted message to the server's handlers, answering "Not
+  /// ready." when the server died or has no handler installed yet.
+  private static func dispatch(message: Message, to server: AgentHookSocketServer?) {
+    switch message {
+    case .command(let deeplinkURL, let clientFD):
+      guard let handler = server?.onCommand else {
+        sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
+        return
+      }
+      handler(deeplinkURL, clientFD)
+    case .query(let resource, let params, let clientFD):
+      guard let handler = server?.onQuery else {
+        sendCommandResponse(clientFD: clientFD, ok: false, error: "Not ready.")
+        return
+      }
+      handler(resource, params, clientFD)
+    }
   }
 
   /// Writes all bytes to an FD, handling partial writes. Logs and
@@ -150,6 +187,45 @@ final class AgentHookSocketServer {
     }
   }
 
+  /// Marks a descriptor close-on-exec so child processes (spawned terminal
+  /// shells) never inherit it. Logs and continues on the near-impossible
+  /// failure: a fresh fd that can't take the flag is harmless once the
+  /// response path also `shutdown(SHUT_WR)`s.
+  nonisolated static func setCloseOnExec(_ fileDescriptor: Int32) {
+    let flags = fcntl(fileDescriptor, F_GETFD)
+    guard flags != -1 else {
+      socketLogger.warning("fcntl(F_GETFD) failed: \(String(cString: strerror(errno)))")
+      return
+    }
+    guard fcntl(fileDescriptor, F_SETFD, flags | FD_CLOEXEC) != -1 else {
+      socketLogger.warning("fcntl(F_SETFD) failed: \(String(cString: strerror(errno)))")
+      return
+    }
+  }
+
+  /// Disables SIGPIPE for this socket so a deferred write to a client that has
+  /// already disconnected returns `EPIPE` (logged + swallowed by `writeAll`)
+  /// instead of terminating the process.
+  private nonisolated static func setNoSIGPIPE(_ fileDescriptor: Int32) {
+    var enabled: Int32 = 1
+    guard
+      setsockopt(
+        fileDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size)) == 0
+    else {
+      socketLogger.warning("setsockopt(SO_NOSIGPIPE) failed: \(String(cString: strerror(errno)))")
+      return
+    }
+  }
+
+  /// Half-closes the write side before closing so the CLI's read-until-EOF
+  /// loop unblocks immediately, even if a forked shell still holds an
+  /// inherited dup of the socket: `shutdown` acts on the shared socket
+  /// object, `close` only drops this fd's reference (issue #529).
+  private nonisolated static func shutdownAndClose(_ clientFD: Int32) {
+    Darwin.shutdown(clientFD, SHUT_WR)
+    close(clientFD)
+  }
+
   // MARK: - Socket creation (nonisolated).
 
   private nonisolated static func createSocket(path: String) -> Int32 {
@@ -158,6 +234,8 @@ final class AgentHookSocketServer {
       socketLogger.warning("socket() failed: \(String(cString: strerror(errno)))")
       return -1
     }
+    // Keep the control socket out of spawned shells' fd tables.
+    setCloseOnExec(socketFD)
 
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_UNIX)
@@ -213,28 +291,30 @@ final class AgentHookSocketServer {
       socketLogger.warning("Failed to encode query response")
       writeAll(
         to: clientFD, data: Data("{\"ok\":false,\"error\":\"Internal encoding error.\"}".utf8))
-      close(clientFD)
+      shutdownAndClose(clientFD)
       return
     }
     writeAll(to: clientFD, data: encoded)
-    close(clientFD)
+    shutdownAndClose(clientFD)
   }
 
-  /// Writes a JSON response to a command client and closes the FD.
+  /// Writes a JSON response to a command client and closes the FD. `resourceID`
+  /// is echoed as `id` so creation commands can print the created resource.
   nonisolated static func sendCommandResponse(
-    clientFD: Int32, ok succeeded: Bool, error: String? = nil
+    clientFD: Int32, ok succeeded: Bool, error: String? = nil, resourceID: String? = nil
   ) {
     var json: [String: Any] = ["ok": succeeded]
     if let error { json["error"] = error }
+    if let resourceID { json["id"] = resourceID }
     guard let data = try? JSONSerialization.data(withJSONObject: json) else {
       socketLogger.warning("Failed to encode command response")
       writeAll(
         to: clientFD, data: Data("{\"ok\":false,\"error\":\"Internal encoding error.\"}".utf8))
-      close(clientFD)
+      shutdownAndClose(clientFD)
       return
     }
     writeAll(to: clientFD, data: data)
-    close(clientFD)
+    shutdownAndClose(clientFD)
   }
 
   private nonisolated static func acceptAndParse(
@@ -249,6 +329,13 @@ final class AgentHookSocketServer {
       return nil
     }
 
+    // A spawned terminal shell must not inherit this connection's fd, or it
+    // keeps the write end open and the CLI never sees EOF (issue #529).
+    setCloseOnExec(clientFD)
+    // Completion-based acks hold the connection open for the whole operation, so
+    // a write to a CLI that already disconnected must not raise SIGPIPE.
+    setNoSIGPIPE(clientFD)
+
     // Set a read timeout so a misbehaving client cannot block the accept loop.
     var timeout = timeval(tv_sec: 5, tv_usec: 0)
     guard
@@ -256,12 +343,12 @@ final class AgentHookSocketServer {
         == 0
     else {
       socketLogger.warning("setsockopt(SO_RCVTIMEO) failed: \(String(cString: strerror(errno)))")
-      close(clientFD)
+      shutdownAndClose(clientFD)
       return nil
     }
 
     guard let data = readPayload(from: clientFD) else {
-      close(clientFD)
+      shutdownAndClose(clientFD)
       return nil
     }
 
@@ -271,7 +358,7 @@ final class AgentHookSocketServer {
       if data.first == UInt8(ascii: "{") {
         sendCommandResponse(clientFD: clientFD, ok: false, error: "Malformed request.")
       } else {
-        close(clientFD)
+        shutdownAndClose(clientFD)
       }
       return nil
     }

@@ -47,8 +47,9 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
-      - run: make lint
-      - run: make inspect-dependencies
+      - parallel:
+          - run: make lint
+          - run: make inspect-dependencies
       - run: make build-app
         env:
           XCODEBUILD_FLAGS: -showBuildTimingSummary
@@ -99,46 +100,47 @@ jobs:
       - uses: ./.github/actions/setup-macos
         with:
           disable-tools: spm:swiftlang/swift-format
-      - name: Prepare build overrides
-        env:
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-        run: |
-          set -euo pipefail
-          : "${SENTRY_DSN:?secret SENTRY_DSN is not set}"
-          : "${POSTHOG_API_KEY:?secret POSTHOG_API_KEY is not set}"
-          : "${POSTHOG_HOST:?secret POSTHOG_HOST is not set}"
-          # Epoch build number: monotonic, computed once here so the single binary reused by tip and stable carries one version.
-          BUILD_NUMBER=$(date +%s)
-          mkdir -p build
-          # xcconfig treats // as a comment, which truncates URL values (https://… → https:).
-          # Break every // with $() (evaluates to empty) so the parser never sees a literal //.
-          xcconfig_escape() { printf '%s' "$1" | sed 's#//#/$()/#g'; }
-          cat > build/ReleaseOverrides.xcconfig <<EOF
-          CURRENT_PROJECT_VERSION = $BUILD_NUMBER
-          SENTRY_DSN = $(xcconfig_escape "$SENTRY_DSN")
-          POSTHOG_API_KEY = $(xcconfig_escape "$POSTHOG_API_KEY")
-          POSTHOG_HOST = $(xcconfig_escape "$POSTHOG_HOST")
-          EOF
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
-          echo "XCODE_XCCONFIG_FILE=$PWD/build/ReleaseOverrides.xcconfig" >> "$GITHUB_ENV"
-      - name: Setup keychain
-        run: |
-          echo "$DEVELOPER_ID_CERT_P12" | base64 --decode > build-cert.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import build-cert.p12 -k build.keychain -P "$DEVELOPER_ID_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcodebuild > /dev/null
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain > /dev/null
-          security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
-          security default-keychain -s build.keychain
-          DEVELOPER_ID_IDENTITY_SHA=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          if [ -z "$DEVELOPER_ID_IDENTITY_SHA" ]; then
-            echo "::error::Developer ID Application identity not found in keychain"
-            exit 1
-          fi
-          echo "DEVELOPER_ID_IDENTITY_SHA=$DEVELOPER_ID_IDENTITY_SHA" >> "$GITHUB_ENV"
+      - parallel:
+          - name: Prepare build overrides
+            env:
+              SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+              POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+              POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+            run: |
+              set -euo pipefail
+              : "${SENTRY_DSN:?secret SENTRY_DSN is not set}"
+              : "${POSTHOG_API_KEY:?secret POSTHOG_API_KEY is not set}"
+              : "${POSTHOG_HOST:?secret POSTHOG_HOST is not set}"
+              # Epoch build number: monotonic, computed once here so the single binary reused by tip and stable carries one version.
+              BUILD_NUMBER=$(date +%s)
+              mkdir -p build
+              # xcconfig treats // as a comment, which truncates URL values (https://… → https:).
+              # Break every // with $() (evaluates to empty) so the parser never sees a literal //.
+              xcconfig_escape() { printf '%s' "$1" | sed 's#//#/$()/#g'; }
+              cat > build/ReleaseOverrides.xcconfig <<EOF
+              CURRENT_PROJECT_VERSION = $BUILD_NUMBER
+              SENTRY_DSN = $(xcconfig_escape "$SENTRY_DSN")
+              POSTHOG_API_KEY = $(xcconfig_escape "$POSTHOG_API_KEY")
+              POSTHOG_HOST = $(xcconfig_escape "$POSTHOG_HOST")
+              EOF
+              echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+              echo "XCODE_XCCONFIG_FILE=$PWD/build/ReleaseOverrides.xcconfig" >> "$GITHUB_ENV"
+          - name: Setup keychain
+            run: |
+              echo "$DEVELOPER_ID_CERT_P12" | base64 --decode > build-cert.p12
+              security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+              security set-keychain-settings -t 3600 -u build.keychain
+              security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+              security import build-cert.p12 -k build.keychain -P "$DEVELOPER_ID_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcodebuild > /dev/null
+              security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain > /dev/null
+              security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
+              security default-keychain -s build.keychain
+              DEVELOPER_ID_IDENTITY_SHA=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | awk '{print $2}')
+              if [ -z "$DEVELOPER_ID_IDENTITY_SHA" ]; then
+                echo "::error::Developer ID Application identity not found in keychain"
+                exit 1
+              fi
+              echo "DEVELOPER_ID_IDENTITY_SHA=$DEVELOPER_ID_IDENTITY_SHA" >> "$GITHUB_ENV"
       - name: Archive workspace
         run: make archive
       - name: Upload dSYMs
@@ -349,12 +351,13 @@ jobs:
     needs: [check, build]
     if: needs.check.outputs.should_skip != 'true'
     steps:
-      - name: Install sentry-cli
-        run: curl -sL https://sentry.io/get-cli/ | sh
-      - uses: actions/download-artifact@v7
-        with:
-          name: dsyms
-          path: dsyms
+      - parallel:
+          - name: Install sentry-cli
+            run: curl -sL https://sentry.io/get-cli/ | sh
+          - uses: actions/download-artifact@v7
+            with:
+              name: dsyms
+              path: dsyms
       - name: Upload dSYMs to Sentry
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

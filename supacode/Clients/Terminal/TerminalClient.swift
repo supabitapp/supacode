@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 
 struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
@@ -42,12 +43,14 @@ struct TerminalClient {
     case closeFocusedSurface(Worktree)
     case performBindingAction(Worktree, action: String)
     case performBindingActionOnSurface(Worktree, surfaceID: UUID, action: String)
+    case setImagePasteAgents(surfaceID: UUID, agents: Set<SkillAgent>)
     case startSearch(Worktree)
     case searchSelection(Worktree)
     case navigateSearchNext(Worktree)
     case navigateSearchPrevious(Worktree)
     case endSearch(Worktree)
     case selectTab(Worktree, tabID: TerminalTabID)
+    case selectTabAtIndex(Worktree, index: Int)
     case focusSurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, input: String? = nil)
     case splitSurface(
       Worktree, tabID: TerminalTabID, surfaceID: UUID, direction: SplitDirection,
@@ -62,7 +65,8 @@ struct TerminalClient {
   }
 
   enum Event: Equatable {
-    case notificationReceived(worktreeID: Worktree.ID, surfaceID: UUID, title: String, body: String)
+    case notificationReceived(
+      worktreeID: Worktree.ID, surfaceID: UUID, title: String, body: String, isViewed: Bool)
     case notificationIndicatorChanged(count: Int)
     case tabCreated(worktreeID: Worktree.ID)
     case tabClosed(worktreeID: Worktree.ID)
@@ -91,7 +95,8 @@ struct TerminalClient {
       worktreeID: Worktree.ID, tabID: TerminalTabID, display: TerminalTabProgressDisplay?)
     /// Forwarded from the terminal manager when surfaces close (single or bulk).
     /// `AppFeature` translates this into `agentPresence(.surfaceClosed/surfacesClosed)`.
-    case surfacesClosed(Set<UUID>)
+    /// `worktreeID` scopes the CLI close ack so a duplicate id elsewhere can't cross-resolve.
+    case surfacesClosed(worktreeID: Worktree.ID, Set<UUID>)
     /// Forwarded from the terminal manager for hook events received over the socket.
     /// `AppFeature` translates this into `agentPresence(.hookEventReceived)`.
     case agentHookEventReceived(AgentHookEvent)
@@ -99,6 +104,10 @@ struct TerminalClient {
     /// menu / focused-action gates read one Bool instead of iterating
     /// `sidebarItems` from a view body.
     case terminalHasAnySurfaceChanged(hasAny: Bool)
+    /// A surface split failed to materialize (target raced away, target was a
+    /// blocking-script tab, or the layout insert threw). Lets a CLI completion
+    /// ack report the failure instead of waiting for its timeout.
+    case surfaceCreationFailed(worktreeID: Worktree.ID, attemptedID: UUID, message: String)
   }
 }
 

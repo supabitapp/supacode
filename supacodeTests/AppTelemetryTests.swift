@@ -1,3 +1,4 @@
+import PostHog
 import Testing
 
 @testable import SupacodeSettingsShared
@@ -34,6 +35,27 @@ struct AppTelemetryTests {
   }
 
   @Test
+  func configKeepsLifecycleAutocaptureAndFiltersOpenBackground() throws {
+    let configuration = try #require(
+      AppTelemetry.Configuration(
+        infoDictionary: [
+          "PostHogAPIKey": "phc_test",
+          "PostHogHost": "https://us.i.posthog.com",
+        ]
+      )
+    )
+    let config = AppTelemetry.makeConfig(configuration: configuration)
+
+    #expect(config.captureApplicationLifecycleEvents)
+    #expect(!config.enableSwizzling)
+    #expect(!AppTelemetry.shouldSend(eventName: "Application Opened"))
+    #expect(!AppTelemetry.shouldSend(eventName: "Application Backgrounded"))
+    #expect(AppTelemetry.shouldSend(eventName: "Application Installed"))
+    #expect(AppTelemetry.shouldSend(eventName: "Application Updated"))
+    #expect(AppTelemetry.shouldSend(eventName: "repository_added"))
+  }
+
+  @Test
   func isEnabledRequiresAnalyticsAndNonDebugBuild() {
     #expect(AppTelemetry.isEnabled(settings: .default, isDebugBuild: false))
     #expect(
@@ -45,7 +67,6 @@ struct AppTelemetryTests {
           updatesAutomaticallyCheckForUpdates: true,
           updatesAutomaticallyDownloadUpdates: false,
           inAppNotificationsEnabled: true,
-          notificationSoundEnabled: true,
           moveNotifiedWorktreeToTop: true,
           analyticsEnabled: false,
           crashReportsEnabled: true,

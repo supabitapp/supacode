@@ -20,7 +20,7 @@ struct CodingAgentsSidebarCardView: View {
 
   /// Bump to release-day each time the prompt's content materially changes;
   /// users who dismissed before this date see the prompt again.
-  static let cardRelevantSinceDate = Date(timeIntervalSince1970: 1_778_371_200)  // 2026-05-10.
+  static let cardRelevantSinceDate = Date(timeIntervalSince1970: 1_783_382_400)  // 2026-07-07.
 
   static func isDismissed(at dismissedAt: Date, relevantSince: Date = Self.cardRelevantSinceDate) -> Bool {
     SidebarCardRelevance.isDismissed(at: dismissedAt, relevantSince: relevantSince)

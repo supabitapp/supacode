@@ -105,7 +105,8 @@ extension AppFeature.Action {
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
         .tabRemoved, .worktreeStateTornDown, .tabProgressDisplayChanged,
-        .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged:
+        .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
+        .surfaceCreationFailed:
         return false
       }
     // Hot agent-storm paths: per-tab churn never mutates snapshot inputs.
@@ -117,16 +118,18 @@ extension AppFeature.Action {
       return false
     // Lifecycle / UI / effect-dispatch actions never write snapshot inputs
     // directly; any downstream mutation flows back through a classified arm.
-    case .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
+    case .applicationDidBecomeActive, .applicationDidResignActive,
+      .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal,
-      .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
+      .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread, .runScript, .runNamedScript,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
-      .deeplink, .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
+      .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
+      .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
       return false
     }
   }

@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import os
 
 private nonisolated let kiroVersionLogger = SupaLogger("Settings")
 
@@ -21,6 +23,14 @@ nonisolated struct KiroSettingsInstaller {
   /// happens we terminate the process so `waitUntilExit` cannot pin the
   /// cooperative pool thread.
   private static let versionCommandTimeoutSeconds: UInt64 = 5
+
+  /// Grace after SIGTERM before the watchdog escalates to SIGKILL.
+  private static let terminateGraceSeconds: UInt64 = 2
+
+  /// Ceiling for the pipe drains. Covers the full kill sequence plus a tail for
+  /// SIGKILL to close the pipe, so an rc grandchild that inherits the pipe can't
+  /// hang a drain past the timeout (#504).
+  private static let drainDeadlineSeconds: UInt64 = versionCommandTimeoutSeconds + terminateGraceSeconds + 3
 
   let homeDirectoryURL: URL
   let fileManager: FileManager
@@ -114,6 +124,9 @@ nonisolated struct KiroSettingsInstaller {
     let result: CommandResult
     do {
       result = try await runKiroVersionCommand()
+    } catch let error as KiroSettingsInstallerError {
+      // Preserve a precise probe error (e.g. the timeout) instead of flattening it.
+      throw error
     } catch {
       kiroVersionLogger.warning("Kiro version check failed to execute: \(error)")
       throw KiroSettingsInstallerError.kiroUnavailable
@@ -185,32 +198,51 @@ nonisolated struct KiroSettingsInstaller {
 
   static func runKiroVersionCommand() async throws -> CommandResult {
     let process = Process()
-    process.executableURL = CodexSettingsInstaller.loginShellURL()
-    process.arguments = ["-l", "-c", "kiro-cli --version"]
+    // Source the user's rc so a version-manager kiro-cli on the interactive PATH is found (#504).
+    let (shell, command) = ShellClient.loginShellCommandInvocation(
+      "kiro-cli --version", userShell: CodexSettingsInstaller.loginShellURL())
+    process.executableURL = shell
+    process.arguments = ["-l", "-c", command]
     let outputPipe = Pipe()
     let errorPipe = Pipe()
     process.standardOutput = outputPipe
     process.standardError = errorPipe
     try process.run()
 
+    // Set only when the watchdog actually fires, so a genuine crash (SIGSEGV,
+    // SIGPIPE, OOM) isn't misreported as a timeout.
+    let didTimeOut = OSAllocatedUnfairLock(initialState: false)
     let watchdog = Task { [process] in
       try? await Task.sleep(nanoseconds: versionCommandTimeoutSeconds * 1_000_000_000)
-      if process.isRunning {
-        kiroVersionLogger.warning(
-          "kiro-cli --version exceeded \(versionCommandTimeoutSeconds)s; terminating.")
-        process.terminate()
-      }
+      guard process.isRunning else { return }
+      kiroVersionLogger.warning(
+        "kiro-cli --version exceeded \(versionCommandTimeoutSeconds)s; terminating.")
+      didTimeOut.withLock { $0 = true }
+      process.terminate()
+      // Escalate to SIGKILL if the probe ignores SIGTERM, so its pipe write ends
+      // close and the drain can't hang past the timeout.
+      try? await Task.sleep(nanoseconds: terminateGraceSeconds * 1_000_000_000)
+      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
     defer { watchdog.cancel() }
 
     // Drain both pipes concurrently; a verbose login shell (banners from
     // rc files under `-l`) can exceed the ~64KB pipe buffer and deadlock
     // the child on write if we wait for termination before reading.
-    async let outputData = Self.readDataToEnd(from: outputPipe.fileHandleForReading)
-    async let errorData = Self.readDataToEnd(from: errorPipe.fileHandleForReading)
+    async let outputData = ShellClient.readToEndOrDeadline(
+      from: outputPipe.fileHandleForReading, deadlineSeconds: drainDeadlineSeconds)
+    async let errorData = ShellClient.readToEndOrDeadline(
+      from: errorPipe.fileHandleForReading, deadlineSeconds: drainDeadlineSeconds)
     let standardOutputData = await outputData
     let standardErrorData = await errorData
     process.waitUntilExit()
+
+    // Gate on the watchdog flag rather than the signal reason: a genuine crash
+    // must not masquerade as a timeout, and a SIGTERM-trapping CLI that exits
+    // under the grace still counts as our timeout.
+    if didTimeOut.withLock({ $0 }) {
+      throw KiroSettingsInstallerError.kiroVersionCheckTimedOut
+    }
 
     let standardOutput = Self.decodeUTF8(standardOutputData, descriptor: "stdout")
     let standardError = Self.decodeUTF8(standardErrorData, descriptor: "stderr")
@@ -219,20 +251,6 @@ nonisolated struct KiroSettingsInstaller {
       standardOutput: standardOutput,
       standardError: standardError.trimmingCharacters(in: .whitespacesAndNewlines),
     )
-  }
-
-  /// Reads a file handle to EOF on a detached Task so `async let` callers can
-  /// drain stdout and stderr concurrently while the child is still writing.
-  ///
-  /// NOTE: if the parent Task is cancelled mid-await, the detached reader
-  /// stays alive until the pipe closes (child exits). Acceptable for a
-  /// one-shot version probe — do not copy this into a streaming path.
-  private static func readDataToEnd(from handle: FileHandle) async -> Data {
-    await withCheckedContinuation { continuation in
-      Task.detached {
-        continuation.resume(returning: handle.readDataToEndOfFile())
-      }
-    }
   }
 
   private static func decodeUTF8(_ data: Data, descriptor: String) -> String {
@@ -269,6 +287,7 @@ nonisolated enum KiroSettingsInstallerError: Error, Equatable, LocalizedError {
   case invalidJSON(String)
   case invalidRootObject
   case kiroUnavailable
+  case kiroVersionCheckTimedOut
   case unsupportedKiroVersion(String)
 
   var errorDescription: String? {
@@ -283,6 +302,8 @@ nonisolated enum KiroSettingsInstallerError: Error, Equatable, LocalizedError {
       "Kiro agent config must be a JSON object before Supacode can install hooks."
     case .kiroUnavailable:
       "Kiro must be installed and available in your login shell before Supacode can install hooks."
+    case .kiroVersionCheckTimedOut:
+      "Kiro did not respond to the version check. Check that your shell startup files aren't blocking, then retry."
     case .unsupportedKiroVersion(let detected):
       """
       Supacode only knows Kiro \(KiroSettingsInstaller.supportedVersionPrefix)x defaults \

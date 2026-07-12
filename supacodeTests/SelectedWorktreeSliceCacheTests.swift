@@ -49,7 +49,8 @@ struct SelectedWorktreeSliceCacheTests {
               surfaceIDs: [surfaceID],
               isProgressBusy: false,
               hasUnseenNotifications: false,
-              notifications: []
+              notifications: [],
+              runningScripts: []
             )
           )
         )
@@ -57,9 +58,11 @@ struct SelectedWorktreeSliceCacheTests {
     ) {
       $0.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
       $0.sidebarItems[id: worktree.id]?.surfaceIDs = [surfaceID]
-      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .toolbarNotificationGroups])
+      $0.applyPostReduceCacheRecomputes()
     }
 
+    // The slice recompute runs (projections can carry `runningScripts`), but a
+    // surfaces-only change must diff to the same slice value.
     #expect(store.state.selectedWorktreeSlice == sliceBefore)
   }
 
@@ -79,7 +82,7 @@ struct SelectedWorktreeSliceCacheTests {
     #expect(store.state.toolbarNotificationGroupsCache == cacheBefore)
   }
 
-  @Test func runningScriptStartedOnFocusedRowMutatesSlice() async {
+  @Test func runningScriptProjectionOnFocusedRowMutatesSlice() async {
     let worktree = makeWorktree(id: "/tmp/repo/wt", repoRoot: "/tmp/repo")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
     var state = RepositoriesFeature.State(reconciledRepositories: [repository])
@@ -91,16 +94,27 @@ struct SelectedWorktreeSliceCacheTests {
     await store.send(
       .sidebarItems(
         .element(
-          id: worktree.id, action: .runningScriptStarted(id: scriptID, tint: .blue)
+          id: worktree.id,
+          action: .terminalProjectionChanged(
+            WorktreeRowProjection(
+              surfaceIDs: [],
+              isProgressBusy: false,
+              hasUnseenNotifications: false,
+              notifications: [],
+              runningScripts: [.init(id: scriptID, tint: .blue)]
+            )
+          )
         )
       )
     ) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.append(.init(id: scriptID, tint: .blue))
-      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
+      $0.sidebarItems[id: worktree.id]?.hasTerminalProjection = true
+      $0.sidebarItems[id: worktree.id]?.runningScripts = [.init(id: scriptID, tint: .blue)]
+      $0.applyPostReduceCacheRecomputes()
     }
 
     // Verify the cache picked up the new running script (sanity that the
-    // recompute path actually fires for this action).
+    // recompute path actually fires for this action). This is the toolbar
+    // dropdown's Run/Stop signal (#573).
     #expect(store.state.selectedWorktreeSlice?.runningScripts.contains(where: { $0.id == scriptID }) == true)
   }
 

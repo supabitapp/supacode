@@ -29,6 +29,12 @@ struct DeeplinkInputConfirmationFeature {
     var alwaysAllow: Bool = false
     /// Socket client FD for CLI response, if this was triggered by a socket command.
     var responseFD: Int32?
+    /// Seconds the deferred completion ack may wait once confirmed (carried from
+    /// the CLI's `timeout` so the re-run registers with the right budget).
+    var timeoutSeconds: Int = 180
+    /// Generation stamp so a stale timeout action can't fire against a later
+    /// dialog that recycled the same `responseFD`.
+    var timeoutToken: Int = 0
   }
 
   enum Action: BindableAction, Equatable {

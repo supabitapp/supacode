@@ -27,12 +27,8 @@ runs:
       with:
         version: 2026.3.0
         cache: true
-    # Tuist auth (OIDC) only works on the canonical upstream repo, which is the
-    # one linked in the Tuist dashboard. Skip it on forks and on cross-fork PRs
-    # (external contributors can't access the OIDC trust) — `tuist generate`
-    # works fine without auth; auth only buys the Tuist remote cache.
     - name: Authenticate with Tuist
-      if: ${{ github.repository == 'supabitapp/supacode' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       shell: bash
       run: mise exec -- tuist auth login
     - name: Xcode cache key

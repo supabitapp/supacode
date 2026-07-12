@@ -169,7 +169,8 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.updatesAutomaticallyCheckForUpdates == false)
     #expect(settings.global.updatesAutomaticallyDownloadUpdates == true)
     #expect(settings.global.inAppNotificationsEnabled == true)
-    #expect(settings.global.notificationSoundEnabled == true)
+    // Missing key (pre-feature file) decodes to the default sound.
+    #expect(settings.global.notificationSound == .hero)
     #expect(settings.global.systemNotificationsEnabled == false)
     #expect(settings.global.moveNotifiedWorktreeToTop == true)
     #expect(settings.global.analyticsEnabled == true)
@@ -265,6 +266,105 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.confirmQuitMode == .auto)
   }
 
+  @Test(.dependencies) func roundTripsExplicitNotificationSound() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.notificationSound = .submarine }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    // An explicitly chosen sound must survive a save / reload round-trip.
+    #expect(reloaded.global.notificationSound == .submarine)
+  }
+
+  @Test(.dependencies) func migratesLegacyNotificationSoundEnabledFalseToNever() throws {
+    // A pre-picker file with the sound explicitly muted must stay muted, not
+    // resurface as the default sound on upgrade.
+    let legacy = LegacySettingsFileWithSoundToggle(
+      global: LegacyGlobalSettingsWithSoundToggle(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: true,
+        updatesAutomaticallyDownloadUpdates: false,
+        notificationSoundEnabled: false
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.notificationSound == .never)
+  }
+
+  @Test(.dependencies) func migratesLegacyNotificationSoundEnabledTrueToDefault() throws {
+    // Symmetric to the `false` case: the sound was on, so it folds to the default.
+    let legacy = LegacySettingsFileWithSoundToggle(
+      global: LegacyGlobalSettingsWithSoundToggle(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: true,
+        updatesAutomaticallyDownloadUpdates: false,
+        notificationSoundEnabled: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.notificationSound == .hero)
+  }
+
+  @Test(.dependencies) func decodesUnrecognizedNotificationSoundAsDefaultWithoutResettingSiblings() throws {
+    // A hand-edited or downgraded file carrying a sound case this build doesn't
+    // know yet. The `try?` must isolate the fallback to this one field.
+    var global = GlobalSettings.default
+    global.appearanceMode = .dark
+    global.systemNotificationsEnabled = true
+    global.updatesAutomaticallyDownloadUpdates = true
+
+    let encoded = try JSONEncoder().encode(global)
+    var globalDict = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    globalDict["notificationSound"] = "futureSoundFromNewerBuild"
+    let data = try JSONSerialization.data(withJSONObject: ["global": globalDict, "repositories": [:]])
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // The unknown sound falls back to the default...
+    #expect(settings.global.notificationSound == .hero)
+    // ...but the rest of the file survives. This is what `try?` buys over `try`.
+    #expect(settings.global.appearanceMode == .dark)
+    #expect(settings.global.systemNotificationsEnabled == true)
+    #expect(settings.global.updatesAutomaticallyDownloadUpdates == true)
+  }
+
   @Test(.dependencies) func roundTripsExplicitTerminalThemeSyncEnabled() throws {
     let storage = SettingsTestStorage()
 
@@ -284,6 +384,49 @@ struct SettingsFilePersistenceTests {
 
     // Explicit `true` must survive the asymmetric missing-key fallback.
     #expect(reloaded.global.terminalThemeSyncEnabled == true)
+  }
+
+  @Test(.dependencies) func decodesMissingRemoteSessionPersistenceEnabledAsTrue() throws {
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // Pre-feature files opt in by default (the setting is an opt-out).
+    #expect(settings.global.remoteSessionPersistenceEnabled == true)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitRemoteSessionPersistenceDisabled() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.remoteSessionPersistenceEnabled = false }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(reloaded.global.remoteSessionPersistenceEnabled == false)
   }
 }
 
@@ -340,6 +483,18 @@ private struct LegacyGlobalSettingsWithArchiveFlag: Codable {
   var updatesAutomaticallyCheckForUpdates: Bool
   var updatesAutomaticallyDownloadUpdates: Bool
   var automaticallyArchiveMergedWorktrees: Bool
+}
+
+private struct LegacySettingsFileWithSoundToggle: Codable {
+  var global: LegacyGlobalSettingsWithSoundToggle
+  var repositories: [String: RepositorySettings]
+}
+
+private struct LegacyGlobalSettingsWithSoundToggle: Codable {
+  var appearanceMode: AppearanceMode
+  var updatesAutomaticallyCheckForUpdates: Bool
+  var updatesAutomaticallyDownloadUpdates: Bool
+  var notificationSoundEnabled: Bool
 }
 
 private struct LegacySettingsFileWithQuitToggle: Codable {

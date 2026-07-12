@@ -9,7 +9,6 @@ import Testing
 @testable import supacode
 
 @MainActor
-@Suite(.serialized)
 struct RepositoriesFeatureRenameBranchTests {
   private let repoID: RepositoryID = "/tmp/rename-repo"
 

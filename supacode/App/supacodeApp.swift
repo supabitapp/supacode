@@ -9,6 +9,8 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import GhosttyKit
+import IdentifiedCollections
+import OrderedCollections
 import Sharing
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
@@ -78,6 +80,7 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
+    appStore?.send(.applicationDidBecomeActive)
     let app = NSApplication.shared
     // Filter `NSPanel` out of the visibility check — the system
     // color / font panels (and any sheet-attached child panels) are
@@ -87,6 +90,10 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     }
     guard !hasVisibleMainWindow else { return }
     app.surfaceMainWindow()
+  }
+
+  func applicationDidResignActive(_ notification: Notification) {
+    appStore?.send(.applicationDidResignActive)
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -195,6 +202,9 @@ struct SupacodeApp: App {
   @MainActor
   private static func makeTerminalManager(runtime: GhosttyRuntime) -> WorktreeTerminalManager {
     let terminalManager = WorktreeTerminalManager(runtime: runtime)
+    runtime.focusedSurfaceBackgroundColorProvider = { [weak terminalManager] in
+      terminalManager?.focusedSurfaceBackground
+    }
     terminalManager.saveLayoutSnapshot = { worktreeID, snapshot in
       @Shared(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
       $layouts.withLock { dict in
@@ -380,47 +390,97 @@ struct SupacodeApp: App {
         return
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: surfaces)
+    case "worktreeAppearance":
+      handleWorktreeAppearanceQuery(params: params, repos: repos, clientFD: clientFD, store: store)
     case "scripts":
-      guard let worktreeID = params["worktreeID"] else {
-        AgentHookSocketServer.sendCommandResponse(
-          clientFD: clientFD, ok: false, error: "Missing worktreeID for script list.")
-        return
-      }
-      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      // Worktree IDs from standardizedFileURL include a trailing slash, so
-      // accept both forms — matching the deeplink reducer's resolveWorktreeID.
-      let allWorktrees = repos.flatMap(\.worktrees)
-      let worktree =
-        allWorktrees.first(where: { $0.id.rawValue == decoded })
-        ?? allWorktrees.first(where: { $0.id.rawValue == decoded + "/" })
-      guard let worktree else {
-        AgentHookSocketServer.sendCommandResponse(
-          clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
-        return
-      }
-      @SharedReader(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
-      @SharedReader(.settingsFile) var settingsFile
-      let runningIDs: Set<UUID> =
-        store.repositories.sidebarItems[id: worktree.id]
-        .map { Set($0.runningScripts.ids) } ?? []
-      let scripts: [ScriptDefinition] = .merged(
-        repo: settings.scripts,
-        global: settingsFile.global.globalScripts,
-      )
-      let data = scripts.map { script in
-        [
-          "id": script.id.uuidString,
-          "kind": script.kind.rawValue,
-          "name": script.name,
-          "displayName": script.displayName,
-          "running": runningIDs.contains(script.id) ? "1" : "",
-        ]
-      }
-      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
+      handleScriptsQuery(params: params, repos: repos, clientFD: clientFD, store: store)
     default:
       AgentHookSocketServer.sendCommandResponse(
         clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
     }
+  }
+
+  private static func handleWorktreeAppearanceQuery(
+    params: [String: String],
+    repos: IdentifiedArrayOf<Repository>,
+    clientFD: Int32,
+    store: StoreOf<AppFeature>
+  ) {
+    guard let worktreeID = params["worktreeID"] else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Missing worktreeID for appearance.")
+      return
+    }
+    guard let (repository, worktree) = resolveWorktree(worktreeID, in: repos) else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+      return
+    }
+    let bucket = store.repositories.sidebar.currentBucket(of: worktree.id, in: repository.id)
+    let item = bucket.flatMap {
+      store.repositories.sidebar.sections[repository.id]?.buckets[$0]?.items[worktree.id]
+    }
+    AgentHookSocketServer.sendQueryResponse(
+      clientFD: clientFD,
+      data: [
+        WorktreeAppearanceQueryResponse.fields(
+          repository: repository,
+          worktree: worktree,
+          item: item
+        )
+      ]
+    )
+  }
+
+  private static func handleScriptsQuery(
+    params: [String: String],
+    repos: IdentifiedArrayOf<Repository>,
+    clientFD: Int32,
+    store: StoreOf<AppFeature>
+  ) {
+    guard let worktreeID = params["worktreeID"] else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Missing worktreeID for script list.")
+      return
+    }
+    guard let (_, worktree) = resolveWorktree(worktreeID, in: repos) else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+      return
+    }
+    @SharedReader(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    @SharedReader(.settingsFile) var settingsFile
+    let runningIDs: Set<UUID> =
+      store.repositories.sidebarItems[id: worktree.id]
+      .map { Set($0.runningScripts.ids) } ?? []
+    let scripts: [ScriptDefinition] = .merged(
+      repo: settings.scripts,
+      global: settingsFile.global.globalScripts,
+    )
+    let data = scripts.map { script in
+      [
+        "id": script.id.uuidString,
+        "kind": script.kind.rawValue,
+        "name": script.name,
+        "displayName": script.displayName,
+        "running": runningIDs.contains(script.id) ? "1" : "",
+      ]
+    }
+    AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
+  }
+
+  private static func resolveWorktree(
+    _ worktreeID: String,
+    in repos: IdentifiedArrayOf<Repository>
+  ) -> (Repository, Worktree)? {
+    let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+    return repos.lazy.compactMap { repo -> (Repository, Worktree)? in
+      // IDs from standardizedFileURL carry a trailing slash; accept both forms.
+      let worktree = repo.worktrees.first { candidate in
+        candidate.id.rawValue == decoded || candidate.id.rawValue == decoded + "/"
+      }
+      return worktree.map { (repo, $0) }
+    }.first
   }
 
   var body: some Scene {
@@ -439,7 +499,10 @@ struct SupacodeApp: App {
     .commands {
       WorktreeCommands(store: store)
       SidebarCommands()
-      TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
+      Group {
+        TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
+        TerminalTabSelectionCommands(store: store)
+      }
       WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
         Button("Go to Worktree") {
@@ -487,6 +550,7 @@ struct SupacodeApp: App {
         .environment(commandKeyObserver)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
+        .movesSettingsWindowToActiveSpace()
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)

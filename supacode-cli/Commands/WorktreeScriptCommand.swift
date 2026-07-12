@@ -21,9 +21,15 @@ extension WorktreeScriptCommand {
     @Option(name: [.short, .long], help: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID.")
     var worktree: String?
 
+    @OptionGroup var timeoutOption: TimeoutOption
+
     func run() throws {
       let id = try resolveWorktreeID(worktree)
-      let items = try QueryDispatcher.query(resource: "scripts", params: ["worktreeID": id])
+      let items = try QueryDispatcher.query(
+        resource: "scripts",
+        params: ["worktreeID": id],
+        timeoutSeconds: timeoutOption.timeout
+      )
       for item in items {
         let running = !(item["running"] ?? "").isEmpty
         print(formatScriptListLine(item, running: running))

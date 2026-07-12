@@ -47,8 +47,9 @@ public struct SettingsFeature {
     public var updatesAutomaticallyCheckForUpdates: Bool
     public var updatesAutomaticallyDownloadUpdates: Bool
     public var inAppNotificationsEnabled: Bool
-    public var notificationSoundEnabled: Bool
+    public var notificationSound: NotificationSound
     public var systemNotificationsEnabled: Bool
+    public var muteNotificationsForActiveSurface: Bool
     public var moveNotifiedWorktreeToTop: Bool
     public var analyticsEnabled: Bool
     public var crashReportsEnabled: Bool
@@ -72,6 +73,7 @@ public struct SettingsFeature {
     public var autoUpdateAgentIntegrationsEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
     public var terminateSessionsOnQuit: Bool
+    public var remoteSessionPersistenceEnabled: Bool
     public var cliInstallState = CLIInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
@@ -81,6 +83,12 @@ public struct SettingsFeature {
     public var repositorySettings: RepositorySettingsFeature.State?
     @Presents public var alert: AlertState<Alert>?
 
+    /// True when at least one notification delivery channel (macOS banner or
+    /// the fallback sound) can fire, so surface-mute has something to mute.
+    public var hasActiveNotificationChannel: Bool {
+      systemNotificationsEnabled || notificationSound != .never
+    }
+
     public init(settings: GlobalSettings = .default) {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
       appearanceMode = settings.appearanceMode
@@ -89,8 +97,9 @@ public struct SettingsFeature {
       updatesAutomaticallyCheckForUpdates = settings.updatesAutomaticallyCheckForUpdates
       updatesAutomaticallyDownloadUpdates = settings.updatesAutomaticallyDownloadUpdates
       inAppNotificationsEnabled = settings.inAppNotificationsEnabled
-      notificationSoundEnabled = settings.notificationSoundEnabled
+      notificationSound = settings.notificationSound
       systemNotificationsEnabled = settings.systemNotificationsEnabled
+      muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
@@ -113,6 +122,7 @@ public struct SettingsFeature {
       autoUpdateAgentIntegrationsEnabled = settings.autoUpdateAgentIntegrationsEnabled
       confirmQuitMode = settings.confirmQuitMode
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
+      remoteSessionPersistenceEnabled = settings.remoteSessionPersistenceEnabled
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -125,8 +135,9 @@ public struct SettingsFeature {
         updatesAutomaticallyCheckForUpdates: updatesAutomaticallyCheckForUpdates,
         updatesAutomaticallyDownloadUpdates: updatesAutomaticallyDownloadUpdates,
         inAppNotificationsEnabled: inAppNotificationsEnabled,
-        notificationSoundEnabled: notificationSoundEnabled,
+        notificationSound: notificationSound,
         systemNotificationsEnabled: systemNotificationsEnabled,
+        muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
         analyticsEnabled: analyticsEnabled,
         crashReportsEnabled: crashReportsEnabled,
@@ -151,7 +162,8 @@ public struct SettingsFeature {
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
         autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
         confirmQuitMode: confirmQuitMode,
-        terminateSessionsOnQuit: terminateSessionsOnQuit
+        terminateSessionsOnQuit: terminateSessionsOnQuit,
+        remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled
       )
     }
   }
@@ -203,6 +215,7 @@ public struct SettingsFeature {
   @Dependency(AgentIntegrationClient.self) private var agentIntegrationClient
   @Dependency(ArchivedWorktreeDatesClient.self) private var archivedWorktreeDatesClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
+  @Dependency(NotificationSoundClient.self) private var notificationSoundClient
   @Dependency(\.date.now) private var now
 
   public init() {}
@@ -263,8 +276,9 @@ public struct SettingsFeature {
         state.updatesAutomaticallyCheckForUpdates = normalizedSettings.updatesAutomaticallyCheckForUpdates
         state.updatesAutomaticallyDownloadUpdates = normalizedSettings.updatesAutomaticallyDownloadUpdates
         state.inAppNotificationsEnabled = normalizedSettings.inAppNotificationsEnabled
-        state.notificationSoundEnabled = normalizedSettings.notificationSoundEnabled
+        state.notificationSound = normalizedSettings.notificationSound
         state.systemNotificationsEnabled = normalizedSettings.systemNotificationsEnabled
+        state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
@@ -287,10 +301,23 @@ public struct SettingsFeature {
         state.autoUpdateAgentIntegrationsEnabled = normalizedSettings.autoUpdateAgentIntegrationsEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
+        state.remoteSessionPersistenceEnabled = normalizedSettings.remoteSessionPersistenceEnabled
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)
         return .send(.delegate(.settingsChanged(normalizedSettings)))
+
+      case .binding(\.notificationSound):
+        let sound = state.notificationSound
+        // Preview the chosen sound, but only on the in-app path: with system
+        // notifications on, the banner plays the macOS default instead. `.never`
+        // has nothing to audition.
+        let shouldPreview = !state.systemNotificationsEnabled && sound != .never
+        state.syncGlobalDefaults(from: state.globalSettings)
+        return .merge(
+          persist(state),
+          shouldPreview ? .run { _ in await notificationSoundClient.play(sound) } : .none
+        )
 
       case .binding:
         state.syncGlobalDefaults(from: state.globalSettings)
@@ -434,15 +461,17 @@ public struct SettingsFeature {
 
       case .toggleShortcutEnabled(let id, let enabled):
         if enabled {
-          // Re-enable: if override exists with a real binding, just flip the flag.
-          // If it was a disabled sentinel, remove the override entirely (restore default).
-          if var existing = state.shortcutOverrides[id] {
+          // A real binding just flips its enabled flag. A sentinel (or no override)
+          // carries no binding, so restore the default: a disabled-by-default
+          // shortcut needs its default key bound, an enabled-by-default one drops
+          // the sentinel.
+          if var existing = state.shortcutOverrides[id], existing.keyCode != 0 || !existing.modifiers.isEmpty {
             existing.isEnabled = true
-            if existing.keyCode == 0, existing.modifiers.isEmpty {
-              state.shortcutOverrides.removeValue(forKey: id)
-            } else {
-              state.shortcutOverrides[id] = existing
-            }
+            state.shortcutOverrides[id] = existing
+          } else if let override = AppShortcuts.defaultEnabledOverride(for: id) {
+            state.shortcutOverrides[id] = override
+          } else {
+            state.shortcutOverrides.removeValue(forKey: id)
           }
         } else {
           if var existing = state.shortcutOverrides[id] {

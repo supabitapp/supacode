@@ -4,6 +4,7 @@ import CoreText
 import GhosttyKit
 import QuartzCore
 import SupacodeSettingsShared
+import UniformTypeIdentifiers
 
 private let surfaceLogger = SupaLogger("Surface")
 
@@ -93,6 +94,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var focused = false
   private var markedText = NSMutableAttributedString()
   private var keyboardLayoutChangeKeyUpSuppression: KeyboardLayoutChangeKeyUpSuppression?
+  // Agent presence pushed from app state; gates Cmd+V image-paste routing.
+  var imagePasteAgents: Set<SkillAgent> = []
   private var keyTextAccumulator: [String]?
   private var cellSize: CGSize = .zero
   private var lastScrollbar: ScrollbarState?
@@ -387,6 +390,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
       pendingFocusClaim?.cancel()
       pendingFocusClaim = nil
       focusDidChange(false)
+      // A removed surface can't post from layout(); without this the tint
+      // backdrop keeps its rect punched out as a stale untinted hole.
+      NotificationCenter.default.post(name: .ghosttySurfaceFrameDidChange, object: self)
     } else if hasBeenInWindow, shouldClaimFocus?() == true {
       // Re-attached after a split-tree rebuild dropped us. AppKit doesn't
       // auto-promote a re-attached view to firstResponder, so claim it back
@@ -445,6 +451,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   override func layout() {
     super.layout()
     notifySizeChanged()
+    NotificationCenter.default.post(name: .ghosttySurfaceFrameDidChange, object: self)
   }
 
   private func notifySizeChanged() {
@@ -1004,7 +1011,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       }
     }
     // Wrapper argv C strings must also outlive the surface_new call.
-    var wrapperCStrings: [UnsafePointer<CChar>?] = commandWrapper.map { arg in
+    let wrapperCStrings: [UnsafePointer<CChar>?] = commandWrapper.map { arg in
       UnsafePointer(arg.withCString { strdup($0)! })
     }
     defer {
@@ -1104,6 +1111,13 @@ final class GhosttySurfaceView: NSView, Identifiable {
     // answer so a click on the sidebar lets ⌘⌫ reach the main menu.
     guard focused, window?.firstResponder === self else { return false }
 
+    // Image-only Cmd+V routes to Claude's native Ctrl+V paste before binding
+    // resolution, intentionally overriding the default `super+v=paste_from_clipboard`
+    // binding (which would otherwise drop the image).
+    if routeCommandPasteToNativeImagePasteIfNeeded(event) {
+      return true
+    }
+
     if let bindingFlags = bindingFlags(for: event, surface: surface) {
       // Forward to the menu only when the chord resolves to an app-owned item, so Ghostty-only
       // shortcuts like `⌘⇧,` aren't eaten by AppKit's menu-matching quirks. A chord with no
@@ -1140,6 +1154,76 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     keyDown(with: finalEvent)
     return true
+  }
+
+  private func routeCommandPasteToNativeImagePasteIfNeeded(_ event: NSEvent) -> Bool {
+    guard
+      Self.shouldRouteCommandPasteToNativeImagePaste(
+        event: event,
+        pasteboardTypes: NSPasteboard.general.types,
+        imagePasteAgents: imagePasteAgents,
+        keySequenceActive: bridge.state.keySequenceActive == true,
+        keyTableDepth: bridge.state.keyTableDepth
+      )
+    else {
+      return false
+    }
+    guard let nativeEvent = Self.nativeImagePasteEvent(from: event) else {
+      surfaceLogger.error("Cmd+V image paste matched but Ctrl+V synthesis returned nil; falling back to default paste.")
+      return false
+    }
+    keyDown(with: nativeEvent)
+    return true
+  }
+
+  // `pasteboardTypes` is an autoclosure so the cross-process pasteboard read only
+  // happens once the cheap local gates pass, not on every Cmd chord.
+  static func shouldRouteCommandPasteToNativeImagePaste(
+    event: NSEvent,
+    pasteboardTypes: @autoclosure () -> [NSPasteboard.PasteboardType]?,
+    imagePasteAgents: Set<SkillAgent>,
+    keySequenceActive: Bool,
+    keyTableDepth: Int
+  ) -> Bool {
+    guard event.type == .keyDown else { return false }
+    guard !keySequenceActive, keyTableDepth == 0 else { return false }
+    guard imagePasteAgents.contains(.claude) else { return false }
+    guard isExactCommandV(event) else { return false }
+    guard let types = pasteboardTypes(), types.contains(where: isImagePasteboardType) else { return false }
+    return types.allSatisfy { !isTextOrFilePasteboardType($0) }
+  }
+
+  static func nativeImagePasteEvent(from event: NSEvent) -> NSEvent? {
+    guard isExactCommandV(event) else { return nil }
+    return NSEvent.keyEvent(
+      with: .keyDown,
+      location: event.locationInWindow,
+      modifierFlags: .control,
+      timestamp: event.timestamp,
+      windowNumber: event.windowNumber,
+      context: nil,
+      characters: "v",
+      charactersIgnoringModifiers: "v",
+      isARepeat: event.isARepeat,
+      keyCode: UInt16(kVK_ANSI_V)
+    )
+  }
+
+  private static func isExactCommandV(_ event: NSEvent) -> Bool {
+    let shortcutMask: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+    return event.charactersIgnoringModifiers?.lowercased() == "v"
+      && event.modifierFlags.intersection(shortcutMask) == [.command]
+  }
+
+  private static func isTextOrFilePasteboardType(_ type: NSPasteboard.PasteboardType) -> Bool {
+    if [.string, .fileURL, .URL].contains(type) { return true }
+    guard let uniformType = UTType(type.rawValue) else { return false }
+    return uniformType.conforms(to: .text) || uniformType.conforms(to: .url)
+  }
+
+  private static func isImagePasteboardType(_ type: NSPasteboard.PasteboardType) -> Bool {
+    guard let uniformType = UTType(type.rawValue) else { return false }
+    return uniformType.conforms(to: .image)
   }
 
   private func bindingFlags(

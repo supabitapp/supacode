@@ -1,3 +1,4 @@
+import ConcurrencyExtras
 import Darwin
 import Foundation
 import Testing
@@ -146,7 +147,7 @@ struct WorktreeEnvironmentTests {
     #expect(runner.contains("cd -- '/home/me/wt'"))
     #expect(runner.contains("\"$SHELL\" -l -c \"$1\""))
     // Beta banner present (remote surfaces are in beta).
-    #expect(runner.contains("beta"))
+    #expect(runner.contains(ZmxAttach.betaBanner))
   }
 
   @Test func remoteRunnerScriptSkipsCdForRootOrEmptyPath() {
@@ -196,7 +197,7 @@ struct WorktreeEnvironmentTests {
     #expect(BlockingScriptRunner.remoteCommand(host: host, script: "   ", remoteWorktreePath: "/p") == nil)
   }
 
-  @Test func blockingScriptLaunchPropagatesNonZeroExitCodeInZsh() throws {
+  @Test func blockingScriptLaunchPropagatesNonZeroExitCodeInZsh() async throws {
     let launch = try #require(
       try BlockingScriptRunner.makeLaunch(
         script: "exit 1",
@@ -220,13 +221,12 @@ struct WorktreeEnvironmentTests {
     // stdin so the `else exit "$SUPACODE_EXIT"` branch wins under xctest.
     process.standardInput = Pipe()
 
-    try process.run()
-    process.waitUntilExit()
+    try await process.runToExit()
 
     #expect(process.terminationStatus == 1)
   }
 
-  @Test func blockingScriptCommandInputHandlesQuotedTempPathsInZsh() throws {
+  @Test func blockingScriptCommandInputHandlesQuotedTempPathsInZsh() async throws {
     let fileManager = FileManager.default
     let baseDirectoryURL = fileManager.temporaryDirectory.appending(
       path: "supacode temporary path's with spaces \(UUID().uuidString.lowercased())",
@@ -258,14 +258,13 @@ struct WorktreeEnvironmentTests {
     // gate would otherwise `exec tail -f /dev/null` and hang the test.
     process.standardInput = Pipe()
 
-    try process.run()
-    process.waitUntilExit()
+    try await process.runToExit()
 
     #expect(launch.commandInput.starts(with: "'") == true)
     #expect(process.terminationStatus == 1)
   }
 
-  @Test func blockingScriptRunnerEmits133CDPairWhenShellPathDisappears() throws {
+  @Test func blockingScriptRunnerEmits133CDPairWhenShellPathDisappears() async throws {
     let launch = try #require(
       try BlockingScriptRunner.makeLaunch(
         script: "true",
@@ -286,8 +285,7 @@ struct WorktreeEnvironmentTests {
     process.standardInput = Pipe()
     process.standardOutput = stdoutPipe
     process.standardError = Pipe()
-    try process.run()
-    process.waitUntilExit()
+    try await process.runToExit()
 
     let stdout =
       String(
@@ -299,7 +297,7 @@ struct WorktreeEnvironmentTests {
     #expect(stdout.contains("\u{1B}]133;D;127\u{07}"))
   }
 
-  @Test func blockingScriptRunnerEmitsCommandFinishedUnderRealPTYBeforeExecTail() throws {
+  @Test func blockingScriptRunnerEmitsCommandFinishedUnderRealPTYBeforeExecTail() async throws {
     let launch = try #require(
       try BlockingScriptRunner.makeLaunch(script: "true", shellPath: "/bin/zsh")
     )
@@ -331,21 +329,31 @@ struct WorktreeEnvironmentTests {
     process.standardInput = FileHandle(fileDescriptor: subordinateFD, closeOnDealloc: false)
     process.standardOutput = stdoutPipe
     process.standardError = Pipe()
+    let captured = LockIsolated(Data())
+    stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      captured.withValue { $0.append(chunk) }
+    }
+    let (exited, exitContinuation) = AsyncStream<Void>.makeStream()
+    process.terminationHandler = { _ in exitContinuation.finish() }
     try process.run()
+    // A cancelled wait must not orphan the runner blocked in `exec tail`.
+    defer { if process.isRunning { process.terminate() } }
 
-    // Let the runner emit 133;C, execute `true`, emit 133;D, then block on
-    // `exec tail`. Half a second is comfortable on local + CI; the alternative
-    // (poll readabilityHandler) needs lock-guarded shared state for a fixed
-    // payload we're only inspecting after termination.
-    Thread.sleep(forTimeInterval: 0.5)
+    // Wait for the runner to emit 133;C, execute `true`, and emit 133;D
+    // before it blocks on `exec tail`; the deadline only guards a regression.
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    while ContinuousClock.now < deadline {
+      let text = String(data: captured.value, encoding: .utf8) ?? ""
+      if text.contains("\u{1B}]133;C\u{07}"), text.contains("\u{1B}]133;D;0\u{07}") { break }
+      try await Task.sleep(for: .milliseconds(25))
+    }
     process.terminate()
-    process.waitUntilExit()
+    for await _ in exited {}
+    stdoutPipe.fileHandleForReading.readabilityHandler = nil
 
-    let observed =
-      String(
-        data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
-        encoding: .utf8
-      ) ?? ""
+    let observed = String(data: captured.value, encoding: .utf8) ?? ""
     #expect(observed.contains("\u{1B}]133;C\u{07}"), "133;C missing from PTY stdout")
     #expect(observed.contains("\u{1B}]133;D;0\u{07}"), "133;D missing from PTY stdout")
     // 133;C must precede 133;D so Ghostty's command timer pairs correctly.

@@ -5,6 +5,19 @@ import SwiftUI
 struct OpenWorktreeActionMenuLabelView: View {
   let action: OpenWorktreeAction
 
+  var body: some View {
+    Label {
+      Text(action.labelTitle)
+    } icon: {
+      OpenWorktreeActionIcon(action: action)
+    }.labelStyle(.titleAndIcon)
+  }
+}
+
+/// The icon for an open action (resolved app icon or SF Symbol).
+struct OpenWorktreeActionIcon: View {
+  let action: OpenWorktreeAction
+
   private func resizedIcon(_ image: NSImage, size: CGSize) -> NSImage {
     let newImage = NSImage(size: size)
     newImage.lockFocus()
@@ -19,21 +32,17 @@ struct OpenWorktreeActionMenuLabelView: View {
   }
 
   var body: some View {
-    Label {
-      Text(action.labelTitle)
-    } icon: {
-      if let icon = action.menuIcon {
-        switch icon {
-        case .app(let image):
-          Image(nsImage: resizedIcon(image, size: CGSize(width: 16, height: 16)))
-            .renderingMode(.original)
-            .accessibilityHidden(true)
-        case .symbol(let name):
-          Image(systemName: name)
-            .foregroundStyle(.primary)
-            .accessibilityHidden(true)
-        }
+    if let icon = action.menuIcon {
+      switch icon {
+      case .app(let image):
+        Image(nsImage: resizedIcon(image, size: CGSize(width: 16, height: 16)))
+          .renderingMode(.original)
+          .accessibilityHidden(true)
+      case .symbol(let name):
+        Image(systemName: name)
+          .foregroundStyle(.primary)
+          .accessibilityHidden(true)
       }
-    }.labelStyle(.titleAndIcon)
+    }
   }
 }

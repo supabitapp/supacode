@@ -606,7 +606,7 @@ private struct SidebarItemContextMenu: View {
   }
 
   private var openActionSelection: OpenWorktreeAction {
-    @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
     return OpenWorktreeAction.fromSettingsID(
       repositorySettings.openActionID,
       defaultEditorID: settingsFile.global.defaultEditorID
@@ -635,12 +635,11 @@ private struct SidebarItemContextMenu: View {
     let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
     let isAllFoldersBulk = isAllFoldersBulk
 
-    // Open actions resolve local paths through Finder / editors, which can't
-    // reach a remote SSH host, so they're disabled (but still shown, matching
-    // the toolbar and menu bar) for a remote row.
+    // Open actions stay shown for a remote row but `openActions` gates each
+    // editor per-item via `canOpen` (Reveal in Finder is local-only), so no
+    // blanket disable here.
     if !isBulkSelection, !worktree.isMissing {
       openActions(overrides: overrides)
-        .disabled(worktree.host != nil)
       Divider()
     }
 
@@ -815,6 +814,7 @@ private struct SidebarItemContextMenu: View {
       }
       .appKeyboardShortcut(openShortcut)
       .help("Open with \(primarySelection.labelTitle) (\(openShortcut?.display ?? "none"))")
+      .disabled(!canOpen(primarySelection))
     }
 
     Menu("Open With") {
@@ -824,7 +824,8 @@ private struct SidebarItemContextMenu: View {
         } label: {
           OpenWorktreeActionMenuLabelView(action: action)
         }
-        .help("Open with \(action.labelTitle)")
+        .help(openActionHelp(for: action))
+        .disabled(!canOpen(action))
       }
     }
 
@@ -833,6 +834,26 @@ private struct SidebarItemContextMenu: View {
     }
     .appKeyboardShortcut(revealShortcut)
     .help("Reveal in Finder (\(revealShortcut?.display ?? "none"))")
+    .disabled(worktree.host != nil)
+  }
+
+  /// Whether `action` can open this row: local opens everywhere, remote only
+  /// via an editor whose Remote-SSH CLI can express the host.
+  private func canOpen(_ action: OpenWorktreeAction) -> Bool {
+    guard let host = worktree.host else { return true }
+    return action.remoteOpenInvocation(host: host, remotePath: worktree.location.workingDirectoryPath) != nil
+  }
+
+  /// Tooltip for an "Open With" entry. A disabled VS Code family row on a
+  /// non-default-port host explains the `~/.ssh/config` requirement; otherwise
+  /// falls back to the plain action label.
+  private func openActionHelp(for action: OpenWorktreeAction) -> String {
+    if let host = worktree.host,
+      let reason = action.remoteOpenDisabledReason(host: host, remotePath: worktree.location.workingDirectoryPath)
+    {
+      return reason
+    }
+    return "Open with \(action.labelTitle)"
   }
 
   private func togglePin(for worktreeID: Worktree.ID, isPinned: Bool) {

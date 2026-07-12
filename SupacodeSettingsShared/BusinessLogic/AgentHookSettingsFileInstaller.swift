@@ -29,9 +29,14 @@ nonisolated struct AgentHookSettingsFileInstaller {
   /// - `.notInstalled`  — no Supacode-managed commands at all
   /// - `.outdated`      — some present, but the set differs (extras, missing,
   ///                      or stale variants from older Supacode versions)
+  ///
+  /// `additionalOutdatedIfInstalled` runs only when the command set already
+  /// matches, against the **same** parsed snapshot (no second disk read). Use
+  /// it for non-command payload checks such as Grok's env passthrough map.
   func installState(
     settingsURL: URL,
-    hookGroupsByEvent: [String: [JSONValue]]
+    hookGroupsByEvent: [String: [JSONValue]],
+    additionalOutdatedIfInstalled: (([String: JSONValue]) -> Bool)? = nil
   ) -> ComponentInstallState {
     do {
       let settingsObject = try loadSettingsObject(at: settingsURL)
@@ -39,7 +44,11 @@ nonisolated struct AgentHookSettingsFileInstaller {
       guard !expected.isEmpty else { return .notInstalled }
       let actual = Self.installedSupacodeCommands(in: settingsObject)
       if actual.isEmpty { return .notInstalled }
-      return actual == expected ? .installed : .outdated
+      guard actual == expected else { return .outdated }
+      if let additionalOutdatedIfInstalled, additionalOutdatedIfInstalled(settingsObject) {
+        return .outdated
+      }
+      return .installed
     } catch {
       if !Self.isFileNotFound(error) {
         logWarning("Failed to inspect hook settings at \(settingsURL.path): \(error)")

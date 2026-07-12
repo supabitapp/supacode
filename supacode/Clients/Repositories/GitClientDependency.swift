@@ -14,6 +14,9 @@ struct GitClientDependency: Sendable {
   /// `/tmp/...` paths keep working; tests that exercise the
   /// missing-directory path override explicitly.
   var rootDirectoryExists: @Sendable (URL) async -> Bool
+  /// One-shot `git --version` probe classifying an environment-level git
+  /// failure (e.g. an unaccepted Xcode license). `nil` means git is usable.
+  var checkGitEnvironment: @Sendable () async -> GitEnvironmentError?
   var worktrees: @Sendable (URL) async throws -> [Worktree]
   var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
@@ -44,6 +47,13 @@ struct GitClientDependency: Sendable {
       _ baseRef: String,
       _ directoryOverride: URL?
     ) -> AsyncThrowingStream<GitWorktreeCreateEvent, Error>
+  var cloneStream:
+    @Sendable (
+      _ repositoryURL: String,
+      _ destination: URL,
+      _ branch: String?,
+      _ depth: Int?
+    ) -> AsyncThrowingStream<GitCloneEvent, Error>
   var removeWorktree: @Sendable (_ worktree: Worktree, _ deleteBranch: Bool) async throws -> URL
   var isBareRepository: @Sendable (_ repoRoot: URL) async throws -> Bool
   var branchName: @Sendable (URL) async -> String?
@@ -78,6 +88,7 @@ extension GitClientDependency: DependencyKey {
         )
         return exists && isDirectory.boolValue
       },
+      checkGitEnvironment: { await GitClient(shell: shell).gitEnvironmentError() },
       worktrees: { try await GitClient(shell: shell).worktrees(for: $0) },
       reconcileSupacodeLocks: { await GitClient(shell: shell).reconcileSupacodeLocks(for: $0) },
       localBranchNames: { try await GitClient(shell: shell).localBranchNames(for: $0) },
@@ -111,6 +122,14 @@ extension GitClientDependency: DependencyKey {
           directoryOverride: directoryOverride
         )
       },
+      cloneStream: { repositoryURL, destination, branch, depth in
+        GitClient(shell: shell).cloneStream(
+          repositoryURL: repositoryURL,
+          into: destination,
+          branch: branch,
+          depth: depth
+        )
+      },
       removeWorktree: { worktree, deleteBranch in
         try await GitClient(shell: shell).removeWorktree(worktree, deleteBranch: deleteBranch)
       },
@@ -134,7 +153,15 @@ extension GitClientDependency: DependencyKey {
     var value = liveValue
     value.isGitRepository = { _ in true }
     value.rootDirectoryExists = { _ in true }
+    // Default to a healthy git environment so tests don't shell out to real
+    // `git --version`; the license-gate tests override this explicitly.
+    value.checkGitEnvironment = { nil }
     value.reconcileSupacodeLocks = { _ in }
+    // `liveValue` shells out to real `git clone`; a no-op default keeps an
+    // unstubbed test from cloning over the network. Clone tests override this.
+    value.cloneStream = { _, _, _, _ in
+      AsyncThrowingStream { $0.finish() }
+    }
     return value
   }
 }

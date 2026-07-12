@@ -113,7 +113,9 @@ final class WorktreeInfoWatcherManager {
 
   private func setWorktrees(_ worktrees: [Worktree]) {
     let isInitialWorktreeLoad = !hasCompletedInitialWorktreeLoad && self.worktrees.isEmpty && !worktrees.isEmpty
-    let worktreesByID = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.id, $0) })
+    // Keep the first entry on a duplicate WorktreeID instead of trapping; a repo registered
+    // under both its working dir and `.bare/` enumerates the same worktree twice.
+    let worktreesByID = Dictionary(worktrees.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let desiredIDs = Set(worktreesByID.keys)
     let currentIDs = Set(self.worktrees.keys)
     let removedIDs = currentIDs.subtracting(desiredIDs)
@@ -128,17 +130,20 @@ final class WorktreeInfoWatcherManager {
       deferredLineChangeIDs.formUnion(newIDs)
     }
     self.worktrees = worktreesByID
-    for worktree in worktrees {
+    // Iterate the de-duplicated values so a duplicate WorktreeID doesn't configure
+    // the same watcher or emit its immediate refresh twice.
+    var repositoryRoots: Set<URL> = []
+    for worktree in worktreesByID.values {
       configureWatcher(for: worktree)
       updateLineChangeSchedule(
         worktreeID: worktree.id,
         immediate: isInitialWorktreeLoad || !deferredLineChangeIDs.contains(worktree.id)
       )
+      repositoryRoots.insert(worktree.repositoryRootURL)
     }
     if isInitialWorktreeLoad {
       hasCompletedInitialWorktreeLoad = true
     }
-    let repositoryRoots = Set(worktrees.map(\.repositoryRootURL))
     for repositoryRootURL in repositoryRoots {
       updatePullRequestSchedule(repositoryRootURL: repositoryRootURL, immediate: true)
     }

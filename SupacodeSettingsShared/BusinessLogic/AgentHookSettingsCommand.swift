@@ -69,4 +69,20 @@ nonisolated enum AgentHookSettingsCommand {
   private static var oscGuardExpr: String {
     #"[ -n "${\#(AgentPresenceOSC.surfaceEnvVar):-}" ]"#
   }
+
+  /// Env vars Grok must forward into hook subprocesses. Grok spawns hooks without
+  /// inheriting the terminal's `SUPACODE_*` env; `${VAR}` expansion copies from
+  /// the parent Grok process at spawn time. Presence strictly needs
+  /// `SUPACODE_SURFACE_ID` (OSC guard) and uses `SUPACODE_SOCKET_PATH` for the
+  /// local pid suffix; the remaining vars match the terminal env for parity
+  /// with other agents / future hooks.
+  static let grokHookEnvPassthrough: [String: String] = [
+    "SUPACODE_SURFACE_ID": "${SUPACODE_SURFACE_ID}",
+    "SUPACODE_SOCKET_PATH": "${SUPACODE_SOCKET_PATH}",
+    "SUPACODE_TAB_ID": "${SUPACODE_TAB_ID}",
+    "SUPACODE_WORKTREE_ID": "${SUPACODE_WORKTREE_ID}",
+    "SUPACODE_REPO_ID": "${SUPACODE_REPO_ID}",
+    "SUPACODE_ROOT_PATH": "${SUPACODE_ROOT_PATH}",
+    "SUPACODE_WORKTREE_PATH": "${SUPACODE_WORKTREE_PATH}",
+  ]
 }

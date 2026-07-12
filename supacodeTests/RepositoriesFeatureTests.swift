@@ -13,6 +13,52 @@ import Testing
 
 @MainActor
 struct RepositoriesFeatureTests {
+  @Test func toggleInspectorPaneOpensSwapsAndCloses() async {
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+    }
+
+    // Opens on the target pane (which defaults to `.git`).
+    await store.send(.toggleInspectorPane(.git)) {
+      $0.inspectorPresented = true
+    }
+    // A different pane swaps the inspector content while staying open.
+    await store.send(.toggleInspectorPane(.notifications)) {
+      $0.inspectorPane = .notifications
+    }
+    // Re-toggling the active pane closes the inspector but keeps the pane.
+    await store.send(.toggleInspectorPane(.notifications)) {
+      $0.inspectorPresented = false
+    }
+    // Toggling the retained pane while closed reopens it (the guard leans on
+    // `inspectorPresented`, not the pane, to decide open vs close).
+    await store.send(.toggleInspectorPane(.notifications)) {
+      $0.inspectorPresented = true
+    }
+  }
+
+  @Test func setInspectorPresentedKeepsSelectedPane() async {
+    var initialState = RepositoriesFeature.State()
+    initialState.inspectorPane = .notifications
+    initialState.inspectorPresented = true
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+    }
+
+    // A drag-to-collapse only flips presentation; the pane must survive so a
+    // drag back open doesn't render an empty inspector.
+    await store.send(.setInspectorPresented(false)) {
+      $0.inspectorPresented = false
+    }
+    await store.send(.setInspectorPresented(true)) {
+      $0.inspectorPresented = true
+    }
+  }
+
   @Test func refreshWorktreesSetsRefreshingStateUntilLoadCompletes() async {
     let worktree = makeWorktree(id: "/tmp/repo/main", name: "main")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
@@ -26,6 +72,7 @@ struct RepositoriesFeatureTests {
       $0.isRefreshingWorktrees = true
     }
     await store.receive(\.reloadRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.isRefreshingWorktrees = false
       $0.isInitialLoadComplete = true
@@ -328,6 +375,183 @@ struct RepositoriesFeatureTests {
 
     // Collapsing again should be a no-op.
     await store.send(.repositoryExpansionChanged(repository.id, isExpanded: false))
+  }
+
+  @Test func setAllSidebarGroupsExpandedCollapsesEveryRepositorySection() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "wt1", repoRoot: "/tmp/repoA")
+    let worktreeB = makeWorktree(id: "/tmp/repoB/wt1", name: "wt1", repoRoot: "/tmp/repoB")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    let repoB = makeRepository(id: "/tmp/repoB", name: "repoB", worktrees: [worktreeB])
+    var initialState = makeState(repositories: [repoA, repoB])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    // No repo has a persisted section yet, so collapse-all must materialize one
+    // for every repo in the roster.
+    await store.send(.setAllSidebarGroupsExpanded(false)) {
+      $0.$sidebar.withLock { sidebar in
+        for repositoryID in [repoA.id, repoB.id] {
+          sidebar.sections[repositoryID, default: .init()].collapsed = true
+        }
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[repoA.id]?.collapsed == true)
+    #expect(store.state.sidebar.sections[repoB.id]?.collapsed == true)
+  }
+
+  @Test func setAllSidebarGroupsExpandedCollapsePreservesBranchPrefixes() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "feature/x", repoRoot: "/tmp/repoA")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    var initialState = makeState(repositories: [repoA])
+    initialState.reconcileSidebarForTesting()
+    // Seed an expanded section with a collapsed branch group so collapse-all has
+    // a prefix that must survive.
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoA.id, default: .init()].collapsed = false
+      sidebar.sections[repoA.id, default: .init()].buckets[.unpinned] = .init(collapsedBranchPrefixes: [
+        "feature"
+      ])
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(false)) {
+      $0.$sidebar.withLock { sidebar in
+        sidebar.sections[repoA.id, default: .init()].collapsed = true
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[repoA.id]?.collapsed == true)
+    #expect(
+      store.state.sidebar.sections[repoA.id]?.buckets[.unpinned]?.collapsedBranchPrefixes == ["feature"]
+    )
+  }
+
+  @Test func setAllSidebarGroupsExpandedExpandsSectionsAndClearsEveryBucketsBranchPrefixes() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "feature/x", repoRoot: "/tmp/repoA")
+    let worktreeB = makeWorktree(id: "/tmp/repoB/wt1", name: "hotfix/y", repoRoot: "/tmp/repoB")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    let repoB = makeRepository(id: "/tmp/repoB", name: "repoB", worktrees: [worktreeB])
+    var initialState = makeState(repositories: [repoA, repoB])
+    initialState.reconcileSidebarForTesting()
+    // Collapse every section and seed collapsed branch groups across multiple
+    // buckets and repos, so expand-all has to clear more than one bucket.
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repoA.id, default: .init()].collapsed = true
+      sidebar.sections[repoB.id, default: .init()].collapsed = true
+      sidebar.sections[repoA.id, default: .init()].buckets[.pinned] = .init(collapsedBranchPrefixes: [
+        "release"
+      ])
+      sidebar.sections[repoA.id, default: .init()].buckets[.unpinned] = .init(collapsedBranchPrefixes: [
+        "feature"
+      ])
+      sidebar.sections[repoB.id, default: .init()].buckets[.unpinned] = .init(collapsedBranchPrefixes: [
+        "hotfix"
+      ])
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(true)) {
+      $0.$sidebar.withLock { sidebar in
+        for repositoryID in [repoA.id, repoB.id] {
+          guard var section = sidebar.sections[repositoryID] else { continue }
+          section.collapsed = false
+          for bucketID in Array(section.buckets.keys) {
+            section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+          }
+          sidebar.sections[repositoryID] = section
+        }
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[repoA.id]?.collapsed == false)
+    #expect(store.state.sidebar.sections[repoB.id]?.collapsed == false)
+    #expect(
+      store.state.sidebar.sections[repoA.id]?.buckets[.pinned]?.collapsedBranchPrefixes.isEmpty == true
+    )
+    #expect(
+      store.state.sidebar.sections[repoA.id]?.buckets[.unpinned]?.collapsedBranchPrefixes.isEmpty == true
+    )
+    #expect(
+      store.state.sidebar.sections[repoB.id]?.buckets[.unpinned]?.collapsedBranchPrefixes.isEmpty == true
+    )
+  }
+
+  @Test func setAllSidebarGroupsExpandedIsNoOpWhenAlreadyExpanded() async {
+    let worktreeA = makeWorktree(id: "/tmp/repoA/wt1", name: "wt1", repoRoot: "/tmp/repoA")
+    let repoA = makeRepository(id: "/tmp/repoA", name: "repoA", worktrees: [worktreeA])
+    var initialState = makeState(repositories: [repoA])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    // Already expanded with no persisted section, so expand-all writes nothing.
+    await store.send(.setAllSidebarGroupsExpanded(true))
+
+    #expect(store.state.isRepositoryExpanded(repoA.id))
+    #expect(store.state.sidebar.sections[repoA.id] == nil)
+  }
+
+  @Test func setAllSidebarGroupsExpandedExpandsFolderRepositorySection() async {
+    let folderURL = URL(fileURLWithPath: "/tmp/folderRepo")
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let folderRepo = Repository(
+      id: RepositoryID("/tmp/folderRepo"),
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+    var initialState = makeState(repositories: [folderRepo])
+    initialState.reconcileSidebarForTesting()
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[folderRepo.id, default: .init()].collapsed = true
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(true)) {
+      $0.$sidebar.withLock { sidebar in
+        guard var section = sidebar.sections[folderRepo.id] else { return }
+        section.collapsed = false
+        for bucketID in Array(section.buckets.keys) {
+          section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
+        }
+        sidebar.sections[folderRepo.id] = section
+      }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+
+    #expect(store.state.sidebar.sections[folderRepo.id]?.collapsed == false)
+  }
+
+  @Test func setAllSidebarGroupsExpandedOnEmptySidebarIsNoOp() async {
+    var initialState = makeState(repositories: [])
+    initialState.reconcileSidebarForTesting()
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setAllSidebarGroupsExpanded(true))
+    await store.send(.setAllSidebarGroupsExpanded(false))
   }
 
   @Test func sidebarSelectionChangedWithoutFocusTerminalDoesNotInsertPendingFocus() async {
@@ -2596,18 +2820,16 @@ struct RepositoriesFeatureTests {
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
-    state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
-      .init(id: definition.id, tint: definition.resolvedTintColor)
-    state.applyPostReduceCacheRecomputes()
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
+    // No seeded `runningScripts`: the alert must fire even when the row
+    // mirror already reconciled the removal (#573).
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: 1,
         tabId: nil
@@ -2620,10 +2842,6 @@ struct RepositoriesFeatureTests {
         repoName: "repo",
         worktreeName: "feature"
       )
-    }
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.reconcileSidebarForTesting()
     }
   }
 
@@ -2645,16 +2863,13 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: 0,
         tabId: nil
       )
     )
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.reconcileSidebarForTesting()
-    }
+    // The row keeps its entry: removal arrives via the terminal projection.
+    #expect(store.state.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] != nil)
     #expect(store.state.alert == nil)
   }
 
@@ -2676,16 +2891,11 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: nil,
         tabId: nil
       )
     )
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
-      $0.reconcileSidebarForTesting()
-    }
     #expect(store.state.alert == nil)
   }
 
@@ -2724,7 +2934,9 @@ struct RepositoriesFeatureTests {
     #expect(state.runningScriptColors(for: worktree.id) == [.purple, .orange])
   }
 
-  @Test(.dependencies) func scriptCompletedPartialCompletionPreservesSurvivors() async {
+  @Test(.dependencies) func scriptCompletedLeavesRunningScriptsUntouched() async {
+    // `runningScripts` reconciles from the terminal projection (single
+    // writer); completion must not mutate the row mirror.
     let repoRoot = "/tmp/repo"
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
@@ -2745,16 +2957,12 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: completing.id,
         kind: .script(completing),
         exitCode: 0,
         tabId: nil
       )
     )
-    await store.receive(\.sidebarItems) {
-      $0.sidebarItems[id: worktree.id]?.runningScripts.remove(id: completing.id)
-      $0.reconcileSidebarForTesting()
-    }
+    #expect(store.state.sidebarItems[id: worktree.id]?.runningScripts.count == 2)
     #expect(store.state.alert == nil)
   }
 
@@ -2779,7 +2987,6 @@ struct RepositoriesFeatureTests {
     await store.send(
       .scriptCompleted(
         worktreeID: worktree.id,
-        scriptID: definition.id,
         kind: .script(definition),
         exitCode: 1,
         tabId: tabId
@@ -3055,7 +3262,7 @@ struct RepositoriesFeatureTests {
     (137, "Script killed by signal 9 (exit code 137)."),
   ]
 
-  @Test(arguments: archiveExitCodeCases)
+  @Test(.dependencies, arguments: archiveExitCodeCases)
   func archiveScriptCompletedShowsExpectedMessage(exitCode: Int, expectedMessage: String) async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
@@ -3273,6 +3480,7 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
@@ -3386,6 +3594,7 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
@@ -4212,6 +4421,7 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.reloadRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
@@ -4251,6 +4461,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.reloadRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
@@ -4304,6 +4515,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.delegate.worktreeCreated)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
@@ -6147,6 +6359,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.delegate.worktreeCreated)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
@@ -6739,6 +6952,7 @@ struct RepositoriesFeatureTests {
 
     await gate.resume()
 
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.repositories = [repoA, repoB]
       $0.repositoryRoots = [repoRootA, repoRootB].map { URL(fileURLWithPath: $0) }
@@ -6789,6 +7003,7 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.loadPersistedRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.repositories = [repoA, repoB]
       $0.repositoryRoots = [repoRootA, repoRootB].map { URL(fileURLWithPath: $0) }
@@ -6967,6 +7182,7 @@ struct RepositoriesFeatureTests {
       worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
       isGitRepository: false
     )
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.repositories = [folderRepo]
       $0.repositoryRoots = [rootURL]
@@ -7002,6 +7218,7 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.loadPersistedRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.repositories = []
       $0.repositoryRoots = [URL(fileURLWithPath: repoRoot)]
@@ -7051,6 +7268,7 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.loadPersistedRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.repositories = []
       $0.repositoryRoots = [URL(fileURLWithPath: repoRoot)]
@@ -7061,6 +7279,529 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     await store.finish()
+  }
+
+  @Test func loadUnderXcodeLicenseGateShowsBannerNotBrokenRows() async {
+    // The listing shells out to git; an unaccepted Xcode license makes every
+    // git call fail. The loader must surface the banner and emit no failure
+    // rows, so intact repos never look corrupt.
+    let repoRoot = "/tmp/\(UUID().uuidString)-git"
+    let licenseError = ShellClientError(
+      command: "wt ls --json",
+      stdout: "",
+      stderr: "You have not agreed to the Xcode license agreements. "
+        + "Please run 'sudo xcodebuild -license'.",
+      exitCode: 69
+    )
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [repoRoot] }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in throw licenseError }
+      // A real block fails `git --version` too, so the authoritative probe confirms it.
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    await store.receive(\.gitEnvironmentChanged) {
+      $0.gitEnvironmentError = .xcodeLicenseNotAccepted
+    }
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositories = []
+      $0.repositoryRoots = [URL(fileURLWithPath: repoRoot)]
+      $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
+    }
+    await store.finish()
+    #expect(store.state.loadFailuresByID.isEmpty)
+  }
+
+  @Test func loadUnderGateKeepsFolderReposAndSuppressesGitFailures() async {
+    // Regression guard: the environment gate only blocks git. Folder repos are
+    // pure filesystem, so they must keep loading while the git roots are
+    // suppressed under the banner.
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let licenseError = ShellClientError(
+      command: "wt ls --json",
+      stdout: "",
+      stderr: "Please run 'sudo xcodebuild -license' from within a Terminal.",
+      exitCode: 69
+    )
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot, folderRoot] }
+      $0.gitClient.isGitRepository = { $0.path(percentEncoded: false) == gitRoot }
+      $0.gitClient.worktrees = { _ in throw licenseError }
+      // A real block fails `git --version` too, so the authoritative probe confirms it.
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+    }
+
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let synthetic = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL,
+      isAttached: false
+    )
+    let folderRepo = Repository(
+      id: RepositoryID(folderRoot),
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: [synthetic],
+      isGitRepository: false
+    )
+
+    // Non-exhaustive: the derived sidebar-structure cache mirror isn't
+    // reproducible for the "folder kept, git suppressed" mix, so assert the
+    // meaningful outcome directly.
+    store.exhaustivity = .off
+    await store.send(.loadPersistedRepositories)
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == .xcodeLicenseNotAccepted)
+    #expect(Array(store.state.repositories) == [folderRepo])
+    #expect(store.state.repositoryRoots == [gitRoot, folderRoot].map { URL(fileURLWithPath: $0) })
+    #expect(store.state.isInitialLoadComplete)
+    #expect(store.state.loadFailuresByID.isEmpty)
+  }
+
+  @Test func loadWithNoGitRootsProbesGitEnvironmentForBanner() async {
+    // With zero git roots nothing exercises git, so a standalone `git --version`
+    // probe is the only way a fresh install surfaces the banner.
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.gitClient.checkGitEnvironment = { .developerToolsUnavailable }
+    }
+
+    await store.send(.loadPersistedRepositories)
+    await store.receive(\.gitEnvironmentChanged) {
+      $0.gitEnvironmentError = .developerToolsUnavailable
+    }
+    await store.receive(\.repositoriesLoaded) {
+      $0.repositoryRoots = []
+      $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
+    }
+    await store.finish()
+  }
+
+  @Test func refreshAfterLicenseAcceptedClearsBannerAndReloads() async {
+    // Once the user accepts the license, the periodic refresh re-probes, clears
+    // the banner, and the repos reappear without a relaunch.
+    let worktree = makeWorktree(id: "/tmp/repo/main", name: "main")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.gitEnvironmentError = .xcodeLicenseNotAccepted
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.worktrees = { _ in [worktree] }
+    }
+
+    await store.send(.refreshWorktrees) {
+      $0.isRefreshingWorktrees = true
+    }
+    await store.receive(\.reloadRepositories)
+    await store.receive(\.gitEnvironmentChanged) {
+      $0.gitEnvironmentError = nil
+    }
+    await store.receive(\.repositoriesLoaded) {
+      $0.isRefreshingWorktrees = false
+      $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
+    }
+    await store.finish()
+  }
+
+  @Test func refreshStaysActiveWhileBlockedEvenWithNoRoots() async {
+    // The zero-root refresh normally early-returns; while blocked it must still
+    // run so an accepted license can clear the banner.
+    var initialState = RepositoriesFeature.State()
+    initialState.gitEnvironmentError = .xcodeLicenseNotAccepted
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.checkGitEnvironment = { nil }
+    }
+
+    await store.send(.refreshWorktrees) {
+      $0.isRefreshingWorktrees = true
+    }
+    await store.receive(\.reloadRepositories)
+    await store.receive(\.gitEnvironmentChanged) {
+      $0.gitEnvironmentError = nil
+    }
+    await store.receive(\.repositoriesLoaded) {
+      $0.isRefreshingWorktrees = false
+      $0.isInitialLoadComplete = true
+      $0.reconcileSidebarForTesting()
+    }
+    await store.finish()
+  }
+
+  @Test func openRepositoriesUnderGateShowsBannerNotInvalidAlertForGitRepo() async throws {
+    // Adding a real git repo while blocked must surface the banner and keep the
+    // repo (as a blocked warning row), not the misleading "couldn't read this
+    // folder" alert.
+    let licenseError = ShellClientError(
+      command: "wt root", stdout: "", stderr: "sudo xcodebuild -license", exitCode: 69)
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let standardizedURL = tempDir.standardizedFileURL
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.repoRoot = { _ in throw licenseError }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in throw licenseError }
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openRepositories([tempDir]))
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == .xcodeLicenseNotAccepted)
+    #expect(store.state.repositoryRoots == [standardizedURL])
+    #expect(store.state.alert == nil)
+  }
+
+  @Test func openRepositoriesAddsPlainFolderEvenWhileGitBlocked() async throws {
+    // A plain folder needs no git, so the gate must not stop it from being
+    // added, even though the banner also shows.
+    let licenseError = ShellClientError(
+      command: "wt root", stdout: "", stderr: "sudo xcodebuild -license", exitCode: 69)
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let standardizedURL = tempDir.standardizedFileURL
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { _ in }
+      $0.gitClient.repoRoot = { _ in throw licenseError }
+      $0.gitClient.isGitRepository = { _ in false }
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    let folderWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: standardizedURL),
+      kind: .folder,
+      name: Repository.name(for: standardizedURL),
+      detail: "",
+      workingDirectory: standardizedURL,
+      repositoryRootURL: standardizedURL,
+      isAttached: false
+    )
+    let folderRepo = Repository(
+      id: RepositoryID(standardizedURL.path(percentEncoded: false)),
+      rootURL: standardizedURL,
+      name: Repository.name(for: standardizedURL),
+      worktrees: IdentifiedArray(uniqueElements: [folderWorktree]),
+      isGitRepository: false
+    )
+
+    // Non-exhaustive: the derived sidebar-structure cache mirror isn't
+    // reproducible for the "folder kept, git suppressed" mix, so assert the
+    // meaningful outcome directly.
+    store.exhaustivity = .off
+    await store.send(.openRepositories([tempDir]))
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == .xcodeLicenseNotAccepted)
+    #expect(Array(store.state.repositories) == [folderRepo])
+    #expect(store.state.repositoryRoots == [standardizedURL])
+    #expect(store.state.isInitialLoadComplete)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test func archivedWorktreeSurvivesBlockedGitLoad() async {
+    // Regression: suppressing env-caused failures must not let the archived
+    // prune drop curation for the temporarily-hidden repos.
+    let worktree = makeWorktree(id: "/tmp/blocked/wt", name: "duck", repoRoot: "/tmp/blocked")
+    let repository = makeRepository(id: "/tmp/blocked", worktrees: [worktree])
+    var initial = makeState(repositories: [repository])
+    initial.repositoryRoots = [repository.rootURL]
+    initial.isInitialLoadComplete = true
+    initial.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id] = .init(
+        buckets: [.archived: .init(items: [worktree.id: .init(archivedAt: .now)])]
+      )
+    }
+    let licenseError = ShellClientError(
+      command: "wt ls", stdout: "", stderr: "sudo xcodebuild -license", exitCode: 69)
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in throw licenseError }
+      // A real block fails `git --version` too, so the authoritative probe confirms it.
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.reloadRepositories(animated: false))
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == .xcodeLicenseNotAccepted)
+    #expect(
+      store.state.sidebar.sections[repository.id]?.buckets[.archived]?.items[worktree.id] != nil
+    )
+  }
+
+  @Test func gitErrorEchoingGatePhraseWhileGitWorksSurfacesFailureNotBanner() async {
+    // A repo-specific error that merely echoes a gate phrase must not raise the
+    // app-wide banner when another git repo demonstrably works.
+    let goodRoot = "/tmp/\(UUID().uuidString)-good"
+    let weirdRoot = "/tmp/\(UUID().uuidString)-weird"
+    let goodWorktree = makeWorktree(id: "\(goodRoot)/main", name: "main", repoRoot: goodRoot)
+    let phraseError = ShellClientError(
+      command: "wt ls", stdout: "", stderr: "hook failed: this tool requires Xcode 15", exitCode: 1)
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [goodRoot, weirdRoot] }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { url in
+        if url.path(percentEncoded: false) == goodRoot { return [goodWorktree] }
+        throw phraseError
+      }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.loadPersistedRepositories)
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == nil)
+    #expect(store.state.repositories[id: RepositoryID(goodRoot)] != nil)
+    #expect(store.state.loadFailuresByID[RepositoryID(weirdRoot)] != nil)
+  }
+
+  @Test func blockedRepoBecomesRealRepoWhenLicenseAccepted() async {
+    // The core transition: a blocked warning row becomes a real repo row once
+    // git recovers, with the banner cleared.
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let gitID = RepositoryID(gitRoot)
+    let worktree = makeWorktree(id: "\(gitRoot)/main", name: "main", repoRoot: gitRoot)
+    var initial = RepositoriesFeature.State()
+    initial.repositoryRoots = [URL(fileURLWithPath: gitRoot)]
+    initial.gitEnvironmentError = .xcodeLicenseNotAccepted
+    initial.isInitialLoadComplete = true
+    // The starting state really does render a blocked warning row.
+    #expect(
+      initial.computeSidebarStructure(groupPinned: false, groupActive: false).sections.contains {
+        if case .environmentBlockedRepository(let id, _, _, _) = $0 { return id == gitID }
+        return false
+      })
+
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in [worktree] }
+      $0.gitClient.checkGitEnvironment = { nil }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.reloadRepositories(animated: false))
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == nil)
+    #expect(store.state.repositories[id: gitID] != nil)
+    let structure = store.state.sidebarStructure
+    #expect(
+      structure.sections.contains {
+        if case .repository(let id, _) = $0 { return id == gitID }
+        return false
+      })
+    #expect(
+      !structure.sections.contains {
+        if case .environmentBlockedRepository = $0 { return true }
+        return false
+      })
+  }
+
+  @Test func mixedRosterRoutesFolderBlockedGitAndMissingDirIndependently() async {
+    // One load must route a folder to a kept repo, a blocked git root to a
+    // suppressed warning row, and a missing directory to an actionable failure.
+    let folderRoot = "/tmp/\(UUID().uuidString)-folder"
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let missingRoot = "/tmp/\(UUID().uuidString)-missing"
+    let licenseError = ShellClientError(
+      command: "wt ls", stdout: "", stderr: "sudo xcodebuild -license", exitCode: 69)
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [folderRoot, gitRoot, missingRoot] }
+      $0.gitClient.rootDirectoryExists = { $0.path(percentEncoded: false) != missingRoot }
+      $0.gitClient.isGitRepository = { $0.path(percentEncoded: false) == gitRoot }
+      $0.gitClient.worktrees = { _ in throw licenseError }
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.loadPersistedRepositories)
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == .xcodeLicenseNotAccepted)
+    #expect(Array(store.state.repositories.ids) == [RepositoryID(folderRoot)])
+    #expect(Set(store.state.loadFailuresByID.keys) == [RepositoryID(missingRoot)])
+  }
+
+  @Test func addingGitRepoWhileBlockedPersistsItAsBlockedRow() async throws {
+    // Git is blocked, not the repo: a real git repo the user adds must be
+    // persisted (survive to recovery) and shown as a blocked row, not dropped.
+    let licenseError = ShellClientError(
+      command: "wt root", stdout: "", stderr: "sudo xcodebuild -license", exitCode: 69)
+    let tempDir = FileManager.default.temporaryDirectory
+      .appending(path: "supa-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let standardizedURL = tempDir.standardizedFileURL
+    let gitID = RepositoryID(standardizedURL.path(percentEncoded: false))
+    let savedRoots = LockIsolated<[String]>([])
+
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [] }
+      $0.repositoryPersistence.saveRoots = { savedRoots.setValue($0) }
+      $0.gitClient.repoRoot = { _ in throw licenseError }
+      $0.gitClient.rootDirectoryExists = { _ in true }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in throw licenseError }
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openRepositories([tempDir]))
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == .xcodeLicenseNotAccepted)
+    #expect(
+      store.state.repositoryRoots.map { $0.path(percentEncoded: false) }
+        .contains(standardizedURL.path(percentEncoded: false)))
+    #expect(savedRoots.value.contains(standardizedURL.path(percentEncoded: false)))
+    #expect(
+      store.state.sidebarStructure.sections.contains {
+        if case .environmentBlockedRepository(let id, _, _, _) = $0 { return id == gitID }
+        return false
+      })
+  }
+
+  @Test func blockedRepoIsRemovable() async {
+    // A repo added while blocked shows a warning row, but must still be
+    // removable (path-based) so a mistaken add isn't a dead-end until recovery.
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let gitID = RepositoryID(gitRoot)
+    var initial = RepositoriesFeature.State()
+    initial.repositoryRoots = [URL(fileURLWithPath: gitRoot)]
+    initial.gitEnvironmentError = .xcodeLicenseNotAccepted
+    initial.isInitialLoadComplete = true
+    let savedRoots = LockIsolated<[String]>(["unset"])
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot] }
+      $0.repositoryPersistence.saveRoots = { savedRoots.setValue($0) }
+      $0.repositoryPersistence.pruneRepositoryConfigs = { _ in }
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.removeFailedRepository(gitID))
+    await store.skipReceivedActions()
+    #expect(
+      !store.state.repositoryRoots.contains {
+        RepositoryID($0.standardizedFileURL.path(percentEncoded: false)) == gitID
+      })
+    #expect(!savedRoots.value.contains(gitRoot))
+  }
+
+  @Test func soleGitRepoEchoingGatePhraseProbesBeforeBannering() async {
+    // The only git root echoes a gate phrase but git is actually healthy. With
+    // nothing to disconfirm against, the `git --version` probe is the ground
+    // truth: it clears the false positive, so the real error surfaces as a
+    // failure row rather than a bogus app-wide banner.
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let phraseError = ShellClientError(
+      command: "wt ls", stdout: "", stderr: "post-checkout hook: this step requires Xcode", exitCode: 1)
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot] }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in throw phraseError }
+      // `git --version` succeeds: git is not actually blocked.
+      $0.gitClient.checkGitEnvironment = { nil }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.loadPersistedRepositories)
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == nil)
+    #expect(store.state.loadFailuresByID[RepositoryID(gitRoot)] != nil)
+  }
+
+  @Test func blockWithUnmatchedRepoErrorStillBannersViaProbe() async {
+    // Locale robustness: even when the per-repo error text matches no gate
+    // phrase (e.g. a localized message), the `git --version` probe is the
+    // authority, so the banner shows and the repo is suppressed as a warning
+    // row rather than marked broken.
+    let gitRoot = "/tmp/\(UUID().uuidString)-git"
+    let opaqueError = ShellClientError(
+      command: "wt ls", stdout: "", stderr: "erreur: impossible de lire", exitCode: 1)
+    let store = TestStore(initialState: RepositoriesFeature.State()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.loadRoots = { [gitRoot] }
+      $0.gitClient.isGitRepository = { _ in true }
+      $0.gitClient.worktrees = { _ in throw opaqueError }
+      // The locale-independent probe is what confirms the block.
+      $0.gitClient.checkGitEnvironment = { .xcodeLicenseNotAccepted }
+      $0.analyticsClient.capture = { _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.loadPersistedRepositories)
+    await store.skipReceivedActions()
+    #expect(store.state.gitEnvironmentError == .xcodeLicenseNotAccepted)
+    #expect(store.state.loadFailuresByID[RepositoryID(gitRoot)] == nil)
+    #expect(store.state.repositories[id: RepositoryID(gitRoot)] == nil)
+  }
+
+  @Test func gitEnvironmentChangedIgnoresUnchangedValue() async {
+    var initialState = RepositoriesFeature.State()
+    initialState.gitEnvironmentError = .xcodeLicenseNotAccepted
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+    }
+
+    // Re-publishing the same value on the periodic refresh must not mutate state.
+    await store.send(.gitEnvironmentChanged(.xcodeLicenseNotAccepted))
+    // A real transition still applies.
+    await store.send(.gitEnvironmentChanged(nil)) {
+      $0.gitEnvironmentError = nil
+    }
   }
 
   @Test func loadPersistedRepositoriesClassifiesMixedGitAndFolderRoots() async {
@@ -7080,6 +7821,7 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.loadPersistedRepositories)
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
       $0.repositories = [
         Repository(
@@ -7163,6 +7905,7 @@ struct RepositoriesFeatureTests {
     )
 
     await store.send(.openRepositories([tempDir]))
+    await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.openRepositoriesFinished) {
       $0.repositories = [folderRepo]
       $0.repositoryRoots = [standardizedURL]
