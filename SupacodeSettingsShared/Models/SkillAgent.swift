@@ -12,7 +12,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   case pi
 
   /// Path under the user's home where the agent stores its config
-  /// (e.g. `.claude`, `.codex`, `.copilot`, `.grok`, `.hermes`, `.kimi`, `.kiro`, `.omp/agent`, `.pi/agent`,
+  /// (e.g. `.claude`, `.codex`, `.copilot`, `.grok`, `.hermes`, `.kimi-code`, `.kiro`, `.omp/agent`, `.pi/agent`,
   /// `.config/opencode`).
   public var configDirectoryName: String {
     switch self {
@@ -21,7 +21,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .copilot: ".copilot"
     case .grok: ".grok"
     case .hermes: ".hermes"
-    case .kimi: ".kimi"
+    case .kimi: ".kimi-code"
     case .kiro: ".kiro"
     case .omp: ".omp/agent"
     case .opencode: ".config/opencode"
@@ -37,7 +37,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .copilot: "Copilot CLI"
     case .grok: "Grok"
     case .hermes: "Hermes"
-    case .kimi: "Kimi CLI"
+    case .kimi: "Kimi Code"
     case .kiro: "Kiro"
     case .omp: "Oh My Pi"
     case .opencode: "OpenCode"
