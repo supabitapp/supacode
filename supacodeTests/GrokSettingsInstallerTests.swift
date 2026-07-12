@@ -11,7 +11,7 @@ struct GrokSettingsInstallerTests {
       .appendingPathComponent("supacode-grok-installer-\(UUID().uuidString)", isDirectory: true)
   }
 
-  /// Rewrites managed hooks' `env` maps on disk via `transform`; returning nil
+  /// Rewrites every hook's `env` map on disk via `transform`; returning nil
   /// drops the `env` key. Simulates an older install whose commands still
   /// match but whose env passthrough is absent, partial, or drifted.
   /// When `event` is set, only that event's hooks are rewritten.
@@ -138,7 +138,7 @@ struct GrokSettingsInstallerTests {
     #expect(installer.installState() == .installed)
 
     // One managed event without env among an otherwise complete map is still
-    // outdated — the detector must not require every hook to be broken.
+    // outdated: the detector must not require every hook to be broken.
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     try rewriteManagedHookEnv(at: settingsURL, event: "Stop") { _ in nil }
 
@@ -180,44 +180,6 @@ struct GrokSettingsInstallerTests {
     #expect(installer.installState() == .installed)
     #expect(
       !GrokHookSettings.managedHooksLackEnvPassthrough(in: try loadSettingsObject(at: settingsURL)))
-  }
-
-  @Test func installPrunesLegacyGrokOSCHelperHooks() throws {
-    let homeURL = makeTempHomeURL()
-    defer { try? fileManager.removeItem(at: homeURL) }
-
-    let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
-    try fileManager.createDirectory(
-      at: settingsURL.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    let legacyBin = "\(homeURL.path)/.grok/hooks/bin/supacode-osc.sh busy"
-    let stale: JSONValue = .object([
-      "hooks": .object([
-        "UserPromptSubmit": .array([
-          .object([
-            "hooks": .array([
-              .object([
-                "type": "command",
-                "command": .string(legacyBin),
-                "timeout": 5,
-              ])
-            ])
-          ])
-        ])
-      ])
-    ])
-    try JSONEncoder().encode(stale).write(to: settingsURL)
-
-    let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    // Dual legacy+missing-canonical: outdated before install.
-    #expect(installer.installState() == .outdated)
-    try installer.installAllHooks()
-
-    let text = try String(contentsOf: settingsURL, encoding: .utf8)
-    #expect(!text.contains(AgentHookSettingsCommand.legacyGrokOSCHelperMarker))
-    #expect(text.contains(AgentHookSettingsCommand.ownershipMarker))
-    #expect(installer.installState() == .installed)
   }
 
   @Test func managedHooksHaveEnvPassthroughAfterInstall() throws {

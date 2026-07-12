@@ -21,7 +21,7 @@ nonisolated struct GrokSettingsInstaller {
   /// `ClaudeSettingsInstaller.installState()` for rationale.
   ///
   /// After the shared command-set check, also requires every managed hook to
-  /// carry the canonical Grok env passthrough map — inspected on the same
+  /// carry the canonical Grok env passthrough map, inspected on the same
   /// parsed snapshot (no second disk read).
   func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]
