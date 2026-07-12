@@ -1166,8 +1166,10 @@ struct WorktreeTerminalManagerTests {
     await probe.waitForRemoteKill { $0.contains(where: { $0.sessionID == sessionID }) }
     let remoteKills = await probe.remoteKilledSessions()
     #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
-    let killed = await probe.killedSessions()
-    #expect(killed.contains(sessionID))
+    // The local kill runs only after the remote one completes, so wait for it
+    // instead of sampling `killedSessions` immediately.
+    await probe.waitForKill { $0.contains(sessionID) }
+    #expect(await probe.killedSessions().contains(sessionID))
   }
 
   @Test func closeTabKillsHostSessionForRemoteWorktree() async {
@@ -1237,6 +1239,36 @@ struct WorktreeTerminalManagerTests {
     #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
   }
 
+  @Test func closeKillsHostSessionBeforeLocalSession() async {
+    // The host-side kill's SSH reuses the ControlMaster held open by the local
+    // zmx session, so the local kill must not run until the remote kill has
+    // finished; killing local first tears that master down and leaks the host session.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: true),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    // Hold the remote kill mid-flight so a racing local kill would be observable.
+    await probe.armRemoteKillGate()
+    state.closeTab(tabID)
+    await probe.waitForRemoteKillPending(atLeast: 1)
+    // Give any concurrently-dispatched local kill ample scheduling to land.
+    for _ in 0..<50 { await Task.yield() }
+    await probe.releaseRemoteKillGate()
+
+    await probe.waitForKill { $0.contains(sessionID) }
+    #expect(await probe.localKilledWhileGated() == false)
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
   @Test func remoteKillFiresEvenWhenLocalZmxIsUnbundled() async {
     // Over-budget / unbundled local zmx must not gate host-side teardown.
     // `executableURL` still serves the inert fake binary so the surface never
@@ -1290,6 +1322,87 @@ struct WorktreeTerminalManagerTests {
 
     await manager.terminateAllSessions()
 
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+    // The merged plan must kill the local session too, not just the host side.
+    #expect(await probe.killedSessions().contains(sessionID))
+  }
+
+  @Test func killPlanMergesLocalAndRemoteKillsPerSession() {
+    let devbox = RemoteHost(alias: "devbox")
+    let other = RemoteHost(alias: "other")
+
+    let plan = WorktreeTerminalManager.killPlan(
+      localSessionIDs: ["local-only", "both", "local-only"],
+      remoteSessions: [
+        (host: devbox, sessionID: "both"),
+        (host: devbox, sessionID: "remote-only"),
+        (host: other, sessionID: "remote-only"),
+      ]
+    )
+
+    #expect(plan.map(\.sessionID) == ["local-only", "both", "remote-only"])
+    let byID = Dictionary(uniqueKeysWithValues: plan.map { ($0.sessionID, $0) })
+    #expect(byID["local-only"]?.killLocal == true)
+    #expect(byID["local-only"]?.host == nil)
+    #expect(byID["both"]?.killLocal == true)
+    #expect(byID["both"]?.host == devbox)
+    #expect(byID["remote-only"]?.killLocal == false)
+    // First host wins a (never-expected) collision.
+    #expect(byID["remote-only"]?.host == devbox)
+  }
+
+  @Test func pruneKillsHostSessionBeforeLocalSession() async {
+    // Same ControlMaster ordering contract as surface close, on the prune path.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    await probe.armRemoteKillGate()
+    manager.prune(keeping: [])
+    await probe.waitForRemoteKillPending(atLeast: 1)
+    // Give any concurrently-dispatched local kill ample scheduling to land.
+    for _ in 0..<50 { await Task.yield() }
+    await probe.releaseRemoteKillGate()
+
+    await probe.waitForKill { $0.contains(sessionID) }
+    #expect(await probe.localKilledWhileGated() == false)
+    let remoteKills = await probe.remoteKilledSessions()
+    #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
+  }
+
+  @Test func quitKillsHostSessionBeforeLocalSession() async {
+    // Same ControlMaster ordering contract as surface close, on the quit path.
+    let probe = ZmxTestProbe(listing: [])
+    let worktree = makeRemoteWorktree()
+    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false),
+      let surfaceID = state.splitTree(for: tabID).root?.leftmostLeaf().id
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let sessionID = session(for: surfaceID)
+
+    await probe.armRemoteKillGate()
+    let terminate = Task { await manager.terminateAllSessions() }
+    await probe.waitForRemoteKillPending(atLeast: 1)
+    // Give any concurrently-dispatched local kill ample scheduling to land.
+    for _ in 0..<50 { await Task.yield() }
+    await probe.releaseRemoteKillGate()
+    await terminate.value
+
+    #expect(await probe.localKilledWhileGated() == false)
+    #expect(await probe.killedSessions().contains(sessionID))
     let remoteKills = await probe.remoteKilledSessions()
     #expect(remoteKills.contains(.init(authority: "devbox", sessionID: sessionID)))
   }
@@ -2695,6 +2808,7 @@ struct WorktreeTerminalManagerTests {
     private enum Trigger {
       case kill(@Sendable ([String]) -> Bool)
       case remoteKill(@Sendable ([RemoteKill]) -> Bool)
+      case remoteKillPending(threshold: Int)
       case list(threshold: Int)
     }
 
@@ -2716,6 +2830,12 @@ struct WorktreeTerminalManagerTests {
     private var remoteKills: [RemoteKill] = []
     private var listCalls = 0
     private var waiters: [Waiter] = []
+    /// When armed, `killRemoteSession` suspends mid-flight so a test can observe
+    /// whether a local kill races it (the ordering bug).
+    private var remoteKillGateArmed = false
+    private var pendingRemoteKillContinuations: [CheckedContinuation<Void, Never>] = []
+    private var remoteKillPendingCount = 0
+    private var localKilledWhileRemoteGated = false
 
     init(listing: [ZmxSessionListParser.Entry]?) {
       self.listing = listing
@@ -2732,6 +2852,7 @@ struct WorktreeTerminalManagerTests {
     }
 
     func killSession(_ sessionID: String) {
+      if remoteKillGateArmed { localKilledWhileRemoteGated = true }
       killed.append(sessionID)
       resumeWaiters()
     }
@@ -2740,10 +2861,30 @@ struct WorktreeTerminalManagerTests {
       killed
     }
 
-    func killRemoteSession(host: RemoteHost, sessionID: String) {
+    func killRemoteSession(host: RemoteHost, sessionID: String) async {
+      if remoteKillGateArmed {
+        remoteKillPendingCount += 1
+        resumeWaiters()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+          pendingRemoteKillContinuations.append(continuation)
+        }
+      }
       remoteKills.append(RemoteKill(authority: host.authority, sessionID: sessionID))
       resumeWaiters()
     }
+
+    /// Holds every subsequent `killRemoteSession` suspended until released.
+    func armRemoteKillGate() { remoteKillGateArmed = true }
+
+    func releaseRemoteKillGate() {
+      remoteKillGateArmed = false
+      let held = pendingRemoteKillContinuations
+      pendingRemoteKillContinuations.removeAll()
+      for continuation in held { continuation.resume() }
+    }
+
+    /// True if a local kill ran while a remote kill was gated (remote-before-local violated).
+    func localKilledWhileGated() -> Bool { localKilledWhileRemoteGated }
 
     func remoteKilledSessions() -> [RemoteKill] {
       remoteKills
@@ -2767,6 +2908,17 @@ struct WorktreeTerminalManagerTests {
       sourceLocation: SourceLocation = #_sourceLocation
     ) async -> Bool {
       await wait(for: .remoteKill(predicate), description: "remote zmx session kill", sourceLocation: sourceLocation)
+    }
+
+    @discardableResult
+    func waitForRemoteKillPending(
+      atLeast threshold: Int,
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) async -> Bool {
+      await wait(
+        for: .remoteKillPending(threshold: threshold),
+        description: "gated remote zmx kill",
+        sourceLocation: sourceLocation)
     }
 
     @discardableResult
@@ -2803,6 +2955,7 @@ struct WorktreeTerminalManagerTests {
       switch trigger {
       case .kill(let predicate): predicate(killed)
       case .remoteKill(let predicate): predicate(remoteKills)
+      case .remoteKillPending(let threshold): remoteKillPendingCount >= threshold
       case .list(let threshold): listCalls >= threshold
       }
     }

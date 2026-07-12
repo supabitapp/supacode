@@ -2179,11 +2179,8 @@ final class WorktreeTerminalState {
     Task.detached {
       await withTaskGroup(of: Void.self) { group in
         for id in sessionIDs {
-          if killLocal {
-            group.addTask { await client.killSession(id) }
-          }
-          if let host {
-            group.addTask { await client.killRemoteSession(host, id) }
+          group.addTask {
+            await client.killSurfaceSessions(sessionID: id, remoteHost: host, killLocal: killLocal)
           }
         }
       }

@@ -755,11 +755,12 @@ final class WorktreeTerminalManager {
     layoutFlushTasks.removeAll()
   }
 
-  /// Tears down persistent zmx sessions for worktrees that just left the keep set.
-  /// Parallel kill so a single stuck daemon doesn't pin the executor for
-  /// `subprocessTimeout * N` (the bound is a single, maximum timeout regardless
-  /// of N). `remoteSessions` are the host-side sessions of pruned remote
-  /// worktrees, torn down best-effort over SSH.
+  /// Tears down persistent zmx sessions for worktrees that just left the keep
+  /// set. Parallel across surfaces; within one surface the remote kill precedes
+  /// the local one (see `ZmxClient.killSurfaceSessions`), so the bound is one
+  /// remote (15s) plus one local (5s) timeout regardless of N. Detached and
+  /// unbudgeted; a quit inside that window leaves local survivors to the
+  /// next-launch orphan reap (a host-side survivor has no reaper).
   private func killZmxSessions(
     _ sessionIDs: [String],
     remoteSessions: [(host: RemoteHost, sessionID: String)] = []
@@ -770,15 +771,48 @@ final class WorktreeTerminalManager {
       "terminal_persistence_session_killed",
       ["reason": "worktree_pruned", "count": sessionIDs.count, "remote_count": remoteSessions.count]
     )
+    let plan = Self.killPlan(localSessionIDs: sessionIDs, remoteSessions: remoteSessions)
     Task.detached {
       await withTaskGroup(of: Void.self) { group in
-        for id in sessionIDs {
-          group.addTask { await client.killSession(id) }
-        }
-        for remote in remoteSessions {
-          group.addTask { await client.killRemoteSession(remote.host, remote.sessionID) }
+        for entry in plan {
+          group.addTask {
+            await client.killSurfaceSessions(
+              sessionID: entry.sessionID, remoteHost: entry.host, killLocal: entry.killLocal)
+          }
         }
       }
+    }
+  }
+
+  /// One surface's session teardown: the host-side session (when remote) and the
+  /// local session, run remote-first via `ZmxClient.killSurfaceSessions`.
+  struct SurfaceSessionKill: Sendable {
+    let sessionID: String
+    let host: RemoteHost?
+    let killLocal: Bool
+  }
+
+  /// Merges the local and remote kill lists into one entry per session so each
+  /// surface's remote+local teardown runs in the safe order (see
+  /// `ZmxClient.killSurfaceSessions`). A session present in only one list keeps
+  /// that side; a session in both is torn down remote-first then local.
+  static func killPlan(
+    localSessionIDs: [String],
+    remoteSessions: [(host: RemoteHost, sessionID: String)]
+  ) -> [SurfaceSessionKill] {
+    let localSet = Set(localSessionIDs)
+    let remoteByID = Dictionary(remoteSessions.map { ($0.sessionID, $0.host) }) { first, second in
+      // One host per session ID by construction; a collision leaks the dropped
+      // host's session, so make it visible.
+      terminalLogger.warning(
+        "killPlan: one session on two hosts; keeping \(first.alias), dropping \(second.alias)")
+      return first
+    }
+    let orderedIDs = localSessionIDs + remoteSessions.map(\.sessionID).filter { !localSet.contains($0) }
+    var seen: Set<String> = []
+    return orderedIDs.compactMap { id in
+      guard seen.insert(id).inserted else { return nil }
+      return SurfaceSessionKill(sessionID: id, host: remoteByID[id], killLocal: localSet.contains(id))
     }
   }
 
@@ -835,11 +869,14 @@ final class WorktreeTerminalManager {
       state.closeAllSurfaces()
     }
     emitHasAnyTerminalSurfaceIfNeeded()
-    // This instance's tracked sessions are always killed. The orphan subset
-    // (live and untracked) is attach-aware: spared when a client is attached or
-    // the count is unknown, so a concurrently-running instance keeps its
-    // sessions. Orphan reaping is therefore eventually consistent: the last
-    // instance to quit with no live clients sweeps what remains.
+    // This instance's tracked local sessions are killed. A remote surface's
+    // local kill is gated behind its budgeted remote kill (see
+    // `ZmxClient.killSurfaceSessions`); when the budget expires first, the
+    // local survivor is left to the next-launch orphan reap. The orphan subset (live and
+    // untracked) is attach-aware: spared when a client is attached or the count
+    // is unknown, so a concurrently-running instance keeps its sessions. Orphan
+    // reaping is therefore eventually consistent: the last instance to quit
+    // with no live clients sweeps what remains.
     let liveSessions = await zmxClient.listSessionsWithClients()
     let orphanSessions: [String]
     if let liveSessions {
@@ -871,14 +908,15 @@ final class WorktreeTerminalManager {
     }
     // Raced against a budget so an unreachable host cannot hold the quit path
     // for the full remote ssh timeout; stragglers are cancelled (best-effort).
+    let plan = Self.killPlan(localSessionIDs: allSessions, remoteSessions: trackedRemoteSessions)
     await withTaskGroup(of: Void.self) { group in
       group.addTask {
         await withTaskGroup(of: Void.self) { kills in
-          for id in allSessions {
-            kills.addTask { await client.killSession(id) }
-          }
-          for remote in trackedRemoteSessions {
-            kills.addTask { await client.killRemoteSession(remote.host, remote.sessionID) }
+          for entry in plan {
+            kills.addTask {
+              await client.killSurfaceSessions(
+                sessionID: entry.sessionID, remoteHost: entry.host, killLocal: entry.killLocal)
+            }
           }
         }
       }
@@ -890,9 +928,11 @@ final class WorktreeTerminalManager {
     }
   }
 
-  /// Cap on the quit-time kill sweep: comfortably above the local zmx cap
-  /// (5s) so local teardown is never truncated, well under the remote ssh cap
-  /// (15s) so an unreachable host cannot make quit feel hung.
+  /// Cap on the quit-time kill sweep: comfortably above the local zmx cap (5s)
+  /// so a local-only teardown is never truncated, well under the remote ssh cap
+  /// (15s) so an unreachable host cannot make quit feel hung. A remote surface's
+  /// local kill is gated behind its remote kill, so on an unreachable host it
+  /// can be deferred to the next-launch orphan reap.
   static let quitKillBudget: Duration = .seconds(6)
 
   /// Reaps `supa-*` sessions zmx hosts that no persisted layout claims;
