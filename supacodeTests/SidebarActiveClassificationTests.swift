@@ -99,12 +99,48 @@ struct SidebarActiveClassificationTests {
     #expect(classification == nil)
   }
 
+  /// Regression: this combination used to fall through every case and return
+  /// `nil`, which dropped the row from Active entirely.
+  ///
+  /// It is reachable. `agents` is emptied when the user turns off
+  /// `agentPresenceBadgesEnabled`, which forces `hasAgent` and `hasAwaiting`
+  /// false, while `hasUnseenNotifications` is a stored flag coupled to neither.
+  /// So for a badge-disabled user, an agent that finished and left output behind
+  /// never surfaced in the Active section at all.
+  @Test func unreadWithNoAgentAndNoScriptStillClassifies() {
+    let classification = SidebarActiveClassification.classify(
+      hasUnread: true, hasAwaiting: false, hasAgent: false, hasRunning: false
+    )
+    #expect(classification == .unread)
+  }
+
+  /// The all-false row is now the only input that returns nil.
+  @Test func idleIsTheOnlyUnclassifiedCombination() {
+    var unclassified: [Int] = []
+    for mask in 0..<16 {
+      let classification = SidebarActiveClassification.classify(
+        hasUnread: mask & 1 != 0,
+        hasAwaiting: mask & 2 != 0,
+        hasAgent: mask & 4 != 0,
+        hasRunning: mask & 8 != 0
+      )
+      if classification == nil { unclassified.append(mask) }
+    }
+    #expect(unclassified == [0])
+  }
+
   @Test func prioritiesOrderedAsSpec() {
     // The bucket priority ordering is the user contract; lock it explicitly
     // so a future shuffle of the enum case order can't silently re-rank.
+    //
+    // `.unread` is appended rather than slotted into the unread family (which
+    // would have put it at rawValue 6) precisely so that adding it re-ranked
+    // nothing: every case that existed before keeps its exact position, and the
+    // new one sorts last among classified rows.
     let expected: [SidebarActiveClassification] = [
       .unreadAwaitingRunning, .unreadAwaiting, .unreadAgentRunning, .unreadAgent,
       .unreadRunning, .awaitingRunning, .awaiting, .agentRunning, .agent, .running,
+      .unread,
     ]
     #expect(SidebarActiveClassification.allCases == expected)
   }

@@ -36,11 +36,27 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   case agentRunning = 8
   case agent = 9
   case running = 10
+  /// Unread output with no agent badge and no running script.
+  ///
+  /// Previously unrepresentable, so such a row classified as `nil` and was
+  /// dropped from Active entirely. It is reachable: `agents` is emptied when the
+  /// user turns `agentPresenceBadgesEnabled` off (see `classify(_:)` below),
+  /// which forces `hasAgent` and `hasAwaiting` false, while
+  /// `hasUnseenNotifications` is a stored flag coupled to neither. So with
+  /// badges off, an agent that finished and left output behind never surfaced.
+  ///
+  /// Appended rather than slotted into the unread family (which would have been
+  /// rawValue 6) so that no existing case is re-ranked: every row that hoists
+  /// today keeps exactly its current position in the flat Active list. It sorts
+  /// last among classified rows but still ahead of unclassified ones, which take
+  /// `allCases.count + 1`.
+  case unread = 11
 
   static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
-  /// Pure classifier driven by four leaf-local flags. Returns `nil` for rows
-  /// that don't belong in Active (no unread, no awaiting, no agent, no script).
+  /// Pure classifier driven by four leaf-local flags. Returns `nil` only for
+  /// rows with nothing to report at all: no unread, no awaiting, no agent, no
+  /// script.
   static func classify(
     hasUnread: Bool,
     hasAwaiting: Bool,
@@ -57,6 +73,9 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
     if hasAgent && hasRunning { return .agentRunning }
     if hasAgent { return .agent }
     if hasRunning { return .running }
+    // Reaching here with `hasUnread` implies no agent, no script and nothing
+    // awaiting: every combination of those was returned above.
+    if hasUnread { return .unread }
     return nil
   }
 
