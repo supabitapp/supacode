@@ -53,6 +53,7 @@ final class WorktreeTerminalState {
   private struct SurfaceLaunchMetadata {
     let usesZmx: Bool
     let context: ghostty_surface_context_e
+    let externalZmxSessionID: String?
   }
 
   let tabManager: TerminalTabManager
@@ -326,6 +327,13 @@ final class WorktreeTerminalState {
     _ = createTab(focusing: focusing, setupScript: setupScript)
   }
 
+  private func restorePendingLayoutIfNeeded(focusing: Bool) {
+    guard let snapshot = pendingLayoutSnapshot else { return }
+    pendingLayoutSnapshot = nil
+    hasAttemptedInitialTab = true
+    restoreFromSnapshot(snapshot, focusing: focusing)
+  }
+
   @discardableResult
   func createTab(
     focusing: Bool = true,
@@ -372,6 +380,53 @@ final class WorktreeTerminalState {
     )
     if shouldConsumeSetupScript, tabId != nil {
       onSetupScriptConsumed?()
+    }
+    return tabId
+  }
+
+  @discardableResult
+  func adoptZmxSession(
+    sessionID: String,
+    title: String?,
+    tabID requestedTabID: UUID,
+    focusing: Bool = true
+  ) -> TerminalTabID? {
+    guard let sessionID = ZmxExternalSessionName.normalized(sessionID),
+      let command = externalZmxAttachCommand(sessionID: sessionID)
+    else { return nil }
+    restorePendingLayoutIfNeeded(focusing: false)
+    let terminalTabID = TerminalTabID(rawValue: requestedTabID)
+    if hasTab(terminalTabID) {
+      if externalZmxSessionID(in: terminalTabID) == sessionID {
+        if let title { tabManager.setCustomTitle(terminalTabID, title: title) }
+        // Re-applying the same external session is a sync no-op; do not steal focus.
+        return terminalTabID
+      }
+      closeTab(terminalTabID)
+    }
+    let resolvedTitle: String
+    if let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmedTitle.isEmpty {
+      resolvedTitle = trimmedTitle
+    } else {
+      resolvedTitle = sessionID
+    }
+    let tabId = createTab(
+      TabCreation(
+        title: resolvedTitle,
+        icon: nil,
+        isTitleLocked: false,
+        command: command,
+        initialInput: nil,
+        focusing: focusing,
+        inheritingFromSurfaceId: currentFocusedSurfaceId(),
+        context: tabManager.tabs.isEmpty ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB,
+        tabID: requestedTabID,
+        bypassZmx: true,
+        externalZmxSessionID: sessionID,
+      )
+    )
+    if let tabId, let title {
+      tabManager.setCustomTitle(tabId, title: title)
     }
     return tabId
   }
@@ -535,6 +590,7 @@ final class WorktreeTerminalState {
     /// Skip zmx session wrapping for transactional surfaces (blocking setup/archive/delete scripts)
     /// that must die with the app rather than survive.
     var bypassZmx: Bool = false
+    var externalZmxSessionID: String? = nil
   }
 
   private func createTab(_ creation: TabCreation) -> TerminalTabID? {
@@ -560,7 +616,8 @@ final class WorktreeTerminalState {
       initialInput: creation.initialInput,
       context: creation.context,
       surfaceID: creation.tabID != nil ? tabId.rawValue : nil,
-      bypassZmx: creation.bypassZmx
+      bypassZmx: creation.bypassZmx,
+      externalZmxSessionID: creation.externalZmxSessionID,
     )
     updateShouldHideTabBar()
     if creation.focusing, let surface = tree.root?.leftmostLeaf() {
@@ -568,6 +625,14 @@ final class WorktreeTerminalState {
     }
     onTabCreated?()
     return tabId
+  }
+
+  private func externalZmxAttachCommand(sessionID: String) -> String? {
+    if let host = worktree.host {
+      return ZmxAttach.buildRemoteExternalAttachCommand(host: host, sessionID: sessionID)
+    }
+    guard let executablePath = zmxClient.executableURL()?.path(percentEncoded: false) else { return nil }
+    return ZmxAttach.buildExternalAttachCommand(executablePath: executablePath, sessionID: sessionID)
   }
 
   func listSurfaces(tabID: TerminalTabID) -> [[String: String]] {
@@ -578,6 +643,21 @@ final class WorktreeTerminalState {
       if surfaceID == focusedID { entry["focused"] = "1" }
       return entry
     }.sorted { ($0["id"] ?? "") < ($1["id"] ?? "") }
+  }
+
+  private func externalZmxSessionID(in tabID: TerminalTabID) -> String? {
+    for surfaceID in surfaceIDs(inTab: tabID) {
+      if let sessionID = surfaceLaunchMetadata[surfaceID]?.externalZmxSessionID {
+        return sessionID
+      }
+    }
+    return nil
+  }
+
+  private func tabContainsExternalZmxSession(_ tabID: TerminalTabID) -> Bool {
+    surfaceIDs(inTab: tabID).contains { surfaceID in
+      surfaceLaunchMetadata[surfaceID]?.externalZmxSessionID != nil
+    }
   }
 
   func hasTab(_ tabId: TerminalTabID) -> Bool {
@@ -593,6 +673,14 @@ final class WorktreeTerminalState {
   /// All surface IDs across every tab in this worktree state.
   var allSurfaceIDs: [UUID] {
     trees.values.flatMap { $0.leaves().map(\.id) }
+  }
+
+  /// zmx session IDs whose lifecycle is owned by Supacode for these surfaces.
+  func ownedZmxSessionIDs(forSurfaceIDs surfaceIDs: [UUID]) -> [String] {
+    surfaceIDs.compactMap { surfaceID -> String? in
+      guard surfaceLaunchMetadata[surfaceID]?.externalZmxSessionID == nil else { return nil }
+      return ZmxSessionID.make(surfaceID: surfaceID)
+    }
   }
 
   /// Host of a remote worktree, nil for local. Every surface in this state
@@ -860,7 +948,8 @@ final class WorktreeTerminalState {
     initialInput: String? = nil,
     context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB,
     surfaceID: UUID? = nil,
-    bypassZmx: Bool = false
+    bypassZmx: Bool = false,
+    externalZmxSessionID: String? = nil
   ) -> SplitTree<GhosttySurfaceView> {
     if let existing = trees[tabId] {
       return existing
@@ -876,7 +965,8 @@ final class WorktreeTerminalState {
       inheritingFromSurfaceId: inheritingFromSurfaceId,
       context: context,
       surfaceID: surfaceID,
-      bypassZmx: bypassZmx
+      bypassZmx: bypassZmx,
+      externalZmxSessionID: externalZmxSessionID
     )
     let tree = SplitTree(view: surface)
     setTree(tree, for: tabId)
@@ -1149,6 +1239,9 @@ final class WorktreeTerminalState {
     for tab in tabManager.tabs {
       // Blocking-script tabs die with the app; persisting them would resurrect a dead session.
       if tab.isBlockingScript { continue }
+      // Externally managed zmx sessions must be re-adopted by their owner; persisting
+      // them as normal tabs would restore a shell that is no longer attached.
+      if tabContainsExternalZmxSession(tab.id) { continue }
       guard let tree = trees[tab.id], let root = tree.root else {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
@@ -1557,6 +1650,7 @@ final class WorktreeTerminalState {
     context: ghostty_surface_context_e,
     surfaceID: UUID? = nil,
     bypassZmx: Bool = false,
+    externalZmxSessionID: String? = nil,
     replacingExistingSurfaceID: Bool = false,
   ) -> GhosttySurfaceView {
     let resolvedID: UUID
@@ -1602,7 +1696,11 @@ final class WorktreeTerminalState {
     )
     wireSurfaceCallbacks(view: view, tabId: tabId)
     surfaces[view.id] = view
-    surfaceLaunchMetadata[view.id] = SurfaceLaunchMetadata(usesZmx: launch.usesZmx, context: context)
+    surfaceLaunchMetadata[view.id] = SurfaceLaunchMetadata(
+      usesZmx: launch.usesZmx,
+      context: context,
+      externalZmxSessionID: externalZmxSessionID
+    )
     surfaceStates[view.id] = WorktreeSurfaceState()
     return view
   }
@@ -2136,9 +2234,8 @@ final class WorktreeTerminalState {
   }
 
   /// Detaches one surface from the local bookkeeping. The zmx session is NOT
-  /// killed here; callers route the kill through `killZmxSessions(forSurfaceIDs:)`
-  /// so a single multi-pane close emits one `count=N` analytics event + one
-  /// `withTaskGroup` instead of N events and N detached Tasks.
+  /// killed here; callers compute the Supacode-owned session IDs before this
+  /// drops launch metadata, then kill the batch afterwards.
   /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
   /// instant so a future surface ID can't reuse stale dedupe state.
   private func discardSurfaceBookkeeping(for surfaceID: UUID) {
@@ -2155,23 +2252,20 @@ final class WorktreeTerminalState {
     onSurfacesClosed?([surfaceID])
   }
 
-  /// Tears down persistent zmx sessions for surfaces the user just closed.
+  /// Tears down persistent zmx sessions the user just closed.
   /// `isBundled` (not `executableURL`) is the gate so sessions created on a
   /// previous under-budget launch still tear down when this launch exceeds the
   /// socket budget. One analytics event + one `withTaskGroup` per call.
-  /// `includeRemote` also tears down the host-side sessions of a remote
-  /// worktree; only explicit close paths set it, so a non-explicit end (clean
-  /// remote exit, deliberate host-side detach, or a reconnect abort) spares
-  /// the host session. The remote kill is unconditional on explicit close (no
-  /// per-surface persistence gate): a host session may exist from an earlier
-  /// launch regardless of the current toggle, and the kill invocation is a
-  /// silent no-op when nothing exists.
-  private func killZmxSessions(forSurfaceIDs surfaceIDs: [UUID], includeRemote: Bool = false) {
-    guard !surfaceIDs.isEmpty else { return }
+  /// `includeRemote` also tears down Supacode-owned host-side sessions of a
+  /// remote worktree; only explicit close paths set it, so a non-explicit end
+  /// (clean remote exit, deliberate host-side detach, or a reconnect abort)
+  /// spares the host session. Externally adopted sessions are skipped because
+  /// their lifecycle is managed by the caller.
+  private func killZmxSessions(forSessionIDs sessionIDs: [String], includeRemote: Bool = false) {
+    guard !sessionIDs.isEmpty else { return }
     let killLocal = zmxClient.isBundled()
     let host = includeRemote ? worktree.host : nil
     guard killLocal || host != nil else { return }
-    let sessionIDs = surfaceIDs.map(ZmxSessionID.make(surfaceID:))
     let client = zmxClient
     analyticsClient.capture(
       "terminal_persistence_session_killed",
@@ -2195,11 +2289,12 @@ final class WorktreeTerminalState {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
     surfaceGenerationByTab.removeValue(forKey: tabId)
     let leafIDs = tree.leaves().map(\.id)
+    let sessionIDs = ownedZmxSessionIDs(forSurfaceIDs: leafIDs)
     for surface in tree.leaves() {
       surface.closeSurface()
       cleanupSurfaceState(for: surface.id)
     }
-    killZmxSessions(forSurfaceIDs: leafIDs, includeRemote: true)
+    killZmxSessions(forSessionIDs: sessionIDs, includeRemote: true)
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     if lastTabProjections.removeValue(forKey: tabId) != nil {
       onTabRemoved?(tabId)
@@ -2573,20 +2668,17 @@ final class WorktreeTerminalState {
     killZmxSession: Bool,
     includeRemoteSession: Bool = false
   ) {
+    let sessionIDs = killZmxSession ? ownedZmxSessionIDs(forSurfaceIDs: [view.id]) : []
     guard let tabId = tabID(containing: view.id), let tree = trees[tabId] else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
-      if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
-      }
+      killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemoteSession)
       return
     }
     guard let node = tree.find(id: view.id) else {
       view.closeSurface()
       cleanupSurfaceState(for: view.id)
-      if killZmxSession {
-        killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
-      }
+      killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemoteSession)
       return
     }
     let nextSurface =
@@ -2596,9 +2688,7 @@ final class WorktreeTerminalState {
     let newTree = tree.removing(node)
     view.closeSurface()
     cleanupSurfaceState(for: view.id)
-    if killZmxSession {
-      killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
-    }
+    killZmxSessions(forSessionIDs: sessionIDs, includeRemote: includeRemoteSession)
     if newTree.isEmpty {
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)

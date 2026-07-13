@@ -151,6 +151,39 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .tabNew(input: "echo hello", id: nil)))
   }
 
+  @Test func worktreeTabAdoptZmx() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(
+      string:
+        "supacode://worktree/\(encoded)/tab/adopt-zmx?session=remote-session.1&id=\(tabUUID.uuidString)&title=Remote"
+    )!
+    #expect(
+      parse(url)
+        == .worktree(
+          id: "/tmp/repo/wt-1",
+          action: .tabAdoptZmx(sessionID: "remote-session.1", title: "Remote", id: tabUUID))
+    )
+
+    let spacedURL = URL(
+      string: "supacode://worktree/\(encoded)/tab/adopt-zmx?session=%20remote-session.1%20&id=\(tabUUID.uuidString)"
+    )!
+    #expect(
+      parse(spacedURL)
+        == .worktree(
+          id: "/tmp/repo/wt-1",
+          action: .tabAdoptZmx(sessionID: "remote-session.1", title: nil, id: tabUUID))
+    )
+  }
+
+  @Test func worktreeTabAdoptZmxRequiresValidSessionAndID() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let validID = "550E8400-E29B-41D4-A716-446655440000"
+    #expect(parse(URL(string: "supacode://worktree/\(encoded)/tab/adopt-zmx?id=\(validID)")!) == nil)
+    #expect(parse(URL(string: "supacode://worktree/\(encoded)/tab/adopt-zmx?session=bad%2Fname&id=\(validID)")!) == nil)
+    #expect(parse(URL(string: "supacode://worktree/\(encoded)/tab/adopt-zmx?session=remote-session&id=nope")!) == nil)
+  }
+
   @Test func worktreeTabDestroy() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!

@@ -52,6 +52,17 @@ nonisolated enum DeeplinkURLBuilder {
     return url
   }
 
+  static func tabAdoptZmx(worktreeID: String, sessionID: String, title: String?, id: String) -> String {
+    var url = "supacode://worktree/\(worktreeID)/tab/adopt-zmx"
+    var params = [
+      "session=\(percentEncodeQueryValue(sessionID))",
+      "id=\(id)",
+    ]
+    if let title { params.append("title=\(percentEncodeQueryValue(title))") }
+    url += "?\(params.joined(separator: "&"))"
+    return url
+  }
+
   static func tabClose(worktreeID: String, tabID: String) -> String {
     "supacode://worktree/\(worktreeID)/tab/\(tabID)/destroy"
   }

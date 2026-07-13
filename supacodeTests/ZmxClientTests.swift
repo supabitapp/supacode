@@ -34,6 +34,24 @@ struct ZmxSessionIDTests {
 }
 
 @MainActor
+struct ZmxExternalSessionNameTests {
+  @Test func normalizedTrimsSupportedNames() {
+    #expect(
+      ZmxExternalSessionName.normalized("  remote session@1:main_ok  ")
+        == "remote session@1:main_ok"
+    )
+  }
+
+  @Test func normalizedRejectsEmptyAndUnsupportedNames() {
+    #expect(ZmxExternalSessionName.normalized("  \n ") == nil)
+    #expect(ZmxExternalSessionName.normalized("remote/session") == nil)
+    #expect(ZmxExternalSessionName.normalized(".") == nil)
+    #expect(ZmxExternalSessionName.normalized("..") == nil)
+    #expect(ZmxExternalSessionName.normalized("remote\u{7f}session") == nil)
+  }
+}
+
+@MainActor
 struct ZmxAttachTests {
   @Test func buildCommandWithoutUserCommandUsesAttachOnly() {
     let cmd = ZmxAttach.buildCommand(
@@ -98,6 +116,35 @@ struct ZmxAttachTests {
     #expect(argv[0] == "/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx")
     #expect(argv[1] == "attach")
     #expect(argv[2] == "supa-1")
+  }
+
+  @Test func buildExternalAttachCommandAttachesExistingSession() {
+    let cmd = ZmxAttach.buildExternalAttachCommand(
+      executablePath: "/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx",
+      sessionID: "remote session@1:main_ok"
+    )
+    #expect(
+      cmd
+        == "if '/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx' list --short "
+        + "| grep -Fx -- 'remote session@1:main_ok' >/dev/null; "
+        + "then exec '/Applications/Supacode Dev.app/Contents/Resources/zmx/zmx' "
+        + "attach 'remote session@1:main_ok'; "
+        + "else printf 'zmx session not found: %s\\n' 'remote session@1:main_ok'; exit 1; fi"
+    )
+  }
+
+  @Test func buildExternalAttachCommandRejectsUnsupportedSessionName() {
+    #expect(ZmxAttach.buildExternalAttachCommand(executablePath: "/zmx", sessionID: "remote/session") == nil)
+  }
+
+  @Test func buildRemoteExternalAttachCommandRequiresExistingSession() {
+    let cmd = ZmxAttach.buildRemoteExternalAttachCommand(
+      host: RemoteHost(alias: "remote-build"), sessionID: "external-session-1")
+    #expect(cmd?.contains("zmx list --short") == true)
+    #expect(cmd?.contains("grep -Fx") == true)
+    #expect(cmd?.contains("zmx attach") == true)
+    #expect(cmd?.contains("external-session-1") == true)
+    #expect(cmd?.contains("zmx session not found") == true)
   }
 }
 

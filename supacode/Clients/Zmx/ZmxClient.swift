@@ -337,6 +337,20 @@ nonisolated enum ZmxSessionID {
   }
 }
 
+nonisolated enum ZmxExternalSessionName {
+  static func normalized(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    guard trimmed != ".", trimmed != ".." else { return nil }
+    guard !trimmed.unicodeScalars.contains(where: isRejectedScalar) else { return nil }
+    return trimmed
+  }
+
+  private static func isRejectedScalar(_ scalar: Unicode.Scalar) -> Bool {
+    scalar.value == 0 || scalar.value == 0x2F || CharacterSet.controlCharacters.contains(scalar)
+  }
+}
+
 nonisolated enum ZmxSocketBudget {
   /// macOS `sockaddr_un.sun_path` limit, minus a small safety margin.
   static let sunPathLimit = 104
@@ -408,6 +422,24 @@ nonisolated enum ZmxAttach {
   /// separate arg, so no shell quoting is needed even when the path has spaces.
   static func buildWrapperArgv(executablePath: String, sessionID: String) -> [String] {
     [executablePath, "attach", sessionID]
+  }
+
+  static func buildExternalAttachCommand(executablePath: String, sessionID: String) -> String? {
+    guard let sessionID = ZmxExternalSessionName.normalized(sessionID) else { return nil }
+    return existingExternalAttachScript(executable: shellQuote(executablePath), sessionID: sessionID)
+  }
+
+  static func buildRemoteExternalAttachCommand(host: RemoteHost, sessionID: String) -> String? {
+    guard let sessionID = ZmxExternalSessionName.normalized(sessionID) else { return nil }
+    let remote = posixShellWrapped(existingExternalAttachScript(executable: "zmx", sessionID: sessionID))
+    return SSHCommand.commandLine(host: host, remoteCommand: remote)
+  }
+
+  private static func existingExternalAttachScript(executable: String, sessionID: String) -> String {
+    let quotedSessionID = shellQuote(sessionID)
+    return "if \(executable) list --short | grep -Fx -- \(quotedSessionID) >/dev/null; "
+      + "then exec \(executable) attach \(quotedSessionID); "
+      + "else printf 'zmx session not found: %s\\n' \(quotedSessionID); exit 1; fi"
   }
 
   /// Resolves how a surface launches under zmx, given the budget-gated executable

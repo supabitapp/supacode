@@ -1863,7 +1863,7 @@ struct AppFeature {
     // user can actually clear the orphan.
     let spawnsShell: Bool
     switch action {
-    case .run, .runScript, .tabNew, .surfaceSplit:
+    case .run, .runScript, .tabNew, .tabAdoptZmx, .surfaceSplit:
       spawnsShell = true
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
@@ -2018,6 +2018,29 @@ struct AppFeature {
       return awaitingCompletion(
         effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .tabAdoptZmx(let sessionID, let title, let id):
+      guard let sessionID = ZmxExternalSessionName.normalized(sessionID) else {
+        state.alert = AlertState {
+          TextState("Invalid zmx session")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("The zmx session name contains unsupported characters.")
+        }
+        return .none
+      }
+      let alreadyExists = terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: id))
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .adoptZmxSession(worktree, sessionID: sessionID, title: title, id: id)
+      }
+      guard !alreadyExists else { return effect }
+      return awaitingCompletion(
+        effect,
+        match: .tabInWorktree(worktreeID: worktreeID, tabID: id),
+        responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds,
+        state: &state
+      )
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       guard bypassConfirmation else {

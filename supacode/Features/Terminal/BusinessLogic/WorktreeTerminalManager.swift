@@ -284,6 +284,8 @@ final class WorktreeTerminalManager {
       Task {
         createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, initialInput: input, tabID: id)
       }
+    case .adoptZmxSession(let worktree, let sessionID, let title, let id):
+      adoptZmxSession(in: worktree, sessionID: sessionID, title: title, tabID: id)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
@@ -373,7 +375,7 @@ final class WorktreeTerminalManager {
       state(for: worktree).navigateSearchOnFocusedSurface(.previous)
     case .endSearch(let worktree):
       state(for: worktree).performBindingActionOnFocusedSurface("end_search")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .adoptZmxSession, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .setImagePasteAgents, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
@@ -391,7 +393,7 @@ final class WorktreeTerminalManager {
       state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .adoptZmxSession, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
@@ -429,7 +431,7 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .adoptZmxSession, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
@@ -623,6 +625,29 @@ final class WorktreeTerminalManager {
         worktreeID: worktree.id, attemptedID: tabID, message: "Could not create the tab."))
   }
 
+  private func adoptZmxSession(
+    in worktree: Worktree,
+    sessionID: String,
+    title: String?,
+    tabID: UUID
+  ) {
+    let terminalTabID = TerminalTabID(rawValue: tabID)
+    for (existingWorktreeID, existingState) in states where existingWorktreeID != worktree.id {
+      guard existingState.hasTab(terminalTabID) else { continue }
+      existingState.closeTab(terminalTabID)
+      break
+    }
+    let state = state(for: worktree)
+    let adopted = state.adoptZmxSession(sessionID: sessionID, title: title, tabID: tabID)
+    guard adopted == nil else { return }
+    emit(
+      .surfaceCreationFailed(
+        worktreeID: worktree.id,
+        attemptedID: tabID,
+        message: "Could not adopt the zmx session."
+      ))
+  }
+
   @discardableResult
   func closeFocusedTab(in worktree: Worktree) -> Bool {
     let state = state(for: worktree)
@@ -648,7 +673,7 @@ final class WorktreeTerminalManager {
     }
     let prunedSurfaceIDs = Set(removed.flatMap { _, state in state.allSurfaceIDs })
     let prunedSessionIDs = removed.flatMap { _, state in
-      state.allSurfaceIDs.map { ZmxSessionID.make(surfaceID: $0) }
+      state.ownedZmxSessionIDs(forSurfaceIDs: state.allSurfaceIDs)
     }
     let prunedRemoteSessions = Self.remoteSessions(in: removed.map(\.1))
     for (id, state) in removed {
@@ -675,16 +700,16 @@ final class WorktreeTerminalManager {
     killZmxSessions(prunedSessionIDs, remoteSessions: prunedRemoteSessions)
   }
 
-  /// Host-side zmx sessions owned by the given states, one entry per surface
-  /// of each remote worktree. Unconditional on the persistence toggle: a host
-  /// session may exist from an earlier launch, and the kill invocation is a
-  /// silent no-op when nothing exists.
+  /// Host-side zmx sessions owned by the given states, one entry per owned
+  /// surface of each remote worktree. Unconditional on the persistence toggle:
+  /// a host session may exist from an earlier launch, and the kill invocation
+  /// is a silent no-op when nothing exists.
   private static func remoteSessions(
     in states: [WorktreeTerminalState]
   ) -> [(host: RemoteHost, sessionID: String)] {
     states.flatMap { state -> [(host: RemoteHost, sessionID: String)] in
       guard let host = state.remoteHost else { return [] }
-      return state.allSurfaceIDs.map { (host, ZmxSessionID.make(surfaceID: $0)) }
+      return state.ownedZmxSessionIDs(forSurfaceIDs: state.allSurfaceIDs).map { (host, $0) }
     }
   }
 

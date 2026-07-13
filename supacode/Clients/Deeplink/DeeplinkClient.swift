@@ -187,6 +187,7 @@ private nonisolated enum DeeplinkParser {
   ) -> Deeplink? {
     // "tab/<tab-uuid>" → focus tab.
     // "tab/new" → create new tab.
+    // "tab/adopt-zmx" → ensure an existing zmx session has a tab.
     // "tab/<tab-uuid>/destroy" → close tab.
     // "tab/<tab-uuid>/surface/<surface-uuid>" → focus surface.
     // "tab/<tab-uuid>/surface/<surface-uuid>/split" → split surface.
@@ -201,6 +202,20 @@ private nonisolated enum DeeplinkParser {
       let input = queryItems.first(where: { $0.name == "input" })?.value
       let id = queryItems.first(where: { $0.name == "id" })?.value.flatMap(UUID.init(uuidString:))
       return .worktree(id: worktreeID, action: .tabNew(input: input, id: id))
+    }
+    if thirdSegment == "adopt-zmx" {
+      guard let rawSessionID = queryItems.first(where: { $0.name == "session" })?.value,
+        let sessionID = ZmxExternalSessionName.normalized(rawSessionID)
+      else {
+        logger.warning("adopt-zmx deeplink missing or invalid session.")
+        return nil
+      }
+      guard let id = queryItems.first(where: { $0.name == "id" })?.value.flatMap(UUID.init(uuidString:)) else {
+        logger.warning("adopt-zmx deeplink missing or invalid id.")
+        return nil
+      }
+      let title = queryItems.first(where: { $0.name == "title" })?.value
+      return .worktree(id: worktreeID, action: .tabAdoptZmx(sessionID: sessionID, title: title, id: id))
     }
 
     guard let tabUUID = UUID(uuidString: thirdSegment) else {

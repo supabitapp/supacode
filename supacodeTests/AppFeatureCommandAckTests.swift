@@ -124,6 +124,65 @@ struct AppFeatureCommandAckTests {
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
   }
 
+  // MARK: - tab adopt-zmx.
+
+  @Test(.dependencies) func tabAdoptZmxSocketDeeplinkResolvesOnProjection() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree, tabExists: false)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabAdoptZmx(sessionID: "remote-session", title: "Remote", id: tabID)),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+
+    await store.send(
+      .terminalEvent(
+        .tabProjectionChanged(
+          worktreeID: worktree.id,
+          WorktreeTabProjection(
+            tabID: TerminalTabID(rawValue: tabID),
+            surfaceIDs: [tabID],
+            activeSurfaceID: tabID,
+            unseenNotificationCount: 0
+          )
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func tabAdoptZmxExistingTabAcksImmediately() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree, tabExists: true)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabAdoptZmx(sessionID: "remote-session", title: nil, id: tabID)),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
   // MARK: - worktree new.
 
   @Test(.dependencies) func worktreeNewAckBindsByPendingIDAndResolvesOnFirstTab() async {

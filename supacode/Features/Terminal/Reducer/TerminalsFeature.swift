@@ -54,15 +54,16 @@ struct TerminalsFeature {
       case .tabProjectionChanged(let worktreeID, let projection):
         let tabID = projection.tabID
         if state.terminalTabs[id: tabID] == nil {
-          // Drop stale projections arriving after the tab was removed in this
-          // worktree. Matching by (worktreeID, tabID) so a snapshot-restore
-          // under a different worktree wouldn't be shadowed; the per-worktree
-          // drain on teardown covers the same-worktree restore case.
-          guard
-            !state.recentlyRemovedTabIDs.contains(where: {
-              $0.worktreeID == worktreeID && $0.tabID == tabID
-            })
-          else { return .none }
+          // Drop stale empty projections arriving after the tab was removed in
+          // this worktree, while still allowing an immediate same-ID re-add
+          // once it has a live surface. Today a non-empty projection after
+          // removal means the tree was synchronously rebuilt with that ID.
+          if let recentlyRemovedIndex = state.recentlyRemovedTabIDs.firstIndex(where: {
+            $0.worktreeID == worktreeID && $0.tabID == tabID
+          }) {
+            guard !projection.surfaceIDs.isEmpty else { return .none }
+            state.recentlyRemovedTabIDs.remove(at: recentlyRemovedIndex)
+          }
           state.terminalTabs.append(
             TerminalTabFeature.State(id: tabID, worktreeID: worktreeID)
           )
