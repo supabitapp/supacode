@@ -506,12 +506,14 @@ struct SupacodeApp: App {
       WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
       CommandGroup(after: .textEditing) {
         Button("Go to Worktree") {
-          store.send(.commandPalette(.presentInMode(.worktreeSwitcher)))
+          guard NSApp.currentEvent?.isAutoRepeatKeyDown != true else { return }
+          store.send(.commandPalette(.togglePresentInMode(.worktreeSwitcher)))
         }
         .appKeyboardShortcut(AppShortcuts.worktreeSwitcher.effective(from: store.settings.shortcutOverrides))
         .help("Switch between worktrees, sorted by most recently used")
         Button("Command Palette") {
-          store.send(.commandPalette(.presentInMode(.commands)))
+          guard NSApp.currentEvent?.isAutoRepeatKeyDown != true else { return }
+          store.send(.commandPalette(.togglePresentInMode(.commands)))
         }
         .appKeyboardShortcut(AppShortcuts.commandPalette.effective(from: store.settings.shortcutOverrides))
         .help("Command Palette")

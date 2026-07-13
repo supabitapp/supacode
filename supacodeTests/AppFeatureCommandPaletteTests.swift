@@ -576,9 +576,59 @@ struct AppFeatureCommandPaletteTests {
 
     // Ghostty's toggle opens the command palette, never the last-used switcher.
     await store.send(.terminalEvent(.commandPaletteToggleRequested(worktreeID: worktree.id)))
-    await store.receive(\.commandPalette.presentInMode)
+    await store.receive(\.commandPalette.togglePresentInMode)
     #expect(store.state.commandPalette.mode == .commands)
     #expect(store.state.commandPalette.isPresented == true)
+  }
+
+  @Test(.dependencies) func terminalToggleSwitchesOpenWorktreeSwitcherToCommands() async {
+    let worktree = makeWorktree(id: "/tmp/repo-toggle/wt", name: "wt", repoRoot: "/tmp/repo-toggle")
+    let repository = makeRepository(id: "/tmp/repo-toggle", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    var appState = AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    // The worktree switcher is already open.
+    appState.commandPalette.isPresented = true
+    appState.commandPalette.mode = .worktreeSwitcher
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    // The switcher swaps to the command palette rather than closing.
+    await store.send(.terminalEvent(.commandPaletteToggleRequested(worktreeID: worktree.id)))
+    await store.receive(\.commandPalette.togglePresentInMode)
+    #expect(store.state.commandPalette.mode == .commands)
+    #expect(store.state.commandPalette.isPresented == true)
+  }
+
+  @Test(.dependencies) func terminalToggleClosingTheCommandPaletteDoesNotChangeSelection() async {
+    let selected = makeWorktree(id: "/tmp/repo-close/wt-a", name: "wt-a", repoRoot: "/tmp/repo-close")
+    let origin = makeWorktree(id: "/tmp/repo-close/wt-b", name: "wt-b", repoRoot: "/tmp/repo-close")
+    let repository = makeRepository(id: "/tmp/repo-close", worktrees: [selected, origin])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.setSingleWorktreeSelection(selected.id)
+    var appState = AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    appState.commandPalette.isPresented = true
+    appState.commandPalette.mode = .commands
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    // The toggle fires from wt-b's surface while wt-a is selected. Closing must not
+    // drag the selection onto the originating worktree.
+    await store.send(.terminalEvent(.commandPaletteToggleRequested(worktreeID: origin.id)))
+    await store.receive(\.commandPalette.togglePresentInMode)
+    await store.receive(\.commandPalette.setPresented)
+    await store.receive(\.commandPalette.delegate.dismissedWithoutSelection)
+    #expect(store.state.commandPalette.isPresented == false)
+    #expect(store.state.repositories.selectedWorktreeID == selected.id)
   }
 
 }

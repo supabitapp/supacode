@@ -36,12 +36,11 @@ struct CommandPaletteFeature {
   enum Action: BindableAction, Equatable {
     case binding(BindingAction<State>)
     case setPresented(Bool)
-    case togglePresented
-    /// Open the palette in a specific mode. No-op if already presented in
-    /// the same mode; switches mode and refreshes selection if already
-    /// presented in a different mode. Wired to the Cmd+P / Cmd+Shift+P
-    /// menu items in `supacodeApp.swift`.
-    case presentInMode(PaletteMode)
+    /// The one transition behind every palette shortcut: opens in `mode` when
+    /// closed, switches surface when open in another mode, and closes when open
+    /// in the same mode. Wired to the Cmd+P / Cmd+Shift+P menu items in
+    /// `supacodeApp.swift` and to the palette panel's key monitor.
+    case togglePresentInMode(PaletteMode)
     case activateItem(CommandPaletteItem)
     case updateSelection(itemsCount: Int, defaultIndex: Int)
     case resetSelection(itemsCount: Int, defaultIndex: Int)
@@ -107,31 +106,19 @@ struct CommandPaletteFeature {
         }
         return .none
 
-      case .togglePresented:
-        let wasPresented = state.isPresented
-        state.isPresented.toggle()
-        if state.isPresented {
-          state.mode = .commands
-          loadRecency(into: &state)
-          state.selectedIndex = nil
-        } else {
-          state.resetForDismiss()
+      case .togglePresentInMode(let mode):
+        // Re-pressing the shortcut that opened the palette closes it. Route through
+        // `setPresented(false)` so the dismiss delegate refocuses the terminal.
+        guard !state.isPresented || state.mode != mode else {
+          return .send(.setPresented(false))
         }
-        if wasPresented, !state.isPresented {
-          return .send(.delegate(.dismissedWithoutSelection))
-        }
-        return .none
-
-      case .presentInMode(let mode):
-        let wasPresented = state.isPresented
-        let modeChanged = state.mode != mode
+        // Switching surfaces keeps the panel key, so no dismiss delegate here. The
+        // query is dropped because the two modes filter disjoint item sets.
         state.isPresented = true
         state.mode = mode
-        if !wasPresented || modeChanged {
-          loadRecency(into: &state)
-          state.query = ""
-          state.selectedIndex = nil
-        }
+        loadRecency(into: &state)
+        state.query = ""
+        state.selectedIndex = nil
         return .none
 
       case .activateItem(let item):

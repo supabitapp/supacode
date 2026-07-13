@@ -1,3 +1,4 @@
+import AppKit
 import Sharing
 import SwiftUI
 
@@ -175,6 +176,10 @@ public struct AppShortcut: Identifiable {
   public let keyEquivalent: KeyEquivalent
   public let modifiers: EventModifiers
   private let keyCode: UInt16?
+  // True when the key code came from a rebind, where it is the physical key the user
+  // actually pressed. The defaults instead derive theirs from a character, so theirs is
+  // only ever as good as the layout that was active when the shortcut was built.
+  private let keyCodeIsExplicit: Bool
   private let ghosttyKeyName: String
   // Whether the binding is active with no user override; `false` ships the
   // shortcut as a rebindable option that stays off until the user enables it.
@@ -185,6 +190,7 @@ public struct AppShortcut: Identifiable {
     self.keyEquivalent = KeyEquivalent(key)
     self.modifiers = modifiers
     self.isEnabledByDefault = isEnabledByDefault
+    self.keyCodeIsExplicit = false
     let code = AppShortcutOverride.keyCode(forDisplayedKeyEquivalent: key) ?? AppShortcutOverride.keyCode(for: key)
     self.keyCode = code
     if let code {
@@ -206,6 +212,7 @@ public struct AppShortcut: Identifiable {
     self.keyEquivalent = keyEquivalent
     self.modifiers = modifiers
     self.keyCode = nil
+    self.keyCodeIsExplicit = false
     self.ghosttyKeyName = ghosttyKeyName
     self.isEnabledByDefault = isEnabledByDefault
   }
@@ -245,6 +252,36 @@ public struct AppShortcut: Identifiable {
     return AppShortcut(id: id, override: override)
   }
 
+  // Matches a raw key event against this shortcut. Compares key codes rather than
+  // characters so the match survives Caps Lock and Shift, and requires an exact
+  // modifier set so ⌘⇧P never matches a plain ⌘P binding.
+  public func matches(_ event: NSEvent) -> Bool {
+    guard Self.rawModifierFlags(of: event) == rawModifierFlags else { return false }
+    guard let code = resolvedKeyCode else { return false }
+    return event.keyCode == code
+  }
+
+  // A rebind recorded the physical key, so its code is authoritative: reverse-resolving it
+  // from the character would snap a keypad or special key back onto the main-row key that
+  // prints the same thing. A default only carries a character, so its code has to track
+  // the live layout, or an input source switch would strand it on the wrong physical key.
+  // Nil only for the special-key defaults, which no caller matches against.
+  private var resolvedKeyCode: UInt16? {
+    guard !keyCodeIsExplicit else { return keyCode }
+    return AppShortcutOverride.keyCode(forDisplayedKeyEquivalent: keyEquivalent.character) ?? keyCode
+  }
+
+  private static func rawModifierFlags(of event: NSEvent) -> AppShortcutOverride.ModifierFlags {
+    // Drop the incidental `.capsLock` / `.function` / `.numericPad` flags a key carries.
+    let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+    var flags: AppShortcutOverride.ModifierFlags = []
+    if modifiers.contains(.command) { flags.insert(.command) }
+    if modifiers.contains(.option) { flags.insert(.option) }
+    if modifiers.contains(.control) { flags.insert(.control) }
+    if modifiers.contains(.shift) { flags.insert(.shift) }
+    return flags
+  }
+
   // The override that binds this shortcut's default key, enabled. Used to turn on
   // a disabled-by-default shortcut from the settings toggle. nil for special keys
   // with no resolvable key code.
@@ -258,6 +295,7 @@ public struct AppShortcut: Identifiable {
     self.keyEquivalent = override.keyEquivalent
     self.modifiers = override.eventModifiers
     self.keyCode = override.keyCode
+    self.keyCodeIsExplicit = true
     self.ghosttyKeyName = AppShortcutOverride.resolvedGhosttyKeyName(for: override.keyCode)
     self.isEnabledByDefault = true
   }

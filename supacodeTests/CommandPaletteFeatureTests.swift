@@ -1254,11 +1254,12 @@ struct CommandPaletteFeatureTests {
 
     // MRU head (A), then prior MRU (C), then the worktree never visited (B),
     // which trails in sidebar order.
-    #expect(items.map(\.id) == [
-      "worktree.\(wtA.id).select",
-      "worktree.\(wtC.id).select",
-      "worktree.\(wtB.id).select",
-    ])
+    #expect(
+      items.map(\.id) == [
+        "worktree.\(wtA.id).select",
+        "worktree.\(wtC.id).select",
+        "worktree.\(wtB.id).select",
+      ])
     // priorityTier mirrors visible order so an empty-query prioritizeItems()
     // pass preserves the MRU ranking even though item-level recency is empty.
     #expect(items.map(\.priorityTier) == [0, 1, 2])
@@ -1278,11 +1279,12 @@ struct CommandPaletteFeatureTests {
 
     let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
 
-    #expect(Set(items.map(\.id)) == [
-      "worktree.\(wt1.id).select",
-      "worktree.\(wt2.id).select",
-      "worktree.\(wt3.id).select",
-    ])
+    #expect(
+      Set(items.map(\.id)) == [
+        "worktree.\(wt1.id).select",
+        "worktree.\(wt2.id).select",
+        "worktree.\(wt3.id).select",
+      ])
   }
 
   @Test func worktreeSwitcherItems_titleIsWorktreeWithRepoSubtitle() {
@@ -1319,25 +1321,26 @@ struct CommandPaletteFeatureTests {
     // (wtOther) leads, flagged so the overlay skips it for the default
     // selection; the prior worktree (wtMain) follows.
     #expect(switcher.allSatisfy { $0.id.hasPrefix("worktree.") && $0.id.hasSuffix(".select") })
-    #expect(switcher == [
-      CommandPaletteItem(
-        id: "worktree.\(wtOther.id).select",
-        title: "wt",
-        subtitle: "Other",
-        kind: .worktreeSelect(wtOther.id),
-        priorityTier: 0,
-        isCurrentWorktree: true,
-        worktreeStyle: .init(icon: .pullRequest(.branch, checkBadge: nil))
-      ),
-      CommandPaletteItem(
-        id: "worktree.\(wtMain.id).select",
-        title: "main",
-        subtitle: "Repo",
-        kind: .worktreeSelect(wtMain.id),
-        priorityTier: 1,
-        worktreeStyle: .init(icon: .pullRequest(.branch, checkBadge: nil))
-      ),
-    ])
+    #expect(
+      switcher == [
+        CommandPaletteItem(
+          id: "worktree.\(wtOther.id).select",
+          title: "wt",
+          subtitle: "Other",
+          kind: .worktreeSelect(wtOther.id),
+          priorityTier: 0,
+          isCurrentWorktree: true,
+          worktreeStyle: .init(icon: .pullRequest(.branch, checkBadge: nil))
+        ),
+        CommandPaletteItem(
+          id: "worktree.\(wtMain.id).select",
+          title: "main",
+          subtitle: "Repo",
+          kind: .worktreeSelect(wtMain.id),
+          priorityTier: 1,
+          worktreeStyle: .init(icon: .pullRequest(.branch, checkBadge: nil))
+        ),
+      ])
   }
 
   @Test func commandPaletteItems_omitsWorktreeSelectRows() {
@@ -1428,7 +1431,7 @@ struct CommandPaletteFeatureTests {
     #expect(CommandPaletteFeature.defaultSelectionIndex(rows: [prev, current], query: "") == 0)
   }
 
-  @Test func presentInMode_sameModeWhilePresentedPreservesQuery() async {
+  @Test func togglePresentInMode_sameModeWhilePresentedDismisses() async {
     let store = TestStore(
       initialState: CommandPaletteFeature.State(
         isPresented: true, mode: .worktreeSwitcher, query: "feat", selectedIndex: 2
@@ -1436,11 +1439,19 @@ struct CommandPaletteFeatureTests {
     ) {
       CommandPaletteFeature()
     }
-    // Re-pressing the same mode while open is a no-op: the in-flight query and selection survive.
-    await store.send(.presentInMode(.worktreeSwitcher))
+    // Re-pressing the shortcut that opened the palette closes it, and the dismiss
+    // delegate hands focus back to the terminal.
+    await store.send(.togglePresentInMode(.worktreeSwitcher))
+    await store.receive(\.setPresented) {
+      $0.isPresented = false
+      $0.mode = .commands
+      $0.query = ""
+      $0.selectedIndex = nil
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
   }
 
-  @Test func presentInMode_switchingModeWhilePresentedResets() async {
+  @Test func togglePresentInMode_switchingModeWhilePresentedResets() async {
     let store = TestStore(
       initialState: CommandPaletteFeature.State(
         isPresented: true, mode: .commands, query: "x", selectedIndex: 3
@@ -1449,11 +1460,45 @@ struct CommandPaletteFeatureTests {
       CommandPaletteFeature()
     }
     // Switching mode while open clears the query and selection and swaps the surface.
-    await store.send(.presentInMode(.worktreeSwitcher)) {
+    // No dismiss delegate: the panel stays key, so the terminal must not steal focus.
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
       $0.mode = .worktreeSwitcher
       $0.query = ""
       $0.selectedIndex = nil
     }
+  }
+
+  @Test func togglePresentInMode_userKeystrokeSequence() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+    // ⌘P opens the worktree switcher.
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
+      $0.isPresented = true
+      $0.mode = .worktreeSwitcher
+    }
+    // ⌘⇧P switches to the command palette without closing.
+    await store.send(.togglePresentInMode(.commands)) {
+      $0.mode = .commands
+    }
+    // ⌘⇧P again closes it.
+    await store.send(.togglePresentInMode(.commands))
+    await store.receive(\.setPresented) {
+      $0.isPresented = false
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+    // ⌘P reopens the worktree switcher.
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
+      $0.isPresented = true
+      $0.mode = .worktreeSwitcher
+    }
+    // ⌘P again closes it.
+    await store.send(.togglePresentInMode(.worktreeSwitcher))
+    await store.receive(\.setPresented) {
+      $0.isPresented = false
+      $0.mode = .commands
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
   }
 
   @Test func worktreeSwitcherItems_appliesRepoColorWorktreeTintAndHost() {
@@ -1598,14 +1643,26 @@ struct CommandPaletteFeatureTests {
     #expect(item?.worktreeStyle?.icon == .pullRequest(.open, checkBadge: .failing))
   }
 
-  @Test func presentInMode_setsModeAndPresentsTheView() async {
+  @Test func togglePresentInMode_whenClosedOpensInThatMode() async {
     let store = TestStore(initialState: CommandPaletteFeature.State()) {
       CommandPaletteFeature()
     }
 
-    await store.send(.presentInMode(.worktreeSwitcher)) {
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
       $0.isPresented = true
       $0.mode = .worktreeSwitcher
+    }
+  }
+
+  @Test func togglePresentInMode_whenClosedInTheSameModeStillOpens() async {
+    // Every dismiss resets the mode to `.commands`, so a closed palette usually already
+    // sits in the mode being asked for. Closed must always open, never toggle off.
+    let store = TestStore(initialState: CommandPaletteFeature.State(mode: .commands)) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.togglePresentInMode(.commands)) {
+      $0.isPresented = true
     }
   }
 
@@ -1628,17 +1685,6 @@ struct CommandPaletteFeatureTests {
       CommandPaletteFeature()
     }
     await store.send(.setPresented(false))
-  }
-
-  @Test func togglePresented_dismissEmitsDelegate() async {
-    let store = TestStore(initialState: CommandPaletteFeature.State(isPresented: true)) {
-      CommandPaletteFeature()
-    }
-
-    await store.send(.togglePresented) {
-      $0.isPresented = false
-    }
-    await store.receive(\.delegate.dismissedWithoutSelection)
   }
 
   @Test func activateItem_doesNotEmitDismissedDelegate() async {

@@ -1,6 +1,16 @@
 import AppKit
 import ComposableArchitecture
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
+
+extension NSEvent {
+  /// `isARepeat` raises on anything but a key event, and a menu action reads the current
+  /// event, which is a mouse event when the item is clicked. Gate on the type first.
+  var isAutoRepeatKeyDown: Bool {
+    type == .keyDown && isARepeat
+  }
+}
 
 /// Floating key panel that hosts the command palette. Living in its own window
 /// keeps the main window's first responder untouched, so dismissing the palette
@@ -161,6 +171,20 @@ final class CommandPalettePanelHostView: NSView {
         self.activatePaletteItem(at: index)
         return nil
       }
+      // The palette's own shortcuts toggle it: same mode closes, the other mode
+      // switches surface. Matched here because the monitor runs ahead of the main
+      // menu, so the ⌘P / ⌘⇧P menu items never see the key while the panel is key.
+      // Ahead of the move matcher so a shortcut rebound onto ⌃P / ⌃N still toggles,
+      // but behind ⌘1..⌘5, which the rows render and must keep honoring.
+      if let mode = Self.paletteToggleMode(for: event) {
+        // Swallow auto-repeat rather than toggling on it: a held chord would flip the
+        // palette open and closed. The menu items guard the same way, because closing
+        // tears this monitor down and the next repeat would reach them instead.
+        if !event.isAutoRepeatKeyDown {
+          self.store.send(.togglePresentInMode(mode))
+        }
+        return nil
+      }
       if let moveUp = Self.paletteMoveIsUp(for: event) {
         self.movePaletteSelection(up: moveUp)
         return nil
@@ -218,6 +242,20 @@ final class CommandPalettePanelHostView: NSView {
     case "a": return #selector(NSText.selectAll(_:))
     default: return nil
     }
+  }
+
+  // The mode whose shortcut this event matches, honoring user rebinds. `nil` when the
+  // user disabled the shortcut, so a disabled chord keeps falling through to the beep.
+  private static func paletteToggleMode(for event: NSEvent) -> CommandPaletteFeature.PaletteMode? {
+    @Shared(.settingsFile) var settingsFile
+    let overrides = settingsFile.global.shortcutOverrides
+    if AppShortcuts.worktreeSwitcher.effective(from: overrides)?.matches(event) == true {
+      return .worktreeSwitcher
+    }
+    if AppShortcuts.commandPalette.effective(from: overrides)?.matches(event) == true {
+      return .commands
+    }
+    return nil
   }
 
   private static func paletteActivationIndex(for event: NSEvent) -> Int? {
