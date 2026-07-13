@@ -9,6 +9,7 @@ struct WorktreeInfoWatcherClient {
     case setWorktrees([Worktree])
     case setSelectedWorktreeID(Worktree.ID?)
     case setPullRequestTrackingEnabled(Bool)
+    case refresh
     case stop
   }
 

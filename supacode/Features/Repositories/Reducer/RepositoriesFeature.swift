@@ -2152,7 +2152,19 @@ struct RepositoriesFeature {
       case .worktreeBranchNameLoaded(let worktreeID, let name):
         state.updateWorktreeName(worktreeID, name: name)
         Self.syncSidebar(&state)
-        return .none
+        guard let repositoryID = state.repositoryID(containing: worktreeID),
+          let repository = state.repositories[id: repositoryID]
+        else {
+          return .none
+        }
+        return .send(
+          .worktreeInfoEvent(
+            .repositoryPullRequestRefresh(
+              repositoryRootURL: repository.rootURL,
+              worktreeIDs: repository.worktrees.map(\.id)
+            )
+          )
+        )
 
       case .worktreeLineChangesLoaded(let worktreeID, let added, let removed):
         return state.updateWorktreeLineChangesEffect(

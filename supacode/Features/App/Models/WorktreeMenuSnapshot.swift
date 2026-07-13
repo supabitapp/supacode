@@ -120,6 +120,7 @@ extension AppFeature.Action {
     // directly; any downstream mutation flows back through a classified arm.
     case .applicationDidBecomeActive, .applicationDidResignActive,
       .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
+      .refreshWorktreesRequested,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal,
