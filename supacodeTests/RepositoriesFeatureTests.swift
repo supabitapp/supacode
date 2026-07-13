@@ -4874,7 +4874,9 @@ struct RepositoriesFeatureTests {
     let worktree = makeWorktree(id: "/tmp/wt", name: "eagle", createdAt: createdAt)
     let renamedWorktree = makeWorktree(id: "/tmp/wt", name: "falcon", createdAt: createdAt)
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .disabled
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
@@ -4891,6 +4893,7 @@ struct RepositoriesFeatureTests {
       $0.repositories[id: repository.id] = repository
       $0.reconcileSidebarForTesting()
     }
+    await store.receive(\.worktreeInfoEvent)
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.name == "falcon")
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.createdAt == createdAt)
   }
@@ -6005,6 +6008,42 @@ struct RepositoriesFeatureTests {
     await store.finish()
 
     #expect(batchCalls.value == [GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")])
+  }
+
+  @Test func worktreeBranchNameLoadedRefreshesPullRequestsWithUpdatedBranchName() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "old-feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .available
+    let queriedBranches = LockIsolated<[String]>([])
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { _, _, _, branches in
+        queriedBranches.withValue { $0 = branches }
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeBranchNameLoaded(worktreeID: featureWorktree.id, name: "new-feature")
+    )
+    await store.receive(\.worktreeInfoEvent)
+    await store.receive(\.repositoryPullRequestsLoaded)
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+
+    #expect(queriedBranches.value == ["main", "new-feature"])
   }
 
   @Test func pullRequestActionMergePassesResolvedRemoteToGh() async {

@@ -56,13 +56,41 @@ struct AppFeatureCommandPaletteTests {
   }
 
   @Test(.dependencies) func refreshWorktreesDispatchesRefresh() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
     }
     store.exhaustivity = .off
 
     await store.send(.commandPalette(.delegate(.refreshWorktrees)))
+    await store.receive(\.refreshWorktreesRequested)
     await store.receive(\.repositories.refreshWorktrees)
+    await store.receive(\.repositories.reloadRepositories)
+    await store.finish()
+
+    #expect(watcherCommands.value == [.refresh])
+  }
+
+  @Test(.dependencies) func repositoryRefreshDoesNotForceWorktreeInfoRefresh() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
+    let store = TestStore(initialState: AppFeature.State()) {
+      AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.refreshWorktrees))
+    await store.receive(\.repositories.reloadRepositories)
+    await store.finish()
+
+    #expect(watcherCommands.value.isEmpty)
   }
 
   @Test(.dependencies) func viewArchivedWorktreesDispatchesSelectArchived() async {

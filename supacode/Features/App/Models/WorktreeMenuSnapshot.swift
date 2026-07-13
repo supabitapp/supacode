@@ -121,6 +121,7 @@ extension AppFeature.Action {
     case .applicationDidBecomeActive, .applicationDidResignActive,
       .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
       .refreshInstalledOpenActions, .installedOpenActionsResolved,
+      .refreshWorktreesRequested,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .openFile, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
