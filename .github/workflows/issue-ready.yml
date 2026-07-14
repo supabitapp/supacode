@@ -1,8 +1,8 @@
 name: Issue ready
 
-# Comments on an issue once it is marked `ready`, so the reporter knows they can open a pull
-# request without having to watch the label. Covers both paths: a bug that is `ready` on
-# creation, and a feature a maintainer marks `ready` later. Comments once, via a hidden marker.
+# Comments on an issue once a maintainer marks it `ready`, so the reporter knows they can open a
+# pull request without having to watch the label. Bugs and features alike are `ready` only after a
+# maintainer approves them. Comments once, via a hidden marker.
 on:
   issues:
     types: [opened, labeled]
@@ -43,9 +43,7 @@ jobs:
             });
             if (comments.some((c) => c.body && c.body.includes(marker))) return; // Already notified.
 
-            const lead = hasLabel('enhancement')
-              ? 'Thanks for your patience. This feature is approved and marked `ready`, so it is now open for a pull request.'
-              : 'This is marked `ready`, so it is open for a pull request.';
+            const lead = 'Thanks for your patience. This is approved and marked `ready`, so it is now open for a pull request.';
             const body =
               `${marker}\n\n` +
               `${lead} If you'd like to work on it, open a pull request and link it with \`Closes #${issue.number}\` ` +

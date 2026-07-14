@@ -22,7 +22,7 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const labels = [
-              { name: 'ready', color: '0e8a16', description: 'Approved for a pull request. Auto-applied to bugs; added by a maintainer for features.' },
+              { name: 'ready', color: '0e8a16', description: 'Approved for a pull request. Added by a maintainer once an issue is triaged.' },
               { name: 'bug', color: 'd73a4a', description: "Something isn't working" },
               { name: 'enhancement', color: 'a2eeef', description: 'New feature or request' },
               { name: 'question', color: 'd876e3', description: 'A question about using or configuring Supacode' },
