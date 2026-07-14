@@ -490,6 +490,77 @@ struct AppFeatureCommandPaletteTests {
     }
   }
 
+  @Test(.dependencies) func customizeRepositoryAppearanceDispatchesRequest() async {
+    let mainWorktree = makeWorktree(
+      id: "/tmp/repo-appearance",
+      name: "main",
+      repoRoot: "/tmp/repo-appearance"
+    )
+    let repository = makeRepository(id: "/tmp/repo-appearance", worktrees: [mainWorktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.commandPalette(.delegate(.customizeRepositoryAppearance(repository.id))))
+    await store.receive(\.repositories.requestCustomizeRepository) {
+      $0.repositories.repositoryCustomization = RepositoryCustomizationFeature.State(
+        repositoryID: repository.id,
+        defaultName: "repo",
+        title: "",
+        color: nil
+      )
+    }
+  }
+
+  @Test(.dependencies) func customizeWorktreeAppearanceDispatchesRequest() async {
+    let mainWorktree = makeWorktree(
+      id: "/tmp/repo-appearance-wt",
+      name: "main",
+      repoRoot: "/tmp/repo-appearance-wt"
+    )
+    let worktree = makeWorktree(
+      id: "/tmp/repo-appearance-wt/wt-1",
+      name: "feature/old",
+      repoRoot: "/tmp/repo-appearance-wt"
+    )
+    let repository = makeRepository(
+      id: "/tmp/repo-appearance-wt",
+      worktrees: [mainWorktree, worktree]
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.repositoryRoots = [repository.rootURL]
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.commandPalette(.delegate(.customizeWorktreeAppearance(worktree.id, repository.id))))
+    await store.receive(\.repositories.requestCustomizeWorktree) {
+      $0.repositories.worktreeCustomization = WorktreeCustomizationFeature.State(
+        worktreeID: worktree.id,
+        repositoryID: repository.id,
+        defaultName: "feature/old",
+        title: "",
+        color: nil
+      )
+    }
+  }
+
   @Test(.dependencies) func selectWorktreeDelegateSelectsAndFocusesTerminal() async {
     let worktree = makeWorktree(id: "/tmp/repo-goto/wt-1", name: "wt-1", repoRoot: "/tmp/repo-goto")
     let repository = makeRepository(id: "/tmp/repo-goto", worktrees: [worktree])

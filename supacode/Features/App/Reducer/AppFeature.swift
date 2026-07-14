@@ -1325,6 +1325,12 @@ struct AppFeature {
       case .commandPalette(.delegate(.renameBranch(let worktreeID, let repositoryID))):
         return .send(.repositories(.requestRenameBranch(worktreeID, repositoryID)))
 
+      case .commandPalette(.delegate(.customizeRepositoryAppearance(let repositoryID))):
+        return .send(.repositories(.requestCustomizeRepository(repositoryID)))
+
+      case .commandPalette(.delegate(.customizeWorktreeAppearance(let worktreeID, let repositoryID))):
+        return .send(.repositories(.requestCustomizeWorktree(worktreeID, repositoryID)))
+
       case .commandPalette(.delegate(.viewArchivedWorktrees)):
         return .send(.repositories(.selectArchivedWorktrees))
 

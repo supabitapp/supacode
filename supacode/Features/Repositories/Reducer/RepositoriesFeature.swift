@@ -4003,6 +4003,11 @@ struct RepositoriesFeature {
         guard repository.isGitRepository else {
           return .none
         }
+        // The sidebar disables customize while the repo is being removed; the
+        // palette has no disabled state, so gate the request here too.
+        guard state.removingRepositoryIDs[repositoryID] == nil else {
+          return .none
+        }
         let section = state.sidebar.sections[repositoryID]
         let storedTitle = section?.title ?? ""
         let storedColor = section?.color

@@ -168,6 +168,176 @@ struct CommandPaletteFeatureTests {
     )
   }
 
+  @Test func commandPaletteItems_customizeAppearanceForNonMainWorktreeOffersRowAndRepository() {
+    let rootPath = "/tmp/repo-customize"
+    let main = makeWorktree(id: rootPath, name: "main", repoRoot: rootPath)
+    let feature = makeWorktree(
+      id: "\(rootPath)/feature",
+      name: "feature/new",
+      repoRoot: rootPath
+    )
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main, feature])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    // The row and section carry custom titles / tints; the palette subtitles
+    // must echo what the sidebar shows.
+    state.sidebarItems[id: feature.id]?.customTitle = "Cool Branch"
+    state.sidebarItems[id: feature.id]?.customTint = .purple
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repository.id] ?? .init()
+      section.title = "Pretty Repo"
+      section.color = .teal
+      sidebar.sections[repository.id] = section
+    }
+    state.selection = .worktree(feature.id)
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let worktreeCustomize = items.first {
+      if case .customizeWorktreeAppearance = $0.kind { return true }
+      return false
+    }
+    #expect(worktreeCustomize?.id == "worktree.\(feature.id).customize-appearance")
+    #expect(worktreeCustomize?.title == "Customize Appearance")
+    #expect(worktreeCustomize?.subtitle == "Cool Branch")
+    #expect(worktreeCustomize?.subtitleTint == .purple)
+    // A worktree selection also offers repository-level customization.
+    let repositoryCustomize = items.first {
+      if case .customizeRepositoryAppearance = $0.kind { return true }
+      return false
+    }
+    #expect(repositoryCustomize?.id == "repository.\(repository.id).customize-appearance")
+    #expect(repositoryCustomize?.title == "Customize Repository Appearance")
+    #expect(repositoryCustomize?.subtitle == "Pretty Repo")
+    #expect(repositoryCustomize?.subtitleTint == .teal)
+  }
+
+  @Test func commandPaletteItems_customizeAppearanceForMainWorktreeTargetsRepositoryOnly() {
+    let rootPath = "/tmp/repo-customize-main"
+    // Main worktree lives at the repo root (`workingDirectory == repositoryRootURL`).
+    let main = makeWorktree(id: rootPath, name: "main", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(main.id)
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let repositoryCustomize = items.first {
+      if case .customizeRepositoryAppearance = $0.kind { return true }
+      return false
+    }
+    #expect(repositoryCustomize?.id == "repository.\(repository.id).customize-appearance")
+    #expect(repositoryCustomize?.title == "Customize Repository Appearance")
+    #expect(repositoryCustomize?.subtitle == "Repo")
+    // A main-worktree selection never offers per-row customization.
+    #expect(
+      items.contains {
+        if case .customizeWorktreeAppearance = $0.kind { return true }
+        return false
+      } == false
+    )
+  }
+
+  @Test func commandPaletteItems_customizeAppearanceForFolderRowTargetsRowOnly() {
+    let folderURL = URL(fileURLWithPath: "/tmp/my-folder")
+    let folderID = Repository.folderWorktreeID(for: folderURL)
+    let folderRepo = Repository(
+      id: RepositoryID(folderURL.path(percentEncoded: false)),
+      rootURL: folderURL,
+      name: "my-folder",
+      worktrees: IdentifiedArray(uniqueElements: [
+        Worktree(
+          id: folderID,
+          name: "my-folder",
+          detail: "",
+          workingDirectory: folderURL,
+          repositoryRootURL: folderURL
+        )
+      ]),
+      isGitRepository: false
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [folderRepo])
+    // A folder's custom name / color live on the sidebar section.
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[folderRepo.id] ?? .init()
+      section.title = "Design Docs"
+      section.color = .orange
+      sidebar.sections[folderRepo.id] = section
+    }
+    state.selection = .worktree(folderID)
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let customize = items.first {
+      if case .customizeWorktreeAppearance = $0.kind { return true }
+      return false
+    }
+    #expect(customize?.id == "worktree.\(folderID).customize-appearance")
+    #expect(customize?.title == "Customize Appearance")
+    #expect(customize?.subtitle == "Design Docs")
+    #expect(customize?.subtitleTint == .orange)
+    // Folder repos have no section header, so never a repository-level entry.
+    #expect(
+      items.contains {
+        if case .customizeRepositoryAppearance = $0.kind { return true }
+        return false
+      } == false
+    )
+  }
+
+  @Test func commandPaletteItems_customizeAppearanceFolderPrefersRowOverStaleSection() {
+    let folderURL = URL(fileURLWithPath: "/tmp/row-folder")
+    let folderID = Repository.folderWorktreeID(for: folderURL)
+    let folderRepo = Repository(
+      id: RepositoryID(folderURL.path(percentEncoded: false)),
+      rootURL: folderURL,
+      name: "row-folder",
+      worktrees: IdentifiedArray(uniqueElements: [
+        Worktree(
+          id: folderID,
+          name: "row-folder",
+          detail: "",
+          workingDirectory: folderURL,
+          repositoryRootURL: folderURL
+        )
+      ]),
+      isGitRepository: false
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [folderRepo])
+    // The loaded folder row (and the customization sheet) read the per-row
+    // bucket, so it wins over a stale legacy section value.
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[folderRepo.id] ?? .init()
+      section.title = "Stale"
+      section.color = .red
+      sidebar.sections[folderRepo.id] = section
+    }
+    state.sidebarItems[id: folderID]?.customTitle = "Notes"
+    state.sidebarItems[id: folderID]?.customTint = .green
+    state.selection = .worktree(folderID)
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let customize = items.first {
+      if case .customizeWorktreeAppearance = $0.kind { return true }
+      return false
+    }
+    #expect(customize?.subtitle == "Notes")
+    #expect(customize?.subtitleTint == .green)
+  }
+
+  @Test func commandPaletteItems_omitsCustomizeAppearanceWithoutSelection() {
+    let rootPath = "/tmp/repo-customize-none"
+    let main = makeWorktree(id: rootPath, name: "main", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main])
+    let items = CommandPaletteFeature.commandPaletteItems(
+      from: RepositoriesFeature.State(reconciledRepositories: [repository])
+    )
+    #expect(
+      items.contains {
+        switch $0.kind {
+        case .customizeRepositoryAppearance, .customizeWorktreeAppearance: true
+        default: false
+        }
+      } == false
+    )
+  }
+
   @Test func commandPaletteItems_omitGhosttyCommandsWithoutSelectedWorktree() {
     let items = CommandPaletteFeature.commandPaletteItems(
       from: RepositoriesFeature.State(),
