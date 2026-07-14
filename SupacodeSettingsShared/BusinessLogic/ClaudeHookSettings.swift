@@ -35,8 +35,11 @@ private nonisolated struct ClaudeHooksPayload: Encodable {
     events: [.awaitingInput], forwardStdinAsNotification: true, agent: .claude)
   private static let awaitingInput = AgentHookSettingsCommand.compositeCommand(
     events: [.awaitingInput], forwardStdinAsNotification: false, agent: .claude)
-  private static let idleAndNotify = AgentHookSettingsCommand.compositeCommand(
-    events: [.idle], forwardStdinAsNotification: true, agent: .claude)
+  private static let stop = AgentHookSettingsCommand.claudeStopCommand(agent: .claude)
+  // PostCompact is intentionally NOT mapped: compaction finishing is not turn
+  // completion. `SessionStart(source: compact)` is what ends the compacting state.
+  private static let compacting = AgentHookSettingsCommand.compositeCommand(
+    events: [.compacting], forwardStdinAsNotification: false, agent: .claude)
   private static let sessionStart = AgentHookSettingsCommand.compositeCommand(
     events: [.sessionStart], forwardStdinAsNotification: false, agent: .claude)
   private static let sessionEndAndIdle = AgentHookSettingsCommand.compositeCommand(
@@ -63,8 +66,11 @@ private nonisolated struct ClaudeHooksPayload: Encodable {
     "Notification": [
       .init(matcher: "", hooks: [.init(command: Self.awaitingInputAndNotify, timeout: 10)])
     ],
+    "PreCompact": [
+      .init(hooks: [.init(command: Self.compacting, timeout: 5)])
+    ],
     "Stop": [
-      .init(hooks: [.init(command: Self.idleAndNotify, timeout: 10)])
+      .init(hooks: [.init(command: Self.stop, timeout: 10)])
     ],
     "SessionEnd": [
       .init(matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: 5)])

@@ -789,26 +789,13 @@ struct AppFeature {
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-        let tint = definition.resolvedTintColor
-        var effects: [Effect<Action>] = [
-          .run { _ in
-            await terminalClient.send(
-              .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
-            )
-          }
-        ]
-        if state.repositories.sidebarItems[id: worktree.id] != nil {
-          effects.append(
-            .send(
-              .repositories(
-                .sidebarItems(
-                  .element(id: worktree.id, action: .runningScriptStarted(id: definition.id, tint: tint))
-                )
-              )
-            )
+        // The row's `runningScripts` reconciles from the terminal's projection
+        // once the script tab is tracked; no optimistic mirror write (#573).
+        return .run { _ in
+          await terminalClient.send(
+            .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
           )
         }
-        return .merge(effects)
 
       case .stopScript(let definition):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -1153,7 +1140,21 @@ struct AppFeature {
         return .none
 
       case .commandPalette(.delegate(.selectWorktree(let worktreeID))):
-        return .send(.repositories(.selectWorktree(worktreeID)))
+        // Always-focused-terminal: palette completion lands focus in the
+        // chosen worktree's terminal, matching the menu/deeplink paths
+        // that already passed focusTerminal: true.
+        return .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
+
+      case .commandPalette(.delegate(.dismissedWithoutSelection)):
+        // Always-focused-terminal invariant. Cancellation paths (Esc, outside
+        // tap, programmatic close) don't carry a destination; refocus the
+        // current worktree's terminal so the cursor never lingers nowhere.
+        guard let worktreeID = state.repositories.selectedWorktreeID,
+          state.repositories.sidebarItems[id: worktreeID] != nil
+        else { return .none }
+        return .send(
+          .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
+        )
 
       case .commandPalette(.delegate(.checkForUpdates)):
         return .send(.updates(.checkForUpdates))
@@ -1292,24 +1293,26 @@ struct AppFeature {
         return .none
 
       case .terminalEvent(.commandPaletteToggleRequested(let worktreeID)):
-        if state.commandPalette.isPresented {
-          return .send(.commandPalette(.setPresented(false)))
+        // Ghostty's toggle action targets the command palette specifically, so force
+        // `.commands`; otherwise it would inherit the last-used mode. Selecting the
+        // originating worktree only makes sense when the palette is opening.
+        guard !state.commandPalette.isPresented else {
+          return .send(.commandPalette(.togglePresentInMode(.commands)))
         }
         return .merge(
           .send(.repositories(.selectWorktree(worktreeID))),
-          .send(.commandPalette(.setPresented(true)))
+          .send(.commandPalette(.togglePresentInMode(.commands)))
         )
       case .terminalEvent(.setupScriptConsumed(let worktreeID)):
         return .send(.repositories(.consumeSetupScript(worktreeID)))
 
       case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
         switch kind {
-        case .script(let definition):
+        case .script:
           return .send(
             .repositories(
               .scriptCompleted(
                 worktreeID: worktreeID,
-                scriptID: definition.id,
                 kind: kind,
                 exitCode: exitCode,
                 tabId: tabId
@@ -1322,8 +1325,15 @@ struct AppFeature {
           return .send(.repositories(.deleteScriptCompleted(worktreeID: worktreeID, exitCode: exitCode, tabId: tabId)))
         }
 
-      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, let projection)):
+      case .terminalEvent(.worktreeProjectionChanged(let worktreeID, var projection)):
         guard let row = state.repositories.sidebarItems[id: worktreeID] else { return .none }
+        // Archived rows render no running-state dots, so terminal truth must
+        // not re-inject them (see `stripsArchivedRunningScripts`).
+        if !projection.runningScripts.isEmpty,
+          state.repositories.stripsArchivedRunningScripts(for: worktreeID, lifecycle: row.lifecycle)
+        {
+          projection.runningScripts = []
+        }
         let projectedSurfaces = Set(projection.surfaceIDs)
         // Re-fan-out only for surfaces this projection ADDS to the row;
         // steady-state churn (notification arrival, focus changes) keeps the
@@ -1428,6 +1438,12 @@ struct AppFeature {
       case .terminalEvent(.agentHookEventReceived(let event)):
         return .send(.agentPresence(.hookEventReceived(event)))
 
+      // The user is looking at this surface, so whatever was parked on them there
+      // is acknowledged. Scoped to the focused surface, so a broken session in
+      // another split of the same worktree keeps its warning.
+      case .terminalEvent(.focusChanged(_, let surfaceID)):
+        return .send(.agentPresence(.clearAttention(surfaces: [surfaceID])))
+
       case .terminalEvent:
         return .none
       }
@@ -1529,14 +1545,11 @@ struct AppFeature {
     var affectedSurfaces: Set<UUID> = []
     for rowID in rowIDs {
       guard let row = state.repositories.sidebarItems[id: rowID] else { continue }
-      let agents = presence.agents(across: row.surfaceIDs, badgesEnabled: badgesEnabled)
-      let hasActivity = presence.hasActivity(in: row.surfaceIDs)
+      let snapshot = presence.rowSnapshot(across: row.surfaceIDs, badgesEnabled: badgesEnabled)
       effects.append(
         .send(
           .repositories(
-            .sidebarItems(
-              .element(id: rowID, action: .agentSnapshotChanged(agents, hasActivity: hasActivity))
-            )
+            .sidebarItems(.element(id: rowID, action: .agentSnapshotChanged(snapshot)))
           )
         )
       )
@@ -2143,27 +2156,14 @@ struct AppFeature {
       )
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
-    let tint = definition.resolvedTintColor
     let terminalClient = terminalClient
-    var effects: [Effect<Action>] = [
-      .run { _ in
-        await terminalClient.send(
-          .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
-        )
-      }
-    ]
-    if state.repositories.sidebarItems[id: worktreeID] != nil {
-      effects.append(
-        .send(
-          .repositories(
-            .sidebarItems(
-              .element(id: worktreeID, action: .runningScriptStarted(id: scriptID, tint: tint))
-            )
-          )
-        )
+    // The row's `runningScripts` reconciles from the terminal's projection
+    // once the script tab is tracked; no optimistic mirror write (#573).
+    return .run { _ in
+      await terminalClient.send(
+        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
       )
     }
-    return .merge(effects)
   }
 
   private func stopScriptDeeplinkEffect(

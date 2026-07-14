@@ -205,7 +205,10 @@ extension ZmxClient {
       // Uses `bundledExecutable`, not the budget-gated `resolveExecutable`, so
       // kill paths still tear down sessions from a previous under-budget launch
       // even when this launch's `ZMX_DIR` is over budget.
-      guard let executable = bundledExecutable() else { return nil }
+      guard let executable = bundledExecutable() else {
+        zmxLogger.debug("zmx unbundled: skipping `zmx \(arguments.joined(separator: " "))`")
+        return nil
+      }
       // Pin `ZMX_DIR` so the subprocess resolves the same socket dir as the
       // wrapped shell. Defense-in-depth against future env divergence even
       // after the separator fix in `socketDir`.
@@ -251,6 +254,25 @@ extension ZmxClient {
     killRemoteSession: { _, _ in },
     listSessionsWithClients: { [] }
   )
+}
+
+extension ZmxClient {
+  /// Tears down one surface's sessions host-first, then local: the remote kill's
+  /// SSH reuses the ControlMaster held open by the local zmx session, so killing
+  /// local first would strand the host session. Skips either side when unset.
+  /// Under cancellation the local kill is skipped instead of spawning a child
+  /// that would be terminated on arrival; the caller owns any retry.
+  func killSurfaceSessions(sessionID: String, remoteHost: RemoteHost?, killLocal: Bool) async {
+    if let remoteHost {
+      await killRemoteSession(remoteHost, sessionID)
+    }
+    guard killLocal else { return }
+    guard !Task.isCancelled else {
+      zmxLogger.debug("Cancelled before local kill of \(sessionID); caller owns the retry")
+      return
+    }
+    await killSession(sessionID)
+  }
 }
 
 extension ZmxClient: DependencyKey {

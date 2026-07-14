@@ -2,7 +2,7 @@ import Foundation
 
 nonisolated enum KimiHookSettings {
   /// Canonical flat list of Kimi hook entries. Each item is one
-  /// `[[hooks]]` block in `~/.kimi/config.toml`; Supacode owns exactly
+  /// `[[hooks]]` block in `~/.kimi-code/config.toml`; Supacode owns exactly
   /// this set. See `ClaudeHookSettings` for the composite-command rationale
   /// (one Supacode-managed entry per slot, so install is an idempotent
   /// prune-and-replace).
@@ -35,7 +35,7 @@ nonisolated struct KimiHookEntry: Equatable, Sendable {
 
 // MARK: - Hook payload.
 
-// Kimi stores hooks as `[[hooks]]` array-of-tables in `~/.kimi/config.toml`
+// Kimi stores hooks as `[[hooks]]` array-of-tables in `~/.kimi-code/config.toml`
 // with PascalCase event names matching Claude's set, so the busy/idle/
 // awaitingInput mapping mirrors `ClaudeHooksPayload`. The
 // `AskUserQuestion|ExitPlanMode` matcher is reused from Claude and assumed

@@ -1,3 +1,4 @@
+import AppKit
 import Carbon.HIToolbox
 import CustomDump
 import SwiftUI
@@ -16,6 +17,96 @@ private struct PlainCodingKey: CodingKey {
 
 @MainActor
 struct AppShortcutsTests {
+  private static func keyEvent(keyCode: Int, modifiers: NSEvent.ModifierFlags) -> NSEvent {
+    NSEvent.keyEvent(
+      with: .keyDown,
+      location: .zero,
+      modifierFlags: modifiers,
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      characters: "p",
+      charactersIgnoringModifiers: "p",
+      isARepeat: false,
+      keyCode: UInt16(keyCode)
+    )!
+  }
+
+  @Test func matchesRequiresAnExactModifierSet() {
+    let worktreeSwitcher = AppShortcuts.worktreeSwitcher  // ⌘P.
+    let commandPalette = AppShortcuts.commandPalette  // ⌘⇧P.
+
+    let command = Self.keyEvent(keyCode: kVK_ANSI_P, modifiers: .command)
+    #expect(worktreeSwitcher.matches(command))
+    // ⌘P must not match ⌘⇧P: a character-based match would invert the two palettes.
+    #expect(commandPalette.matches(command) == false)
+
+    let commandShift = Self.keyEvent(keyCode: kVK_ANSI_P, modifiers: [.command, .shift])
+    #expect(commandPalette.matches(commandShift))
+    #expect(worktreeSwitcher.matches(commandShift) == false)
+
+    // A superset of the bound modifiers is not a match.
+    let commandOption = Self.keyEvent(keyCode: kVK_ANSI_P, modifiers: [.command, .option])
+    #expect(worktreeSwitcher.matches(commandOption) == false)
+    #expect(commandPalette.matches(commandOption) == false)
+  }
+
+  @Test func matchesIgnoresIncidentalModifierFlags() {
+    // Caps Lock (and the function / numeric-pad flags) must not defeat the match.
+    let event = Self.keyEvent(keyCode: kVK_ANSI_P, modifiers: [.command, .capsLock, .function])
+    #expect(AppShortcuts.worktreeSwitcher.matches(event))
+  }
+
+  @Test func matchesFollowsUserRebind() {
+    let overrides: [AppShortcutID: AppShortcutOverride] = [
+      .worktreeSwitcher: AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: .command)
+    ]
+    let rebound = AppShortcuts.worktreeSwitcher.effective(from: overrides)
+
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_ANSI_K, modifiers: .command)) == true)
+    // The default chord stops matching once the user rebinds it.
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_ANSI_P, modifiers: .command)) == false)
+  }
+
+  @Test func disabledShortcutResolvesToNoMatcher() {
+    let overrides: [AppShortcutID: AppShortcutOverride] = [.worktreeSwitcher: .disabled]
+    // A disabled shortcut has no effective binding, so the palette never matches its chord.
+    #expect(AppShortcuts.worktreeSwitcher.effective(from: overrides) == nil)
+  }
+
+  @Test func matchesIsAlwaysFalseForSpecialKeyShortcuts() {
+    // Shortcuts built from a bare key equivalent (⌘⌫, ⌘⏎, ...) carry no key code, so
+    // `matches` reports false rather than guessing. Pinned so a future caller does not
+    // read the silent no-match as a bug.
+    let event = Self.keyEvent(keyCode: kVK_Delete, modifiers: .command)
+    #expect(AppShortcuts.archiveWorktree.matches(event) == false)
+  }
+
+  @Test func matchesFollowsRebindOntoAKeypadKey() {
+    // A keypad digit prints the same character as its main-row twin, so resolving the code
+    // back from the character would answer the wrong physical key. The rebind's own code wins.
+    let overrides: [AppShortcutID: AppShortcutOverride] = [
+      .worktreeSwitcher: AppShortcutOverride(keyCode: UInt16(kVK_ANSI_Keypad1), modifiers: .command)
+    ]
+    let rebound = AppShortcuts.worktreeSwitcher.effective(from: overrides)
+
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_ANSI_Keypad1, modifiers: .command)) == true)
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_ANSI_1, modifiers: .command)) == false)
+  }
+
+  @Test func matchesFollowsRebindOntoASpecialKey() {
+    // A special key has no printable equivalent to resolve, so the match falls back to
+    // the code the rebind stored. Without it the menu would open the palette on ⌘⏎ while
+    // the panel refused to close on the same chord.
+    let overrides: [AppShortcutID: AppShortcutOverride] = [
+      .worktreeSwitcher: AppShortcutOverride(keyCode: UInt16(kVK_Return), modifiers: .command)
+    ]
+    let rebound = AppShortcuts.worktreeSwitcher.effective(from: overrides)
+
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_Return, modifiers: .command)) == true)
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_ANSI_P, modifiers: .command)) == false)
+  }
+
   @Test func displaySymbolsMatchDisplay() {
     let shortcuts: [AppShortcut] = [
       AppShortcuts.openSettings,

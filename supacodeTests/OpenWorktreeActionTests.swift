@@ -5,6 +5,13 @@ import Testing
 @testable import supacode
 
 struct OpenWorktreeActionTests {
+  private struct TraeVariantExpectation {
+    let action: OpenWorktreeAction
+    let title: String
+    let settingsID: String
+    let bundleID: String
+  }
+
   @Test func menuOrderIncludesExpectedWorkspaceActions() {
     let settingsIDs = OpenWorktreeAction.menuOrder.map(\.settingsID)
 
@@ -20,6 +27,42 @@ struct OpenWorktreeActionTests {
     #expect(settingsIDs.contains("webstorm"))
     #expect(settingsIDs.contains("phpstorm"))
     #expect(settingsIDs.contains("pycharm"))
+  }
+
+  @Test func traeVariantsHaveExpectedMetadataAndDefaultOpenBehavior() {
+    let variants = [
+      TraeVariantExpectation(
+        action: .trae,
+        title: "Trae",
+        settingsID: "trae",
+        bundleID: "com.trae.app"
+      ),
+      TraeVariantExpectation(
+        action: .traeCN,
+        title: "Trae CN",
+        settingsID: "trae-cn",
+        bundleID: "cn.trae.app"
+      ),
+    ]
+
+    for variant in variants {
+      #expect(variant.action.title == variant.title)
+      #expect(variant.action.labelTitle == variant.title)
+      #expect(variant.action.settingsID == variant.settingsID)
+      #expect(variant.action.bundleIdentifier == variant.bundleID)
+      #expect(variant.action.openTargets == [.default])
+      #expect(variant.action.openBehaviors == [.default])
+    }
+  }
+
+  @Test func traeVariantsAreListedWithEditors() {
+    let editors = OpenWorktreeAction.editorPriority
+    let menuSettingsIDs = OpenWorktreeAction.menuOrder.map(\.settingsID)
+
+    #expect(editors.contains(.trae))
+    #expect(editors.contains(.traeCN))
+    #expect(menuSettingsIDs.contains("trae"))
+    #expect(menuSettingsIDs.contains("trae-cn"))
   }
 
   @Test func jetBrainsIDEsHaveCorrectBundleIdentifiers() {
@@ -259,6 +302,8 @@ struct OpenWorktreeActionTests {
       (.vscodeInsiders, "code-insiders"),
       (.vscodium, "codium"),
       (.cursor, "cursor"),
+      (.trae, "trae"),
+      (.traeCN, "trae-cn"),
       (.windsurf, "windsurf"),
       (.antigravity, "antigravity"),
     ]
@@ -278,6 +323,8 @@ struct OpenWorktreeActionTests {
       .vscodeInsiders,
       .vscodium,
       .cursor,
+      .trae,
+      .traeCN,
       .windsurf,
       .antigravity,
     ]
@@ -296,6 +343,8 @@ struct OpenWorktreeActionTests {
       .vscodeInsiders,
       .vscodium,
       .cursor,
+      .trae,
+      .traeCN,
       .windsurf,
       .antigravity,
     ]
@@ -329,6 +378,8 @@ struct OpenWorktreeActionTests {
       .vscodeInsiders,
       .vscodium,
       .cursor,
+      .trae,
+      .traeCN,
       .windsurf,
       .antigravity,
     ]
@@ -361,6 +412,8 @@ struct OpenWorktreeActionTests {
       .vscodeInsiders,
       .vscodium,
       .cursor,
+      .trae,
+      .traeCN,
       .windsurf,
       .antigravity,
     ]
@@ -376,6 +429,8 @@ struct OpenWorktreeActionTests {
       .vscodeInsiders,
       .vscodium,
       .cursor,
+      .trae,
+      .traeCN,
       .windsurf,
       .antigravity,
     ]

@@ -42,6 +42,14 @@ struct KimiSettingsInstallerTests {
     #expect(installer.installState(settingsURL: url, canonicalEntries: canonicalEntries()) == .notInstalled)
   }
 
+  // MARK: - Canonical config path.
+
+  @Test func settingsURLResolvesToKimiCodeConfig() {
+    let home = URL(fileURLWithPath: "/Users/test", isDirectory: true)
+    let url = KimiSettingsInstaller.settingsURL(homeDirectoryURL: home)
+    #expect(url.path(percentEncoded: false) == "/Users/test/.kimi-code/config.toml")
+  }
+
   // MARK: - Preserve existing content.
 
   @Test func installPreservesNonHooksSections() throws {

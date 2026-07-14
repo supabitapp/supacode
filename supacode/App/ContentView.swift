@@ -167,7 +167,8 @@ private struct CommandPaletteOverlayHost: View {
     let paletteStore = store.scope(state: \.commandPalette, action: \.commandPalette)
     return CommandPalettePanelHost(
       store: paletteStore,
-      items: CommandPaletteFeature.commandPaletteItems(
+      items: CommandPaletteFeature.items(
+        in: paletteStore.mode,
         from: repositoriesStore.state,
         ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
         scripts: store.allScripts,

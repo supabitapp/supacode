@@ -11,6 +11,13 @@ struct SkillAgentTests {
     #expect(SkillAgent.hermes.configDirectoryName == ".hermes")
   }
 
+  @Test func kimiIdentityUsesKimiCodePathsAndDisplayName() {
+    #expect(SkillAgent.kimi.rawValue == "kimi")
+    #expect(SkillAgent.kimi.displayName == "Kimi Code")
+    #expect(SkillAgent.kimi.configDirectoryName == ".kimi-code")
+    #expect(SkillAgent.kimi.assetName == "kimi-mark")
+  }
+
   @Test func selectedExistingAgentMappingsStayStable() {
     #expect(SkillAgent.claude.assetName == "claude-code-mark")
     #expect(SkillAgent.opencode.configDirectoryName == ".config/opencode")

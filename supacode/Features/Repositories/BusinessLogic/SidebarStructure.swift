@@ -22,10 +22,13 @@ extension DependencyValues {
 }
 
 /// Classification buckets for the global Active section. Lower raw value =
-/// higher priority. Rows that don't classify into one of the ten buckets are
+/// higher priority. Rows that don't classify into one of the buckets are
 /// excluded from Active and (when the Pinned section is in play) fall to the
 /// bottom of Pinned alphabetically.
 enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
+  /// An agent stopped on an error. Highest priority, so a broken session floats
+  /// above every other Active state.
+  case errored = 0
   case unreadAwaitingRunning = 1
   case unreadAwaiting = 2
   case unreadAgentRunning = 3
@@ -65,7 +68,9 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   /// Active even when the agent isn't actively working; `state.agents` is
   /// already empty when badges are disabled by the user.
   static func classify(_ state: SidebarItemFeature.State) -> Self? {
-    classify(
+    // A broken session outranks every other Active state.
+    if state.hasAgentError { return .errored }
+    return classify(
       hasUnread: state.hasUnseenNotifications,
       hasAwaiting: state.hasAgentAwaitingInput,
       hasAgent: !state.agents.isEmpty,
@@ -355,12 +360,14 @@ struct CacheInvalidations: OptionSet {
 extension SidebarItemFeature.Action {
   var cacheInvalidations: CacheInvalidations {
     switch self {
-    case .lifecycleChanged, .runningScriptStarted, .runningScriptStopped:
+    case .lifecycleChanged:
       return [.sidebarStructure, .selectedWorktreeSlice]
     case .agentSnapshotChanged:
       return .sidebarStructure
+    // `.selectedWorktreeSlice` because the projection carries the focused row's
+    // `runningScripts` (toolbar Run/Stop state).
     case .terminalProjectionChanged:
-      return [.sidebarStructure, .toolbarNotificationGroups]
+      return .all
     case .pullRequestChanged:
       return .selectedWorktreeSlice
     case .diffStatsChanged, .pullRequestQueryStarted,

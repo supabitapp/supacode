@@ -19,6 +19,31 @@ struct AgentHookCommandTests {
     #expect(command.contains("event=idle"))
   }
 
+  // MARK: - AgentCommandHook env encoding.
+
+  @Test func commandHookOmitsEnvWhenNil() throws {
+    let encoded = try Self.encodeHook(.init(command: "run", timeout: 5))
+    #expect(encoded["env"] == nil)
+  }
+
+  @Test func commandHookOmitsEnvWhenEmpty() throws {
+    // An empty map must not serialize as `"env": {}`, so agents without a
+    // passthrough (Claude, Codex) keep their bare hook shape.
+    let encoded = try Self.encodeHook(.init(command: "run", timeout: 5, env: [:]))
+    #expect(encoded["env"] == nil)
+  }
+
+  @Test func commandHookEncodesNonEmptyEnv() throws {
+    let encoded = try Self.encodeHook(
+      .init(command: "run", timeout: 5, env: ["SUPACODE_SURFACE_ID": "${SUPACODE_SURFACE_ID}"]))
+    #expect(encoded["env"]?.objectValue?["SUPACODE_SURFACE_ID"]?.stringValue == "${SUPACODE_SURFACE_ID}")
+  }
+
+  private static func encodeHook(_ hook: AgentCommandHook) throws -> [String: JSONValue] {
+    let data = try JSONEncoder().encode(hook)
+    return try JSONDecoder().decode(JSONValue.self, from: data).objectValue ?? [:]
+  }
+
   // MARK: - Claude canonical hook map.
 
   @Test func claudePostToolUseFiresIdleNotBusy() throws {
@@ -58,6 +83,53 @@ struct AgentHookCommandTests {
         $0.objectValue?["command"]?.stringValue
       } ?? []
     }
+  }
+
+  // MARK: - Error + compaction events.
+
+  @Test func everyHookEventDecodesOnTheAppSide() {
+    // The emitter and the app carry parallel enums; an event only the emitter knows
+    // about lands on the wire and is silently dropped.
+    for event in HookEvent.allCases {
+      #expect(AgentHookEvent.EventName(rawValue: event.rawValue) != nil)
+    }
+  }
+
+  @Test func emitShellErrorCarriesOSCErrorEvent() {
+    let command = AgentPresenceOSC.emitShell(event: .error, agent: .claude)
+    #expect(command.contains("event=error"))
+  }
+
+  @Test func compositeCompactingCarriesOSCCompactingEvent() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.compacting], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains("event=compacting"))
+  }
+
+  @Test func claudePreCompactMapsToCompactingAndPostCompactIsUnmapped() throws {
+    // PostCompact is intentionally NOT mapped: compaction finishing is not turn
+    // completion. The SessionStart Claude fires afterwards is what ends the state.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let preCompact = try #require(groups["PreCompact"])
+    let commands = Self.commandStrings(in: preCompact)
+    #expect(!commands.isEmpty)
+    #expect(commands.allSatisfy { $0.contains("event=compacting") })
+    #expect(groups["PostCompact"] == nil)
+  }
+
+  @Test func claudeStopProbesTranscriptForErrorButStillIdlesOtherwise() throws {
+    // Both branches must be present, plus the notify leg.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let stop = try #require(groups["Stop"])
+    let command = try #require(Self.commandStrings(in: stop).first)
+    #expect(command.contains("transcript_path"))
+    #expect(command.contains("isApiErrorMessage"))
+    #expect(command.contains("event=error"))
+    #expect(command.contains("event=idle"))
+    #expect(command.contains("kind=notify"))
+    // SSH portability: no jq / python in the transcript probe.
+    #expect(!command.contains("jq"))
+    #expect(!command.contains("python"))
   }
 
   @Test func compositeGuardsOnSurfaceOnly() {
@@ -507,6 +579,156 @@ struct AgentHookCommandTests {
       events: [.busy], forwardStdinAsNotification: true, agent: .claude)
     let tty = try await runHookCommandCapturingTTY(command, env: [:], stdin: "{}")
     #expect(tty.isEmpty)
+  }
+
+  // MARK: - Stop-hook error transcript probe (real shell).
+
+  /// One compact transcript entry; `sessionId` defaults to the current turn's.
+  private static func transcriptLine(
+    type: String, sessionId: String = "S", isApiError: Bool = false
+  ) -> String {
+    let errorField = isApiError ? #","isApiErrorMessage":true,"error":"server_error""# : ""
+    return #"{"type":"\#(type)","sessionId":"\#(sessionId)"\#(errorField),"message":{"role":"\#(type)","content":"x"}}"#
+  }
+
+  /// Writes JSONL `lines` to a temp file and returns its path (caller cleans up).
+  private func writeTranscript(_ lines: [String]) throws -> URL {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-transcript-\(UUID().uuidString).jsonl")
+    try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    return url
+  }
+
+  /// Runs the Claude Stop hook with a stdin payload pointing at `transcriptPath`
+  /// and returns the captured tty text. `transcriptPath` nil omits the field.
+  private func runStopHook(transcriptPath: String?) async throws -> String {
+    let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.claudeStopCommand(agent: .claude)
+    let pathField = transcriptPath.map { #","transcript_path":"\#($0)""# } ?? ""
+    let json = #"{"hook_event_name":"Stop","session_id":"S"\#(pathField)}"#
+    return try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+  }
+
+  /// Same, with `session_id` omitted from the hook payload.
+  private func runStopHookWithoutSessionID(transcriptPath: String) async throws -> String {
+    let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.claudeStopCommand(agent: .claude)
+    let json = #"{"hook_event_name":"Stop","transcript_path":"\#(transcriptPath)"}"#
+    return try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+  }
+
+  @Test func stopEmitsErrorWhenCurrentTurnEndedInError() async throws {
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "user"),
+      Self.transcriptLine(type: "assistant"),
+      Self.transcriptLine(type: "assistant", isApiError: true),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=error"))
+    #expect(!tty.contains("event=idle"))
+  }
+
+  @Test func stopIdlesWhenErrorIsStaleAfterReprompt() async throws {
+    // A later user re-prompt means the turn moved on: the error is stale.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true),
+      Self.transcriptLine(type: "user"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenErrorFollowedByCleanAssistant() async throws {
+    // A later non-error assistant reply means the model recovered.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true),
+      Self.transcriptLine(type: "assistant"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenNoErrorPresent() async throws {
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "user"),
+      Self.transcriptLine(type: "assistant"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIgnoresErrorFromDifferentSession() async throws {
+    // An isApiErrorMessage entry from another session must not flag this turn.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", sessionId: "OTHER", isApiError: true)
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenTranscriptMissing() async throws {
+    let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-missing-\(UUID().uuidString).jsonl")
+    let tty = try await runStopHook(transcriptPath: missing.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenTranscriptPathAbsent() async throws {
+    let tty = try await runStopHook(transcriptPath: nil)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopErrorEmitsFixedNotificationThroughTheNormalPipeline() async throws {
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true)
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=error"))
+    let notify = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(notify.body == AgentHookSettingsCommand.errorNotifyBody)
+    #expect(notify.title == AgentHookSettingsCommand.errorNotifyTitle)
+  }
+
+  @Test func stopIdlesWhenTheHookPayloadCarriesNoSessionID() async throws {
+    // Without a session id the probe cannot tell whose error it is looking at, so
+    // it must fall back to idle rather than flag another session's stale error.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true)
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHookWithoutSessionID(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdleBranchStillForwardsTheTurnNotification() async throws {
+    // The idle branch reuses the stdin the probe already consumed; if `$__in` stops
+    // propagating, every normal turn-end notification silently loses its body.
+    let transcript = try writeTranscript([Self.transcriptLine(type: "assistant")])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let json =
+      #"{"hook_event_name":"Stop","session_id":"S","transcript_path":"\#(transcript.path)","#
+      + #""last_assistant_message":"all done"}"#
+    let tty = try await runHookCommandCapturingTTY(
+      AgentHookSettingsCommand.claudeStopCommand(agent: .claude),
+      env: ["SUPACODE_SURFACE_ID": UUID().uuidString],
+      stdin: json
+    )
+    #expect(tty.contains("event=idle"))
+    let notify = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(notify.body == "all done")
   }
 
   // MARK: - OSC presence round-trip.

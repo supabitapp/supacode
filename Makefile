@@ -10,6 +10,7 @@ MAKEFLAGS += --no-builtin-rules
 CURRENT_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 CURRENT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(CURRENT_MAKEFILE_PATH)))
 PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/supacode.xcworkspace
+DERIVED_DATA_PATH := $(CURRENT_MAKEFILE_DIR)/.build/DerivedData
 APP_SCHEME := supacode
 PROJECT_CONFIG_PATH := Configurations/Project.xcconfig
 TUIST_GENERATION_STAMP_DIR := $(CURRENT_MAKEFILE_DIR)/.build/.tuist-generated-stamps
@@ -69,10 +70,7 @@ $(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAM
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
 	rm -rf supacode.xcodeproj supacode.xcworkspace
-	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/supacode-*; do \
-		[ -e "$$path" ] || continue; \
-		rm -rf "$$path"; \
-	done
+	rm -rf "$(DERIVED_DATA_PATH)"
 	mise exec -- tuist generate --no-open --cache-profile "$*"
 	touch "$@"
 
@@ -81,10 +79,7 @@ $(TUIST_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_ST
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
 	rm -rf supacode.xcodeproj supacode.xcworkspace
-	for path in "$${HOME}/Library/Developer/Xcode/DerivedData"/supacode-*; do \
-		[ -e "$$path" ] || continue; \
-		rm -rf "$$path"; \
-	done
+	rm -rf "$(DERIVED_DATA_PATH)"
 	mise exec -- tuist generate --no-open --cache-profile development --configuration Release
 	touch "$@"
 
@@ -111,11 +106,11 @@ warm-cache: $(TUIST_INSTALL_STAMP) # Warm the full Tuist cacheable graph
 
 build-app: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Build the macOS app (Debug)
 	$(SELECT_DEVELOPER_DIR); \
-	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -derivedDataPath "$(DERIVED_DATA_PATH)" build -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
 
 run-app: build-app # Build then launch (Debug) with log streaming
 	@$(SELECT_DEVELOPER_DIR); \
-	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -derivedDataPath "$(DERIVED_DATA_PATH)" -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
@@ -123,7 +118,7 @@ run-app: build-app # Build then launch (Debug) with log streaming
 
 install-dev-build: build-app # install dev build to /Applications
 	@$(SELECT_DEVELOPER_DIR); \
-	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -derivedDataPath "$(DERIVED_DATA_PATH)" -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
 	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
 	src="$$build_dir/$$product"; \
@@ -140,7 +135,7 @@ install-dev-build: build-app # install dev build to /Applications
 archive: $(TUIST_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
 	mkdir -p build
 	$(SELECT_DEVELOPER_DIR); \
-	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
 
 export-archive: # Export xarchive
 	$(SELECT_DEVELOPER_DIR); \
@@ -149,9 +144,9 @@ export-archive: # Export xarchive
 test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	@$(SELECT_DEVELOPER_DIR); \
 	if [ -t 1 ]; then \
-		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \
+		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \
 	else \
-		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL); \
+		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL); \
 	fi
 
 format: # Format code with swift-format (mise-pinned for reproducibility).

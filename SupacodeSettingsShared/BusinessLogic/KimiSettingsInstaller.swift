@@ -1,9 +1,9 @@
 import Foundation
 
-/// Top-level installer for Kimi CLI hooks. Owns the canonical entry list
+/// Top-level installer for Kimi Code hooks. Owns the canonical entry list
 /// (`KimiHookSettings`) and delegates the on-disk TOML read-modify-write to
 /// `KimiHookSettingsFileInstaller`. Kimi activates hooks purely from
-/// `~/.kimi/config.toml`, so there is no version probe and no feature flag.
+/// `~/.kimi-code/config.toml`, so there is no version probe and no feature flag.
 nonisolated struct KimiSettingsInstaller {
   let homeDirectoryURL: URL
   let fileManager: FileManager
@@ -44,7 +44,7 @@ nonisolated struct KimiSettingsInstaller {
 
   static func settingsURL(homeDirectoryURL: URL) -> URL {
     homeDirectoryURL
-      .appendingPathComponent(".kimi", isDirectory: true)
+      .appendingPathComponent(".kimi-code", isDirectory: true)
       .appendingPathComponent("config.toml", isDirectory: false)
   }
 

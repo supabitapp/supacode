@@ -25,11 +25,17 @@ nonisolated struct RepositoryID: Hashable, Sendable, Codable, CustomStringConver
 /// Same string-backed shape as `RepositoryID`; the two are compiler-distinct so
 /// a repo id and a worktree id can't be confused at a call site.
 nonisolated struct WorktreeID: Hashable, Sendable, Codable, CustomStringConvertible {
+  /// Prefix for the synthetic id a worktree carries while it is being created.
+  static let pendingPrefix = "pending:"
+
   let rawValue: String
 
   init(_ rawValue: String) { self.rawValue = rawValue }
 
   var description: String { rawValue }
+
+  /// A placeholder id for an in-flight creation, not yet a real worktree.
+  var isPending: Bool { rawValue.hasPrefix(Self.pendingPrefix) }
 
   init(from decoder: any Decoder) throws {
     self.rawValue = try decoder.singleValueContainer().decode(String.self)

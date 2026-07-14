@@ -31,7 +31,7 @@ enum AppTelemetry {
   }
 
   static func makeConfig(configuration: Configuration) -> PostHogConfig {
-    let config = PostHogConfig(apiKey: configuration.apiKey, host: configuration.host)
+    let config = PostHogConfig(projectToken: configuration.apiKey, host: configuration.host)
     config.captureApplicationLifecycleEvents = true
     config.enableSwizzling = false
     config.setBeforeSend { event in

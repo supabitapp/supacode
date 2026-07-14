@@ -123,12 +123,27 @@ struct HermesPluginInstallerTests {
     let module = HermesPluginContent.module()
 
     // Every presence state the module emits must round-trip through `HookEvent`,
-    // or the app's `AgentPresenceOSC.parse` drops the signal. session_end must be
-    // present so the badge tears down on session end (not just idle).
-    for state in ["session_start", "busy", "idle", "session_end"] {
+    // or the app's `AgentPresenceOSC.parse` drops the signal.
+    for state in ["session_start", "busy", "idle"] {
       #expect(module.contains("_emit_presence(\"\(state)\")"))
       #expect(HookEvent(rawValue: state) != nil)
     }
+    #expect(!module.contains("_emit_presence(\"session_end\")"))
+  }
+
+  @Test func onSessionEndEmitsIdleBetweenTurns() {
+    let module = HermesPluginContent.module()
+
+    // Hermes fires `on_session_end` per turn, so its hook must emit `idle` (not
+    // `session_end`) to keep the badge present between turns. `_on_session_end` is
+    // the last function, so its body runs to the end of the module.
+    guard let hook = module.range(of: "def _on_session_end") else {
+      Issue.record("module is missing the _on_session_end hook")
+      return
+    }
+    let body = module[hook.upperBound...]
+    #expect(body.contains("_emit_presence(\"idle\")"))
+    #expect(!body.contains("_emit_presence(\"session_end\")"))
   }
 
   @Test func installOverOutdatedReturnsInstalled() throws {

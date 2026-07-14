@@ -1,4 +1,5 @@
 import Foundation
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -243,5 +244,77 @@ struct ZmxSessionListParserTests {
 struct ZmxClientNoopTests {
   @Test func noopExecutableURLReturnsNil() {
     #expect(ZmxClient.noop.executableURL() == nil)
+  }
+}
+
+@MainActor
+struct ZmxClientKillSurfaceSessionsTests {
+  private actor KillRecorder {
+    private(set) var calls: [String] = []
+    func record(_ call: String) { calls.append(call) }
+  }
+
+  private func makeClient(recording recorder: KillRecorder) -> ZmxClient {
+    ZmxClient(
+      executableURL: { nil },
+      isBundled: { true },
+      killSession: { _ in await recorder.record("local") },
+      killRemoteSession: { _, _ in await recorder.record("remote") },
+      listSessionsWithClients: { nil },
+    )
+  }
+
+  @Test func killsRemoteBeforeLocal() async {
+    let recorder = KillRecorder()
+    let client = makeClient(recording: recorder)
+
+    await client.killSurfaceSessions(
+      sessionID: "supa-s", remoteHost: RemoteHost(alias: "devbox"), killLocal: true)
+
+    #expect(await recorder.calls == ["remote", "local"])
+  }
+
+  @Test func skipsRemoteWhenHostUnset() async {
+    let recorder = KillRecorder()
+    let client = makeClient(recording: recorder)
+
+    await client.killSurfaceSessions(sessionID: "supa-s", remoteHost: nil, killLocal: true)
+
+    #expect(await recorder.calls == ["local"])
+  }
+
+  @Test func skipsLocalWhenKillLocalUnset() async {
+    let recorder = KillRecorder()
+    let client = makeClient(recording: recorder)
+
+    await client.killSurfaceSessions(
+      sessionID: "supa-s", remoteHost: RemoteHost(alias: "devbox"), killLocal: false)
+
+    #expect(await recorder.calls == ["remote"])
+  }
+
+  @Test func doesNothingWhenBothSidesUnset() async {
+    let recorder = KillRecorder()
+    let client = makeClient(recording: recorder)
+
+    await client.killSurfaceSessions(sessionID: "supa-s", remoteHost: nil, killLocal: false)
+
+    #expect(await recorder.calls.isEmpty)
+  }
+
+  @Test func skipsLocalKillUnderCancellation() async {
+    // A budget cancellation mid-remote-kill must not spawn a doomed local kill;
+    // the quit path's fallback sweep owns the retry.
+    let recorder = KillRecorder()
+    let client = makeClient(recording: recorder)
+
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      await client.killSurfaceSessions(
+        sessionID: "supa-s", remoteHost: RemoteHost(alias: "devbox"), killLocal: true)
+    }
+    await task.value
+
+    #expect(await recorder.calls == ["remote"])
   }
 }

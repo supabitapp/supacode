@@ -234,7 +234,7 @@ struct AppFeatureArchivedSelectionTests {
     await store.receive(
       \.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged
     ) {
-      $0.repositories.sidebarItems[id: worktree.id]?.agents = [
+      $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot.agents = [
         AgentPresenceFeature.AgentInstance(agent: .claude, activity: .awaitingInput)
       ]
     }
@@ -321,10 +321,10 @@ struct AppFeatureArchivedSelectionTests {
     await store.receive(
       \.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged
     ) {
-      $0.repositories.sidebarItems[id: worktree.id]?.agents = [
+      $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot.agents = [
         AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
       ]
-      $0.repositories.sidebarItems[id: worktree.id]?.hasAgentActivity = true
+      $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot.isWorking = true
     }
     await store.finish()
 

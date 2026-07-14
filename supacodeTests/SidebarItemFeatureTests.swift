@@ -33,34 +33,34 @@ struct SidebarItemFeatureTests {
     }
   }
 
-  @Test func runningScriptStartedIsIdempotentForSameTint() async {
-    let scriptID = UUID()
-    let store = TestStore(initialState: makeState(name: "feature")) {
+  @Test func terminalProjectionReplacesRunningScriptsWholesale() async {
+    // The projection is the single writer: whatever set it carries replaces
+    // the row's, so a stale mirror can't survive a reconcile (#573).
+    let scriptA = UUID()
+    let scriptB = UUID()
+    var state = makeState(name: "feature")
+    state.runningScripts = [.init(id: scriptA, tint: .orange)]
+    let store = TestStore(initialState: state) {
       SidebarItemFeature()
     }
-    await store.send(.runningScriptStarted(id: scriptID, tint: .orange)) {
-      $0.runningScripts = [.init(id: scriptID, tint: .orange)]
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(runningScripts: [.init(id: scriptB, tint: .blue)])
+      )
+    ) {
+      $0.hasTerminalProjection = true
+      $0.runningScripts = [.init(id: scriptB, tint: .blue)]
     }
-    // Same tint: no-op.
-    await store.send(.runningScriptStarted(id: scriptID, tint: .orange))
-    await store.send(.runningScriptStarted(id: scriptID, tint: .blue)) {
-      $0.runningScripts[id: scriptID]?.tint = .blue
-    }
-  }
-
-  @Test func runningScriptStopRemovesAndIsIdempotent() async {
-    let scriptID = UUID()
-    let store = TestStore(initialState: makeState(name: "feature")) {
-      SidebarItemFeature()
-    }
-    await store.send(.runningScriptStarted(id: scriptID, tint: .orange)) {
-      $0.runningScripts = [.init(id: scriptID, tint: .orange)]
-    }
-    await store.send(.runningScriptStopped(id: scriptID)) {
+    // Identical set: no-op.
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(runningScripts: [.init(id: scriptB, tint: .blue)])
+      )
+    )
+    // Empty set clears the phantom.
+    await store.send(.terminalProjectionChanged(makeProjection(runningScripts: []))) {
       $0.runningScripts = []
     }
-    // Stopping an unknown id is a no-op.
-    await store.send(.runningScriptStopped(id: UUID()))
   }
 
   @Test func agentSnapshotEqualityGuardSkipsNoOps() async {
@@ -71,16 +71,34 @@ struct SidebarItemFeatureTests {
       agent: .claude,
       activity: .busy
     )
-    await store.send(.agentSnapshotChanged([instance], hasActivity: true)) {
-      $0.agents = [instance]
-      $0.hasAgentActivity = true
+    await store.send(.agentSnapshotChanged(.init(agents: [instance], isWorking: true))) {
+      $0.agentSnapshot = .init(agents: [instance], isWorking: true)
     }
     // Same payload: no-op.
-    await store.send(.agentSnapshotChanged([instance], hasActivity: true))
-    // hasActivity flip only.
-    await store.send(.agentSnapshotChanged([instance], hasActivity: false)) {
-      $0.hasAgentActivity = false
+    await store.send(.agentSnapshotChanged(.init(agents: [instance], isWorking: true)))
+    // isWorking flip only.
+    await store.send(.agentSnapshotChanged(.init(agents: [instance], isWorking: false))) {
+      $0.agentSnapshot = .init(agents: [instance], isWorking: false)
     }
+  }
+
+  @Test func agentErrorFlagTracksSnapshot() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let errored = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .error)
+    await store.send(.agentSnapshotChanged(.init(agents: [errored], hasError: true))) {
+      $0.agentSnapshot = .init(agents: [errored], hasError: true)
+    }
+    #expect(store.state.hasAgentError)
+
+    // A restart clears it and puts the row back to work.
+    let busy = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+    await store.send(.agentSnapshotChanged(.init(agents: [busy], isWorking: true))) {
+      $0.agentSnapshot = .init(agents: [busy], isWorking: true)
+    }
+    #expect(!store.state.hasAgentError)
+    #expect(store.state.hasAgentActivity)
   }
 
   // MARK: - Terminal projection per-field guards.
@@ -97,12 +115,7 @@ struct SidebarItemFeatureTests {
       body: "hi",
       createdAt: Date(timeIntervalSince1970: 0)
     )
-    let baseline = WorktreeRowProjection(
-      surfaceIDs: [surface1],
-      isProgressBusy: false,
-      hasUnseenNotifications: false,
-      notifications: []
-    )
+    let baseline = makeProjection(surfaceIDs: [surface1])
     await store.send(.terminalProjectionChanged(baseline)) {
       $0.hasTerminalProjection = true
       $0.surfaceIDs = [surface1]
@@ -111,26 +124,14 @@ struct SidebarItemFeatureTests {
     await store.send(.terminalProjectionChanged(baseline))
     // surfaceIDs alone changes.
     await store.send(
-      .terminalProjectionChanged(
-        WorktreeRowProjection(
-          surfaceIDs: [surface1, surface2],
-          isProgressBusy: false,
-          hasUnseenNotifications: false,
-          notifications: []
-        )
-      )
+      .terminalProjectionChanged(makeProjection(surfaceIDs: [surface1, surface2]))
     ) {
       $0.surfaceIDs = [surface1, surface2]
     }
     // isProgressBusy alone changes (and `isTaskRunning` derives from it).
     await store.send(
       .terminalProjectionChanged(
-        WorktreeRowProjection(
-          surfaceIDs: [surface1, surface2],
-          isProgressBusy: true,
-          hasUnseenNotifications: false,
-          notifications: []
-        )
+        makeProjection(surfaceIDs: [surface1, surface2], isProgressBusy: true)
       )
     ) {
       $0.isProgressBusy = true
@@ -138,12 +139,7 @@ struct SidebarItemFeatureTests {
     // hasUnseenNotifications flips alone (independent of `notifications`).
     await store.send(
       .terminalProjectionChanged(
-        WorktreeRowProjection(
-          surfaceIDs: [surface1, surface2],
-          isProgressBusy: true,
-          hasUnseenNotifications: true,
-          notifications: []
-        )
+        makeProjection(surfaceIDs: [surface1, surface2], isProgressBusy: true, hasUnseenNotifications: true)
       )
     ) {
       $0.hasUnseenNotifications = true
@@ -151,7 +147,7 @@ struct SidebarItemFeatureTests {
     // notifications flip alone.
     await store.send(
       .terminalProjectionChanged(
-        WorktreeRowProjection(
+        makeProjection(
           surfaceIDs: [surface1, surface2],
           isProgressBusy: true,
           hasUnseenNotifications: true,
@@ -160,6 +156,21 @@ struct SidebarItemFeatureTests {
       )
     ) {
       $0.notifications = [notif]
+    }
+    // runningScripts flip alone.
+    let scriptID = UUID()
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(
+          surfaceIDs: [surface1, surface2],
+          isProgressBusy: true,
+          hasUnseenNotifications: true,
+          notifications: [notif],
+          runningScripts: [.init(id: scriptID, tint: .blue)]
+        )
+      )
+    ) {
+      $0.runningScripts = [.init(id: scriptID, tint: .blue)]
     }
   }
 
@@ -300,6 +311,22 @@ struct SidebarItemFeatureTests {
       isMainWorktree: false,
       isPinned: false,
       hasMergedBadge: false
+    )
+  }
+
+  private func makeProjection(
+    surfaceIDs: [UUID] = [],
+    isProgressBusy: Bool = false,
+    hasUnseenNotifications: Bool = false,
+    notifications: IdentifiedArrayOf<WorktreeTerminalNotification> = [],
+    runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = []
+  ) -> WorktreeRowProjection {
+    WorktreeRowProjection(
+      surfaceIDs: surfaceIDs,
+      isProgressBusy: isProgressBusy,
+      hasUnseenNotifications: hasUnseenNotifications,
+      notifications: notifications,
+      runningScripts: runningScripts
     )
   }
 }

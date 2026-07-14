@@ -4,11 +4,25 @@ import OrderedCollections
 import Sharing
 import SupacodeSettingsShared
 
+private nonisolated let commandPaletteLogger = SupaLogger("CommandPalette")
+
 @Reducer
 struct CommandPaletteFeature {
+  /// Two narrow surfaces sharing one palette UI. `.commands` is the full
+  /// command palette (scripts, ghostty actions, PR actions, settings);
+  /// `.worktreeSwitcher` shows only worktrees, sorted by
+  /// `RepositoriesFeature.State.worktreeMRU`. Mode lives in State so the
+  /// items builder, the view, and the dismiss handler all read the same
+  /// source of truth.
+  enum PaletteMode: Equatable, Sendable {
+    case commands
+    case worktreeSwitcher
+  }
+
   @ObservableState
   struct State: Equatable {
     var isPresented = false
+    var mode: PaletteMode = .commands
     var query = ""
     var selectedIndex: Int?
     var recencyByItemID: [CommandPaletteItem.ID: TimeInterval] = [:]
@@ -22,10 +36,14 @@ struct CommandPaletteFeature {
   enum Action: BindableAction, Equatable {
     case binding(BindingAction<State>)
     case setPresented(Bool)
-    case togglePresented
+    /// The one transition behind every palette shortcut: opens in `mode` when
+    /// closed, switches surface when open in another mode, and closes when open
+    /// in the same mode. Wired to the Cmd+P / Cmd+Shift+P menu items in
+    /// `supacodeApp.swift` and to the palette panel's key monitor.
+    case togglePresentInMode(PaletteMode)
     case activateItem(CommandPaletteItem)
-    case updateSelection(itemsCount: Int)
-    case resetSelection(itemsCount: Int)
+    case updateSelection(itemsCount: Int, defaultIndex: Int)
+    case resetSelection(itemsCount: Int, defaultIndex: Int)
     case moveSelection(SelectionMove, itemsCount: Int)
     case pruneRecency([CommandPaletteItem.ID])
     case delegate(Delegate)
@@ -55,6 +73,11 @@ struct CommandPaletteFeature {
     case openFailingCheckDetails(Worktree.ID)
     case runScript(ScriptDefinition)
     case stopScript(UUID, name: String)
+    /// Palette closed without the user activating an item (Esc, outside
+    /// tap, programmatic dismiss). AppFeature uses this to refocus the
+    /// current worktree's terminal, the "terminal is the default
+    /// focus" invariant.
+    case dismissedWithoutSelection
     #if DEBUG
       case debugTestToast(RepositoriesFeature.StatusToast)
     #endif
@@ -70,36 +93,44 @@ struct CommandPaletteFeature {
         return .none
 
       case .setPresented(let isPresented):
+        let wasPresented = state.isPresented
         state.isPresented = isPresented
         if isPresented {
           loadRecency(into: &state)
           state.selectedIndex = nil
         } else {
-          state.query = ""
-          state.selectedIndex = nil
+          state.resetForDismiss()
+        }
+        if wasPresented, !isPresented {
+          return .send(.delegate(.dismissedWithoutSelection))
         }
         return .none
 
-      case .togglePresented:
-        state.isPresented.toggle()
-        if state.isPresented {
-          loadRecency(into: &state)
-          state.selectedIndex = nil
-        } else {
-          state.query = ""
-          state.selectedIndex = nil
+      case .togglePresentInMode(let mode):
+        // Re-pressing the shortcut that opened the palette closes it. Route through
+        // `setPresented(false)` so the dismiss delegate refocuses the terminal.
+        guard !state.isPresented || state.mode != mode else {
+          return .send(.setPresented(false))
         }
+        // Switching surfaces keeps the panel key, so no dismiss delegate here. The
+        // query is dropped because the two modes filter disjoint item sets.
+        state.isPresented = true
+        state.mode = mode
+        loadRecency(into: &state)
+        state.query = ""
+        state.selectedIndex = nil
         return .none
 
       case .activateItem(let item):
         state.isPresented = false
-        state.query = ""
-        state.selectedIndex = nil
+        state.resetForDismiss()
         state.recencyByItemID[item.id] = now.timeIntervalSince1970
         saveRecency(state.recencyByItemID)
+        // No `.dismissedWithoutSelection` here: every activation delegate
+        // resolves to a destination that owns its own focus transition.
         return .send(.delegate(delegateAction(for: item.kind)))
 
-      case .updateSelection(let itemsCount):
+      case .updateSelection(let itemsCount, let defaultIndex):
         if itemsCount == 0 {
           state.selectedIndex = nil
           return .none
@@ -107,12 +138,12 @@ struct CommandPaletteFeature {
         if let selectedIndex = state.selectedIndex, selectedIndex >= itemsCount {
           state.selectedIndex = itemsCount - 1
         } else if state.selectedIndex == nil {
-          state.selectedIndex = 0
+          state.selectedIndex = min(max(defaultIndex, 0), itemsCount - 1)
         }
         return .none
 
-      case .resetSelection(let itemsCount):
-        state.selectedIndex = itemsCount == 0 ? nil : 0
+      case .resetSelection(let itemsCount, let defaultIndex):
+        state.selectedIndex = itemsCount == 0 ? nil : min(max(defaultIndex, 0), itemsCount - 1)
         return .none
 
       case .moveSelection(let direction, let itemsCount):
@@ -151,17 +182,38 @@ struct CommandPaletteFeature {
     }
   }
 
+  /// Where the cursor lands when there's no prior selection. Normally the top
+  /// row (0). In the worktree switcher with an empty query, the current-worktree
+  /// row sits at index 0, so skip to 1 (⌘P then Enter switches to the previous
+  /// worktree instead of being a no-op). Once the user types, the top match wins.
+  static func defaultSelectionIndex(rows: [CommandPaletteItem], query: String) -> Int {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.isEmpty, rows.count > 1, rows.first?.isCurrentWorktree == true else {
+      return 0
+    }
+    return 1
+  }
+
   static func filterItems(
     items: [CommandPaletteItem],
     query: String,
+    mode: PaletteMode = .commands,
     recencyByID: [CommandPaletteItem.ID: TimeInterval] = [:],
     now: Date = .now
   ) -> [CommandPaletteItem] {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    let globalItems = items.filter(\.isGlobal)
     guard !trimmed.isEmpty else {
-      let visibleItems = globalItems.filter { !$0.isRootAction }
-      return prioritizeItems(items: visibleItems, recencyByID: recencyByID, now: now)
+      switch mode {
+      case .commands:
+        // The empty-query commands palette shows only the non-root global
+        // actions; scripts and PR actions surface once you type.
+        let visibleItems = items.filter { $0.isGlobal && !$0.isRootAction }
+        return prioritizeItems(items: visibleItems, recencyByID: recencyByID, now: now)
+      case .worktreeSwitcher:
+        // The switcher is a navigation surface: every worktree row is visible
+        // with no query, already ordered MRU-first via `priorityTier`.
+        return prioritizeItems(items: items, recencyByID: recencyByID, now: now)
+      }
     }
     let scorer = CommandPaletteFuzzyScorer(query: trimmed, recencyByID: recencyByID, now: now)
     return scorer.rankedItems(from: items)
@@ -245,26 +297,8 @@ struct CommandPaletteFeature {
     if let renameBranchItem = renameBranchItem(from: repositories) {
       items.append(renameBranchItem)
     }
-    for row in repositories.orderedSidebarItems() {
-      guard row.lifecycle == .idle else { continue }
-      let repositoryName = Repository.sidebarDisplayName(
-        custom: repositories.sidebar.sections[row.repositoryID]?.title,
-        fallback: repositories.repositoryName(for: row.repositoryID) ?? "Repository"
-      )
-      let worktreeDisplayName = SidebarDisplayName.resolved(custom: row.customTitle, fallback: row.name) ?? row.name
-      // Folder rows only have a synthetic "main" worktree whose name matches the repository, so
-      // the usual `repo / worktree` format would render as `Foo / Foo`. Use the repository name
-      // alone for folders.
-      let title = row.isFolder ? repositoryName : "\(repositoryName) / \(worktreeDisplayName)"
-      items.append(
-        CommandPaletteItem(
-          id: CommandPaletteItemID.worktreeSelect(row.id),
-          title: title,
-          subtitle: nil,
-          kind: .worktreeSelect(row.id)
-        )
-      )
-    }
+    // Worktree navigation is the ⌘P switcher's job (see `worktreeSwitcherItems`);
+    // the ⌘⇧P command palette lists actions only, not worktree rows.
     return items
   }
 
@@ -315,6 +349,118 @@ struct CommandPaletteFeature {
       ids.append(CommandPaletteItemID.stopScript(script.id))
     }
     return ids
+  }
+
+  /// Mode-aware item dispatch. The palette overlay calls this once per
+  /// re-render; the mode comes from `State.mode` and the per-mode
+  /// builders own all selection / ranking / subtitle decisions.
+  static func items(
+    in mode: PaletteMode,
+    from repositories: RepositoriesFeature.State,
+    ghosttyCommands: [GhosttyCommand] = [],
+    scripts: [ScriptDefinition] = [],
+    runningScriptIDs: Set<UUID> = []
+  ) -> [CommandPaletteItem] {
+    switch mode {
+    case .commands:
+      return commandPaletteItems(
+        from: repositories,
+        ghosttyCommands: ghosttyCommands,
+        scripts: scripts,
+        runningScriptIDs: runningScriptIDs
+      )
+    case .worktreeSwitcher:
+      return worktreeSwitcherItems(from: repositories)
+    }
+  }
+
+  /// Worktree switcher items. Order: `worktreeMRU` entries first in recency
+  /// order (most-recent-first), then any remaining idle worktree in sidebar
+  /// order. `priorityTier` carries the ordinal so `prioritizeItems` keeps MRU
+  /// order with an empty query; a typed query then hits the worktree-name title
+  /// or the repo-name subtitle. The current worktree is rendered but flagged
+  /// `isCurrentWorktree` so the overlay skips it for the default selection.
+  static func worktreeSwitcherItems(
+    from repositories: RepositoriesFeature.State
+  ) -> [CommandPaletteItem] {
+    let mruRank: [Worktree.ID: Int] = Dictionary(
+      repositories.worktreeMRU.enumerated().map { ($1, $0) },
+      uniquingKeysWith: { first, _ in first }
+    )
+    let currentWorktreeID = repositories.selectedWorktreeID
+    let idleRows = repositories.orderedSidebarItems().filter { $0.lifecycle == .idle }
+    let ordered =
+      idleRows.enumerated().sorted { lhs, rhs in
+        switch (mruRank[lhs.element.id], mruRank[rhs.element.id]) {
+        case let (lhsRank?, rhsRank?): return lhsRank < rhsRank
+        case (_?, nil): return true
+        case (nil, _?): return false
+        case (nil, nil): return lhs.offset < rhs.offset
+        }
+      }
+      .map(\.element)
+
+    return ordered.enumerated().map { index, row in
+      let section = repositories.sidebar.sections[row.repositoryID]
+      let resolvedRepositoryName = repositories.repositoryName(for: row.repositoryID)
+      if resolvedRepositoryName == nil {
+        commandPaletteLogger.warning(
+          "Worktree switcher row \(row.id) resolved no repository name for \(row.repositoryID)."
+        )
+      }
+      // Mirror the sidebar: the repo's custom color / title live on the sidebar
+      // section (`repositoryAccent` is unused), a per-worktree override on the
+      // row. Git rows tint the worktree name over the repo name; folders collapse
+      // to their own name with no subtitle; the host stays a distinct badge.
+      let repoColor = section?.color
+      let repositoryName = Repository.sidebarDisplayName(
+        custom: section?.title,
+        fallback: resolvedRepositoryName ?? "Repository"
+      )
+      let hostInfo = row.host?.displayAuthority
+      // Mirror the sidebar's leading glyph. Missing wins over folder wins over
+      // the pull-request icon, matching `IconContent`; rows are idle-only here.
+      // A pull request whose head branch no longer matches the worktree is
+      // treated as none, mirroring `WorktreePullRequestDisplay`'s stale guard.
+      let matchedPullRequest = row.pullRequest.flatMap { pullRequest in
+        pullRequest.headRefName == nil || pullRequest.headRefName == row.branchName ? pullRequest : nil
+      }
+      let icon: CommandPaletteItem.WorktreeRowIcon =
+        row.isMissing
+        ? .missing
+        : row.isFolder
+          ? .folder
+          : .pullRequest(
+            SidebarPullRequestIcon.resolve(matchedPullRequest),
+            checkBadge: SidebarCheckBadgeState.resolve(matchedPullRequest)
+          )
+      let title: String
+      let subtitle: String?
+      let style: CommandPaletteItem.WorktreeRowStyle
+      if row.isFolder {
+        // Fall back to the row's own name (never a generic constant) so a
+        // not-yet-loaded remote folder stays identifiable as its whole title.
+        title = Repository.sidebarDisplayName(
+          custom: section?.title ?? row.customTitle,
+          fallback: resolvedRepositoryName ?? row.name
+        )
+        subtitle = nil
+        style = .init(titleTint: repoColor ?? row.customTint, repoTint: nil, hostInfo: hostInfo, icon: icon)
+      } else {
+        title = SidebarDisplayName.resolved(custom: row.customTitle, fallback: row.name) ?? row.name
+        subtitle = repositoryName
+        style = .init(titleTint: row.customTint, repoTint: repoColor, hostInfo: hostInfo, icon: icon)
+      }
+      return CommandPaletteItem(
+        id: CommandPaletteItemID.worktreeSelect(row.id),
+        title: title,
+        subtitle: subtitle,
+        kind: .worktreeSelect(row.id),
+        priorityTier: index,
+        isCurrentWorktree: row.id == currentWorktreeID,
+        worktreeStyle: style
+      )
+    }
   }
 }
 
@@ -728,7 +874,7 @@ private func scriptItems(
         CommandPaletteItem(
           id: CommandPaletteItemID.runScript(script.id),
           title: "Configure: \(script.displayName)",
-          subtitle: "No command — opens Settings.",
+          subtitle: "No command, opens Settings.",
           kind: .runScript(script),
           priorityTier: CommandPaletteItem.defaultPriorityTier + 50
         )
@@ -757,6 +903,16 @@ private func ghosttyCommandItems(_ commands: [GhosttyCommand]) -> [CommandPalett
       kind: .ghosttyCommand(command.action),
       priorityTier: CommandPaletteItem.defaultPriorityTier + 100
     )
+  }
+}
+
+extension CommandPaletteFeature.State {
+  /// Resets to the closed-palette invariant: no query, no selection, back to
+  /// `.commands`. Callers own the `isPresented` transition.
+  mutating func resetForDismiss() {
+    query = ""
+    selectedIndex = nil
+    mode = .commands
   }
 }
 
@@ -802,7 +958,18 @@ private struct CommandPaletteFuzzyScorer {
     let index: Int
   }
 
+  // Ranking tiers, highest to lowest. The whole point is that match *quality*
+  // dominates: a direct (prefix/substring) hit always outranks a scattered
+  // fuzzy hit, and a direct hit on the subtitle (e.g. a repo name) outranks a
+  // scattered hit on the title (fuzzy must never beat direct). Adjacent tiers
+  // are spaced by at least `maxIntraTierScore + 1`, and every in-tier score is
+  // clamped to `maxIntraTierScore`, so a single query piece can never bleed into
+  // the tier above. Multi-word queries sum per-piece tiered scores, so this
+  // strict ordering is a single-piece guarantee.
+  private static let maxIntraTierScore = (1 << 14) - 1
   private static let labelPrefixScoreThreshold = 1 << 17
+  private static let labelSubstringScoreThreshold = (1 << 16) + (1 << 15)
+  private static let subtitleDirectScoreThreshold = (1 << 16) + (1 << 14)
   private static let labelScoreThreshold = 1 << 16
 
   private let query: PreparedQuery
@@ -888,71 +1055,111 @@ private struct CommandPaletteFuzzyScorer {
     description: String?,
     query: PreparedQueryPiece
   ) -> ItemScore {
+    let allowNonContiguous = allowNonContiguousMatches && !query.expectContiguousMatch
+
     let (labelScore, labelPositions) = scoreFuzzy(
       target: label,
       query: query,
-      allowNonContiguousMatches: allowNonContiguousMatches && !query.expectContiguousMatch
+      allowNonContiguousMatches: allowNonContiguous
     )
     if labelScore > 0 {
-      let labelPrefixMatch = matchesPrefix(query: query.normalizedLowercase, target: label)
-      let baseScore: Int
-      if let labelPrefixMatch {
-        let prefixLengthBoost = Int(
-          (Double(query.normalized.count) / Double(label.count) * 100).rounded()
-        )
-        baseScore = Self.labelPrefixScoreThreshold + prefixLengthBoost
-        return ItemScore(
-          score: baseScore + labelScore,
+      // Title matched. A direct hit (prefix, then contiguous substring) is
+      // ranked into a strictly higher tier than a scattered subsequence hit.
+      if let labelPrefixMatch = matchesPrefix(query: query.normalizedLowercase, target: label) {
+        return tieredScore(
+          tier: Self.labelPrefixScoreThreshold,
+          intra: lengthBoost(query: query, target: label) + labelScore,
           labelMatch: labelPrefixMatch,
           descriptionMatch: nil
         )
       }
-      baseScore = Self.labelScoreThreshold
-      return ItemScore(
-        score: baseScore + labelScore,
+      if let labelSubstringMatch = matchesSubstring(query: query.normalizedLowercase, target: label) {
+        // No length boost inside non-prefix tiers: equal-quality matches stay
+        // tied on score so recency (MRU) decides them, see `compare`.
+        return tieredScore(
+          tier: Self.labelSubstringScoreThreshold,
+          intra: labelScore,
+          labelMatch: labelSubstringMatch,
+          descriptionMatch: nil
+        )
+      }
+      // The title matched only as a scattered subsequence. A direct subtitle hit
+      // (the repo name) still outranks that, so check it before settling for the
+      // scattered-title tier; otherwise a query that both scatter-matches the
+      // worktree name and directly matches the repo name is buried in the
+      // scattered band instead of ranking as the clean repo match it is.
+      if let description, let subtitleDirectMatch = directMatch(target: description, query: query) {
+        let (subtitleScore, _) = scoreFuzzy(
+          target: description,
+          query: query,
+          allowNonContiguousMatches: allowNonContiguous
+        )
+        return tieredScore(
+          tier: Self.subtitleDirectScoreThreshold,
+          intra: subtitleScore,
+          labelMatch: createMatches(labelPositions),
+          descriptionMatch: subtitleDirectMatch
+        )
+      }
+      return tieredScore(
+        tier: Self.labelScoreThreshold,
+        intra: labelScore,
         labelMatch: createMatches(labelPositions),
         descriptionMatch: nil
       )
     }
 
     if let description {
-      let descriptionPrefixLength = description.count
-      let descriptionAndLabel = description + label
-      let (labelDescriptionScore, labelDescriptionPositions) = scoreFuzzy(
-        target: descriptionAndLabel,
+      let (descriptionScore, descriptionPositions) = scoreFuzzy(
+        target: description,
         query: query,
-        allowNonContiguousMatches: allowNonContiguousMatches && !query.expectContiguousMatch
+        allowNonContiguousMatches: allowNonContiguous
       )
-      if labelDescriptionScore > 0 {
-        let labelDescriptionMatches = createMatches(labelDescriptionPositions)
-        var labelMatch: [Match] = []
-        var descriptionMatch: [Match] = []
-
-        for match in labelDescriptionMatches {
-          if match.start < descriptionPrefixLength && match.end > descriptionPrefixLength {
-            labelMatch.append(Match(start: 0, end: match.end - descriptionPrefixLength))
-            descriptionMatch.append(Match(start: match.start, end: descriptionPrefixLength))
-          } else if match.start >= descriptionPrefixLength {
-            labelMatch.append(
-              Match(
-                start: match.start - descriptionPrefixLength,
-                end: match.end - descriptionPrefixLength
-              )
-            )
-          } else {
-            descriptionMatch.append(match)
-          }
+      if descriptionScore > 0 {
+        // A direct hit on the subtitle (the repo name) outranks a scattered hit
+        // on the title: a clean repo match must not lose to a fuzzy worktree
+        // match. A scattered subtitle hit stays in the lowest band.
+        if let subtitleDirectMatch = directMatch(target: description, query: query) {
+          return tieredScore(
+            tier: Self.subtitleDirectScoreThreshold,
+            intra: descriptionScore,
+            labelMatch: nil,
+            descriptionMatch: subtitleDirectMatch
+          )
         }
-
-        return ItemScore(
-          score: labelDescriptionScore,
-          labelMatch: labelMatch,
-          descriptionMatch: descriptionMatch
+        return tieredScore(
+          tier: 0,
+          intra: descriptionScore,
+          labelMatch: nil,
+          descriptionMatch: createMatches(descriptionPositions)
         )
       }
     }
 
     return ItemScore(score: 0, labelMatch: nil, descriptionMatch: nil)
+  }
+
+  /// Compose a tier threshold with an in-tier refinement score, clamping the
+  /// refinement so it can never bleed into the tier above (preserving the
+  /// strict direct-beats-fuzzy ordering for pathologically long targets).
+  private func tieredScore(
+    tier: Int,
+    intra: Int,
+    labelMatch: [Match]?,
+    descriptionMatch: [Match]?
+  ) -> ItemScore {
+    ItemScore(
+      score: tier + min(intra, Self.maxIntraTierScore),
+      labelMatch: labelMatch,
+      descriptionMatch: descriptionMatch
+    )
+  }
+
+  /// Favour shorter targets within a tier: the closer the query length is to the
+  /// target length, the larger the boost (a 3/3 match beats a 3/8 match).
+  private func lengthBoost(query: PreparedQueryPiece, target: String) -> Int {
+    guard !target.isEmpty else { return 0 }
+    return Int((Double(query.normalized.count) / Double(target.count) * 100).rounded())
   }
 
   private func compare(_ itemA: ScoredItem, _ itemB: ScoredItem) -> Int {
@@ -989,19 +1196,22 @@ private struct CommandPaletteFuzzyScorer {
       return 1
     }
 
+    if itemA.item.priorityTier != itemB.item.priorityTier {
+      return itemA.item.priorityTier < itemB.item.priorityTier ? -1 : 1
+    }
+
+    // Recency (MRU) is a within-tier signal: once match quality (the score tier)
+    // is equal, the more-recently-used row wins, and it wins BEFORE match-spread
+    // so a navigation surface jumps to what you were just in.
+    if itemA.recencyScore != itemB.recencyScore {
+      return itemA.recencyScore > itemB.recencyScore ? -1 : 1
+    }
+
     if let itemAMatchDistance = matchDistance(itemA),
       let itemBMatchDistance = matchDistance(itemB),
       itemAMatchDistance != itemBMatchDistance
     {
       return itemBMatchDistance > itemAMatchDistance ? -1 : 1
-    }
-
-    if itemA.item.priorityTier != itemB.item.priorityTier {
-      return itemA.item.priorityTier < itemB.item.priorityTier ? -1 : 1
-    }
-
-    if itemA.recencyScore != itemB.recencyScore {
-      return itemA.recencyScore > itemB.recencyScore ? -1 : 1
     }
 
     let fallback = fallbackCompare(itemA.item, itemB.item)
@@ -1350,6 +1560,36 @@ private struct CommandPaletteFuzzyScorer {
     let targetLower = target.lowercased()
     guard targetLower.hasPrefix(query) else { return nil }
     return [Match(start: 0, end: query.count)]
+  }
+
+  /// A "direct" match on the target: a prefix hit, else a contiguous substring
+  /// hit, else `nil`. Prefix positions win so highlighting anchors to the front.
+  private func directMatch(target: String, query: PreparedQueryPiece) -> [Match]? {
+    matchesPrefix(query: query.normalizedLowercase, target: target)
+      ?? matchesSubstring(query: query.normalizedLowercase, target: target)
+  }
+
+  /// Contiguous (substring) match anywhere in the target. `query` is already
+  /// normalized lowercase. Returns the first occurrence; treats `/` and `\` as
+  /// equivalent, matching `considerAsEqual`. This is what separates a "direct"
+  /// hit from a scattered subsequence hit.
+  private func matchesSubstring(query: String, target: String) -> [Match]? {
+    guard !query.isEmpty else { return nil }
+    let queryChars = Array(query)
+    let targetChars = Array(target.lowercased())
+    guard queryChars.count <= targetChars.count else { return nil }
+    for start in 0...(targetChars.count - queryChars.count) {
+      var matched = true
+      for offset in 0..<queryChars.count
+      where !considerAsEqual(targetChars[start + offset], queryChars[offset]) {
+        matched = false
+        break
+      }
+      if matched {
+        return [Match(start: start, end: start + queryChars.count)]
+      }
+    }
+    return nil
   }
 
   private static func prepareQuery(_ original: String) -> PreparedQuery {

@@ -6,10 +6,9 @@ import SwiftUI
 /// badges with a slight overlap; any remaining agents collapse into a plain
 /// `+N` label trailing the group. Pass `maxVisible: .max` to render every
 /// agent without an overflow chip (used by the sidebar setup card, which has
-/// the horizontal room for the full lineup). Each badge contrast-flips its
-/// colorScheme when its `awaitingInput` flag is set; the producer
-/// (`AgentPresenceFeature.State.agents(across:)`) sorts those to the front so
-/// they always appear first in the row.
+/// the horizontal room for the full lineup). Each badge styles itself from its
+/// activity; the producer (`AgentPresenceFeature.State.agents(across:)`) sorts
+/// the attention-worthy ones to the front so they lead the row.
 struct AgentAvatarGroupView: View {
   /// Producer-sorted (awaiting-input first); duplicates kept (e.g. two
   /// Claude surfaces in the same tab show two Claude badges).
@@ -51,7 +50,7 @@ struct AgentAvatarGroupView: View {
       return Slot(
         agent: instance.agent,
         occurrence: occurrence,
-        awaitingInput: instance.awaitingInput,
+        activity: instance.activity,
         // Leftmost on top — stable regardless of `maxVisible`.
         zIndex: Double(total - index)
       )
@@ -61,7 +60,7 @@ struct AgentAvatarGroupView: View {
   private struct Slot: Identifiable {
     let agent: SkillAgent
     let occurrence: Int
-    let awaitingInput: Bool
+    let activity: AgentPresenceFeature.Activity
     let zIndex: Double
     var id: AnyHashable { [AnyHashable(agent), AnyHashable(occurrence)] }
   }
@@ -71,7 +70,7 @@ struct AgentAvatarGroupView: View {
       HStack(spacing: 4) {
         HStack(spacing: -size * 0.35) {
           ForEach(visibleSlots) { slot in
-            AgentBadgeView(agent: slot.agent, size: size, awaitingInput: slot.awaitingInput)
+            AgentBadgeView(agent: slot.agent, size: size, activity: slot.activity)
               .zIndex(slot.zIndex)
           }
         }
@@ -89,8 +88,10 @@ struct AgentAvatarGroupView: View {
     }
   }
 
+  /// The group ignores its children, so each badge's own state has to be folded
+  /// in here or VoiceOver never hears that a session broke.
   private var accessibilityLabel: String {
-    let names = instances.map(\.agent.displayName).joined(separator: ", ")
-    return "Running: \(names)"
+    let descriptions = instances.map { AgentBadgeVisual.resolve($0.activity).describing($0.agent) }
+    return "Agents: \(descriptions.joined(separator: ", "))"
   }
 }

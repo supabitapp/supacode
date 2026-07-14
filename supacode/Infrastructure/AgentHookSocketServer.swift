@@ -466,6 +466,11 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
     case awaitingInput = "awaiting_input"
     case idle
     case notification
+    /// Turn ended in an API / connection error. See `AgentPresenceFeature.Activity`
+    /// for how long the resulting state sticks around.
+    case error
+    /// Context compaction started.
+    case compacting
   }
 
   let version: Int

@@ -58,6 +58,126 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.records[key]?.pids.isEmpty == true)
   }
 
+  // MARK: - Error + compaction.
+
+  @Test func errorMarksSurfaceErroredAndHasErrorReportsIt() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.activity == .error)
+    #expect(harness.state.hasError(in: [surfaceID]))
+    // The turn is dead, so it must not drive the shimmer.
+    #expect(!harness.state.hasActivity(in: [surfaceID]))
+  }
+
+  @Test func busyClearsStickyError() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    #expect(!harness.state.hasError(in: [surfaceID]))
+    #expect(harness.state.hasActivity(in: [surfaceID]))
+  }
+
+  @Test func awaitingInputAndIdleCannotDowngradeStickyError() {
+    // Claude's 60s-idle Notification fires `awaiting_input` on exactly the session
+    // that just died, so nothing but a new turn may leave the errored state.
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    #expect(harness.state.hasError(in: [surfaceID]))
+
+    harness.send(.hookEventReceived(makeEvent(.idle, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    #expect(harness.state.hasError(in: [surfaceID]))
+  }
+
+  @Test func sessionStartClearsStickyError() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid)))
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .claude, surfaceID: surfaceID, pid: pid)))
+
+    // A restart re-fires session_start for the same (surface, pid).
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid)))
+
+    #expect(!harness.state.hasError(in: [surfaceID]))
+  }
+
+  @Test func pidlessSessionStartClearsStickyState() {
+    // Over SSH the presence OSC carries no pid, so the restart must still clear a
+    // sticky error and end a compaction that finished while we weren't looking.
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .claude, surfaceID: surfaceID)))
+    #expect(harness.state.hasError(in: [surfaceID]))
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    #expect(!harness.state.hasError(in: [surfaceID]))
+
+    harness.send(.hookEventReceived(makeEvent(.compacting, agent: .claude, surfaceID: surfaceID)))
+    #expect(harness.state.isCompacting(in: [surfaceID]))
+
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID)))
+    #expect(!harness.state.isCompacting(in: [surfaceID]))
+  }
+
+  @Test func clearAttentionResetsErroredAndAwaitingSurfaces() {
+    var harness = Harness()
+    let errored = UUID()
+    let awaiting = UUID()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: errored, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .claude, surfaceID: errored, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: awaiting, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .claude, surfaceID: awaiting, pid: getpid())))
+
+    harness.send(.clearAttention(surfaces: [errored, awaiting]))
+
+    #expect(!harness.state.hasError(in: [errored]))
+    #expect(harness.state.agents(across: [awaiting], badgesEnabled: true).first?.awaitingInput == false)
+  }
+
+  @Test func compactingCountsAsWorkAndIsClearedByTheNextEvent() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    harness.send(.hookEventReceived(makeEvent(.compacting, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    #expect(harness.state.isCompacting(in: [surfaceID]))
+    #expect(!harness.state.hasError(in: [surfaceID]))
+    // Compaction runs inside a turn, so the row must keep shimmering.
+    #expect(harness.state.hasActivity(in: [surfaceID]))
+
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    #expect(!harness.state.isCompacting(in: [surfaceID]))
+
+    harness.send(.hookEventReceived(makeEvent(.compacting, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.idle, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    #expect(!harness.state.isCompacting(in: [surfaceID]))
+  }
+
+  @Test func rowSnapshotHidesErrorWhenBadgesAreDisabled() {
+    // The badge carries the error treatment, so with badges off there is nothing
+    // to surface and the row must not float to the top of Active either.
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+
+    #expect(harness.state.rowSnapshot(across: [surfaceID], badgesEnabled: true).hasError)
+    #expect(!harness.state.rowSnapshot(across: [surfaceID], badgesEnabled: false).hasError)
+  }
+
   @Test func awaitingInputWithoutPidLazilyCreatesAwaitingRecord() {
     // A remote agent's awaiting-input OSC arrives with no pid and possibly no
     // prior session_start; it must still light the badge.
@@ -872,6 +992,21 @@ struct AgentPresenceFeatureTests {
     let codexKey = AgentPresenceFeature.PresenceKey(agent: .codex, surfaceID: surfaceID)
     #expect(harness.state.records[claudeKey]?.pids == [live])
     #expect(harness.state.records[codexKey] == nil)
+  }
+
+  @Test func erroredAgentSortsToFrontOfGroup() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    // Two agents on one surface. By rawValue `claude` sorts before `codex`, so
+    // the errored-first key is only proven if the errored `codex` leads.
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.hookEventReceived(makeEvent(.error, agent: .codex, surfaceID: surfaceID, pid: getpid())))
+
+    let instances = harness.state.agents(across: [surfaceID], badgesEnabled: true)
+    #expect(instances.map(\.agent) == [.codex, .claude])
+    #expect(instances.first?.activity == .error)
   }
 
   // MARK: - Helpers.

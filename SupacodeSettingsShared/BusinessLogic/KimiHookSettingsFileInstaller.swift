@@ -3,7 +3,7 @@ import Foundation
 private nonisolated let kimiInstallerLogger = SupaLogger("Settings")
 
 /// TOML installer for Kimi's `[[hooks]]` array-of-tables in
-/// `~/.kimi/config.toml`. Operates on the file as structured text: identifies
+/// `~/.kimi-code/config.toml`. Operates on the file as structured text: identifies
 /// `[[hooks]]` block boundaries, drops Supacode-owned blocks (by `command`
 /// sentinel), and appends canonical blocks. All other content (TOML sections,
 /// comments, blank lines) is preserved; line endings are normalized to LF on
@@ -328,7 +328,7 @@ nonisolated enum KimiHookSettingsFileError: Error, Equatable, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidUTF8:
-      "Kimi's config.toml is not valid UTF-8. Fix or remove ~/.kimi/config.toml and try again."
+      "Kimi's config.toml is not valid UTF-8. Fix or remove ~/.kimi-code/config.toml and try again."
     }
   }
 }

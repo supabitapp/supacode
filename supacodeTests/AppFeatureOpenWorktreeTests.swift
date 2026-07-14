@@ -163,6 +163,20 @@ struct AppFeatureOpenWorktreeTests {
     await store.finish()
   }
 
+  @Test(.dependencies) func openRemoteWorktreeWithTraeRoutesThroughWorkspaceClient() async {
+    let worktree = Self.makeRemoteWorktree()
+    let (store, context) = makeStore(worktree: worktree)
+
+    await store.send(.openWorktree(.trae))
+    #expect(context.openedActions.value == [.trae])
+    #expect(
+      context.capturedEvents.value == [
+        CapturedEvent(name: "worktree_opened", source: "toolbar", remote: "true")
+      ]
+    )
+    await store.finish()
+  }
+
   @Test(.dependencies) func openRemoteWorktreeWithVSCodeOnNonDefaultPortReportsUnsupported() async {
     // A non-default-port host can't be expressed as `ssh-remote+host:port`, so
     // `remoteOpenInvocation` is `nil` and the reducer surfaces the port reason.

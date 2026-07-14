@@ -1,6 +1,16 @@
 import AppKit
 import ComposableArchitecture
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
+
+extension NSEvent {
+  /// `isARepeat` raises on anything but a key event, and a menu action reads the current
+  /// event, which is a mouse event when the item is clicked. Gate on the type first.
+  var isAutoRepeatKeyDown: Bool {
+    type == .keyDown && isARepeat
+  }
+}
 
 /// Floating key panel that hosts the command palette. Living in its own window
 /// keeps the main window's first responder untouched, so dismissing the palette
@@ -153,11 +163,26 @@ final class CommandPalettePanelHostView: NSView {
     keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
       guard let self, let panel = self.panel, panel.isKeyWindow else { return event }
       if panel.performKeyEquivalent(with: event) { return nil }
-      // SwiftUI in-view `.keyboardShortcut` buttons don't fire through a panel's
-      // `performKeyEquivalent`, so drive the palette's own navigation / activation
-      // shortcuts here (⌘1..⌘5, arrow keys, ⌃P / ⌃N).
+      // Drive the palette's navigation / activation shortcuts (⌘1..⌘5, arrow
+      // keys, ⌃P / ⌃N) here: in-view `.keyboardShortcut` buttons don't fire
+      // through the panel's `performKeyEquivalent` and would stay registered
+      // app-wide for the hosting view's lifetime.
       if let index = Self.paletteActivationIndex(for: event) {
         self.activatePaletteItem(at: index)
+        return nil
+      }
+      // The palette's own shortcuts toggle it: same mode closes, the other mode
+      // switches surface. Matched here because the monitor runs ahead of the main
+      // menu, so the ⌘P / ⌘⇧P menu items never see the key while the panel is key.
+      // Ahead of the move matcher so a shortcut rebound onto ⌃P / ⌃N still toggles,
+      // but behind ⌘1..⌘5, which the rows render and must keep honoring.
+      if let mode = Self.paletteToggleMode(for: event) {
+        // Swallow auto-repeat rather than toggling on it: a held chord would flip the
+        // palette open and closed. The menu items guard the same way, because closing
+        // tears this monitor down and the next repeat would reach them instead.
+        if !event.isAutoRepeatKeyDown {
+          self.store.send(.togglePresentInMode(mode))
+        }
         return nil
       }
       if let moveUp = Self.paletteMoveIsUp(for: event) {
@@ -219,6 +244,20 @@ final class CommandPalettePanelHostView: NSView {
     }
   }
 
+  // The mode whose shortcut this event matches, honoring user rebinds. `nil` when the
+  // user disabled the shortcut, so a disabled chord keeps falling through to the beep.
+  private static func paletteToggleMode(for event: NSEvent) -> CommandPaletteFeature.PaletteMode? {
+    @Shared(.settingsFile) var settingsFile
+    let overrides = settingsFile.global.shortcutOverrides
+    if AppShortcuts.worktreeSwitcher.effective(from: overrides)?.matches(event) == true {
+      return .worktreeSwitcher
+    }
+    if AppShortcuts.commandPalette.effective(from: overrides)?.matches(event) == true {
+      return .commands
+    }
+    return nil
+  }
+
   private static func paletteActivationIndex(for event: NSEvent) -> Int? {
     guard Self.coreModifiers(of: event) == .command else { return nil }
     guard let characters = event.charactersIgnoringModifiers, let digit = Int(characters),
@@ -253,6 +292,7 @@ final class CommandPalettePanelHostView: NSView {
     CommandPaletteFeature.filterItems(
       items: items,
       query: store.query,
+      mode: store.mode,
       recencyByID: store.recencyByItemID,
       now: .now
     )
@@ -282,20 +322,26 @@ final class CommandPalettePanelHostView: NSView {
     // the focus task); the panel and its observer are kept for reuse.
     removeKeyMonitor()
     hostingView = nil
-    guard let panel, panel.isVisible else { return }
-    let parent = panel.parent
-    parent?.removeChildWindow(panel)
-    panel.orderOut(nil)
-    // Reclaim key on the main window so its preserved first responder (and the
-    // terminal-focus sync driven by `didBecomeKey`) is restored, but only when
-    // the dismissal stayed inside the app and nothing else took key: if the user
-    // dismissed by clicking another in-app window (e.g. Settings), re-keying here
-    // would steal focus from it; if they left the app entirely (Cmd-Tab, another
-    // app), `keyWindow` is also nil, so the `isActive` guard avoids yanking focus
-    // back from the app they switched to.
-    if NSApp.isActive, NSApp.keyWindow == nil, let parent {
-      parent.makeKey()
+    guard let panel else { return }
+    if panel.isVisible {
+      let parent = panel.parent
+      parent?.removeChildWindow(panel)
+      panel.orderOut(nil)
+      // Reclaim key on the main window so its preserved first responder (and the
+      // terminal-focus sync driven by `didBecomeKey`) is restored, but only when
+      // the dismissal stayed inside the app and nothing else took key: if the user
+      // dismissed by clicking another in-app window (e.g. Settings), re-keying here
+      // would steal focus from it; if they left the app entirely (Cmd-Tab, another
+      // app), `keyWindow` is also nil, so the `isActive` guard avoids yanking focus
+      // back from the app they switched to.
+      if NSApp.isActive, NSApp.keyWindow == nil, let parent {
+        parent.makeKey()
+      }
     }
+    // Release the content tree, not just our reference: a retained NSHostingView
+    // keeps any SwiftUI keyboard shortcuts registered app-wide even while the
+    // panel is ordered out, stealing those keys from the rest of the app.
+    panel.contentView = nil
   }
 
   private func makePanel() -> CommandPalettePanel {

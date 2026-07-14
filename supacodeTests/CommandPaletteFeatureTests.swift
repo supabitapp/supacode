@@ -31,7 +31,7 @@ struct CommandPaletteFeatureTests {
     expectNoDifference(items.map(\.id), expectedIDs)
   }
 
-  @Test func commandPaletteItems_skipsPendingAndDeletingWorktrees() {
+  @Test func worktreeSwitcherItems_skipsPendingAndDeletingWorktrees() {
     let rootPath = "/tmp/repo"
     let keep = makeWorktree(id: "\(rootPath)/wt-keep", name: "keep", repoRoot: rootPath)
     let deleting = makeWorktree(
@@ -57,7 +57,7 @@ struct CommandPaletteFeatureTests {
     ]
     state.reconcileSidebarForTesting()
 
-    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
     let ids = items.map(\.id)
     #expect(ids.contains("worktree.\(keep.id).select"))
     #expect(ids.contains { $0.contains(deleting.id.rawValue) } == false)
@@ -245,13 +245,15 @@ struct CommandPaletteFeatureTests {
         return false
       } == false
     )
+    // The commands palette lists no worktree-navigation rows (that is the ⌘P
+    // switcher's job now), only actions.
     #expect(
       items.filter {
         if case .worktreeSelect = $0.kind {
           return true
         }
         return false
-      }.count == 1
+      }.count == 0
     )
   }
 
@@ -293,28 +295,7 @@ struct CommandPaletteFeatureTests {
     )
   }
 
-  @Test func commandPaletteItems_trimsDetailToNil() {
-    let rootPath = "/tmp/repo"
-    let worktree = makeWorktree(
-      id: "\(rootPath)/wt-detail",
-      name: "detail",
-      detail: "   ",
-      repoRoot: rootPath
-    )
-    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    let items = CommandPaletteFeature.commandPaletteItems(
-      from: RepositoriesFeature.State(reconciledRepositories: [repository])
-    )
-    let selectItem = items.first {
-      if case .worktreeSelect(let id) = $0.kind {
-        return id == worktree.id
-      }
-      return false
-    }
-    #expect(selectItem?.subtitle == nil)
-  }
-
-  @Test func commandPaletteItems_keepsFullWorktreeName() {
+  @Test func worktreeSwitcherItems_keepsFullWorktreeName() {
     let rootPath = "/tmp/repo"
     let worktree = makeWorktree(
       id: "\(rootPath)/wt-path",
@@ -323,7 +304,7 @@ struct CommandPaletteFeatureTests {
       repoRoot: rootPath
     )
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
-    let items = CommandPaletteFeature.commandPaletteItems(
+    let items = CommandPaletteFeature.worktreeSwitcherItems(
       from: RepositoriesFeature.State(reconciledRepositories: [repository])
     )
     let selectItem = items.first {
@@ -332,10 +313,12 @@ struct CommandPaletteFeatureTests {
       }
       return false
     }
-    #expect(selectItem?.title == "Repo / khoi/cache")
+    // The worktree name is the title verbatim (a `/` in the branch is not truncated).
+    #expect(selectItem?.title == "khoi/cache")
+    #expect(selectItem?.subtitle == "Repo")
   }
 
-  @Test func commandPaletteItems_respectsRowOrderWithinRepository() {
+  @Test func worktreeSwitcherItems_respectsRowOrderWithinRepository() {
     let rootPath = "/tmp/repo"
     let main = makeWorktree(
       id: rootPath,
@@ -373,7 +356,7 @@ struct CommandPaletteFeatureTests {
       )
     }
 
-    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
     let selectIDs = items.compactMap { item in
       if case .worktreeSelect(let id) = item.kind {
         return id
@@ -383,7 +366,7 @@ struct CommandPaletteFeatureTests {
     expectNoDifference(selectIDs, [main.id, pinned.id, unpinned.id])
   }
 
-  @Test func commandPaletteItems_respectsRepositoryOrder() {
+  @Test func worktreeSwitcherItems_respectsRepositoryOrder() {
     let repoAPath = "/tmp/repo-a"
     let repoBPath = "/tmp/repo-b"
     let mainA = makeWorktree(
@@ -405,7 +388,7 @@ struct CommandPaletteFeatureTests {
     var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB])
     state.repositoryRoots = [repoB.rootURL, repoA.rootURL]
 
-    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
     let selectIDs = items.compactMap { item in
       if case .worktreeSelect(let id) = item.kind {
         return id
@@ -535,6 +518,53 @@ struct CommandPaletteFeatureTests {
     expectNoDifference(
       CommandPaletteFeature.filterItems(items: [item], query: "repo main"),
       [item]
+    )
+  }
+
+  @Test func directSubtitleMatchOutranksScatteredTitleMatch() {
+    // The worktree-title + repo-subtitle split must not let a scattered fuzzy hit
+    // on the worktree name bury a clean direct hit on the repo name. Query "main"
+    // scatter-matches the title "mountain-trail" but exactly matches the repo
+    // subtitle "main" of the other row — the direct repo hit must win.
+    let scatteredTitle = CommandPaletteItem(
+      id: "worktree.mountain",
+      title: "mountain-trail",
+      subtitle: "zzz",
+      kind: .worktreeSelect("wt-mountain")
+    )
+    let directSubtitle = CommandPaletteItem(
+      id: "worktree.feature",
+      title: "feature-x",
+      subtitle: "main",
+      kind: .worktreeSelect("wt-feature")
+    )
+
+    expectNoDifference(
+      CommandPaletteFeature.filterItems(items: [scatteredTitle, directSubtitle], query: "main"),
+      [directSubtitle, scatteredTitle]
+    )
+  }
+
+  @Test func contiguousSubstringOutranksScatteredSubsequence() {
+    // A contiguous substring hit is a "direct" match and must beat a scattered
+    // subsequence hit, even when the scattered one lands on separators/word
+    // starts whose per-character bonuses would otherwise push it ahead.
+    let scattered = CommandPaletteItem(
+      id: "worktree.scattered",
+      title: "a-zzz-b",
+      subtitle: nil,
+      kind: .worktreeSelect("wt-scattered")
+    )
+    let substring = CommandPaletteItem(
+      id: "worktree.substring",
+      title: "xab",
+      subtitle: nil,
+      kind: .worktreeSelect("wt-substring")
+    )
+
+    expectNoDifference(
+      CommandPaletteFeature.filterItems(items: [scattered, substring], query: "ab"),
+      [substring, scattered]
     )
   }
 
@@ -1063,6 +1093,55 @@ struct CommandPaletteFeatureTests {
     await store.receive(.delegate(.ghosttyCommand("goto_split:right")))
   }
 
+  @Test func updateSelection_usesDefaultIndexWhenNoSelection() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+
+    // The project switcher hands a defaultIndex of 1 to skip its own
+    // current-project row; with no prior selection the cursor lands there.
+    await store.send(.updateSelection(itemsCount: 3, defaultIndex: 1)) {
+      $0.selectedIndex = 1
+    }
+  }
+
+  @Test func updateSelection_clampsDefaultIndexToLastRow() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+
+    // A defaultIndex past the end (e.g. a stale switcher list shrank to one
+    // row) clamps to the last valid index rather than overrunning.
+    await store.send(.updateSelection(itemsCount: 1, defaultIndex: 1)) {
+      $0.selectedIndex = 0
+    }
+  }
+
+  @Test func updateSelection_keepsExistingSelectionOverDefault() async {
+    var state = CommandPaletteFeature.State()
+    state.selectedIndex = 0
+    let store = TestStore(initialState: state) {
+      CommandPaletteFeature()
+    }
+
+    // An in-bounds existing selection wins; defaultIndex only seeds a nil
+    // selection so arrow-key navigation isn't yanked back on every refresh.
+    await store.send(.updateSelection(itemsCount: 3, defaultIndex: 1))
+  }
+
+  @Test func resetSelection_usesDefaultIndex() async {
+    var state = CommandPaletteFeature.State()
+    state.selectedIndex = 2
+    let store = TestStore(initialState: state) {
+      CommandPaletteFeature()
+    }
+
+    // resetSelection (fired on query change) snaps straight to defaultIndex.
+    await store.send(.resetSelection(itemsCount: 3, defaultIndex: 1)) {
+      $0.selectedIndex = 1
+    }
+  }
+
   // MARK: - Script items.
 
   @Test func commandPaletteItems_includesRunItemsForConfiguredScripts() {
@@ -1149,6 +1228,484 @@ struct CommandPaletteFeatureTests {
 
     #expect(ids.contains("script.\(definition.id).run"))
     #expect(ids.contains("script.\(definition.id).stop"))
+  }
+
+  @Test func worktreeSwitcherItems_emptyWhenNoWorktrees() {
+    let items = CommandPaletteFeature.worktreeSwitcherItems(from: RepositoriesFeature.State())
+    #expect(items.isEmpty)
+  }
+
+  @Test func worktreeSwitcherItems_sortsByMRUThenSidebarOrderAndMarksCurrent() {
+    let wtA = makeWorktree(id: "/tmp/repo-a/wt", name: "wt", repoRoot: "/tmp/repo-a")
+    let wtB = makeWorktree(id: "/tmp/repo-b/wt", name: "wt", repoRoot: "/tmp/repo-b")
+    let wtC = makeWorktree(id: "/tmp/repo-c/wt", name: "wt", repoRoot: "/tmp/repo-c")
+    let repoA = makeRepository(rootPath: "/tmp/repo-a", name: "Alpha", worktrees: [wtA])
+    let repoB = makeRepository(rootPath: "/tmp/repo-b", name: "Bravo", worktrees: [wtB])
+    let repoC = makeRepository(rootPath: "/tmp/repo-c", name: "Charlie", worktrees: [wtC])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB, repoC])
+
+    // MRU = [wtA, wtC] after select C then select A. The current worktree
+    // (wtA, the MRU head) is rendered first but flagged isCurrentWorktree so
+    // the overlay skips it for the default selection.
+    state.setSingleWorktreeSelection(wtC.id)
+    state.setSingleWorktreeSelection(wtA.id)
+
+    let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
+
+    // MRU head (A), then prior MRU (C), then the worktree never visited (B),
+    // which trails in sidebar order.
+    #expect(
+      items.map(\.id) == [
+        "worktree.\(wtA.id).select",
+        "worktree.\(wtC.id).select",
+        "worktree.\(wtB.id).select",
+      ])
+    // priorityTier mirrors visible order so an empty-query prioritizeItems()
+    // pass preserves the MRU ranking even though item-level recency is empty.
+    #expect(items.map(\.priorityTier) == [0, 1, 2])
+    // Only the current worktree (A) carries the skip-for-default flag.
+    #expect(items.map(\.isCurrentWorktree) == [true, false, false])
+  }
+
+  @Test func worktreeSwitcherItems_listsEveryWorktreeAcrossRepos() {
+    // The whole point of the rework: multi-worktree repos surface every
+    // worktree, not a single per-repo entry. wt1/wt2 share repoA.
+    let wt1 = makeWorktree(id: "/tmp/repo-a/wt-1", name: "feature/one", repoRoot: "/tmp/repo-a")
+    let wt2 = makeWorktree(id: "/tmp/repo-a/wt-2", name: "feature/two", repoRoot: "/tmp/repo-a")
+    let wt3 = makeWorktree(id: "/tmp/repo-b/wt", name: "main", repoRoot: "/tmp/repo-b")
+    let repoA = makeRepository(rootPath: "/tmp/repo-a", name: "Alpha", worktrees: [wt1, wt2])
+    let repoB = makeRepository(rootPath: "/tmp/repo-b", name: "Bravo", worktrees: [wt3])
+    let state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB])
+
+    let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
+
+    #expect(
+      Set(items.map(\.id)) == [
+        "worktree.\(wt1.id).select",
+        "worktree.\(wt2.id).select",
+        "worktree.\(wt3.id).select",
+      ])
+  }
+
+  @Test func worktreeSwitcherItems_titleIsWorktreeWithRepoSubtitle() {
+    let wtFeat = makeWorktree(id: "/tmp/repo/feat", name: "feature/x", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wtFeat])
+    let state = RepositoriesFeature.State(reconciledRepositories: [repo])
+
+    let items = CommandPaletteFeature.worktreeSwitcherItems(from: state)
+    // Worktree name is the prominent title; repo is the secondary subtitle so
+    // the two read as a hierarchy. The fuzzy scorer matches both, so a query
+    // still hits either the worktree name or the project name.
+    #expect(items.first?.title == "feature/x")
+    #expect(items.first?.subtitle == "Repo")
+  }
+
+  @Test func items_dispatchByMode() {
+    let wtMain = makeWorktree(id: "/tmp/repo/main", name: "main", repoRoot: "/tmp/repo")
+    let wtOther = makeWorktree(id: "/tmp/other/wt", name: "wt", repoRoot: "/tmp/other")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [wtMain])
+    let other = makeRepository(rootPath: "/tmp/other", name: "Other", worktrees: [wtOther])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo, other])
+    // wtOther is current; wtMain is the previous worktree the switcher surfaces.
+    state.setSingleWorktreeSelection(wtMain.id)
+    state.setSingleWorktreeSelection(wtOther.id)
+
+    let commands = CommandPaletteFeature.items(in: .commands, from: state)
+    let switcher = CommandPaletteFeature.items(in: .worktreeSwitcher, from: state)
+
+    // .commands surfaces actions only; worktree navigation moved to the switcher.
+    #expect(commands.contains { $0.id.hasPrefix("global.") })
+    #expect(commands.contains { $0.id == "worktree.\(wtMain.id).select" } == false)
+
+    // .worktreeSwitcher is worktree-only, MRU-ordered. The current worktree
+    // (wtOther) leads, flagged so the overlay skips it for the default
+    // selection; the prior worktree (wtMain) follows.
+    #expect(switcher.allSatisfy { $0.id.hasPrefix("worktree.") && $0.id.hasSuffix(".select") })
+    #expect(
+      switcher == [
+        CommandPaletteItem(
+          id: "worktree.\(wtOther.id).select",
+          title: "wt",
+          subtitle: "Other",
+          kind: .worktreeSelect(wtOther.id),
+          priorityTier: 0,
+          isCurrentWorktree: true,
+          worktreeStyle: .init(icon: .pullRequest(.branch, checkBadge: nil))
+        ),
+        CommandPaletteItem(
+          id: "worktree.\(wtMain.id).select",
+          title: "main",
+          subtitle: "Repo",
+          kind: .worktreeSelect(wtMain.id),
+          priorityTier: 1,
+          worktreeStyle: .init(icon: .pullRequest(.branch, checkBadge: nil))
+        ),
+      ])
+  }
+
+  @Test func commandPaletteItems_omitsWorktreeSelectRows() {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [worktree])
+    let items = CommandPaletteFeature.commandPaletteItems(
+      from: RepositoriesFeature.State(reconciledRepositories: [repo])
+    )
+    // The ⌘⇧P command palette lists actions only; worktree navigation is the switcher's job.
+    #expect(
+      items.contains {
+        if case .worktreeSelect = $0.kind { return true }
+        return false
+      } == false
+    )
+  }
+
+  @Test func directSubtitleMatchBeatsScatteredTitleWhenTitleAlsoMatches() {
+    // "main" scatter-matches "mountain-*" (m-a-i-n as a subsequence). The row whose
+    // repo subtitle is exactly "main" must outrank the row that only scatter-matches
+    // its title: a clean repo hit beats a fuzzy worktree hit even when both titles match.
+    let subtitleHit = CommandPaletteItem(
+      id: "worktree.x.select", title: "mountain-xyz", subtitle: "main", kind: .worktreeSelect("x")
+    )
+    let titleScatterOnly = CommandPaletteItem(
+      id: "worktree.y.select", title: "mountain-abc", subtitle: "other", kind: .worktreeSelect("y")
+    )
+    let result = CommandPaletteFeature.filterItems(items: [titleScatterOnly, subtitleHit], query: "main")
+    #expect(result.map(\.id) == ["worktree.x.select", "worktree.y.select"])
+  }
+
+  @Test func directSubstringBeatsScatteredMatchOnLongTarget() {
+    // A direct substring hit outranks a scattered subsequence hit even when the
+    // scattered hit is on a very long title, whose in-tier score is clamped so it
+    // cannot bleed past the higher direct tier.
+    let longScatter = CommandPaletteItem(
+      id: "worktree.long.select",
+      title: "abazzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzc",
+      subtitle: nil,
+      kind: .worktreeSelect("long")
+    )
+    let directShort = CommandPaletteItem(
+      id: "worktree.short.select", title: "xabc", subtitle: nil, kind: .worktreeSelect("short")
+    )
+    let result = CommandPaletteFeature.filterItems(items: [longScatter, directShort], query: "abc")
+    #expect(result.first?.id == "worktree.short.select")
+  }
+
+  @Test func filterItems_worktreeSwitcherEmptyQueryListsAllWorktrees() {
+    let current = CommandPaletteItem(
+      id: "worktree.a.select", title: "a", subtitle: "R", kind: .worktreeSelect("a"),
+      priorityTier: 0, isCurrentWorktree: true
+    )
+    let prev = CommandPaletteItem(
+      id: "worktree.b.select", title: "b", subtitle: "R", kind: .worktreeSelect("b"), priorityTier: 1
+    )
+    // The switcher lists every worktree (including the current one) with an empty
+    // query, in priorityTier (MRU) order, unlike the commands palette which hides them.
+    let result = CommandPaletteFeature.filterItems(items: [current, prev], query: "", mode: .worktreeSwitcher)
+    #expect(result.map(\.id) == ["worktree.a.select", "worktree.b.select"])
+  }
+
+  @Test func defaultSelectionIndex_skipsCurrentWorktreeOnEmptyQuery() {
+    let current = CommandPaletteItem(
+      id: "worktree.a.select", title: "a", subtitle: "R", kind: .worktreeSelect("a"),
+      priorityTier: 0, isCurrentWorktree: true
+    )
+    let prev = CommandPaletteItem(
+      id: "worktree.b.select", title: "b", subtitle: "R", kind: .worktreeSelect("b"), priorityTier: 1
+    )
+    // Empty query + current worktree at index 0 lands on the previous worktree (1).
+    #expect(CommandPaletteFeature.defaultSelectionIndex(rows: [current, prev], query: "") == 1)
+  }
+
+  @Test func defaultSelectionIndex_topRowWhenQueryNonEmptyOrHeadNotCurrent() {
+    let current = CommandPaletteItem(
+      id: "worktree.a.select", title: "a", subtitle: "R", kind: .worktreeSelect("a"),
+      priorityTier: 0, isCurrentWorktree: true
+    )
+    let prev = CommandPaletteItem(
+      id: "worktree.b.select", title: "b", subtitle: "R", kind: .worktreeSelect("b"), priorityTier: 1
+    )
+    // Once the user types, the top fuzzy match wins even if it is the current worktree.
+    #expect(CommandPaletteFeature.defaultSelectionIndex(rows: [current, prev], query: "a") == 0)
+    // A lone current row still selects index 0 (nothing else to jump to).
+    #expect(CommandPaletteFeature.defaultSelectionIndex(rows: [current], query: "") == 0)
+    // When the head isn't the current worktree, don't skip it.
+    #expect(CommandPaletteFeature.defaultSelectionIndex(rows: [prev, current], query: "") == 0)
+  }
+
+  @Test func togglePresentInMode_sameModeWhilePresentedDismisses() async {
+    let store = TestStore(
+      initialState: CommandPaletteFeature.State(
+        isPresented: true, mode: .worktreeSwitcher, query: "feat", selectedIndex: 2
+      )
+    ) {
+      CommandPaletteFeature()
+    }
+    // Re-pressing the shortcut that opened the palette closes it, and the dismiss
+    // delegate hands focus back to the terminal.
+    await store.send(.togglePresentInMode(.worktreeSwitcher))
+    await store.receive(\.setPresented) {
+      $0.isPresented = false
+      $0.mode = .commands
+      $0.query = ""
+      $0.selectedIndex = nil
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+  }
+
+  @Test func togglePresentInMode_switchingModeWhilePresentedResets() async {
+    let store = TestStore(
+      initialState: CommandPaletteFeature.State(
+        isPresented: true, mode: .commands, query: "x", selectedIndex: 3
+      )
+    ) {
+      CommandPaletteFeature()
+    }
+    // Switching mode while open clears the query and selection and swaps the surface.
+    // No dismiss delegate: the panel stays key, so the terminal must not steal focus.
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
+      $0.mode = .worktreeSwitcher
+      $0.query = ""
+      $0.selectedIndex = nil
+    }
+  }
+
+  @Test func togglePresentInMode_userKeystrokeSequence() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+    // ⌘P opens the worktree switcher.
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
+      $0.isPresented = true
+      $0.mode = .worktreeSwitcher
+    }
+    // ⌘⇧P switches to the command palette without closing.
+    await store.send(.togglePresentInMode(.commands)) {
+      $0.mode = .commands
+    }
+    // ⌘⇧P again closes it.
+    await store.send(.togglePresentInMode(.commands))
+    await store.receive(\.setPresented) {
+      $0.isPresented = false
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+    // ⌘P reopens the worktree switcher.
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
+      $0.isPresented = true
+      $0.mode = .worktreeSwitcher
+    }
+    // ⌘P again closes it.
+    await store.send(.togglePresentInMode(.worktreeSwitcher))
+    await store.receive(\.setPresented) {
+      $0.isPresented = false
+      $0.mode = .commands
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+  }
+
+  @Test func worktreeSwitcherItems_appliesRepoColorWorktreeTintAndHost() {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    // Repo color lives on the sidebar section; the per-worktree tint and host on the row.
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[repo.id] ?? .init()
+      section.color = .blue
+      sidebar.sections[repo.id] = section
+    }
+    state.sidebarItems[id: worktree.id]?.customTint = .red
+    let host = RemoteHost(alias: "beacon")
+    state.sidebarItems[id: worktree.id]?.host = host
+
+    let item = CommandPaletteFeature.worktreeSwitcherItems(from: state).first
+    #expect(item?.title == "feature")
+    #expect(item?.subtitle == "Repo")
+    // Worktree name takes its own tint; the repo subtitle takes the repo color.
+    #expect(item?.worktreeStyle?.titleTint == .red)
+    #expect(item?.worktreeStyle?.repoTint == .blue)
+    #expect(item?.worktreeStyle?.hostInfo == host.displayAuthority)
+    // A git worktree with no linked pull request shows the branch glyph, no badge.
+    #expect(item?.worktreeStyle?.icon == .pullRequest(.branch, checkBadge: nil))
+  }
+
+  @Test func worktreeSwitcherItems_folderUsesCustomNameAndColorNoSubtitle() {
+    let folderURL = URL(fileURLWithPath: "/tmp/my-folder")
+    let folderID = Repository.folderWorktreeID(for: folderURL)
+    let folderRepo = Repository(
+      id: RepositoryID(folderURL.path(percentEncoded: false)),
+      rootURL: folderURL,
+      name: "my-folder",
+      worktrees: IdentifiedArray(uniqueElements: [
+        Worktree(id: folderID, name: "my-folder", detail: "", workingDirectory: folderURL, repositoryRootURL: folderURL)
+      ]),
+      isGitRepository: false
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [folderRepo])
+    // A folder's custom name / color live on the sidebar section.
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[folderRepo.id] ?? .init()
+      section.title = "Design Docs"
+      section.color = .teal
+      sidebar.sections[folderRepo.id] = section
+    }
+
+    let item = CommandPaletteFeature.worktreeSwitcherItems(from: state).first
+    // A folder shows its custom name as the title (tinted with the folder color) and
+    // carries no repo subtitle, so the name never doubles up.
+    #expect(item?.title == "Design Docs")
+    #expect(item?.subtitle == nil)
+    #expect(item?.worktreeStyle?.titleTint == .teal)
+    #expect(item?.worktreeStyle?.repoTint == nil)
+    #expect(item?.worktreeStyle?.icon == .folder)
+  }
+
+  @Test func worktreeSwitcherItems_iconMissingWinsOverPullRequest() {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    state.sidebarItems[id: worktree.id]?.isMissing = true
+    state.sidebarItems[id: worktree.id]?.pullRequest = makePullRequest(state: "OPEN")
+
+    let item = CommandPaletteFeature.worktreeSwitcherItems(from: state).first
+    // A missing working directory wins over the pull-request glyph.
+    #expect(item?.worktreeStyle?.icon == .missing)
+  }
+
+  @Test func worktreeSwitcherItems_iconIgnoresStalePullRequestOffBranch() {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    // The row moved to a branch that no longer matches the PR head ("feature").
+    state.sidebarItems[id: worktree.id]?.branchName = "moved-off"
+    let failingCheck = GithubPullRequestStatusCheck(
+      detailsUrl: "https://example.com/check/1",
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+      state: nil
+    )
+    state.sidebarItems[id: worktree.id]?.pullRequest = makePullRequest(state: "OPEN", checks: [failingCheck])
+
+    let item = CommandPaletteFeature.worktreeSwitcherItems(from: state).first
+    // A stale PR (head branch != row branch) collapses to the branch glyph and drops the badge.
+    #expect(item?.worktreeStyle?.icon == .pullRequest(.branch, checkBadge: nil))
+  }
+
+  @Test func worktreeSwitcherItems_iconBadgesPassingAndInProgressChecks() {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [worktree])
+
+    var passingState = RepositoriesFeature.State(reconciledRepositories: [repo])
+    passingState.sidebarItems[id: worktree.id]?.pullRequest = makePullRequest(
+      state: "OPEN",
+      checks: [GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: "SUCCESS", state: nil)]
+    )
+    #expect(
+      CommandPaletteFeature.worktreeSwitcherItems(from: passingState).first?.worktreeStyle?.icon
+        == .pullRequest(.open, checkBadge: .passing))
+
+    var inProgressState = RepositoriesFeature.State(reconciledRepositories: [repo])
+    inProgressState.sidebarItems[id: worktree.id]?.pullRequest = makePullRequest(
+      state: "OPEN",
+      checks: [GithubPullRequestStatusCheck(status: "IN_PROGRESS", conclusion: nil, state: nil)]
+    )
+    #expect(
+      CommandPaletteFeature.worktreeSwitcherItems(from: inProgressState).first?.worktreeStyle?.icon
+        == .pullRequest(.open, checkBadge: .inProgress))
+  }
+
+  @Test func worktreeSwitcherItems_iconReflectsPullRequestState() {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    state.sidebarItems[id: worktree.id]?.pullRequest = makePullRequest(state: "OPEN")
+
+    let item = CommandPaletteFeature.worktreeSwitcherItems(from: state).first
+    // An open pull request with no checks lifts the branch glyph to the open-PR
+    // variant and carries no check badge.
+    #expect(item?.worktreeStyle?.icon == .pullRequest(.open, checkBadge: nil))
+  }
+
+  @Test func worktreeSwitcherItems_iconBadgesFailingChecks() {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: "/tmp/repo")
+    let repo = makeRepository(rootPath: "/tmp/repo", name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
+    let failingCheck = GithubPullRequestStatusCheck(
+      detailsUrl: "https://example.com/check/1",
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+      state: nil
+    )
+    state.sidebarItems[id: worktree.id]?.pullRequest = makePullRequest(
+      state: "OPEN",
+      checks: [failingCheck]
+    )
+
+    let item = CommandPaletteFeature.worktreeSwitcherItems(from: state).first
+    // A failing check surfaces the red check badge over the open-PR glyph.
+    #expect(item?.worktreeStyle?.icon == .pullRequest(.open, checkBadge: .failing))
+  }
+
+  @Test func togglePresentInMode_whenClosedOpensInThatMode() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.togglePresentInMode(.worktreeSwitcher)) {
+      $0.isPresented = true
+      $0.mode = .worktreeSwitcher
+    }
+  }
+
+  @Test func togglePresentInMode_whenClosedInTheSameModeStillOpens() async {
+    // Every dismiss resets the mode to `.commands`, so a closed palette usually already
+    // sits in the mode being asked for. Closed must always open, never toggle off.
+    let store = TestStore(initialState: CommandPaletteFeature.State(mode: .commands)) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.togglePresentInMode(.commands)) {
+      $0.isPresented = true
+    }
+  }
+
+  @Test func setPresented_falseFromPresentedEmitsDismissedDelegate() async {
+    let store = TestStore(
+      initialState: CommandPaletteFeature.State(isPresented: true, mode: .worktreeSwitcher)
+    ) {
+      CommandPaletteFeature()
+    }
+
+    await store.send(.setPresented(false)) {
+      $0.isPresented = false
+      $0.mode = .commands
+    }
+    await store.receive(\.delegate.dismissedWithoutSelection)
+  }
+
+  @Test func setPresented_falseFromNotPresentedDoesNotEmitDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State()) {
+      CommandPaletteFeature()
+    }
+    await store.send(.setPresented(false))
+  }
+
+  @Test func activateItem_doesNotEmitDismissedDelegate() async {
+    let store = TestStore(initialState: CommandPaletteFeature.State(isPresented: true)) {
+      CommandPaletteFeature()
+    } withDependencies: {
+      $0.date.now = Date(timeIntervalSince1970: 0)
+    }
+
+    let item = CommandPaletteItem(
+      id: "global.open-settings",
+      title: "Open Settings",
+      subtitle: nil,
+      kind: .openSettings
+    )
+    await store.send(.activateItem(item)) {
+      $0.isPresented = false
+      $0.recencyByItemID[item.id] = 0
+    }
+    // The activation delegate carries the focus — no dismissal echo.
+    await store.receive(\.delegate.openSettings)
   }
 }
 

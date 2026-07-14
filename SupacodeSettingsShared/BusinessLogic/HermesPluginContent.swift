@@ -124,8 +124,8 @@ nonisolated enum HermesPluginContent {
 
 
     def _on_session_end(**_kwargs):
-        # Emit session_end so the app tears the badge down promptly (idle lingers until the pid is reaped).
-        _emit_presence("session_end")
+        # on_session_end fires per turn in Hermes, so emit idle (not session_end) to stay present between turns.
+        _emit_presence("idle")
     """
   }
 }

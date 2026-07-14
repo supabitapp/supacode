@@ -222,6 +222,17 @@ public nonisolated enum AgentPresenceOSC {
     "\(kindField)=\(notifyKind);\(titleField)=\(title);\(bodyField)=\(body)"
   }
 
+  /// Notify OSC whose `title` / `body` are base64-encoded when the command is
+  /// composed, so the hook needs no runtime `base64` / `awk`. Standard base64
+  /// carries no `;` or `%`, so it is framing- and `printf`-safe with no format args.
+  static func emitFixedNotifyShell(agent: SkillAgent, title: String, body: String) -> String {
+    let encodedTitle = Data(title.utf8).base64EncodedString()
+    let encodedBody = Data(body.utf8).base64EncodedString()
+    let payload =
+      #"\033]3008;start=\#(agent.rawValue);\#(notifyMetadata(title: encodedTitle, body: encodedBody))\033\\"#
+    return #"printf '\#(payload)' > "$__tty""#
+  }
+
   /// Portable awk that extracts one JSON string value from the agent's hook JSON
   /// on stdin. `keys` is a comma-separated precedence list (first non-empty wins);
   /// the raw escaped value is copied verbatim up to the first unescaped `"` and
@@ -258,5 +269,39 @@ public nonisolated enum AgentPresenceOSC {
       + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
       + #"-v budget=\#(notifyBodyByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
       + #"printf '\#(payload)' "$__t" "$__b" > "$__tty""#
+  }
+
+  // MARK: - Stop-hook API-error probe.
+
+  /// Bytes of the transcript tail the Stop-hook probe reads. Bounded so the hook
+  /// stays cheap. Sized well above the largest realistic entry, since a single
+  /// tool-result line can run to tens of kilobytes.
+  static let transcriptTailBytes = 262_144
+
+  /// Scans the transcript JSONL (compact, one object per line, oldest-first) and
+  /// prints `1` when the last message entry for `sid` is an API error: a later
+  /// `type:"user"` or non-error `type:"assistant"` line means the turn moved on.
+  /// An empty `sid` never matches, so a hook payload without `session_id` degrades
+  /// to idle rather than to another session's stale error. Substring matching
+  /// assumes compact JSON; anything else fails to match and yields idle, never a
+  /// spurious error. No single quote, so it survives single-quoting in shell.
+  static let apiErrorScanAwk =
+    #"{if(index($0,"\"isApiErrorMessage\":true")>0){if(sid!=""&&index($0,"\"sessionId\":\"" sid "\"")>0)c=1;next}"#
+    + #"if(index($0,"\"type\":\"user\"")>0){c=0;next}"#
+    + #"if(index($0,"\"type\":\"assistant\"")>0){c=0;next}}"#
+    + #"END{printf "%s",(c?"1":"")}"#
+
+  /// Sets `$__apierr=1` when the current turn ended in an API error. Leaves `$__in`
+  /// set so a following `emitNotifyShell(readsStdin: false)` reuses the one stdin
+  /// read. `awk` and `tail` only, so it works on a bare SSH host.
+  static func stopApiErrorProbeShell() -> String {
+    #"__in=$(cat); "#
+      + #"__tp=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="transcript_path" "#
+      + #"-v budget=4096 '\#(notifyExtractAwk)'); "#
+      + #"__sid=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="session_id" "#
+      + #"-v budget=256 '\#(notifyExtractAwk)'); "#
+      + #"__apierr=""; [ -n "$__tp" ] && [ -f "$__tp" ] && "#
+      + #"__apierr=$(tail -c \#(transcriptTailBytes) "$__tp" 2>/dev/null "#
+      + #"| LC_ALL=C awk -v sid="$__sid" '\#(apiErrorScanAwk)')"#
   }
 }
