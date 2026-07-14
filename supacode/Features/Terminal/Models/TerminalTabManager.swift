@@ -64,8 +64,7 @@ final class TerminalTabManager {
   }
 
   func updateTitle(_ id: TerminalTabID, title: String) {
-    guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-    guard !tabs[index].isTitleLocked else { return }
+    guard let index = renamableTabIndex(id) else { return }
     // TUIs rewrite their title constantly; skip no-op writes so an unchanged
     // title doesn't re-render the tab bar on every report.
     guard tabs[index].title != title else { return }
@@ -73,9 +72,19 @@ final class TerminalTabManager {
   }
 
   func setCustomTitle(_ id: TerminalTabID, title: String) {
-    guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-    guard !tabs[index].isTitleLocked else { return }
+    guard let index = renamableTabIndex(id) else { return }
     tabs[index].customTitle = Self.normalizedCustomTitle(title)
+  }
+
+  func canRename(_ id: TerminalTabID) -> Bool {
+    renamableTabIndex(id) != nil
+  }
+
+  private func renamableTabIndex(_ id: TerminalTabID) -> Int? {
+    guard let index = tabs.firstIndex(where: { $0.id == id }), !tabs[index].isTitleLocked else {
+      return nil
+    }
+    return index
   }
 
   private static func normalizedCustomTitle(_ title: String) -> String? {
@@ -139,7 +148,7 @@ final class TerminalTabManager {
   }
 
   func beginTabRename(_ id: TerminalTabID) {
-    guard tabs.contains(where: { $0.id == id && !$0.isTitleLocked }) else { return }
+    guard canRename(id) else { return }
     editingTabID = id
   }
 

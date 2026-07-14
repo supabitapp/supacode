@@ -146,6 +146,16 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
   }
 
+  @Test func canRenameRequiresExistingUnlockedTab() {
+    let manager = TerminalTabManager()
+    let unlockedID = manager.createTab(title: "tab 1", icon: nil)
+    let lockedID = manager.createTab(title: "Run Script", icon: nil, isTitleLocked: true)
+
+    #expect(manager.canRename(unlockedID))
+    #expect(!manager.canRename(lockedID))
+    #expect(!manager.canRename(TerminalTabID()))
+  }
+
   @Test func setCustomTitleTrimsLeadingAndTrailingWhitespace() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
