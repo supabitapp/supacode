@@ -341,6 +341,16 @@ extension RepositoriesFeature.State {
       toolbarNotificationGroupsCache = new
     }
   }
+
+  /// Equatable-diffs the menu bar sections against the cache so the status menu
+  /// only rebuilds when the rows it renders actually change. Runs after
+  /// `recomputeSidebarStructureIfChanged()`, whose highlight sections it reads.
+  mutating func recomputeMenuBarSectionsIfChanged() {
+    let new = computeMenuBarSections()
+    if new != menuBarSectionsCache {
+      menuBarSectionsCache = new
+    }
+  }
 }
 
 /// Per-cache invalidation flag set returned by every reducer action. Exhaustive
@@ -532,6 +542,11 @@ extension RepositoriesFeature.State {
     }
     if invalidations.contains(.toolbarNotificationGroups) {
       recomputeToolbarNotificationGroupsIfChanged()
+    }
+    // The menu bar rows key off notifications *and* agent activity, and agent
+    // snapshots only invalidate `.sidebarStructure`, so they need both flags.
+    if !invalidations.isDisjoint(with: [.sidebarStructure, .toolbarNotificationGroups]) {
+      recomputeMenuBarSectionsIfChanged()
     }
   }
 

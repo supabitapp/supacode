@@ -334,9 +334,8 @@ public struct SettingsFeature {
         return persist(state)
 
       case .setAppVisibility(let visibility):
-        // Deduped here (not just at the caller) because `MenuBarExtra`'s
-        // `isInserted` binding re-writes the current value on every scene
-        // evaluation; persisting each echo would loop scene -> persist -> scene.
+        // MenuBarExtra echoes the current value on every scene evaluation;
+        // persisting each echo would loop scene -> persist -> scene.
         guard state.appVisibility != visibility else { return .none }
         state.appVisibility = visibility
         state.syncGlobalDefaults(from: state.globalSettings)

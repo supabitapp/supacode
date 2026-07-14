@@ -70,9 +70,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// When true, remote surfaces wrap their session in zmx on the host when
   /// the host has it installed, so the session survives disconnects.
   public var remoteSessionPersistenceEnabled: Bool
-  /// Where Supacode appears: Dock, menu bar, or both. The menu bar status item
-  /// is inserted when this includes the menu bar; the Dock icon is hidden in
-  /// `.menuBar` mode.
+  /// Where Supacode appears: Dock, menu bar, or both.
   public var appVisibility: AppVisibility
 
   public static let `default` = GlobalSettings(
@@ -344,17 +342,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     remoteSessionPersistenceEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .remoteSessionPersistenceEnabled)
       ?? Self.default.remoteSessionPersistenceEnabled
-    // Prefer the new three-state field; fall back to the legacy boolean
-    // (`showMenuBarIcon`), which always shipped alongside a Dock icon —
-    // `true` → both surfaces, `false` → Dock only. Missing both → default.
-    if let visibility = try container.decodeIfPresent(AppVisibility.self, forKey: .appVisibility) {
-      appVisibility = visibility
-    } else if let legacyShowMenuBarIcon = try legacy.decodeIfPresent(
-      Bool.self, forKey: LegacyCodingKey(stringValue: "showMenuBarIcon")!)
-    {
-      appVisibility = legacyShowMenuBarIcon ? .dockAndMenuBar : .dock
-    } else {
-      appVisibility = Self.default.appVisibility
-    }
+    // Reject unrecognized values (and a mistyped key) from corrupted or
+    // hand-edited settings files: a throw here resets the whole file to defaults.
+    appVisibility =
+      ((try? container.decodeIfPresent(String.self, forKey: .appVisibility)) ?? nil)
+      .flatMap(AppVisibility.init(rawValue:))
+      ?? Self.default.appVisibility
   }
 }

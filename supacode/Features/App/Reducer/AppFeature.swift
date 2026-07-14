@@ -210,10 +210,7 @@ struct AppFeature {
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
-    case menuBarNotificationSelected(
-      worktreeID: Worktree.ID, tabID: TerminalTabID?, surfaceID: UUID, notificationID: UUID)
     case menuBarWorktreeSelected(worktreeID: Worktree.ID)
-    case showNotificationsPane
     case markAllNotificationsRead
     case runScript
     case runNamedScript(ScriptDefinition)
@@ -532,6 +529,7 @@ struct AppFeature {
           settings.agentPresenceBadgesEnabled != state.lastKnownAgentPresenceBadgesEnabled
         state.lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
         let visibilityChanged = settings.appVisibility != state.lastKnownAppVisibility
+        let previousVisibility = state.lastKnownAppVisibility
         // Surface the main window when the Dock icon comes back, so leaving
         // menu-bar-only mode never strands the user without a window.
         let dockIconReappeared =
@@ -595,10 +593,17 @@ struct AppFeature {
         ]
         if visibilityChanged {
           effects.append(
-            .run { @MainActor _ in
-              NSApplication.shared.applyActivationPolicy(for: settings.appVisibility)
+            .run { @MainActor send in
+              // The status item is already gone by now (the `MenuBarExtra`
+              // binding reads the new value on the same scene pass), so a
+              // refused policy switch would leave no surface at all. Fall back
+              // to the previous mode, which puts one of them back.
+              guard appLifecycleClient.applyVisibility(settings.appVisibility) else {
+                await send(.settings(.setAppVisibility(previousVisibility)))
+                return
+              }
               if dockIconReappeared {
-                NSApplication.shared.surfaceMainWindow()
+                _ = appLifecycleClient.surfaceMainWindow()
               }
             }
           )
@@ -769,52 +774,22 @@ struct AppFeature {
           }
         )
 
-      case .menuBarNotificationSelected(let worktreeID, let tabID, let surfaceID, let notificationID):
-        guard let worktree = state.repositories.worktree(for: worktreeID) else {
-          jumpLogger.warning(
-            "menuBarNotificationSelected: worktree \(worktreeID) vanished between menu render and click."
-          )
-          return .none
-        }
-        analyticsClient.capture("menu_bar_notification_selected", nil)
-        // The notification may predate a tab move; re-resolve the surface's
-        // current tab when the recorded one is gone. A nil resolution means
-        // the surface closed — still surface the app and mark the item read.
-        let resolvedTabID = tabID ?? terminalClient.tabID(worktreeID, surfaceID)
-        return .merge(
-          .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
-          .run { @MainActor _ in
-            NSApplication.shared.surfaceMainWindow()
-            if let resolvedTabID {
-              terminalClient.send(.focusSurface(worktree, tabID: resolvedTabID, surfaceID: surfaceID))
-            }
-            terminalClient.markNotificationRead(worktreeID, notificationID)
-          }
-        )
-
       case .menuBarWorktreeSelected(let worktreeID):
+        // The menu snapshots its rows when it opens, so the worktree can be
+        // archived or deleted before the click lands. Surface the app anyway:
+        // in menu bar mode a dead click is indistinguishable from a hang.
         guard state.repositories.worktree(for: worktreeID) != nil else {
           jumpLogger.warning(
             "menuBarWorktreeSelected: worktree \(worktreeID) vanished between menu render and click."
           )
-          return .none
+          analyticsClient.capture("menu_bar_worktree_selected_stale", nil)
+          return .run { @MainActor _ in _ = appLifecycleClient.surfaceMainWindow() }
         }
         analyticsClient.capture("menu_bar_worktree_selected", nil)
         return .merge(
           .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
-          .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
+          .run { @MainActor _ in _ = appLifecycleClient.surfaceMainWindow() }
         )
-
-      case .showNotificationsPane:
-        let surfaceWindow: Effect<Action> = .run { @MainActor _ in
-          NSApplication.shared.surfaceMainWindow()
-        }
-        // Toggle only when the notifications pane isn't already up, so a
-        // second menu invocation surfaces the window instead of closing it.
-        if state.repositories.inspectorPresented, state.repositories.inspectorPane == .notifications {
-          return surfaceWindow
-        }
-        return .merge(surfaceWindow, .send(.repositories(.toggleInspectorPane(.notifications))))
 
       case .markAllNotificationsRead:
         analyticsClient.capture("notifications_mark_all_read", nil)

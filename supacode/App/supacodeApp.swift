@@ -76,22 +76,20 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     // the main window. Opt the singleton out per-process so a panel
     // left open from a previous session can't survive the relaunch.
     NSColorPanel.shared.isRestorable = false
-    // Apply the saved Dock/menu-bar visibility before the first window shows,
-    // so a menu-bar-only user never flashes a Dock icon at launch.
-    if let visibility = appStore?.state.settings.appVisibility {
-      NSApplication.shared.applyActivationPolicy(for: visibility)
+    guard let appStore else {
+      SupaLogger("App").error("applicationDidFinishLaunching with no store; launch setup skipped.")
+      return
     }
-    appStore?.send(.appLaunched)
+    // Apply the saved Dock/menu-bar visibility before the first window shows.
+    NSApplication.shared.applyActivationPolicy(for: appStore.state.settings.appVisibility)
+    appStore.send(.appLaunched)
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
     appStore?.send(.applicationDidBecomeActive)
     let app = NSApplication.shared
-    // Filter `NSPanel` out of the visibility check — the system
-    // color / font panels (and any sheet-attached child panels) are
-    // not "main windows" that should suppress surfacing.
     let hasVisibleMainWindow = app.windows.contains { window in
-      window.isVisible && !(window is NSPanel)
+      window.isVisible && window.isSurfaceableAppWindow
     }
     guard !hasVisibleMainWindow else { return }
     app.surfaceMainWindow()
@@ -585,19 +583,18 @@ struct SupacodeApp: App {
     } label: {
       MenuBarNotificationsLabel(store: store)
     }
-    .menuBarExtraStyle(.menu)
+    // `.window`, not `.menu`: a native menu item can't host the sidebar row's
+    // dots, agent badges, and diff stats. The panel is styled to read like a menu.
+    .menuBarExtraStyle(.window)
   }
 
-  /// Visibility-backed insertion so switching modes (or Cmd-dragging the icon
-  /// out of the menu bar) adds/removes the status item live. Dragging the icon
-  /// out falls back to `.dock`, which keeps at least one surface enabled.
+  /// Dragging the status item out of the menu bar falls back to `.dock`, so at
+  /// least one surface stays enabled.
   private var menuBarInserted: Binding<Bool> {
     Binding(
       get: { store.settings.appVisibility.showsMenuBarIcon },
       set: { newValue in
-        // MenuBarExtra re-writes the current value on every scene evaluation;
-        // only a real flip may reach the store or the persist round-trip
-        // re-evaluates the scene and loops the app at launch.
+        // Ignore MenuBarExtra's scene-evaluation echo; only a real flip should persist.
         guard newValue != store.settings.appVisibility.showsMenuBarIcon else { return }
         store.send(.settings(.setAppVisibility(newValue ? .dockAndMenuBar : .dock)))
       }

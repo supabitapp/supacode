@@ -410,9 +410,8 @@ struct SettingsFilePersistenceTests {
   }
 
   @Test(.dependencies) func decodesMissingAppVisibilityAsDock() throws {
-    // A file predating the visibility model (no `appVisibility`, no legacy
-    // `showMenuBarIcon`) predates the menu bar feature entirely, so it was
-    // Dock-only — the menu bar stays opt-in.
+    // A file predating the menu bar feature was Dock-only, and the menu bar
+    // stays opt-in.
     let legacy = LegacySettingsFile(
       global: LegacyGlobalSettings(
         appearanceMode: .dark,
@@ -434,43 +433,19 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.appVisibility == .dock)
   }
 
-  @Test(.dependencies) func migratesLegacyShowMenuBarIconTrueToDockAndMenuBar() throws {
-    // The old boolean was always paired with a Dock icon, so "menu bar on"
-    // maps to both surfaces enabled.
-    let legacy = LegacySettingsFileWithMenuBarToggle(
-      global: LegacyGlobalSettingsWithMenuBarToggle(
-        appearanceMode: .dark,
-        updatesAutomaticallyCheckForUpdates: true,
+  @Test(.dependencies) func decodesUnrecognizedAppVisibilityAsDockWithoutDiscardingTheFile() throws {
+    // A throw here would reset the whole file to defaults and write it back, so
+    // a hand-edited or newer-than-us value must fall through to the default.
+    let file = SettingsFileWithRawAppVisibility(
+      global: GlobalSettingsWithRawAppVisibility(
+        appearanceMode: .light,
+        updatesAutomaticallyCheckForUpdates: false,
         updatesAutomaticallyDownloadUpdates: false,
-        showMenuBarIcon: true
+        appVisibility: "menubar"
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
-    let storage = MutableTestStorage(initialData: data)
-
-    let settings: SettingsFile = withDependencies {
-      $0.settingsFileStorage = storage.storage
-    } operation: {
-      @Shared(.settingsFile) var settings: SettingsFile
-      return settings
-    }
-
-    #expect(settings.global.appVisibility == .dockAndMenuBar)
-  }
-
-  @Test(.dependencies) func migratesLegacyShowMenuBarIconFalseToDock() throws {
-    // Menu bar off + the always-present Dock icon collapses to Dock-only.
-    let legacy = LegacySettingsFileWithMenuBarToggle(
-      global: LegacyGlobalSettingsWithMenuBarToggle(
-        appearanceMode: .dark,
-        updatesAutomaticallyCheckForUpdates: true,
-        updatesAutomaticallyDownloadUpdates: false,
-        showMenuBarIcon: false
-      ),
-      repositories: [:]
-    )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(file)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -481,6 +456,28 @@ struct SettingsFilePersistenceTests {
     }
 
     #expect(settings.global.appVisibility == .dock)
+    // Both differ from `GlobalSettings.default`, so a reset-to-defaults would fail here.
+    #expect(settings.global.appearanceMode == .light)
+    #expect(settings.global.updatesAutomaticallyCheckForUpdates == false)
+  }
+
+  @Test(.dependencies) func decodesMistypedAppVisibilityAsDockWithoutDiscardingTheFile() throws {
+    // A hand-edit can produce the wrong JSON type, not just an unknown string.
+    let json = """
+      {"global":{"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"appVisibility":3},"repositories":{}}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.appVisibility == .dock)
+    #expect(settings.global.appearanceMode == .light)
   }
 
   @Test(.dependencies) func roundTripsExplicitAppVisibility() throws {
@@ -603,14 +600,14 @@ private struct LegacyGlobalSettingsWithQuitToggle: Codable {
   var confirmBeforeQuit: Bool
 }
 
-private struct LegacySettingsFileWithMenuBarToggle: Codable {
-  var global: LegacyGlobalSettingsWithMenuBarToggle
+private struct SettingsFileWithRawAppVisibility: Codable {
+  var global: GlobalSettingsWithRawAppVisibility
   var repositories: [String: RepositorySettings]
 }
 
-private struct LegacyGlobalSettingsWithMenuBarToggle: Codable {
+private struct GlobalSettingsWithRawAppVisibility: Codable {
   var appearanceMode: AppearanceMode
   var updatesAutomaticallyCheckForUpdates: Bool
   var updatesAutomaticallyDownloadUpdates: Bool
-  var showMenuBarIcon: Bool
+  var appVisibility: String
 }

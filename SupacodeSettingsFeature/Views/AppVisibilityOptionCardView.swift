@@ -1,9 +1,7 @@
 import SupacodeSettingsShared
 import SwiftUI
 
-/// One card in the Dock/menu-bar visibility picker, mirroring
-/// `AppearanceOptionCardView`. Uses an SF Symbol placeholder until dedicated
-/// artwork lands.
+/// One card in the Dock/menu-bar visibility picker, mirroring `AppearanceOptionCardView`.
 struct AppVisibilityOptionCardView: View {
   let visibility: AppVisibility
   let isSelected: Bool
@@ -12,14 +10,11 @@ struct AppVisibilityOptionCardView: View {
   var body: some View {
     Button(action: action) {
       VStack(spacing: 4) {
-        RoundedRectangle(cornerRadius: 8)
-          .fill(.quaternary)
-          .aspectRatio(1.6, contentMode: .fit)
-          .overlay {
-            Image(systemName: visibility.symbolName)
-              .font(.system(size: 22))
-              .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-          }
+        Image(visibility.imageName)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .clipShape(.rect(cornerRadius: 8))
+          .accessibilityLabel(visibility.title)
           .overlay {
             RoundedRectangle(cornerRadius: 8)
               .strokeBorder(
@@ -27,7 +22,6 @@ struct AppVisibilityOptionCardView: View {
                 lineWidth: 2
               )
           }
-          .accessibilityLabel(visibility.title)
         Text(visibility.title)
           .font(.callout)
           .multilineTextAlignment(.center)
@@ -36,5 +30,6 @@ struct AppVisibilityOptionCardView: View {
       }
     }
     .buttonStyle(.plain)
+    .help(visibility.help)
   }
 }

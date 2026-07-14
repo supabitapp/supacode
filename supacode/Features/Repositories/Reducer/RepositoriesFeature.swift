@@ -200,6 +200,11 @@ struct RepositoriesFeature {
     /// mutation across all worktrees). Recomputed via
     /// `recomputeToolbarNotificationGroupsIfChanged()`.
     var toolbarNotificationGroupsCache: [ToolbarNotificationRepositoryGroup] = []
+    /// Cached menu bar sections. The `MenuBarExtra` scene reads this instead of
+    /// `sidebarItems`, which would subscribe the status menu to every per-row
+    /// notification and agent tick. Recomputed via
+    /// `recomputeMenuBarSectionsIfChanged()`.
+    var menuBarSectionsCache = MenuBarSections()
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
     @Presents var worktreeCustomization: WorktreeCustomizationFeature.State?

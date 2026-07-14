@@ -1064,9 +1064,12 @@ final class WorktreeTerminalManager {
     emitProjection(for: worktreeID)
   }
 
-  /// Marks every notification in every managed worktree read. Indicator and
-  /// projection updates propagate via each state's notification callbacks.
+  /// Indicator and projection updates propagate via each state's notification
+  /// callbacks. Every state is swept, not just the unread ones, so a surface
+  /// whose unseen mirror drifted out of sync with its notifications is repaired.
   func markAllNotificationsRead() {
+    let unread = states.values.count(where: \.hasUnseenNotification)
+    terminalLogger.info("markAllNotificationsRead: clearing unread in \(unread) worktree(s).")
     for state in states.values {
       state.markAllNotificationsRead()
     }

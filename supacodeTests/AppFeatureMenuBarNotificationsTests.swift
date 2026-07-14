@@ -9,108 +9,40 @@ import Testing
 
 @MainActor
 struct AppFeatureMenuBarNotificationsTests {
-  @Test(.dependencies) func menuBarNotificationSelectedFocusesSurfaceAndMarksRead() async {
+  @Test(.dependencies) func menuBarWorktreeSelectedSelectsWorktreeAndSurfacesTheWindow() async {
     let worktree = makeWorktree()
-    let tabID = TerminalTabID()
-    let surfaceID = UUID()
-    let notificationID = UUID()
-    let focused = LockIsolated<[TerminalClient.Command]>([])
-    let marked = LockIsolated<[(Worktree.ID, UUID)]>([])
+    let surfaced = LockIsolated(0)
     let store = makeStore(worktree: worktree) {
-      $0.terminalClient.send = { command in
-        focused.withValue { $0.append(command) }
-      }
-      $0.terminalClient.markNotificationRead = { worktreeID, notificationID in
-        marked.withValue { $0.append((worktreeID, notificationID)) }
+      $0.appLifecycleClient.surfaceMainWindow = {
+        surfaced.withValue { $0 += 1 }
+        return true
       }
     }
-
-    await store.send(
-      .menuBarNotificationSelected(
-        worktreeID: worktree.id, tabID: tabID, surfaceID: surfaceID, notificationID: notificationID
-      )
-    )
-    await store.receive(\.repositories.selectWorktree)
-    await store.finish()
-
-    let focusCommands = focused.value.filter {
-      if case .focusSurface = $0 { return true } else { return false }
-    }
-    #expect(
-      focusCommands == [.focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: nil)]
-    )
-    #expect(marked.value.count == 1)
-    #expect(marked.value.first?.0 == worktree.id)
-    #expect(marked.value.first?.1 == notificationID)
-  }
-
-  @Test(.dependencies) func menuBarNotificationSelectedResolvesTabWhenMissing() async {
-    let worktree = makeWorktree()
-    let resolvedTabID = TerminalTabID()
-    let surfaceID = UUID()
-    let focused = LockIsolated<[TerminalClient.Command]>([])
-    let store = makeStore(worktree: worktree) {
-      $0.terminalClient.tabID = { _, _ in resolvedTabID }
-      $0.terminalClient.send = { command in
-        focused.withValue { $0.append(command) }
-      }
-      $0.terminalClient.markNotificationRead = { _, _ in }
-    }
-
-    await store.send(
-      .menuBarNotificationSelected(
-        worktreeID: worktree.id, tabID: nil, surfaceID: surfaceID, notificationID: UUID()
-      )
-    )
-    await store.finish()
-
-    let focusCommands = focused.value.filter {
-      if case .focusSurface = $0 { return true } else { return false }
-    }
-    #expect(
-      focusCommands == [.focusSurface(worktree, tabID: resolvedTabID, surfaceID: surfaceID, input: nil)]
-    )
-  }
-
-  @Test(.dependencies) func menuBarNotificationSelectedStillMarksReadWhenSurfaceGone() async {
-    let worktree = makeWorktree()
-    let focused = LockIsolated<[TerminalClient.Command]>([])
-    let marked = LockIsolated<[(Worktree.ID, UUID)]>([])
-    let notificationID = UUID()
-    let store = makeStore(worktree: worktree) {
-      $0.terminalClient.tabID = { _, _ in nil }
-      $0.terminalClient.send = { command in
-        focused.withValue { $0.append(command) }
-      }
-      $0.terminalClient.markNotificationRead = { worktreeID, notificationID in
-        marked.withValue { $0.append((worktreeID, notificationID)) }
-      }
-    }
-
-    await store.send(
-      .menuBarNotificationSelected(
-        worktreeID: worktree.id, tabID: nil, surfaceID: UUID(), notificationID: notificationID
-      )
-    )
-    await store.finish()
-
-    let focusCommands = focused.value.filter {
-      if case .focusSurface = $0 { return true } else { return false }
-    }
-    #expect(focusCommands.isEmpty)
-    #expect(marked.value.count == 1)
-    #expect(marked.value.first?.1 == notificationID)
-  }
-
-  @Test(.dependencies) func menuBarWorktreeSelectedSelectsWorktree() async {
-    let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree) { _ in }
 
     await store.send(.menuBarWorktreeSelected(worktreeID: worktree.id))
     await store.receive(\.repositories.selectWorktree)
     await store.finish()
 
     #expect(store.state.repositories.selectedWorktreeID == worktree.id)
+    #expect(surfaced.value == 1)
+  }
+
+  @Test(.dependencies) func menuBarWorktreeSelectedStillSurfacesTheWindowWhenTheWorktreeIsGone() async {
+    let worktree = makeWorktree()
+    let surfaced = LockIsolated(0)
+    let store = makeStore(worktree: worktree) {
+      $0.appLifecycleClient.surfaceMainWindow = {
+        surfaced.withValue { $0 += 1 }
+        return true
+      }
+    }
+
+    // A stale click must never be a no-op: in menu bar mode that is
+    // indistinguishable from a hung app.
+    await store.send(.menuBarWorktreeSelected(worktreeID: Worktree.ID("/tmp/repo/vanished")))
+    await store.finish()
+
+    #expect(surfaced.value == 1)
   }
 
   @Test(.dependencies) func markAllNotificationsReadForwardsToTerminalClient() async {
@@ -128,30 +60,143 @@ struct AppFeatureMenuBarNotificationsTests {
     #expect(calls.value == 1)
   }
 
-  @Test(.dependencies) func showNotificationsPanePresentsNotificationsInspector() async {
-    let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree) { _ in }
+  // MARK: - Activation policy.
 
-    await store.send(.showNotificationsPane)
-    await store.receive(\.repositories.toggleInspectorPane)
+  @Test(.dependencies) func switchingToMenuBarOnlyAppliesTheAccessoryPolicy() async {
+    let applied = LockIsolated<[AppVisibility]>([])
+    let surfaced = LockIsolated(0)
+    let store = makeStore(worktree: makeWorktree()) {
+      $0.appLifecycleClient.applyVisibility = { visibility in
+        applied.withValue { $0.append(visibility) }
+        return true
+      }
+      $0.appLifecycleClient.surfaceMainWindow = {
+        surfaced.withValue { $0 += 1 }
+        return true
+      }
+    }
+
+    var settings = GlobalSettings.default
+    settings.appVisibility = .menuBar
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
     await store.finish()
 
-    #expect(store.state.repositories.inspectorPresented)
-    #expect(store.state.repositories.inspectorPane == .notifications)
+    #expect(applied.value == [.menuBar])
+    // Nothing to surface: the Dock icon is going away, not coming back.
+    #expect(surfaced.value == 0)
   }
 
-  @Test(.dependencies) func showNotificationsPaneDoesNotToggleAwayWhenAlreadyPresented() async {
-    let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree) { _ in }
+  @Test(.dependencies) func leavingMenuBarOnlyRestoresTheDockIconAndSurfacesTheWindow() async {
+    let applied = LockIsolated<[AppVisibility]>([])
+    let surfaced = LockIsolated(0)
+    var initialSettings = GlobalSettings.default
+    initialSettings.appVisibility = .menuBar
+    let store = makeStore(worktree: makeWorktree(), settings: initialSettings) {
+      $0.appLifecycleClient.applyVisibility = { visibility in
+        applied.withValue { $0.append(visibility) }
+        return true
+      }
+      $0.appLifecycleClient.surfaceMainWindow = {
+        surfaced.withValue { $0 += 1 }
+        return true
+      }
+    }
 
-    await store.send(.showNotificationsPane)
-    await store.receive(\.repositories.toggleInspectorPane)
-    // A second invocation must keep the pane open instead of toggling it closed.
-    await store.send(.showNotificationsPane)
+    var settings = GlobalSettings.default
+    settings.appVisibility = .dock
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
     await store.finish()
 
-    #expect(store.state.repositories.inspectorPresented)
-    #expect(store.state.repositories.inspectorPane == .notifications)
+    #expect(applied.value == [.dock])
+    // Without this the user leaves menu bar mode with a Dock icon and no window.
+    #expect(surfaced.value == 1)
+  }
+
+  @Test(.dependencies) func leavingMenuBarOnlyForBothAlsoSurfacesTheWindow() async {
+    let applied = LockIsolated<[AppVisibility]>([])
+    let surfaced = LockIsolated(0)
+    var initialSettings = GlobalSettings.default
+    initialSettings.appVisibility = .menuBar
+    let store = makeStore(worktree: makeWorktree(), settings: initialSettings) {
+      $0.appLifecycleClient.applyVisibility = { visibility in
+        applied.withValue { $0.append(visibility) }
+        return true
+      }
+      $0.appLifecycleClient.surfaceMainWindow = {
+        surfaced.withValue { $0 += 1 }
+        return true
+      }
+    }
+
+    var settings = GlobalSettings.default
+    settings.appVisibility = .dockAndMenuBar
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.finish()
+
+    #expect(applied.value == [.dockAndMenuBar])
+    // The Dock icon comes back here too, so the window must follow.
+    #expect(surfaced.value == 1)
+  }
+
+  @Test(.dependencies) func aRefusedPolicySwitchFallsBackToTheModeThatStillHasASurface() async {
+    var initialSettings = GlobalSettings.default
+    initialSettings.appVisibility = .menuBar
+    let store = makeStore(worktree: makeWorktree(), settings: initialSettings) {
+      // AppKit refuses `.accessory` -> `.regular`: without a fallback the status
+      // item is already gone and no Dock icon arrives, leaving no surface at all.
+      $0.appLifecycleClient.applyVisibility = { _ in false }
+      $0.appLifecycleClient.surfaceMainWindow = { true }
+    }
+
+    var settings = GlobalSettings.default
+    settings.appVisibility = .dock
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    // The fallback must carry `.menuBar` specifically: a wrong direction here
+    // (e.g. re-sending `.dock`) would strand the user with no surface.
+    await store.receive(\.settings.setAppVisibility, .menuBar)
+    await store.finish()
+
+    #expect(store.state.settings.appVisibility == .menuBar)
+  }
+
+  @Test(.dependencies) func repeatedSettingsChangesDoNotReapplyTheSameVisibility() async {
+    let applied = LockIsolated<[AppVisibility]>([])
+    let store = makeStore(worktree: makeWorktree()) {
+      $0.appLifecycleClient.applyVisibility = { visibility in
+        applied.withValue { $0.append(visibility) }
+        return true
+      }
+      $0.appLifecycleClient.surfaceMainWindow = { true }
+    }
+
+    var settings = GlobalSettings.default
+    settings.appVisibility = .menuBar
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    // A second, identical delegate must not re-apply the policy: `activate()` on
+    // the retry path would steal focus on every unrelated settings edit.
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.finish()
+
+    #expect(applied.value == [.menuBar])
+    #expect(store.state.lastKnownAppVisibility == .menuBar)
+  }
+
+  @Test(.dependencies) func unchangedVisibilityTouchesTheActivationPolicyNotAtAll() async {
+    let applied = LockIsolated<[AppVisibility]>([])
+    let store = makeStore(worktree: makeWorktree()) {
+      $0.appLifecycleClient.applyVisibility = { visibility in
+        applied.withValue { $0.append(visibility) }
+        return true
+      }
+    }
+
+    var settings = GlobalSettings.default
+    settings.appVisibility = .dock
+    settings.agentPresenceBadgesEnabled.toggle()
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.finish()
+
+    #expect(applied.value.isEmpty)
   }
 
   // MARK: - Helpers.
@@ -171,6 +216,7 @@ struct AppFeatureMenuBarNotificationsTests {
 
   private func makeStore(
     worktree: Worktree,
+    settings: GlobalSettings = .default,
     withAdditionalDependencies: (inout DependencyValues) -> Void
   ) -> TestStoreOf<AppFeature> {
     var repositoriesState = RepositoriesFeature.State()
@@ -187,7 +233,7 @@ struct AppFeatureMenuBarNotificationsTests {
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: repositoriesState,
-        settings: SettingsFeature.State()
+        settings: SettingsFeature.State(settings: settings)
       )
     ) {
       AppFeature()
