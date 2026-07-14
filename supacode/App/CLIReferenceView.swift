@@ -144,7 +144,9 @@ struct CLIReferenceView: View {
     .init(command: "-t, --tab", description: "Tab UUID. Defaults to $SUPACODE_TAB_ID."),
     .init(command: "-s, --surface", description: "Surface UUID. Defaults to $SUPACODE_SURFACE_ID."),
     .init(command: "-c, --script", description: "Script UUID (for `worktree run`/`stop`)."),
-    .init(command: "--title", description: "Sidebar title override; pass an empty string to clear."),
+    .init(
+      command: "--title",
+      description: "Tab title for tab new/rename, or sidebar title for worktree appearance; empty clears."),
     .init(command: "--color", description: "Sidebar tint override; pass none to clear."),
     .init(command: "-r, --repo", description: "Repository ID. Defaults to $SUPACODE_REPO_ID."),
     .init(command: "-i, --input", description: "Command to run in the terminal."),
