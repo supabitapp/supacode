@@ -948,6 +948,115 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
   }
 
+  // MARK: - worktree archive.
+
+  @Test(.dependencies) func archiveSocketDeeplinkResolvesAfterArchiving() async {
+    let worktree = makeWorktree()
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
+    $repositorySettings.withLock { $0.archiveScript = "echo archive" }
+    defer { $repositorySettings.withLock { $0.archiveScript = "" } }
+    let store = makeStore(worktree: worktree, tabExists: true, reconcileSidebar: true) {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+    await store.skipReceivedActions()
+
+    await store.send(
+      .repositories(
+        .archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)
+      )
+    )
+    await store.skipReceivedActions()
+    await store.finish()
+
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id))
+    let ackResolved = store.state.pendingCommandAcks.isEmpty
+    #expect(ackResolved)
+    guard ackResolved else {
+      close(writeFD)
+      return
+    }
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkFailsOnScriptCancellation() async {
+    let worktree = makeWorktree()
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
+    $repositorySettings.withLock { $0.archiveScript = "echo archive" }
+    defer { $repositorySettings.withLock { $0.archiveScript = "" } }
+    let store = makeStore(worktree: worktree, tabExists: true, reconcileSidebar: true)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+    await store.skipReceivedActions()
+
+    await store.send(
+      .repositories(
+        .archiveScriptCompleted(worktreeID: worktree.id, exitCode: nil, tabId: nil)
+      )
+    )
+    await store.skipReceivedActions()
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveSocketConfirmationCancelDrainsAck() async {
+    let worktree = makeWorktree()
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.reconcileSidebarForTesting()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositories, settings: settings)
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.receive(\.repositories.requestArchiveWorktree)
+    #expect(store.state.repositories.alert != nil)
+
+    await store.send(.repositories(.alert(.dismiss)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
   // MARK: - folder delete.
 
   // Note: the success / failure outcomes of `repositoryRemovalCompleted` flow
@@ -1061,11 +1170,16 @@ struct AppFeatureCommandAckTests {
   private func makeStore(
     worktree: Worktree,
     tabExists: Bool,
+    reconcileSidebar: Bool = false,
     _ extraDependencies: (inout DependencyValues) -> Void = { _ in }
   ) -> TestStoreOf<AppFeature> {
+    var repositories = makeRepositoriesState(worktree: worktree)
+    if reconcileSidebar {
+      repositories.reconcileSidebarForTesting()
+    }
     let store = TestStore(
       initialState: AppFeature.State(
-        repositories: makeRepositoriesState(worktree: worktree),
+        repositories: repositories,
         settings: SettingsFeature.State()
       )
     ) {

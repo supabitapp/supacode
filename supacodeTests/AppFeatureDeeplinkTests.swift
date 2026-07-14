@@ -2387,6 +2387,32 @@ struct AppFeatureDeeplinkTests {
     )
   }
 
+  @Test(.dependencies) func cliOnlyPolicyBypassesArchiveConfirmationForSocket() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .cliOnly
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket
+      )
+    )
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+    #expect(store.state.repositories.alert == nil)
+  }
+
   @Test(.dependencies) func cliOnlyPolicyRequiresConfirmationForURLScheme() async {
     let worktree = makeWorktree()
     var settings = SettingsFeature.State()

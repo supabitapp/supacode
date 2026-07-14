@@ -266,6 +266,8 @@ struct AppFeature {
     case surfaceClosed(worktreeID: Worktree.ID, surfaceID: UUID)
     /// worktree delete (git worktree removed).
     case worktreeRemoved(worktreeID: Worktree.ID)
+    /// worktree archive (the row moved into the archived bucket).
+    case worktreeArchived(worktreeID: Worktree.ID)
     /// folder-repository delete (the folder is removed from Supacode / disk).
     case folderRemoved(repositoryID: Repository.ID)
   }
@@ -518,6 +520,12 @@ struct AppFeature {
       case .repositories(.delegate(.repositoriesChanged(let repositories))):
         RepositoriesFeature.syncSidebar(&state.repositories)
         let archivedIDs = state.repositories.archivedWorktreeIDSet
+        let archiveAckEffect = resolveCommandAcks(ok: true, state: &state) { match in
+          if case .worktreeArchived(let worktreeID) = match {
+            return archivedIDs.contains(worktreeID)
+          }
+          return false
+        }
         let allowed = Set(
           state.repositories.sidebarItems
             .filter { item in
@@ -532,6 +540,7 @@ struct AppFeature {
         let worktrees = state.repositories.worktreesForInfoWatcher()
         var effects: [Effect<Action>] = []
         effects.append(contentsOf: [
+          archiveAckEffect,
           .send(
             .settings(
               .repositoriesChanged(
@@ -1240,9 +1249,20 @@ struct AppFeature {
         // confirmation (its repo is removing) resolves on repositoryRemovalCompleted,
         // so an unrelated dismissal must not drain it.
         let removingRepoIDs = Set(state.repositories.removingRepositoryIDs.keys)
+        let archivingWorktreeIDs = Set(
+          state.repositories.sidebarItems.lazy
+            .filter { $0.lifecycle == .archiving }
+            .map(\.id)
+        )
         return resolveCommandAcks(ok: false, error: "Cancelled by user.", state: &state) { match in
-          if case .folderRemoved(let ackRepoID) = match { return !removingRepoIDs.contains(ackRepoID) }
-          return false
+          switch match {
+          case .folderRemoved(let ackRepoID):
+            return !removingRepoIDs.contains(ackRepoID)
+          case .worktreeArchived(let worktreeID):
+            return !archivingWorktreeIDs.contains(worktreeID)
+          default:
+            return false
+          }
         }
 
       case .repositories(.deleteWorktreeFailed(let message, let worktreeID)):
@@ -1259,6 +1279,17 @@ struct AppFeature {
           exitCode.map { "Delete script failed (exit code \($0))." } ?? "Delete cancelled."
         return resolveCommandAcks(ok: false, error: message, state: &state) { match in
           if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
+          return false
+        }
+
+      case .repositories(.archiveScriptCompleted(let worktreeID, let exitCode, _)):
+        // Exit 0 proceeds to archiveWorktreeApply and resolves when the archived
+        // bucket update is published. Failure or cancellation has no later signal.
+        guard exitCode != 0 else { return .none }
+        let message =
+          exitCode.map { "Archive script failed (exit code \($0))." } ?? "Archive cancelled."
+        return resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          if case .worktreeArchived(let ackWorktree) = match { return ackWorktree == worktreeID }
           return false
         }
 
@@ -2093,7 +2124,17 @@ struct AppFeature {
       guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
         return .none
       }
-      return .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
+      let archiveEffect: Effect<Action> =
+        bypassConfirmation
+        ? .send(.repositories(.archiveWorktreeConfirmed(worktreeID, repositoryID)))
+        : .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
+      return awaitingCompletion(
+        archiveEffect,
+        match: .worktreeArchived(worktreeID: worktreeID),
+        responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds,
+        state: &state
+      )
     case .unarchive:
       return .send(.repositories(.unarchiveWorktree(worktreeID)))
     case .delete:
