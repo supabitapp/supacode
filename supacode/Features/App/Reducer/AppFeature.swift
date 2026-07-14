@@ -934,29 +934,20 @@ struct AppFeature {
           .deeplink(parsed, source: source, responseFD: responseFD, timeoutSeconds: timeoutSeconds))
 
       case .deeplink(let deeplink, let source, let responseFD, let timeoutSeconds):
-        let previousAlert = state.alert
-        if responseFD != nil {
-          // Isolate alerts raised by this socket command from an alert that was
-          // already presented. Reducer mutations are synchronous, so restoring
-          // the previous alert on success is invisible to the UI.
-          state.alert = nil
+        let command = isolateSocketCommandAlert(responseFD: responseFD, state: &state) { state in
+          handleDeeplink(
+            deeplink, source: source, responseFD: responseFD,
+            timeoutSeconds: timeoutSeconds, state: &state)
         }
-        let effect = handleDeeplink(
-          deeplink, source: source, responseFD: responseFD,
-          timeoutSeconds: timeoutSeconds, state: &state)
-        guard let responseFD else { return effect }
-        let commandError = state.alert.map(extractAlertMessage)
-        if state.alert == nil {
-          state.alert = previousAlert
-        }
+        guard let responseFD else { return command.effect }
         // Confirmation dialog pending; response will be sent when dialog resolves.
-        guard state.deeplinkInputConfirmation == nil else { return effect }
+        guard state.deeplinkInputConfirmation == nil else { return command.effect }
         // A completion-based ack was registered; it resolves when the operation finishes.
-        guard state.pendingCommandAcks[id: responseFD] == nil else { return effect }
+        guard state.pendingCommandAcks[id: responseFD] == nil else { return command.effect }
         return .concatenate(
-          effect,
+          command.effect,
           sendSocketResponse(
-            clientFD: responseFD, ok: commandError == nil, error: commandError))
+            clientFD: responseFD, ok: command.error == nil, error: command.error))
 
       case .commandAckTimedOut(let responseFD, let token):
         // Ignore a stale watchdog whose ack was already resolved (and whose fd
@@ -1005,16 +996,16 @@ struct AppFeature {
         // The initial deeplink dispatch already selected the worktree via
         // `handleWorktreeDeeplink`. Re-dispatch only the action effect, skipping
         // the redundant select.
-        let alertBefore = state.alert
-        let actionEffect = worktreeActionEffect(
-          worktreeID: worktreeID,
-          action: confirmedAction,
-          state: &state,
-          bypassConfirmation: true,
-          responseFD: pendingFD,
-          timeoutSeconds: timeoutSeconds,
-        )
-        let succeeded = state.alert == alertBefore
+        let command = isolateSocketCommandAlert(responseFD: pendingFD, state: &state) { state in
+          worktreeActionEffect(
+            worktreeID: worktreeID,
+            action: confirmedAction,
+            state: &state,
+            bypassConfirmation: true,
+            responseFD: pendingFD,
+            timeoutSeconds: timeoutSeconds,
+          )
+        }
         let responseEffect: Effect<Action>
         if let pendingFD, state.pendingCommandAcks[id: pendingFD] != nil {
           // Completion-based ack registered; it resolves when the operation finishes.
@@ -1022,8 +1013,8 @@ struct AppFeature {
         } else if let pendingFD {
           responseEffect = sendSocketResponse(
             clientFD: pendingFD,
-            ok: succeeded,
-            error: succeeded ? nil : extractAlertMessage(state.alert))
+            ok: command.error == nil,
+            error: command.error)
         } else {
           responseEffect = .none
         }
@@ -1033,7 +1024,7 @@ struct AppFeature {
           : .none
         return .concatenate(
           .cancel(id: CancelID.deeplinkConfirmationTimeout),
-          policyEffect, actionEffect, responseEffect)
+          policyEffect, command.effect, responseEffect)
 
       case .deeplinkInputConfirmation(.presented(.delegate(.cancel))):
         let pendingFD = state.deeplinkInputConfirmation?.responseFD
@@ -2548,6 +2539,25 @@ struct AppFeature {
   private func captureAppLifecycleEvent(_ event: AppLifecycleEvent, state: inout State) {
     guard state.appLifecycleEventDebouncer.shouldCapture(event: event, now: now) else { return }
     analyticsClient.capture(event.rawValue, nil)
+  }
+
+  /// Captures only alerts raised by the current socket command. A pre-existing
+  /// alert is restored on success so repeated identical failures cannot be
+  /// mistaken for successful acknowledgements.
+  private func isolateSocketCommandAlert(
+    responseFD: Int32?,
+    state: inout State,
+    operation: (inout State) -> Effect<Action>
+  ) -> (effect: Effect<Action>, error: String?) {
+    guard responseFD != nil else { return (operation(&state), nil) }
+    let previousAlert = state.alert
+    state.alert = nil
+    let effect = operation(&state)
+    let error = state.alert.map(extractAlertMessage)
+    if state.alert == nil {
+      state.alert = previousAlert
+    }
+    return (effect, error)
   }
 
   /// Extracts a human-readable message from an alert state for CLI error responses.

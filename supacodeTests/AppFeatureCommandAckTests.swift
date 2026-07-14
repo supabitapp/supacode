@@ -424,6 +424,79 @@ struct AppFeatureCommandAckTests {
     #expect(sent.value.isEmpty)
   }
 
+  @Test(.dependencies) func confirmedTabCloseFailsWhenTabVanishesWithMatchingAlert() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let tabExists = LockIsolated(false)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in tabExists.value }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    let (priorReadFD, priorWriteFD) = makePipe()
+    defer { close(priorReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tab(tabID: tabID)),
+        source: .socket,
+        responseFD: priorWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+    #expect(readPipeJSON(priorReadFD)?["ok"] as? Bool == false)
+    #expect(store.state.alert != nil)
+
+    tabExists.withValue { $0 = true }
+    let (closeReadFD, closeWriteFD) = makePipe()
+    defer { close(closeReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabDestroy(tabID: tabID)),
+        source: .socket,
+        responseFD: closeWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    tabExists.withValue { $0 = false }
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(
+                worktreeID: worktree.id,
+                action: .tabDestroy(tabID: tabID),
+                alwaysAllow: false
+              )
+            )
+          )
+        )
+      )
+    }
+    await store.finish()
+
+    let response = readPipeJSON(closeReadFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("no tab matching") == true)
+    #expect(!sent.value.contains { if case .destroyTab = $0 { true } else { false } })
+  }
+
   // MARK: - worktree delete.
 
   @Test(.dependencies) func deleteSocketDeeplinkResolvesOnWorktreeDeleted() async {
