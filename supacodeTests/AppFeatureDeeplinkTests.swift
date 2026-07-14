@@ -1420,10 +1420,158 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tabNew(input: nil, id: nil))))
     let hasCreateTab = sent.value.contains(where: {
-      if case .createTab(let target, _, _) = $0 { return target.id == worktree.id }
+      if case .createTab(let target, _, _, _) = $0 { return target.id == worktree.id }
       return false
     })
     #expect(hasCreateTab)
+  }
+
+  @Test(.dependencies) func tabNewWithTitleCreatesNamedTerminal() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.tabExists = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(
+          id: worktree.id,
+          action: .tabNew(input: nil, id: tabID, title: "implement")
+        )
+      )
+    )
+    #expect(
+      sent.value.contains(
+        .createTab(
+          worktree,
+          runSetupScriptIfNew: true,
+          id: tabID,
+          title: "implement"
+        )
+      )
+    )
+  }
+
+  @Test(.dependencies) func tabNewWithInputPreservesTitleThroughConfirmation() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var initialState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State(),
+    )
+    initialState.deeplinkInputConfirmation = DeeplinkInputConfirmationFeature.State(
+      worktreeID: worktree.id,
+      worktreeName: worktree.name,
+      repositoryName: "repo",
+      message: .command("omp"),
+      action: .tabNew(input: "omp", id: nil, title: "implement"),
+    )
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(
+                worktreeID: worktree.id,
+                action: .tabNew(input: "omp", id: nil, title: "implement"),
+                alwaysAllow: false
+              )
+            )
+          )
+        )
+      ) {
+        $0.deeplinkInputConfirmation = nil
+      }
+    }
+    #expect(
+      sent.value.contains(
+        .createTabWithInput(
+          worktree,
+          input: "omp",
+          runSetupScriptIfNew: false,
+          id: nil,
+          title: "implement"
+        )
+      )
+    )
+    await store.finish()
+  }
+
+  @Test(.dependencies) func tabRenameUpdatesExistingTab() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.tabExists = { worktreeID, candidate in
+        worktreeID == worktree.id && candidate.rawValue == tabID
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review"))
+      )
+    )
+    #expect(
+      sent.value.contains(
+        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "review")
+      )
+    )
+  }
+
+  @Test(.dependencies) func tabRenameMissingTabShowsAlert() async {
+    let worktree = makeWorktree()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: UUID(), title: "review"))
+      )
+    )
+    #expect(store.state.alert != nil)
   }
 
   // MARK: - Queuing before load.

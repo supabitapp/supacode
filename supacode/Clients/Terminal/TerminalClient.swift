@@ -33,8 +33,14 @@ struct TerminalClient {
     ) -> Void
 
   enum Command: Equatable {
-    case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil)
-    case createTabWithInput(Worktree, input: String, runSetupScriptIfNew: Bool, id: UUID? = nil)
+    case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil, title: String? = nil)
+    case createTabWithInput(
+      Worktree,
+      input: String,
+      runSetupScriptIfNew: Bool,
+      id: UUID? = nil,
+      title: String? = nil
+    )
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case stopRunScript(Worktree)
     case stopScript(Worktree, definitionID: UUID)
@@ -58,6 +64,7 @@ struct TerminalClient {
     case destroyTab(Worktree, tabID: TerminalTabID)
     case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID)
     case beginTabRename(Worktree, tabID: TerminalTabID? = nil)
+    case renameTab(Worktree, tabID: TerminalTabID, title: String)
     case prune(keeping: Set<Worktree.ID>, protectingRepositoryIDs: Set<Repository.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)

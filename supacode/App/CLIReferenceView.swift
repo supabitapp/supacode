@@ -89,8 +89,12 @@ struct CLIReferenceView: View {
     .init(command: "supacode tab list [-w <id>] [-f]", description: "List tab UUIDs. -f for focused only."),
     .init(command: "supacode tab focus [-w <id>] [-t <id>]", description: "Focus a tab."),
     .init(
-      command: "supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>]",
-      description: "Create a new tab. Prints UUID to stdout."
+      command: "supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>]",
+      description: "Create a named tab. Prints UUID to stdout."
+    ),
+    .init(
+      command: "supacode tab rename [-w <id>] [-t <id>] --title <title>",
+      description: "Set the persistent title override; an empty title clears it."
     ),
     .init(command: "supacode tab close [-w <id>] [-t <id>]", description: "Close a tab."),
   ]

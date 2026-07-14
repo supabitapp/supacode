@@ -118,6 +118,20 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.first { $0.id == id }!.displayTitle == "my name")
   }
 
+  @Test func createTabSetsNormalizedCustomTitleAtomically() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", customTitle: "  implement  ", icon: nil)
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == "implement")
+    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "implement")
+  }
+
+  @Test func createTabWithEmptyCustomTitleUsesLiveTitle() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", customTitle: "", icon: nil)
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "tab 1")
+  }
+
   @Test func setCustomTitleDoesNotLockTitle() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)

@@ -76,7 +76,12 @@ struct DeeplinkReferenceView: View {
     .init(
       url: "supacode://worktree/<worktree_id>/tab/new",
       description: "Create a new tab.",
-      params: "?input=<cmd>&id=<uuid>"
+      params: "?input=<cmd>&id=<uuid>&title=<title>"
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/tab/<tab_id>/rename",
+      description: "Set the persistent title override; an empty title clears it.",
+      params: "?title=<title>"
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/destroy",

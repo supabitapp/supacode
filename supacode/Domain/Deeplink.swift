@@ -33,7 +33,8 @@ enum Deeplink: Equatable, Sendable {
     /// stays dumb. `nil` means the query item was omitted and should be preserved.
     case appearance(title: String?, color: String?)
     case tab(tabID: UUID)
-    case tabNew(input: String?, id: UUID?)
+    case tabNew(input: String?, id: UUID?, title: String? = nil)
+    case tabRename(tabID: UUID, title: String)
     case tabDestroy(tabID: UUID)
     case surface(tabID: UUID, surfaceID: UUID, input: String?)
     case surfaceSplit(tabID: UUID, surfaceID: UUID, direction: SplitDirection, input: String?, id: UUID?)
@@ -43,7 +44,7 @@ enum Deeplink: Equatable, Sendable {
     /// Metadata-only updates (appearance) skip it so they don't steal focus.
     var selectsWorktree: Bool {
       switch self {
-      case .appearance: false
+      case .appearance, .tabRename: false
       default: true
       }
     }

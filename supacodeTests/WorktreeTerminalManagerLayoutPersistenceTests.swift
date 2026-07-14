@@ -308,6 +308,21 @@ struct LayoutPersistenceManagerTests {
     #expect(dict[wt3.id.rawValue] == nil)
   }
 
+  @Test func creationPersistsCustomTitleAtomically() async {
+    let harness = makeHarness()
+    let worktree = makeWorktree()
+    let state = harness.manager.state(for: worktree)
+    guard state.createTab(focusing: false, customTitle: "implement") != nil else {
+      Issue.record("Expected a tab")
+      return
+    }
+
+    await settleThenAdvance(harness.clock)
+    await waitUntil { readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == "implement" }
+
+    #expect(readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == "implement")
+  }
+
   @Test func renamePersistsCustomTitleIncrementally() async {
     let harness = makeHarness()
     let worktree = makeWorktree()

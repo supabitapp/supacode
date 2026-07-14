@@ -19,6 +19,7 @@ final class TerminalTabManager {
 
   func createTab(
     title: String,
+    customTitle: String? = nil,
     icon: String?,
     isTitleLocked: Bool = false,
     tintColor: RepositoryColor? = nil,
@@ -40,6 +41,7 @@ final class TerminalTabManager {
     let tab = TerminalTabItem(
       id: tabID,
       title: title,
+      customTitle: customTitle.flatMap(Self.normalizedCustomTitle),
       icon: icon,
       isTitleLocked: isTitleLocked,
       tintColor: tintColor,
@@ -73,8 +75,12 @@ final class TerminalTabManager {
   func setCustomTitle(_ id: TerminalTabID, title: String) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     guard !tabs[index].isTitleLocked else { return }
+    tabs[index].customTitle = Self.normalizedCustomTitle(title)
+  }
+
+  private static func normalizedCustomTitle(_ title: String) -> String? {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-    tabs[index].customTitle = trimmed.isEmpty ? nil : trimmed
+    return trimmed.isEmpty ? nil : trimmed
   }
 
   func isBlockingScript(_ id: TerminalTabID) -> Bool {

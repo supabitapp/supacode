@@ -1870,7 +1870,7 @@ struct AppFeature {
       spawnsShell = true
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
-    case .select, .stop, .stopScript, .tab, .tabDestroy, .surfaceDestroy,
+    case .select, .stop, .stopScript, .tab, .tabRename, .tabDestroy, .surfaceDestroy,
       .archive, .unarchive, .delete, .pin, .unpin, .appearance:
       spawnsShell = false
     }
@@ -1986,7 +1986,7 @@ struct AppFeature {
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .selectTab(worktree, tabID: TerminalTabID(rawValue: tabID))
       }
-    case .tabNew(let input, let id):
+    case .tabNew(let input, let id, let title):
       // Reject explicit IDs that collide with an existing or in-flight tab, so a
       // duplicate id can't have one creation resolve the other's ack.
       if let id,
@@ -2004,7 +2004,7 @@ struct AppFeature {
       }
       guard let input, !input.isEmpty else {
         let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
-          .createTab(worktree, runSetupScriptIfNew: true, id: id)
+          .createTab(worktree, runSetupScriptIfNew: true, id: id, title: title)
         }
         return awaitingCompletion(
           effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2016,11 +2016,22 @@ struct AppFeature {
           message: .command(input), action: action, state: &state)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
-        .createTabWithInput(worktree, input: input, runSetupScriptIfNew: false, id: id)
+        .createTabWithInput(
+          worktree,
+          input: input,
+          runSetupScriptIfNew: false,
+          id: id,
+          title: title
+        )
       }
       return awaitingCompletion(
         effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .tabRename(let tabID, let title):
+      guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: title)
+      }
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       guard bypassConfirmation else {

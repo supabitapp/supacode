@@ -332,7 +332,8 @@ final class WorktreeTerminalState {
     setupScript: String? = nil,
     initialInput: String? = nil,
     inheritingFromSurfaceId: UUID? = nil,
-    tabID: UUID? = nil
+    tabID: UUID? = nil,
+    customTitle: String? = nil
   ) -> TerminalTabID? {
     let context: ghostty_surface_context_e =
       tabManager.tabs.isEmpty
@@ -362,6 +363,7 @@ final class WorktreeTerminalState {
         title: title,
         icon: nil,
         isTitleLocked: false,
+        customTitle: customTitle,
         command: nil,
         initialInput: resolvedInput,
         focusing: focusing,
@@ -519,6 +521,7 @@ final class WorktreeTerminalState {
     let title: String
     let icon: String?
     let isTitleLocked: Bool
+    var customTitle: String?
     var tintColor: RepositoryColor?
     let command: String?
     let initialInput: String?
@@ -540,6 +543,7 @@ final class WorktreeTerminalState {
   private func createTab(_ creation: TabCreation) -> TerminalTabID? {
     let tabId = tabManager.createTab(
       title: creation.title,
+      customTitle: creation.customTitle,
       icon: creation.icon,
       isTitleLocked: creation.isTitleLocked,
       tintColor: creation.tintColor,
