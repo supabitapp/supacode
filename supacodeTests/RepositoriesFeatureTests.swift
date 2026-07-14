@@ -4800,6 +4800,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.mergePullRequest = { _, _, number, _ in
         mergedNumbers.withValue { $0.append(number) }
@@ -4840,6 +4841,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.closePullRequest = { _, _, number in
         closedNumbers.withValue { $0.append(number) }
@@ -4961,6 +4963,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.resolveRemoteInfo = { _ in
         GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
@@ -4999,6 +5002,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.resolveRemoteInfo = { _ in nil }
       $0.gitClient.remoteInfo = { _ in
@@ -5065,6 +5069,108 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
+  @Test func successToastAutoDismissesAfterTheDelay() async {
+    var state = makeState(repositories: [])
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    await store.send(.showToast(.success("Pull request merged"))) {
+      $0.statusToast = .success("Pull request merged")
+    }
+    await clock.advance(by: .milliseconds(2400))
+    #expect(store.state.statusToast == .success("Pull request merged"))
+
+    await clock.advance(by: .milliseconds(100))
+    await store.receive(\.dismissToast) {
+      $0.statusToast = nil
+    }
+    await store.finish()
+  }
+
+  @Test func replacingASuccessToastDoesNotInheritTheCancelledAutoDismiss() async {
+    var state = makeState(repositories: [])
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    await store.send(.showToast(.success("Pull request merged"))) {
+      $0.statusToast = .success("Pull request merged")
+    }
+    await store.send(.showToast(.success("Pull request closed"))) {
+      $0.statusToast = .success("Pull request closed")
+    }
+    // `cancelInFlight` re-arms a single fresh 2.5s timer for the replacement toast rather than stacking a
+    // second dismissal: the toast survives the first timer's original deadline and dismisses once, later.
+    await clock.advance(by: .milliseconds(2400))
+    #expect(store.state.statusToast == .success("Pull request closed"))
+
+    await clock.advance(by: .milliseconds(100))
+    await store.receive(\.dismissToast) {
+      $0.statusToast = nil
+    }
+    await store.finish()
+  }
+
+  @Test func inProgressToastCancelsAPendingSuccessAutoDismiss() async {
+    var state = makeState(repositories: [])
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    await store.send(.showToast(.success("Pull request merged"))) {
+      $0.statusToast = .success("Pull request merged")
+    }
+    await store.send(.showToast(.inProgress("Closing pull request…"))) {
+      $0.statusToast = .inProgress("Closing pull request…")
+    }
+    // An in-progress toast schedules no auto-dismiss and cancels the success timer, so it never self-dismisses.
+    await clock.advance(by: .seconds(5))
+    #expect(store.state.statusToast == .inProgress("Closing pull request…"))
+    await store.finish()
+  }
+
+  @Test func delayedPullRequestRefreshFiresAfterTheDelay() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .disabled
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    // Two rapid requests must collapse to a single fire (cancelInFlight), not stack two refreshes.
+    await store.send(.delayedPullRequestRefresh(featureWorktree.id))
+    await store.send(.delayedPullRequestRefresh(featureWorktree.id))
+    await clock.advance(by: .seconds(2))
+    // GitHub integration is disabled, so the refresh lands as a no-op. A second event would trip `finish()`, so
+    // matching exactly one here proves the two requests coalesced into a single refresh.
+    await store.receive(\.worktreeInfoEvent)
+    await store.finish()
+  }
+
   @Test func worktreeInfoEventRepositoryPullRequestRefreshQueuesWhileAvailabilityUnknown() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
@@ -5076,9 +5182,11 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var initialState = makeState(repositories: [repository])
     initialState.reconcileSidebarForTesting()
+    let clock = TestClock()
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = clock
       $0.githubIntegration.isAvailable = { false }
       $0.gitClient.remoteInfo = { _ in
         Issue.record("remoteInfo should not be requested when GitHub integration is unavailable")
@@ -5111,12 +5219,66 @@ struct RepositoriesFeatureTests {
       $0.queuedPullRequestRefreshByRepositoryID = [:]
       $0.inFlightPullRequestRefreshRepositoryIDs = []
     }
+
+    // The recovery loop re-checks availability on every interval, and the pending refresh survives each failed check.
+    await clock.advance(by: .seconds(15))
+    await store.receive(\.refreshGithubIntegrationAvailability) {
+      $0.githubIntegrationAvailability = .checking
+    }
+    await store.receive(\.githubIntegrationAvailabilityUpdated) {
+      $0.githubIntegrationAvailability = .unavailable
+    }
+
     await store.send(.setGithubIntegrationEnabled(false)) {
       $0.githubIntegrationAvailability = .disabled
       $0.pendingPullRequestRefreshByRepositoryID = [:]
       $0.queuedPullRequestRefreshByRepositoryID = [:]
       $0.inFlightPullRequestRefreshRepositoryIDs = []
     }
+    await store.finish()
+  }
+
+  @Test func githubIntegrationRecoveryStopsRecheckingOnceAvailable() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .checking
+    initialState.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let isAvailable = LockIsolated(false)
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+      $0.continuousClock = clock
+      $0.githubIntegration.isAvailable = { isAvailable.value }
+    }
+
+    await store.send(.githubIntegrationAvailabilityUpdated(false)) {
+      $0.githubIntegrationAvailability = .unavailable
+    }
+
+    // Still unavailable after the first interval: the loop re-arms and checks again on the next one.
+    await clock.advance(by: .seconds(15))
+    await store.receive(\.refreshGithubIntegrationAvailability) {
+      $0.githubIntegrationAvailability = .checking
+    }
+    await store.receive(\.githubIntegrationAvailabilityUpdated) {
+      $0.githubIntegrationAvailability = .unavailable
+    }
+
+    isAvailable.setValue(true)
+    await clock.advance(by: .seconds(15))
+    await store.receive(\.refreshGithubIntegrationAvailability) {
+      $0.githubIntegrationAvailability = .checking
+    }
+    await store.receive(\.githubIntegrationAvailabilityUpdated) {
+      $0.githubIntegrationAvailability = .available
+    }
+
+    // Recovering cancels the loop: further intervals must not re-check.
+    await clock.advance(by: .seconds(60))
     await store.finish()
   }
 
@@ -5214,6 +5376,8 @@ struct RepositoriesFeatureTests {
     )
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
     }
 
     await store.send(.githubIntegrationAvailabilityUpdated(false)) {

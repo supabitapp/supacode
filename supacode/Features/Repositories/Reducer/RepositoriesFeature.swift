@@ -23,6 +23,8 @@ private enum CancelID {
 
 nonisolated let repositoriesLogger = SupaLogger("Repositories")
 private nonisolated let githubIntegrationRecoveryInterval: Duration = .seconds(15)
+private nonisolated let toastAutoDismissDelay: Duration = .milliseconds(2500)
+private nonisolated let delayedPullRequestRefreshDelay: Duration = .seconds(2)
 
 // Resolve `(host, owner, repo)` for a repository root. `gh repo
 // view` honours the user's default-repo resolution (fork →
@@ -524,6 +526,7 @@ struct RepositoriesFeature {
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(ShellClient.self) private var shellClient
+  @Dependency(\.continuousClock) private var clock
   @Dependency(\.date.now) private var now
   @Dependency(\.uuid) private var uuid
 
@@ -2092,12 +2095,10 @@ struct RepositoriesFeature {
           state.queuedPullRequestRefreshByRepositoryID.removeAll()
           state.inFlightPullRequestRefreshRepositoryIDs.removeAll()
           state.inFlightPullRequestBranchSnapshotsByRepositoryID.removeAll()
+          let clock = clock
           return .run { send in
             while !Task.isCancelled {
-              try? await ContinuousClock().sleep(for: githubIntegrationRecoveryInterval)
-              guard !Task.isCancelled else {
-                return
-              }
+              try await clock.sleep(for: githubIntegrationRecoveryInterval)
               await send(.refreshGithubIntegrationAvailability)
             }
           }
@@ -2734,8 +2735,9 @@ struct RepositoriesFeature {
         case .inProgress:
           return .cancel(id: CancelID.toastAutoDismiss)
         case .success:
+          let clock = clock
           return .run { send in
-            try? await ContinuousClock().sleep(for: .seconds(2.5))
+            try await clock.sleep(for: toastAutoDismissDelay)
             await send(.dismissToast)
           }
           .cancellable(id: CancelID.toastAutoDismiss, cancelInFlight: true)
@@ -2767,8 +2769,9 @@ struct RepositoriesFeature {
         }
         let repositoryRootURL = worktree.repositoryRootURL
         let worktreeIDs = repository.worktrees.map(\.id)
+        let clock = clock
         return .run { send in
-          try? await ContinuousClock().sleep(for: .seconds(2))
+          try await clock.sleep(for: delayedPullRequestRefreshDelay)
           await send(
             .worktreeInfoEvent(
               .repositoryPullRequestRefresh(
