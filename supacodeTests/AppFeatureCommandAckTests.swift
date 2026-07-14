@@ -394,7 +394,7 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
   }
 
-  @Test(.dependencies) func lockedTabRenameSocketDeeplinkFailsImmediately() async {
+  @Test(.dependencies) func repeatedLockedTabRenameSocketDeeplinkFailsImmediately() async {
     let worktree = makeWorktree()
     let tabID = UUID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
@@ -404,24 +404,24 @@ struct AppFeatureCommandAckTests {
         sent.withValue { $0.append(command) }
       }
     }
-    let (readFD, writeFD) = makePipe()
-    defer { close(readFD) }
-
-    await store.send(
-      .deeplink(
-        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
-        source: .socket,
-        responseFD: writeFD,
-        timeoutSeconds: 0
+    for _ in 0..<2 {
+      let (readFD, writeFD) = makePipe()
+      defer { close(readFD) }
+      await store.send(
+        .deeplink(
+          .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+          source: .socket,
+          responseFD: writeFD,
+          timeoutSeconds: 0
+        )
       )
-    )
-    await store.finish()
-
+      await store.finish()
+      let response = readPipeJSON(readFD)
+      #expect(response?["ok"] as? Bool == false)
+      #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("locked") == true)
+    }
     #expect(store.state.alert != nil)
     #expect(sent.value.isEmpty)
-    let response = readPipeJSON(readFD)
-    #expect(response?["ok"] as? Bool == false)
-    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("locked") == true)
   }
 
   // MARK: - worktree delete.

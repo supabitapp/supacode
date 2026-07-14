@@ -934,22 +934,29 @@ struct AppFeature {
           .deeplink(parsed, source: source, responseFD: responseFD, timeoutSeconds: timeoutSeconds))
 
       case .deeplink(let deeplink, let source, let responseFD, let timeoutSeconds):
-        let alertBefore = state.alert
+        let previousAlert = state.alert
+        if responseFD != nil {
+          // Isolate alerts raised by this socket command from an alert that was
+          // already presented. Reducer mutations are synchronous, so restoring
+          // the previous alert on success is invisible to the UI.
+          state.alert = nil
+        }
         let effect = handleDeeplink(
           deeplink, source: source, responseFD: responseFD,
           timeoutSeconds: timeoutSeconds, state: &state)
         guard let responseFD else { return effect }
+        let commandError = state.alert.map(extractAlertMessage)
+        if state.alert == nil {
+          state.alert = previousAlert
+        }
         // Confirmation dialog pending; response will be sent when dialog resolves.
         guard state.deeplinkInputConfirmation == nil else { return effect }
         // A completion-based ack was registered; it resolves when the operation finishes.
         guard state.pendingCommandAcks[id: responseFD] == nil else { return effect }
-        // If a new alert was set during handling, the command failed.
-        let succeeded = state.alert == alertBefore
-        let errorMessage: String? = succeeded ? nil : extractAlertMessage(state.alert)
         return .concatenate(
           effect,
           sendSocketResponse(
-            clientFD: responseFD, ok: succeeded, error: errorMessage))
+            clientFD: responseFD, ok: commandError == nil, error: commandError))
 
       case .commandAckTimedOut(let responseFD, let token):
         // Ignore a stale watchdog whose ack was already resolved (and whose fd
