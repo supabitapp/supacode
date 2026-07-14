@@ -90,16 +90,17 @@ struct OmpSettingsInstallerTests {
     #expect(makeInstaller(homeDirectoryURL: home).installState() == .outdated)
   }
 
-  @Test func ompEmittedLifecycleEventsParseAsPresence() {
-    // Pin the emit-to-parse coupling end to end: the extension emits each
-    // literal and the parser still accepts it, so a HookEvent rename or an
-    // emitPresence typo can't silently kill presence over SSH.
-    for event in ["session_start", "busy", "idle", "session_end"] {
+  @Test func ompEmittedLifecycleEventsKeepProcessPresence() {
+    // OMP loads the extension into in-process subagent sessions. A subagent
+    // shutdown shares the top-level process pid, so emitting session_end would
+    // remove the main OMP badge. Process liveness owns final badge removal.
+    for event in ["session_start", "busy", "idle"] {
       #expect(OmpExtensionContent.indexTs.contains("emitPresence(\"\(event)\")"))
       let signal = AgentPresenceOSC.parse(id: "omp", metadata: "event=\(event)")
       #expect(signal?.agent == "omp")
       #expect(signal?.eventRawValue == event)
     }
+    #expect(!OmpExtensionContent.indexTs.contains("emitPresence(\"session_end\")"))
   }
 
   @Test func installCreatesExtensionFile() throws {
