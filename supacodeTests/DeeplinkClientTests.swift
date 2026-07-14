@@ -183,6 +183,16 @@ struct DeeplinkClientTests {
     )
   }
 
+  @Test func worktreeTabRenameWithValuelessTitle() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/rename?title")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .tabRename(tabID: tabUUID, title: ""))
+    )
+  }
+
   @Test func worktreeTabRenameWithoutTitleReturnsNil() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!

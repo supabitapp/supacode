@@ -394,6 +394,36 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
   }
 
+  @Test(.dependencies) func lockedTabRenameSocketDeeplinkFailsImmediately() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in false }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+
+    #expect(store.state.alert != nil)
+    #expect(sent.value.isEmpty)
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("locked") == true)
+  }
+
   // MARK: - worktree delete.
 
   @Test(.dependencies) func deleteSocketDeeplinkResolvesOnWorktreeDeleted() async {

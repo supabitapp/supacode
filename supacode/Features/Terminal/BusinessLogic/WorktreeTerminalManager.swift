@@ -843,6 +843,13 @@ final class WorktreeTerminalManager {
     states[worktreeID]?.hasTab(tabID) ?? false
   }
 
+  func tabCanRename(worktreeID: Worktree.ID, tabID: TerminalTabID) -> Bool {
+    guard let tab = states[worktreeID]?.tabManager.tabs.first(where: { $0.id == tabID }) else {
+      return false
+    }
+    return !tab.isTitleLocked
+  }
+
   func surfaceExists(worktreeID: Worktree.ID, tabID: TerminalTabID, surfaceID: UUID) -> Bool {
     states[worktreeID]?.hasSurface(surfaceID, in: tabID) ?? false
   }

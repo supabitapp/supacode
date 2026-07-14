@@ -1537,6 +1537,9 @@ struct AppFeatureDeeplinkTests {
       $0.terminalClient.tabExists = { worktreeID, candidate in
         worktreeID == worktree.id && candidate.rawValue == tabID
       }
+      $0.terminalClient.tabCanRename = { worktreeID, candidate in
+        worktreeID == worktree.id && candidate.rawValue == tabID
+      }
     }
     store.exhaustivity = .off
 

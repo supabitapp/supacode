@@ -6,6 +6,7 @@ struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
   var events: @MainActor @Sendable () -> AsyncStream<Event>
   var tabExists: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
+  var tabCanRename: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
   var surfaceExists: @MainActor @Sendable (Worktree.ID, TerminalTabID, UUID) -> Bool
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
   var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TerminalTabID?
@@ -123,6 +124,7 @@ extension TerminalClient: DependencyKey {
     send: { _ in fatalError("TerminalClient.send not configured") },
     events: { fatalError("TerminalClient.events not configured") },
     tabExists: { _, _ in fatalError("TerminalClient.tabExists not configured") },
+    tabCanRename: { _, _ in fatalError("TerminalClient.tabCanRename not configured") },
     surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
     surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
     tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
@@ -140,6 +142,7 @@ extension TerminalClient: DependencyKey {
     send: { _ in },
     events: { AsyncStream { $0.finish() } },
     tabExists: unimplemented("TerminalClient.tabExists", placeholder: true),
+    tabCanRename: unimplemented("TerminalClient.tabCanRename", placeholder: true),
     surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true),
     surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
     tabID: unimplemented("TerminalClient.tabID", placeholder: nil),

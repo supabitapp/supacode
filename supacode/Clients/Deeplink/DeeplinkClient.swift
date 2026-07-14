@@ -211,13 +211,14 @@ private nonisolated enum DeeplinkParser {
     }
 
     if pathSegments.count >= 4, pathSegments[3] == "rename" {
-      guard let titleItem = queryItems.first(where: { $0.name == "title" }),
-        let title = titleItem.value
-      else {
+      guard let titleItem = queryItems.first(where: { $0.name == "title" }) else {
         logger.warning("Tab rename deeplink missing title")
         return nil
       }
-      return .worktree(id: worktreeID, action: .tabRename(tabID: tabUUID, title: title))
+      return .worktree(
+        id: worktreeID,
+        action: .tabRename(tabID: tabUUID, title: titleItem.value ?? "")
+      )
     }
     if pathSegments.count >= 4, pathSegments[3] == "destroy" {
       return .worktree(id: worktreeID, action: .tabDestroy(tabID: tabUUID))

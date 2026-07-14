@@ -242,6 +242,9 @@ struct SupacodeApp: App {
         tabExists: { worktreeID, tabID in
           terminalManager.tabExists(worktreeID: worktreeID, tabID: tabID)
         },
+        tabCanRename: { worktreeID, tabID in
+          terminalManager.tabCanRename(worktreeID: worktreeID, tabID: tabID)
+        },
         surfaceExists: { worktreeID, tabID, surfaceID in
           terminalManager.surfaceExists(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID)
         },

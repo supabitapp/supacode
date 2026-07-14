@@ -2029,6 +2029,19 @@ struct AppFeature {
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabRename(let tabID, let title):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      guard terminalClient.tabCanRename(worktreeID, TerminalTabID(rawValue: tabID)) else {
+        deeplinkLogger.warning("Tab \(tabID) has a locked title in worktree \(worktreeID)")
+        state.alert = AlertState {
+          TextState("Tab cannot be renamed")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("This tab's title is locked and cannot be changed.")
+        }
+        return .none
+      }
       return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
         .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: title)
       }
