@@ -16,6 +16,8 @@ struct TerminalClient {
   var selectedSurfaceID: @MainActor @Sendable (Worktree.ID) -> UUID?
   var latestUnreadNotification: @MainActor @Sendable () -> NotificationLocation?
   var markNotificationRead: @MainActor @Sendable (Worktree.ID, UUID) -> Void
+  /// Marks every notification in every worktree read (menu bar "Mark All as Read").
+  var markAllNotificationsRead: @MainActor @Sendable () -> Void
   /// Blocking scripts (setup / archive / delete / run) bypass zmx and die
   /// with the app, so the auto-mode quit confirmation needs to know.
   var hasInflightBlockingScripts: @MainActor @Sendable () -> Bool
@@ -123,6 +125,7 @@ extension TerminalClient: DependencyKey {
     selectedSurfaceID: { _ in fatalError("TerminalClient.selectedSurfaceID not configured") },
     latestUnreadNotification: { fatalError("TerminalClient.latestUnreadNotification not configured") },
     markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") },
+    markAllNotificationsRead: { fatalError("TerminalClient.markAllNotificationsRead not configured") },
     hasInflightBlockingScripts: { fatalError("TerminalClient.hasInflightBlockingScripts not configured") },
     terminateAllSessions: { fatalError("TerminalClient.terminateAllSessions not configured") },
     reapOrphanSessions: { _ in fatalError("TerminalClient.reapOrphanSessions not configured") },
@@ -140,6 +143,7 @@ extension TerminalClient: DependencyKey {
     selectedSurfaceID: unimplemented("TerminalClient.selectedSurfaceID", placeholder: nil),
     latestUnreadNotification: unimplemented("TerminalClient.latestUnreadNotification", placeholder: nil),
     markNotificationRead: unimplemented("TerminalClient.markNotificationRead"),
+    markAllNotificationsRead: unimplemented("TerminalClient.markAllNotificationsRead"),
     hasInflightBlockingScripts: unimplemented("TerminalClient.hasInflightBlockingScripts", placeholder: false),
     terminateAllSessions: unimplemented("TerminalClient.terminateAllSessions"),
     reapOrphanSessions: unimplemented("TerminalClient.reapOrphanSessions"),

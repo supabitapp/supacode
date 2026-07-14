@@ -84,6 +84,7 @@ struct AppFeature {
     var hasAnyTerminalSurface: Bool = false
     var lastKnownSystemNotificationsEnabled: Bool
     var lastKnownAgentPresenceBadgesEnabled: Bool
+    var lastKnownAppVisibility: AppVisibility
     var pendingDeeplinks: [Deeplink] = []
     var isDeeplinkReferenceRequested = false
     /// Cached projection of every primitive the menu-bar `WorktreeCommands`
@@ -114,6 +115,7 @@ struct AppFeature {
       self.settings = settings
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
       lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
+      lastKnownAppVisibility = settings.appVisibility
       // Seed from settings so `state.allScripts` doesn't start empty before the
       // first `settingsChanged` delegate fires. Globals aren't worktree-scoped,
       // so deselection (line below in `selectedWorktreeChanged(nil)`)
@@ -208,6 +210,11 @@ struct AppFeature {
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
+    case menuBarNotificationSelected(
+      worktreeID: Worktree.ID, tabID: TerminalTabID?, surfaceID: UUID, notificationID: UUID)
+    case menuBarWorktreeSelected(worktreeID: Worktree.ID)
+    case showNotificationsPane
+    case markAllNotificationsRead
     case runScript
     case runNamedScript(ScriptDefinition)
     case stopScript(ScriptDefinition)
@@ -524,6 +531,12 @@ struct AppFeature {
         let agentBadgesFlipped =
           settings.agentPresenceBadgesEnabled != state.lastKnownAgentPresenceBadgesEnabled
         state.lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
+        let visibilityChanged = settings.appVisibility != state.lastKnownAppVisibility
+        // Surface the main window when the Dock icon comes back, so leaving
+        // menu-bar-only mode never strands the user without a window.
+        let dockIconReappeared =
+          state.lastKnownAppVisibility.hidesDockIcon && !settings.appVisibility.hidesDockIcon
+        state.lastKnownAppVisibility = settings.appVisibility
         // Compare IDs as a set — name/command edits and pure reorders should not re-prune recency.
         let globalScriptIDsChanged = Set(state.globalScripts.map(\.id)) != Set(settings.globalScripts.map(\.id))
         state.globalScripts = settings.globalScripts
@@ -580,6 +593,16 @@ struct AppFeature {
             }
           },
         ]
+        if visibilityChanged {
+          effects.append(
+            .run { @MainActor _ in
+              NSApplication.shared.applyActivationPolicy(for: settings.appVisibility)
+              if dockIconReappeared {
+                NSApplication.shared.surfaceMainWindow()
+              }
+            }
+          )
+        }
         if globalScriptIDsChanged {
           effects.append(pruneScriptRecencyEffect(state: state))
         }
@@ -745,6 +768,57 @@ struct AppFeature {
             await terminalClient.markNotificationRead(location.worktreeID, location.notificationID)
           }
         )
+
+      case .menuBarNotificationSelected(let worktreeID, let tabID, let surfaceID, let notificationID):
+        guard let worktree = state.repositories.worktree(for: worktreeID) else {
+          jumpLogger.warning(
+            "menuBarNotificationSelected: worktree \(worktreeID) vanished between menu render and click."
+          )
+          return .none
+        }
+        analyticsClient.capture("menu_bar_notification_selected", nil)
+        // The notification may predate a tab move; re-resolve the surface's
+        // current tab when the recorded one is gone. A nil resolution means
+        // the surface closed — still surface the app and mark the item read.
+        let resolvedTabID = tabID ?? terminalClient.tabID(worktreeID, surfaceID)
+        return .merge(
+          .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
+          .run { @MainActor _ in
+            NSApplication.shared.surfaceMainWindow()
+            if let resolvedTabID {
+              terminalClient.send(.focusSurface(worktree, tabID: resolvedTabID, surfaceID: surfaceID))
+            }
+            terminalClient.markNotificationRead(worktreeID, notificationID)
+          }
+        )
+
+      case .menuBarWorktreeSelected(let worktreeID):
+        guard state.repositories.worktree(for: worktreeID) != nil else {
+          jumpLogger.warning(
+            "menuBarWorktreeSelected: worktree \(worktreeID) vanished between menu render and click."
+          )
+          return .none
+        }
+        analyticsClient.capture("menu_bar_worktree_selected", nil)
+        return .merge(
+          .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
+          .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
+        )
+
+      case .showNotificationsPane:
+        let surfaceWindow: Effect<Action> = .run { @MainActor _ in
+          NSApplication.shared.surfaceMainWindow()
+        }
+        // Toggle only when the notifications pane isn't already up, so a
+        // second menu invocation surfaces the window instead of closing it.
+        if state.repositories.inspectorPresented, state.repositories.inspectorPane == .notifications {
+          return surfaceWindow
+        }
+        return .merge(surfaceWindow, .send(.repositories(.toggleInspectorPane(.notifications))))
+
+      case .markAllNotificationsRead:
+        analyticsClient.capture("notifications_mark_all_read", nil)
+        return .run { _ in await terminalClient.markAllNotificationsRead() }
 
       case .runScript:
         // Find the selected or primary script and run it.

@@ -130,6 +130,43 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.systemNotificationsEnabled == true)
   }
 
+  @Test(.dependencies) func settingAppVisibilityPersistsChanges() async {
+    var initialSettings = GlobalSettings.default
+    initialSettings.appVisibility = .dockAndMenuBar
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.setAppVisibility(.menuBar)) {
+      $0.appVisibility = .menuBar
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.appVisibility == .menuBar)
+  }
+
+  @Test(.dependencies) func setAppVisibilityPersistsOnlyRealFlips() async {
+    var initialSettings = GlobalSettings.default
+    initialSettings.appVisibility = .dockAndMenuBar
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    // Echo of the current value (MenuBarExtra scene evaluation) is a no-op.
+    await store.send(.setAppVisibility(.dockAndMenuBar))
+
+    await store.send(.setAppVisibility(.dock)) {
+      $0.appVisibility = .dock
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.appVisibility == .dock)
+  }
+
   @Test(.dependencies) func selectingNotificationSoundPlaysPreview() async {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = .default }

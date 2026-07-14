@@ -76,6 +76,11 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     // the main window. Opt the singleton out per-process so a panel
     // left open from a previous session can't survive the relaunch.
     NSColorPanel.shared.isRestorable = false
+    // Apply the saved Dock/menu-bar visibility before the first window shows,
+    // so a menu-bar-only user never flashes a Dock icon at launch.
+    if let visibility = appStore?.state.settings.appVisibility {
+      NSApplication.shared.applyActivationPolicy(for: visibility)
+    }
     appStore?.send(.appLaunched)
   }
 
@@ -265,6 +270,9 @@ struct SupacodeApp: App {
         },
         markNotificationRead: { worktreeID, notificationID in
           terminalManager.markNotificationRead(worktreeID: worktreeID, notificationID: notificationID)
+        },
+        markAllNotificationsRead: {
+          terminalManager.markAllNotificationsRead()
         },
         hasInflightBlockingScripts: {
           terminalManager.hasInflightBlockingScripts
@@ -572,5 +580,27 @@ struct SupacodeApp: App {
     .windowToolbarStyle(.unified)
     .defaultSize(width: 720, height: 640)
     .restorationBehavior(.disabled)
+    MenuBarExtra(isInserted: menuBarInserted) {
+      MenuBarNotificationsMenu(store: store)
+    } label: {
+      MenuBarNotificationsLabel(store: store)
+    }
+    .menuBarExtraStyle(.menu)
+  }
+
+  /// Visibility-backed insertion so switching modes (or Cmd-dragging the icon
+  /// out of the menu bar) adds/removes the status item live. Dragging the icon
+  /// out falls back to `.dock`, which keeps at least one surface enabled.
+  private var menuBarInserted: Binding<Bool> {
+    Binding(
+      get: { store.settings.appVisibility.showsMenuBarIcon },
+      set: { newValue in
+        // MenuBarExtra re-writes the current value on every scene evaluation;
+        // only a real flip may reach the store or the persist round-trip
+        // re-evaluates the scene and loops the app at launch.
+        guard newValue != store.settings.appVisibility.showsMenuBarIcon else { return }
+        store.send(.settings(.setAppVisibility(newValue ? .dockAndMenuBar : .dock)))
+      }
+    )
   }
 }

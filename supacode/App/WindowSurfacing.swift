@@ -1,6 +1,17 @@
 import AppKit
+import SupacodeSettingsShared
 
 extension NSApplication {
+  /// Applies the Dock/menu-bar visibility mode: `.menuBar` runs as an
+  /// accessory (no Dock icon), every other mode as a regular app. Idempotent —
+  /// safe to call on every settings change.
+  @MainActor
+  func applyActivationPolicy(for visibility: AppVisibility) {
+    let policy: NSApplication.ActivationPolicy = visibility.hidesDockIcon ? .accessory : .regular
+    guard activationPolicy() != policy else { return }
+    setActivationPolicy(policy)
+  }
+
   /// Brings the main window forward, deminiaturizing if needed.
   ///
   /// Falls back to any non-`NSPanel`, non-settings window so a stale

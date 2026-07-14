@@ -59,6 +59,20 @@ public struct AppearanceSettingsView: View {
           )
         }
       }
+      Section {
+        LabeledContent("Visibility") {
+          HStack(spacing: 12) {
+            ForEach(AppVisibility.allCases) { visibility in
+              AppVisibilityOptionCardView(
+                visibility: visibility,
+                isSelected: visibility == store.appVisibility
+              ) {
+                store.send(.setAppVisibility(visibility))
+              }
+            }
+          }
+        }
+      }
       Section("Editor") {
         Picker(
           selection: $store.defaultEditorID

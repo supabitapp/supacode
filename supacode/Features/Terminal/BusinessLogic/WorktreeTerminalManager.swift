@@ -1064,6 +1064,14 @@ final class WorktreeTerminalManager {
     emitProjection(for: worktreeID)
   }
 
+  /// Marks every notification in every managed worktree read. Indicator and
+  /// projection updates propagate via each state's notification callbacks.
+  func markAllNotificationsRead() {
+    for state in states.values {
+      state.markAllNotificationsRead()
+    }
+  }
+
   /// Embed `agentsBySurface` in each surface so badges survive relaunch.
   func saveAllLayoutSnapshots(
     agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]] = [:]

@@ -74,6 +74,7 @@ public struct SettingsFeature {
     public var confirmQuitMode: ConfirmQuitMode
     public var terminateSessionsOnQuit: Bool
     public var remoteSessionPersistenceEnabled: Bool
+    public var appVisibility: AppVisibility
     public var cliInstallState = CLIInstallState.checking
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
@@ -123,6 +124,7 @@ public struct SettingsFeature {
       confirmQuitMode = settings.confirmQuitMode
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
       remoteSessionPersistenceEnabled = settings.remoteSessionPersistenceEnabled
+      appVisibility = settings.appVisibility
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -163,7 +165,8 @@ public struct SettingsFeature {
         autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
         confirmQuitMode: confirmQuitMode,
         terminateSessionsOnQuit: terminateSessionsOnQuit,
-        remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled
+        remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled,
+        appVisibility: appVisibility
       )
     }
   }
@@ -174,6 +177,7 @@ public struct SettingsFeature {
     case repositoriesChanged([SettingsRepositorySummary])
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
+    case setAppVisibility(AppVisibility)
     case setAutomatedActionPolicy(AutomatedActionPolicy)
     case showNotificationPermissionAlert(errorMessage: String?)
     case updateShortcut(id: AppShortcutID, override: AppShortcutOverride?)
@@ -302,6 +306,7 @@ public struct SettingsFeature {
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
         state.remoteSessionPersistenceEnabled = normalizedSettings.remoteSessionPersistenceEnabled
+        state.appVisibility = normalizedSettings.appVisibility
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)
@@ -325,6 +330,15 @@ public struct SettingsFeature {
 
       case .setSystemNotificationsEnabled(let isEnabled):
         state.systemNotificationsEnabled = isEnabled
+        state.syncGlobalDefaults(from: state.globalSettings)
+        return persist(state)
+
+      case .setAppVisibility(let visibility):
+        // Deduped here (not just at the caller) because `MenuBarExtra`'s
+        // `isInserted` binding re-writes the current value on every scene
+        // evaluation; persisting each echo would loop scene -> persist -> scene.
+        guard state.appVisibility != visibility else { return .none }
+        state.appVisibility = visibility
         state.syncGlobalDefaults(from: state.globalSettings)
         return persist(state)
 
