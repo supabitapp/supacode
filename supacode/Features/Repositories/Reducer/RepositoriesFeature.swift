@@ -16,6 +16,7 @@ private enum CancelID {
   static let worktreePromptLoad = "repositories.worktreePromptLoad"
   static let worktreePromptValidation = "repositories.worktreePromptValidation"
   static let resolveRemoteRepositories = "repositories.resolveRemoteRepositories"
+  static let resolveOpenActions = "repositories.resolveOpenActions"
   static func delayedPRRefresh(_ worktreeID: Worktree.ID) -> String {
     "repositories.delayedPRRefresh.\(worktreeID)"
   }
@@ -129,6 +130,16 @@ struct RepositoriesFeature {
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var mergedWorktreeAction: MergedWorktreeAction?
     var moveNotifiedWorktreeToTop = true
+    /// Installed editors in menu order, mirrored down from `AppFeature` so the
+    /// sidebar context menu never probes LaunchServices while building.
+    var installedOpenActions: [OpenWorktreeAction] = []
+    /// Per-repo resolved open action, stored because resolving it reads
+    /// `@Shared(.repositorySettings(...))`, whose reference is cached weakly:
+    /// constructed from a view body it would re-run the key's (disk-reading)
+    /// load on every menu build. The disk pass (`.openActionsResolved`) is what makes it
+    /// authoritative, but `seedUnresolvedOpenActions` fills a new repository's entry from
+    /// what is already in memory first, so nothing ever reads an absent one.
+    var openActionByRepositoryID: [Repository.ID: OpenWorktreeAction] = [:]
     var shouldRestoreLastFocusedWorktree = false
     var shouldSelectFirstAfterReload = false
     var isRefreshingWorktrees = false
@@ -195,6 +206,11 @@ struct RepositoriesFeature {
     /// / notification mutations on the focused row don't invalidate the
     /// detail tree. Recomputed via `recomputeSelectedWorktreeSliceIfChanged()`.
     var selectedWorktreeSlice: SelectedWorktreeSlice?
+    /// Cached projection of the effective sidebar selection. The sidebar body
+    /// and the row context menu read this instead of deriving rows from
+    /// `sidebarItems`, which would observation-track every row. Recomputed via
+    /// `recomputeSidebarSelectionSliceIfChanged()`.
+    var sidebarSelectionSlice: SidebarSelectionSlice = .empty
     /// Cached toolbar notification snapshot. Detail body reads this instead of
     /// iterating `sidebarItems` (which would observe every per-row notification
     /// mutation across all worktrees). Recomputed via
@@ -443,6 +459,21 @@ struct RepositoriesFeature {
       pullRequestsByWorktreeID: [Worktree.ID: GithubPullRequest?]
     )
     case setGithubIntegrationEnabled(Bool)
+    /// Installed editors resolved by `AppFeature`'s LaunchServices sweep. Mirrored
+    /// in through an action (not a direct child-state write) so the post-reduce
+    /// hook re-arms the open-action resolution.
+    case setInstalledOpenActions([OpenWorktreeAction])
+    /// A per-repo `openActionID` or the global default editor changed. Carries no
+    /// payload: resolution re-reads both from the settings files.
+    case openActionSettingsChanged
+    /// Rebuild `openActionByRepositoryID` off the main actor. Sent by `AppFeature`
+    /// on activation; every arm whose `cacheInvalidations` carry
+    /// `.openActionResolution` gets the same effect straight from the post-reduce
+    /// hook, without the extra action hop.
+    case resolveOpenActions
+    /// The resolution effect's result, merged into the map. The only writer of
+    /// `openActionByRepositoryID`.
+    case openActionsResolved([Repository.ID: OpenWorktreeAction])
     case setMergedWorktreeAction(MergedWorktreeAction?)
     case setAutoDeleteArchivedWorktreesAfterDays(AutoDeletePeriod?)
     case autoDeleteExpiredArchivedWorktrees
@@ -2639,10 +2670,58 @@ struct RepositoriesFeature {
       case .setMoveNotifiedWorktreeToTop(let isEnabled):
         state.moveNotifiedWorktreeToTop = isEnabled
         return .none
+
+      case .setInstalledOpenActions(let installed):
+        guard state.installedOpenActions != installed else { return .none }
+        state.installedOpenActions = installed
+        return .none
+
+      case .openActionSettingsChanged:
+        // The post-reduce hook arms the resolution effect from the invalidation bits.
+        return .none
+
+      case .resolveOpenActions:
+        state.seedUnresolvedOpenActions()
+        return Self.resolveOpenActionsEffect(state: state)
+
+      case .openActionsResolved(let resolved):
+        // A repository can leave the roster while the pass is in flight, and the
+        // post-reduce prune has already run by the time this lands. Merging its entry
+        // back would resurrect a key nothing prunes again.
+        let updates = resolved.filter {
+          state.repositories[id: $0.key] != nil && state.openActionByRepositoryID[$0.key] != $0.value
+        }
+        guard !updates.isEmpty else { return .none }
+        state.openActionByRepositoryID.merge(updates) { _, resolved in resolved }
+        return .none
       default:
         return .none
       }
     }
+  }
+
+  /// Rebuilds the open-action map off the main actor. Every entry it resolves reads
+  /// that repository's `supacode.json`, so this must stay an effect: the synchronous
+  /// read on the reducer is what hung the sidebar's context menu.
+  ///
+  /// Re-reads every repository, every pass. Nothing watches `supacode.json`
+  /// (`RepositorySettingsKey.subscribe` is a no-op), so an entry resolved once would never
+  /// be revisited, and an agent or a `git pull` inside a Supacode terminal rewrites that
+  /// file with no activation to catch it. An unchanged result writes nothing.
+  static func resolveOpenActionsEffect(state: State) -> Effect<Action> {
+    // `.none` carries no cancellation id, so an empty pass can't cancel a live one.
+    guard !state.repositories.isEmpty else { return .none }
+    let inputs = state.repositories.map(OpenActionResolutionInput.init)
+    let installed = state.installedOpenActions
+    return .run { send in
+      // The `.openActionsResolved` arm drops what didn't change. Diffing here too
+      // would only compare against a creation-time snapshot, which is exactly the
+      // stale view that must not decide anything.
+      await send(.openActionsResolved(OpenActionResolver.resolve(inputs: inputs, installed: installed)))
+    }
+    // One cancellation id, so only ever one pass in flight: two overlapping passes
+    // could otherwise land out of order and merge an older snapshot over a newer one.
+    .cancellable(id: CancelID.resolveOpenActions, cancelInFlight: true)
   }
 
   /// Pin / unpin / toast / notification / worktree-info-event handlers, split from `body` to keep
@@ -3900,7 +3979,8 @@ struct RepositoriesFeature {
       case .refreshGithubIntegrationAvailability, .githubIntegrationAvailabilityUpdated,
         .repositoryPullRequestRefreshCompleted, .worktreeBranchNameLoaded, .worktreeLineChangesLoaded,
         .repositoryPullRequestsLoaded, .pullRequestAction, .setGithubIntegrationEnabled, .setMergedWorktreeAction,
-        .setAutoDeleteArchivedWorktreesAfterDays, .autoDeleteExpiredArchivedWorktrees, .setMoveNotifiedWorktreeToTop:
+        .setAutoDeleteArchivedWorktreesAfterDays, .autoDeleteExpiredArchivedWorktrees, .setMoveNotifiedWorktreeToTop,
+        .setInstalledOpenActions, .openActionSettingsChanged, .resolveOpenActions, .openActionsResolved:
         // Real handling lives in `githubIntegrationReducer` (combined below) to keep `body`
         // under the type-checker's complexity limit.
         return .none
@@ -4079,12 +4159,19 @@ struct RepositoriesFeature {
     // helper suppresses no-op rebuilds at the SwiftUI layer. Gated on
     // `\.sidebarStructureAutoRecompute` (defaults to true everywhere); a few
     // legacy tests that don't care about sidebar layout opt out via
-    // `withDependencies`.
+    // `withDependencies`, and the same knob parks the open-action resolution
+    // effect for them.
+    //
+    // The open-action bits launch an effect rather than a recompute: the map is
+    // read off disk, so `applyCacheRecomputes` must stay pure.
     Reduce { state, action in
       @Dependency(\.sidebarStructureAutoRecompute) var autoRecompute
       guard autoRecompute else { return .none }
-      state.applyCacheRecomputes(action.cacheInvalidations)
-      return .none
+      let invalidations = action.cacheInvalidations
+      state.applyCacheRecomputes(invalidations)
+      guard invalidations.contains(.openActionResolution) else { return .none }
+      state.seedUnresolvedOpenActions()
+      return Self.resolveOpenActionsEffect(state: state)
     }
   }
 
@@ -4687,9 +4774,45 @@ extension RepositoriesFeature.State {
     selection?.worktreeID
   }
 
-  var effectiveSidebarSelectedRows: [SidebarItemFeature.State] {
-    let selectedRows = orderedSidebarItems().filter { sidebarSelectedWorktreeIDs.contains($0.id) }
-    return selectedRows.isEmpty ? (selectedRow(for: selectedWorktreeID).map { [$0] } ?? []) : selectedRows
+  /// Builds the `sidebarSelectionSlice` cache. Reads `sidebarItems[id:]` per
+  /// selected row, so it belongs to the reducer: calling it from a view body
+  /// would observation-track every row's properties.
+  func computeSidebarSelectionSlice() -> SidebarSelectionSlice {
+    let rows = effectiveSidebarSelectedRows()
+    return SidebarSelectionSlice(
+      rows: rows,
+      archiveTargets:
+        rows
+        .filter { $0.lifecycle == .idle && !$0.isMainWorktree }
+        .map { RepositoriesFeature.ArchiveWorktreeTarget(worktreeID: $0.id, repositoryID: $0.repositoryID) },
+      deleteTargets:
+        rows
+        .filter { $0.lifecycle == .idle }
+        .map { RepositoriesFeature.DeleteWorktreeTarget(worktreeID: $0.id, repositoryID: $0.repositoryID) },
+      hasMixedKindSelection: rows.count > 1 && Set(rows.map(\.kind)).count > 1,
+      isAllFoldersBulk: rows.count > 1 && rows.allSatisfy(\.isFolder)
+    )
+  }
+
+  /// The multi-selection in sidebar order, falling back to the focused row.
+  private func effectiveSidebarSelectedRows() -> [SidebarContextRow] {
+    var rows: [SidebarContextRow] = []
+    var seen: Set<Worktree.ID> = []
+    for row in orderedSidebarItems() where sidebarSelectedWorktreeIDs.contains(row.id) {
+      rows.append(SidebarContextRow(row))
+      seen.insert(row.id)
+    }
+    // Archived rows sit outside the pinned / unpinned buckets the ordered walk
+    // covers, so a selected row that's back on screen for its delete script is
+    // only reachable through `selectedRow(for:)`.
+    if seen.count < sidebarSelectedWorktreeIDs.count {
+      for id in sidebarItems.ids where sidebarSelectedWorktreeIDs.contains(id) && !seen.contains(id) {
+        guard let row = selectedRow(for: id) else { continue }
+        rows.append(SidebarContextRow(row))
+      }
+    }
+    guard rows.isEmpty else { return rows }
+    return selectedRow(for: selectedWorktreeID).map { [SidebarContextRow($0)] } ?? []
   }
 
   var expandedRepositoryIDs: Set<Repository.ID> {
@@ -4983,6 +5106,32 @@ extension RepositoriesFeature.State {
       return repository.id
     }
     return nil
+  }
+
+  /// Answers for the repositories the disk pass has not reached yet, from what is already
+  /// in memory: the settings file's entry for that repository, then the default editor.
+  /// Only the repository's own `supacode.json` needs the disk, so that is all the effect
+  /// is left with, and no consumer has to invent an answer for a repository with no entry.
+  mutating func seedUnresolvedOpenActions() {
+    // With no installed set, the default editor normalizes away and every repository that
+    // overrides nothing folds to `preferredDefault([])`, a guess the sweep overwrites a
+    // moment later. The sweep is synchronous before the first frame, so this is empty
+    // only where nothing has resolved anything yet.
+    guard !installedOpenActions.isEmpty else { return }
+    let unresolved = repositories.filter { openActionByRepositoryID[$0.id] == nil }
+    guard !unresolved.isEmpty else { return }
+    @Shared(.settingsFile) var settingsFile
+    let defaultEditorID = settingsFile.global.defaultEditorID
+    for repository in unresolved {
+      // The settings file is keyed the way `RepositorySettingsKey` keys it, which is not
+      // `Repository.ID` (that one keeps its trailing slash, and remote keys are branded).
+      let key = RepositorySettingsKey(rootURL: repository.rootURL, host: repository.host)
+      openActionByRepositoryID[repository.id] = OpenWorktreeAction.fromSettingsID(
+        settingsFile.repositories[key.repositoryID]?.openActionID,
+        defaultEditorID: defaultEditorID,
+        installed: installedOpenActions
+      )
+    }
   }
 
   /// Selectability check (archived = no, pending = yes) used by the worktree-history

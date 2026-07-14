@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
 import OrderedCollections
@@ -1107,5 +1108,617 @@ struct SidebarStructureTests {
     reordered.move(fromOffsets: translated.offsets, toOffset: translated.destination)
     // Hoisted d stays last; a moves to just before c.
     #expect(reordered == ["b", "a", "c", "d"])
+  }
+
+  // MARK: - Selection slice cache.
+
+  /// Poisons the cache so a recompute is observable: if the action's
+  /// invalidations don't include `.sidebarSelectionSlice`, the sentinel survives.
+  private static let poisonedSelectionSlice = SidebarSelectionSlice(
+    rows: [],
+    archiveTargets: [],
+    deleteTargets: [],
+    hasMixedKindSelection: true,
+    isAllFoldersBulk: true
+  )
+
+  private func makeRepository(path: String) -> Repository {
+    let repoRoot = URL(fileURLWithPath: path)
+    return Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: repoRoot.lastPathComponent,
+      worktrees: IdentifiedArray(uniqueElements: [makeMainWorktree(repoRoot: repoRoot)])
+    )
+  }
+
+  private func makeFolderRepository(path: String) -> Repository {
+    let folderURL = URL(fileURLWithPath: path)
+    return Repository(
+      id: RepositoryID(folderURL.path(percentEncoded: false)),
+      rootURL: folderURL,
+      name: folderURL.lastPathComponent,
+      worktrees: IdentifiedArray(
+        uniqueElements: [
+          Worktree(
+            id: Repository.folderWorktreeID(for: folderURL),
+            name: folderURL.lastPathComponent,
+            detail: "",
+            workingDirectory: folderURL,
+            repositoryRootURL: folderURL
+          )
+        ]
+      ),
+      isGitRepository: false
+    )
+  }
+
+  @Test func selectionChangeRecomputesSelectionSlice() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let feature = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, feature])
+    )
+    var state = makeState(repositories: [repository])
+    state.sidebarSelectionSlice = Self.poisonedSelectionSlice
+
+    state.sidebarSelectedWorktreeIDs = [feature.id]
+    let action = RepositoriesFeature.Action.setSidebarSelectedWorktreeIDs([feature.id])
+    #expect(action.cacheInvalidations.contains(.sidebarSelectionSlice))
+    state.applyCacheRecomputes(action.cacheInvalidations)
+
+    #expect(state.sidebarSelectionSlice.rows.map(\.id) == [feature.id])
+    #expect(!state.sidebarSelectionSlice.hasMixedKindSelection)
+    #expect(!state.sidebarSelectionSlice.isAllFoldersBulk)
+  }
+
+  @Test func perLeafTicksLeaveSelectionSliceUntouched() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let feature = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, feature])
+    )
+    var state = makeState(repositories: [repository])
+    state.sidebarSelectedWorktreeIDs = [feature.id]
+
+    // An agent tick, a notification append, and a running-script update are the
+    // per-leaf storms the sidebar rule forbids fanning out to every row.
+    let ticks: [RepositoriesFeature.Action] = [
+      .sidebarItems(.element(id: feature.id, action: .agentSnapshotChanged(.init(isWorking: true)))),
+      .sidebarItems(
+        .element(
+          id: feature.id,
+          action: .terminalProjectionChanged(
+            WorktreeRowProjection(
+              surfaceIDs: [],
+              isProgressBusy: true,
+              hasUnseenNotifications: true,
+              notifications: [],
+              runningScripts: [.init(id: UUID(), tint: .blue)]
+            )
+          )
+        )
+      ),
+      .worktreeNotificationReceived(feature.id),
+    ]
+
+    for tick in ticks {
+      state.sidebarSelectionSlice = Self.poisonedSelectionSlice
+      #expect(!tick.cacheInvalidations.contains(.sidebarSelectionSlice))
+      state.applyCacheRecomputes(tick.cacheInvalidations)
+      #expect(state.sidebarSelectionSlice == Self.poisonedSelectionSlice)
+    }
+  }
+
+  @Test func contextMenuOpenWorktreeLeavesSelectionSliceUntouched() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main])
+    )
+    var state = makeState(repositories: [repository])
+    state.sidebarSelectionSlice = Self.poisonedSelectionSlice
+
+    let action = RepositoriesFeature.Action.contextMenuOpenWorktree(main.id, .finder)
+    #expect(action.cacheInvalidations.isEmpty)
+    state.applyCacheRecomputes(action.cacheInvalidations)
+
+    #expect(state.sidebarSelectionSlice == Self.poisonedSelectionSlice)
+  }
+
+  @Test func pinFlipRecomputesSelectionSliceSoTheContextMenuLabelStaysFresh() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let feature = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, feature])
+    )
+    var state = makeState(repositories: [repository])
+    state.sidebarSelectedWorktreeIDs = [feature.id]
+    state.applyCacheRecomputes(.all)
+    #expect(state.sidebarSelectionSlice.rows.first?.isPinned == false)
+
+    state.sidebarItems[id: feature.id]?.isPinned = true
+    let action = RepositoriesFeature.Action.pinWorktree(feature.id)
+    #expect(action.cacheInvalidations.contains(.sidebarSelectionSlice))
+    state.applyCacheRecomputes(action.cacheInvalidations)
+
+    #expect(state.sidebarSelectionSlice.rows.first?.isPinned == true)
+  }
+
+  @Test func mixedKindSelectionIsFlaggedAndAllFolderSelectionIsBulk() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main])
+    )
+    let folderA = makeFolderRepository(path: "/tmp/folderA")
+    let folderB = makeFolderRepository(path: "/tmp/folderB")
+    let folderAID = Repository.folderWorktreeID(for: folderA.rootURL)
+    let folderBID = Repository.folderWorktreeID(for: folderB.rootURL)
+    var state = makeState(repositories: [repository, folderA, folderB])
+
+    state.sidebarSelectedWorktreeIDs = [main.id, folderAID]
+    state.applyCacheRecomputes(.sidebarSelectionSlice)
+    #expect(state.sidebarSelectionSlice.rows.count == 2)
+    #expect(state.sidebarSelectionSlice.hasMixedKindSelection)
+    #expect(!state.sidebarSelectionSlice.isAllFoldersBulk)
+
+    state.sidebarSelectedWorktreeIDs = [folderAID, folderBID]
+    state.applyCacheRecomputes(.sidebarSelectionSlice)
+    #expect(state.sidebarSelectionSlice.rows.count == 2)
+    #expect(!state.sidebarSelectionSlice.hasMixedKindSelection)
+    #expect(state.sidebarSelectionSlice.isAllFoldersBulk)
+  }
+
+  // MARK: - Open-action resolution.
+
+  /// Poisons the map so any write by the post-reduce hook is observable: the hook
+  /// is pure, so the sentinel must survive every action.
+  private static let poisonedOpenActionMap: [Repository.ID: OpenWorktreeAction] = [
+    RepositoryID("/tmp/poison"): .xcode
+  ]
+
+  private struct OpenActionStorage {
+    let settings = SettingsTestStorage()
+    let local = RepositoryLocalSettingsTestStorage()
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+
+    func apply(to values: inout DependencyValues) {
+      values.settingsFileStorage = settings.storage
+      values.settingsFileURL = settingsFileURL
+      values.repositoryLocalSettingsStorage = local.storage
+    }
+
+    func seedSettingsFile(_ mutate: (inout SettingsFile) -> Void) {
+      withDependencies {
+        apply(to: &$0)
+      } operation: {
+        @Shared(.settingsFile) var settingsFile
+        $settingsFile.withLock { mutate(&$0) }
+      }
+    }
+
+    func seedLocalSettings(_ settings: RepositorySettings, repoRoot: URL) throws {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      try local.save(
+        encoder.encode(settings),
+        at: SupacodePaths.repositorySettingsURL(for: repoRoot)
+      )
+    }
+  }
+
+  /// Precedence, in one pass off the reducer: the local `supacode.json` wins,
+  /// then the global settings-file entry, then the global default editor, then
+  /// the preferred installed default. A remote repo has no local file to read.
+  @Test(.dependencies) func resolutionAppliesLocalThenGlobalThenDefaultPrecedence() async throws {
+    let storage = OpenActionStorage()
+    let localRoot = URL(fileURLWithPath: "/tmp/resolve-local")
+    let globalRoot = URL(fileURLWithPath: "/tmp/resolve-global")
+    let plainRoot = URL(fileURLWithPath: "/tmp/resolve-plain")
+    let local = makeRepository(path: localRoot.path(percentEncoded: false))
+    let global = makeRepository(path: globalRoot.path(percentEncoded: false))
+    let plain = makeRepository(path: plainRoot.path(percentEncoded: false))
+
+    var localSettings = RepositorySettings.default
+    localSettings.openActionID = OpenWorktreeAction.zed.settingsID
+    try storage.seedLocalSettings(localSettings, repoRoot: localRoot)
+
+    var globalSettings = RepositorySettings.default
+    globalSettings.openActionID = OpenWorktreeAction.finder.settingsID
+    storage.seedSettingsFile {
+      $0.global.defaultEditorID = OpenWorktreeAction.terminal.settingsID
+      $0.repositories[globalRoot.path(percentEncoded: false)] = globalSettings
+    }
+
+    var state = makeState(repositories: [local, global, plain])
+    state.installedOpenActions = [.cursor, .zed, .terminal, .finder]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      storage.apply(to: &$0)
+    }
+
+    // The settings-file entry and the default editor are already in memory, so the seed
+    // answers for them at once. Only the repository whose `supacode.json` overrides both
+    // has to wait for the disk.
+    await store.send(.resolveOpenActions) {
+      $0.openActionByRepositoryID = [
+        local.id: .terminal,
+        global.id: .finder,
+        plain.id: .terminal,
+      ]
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID[local.id] = .zed
+    }
+    await store.finish()
+  }
+
+  /// A remote repo's `rootURL` points at the remote host's path: reading a local
+  /// `supacode.json` there would resolve some unrelated local directory.
+  @Test(.dependencies) func resolutionNeverReadsLocalSettingsForRemoteRepositories() async {
+    let storage = OpenActionStorage()
+    let localRepo = makeRepository(path: "/tmp/resolve-mixed-local")
+    let remoteConfig = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/proj")
+    let remoteWorktree = RepositoriesFeature.remoteMainWorktree(config: remoteConfig)
+    let remoteRepo = Repository(
+      id: RepositoriesFeature.remoteRepositoryID(for: remoteConfig),
+      rootURL: URL(fileURLWithPath: remoteConfig.normalizedRemotePath),
+      name: remoteConfig.resolvedDisplayName,
+      worktrees: IdentifiedArray(uniqueElements: [remoteWorktree]),
+      isGitRepository: true,
+      host: remoteConfig.host
+    )
+    storage.seedSettingsFile { $0.global.defaultEditorID = OpenWorktreeAction.terminal.settingsID }
+
+    var state = makeState(repositories: [localRepo, remoteRepo])
+    state.installedOpenActions = [.cursor, .terminal, .finder]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      storage.apply(to: &$0)
+    }
+
+    // Both seed to the default editor from memory, and the pass confirms it.
+    await store.send(.resolveOpenActions) {
+      $0.openActionByRepositoryID = [
+        localRepo.id: .terminal,
+        remoteRepo.id: .terminal,
+      ]
+    }
+    await store.receive(\.openActionsResolved)
+    await store.finish()
+
+    // Exactly one probe: the local repo's. The remote repo never touches disk.
+    #expect(storage.local.loadCount == 1)
+    #expect(storage.local.saveCount == 0)
+  }
+
+  /// Nothing watches `supacode.json`, so a pass that skipped repositories already in
+  /// the map would never revisit them: an agent or a `git pull` inside a Supacode
+  /// terminal rewrites that file with no app activation to catch it. Every pass
+  /// re-reads every repository, and an unchanged result writes nothing.
+  @Test(.dependencies) func everyPassRereadsEveryRepositoryAndWritesOnlyWhatChanged() async {
+    let storage = OpenActionStorage()
+    let repoA = makeRepository(path: "/tmp/roster-a")
+    let repoB = makeRepository(path: "/tmp/roster-b")
+    storage.seedSettingsFile { $0.global.defaultEditorID = OpenWorktreeAction.finder.settingsID }
+
+    var state = makeState(repositories: [repoA, repoB])
+    state.installedOpenActions = [.cursor, .terminal, .finder]
+    state.openActionByRepositoryID = [repoA.id: .cursor]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      storage.apply(to: &$0)
+    }
+
+    // `repoA` is already in the map, and is re-read anyway: its stale entry gives way
+    // to what the file actually says.
+    await store.send(.resolveOpenActions) {
+      // `repoB` had no entry, so the seed answers for it from the default editor.
+      $0.openActionByRepositoryID[repoB.id] = .finder
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID[repoA.id] = .finder
+    }
+    #expect(storage.local.loadCount == 2)
+
+    // A re-read that changes nothing still lands, but writes nothing: no state
+    // mutation here means it never churns the map's observers.
+    storage.local.resetCounts()
+    await store.send(.resolveOpenActions)
+    await store.receive(\.openActionsResolved)
+    #expect(storage.local.loadCount == 2)
+    await store.finish()
+  }
+
+  /// `@Shared` references are cached, and anything holding one strongly pins the value
+  /// it loaded (every live `WorktreeTerminalState` holds a reader for its repository).
+  /// `subscribe` is a no-op, so nothing re-loads it: resolving through the cache would
+  /// keep serving the value from when that terminal opened, and re-reading the file is
+  /// the entire point of the pass. It has to reach the file even so.
+  @Test(.dependencies) func resolutionRereadsTheFileEvenWhileAReaderHoldsTheCachedValue() async {
+    let storage = OpenActionStorage()
+    let repoRoot = URL(fileURLWithPath: "/tmp/pinned-repo")
+    let repo = makeRepository(path: repoRoot.path(percentEncoded: false))
+    storage.seedSettingsFile { $0.global.defaultEditorID = OpenWorktreeAction.finder.settingsID }
+
+    var localSettings = RepositorySettings.default
+    localSettings.openActionID = OpenWorktreeAction.cursor.settingsID
+    try? storage.seedLocalSettings(localSettings, repoRoot: repoRoot)
+
+    var state = makeState(repositories: [repo])
+    state.installedOpenActions = [.cursor, .zed, .finder]
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      storage.apply(to: &$0)
+    }
+
+    // Stand in for the worktree's terminal: hold the reference for the whole test, so
+    // the cache entry stays alive exactly as it does in the app.
+    let pinned = withDependencies {
+      storage.apply(to: &$0)
+    } operation: {
+      SharedReader(wrappedValue: RepositorySettings.default, .repositorySettings(repoRoot))
+    }
+    #expect(pinned.wrappedValue.openActionID == OpenWorktreeAction.cursor.settingsID)
+
+    // An agent rewrites `supacode.json`. The held reader still reports Cursor.
+    localSettings.openActionID = OpenWorktreeAction.zed.settingsID
+    try? storage.seedLocalSettings(localSettings, repoRoot: repoRoot)
+    #expect(pinned.wrappedValue.openActionID == OpenWorktreeAction.cursor.settingsID)
+
+    // The seed cannot see `supacode.json`, so it answers with the default editor and the
+    // pass corrects it from the file.
+    await store.send(.resolveOpenActions) {
+      $0.openActionByRepositoryID = [repo.id: .finder]
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID[repo.id] = .zed
+    }
+    await store.finish()
+  }
+
+  /// A repository can leave the roster while the pass is in flight: the post-reduce
+  /// prune has already run by the time the result lands, and nothing prunes again, so
+  /// a resurrected key would sit in the map owned by no repository.
+  @Test(.dependencies) func resolutionNeverResurrectsARepositoryThatLeftTheRoster() async {
+    let repoA = makeRepository(path: "/tmp/ghost-a")
+    let removed = makeRepository(path: "/tmp/ghost-removed")
+    var state = makeState(repositories: [repoA])
+    state.openActionByRepositoryID = [repoA.id: .zed]
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+
+    await store.send(.openActionsResolved([repoA.id: .cursor, removed.id: .finder])) {
+      $0.openActionByRepositoryID[repoA.id] = .cursor
+    }
+  }
+
+  /// The roster reconcile the post-reduce hook still owns: pruning is pure, so it
+  /// stays in the reducer while resolution moved to the effect.
+  @Test func postReduceHookPrunesEntriesForDroppedRepositories() {
+    let repoA = makeRepository(path: "/tmp/prune-a")
+    let repoB = makeRepository(path: "/tmp/prune-b")
+    var state = makeState(repositories: [repoA, repoB])
+    state.openActionByRepositoryID = [repoA.id: .zed, repoB.id: .finder]
+
+    state.repositories.remove(id: repoB.id)
+    state.applyCacheRecomputes(
+      RepositoriesFeature.Action.repositoriesLoaded([], failures: [], roots: [], animated: false)
+        .cacheInvalidations
+    )
+
+    #expect(state.openActionByRepositoryID == [repoA.id: .zed])
+  }
+
+  /// The invalidation table is what arms resolution, so lock every arm that can
+  /// change one of the map's inputs: the roster, the installed editors, the settings.
+  @Test func everyArmThatCanChangeTheMapArmsResolution() {
+    let arms: [RepositoriesFeature.Action] = [
+      .repositoriesLoaded([], failures: [], roots: [], animated: false),
+      .openRepositoriesFinished([], failures: [], invalidRoots: [], roots: []),
+      .repositoryRemovalCompleted("/tmp/repo", outcome: .success, selectionWasRemoved: false),
+      .repositoriesRemoved(["/tmp/repo"], selectionWasRemoved: false),
+      .removeFailedRepository("/tmp/repo"),
+      .remoteRepositoryResolved(
+        repositoryID: "/tmp/repo",
+        repository: makeRepository(path: "/tmp/repo"),
+        failureMessage: nil
+      ),
+      .setInstalledOpenActions([.cursor, .finder]),
+      .openActionSettingsChanged,
+    ]
+    for action in arms {
+      #expect(action.cacheInvalidations.contains(.openActionResolution))
+    }
+  }
+
+  @Test func perLeafTicksAndContextMenuOpenNeverArmOpenActionResolution() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let feature = makeWorktree(id: "/tmp/repo/wt", name: "feature", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, feature])
+    )
+    var state = makeState(repositories: [repository])
+
+    let actions: [RepositoriesFeature.Action] = [
+      .sidebarItems(.element(id: feature.id, action: .agentSnapshotChanged(.init(isWorking: true)))),
+      .sidebarItems(.element(id: feature.id, action: .diffStatsChanged(added: 3, removed: 1))),
+      .sidebarItems(.element(id: feature.id, action: .dragSessionChanged(isDragging: true))),
+      .worktreeNotificationReceived(feature.id),
+      .contextMenuOpenWorktree(feature.id, .finder),
+      .pinWorktree(feature.id),
+    ]
+
+    for action in actions {
+      state.openActionByRepositoryID = Self.poisonedOpenActionMap
+      #expect(!action.cacheInvalidations.contains(.openActionResolution))
+      state.applyCacheRecomputes(action.cacheInvalidations)
+      #expect(state.openActionByRepositoryID == Self.poisonedOpenActionMap)
+    }
+  }
+
+  /// The regression lock: the post-reduce hook is pure. Resolving an open action
+  /// reads a `supacode.json` per repository, and doing that from the reducer is
+  /// what hung the app on right-click (#657).
+  @Test(.dependencies) func postReduceHookPerformsNoSettingsIO() {
+    let storage = OpenActionStorage()
+    let repoA = makeRepository(path: "/tmp/pure-a")
+    let repoB = makeRepository(path: "/tmp/pure-b")
+    storage.seedSettingsFile { $0.global.defaultEditorID = OpenWorktreeAction.finder.settingsID }
+
+    withDependencies {
+      storage.apply(to: &$0)
+    } operation: {
+      var state = makeState(repositories: [repoA, repoB])
+      state.installedOpenActions = [.cursor, .finder]
+      storage.local.resetCounts()
+      storage.settings.resetCounts()
+
+      // Every bit, including the ones a roster change and a settings change declare.
+      let invalidations: [CacheInvalidations] = [
+        .all,
+        .allSidebar,
+        .openActionResolution,
+        RepositoriesFeature.Action.repositoriesLoaded([], failures: [], roots: [], animated: false)
+          .cacheInvalidations,
+        RepositoriesFeature.Action.setInstalledOpenActions([.cursor]).cacheInvalidations,
+        RepositoriesFeature.Action.openActionSettingsChanged.cacheInvalidations,
+      ]
+      for invalidation in invalidations {
+        state.applyCacheRecomputes(invalidation)
+      }
+
+      #expect(storage.local.loadCount == 0)
+      #expect(storage.local.saveCount == 0)
+      #expect(storage.settings.loadCount == 0)
+      #expect(storage.settings.saveCount == 0)
+      // The map is untouched by the hook; only `.openActionsResolved` writes it.
+      #expect(state.openActionByRepositoryID.isEmpty)
+    }
+  }
+
+  // MARK: - Alert confirmations.
+
+  @Test func deleteConfirmationsInvalidateEveryRowDerivedCache() {
+    // Both confirm handlers seed `removingRepositoryIDs` and call `syncSidebar`,
+    // which flips a pending row's lifecycle to `.deleting`.
+    let targets = [
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: "/tmp/repo/wt", repositoryID: "/tmp/repo")
+    ]
+    let confirmItems = RepositoriesFeature.Action.alert(
+      .presented(.confirmDeleteSidebarItems(targets, disposition: .gitWorktreeDelete))
+    )
+    let confirmRepository = RepositoriesFeature.Action.alert(
+      .presented(.confirmDeleteRepository("/tmp/repo"))
+    )
+    #expect(confirmItems.cacheInvalidations == .allSidebar)
+    #expect(confirmRepository.cacheInvalidations == .allSidebar)
+
+    // The remaining alert arms only clear the alert and forward.
+    let dismiss = RepositoriesFeature.Action.alert(.dismiss)
+    let archive = RepositoriesFeature.Action.alert(
+      .presented(.confirmArchiveWorktree("/tmp/repo/wt", "/tmp/repo"))
+    )
+    #expect(dismiss.cacheInvalidations.isEmpty)
+    #expect(archive.cacheInvalidations.isEmpty)
+  }
+
+  @Test func reconcileMirrorsAttachedAndWorkingDirectoryPathOntoTheLeaf() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let detached = Worktree(
+      id: WorktreeID("/tmp/repo/wt"),
+      name: "wt",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt"),
+      repositoryRootURL: repoRoot,
+      isAttached: false
+    )
+    let host = RemoteHost(alias: "devbox")
+    let remote = Worktree(
+      location: .remote(host, workingDirectory: "/home/me/proj", repositoryRoot: "/home/me/proj"),
+      kind: .git,
+      name: "main",
+      detail: ""
+    )
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, detached])
+    )
+    let remoteRepository = Repository(
+      location: .remote(host, path: "/home/me/proj"),
+      kind: .git,
+      name: "proj",
+      worktrees: IdentifiedArray(uniqueElements: [remote])
+    )
+    let state = makeState(repositories: [repository, remoteRepository])
+
+    #expect(state.sidebarItems[id: detached.id]?.isAttached == false)
+    #expect(state.sidebarItems[id: detached.id]?.workingDirectoryPath == "/tmp/repo/wt")
+    #expect(state.sidebarItems[id: main.id]?.isAttached == true)
+    // The remote row keeps the remote path verbatim: the context menu hands it to
+    // the editor's Remote-SSH argv, so it must not round-trip through a URL.
+    #expect(state.sidebarItems[id: remote.id]?.workingDirectoryPath == "/home/me/proj")
+    #expect(state.sidebarItems[id: remote.id]?.host == host)
+
+    // The context row is the menu's only input, so it must carry them through.
+    guard let leaf = state.sidebarItems[id: remote.id] else {
+      Issue.record("Missing leaf for the remote row.")
+      return
+    }
+    let contextRow = SidebarContextRow(leaf)
+    #expect(contextRow.workingDirectoryPath == "/home/me/proj")
+    #expect(contextRow.host == host)
+    #expect(contextRow.isAttached)
+  }
+
+  @Test func archiveTargetsExcludeMainWorktreeAndNonIdleRows() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let idle = makeWorktree(id: "/tmp/repo/idle", name: "idle", repoRoot: repoRoot)
+    let busy = makeWorktree(id: "/tmp/repo/busy", name: "busy", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, idle, busy])
+    )
+    var state = makeState(repositories: [repository])
+    state.sidebarItems[id: busy.id]?.lifecycle = .archiving
+    state.sidebarSelectedWorktreeIDs = [main.id, idle.id, busy.id]
+
+    state.applyCacheRecomputes(.sidebarSelectionSlice)
+
+    // Archive spares the main worktree; delete spares only the non-idle row.
+    #expect(state.sidebarSelectionSlice.archiveTargets.map(\.worktreeID) == [idle.id])
+    #expect(state.sidebarSelectionSlice.deleteTargets.map(\.worktreeID) == [main.id, idle.id])
   }
 }

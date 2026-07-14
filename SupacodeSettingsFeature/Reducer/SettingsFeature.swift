@@ -42,6 +42,10 @@ public struct SettingsFeature {
   @ObservableState
   public struct State: Equatable {
     public var appearanceMode: AppearanceMode
+    /// Kept raw, never normalized against `installedOpenActions`. Any settings write
+    /// persists this, so folding an uninstalled editor down to "auto" would write that
+    /// fallback to disk and lose the user's choice even if they reinstall. Readers
+    /// normalize against `installed` instead.
     public var defaultEditorID: String
     public var updateChannel: UpdateChannel
     public var updatesAutomaticallyCheckForUpdates: Bool
@@ -75,6 +79,8 @@ public struct SettingsFeature {
     public var terminateSessionsOnQuit: Bool
     public var remoteSessionPersistenceEnabled: Bool
     public var cliInstallState = CLIInstallState.checking
+    /// Installed editors in menu order, resolved once off the picker's body.
+    public var installedOpenActions: [OpenWorktreeAction]
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
     /// `nil` when the settings window is closed; non-nil selects the visible section.
@@ -90,9 +96,10 @@ public struct SettingsFeature {
     }
 
     public init(settings: GlobalSettings = .default) {
-      let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
+      @Dependency(\.openActionAvailability) var openActionAvailability
+      installedOpenActions = openActionAvailability.installedActions()
       appearanceMode = settings.appearanceMode
-      defaultEditorID = normalizedDefaultEditorID
+      defaultEditorID = settings.defaultEditorID
       updateChannel = settings.updateChannel
       updatesAutomaticallyCheckForUpdates = settings.updatesAutomaticallyCheckForUpdates
       updatesAutomaticallyDownloadUpdates = settings.updatesAutomaticallyDownloadUpdates
@@ -256,17 +263,13 @@ public struct SettingsFeature {
         .cancellable(id: RefreshAgentIntegrationStatesID(), cancelInFlight: true)
 
       case .settingsLoaded(let settings):
-        let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
         let normalizedWorktreeBaseDirPath =
           SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath)
         let normalizedSettings: GlobalSettings
-        if normalizedDefaultEditorID == settings.defaultEditorID,
-          normalizedWorktreeBaseDirPath == settings.defaultWorktreeBaseDirectoryPath
-        {
+        if normalizedWorktreeBaseDirPath == settings.defaultWorktreeBaseDirectoryPath {
           normalizedSettings = settings
         } else {
           var updatedSettings = settings
-          updatedSettings.defaultEditorID = normalizedDefaultEditorID
           updatedSettings.defaultWorktreeBaseDirectoryPath = normalizedWorktreeBaseDirPath
           normalizedSettings = persistGlobalSettings(updatedSettings)
         }

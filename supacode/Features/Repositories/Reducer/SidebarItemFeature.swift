@@ -43,6 +43,12 @@ struct SidebarItemFeature {
     var branchName: String
     var subtitle: String?
     var workingDirectory: URL
+    /// Mirror of `Worktree.location.workingDirectoryPath`: the remote path
+    /// verbatim for a remote row, so an editor's Remote-SSH argv never has to
+    /// round-trip through a `file://` URL.
+    var workingDirectoryPath: String = ""
+    /// Mirror of `Worktree.isAttached`; gates branch-targeted actions.
+    var isAttached: Bool = true
     var repositoryAccent: RepositoryColor?
     var isMainWorktree: Bool
     /// Mirror of `@Shared(.sidebar)`; written through actions only.
@@ -329,4 +335,64 @@ struct SelectedWorktreeSlice: Equatable, Sendable {
   var accent: WorktreeAccent { WorktreeAccent.derive(isMainWorktree: isMainWorktree, isPinned: isPinned) }
 
   var isFolder: Bool { kind == .folder }
+}
+
+/// Value-typed projection of one selected row, carrying only the fields the
+/// sidebar's selection-driven surfaces branch on (context menu, archive /
+/// delete targets). Keeps agent / notification / diff churn out of the
+/// selection cache's Equatable surface. It is also the row context menu's sole
+/// input, so the menu never resolves a `Worktree` from the parent state.
+struct SidebarContextRow: Equatable, Sendable, Identifiable {
+  let id: SidebarItemID
+  let repositoryID: Repository.ID
+  let kind: SidebarItemFeature.State.Kind
+  let lifecycle: SidebarItemFeature.State.Lifecycle
+  let isPinned: Bool
+  let isMainWorktree: Bool
+  let name: String
+  let isMissing: Bool
+  let isAttached: Bool
+  let host: RemoteHost?
+  let workingDirectoryPath: String
+
+  init(_ row: SidebarItemFeature.State) {
+    self.id = row.id
+    self.repositoryID = row.repositoryID
+    self.kind = row.kind
+    self.lifecycle = row.lifecycle
+    self.isPinned = row.isPinned
+    self.isMainWorktree = row.isMainWorktree
+    self.name = row.name
+    self.isMissing = row.isMissing
+    self.isAttached = row.isAttached
+    self.host = row.host
+    self.workingDirectoryPath = row.workingDirectoryPath
+  }
+
+  var isFolder: Bool { kind == .folder }
+}
+
+/// Cached projection of the sidebar's effective selection (the multi-selection
+/// when there is one, else the focused row), on
+/// `RepositoriesFeature.State.sidebarSelectionSlice`. The sidebar and its row
+/// context menu read this instead of walking `sidebarItems` from a view body,
+/// which would observation-track every row and fan a per-leaf tick out to the
+/// whole List.
+struct SidebarSelectionSlice: Equatable, Sendable {
+  var rows: [SidebarContextRow] = []
+  /// Rows a bulk archive can act on: idle, non-main.
+  var archiveTargets: [RepositoriesFeature.ArchiveWorktreeTarget] = []
+  var deleteTargets: [RepositoriesFeature.DeleteWorktreeTarget] = []
+  /// Mixed-kind bulk selections surface no context menu; per-kind actions don't compose.
+  var hasMixedKindSelection: Bool = false
+  var isAllFoldersBulk: Bool = false
+
+  static let empty = SidebarSelectionSlice()
+
+  /// Rows the row context menu acts on: the whole selection when the
+  /// right-clicked row is part of a multi-selection, else that row alone.
+  func contextRows(rightClicked row: SidebarContextRow) -> [SidebarContextRow] {
+    guard rows.count > 1, rows.contains(where: { $0.id == row.id }) else { return [row] }
+    return rows
+  }
 }

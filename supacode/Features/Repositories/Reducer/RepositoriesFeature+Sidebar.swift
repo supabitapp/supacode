@@ -62,6 +62,8 @@ extension RepositoriesFeature {
         item.branchName = worktree.name
         item.subtitle = worktree.detail.isEmpty ? nil : worktree.detail
         item.workingDirectory = worktree.workingDirectory
+        item.workingDirectoryPath = worktree.location.workingDirectoryPath
+        item.isAttached = worktree.isAttached
         item.isMainWorktree = isMain
         item.isPinned = isPinned
         item.isMissing = worktree.isMissing
@@ -104,6 +106,8 @@ extension RepositoriesFeature {
           )
         item.name = pendingName
         item.branchName = pendingName
+        // The worktree doesn't exist yet, so the repo root stands in for its path.
+        item.workingDirectoryPath = repository.rootURL.path(percentEncoded: false)
         item.customTitle = pending.customization?.title
         item.customTint = pending.customization?.color
         item.lifecycle =

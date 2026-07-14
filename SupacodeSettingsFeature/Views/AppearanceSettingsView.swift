@@ -10,7 +10,7 @@ public struct AppearanceSettingsView: View {
   }
 
   public var body: some View {
-    let openActionOptions = OpenWorktreeAction.availableCases
+    let openActionOptions = store.installedOpenActions
     Form {
       Section {
         LabeledContent("Appearance") {
@@ -60,8 +60,21 @@ public struct AppearanceSettingsView: View {
         }
       }
       Section("Editor") {
+        // The stored id deliberately keeps naming an uninstalled editor, so the choice
+        // survives a reinstall. No row is tagged with it though, and an untagged
+        // selection renders blank, so normalize for display and write back raw.
+        let storedEditorID = $store.defaultEditorID
+        let defaultEditorID = Binding(
+          get: {
+            OpenWorktreeAction.normalizedDefaultEditorID(
+              storedEditorID.wrappedValue,
+              installed: openActionOptions
+            )
+          },
+          set: { storedEditorID.wrappedValue = $0 }
+        )
         Picker(
-          selection: $store.defaultEditorID
+          selection: defaultEditorID
         ) {
           Text("Automatic")
             .tag(OpenWorktreeAction.automaticSettingsID)

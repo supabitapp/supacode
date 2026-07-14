@@ -84,6 +84,9 @@ final class CommandPalettePanelHostView: NSView {
   private var hostingView: NSHostingView<CommandPaletteOverlayView>?
   private nonisolated(unsafe) var resignObserver: NSObjectProtocol?
   private nonisolated(unsafe) var keyMonitor: Any?
+  /// Held, not constructed per keystroke: the shared reference is cached weakly,
+  /// so a local would re-read the settings file on every key event.
+  @Shared(.settingsFile) private var settingsFile
 
   init(store: StoreOf<CommandPaletteFeature>) {
     self.store = store
@@ -176,7 +179,7 @@ final class CommandPalettePanelHostView: NSView {
       // menu, so the ⌘P / ⌘⇧P menu items never see the key while the panel is key.
       // Ahead of the move matcher so a shortcut rebound onto ⌃P / ⌃N still toggles,
       // but behind ⌘1..⌘5, which the rows render and must keep honoring.
-      if let mode = Self.paletteToggleMode(for: event) {
+      if let mode = Self.paletteToggleMode(for: event, overrides: self.settingsFile.global.shortcutOverrides) {
         // Swallow auto-repeat rather than toggling on it: a held chord would flip the
         // palette open and closed. The menu items guard the same way, because closing
         // tears this monitor down and the next repeat would reach them instead.
@@ -246,9 +249,10 @@ final class CommandPalettePanelHostView: NSView {
 
   // The mode whose shortcut this event matches, honoring user rebinds. `nil` when the
   // user disabled the shortcut, so a disabled chord keeps falling through to the beep.
-  private static func paletteToggleMode(for event: NSEvent) -> CommandPaletteFeature.PaletteMode? {
-    @Shared(.settingsFile) var settingsFile
-    let overrides = settingsFile.global.shortcutOverrides
+  private static func paletteToggleMode(
+    for event: NSEvent,
+    overrides: [AppShortcutID: AppShortcutOverride]
+  ) -> CommandPaletteFeature.PaletteMode? {
     if AppShortcuts.worktreeSwitcher.effective(from: overrides)?.matches(event) == true {
       return .worktreeSwitcher
     }

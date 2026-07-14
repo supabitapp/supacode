@@ -392,7 +392,7 @@ struct CommandPaletteFeature {
     let ordered =
       idleRows.enumerated().sorted { lhs, rhs in
         switch (mruRank[lhs.element.id], mruRank[rhs.element.id]) {
-        case let (lhsRank?, rhsRank?): return lhsRank < rhsRank
+        case (let lhsRank?, let rhsRank?): return lhsRank < rhsRank
         case (_?, nil): return true
         case (nil, _?): return false
         case (nil, nil): return lhs.offset < rhs.offset

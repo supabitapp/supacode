@@ -15,6 +15,10 @@ private enum CancelID {
   static let periodicRefresh = "app.periodicRefresh"
   static let backgroundPersist = "app.backgroundPersist"
   static let agentPresencePersist = "app.agentPresencePersist"
+  static let installedOpenActions = "app.installedOpenActions"
+  /// Arrow-keying the sidebar re-reads the newly selected repo's settings, so a
+  /// held-down key must not queue a read per row it passed through.
+  static let worktreeSettings = "app.worktreeSettings"
   /// Watchdog for a deferred completion ack, keyed by the open client fd and
   /// its generation so a recycled fd gets a distinct cancellation id.
   static func commandAck(_ responseFD: Int32, _ token: Int) -> String {
@@ -29,6 +33,23 @@ private enum CancelID {
 /// command to complete before draining it with a timeout error. Overridden
 /// per command by the `timeout` deeplink query item the CLI embeds.
 private nonisolated let defaultCommandTimeoutSeconds = 180
+
+/// A repository's scripts together with the repository they were read from. They travel
+/// as one value because the read lands after the selection may have moved, and scripts
+/// attributed to the wrong repository would run its command in this worktree's shell.
+struct LoadedRepositoryScripts: Equatable, Sendable {
+  let source: RepositorySettingsKeyID
+  let scripts: [ScriptDefinition]
+
+  init(source: RepositorySettingsKeyID, scripts: [ScriptDefinition]) {
+    self.source = source
+    self.scripts = scripts
+  }
+
+  init(scripts: [ScriptDefinition], rootURL: URL, host: RemoteHost?) {
+    self.init(source: RepositorySettingsKey(rootURL: rootURL, host: host).id, scripts: scripts)
+  }
+}
 
 @Reducer
 struct AppFeature {
@@ -75,8 +96,62 @@ struct AppFeature {
     /// tab-bar views scope through `\.terminals` (narrow) instead of the full
     /// app store. Mirrors sidebar's `RepositoriesFeature` ownership pattern.
     var terminals = TerminalsFeature.State()
-    var openActionSelection: OpenWorktreeAction = .finder
-    var repoScripts: [ScriptDefinition] = []
+    /// The selected worktree's repository's open action, read from the map the reducer
+    /// resolves off the main actor. Derived, never stored: a stored copy refreshes a disk
+    /// read after the selection moves, and opens the previous repository's editor until it
+    /// does.
+    var openActionSelection: OpenWorktreeAction {
+      guard
+        let worktreeID = repositories.selectedWorktreeID,
+        let repositoryID = repositories.repositoryID(containing: worktreeID)
+      else {
+        return .finder
+      }
+      return repositories.openActionByRepositoryID[repositoryID]
+        ?? OpenWorktreeAction.unresolvedDefault(
+          defaultEditorID: settings.defaultEditorID,
+          installed: installedOpenActions
+        )
+    }
+    /// Installed editors in menu order. Resolving this is ~35 synchronous
+    /// LaunchServices round-trips, so it is cached here and mirrored into the
+    /// child features rather than probed from a menu build.
+    var installedOpenActions: [OpenWorktreeAction]
+    /// The selected repository's scripts, once its settings have been read. `nil` until
+    /// then, which is a different thing from an empty list: empty means the repository
+    /// configures no script and callers may fall back to the globals, whereas `nil` means
+    /// nobody knows yet and falling back would run a script the user did not ask for.
+    /// Read through `repoScripts`, and never store the two apart.
+    var loadedRepoScripts: LoadedRepositoryScripts?
+    /// The settings key of the selected worktree's repository. `nil` selects nothing.
+    var selectedRepositorySettingsKeyID: RepositorySettingsKeyID? {
+      guard let worktree = repositories.worktree(for: repositories.selectedWorktreeID) else {
+        return nil
+      }
+      return RepositorySettingsKey(rootURL: worktree.repositoryRootURL, host: worktree.host).id
+    }
+    /// Whether `repoScripts` is an answer rather than a silence. False while the selected
+    /// repository's settings read is in flight, when the list is empty because nobody has
+    /// looked yet rather than because the repository configures nothing.
+    var hasLoadedRepoScripts: Bool {
+      guard let source = selectedRepositorySettingsKeyID else { return true }
+      return loadedRepoScripts?.source == source
+    }
+    var repoScripts: [ScriptDefinition] {
+      hasLoadedRepoScripts ? loadedRepoScripts?.scripts ?? [] : []
+    }
+    /// The settings pane holding the selected worktree's repository scripts. Keyed by
+    /// `Repository.ID`: a remote repository's id is branded with its host, and the pane
+    /// matches on the id, so a root path would find no repository.
+    var selectedRepositoryScriptsSection: SettingsSection? {
+      guard
+        let worktreeID = repositories.selectedWorktreeID,
+        let repositoryID = repositories.repositoryID(containing: worktreeID)
+      else {
+        return nil
+      }
+      return .repositoryScripts(repositoryID.rawValue)
+    }
     var globalScripts: [ScriptDefinition] = []
     var notificationIndicatorCount: Int = 0
     // Cached aggregate from the terminal manager; flips only on the global
@@ -110,6 +185,14 @@ struct AppFeature {
       repositories: RepositoriesFeature.State = .init(),
       settings: SettingsFeature.State = .init()
     ) {
+      // Reuse the child's sweep. Every lookup is a synchronous LaunchServices
+      // round-trip, so the app must pay for exactly one sweep before the first
+      // frame. It has to stay synchronous: the menu must never offer an editor
+      // that isn't installed, and `.appLaunched`'s re-sweep lands 250 ms later.
+      var repositories = repositories
+      let installed = settings.installedOpenActions
+      repositories.installedOpenActions = installed
+      installedOpenActions = installed
       self.repositories = repositories
       self.settings = settings
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
@@ -197,7 +280,18 @@ struct AppFeature {
     case updates(UpdatesFeature.Action)
     case commandPalette(CommandPaletteFeature.Action)
     case openActionSelectionChanged(OpenWorktreeAction)
-    case worktreeSettingsLoaded(RepositorySettings, worktreeID: Worktree.ID)
+    /// Re-sweep LaunchServices. Activation is not enough on its own: an editor can be
+    /// installed from a Supacode terminal (`brew install --cask …`), which never takes
+    /// the app inactive, so the periodic refresh asks for one too.
+    case refreshInstalledOpenActions
+    case installedOpenActionsResolved([OpenWorktreeAction])
+    /// Carries the settings key it was read from, so `repoScripts` and the repository
+    /// they belong to are always written together.
+    case worktreeSettingsLoaded(
+      RepositorySettings,
+      worktreeID: Worktree.ID,
+      source: RepositorySettingsKeyID
+    )
     case openSelectedWorktree
     case revealInFinder
     case openWorktree(OpenWorktreeAction)
@@ -210,6 +304,7 @@ struct AppFeature {
     case jumpToLatestUnread
     case runScript
     case runNamedScript(ScriptDefinition)
+    case manageRepositoryScripts
     case stopScript(ScriptDefinition)
     case stopRunScripts
     case closeTab
@@ -244,6 +339,7 @@ struct AppFeature {
   @Dependency(DeeplinkClient.self) private var deeplinkClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(WorkspaceClient.self) private var workspaceClient
+  @Dependency(\.openActionAvailability) private var openActionAvailability
   @Dependency(NotificationSoundClient.self) private var notificationSoundClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(TerminalClient.self) private var terminalClient
@@ -256,7 +352,12 @@ struct AppFeature {
       switch action {
       case .applicationDidBecomeActive:
         captureAppLifecycleEvent(.activatedDebounced, state: &state)
-        return .none
+        return .merge(
+          refreshInstalledOpenActionsEffect(current: state.installedOpenActions),
+          // A `supacode.json` can be edited out of band while the app is away, and
+          // the roster refresh may be minutes off, so pick that up on activate too.
+          .send(.repositories(.resolveOpenActions))
+        )
 
       case .applicationDidResignActive:
         captureAppLifecycleEvent(.deactivatedDebounced, state: &state)
@@ -264,6 +365,7 @@ struct AppFeature {
 
       case .appLaunched:
         return .merge(
+          refreshInstalledOpenActionsEffect(current: state.installedOpenActions),
           .send(.repositories(.task)),
           .send(.settings(.task)),
           .run { _ in
@@ -328,6 +430,7 @@ struct AppFeature {
                 try? await ContinuousClock().sleep(for: .seconds(30))
                 guard !Task.isCancelled else { return }
                 await send(.repositories(.refreshWorktrees))
+                await send(.refreshInstalledOpenActions)
               }
             }
             .cancellable(id: CancelID.periodicRefresh, cancelInFlight: true)
@@ -356,8 +459,7 @@ struct AppFeature {
       case .repositories(.delegate(.selectedWorktreeChanged(let worktree))):
         let lastFocusedWorktreeID = worktree?.id
         guard let worktree else {
-          state.openActionSelection = .finder
-          state.repoScripts = []
+          state.loadedRepoScripts = nil
           // Selecting the archived list must NOT overwrite the last
           // focused live worktree — preserve `focusedWorktreeID` so
           // returning from archives restores the prior row.
@@ -376,12 +478,18 @@ struct AppFeature {
           )
         }
         let rootURL = worktree.repositoryRootURL
+        let host = worktree.host
         let worktreeID = worktree.id
+        // Drop the previous repository's scripts, keeping them across worktrees of the
+        // same repository so arrow-keying inside one never flickers. `repoScripts`
+        // checks the source too, so this frees them rather than guarding them.
+        let key = RepositorySettingsKey(rootURL: rootURL, host: host)
+        if state.loadedRepoScripts?.source != key.id {
+          state.loadedRepoScripts = nil
+        }
         state.repositories.$sidebar.withLock { sidebar in
           sidebar.focusedWorktreeID = lastFocusedWorktreeID
         }
-        @Shared(.repositorySettings(rootURL, host: worktree.host)) var repositorySettings
-        let settings = repositorySettings
         return .merge(
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
@@ -389,7 +497,7 @@ struct AppFeature {
           .run { _ in
             await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktree.id))
           },
-          .send(.worktreeSettingsLoaded(settings, worktreeID: worktreeID))
+          Self.loadWorktreeSettingsEffect(key: key, worktreeID: worktreeID)
         )
 
       case .repositories(.delegate(.worktreeCreated(let worktree))):
@@ -524,21 +632,16 @@ struct AppFeature {
         let agentBadgesFlipped =
           settings.agentPresenceBadgesEnabled != state.lastKnownAgentPresenceBadgesEnabled
         state.lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
-        // Compare IDs as a set — name/command edits and pure reorders should not re-prune recency.
+        // Compare IDs as a set: name/command edits and pure reorders should not re-prune recency.
         let globalScriptIDsChanged = Set(state.globalScripts.map(\.id)) != Set(settings.globalScripts.map(\.id))
         state.globalScripts = settings.globalScripts
-        if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
-          let rootURL = selectedWorktree.repositoryRootURL
-          @Shared(.repositorySettings(rootURL, host: selectedWorktree.host)) var repositorySettings
-          state.openActionSelection = OpenWorktreeAction.fromSettingsID(
-            repositorySettings.openActionID,
-            defaultEditorID: settings.defaultEditorID
-          )
-        }
         var effects: [Effect<Action>] = [
           .send(.repositories(.setGithubIntegrationEnabled(settings.githubIntegrationEnabled))),
           .send(.repositories(.setMergedWorktreeAction(settings.mergedWorktreeAction))),
           .send(.repositories(.setMoveNotifiedWorktreeToTop(settings.moveNotifiedWorktreeToTop))),
+          // The global default editor feeds every repo's resolved open action, and the
+          // selected worktree's own open action resolves against it too.
+          .send(.repositories(.openActionSettingsChanged)),
           .send(
             .repositories(.setAutoDeleteArchivedWorktreesAfterDays(settings.autoDeleteArchivedWorktreesAfterDays))
           ),
@@ -557,6 +660,19 @@ struct AppFeature {
           .run { _ in
             await terminalClient.send(.refreshTabBarVisibility)
           },
+        ]
+        if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
+          effects.append(
+            Self.loadWorktreeSettingsEffect(
+              key: RepositorySettingsKey(
+                rootURL: selectedWorktree.repositoryRootURL,
+                host: selectedWorktree.host
+              ),
+              worktreeID: selectedWorktree.id
+            )
+          )
+        }
+        effects += [
           .run { _ in
             await worktreeInfoWatcher.send(
               .setPullRequestTrackingEnabled(settings.githubIntegrationEnabled)
@@ -594,19 +710,37 @@ struct AppFeature {
         return .merge(effects)
 
       case .openActionSelectionChanged(let action):
-        state.openActionSelection = action
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           appLogger.warning("openActionSelectionChanged: selected worktree not found, skipping persistence.")
           return .none
         }
         let rootURL = worktree.repositoryRootURL
-        let actionID = action.settingsID
+        // Read the file before writing it back: `save` encodes the whole struct, and the
+        // cached reference can be a disk read old, so mutating it would drop whatever the
+        // file gained out of band.
+        var settings = RepositorySettingsKey(rootURL: rootURL, host: worktree.host).currentSettings()
+        settings.openActionID = action.settingsID
         @Shared(.repositorySettings(rootURL, host: worktree.host)) var repositorySettings
-        $repositorySettings.withLock { $0.openActionID = actionID }
-        return .none
+        $repositorySettings.withLock { $0 = settings }
+        return .send(.repositories(.openActionSettingsChanged))
+
+      case .refreshInstalledOpenActions:
+        return refreshInstalledOpenActionsEffect(current: state.installedOpenActions)
+
+      case .installedOpenActionsResolved(let installed):
+        state.installedOpenActions = installed
+        state.settings.installedOpenActions = installed
+        return .send(.repositories(.setInstalledOpenActions(installed)))
 
       case .openSelectedWorktree:
-        return .send(.openWorktree(OpenWorktreeAction.availableSelection(state.openActionSelection)))
+        return .send(
+          .openWorktree(
+            OpenWorktreeAction.availableSelection(
+              state.openActionSelection,
+              installed: state.installedOpenActions
+            )
+          )
+        )
 
       case .revealInFinder:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -747,21 +881,25 @@ struct AppFeature {
         )
 
       case .runScript:
+        // An empty `repoScripts` means "this repository configures no run script" only
+        // once its settings have landed, and they land a disk read after the selection
+        // moves. Acting on it before then falls through to the global run script, which
+        // is not the one the user asked for.
+        guard state.hasLoadedRepoScripts else { return .none }
         // Find the selected or primary script and run it.
         guard let definition = state.primaryScript else {
-          guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
-            return .none
-          }
+          guard let section = state.selectedRepositoryScriptsSection else { return .none }
           // Globals-only setup → land on the global pane the user actually configured.
           if state.repoScripts.isEmpty, !state.globalScripts.isEmpty {
             return .send(.settings(.setSelection(.scripts)))
           }
-          let repositoryID =
-            state.repositories.repositoryID(containing: worktree.id)?.rawValue
-            ?? worktree.repositoryRootURL.path(percentEncoded: false)
-          return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
+          return .send(.settings(.setSelection(section)))
         }
         return .send(.runNamedScript(definition))
+
+      case .manageRepositoryScripts:
+        guard let section = state.selectedRepositoryScriptsSection else { return .none }
+        return .send(.settings(.setSelection(section)))
 
       case .runNamedScript(let incoming):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
@@ -769,6 +907,9 @@ struct AppFeature {
         else {
           return .none
         }
+        // Until the repository's scripts land, `resolveScript` sees only the globals, so
+        // a global would win an id a repository script is meant to override.
+        guard state.hasLoadedRepoScripts else { return .none }
         // Re-resolve so a stale view binding can't bypass repo-wins or run a since-deleted script.
         guard let definition = state.resolveScript(id: incoming.id) else { return .none }
         // Prevent running the same script twice.
@@ -783,10 +924,8 @@ struct AppFeature {
           if isGlobal {
             return .send(.settings(.setSelection(.scripts)))
           }
-          let repositoryID =
-            state.repositories.repositoryID(containing: worktree.id)?.rawValue
-            ?? worktree.repositoryRootURL.path(percentEncoded: false)
-          return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
+          guard let section = state.selectedRepositoryScriptsSection else { return .none }
+          return .send(.settings(.setSelection(section)))
         }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
         // The row's `runningScripts` reconciles from the terminal's projection
@@ -871,29 +1010,29 @@ struct AppFeature {
         }
 
       case .settings(.repositorySettings(.delegate(.settingsChanged(let rootURL, let host)))):
+        // The edited repo's row context menu resolves its open action from the
+        // reducer-cached map, so refresh it whichever repo was edited.
+        let refreshOpenActionMap = Effect<Action>.send(.repositories(.openActionSettingsChanged))
+        // Compare the settings keys, not the raw URLs: the key standardizes its root, so
+        // two spellings of the same repository (a `/private` prefix, a trailing slash)
+        // resolve the same open action while a raw `==` would skip the scripts reload.
+        let key = RepositorySettingsKey(rootURL: rootURL, host: host)
         guard let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
-          selectedWorktree.repositoryRootURL == rootURL,
-          selectedWorktree.host == host
+          key.id == state.selectedRepositorySettingsKeyID
         else {
-          return .none
+          return refreshOpenActionMap
         }
-        let worktreeID = selectedWorktree.id
-        @Shared(.repositorySettings(rootURL, host: host)) var repositorySettings
-        return .send(.worktreeSettingsLoaded(repositorySettings, worktreeID: worktreeID))
+        return .merge(
+          refreshOpenActionMap,
+          Self.loadWorktreeSettingsEffect(key: key, worktreeID: selectedWorktree.id)
+        )
 
-      case .worktreeSettingsLoaded(let settings, let worktreeID):
+      case .worktreeSettingsLoaded(let settings, let worktreeID, let source):
         guard state.repositories.selectedWorktreeID == worktreeID else {
           return .none
         }
-        @Shared(.settingsFile) var settingsFile
-        let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(
-          settingsFile.global.defaultEditorID
-        )
-        state.openActionSelection = OpenWorktreeAction.fromSettingsID(
-          settings.openActionID,
-          defaultEditorID: normalizedDefaultEditorID
-        )
-        state.repoScripts = settings.scripts
+        // Only the scripts: the open action is derived from the resolved map.
+        state.loadedRepoScripts = LoadedRepositoryScripts(source: source, scripts: settings.scripts)
         return .none
 
       case .deeplinkReceived(let url, let source, let responseFD):
@@ -1520,6 +1659,35 @@ struct AppFeature {
         }
       }
     )
+  }
+
+  /// Re-sweeps LaunchServices off the main thread, debounced so a launch that is
+  /// immediately followed by an activation resolves once. Emits nothing when the
+  /// installed set is unchanged, which is the common case.
+  private func refreshInstalledOpenActionsEffect(current: [OpenWorktreeAction]) -> Effect<Action> {
+    .run { [openActionAvailability, clock] send in
+      try await clock.sleep(for: .milliseconds(250))
+      let installed = openActionAvailability.installedActions()
+      guard installed != current else { return }
+      await send(.installedOpenActionsResolved(installed))
+    }
+    .cancellable(id: CancelID.installedOpenActions, cancelInFlight: true)
+  }
+
+  /// Loads the selected worktree's repository settings off the main actor: it is a disk
+  /// read, and a held arrow key would otherwise read a file per row it crosses.
+  /// `.worktreeSettingsLoaded` drops a result whose row is no longer selected, so a
+  /// superseded read is harmless as well as cancelled.
+  static func loadWorktreeSettingsEffect(
+    key: RepositorySettingsKey,
+    worktreeID: Worktree.ID
+  ) -> Effect<Action> {
+    .run { send in
+      await send(
+        .worktreeSettingsLoaded(key.currentSettings(), worktreeID: worktreeID, source: key.id)
+      )
+    }
+    .cancellable(id: CancelID.worktreeSettings, cancelInFlight: true)
   }
 
   /// Re-broadcasts every row's agent snapshot under the supplied badge gate.
@@ -2208,7 +2376,12 @@ struct AppFeature {
   /// Resolves a script by ID across the worktree's repo scripts and the user's globals.
   /// Repo entries win when both buckets carry the same ID.
   private func resolveScript(scriptID: UUID, in worktree: Worktree) -> ScriptDefinition? {
-    @SharedReader(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
+    // `currentSettings()`, not `@SharedReader(.repositorySettings(...))`: a deeplink must
+    // run the script the file names today, not the one it named when the terminal opened.
+    let repositorySettings = RepositorySettingsKey(
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    ).currentSettings()
     @SharedReader(.settingsFile) var settingsFile
     let merged: [ScriptDefinition] = .merged(
       repo: repositorySettings.scripts,

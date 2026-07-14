@@ -126,6 +126,7 @@ struct SupacodeApp: App {
   @State private var terminalManager: WorktreeTerminalManager
   @State private var worktreeInfoWatcher: WorktreeInfoWatcherManager
   @State private var commandKeyObserver: CommandKeyObserver
+  @State private var openActionIcons = OpenActionIconStore()
   @State private var store: StoreOf<AppFeature>
 
   @MainActor init() {
@@ -489,6 +490,7 @@ struct SupacodeApp: App {
         ContentView(store: store, terminalManager: terminalManager)
           .environment(ghosttyShortcuts)
           .environment(commandKeyObserver)
+          .environment(openActionIcons)
       }
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)
@@ -496,6 +498,7 @@ struct SupacodeApp: App {
     .handlesExternalEvents(matching: [])
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)
+    .environment(openActionIcons)
     .commands {
       WorktreeCommands(store: store)
       SidebarCommands()
