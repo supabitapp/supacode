@@ -41,7 +41,7 @@ enum Deeplink: Equatable, Sendable {
     case surfaceDestroy(tabID: UUID, surfaceID: UUID)
 
     /// Whether dispatching this action should also select / focus the worktree.
-    /// Metadata-only updates (appearance) skip it so they don't steal focus.
+    /// Metadata-only updates (appearance, tab rename) skip it so they don't steal focus.
     var selectsWorktree: Bool {
       switch self {
       case .appearance, .tabRename: false

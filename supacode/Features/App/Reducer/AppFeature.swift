@@ -177,6 +177,8 @@ struct AppFeature {
     case worktreeNew(pendingID: Worktree.ID, worktreeID: Worktree.ID?)
     /// tab close.
     case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    /// tab rename: resolves when the manager reports whether the title applied.
+    case tabRenamed(worktreeID: Worktree.ID, tabID: TerminalTabID)
     /// surface close (scoped by worktree so a duplicate id elsewhere can't cross-resolve).
     case surfaceClosed(worktreeID: Worktree.ID, surfaceID: UUID)
     /// worktree delete (git worktree removed).
@@ -940,8 +942,9 @@ struct AppFeature {
             timeoutSeconds: timeoutSeconds, state: &state)
         }
         guard let responseFD else { return command.effect }
-        // Confirmation dialog pending; response will be sent when dialog resolves.
-        guard state.deeplinkInputConfirmation == nil else { return command.effect }
+        // This command opened a dialog; it answers this fd when the dialog resolves.
+        // A dialog belonging to another fd must not strand this one.
+        guard state.deeplinkInputConfirmation?.responseFD != responseFD else { return command.effect }
         // A completion-based ack was registered; it resolves when the operation finishes.
         guard state.pendingCommandAcks[id: responseFD] == nil else { return command.effect }
         return .concatenate(
@@ -1408,6 +1411,16 @@ struct AppFeature {
         return .merge(
           .send(.terminals(.tabRemoved(worktreeID: worktreeID, tabID: tabID))), ackEffect)
 
+      case .terminalEvent(.tabRenamed(let worktreeID, let tabID, let applied)):
+        return resolveCommandAcks(
+          ok: applied,
+          error: applied ? nil : "The tab could not be renamed. It may have been closed.",
+          state: &state
+        ) { match in
+          guard case .tabRenamed(let ackWorktree, let renamed) = match else { return false }
+          return ackWorktree == worktreeID && renamed == tabID
+        }
+
       case .terminalEvent(.worktreeStateTornDown(let worktreeID)):
         return .send(.terminals(.worktreeStateTornDown(worktreeID: worktreeID)))
 
@@ -1833,7 +1846,7 @@ struct AppFeature {
     }
 
     let policyBypass = state.settings.automatedActionPolicy.allowsBypass(from: source)
-    // Appearance is a metadata-only update; don't steal focus for a tint / title change.
+    // Appearance and tab rename are metadata-only updates; don't steal focus for a title change.
     let selectEffect: Effect<Action> =
       action.selectsWorktree
       ? .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
@@ -1981,10 +1994,17 @@ struct AppFeature {
       )
     case .tab(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
-      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .selectTab(worktree, tabID: TerminalTabID(rawValue: tabID))
       }
     case .tabNew(let input, let id, let title):
+      // A new tab has no override to clear, so a blank title would be dropped silently.
+      if let title, TerminalTabManager.normalizedCustomTitle(title) == nil {
+        deeplinkLogger.warning("Rejecting blank tab title in worktree \(worktreeID)")
+        state.alert = blankTabTitleAlert(
+          message: "The tab title is blank. Omit the title to keep the terminal title.")
+        return .none
+      }
       // Reject explicit IDs that collide with an existing or in-flight tab, so a
       // duplicate id can't have one creation resolve the other's ack.
       if let id,
@@ -2001,7 +2021,7 @@ struct AppFeature {
         return .none
       }
       guard let input, !input.isEmpty else {
-        let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+        let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
           .createTab(worktree, runSetupScriptIfNew: true, id: id, title: title)
         }
         return awaitingCompletion(
@@ -2013,7 +2033,7 @@ struct AppFeature {
           worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
           message: .command(input), action: action, state: &state)
       }
-      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .createTabWithInput(
           worktree,
           input: input,
@@ -2027,6 +2047,15 @@ struct AppFeature {
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabRename(let tabID, let title):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      // A blank title clears the override, but one that survives only as control
+      // characters would wipe it while reporting the rename as applied.
+      let clearsTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      if !clearsTitle, TerminalTabManager.normalizedCustomTitle(title) == nil {
+        deeplinkLogger.warning("Rejecting unrenderable tab title in worktree \(worktreeID)")
+        state.alert = blankTabTitleAlert(
+          message: "The tab title has no visible characters. Pass an empty title to clear it.")
+        return .none
+      }
       guard terminalClient.tabCanRename(worktreeID, TerminalTabID(rawValue: tabID)) else {
         deeplinkLogger.warning("Tab \(tabID) has a locked title in worktree \(worktreeID)")
         state.alert = AlertState {
@@ -2040,9 +2069,12 @@ struct AppFeature {
         }
         return .none
       }
-      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: title)
       }
+      return awaitingCompletion(
+        effect, match: .tabRenamed(worktreeID: worktreeID, tabID: TerminalTabID(rawValue: tabID)),
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       guard bypassConfirmation else {
@@ -2054,7 +2086,7 @@ struct AppFeature {
           action: action,
           state: &state)
       }
-      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID))
       }
       return awaitingCompletion(
@@ -2073,7 +2105,7 @@ struct AppFeature {
       }
       // Focus has no reliable completion signal (the event only fires when
       // focus actually moves), so this acks immediately.
-      return sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .focusSurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, input: input)
       }
     case .surfaceSplit(let tabID, let surfaceID, let direction, let input, let id):
@@ -2102,7 +2134,7 @@ struct AppFeature {
           worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
           message: .command(input), action: action, state: &state)
       }
-      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .splitSurface(
           worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
           direction: direction, input: input, id: id)
@@ -2123,7 +2155,7 @@ struct AppFeature {
           action: action,
           state: &state)
       }
-      let effect = sendTerminalCommand(worktreeID: worktreeID, state: state) { worktree in
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .destroySurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID)
       }
       return awaitingCompletion(
@@ -2260,6 +2292,18 @@ struct AppFeature {
       }
     } message: {
       TextState("No worktree matching the deeplink could be found. It may have been removed.")
+    }
+  }
+
+  private func blankTabTitleAlert(message: String) -> AlertState<Alert> {
+    AlertState {
+      TextState("Tab title is blank")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState(message)
     }
   }
 
@@ -2430,11 +2474,13 @@ struct AppFeature {
 
   private func sendTerminalCommand(
     worktreeID: Worktree.ID,
-    state: State,
+    state: inout State,
     command: (Worktree) -> TerminalClient.Command
   ) -> Effect<Action> {
     guard let worktree = state.repositories.worktree(for: worktreeID) else {
       deeplinkLogger.warning("Worktree \(worktreeID) vanished before terminal command could be dispatched.")
+      // Alert so the CLI socket response surfaces a real error instead of silent ok=true.
+      state.alert = worktreeNotFoundAlert()
       return .none
     }
     let cmd = command(worktree)
@@ -2554,7 +2600,7 @@ struct AppFeature {
     state.alert = nil
     let effect = operation(&state)
     let error = state.alert.map(extractAlertMessage)
-    if state.alert == nil {
+    if error == nil {
       state.alert = previousAlert
     }
     return (effect, error)
@@ -2635,6 +2681,8 @@ struct AppFeature {
   /// Registers a deferred completion ack and merges in its watchdog. A `nil`
   /// `match` (e.g. tab-new without a correlatable id) or `nil` `responseFD`
   /// (no socket caller) leaves the ack immediate, returning `effect` unchanged.
+  /// So does an alert raised while dispatching (`isolateSocketCommandAlert` clears
+  /// the slot first): the command already failed, so no completion signal is coming.
   private func awaitingCompletion(
     _ effect: Effect<Action>,
     match: CompletionMatch?,
@@ -2642,7 +2690,7 @@ struct AppFeature {
     timeoutSeconds: Int,
     state: inout State
   ) -> Effect<Action> {
-    guard let responseFD, let match else { return effect }
+    guard let responseFD, let match, state.alert == nil else { return effect }
     // One open fd carries one command, so a pending ack here is unexpected.
     // Cancel its watchdog before overwriting so no stale timer lingers.
     var supersede: Effect<Action> = .none

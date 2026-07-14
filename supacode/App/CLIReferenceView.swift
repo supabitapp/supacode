@@ -94,7 +94,8 @@ struct CLIReferenceView: View {
     ),
     .init(
       command: "supacode tab rename [-w <id>] [-t <id>] --title <title>",
-      description: "Set the persistent title override; an empty title clears it."
+      description:
+        "Set the persistent title override; an empty title clears it. Script tabs are locked."
     ),
     .init(command: "supacode tab close [-w <id>] [-t <id>]", description: "Close a tab."),
   ]

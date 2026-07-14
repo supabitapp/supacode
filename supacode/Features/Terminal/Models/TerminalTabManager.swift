@@ -38,10 +38,13 @@ final class TerminalTabManager {
     } else {
       tabID = TerminalTabID()
     }
+    if isTitleLocked, customTitle != nil {
+      Self.logger.warning("Dropping the custom title of locked tab \(tabID.rawValue).")
+    }
     let tab = TerminalTabItem(
       id: tabID,
       title: title,
-      customTitle: customTitle.flatMap(Self.normalizedCustomTitle),
+      customTitle: isTitleLocked ? nil : customTitle.flatMap(Self.normalizedCustomTitle),
       icon: icon,
       isTitleLocked: isTitleLocked,
       tintColor: tintColor,
@@ -71,9 +74,13 @@ final class TerminalTabManager {
     tabs[index].title = title
   }
 
-  func setCustomTitle(_ id: TerminalTabID, title: String) {
-    guard let index = renamableTabIndex(id) else { return }
+  /// Returns false when the tab is gone or its title is locked, so callers can
+  /// skip persisting a rename that never applied.
+  @discardableResult
+  func setCustomTitle(_ id: TerminalTabID, title: String) -> Bool {
+    guard let index = renamableTabIndex(id) else { return false }
     tabs[index].customTitle = Self.normalizedCustomTitle(title)
+    return true
   }
 
   func canRename(_ id: TerminalTabID) -> Bool {
@@ -87,8 +94,16 @@ final class TerminalTabManager {
     return index
   }
 
-  private static func normalizedCustomTitle(_ title: String) -> String? {
-    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+  /// Nil for a title that carries no visible characters. Callers reject such a
+  /// title up front rather than let it drop silently here.
+  nonisolated static func normalizedCustomTitle(_ title: String) -> String? {
+    // Blank control scalars, not the whole control-characters set, so emoji joiners survive.
+    let scalars = title.unicodeScalars.map { scalar in
+      scalar.properties.generalCategory == .control || CharacterSet.newlines.contains(scalar)
+        ? UnicodeScalar(" ") : scalar
+    }
+    let sanitized = String(String.UnicodeScalarView(scalars))
+    let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
   }
 

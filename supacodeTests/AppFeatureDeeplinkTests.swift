@@ -1555,8 +1555,10 @@ struct AppFeatureDeeplinkTests {
     )
   }
 
-  @Test(.dependencies) func tabRenameMissingTabShowsAlert() async {
+  @Test(.dependencies) func tabRenameWithEmptyTitleClearsOverride() async {
     let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
@@ -1565,6 +1567,125 @@ struct AppFeatureDeeplinkTests {
     ) {
       AppFeature()
     } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.tabCanRename = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: ""))
+      )
+    )
+    #expect(
+      sent.value.contains(
+        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "")
+      )
+    )
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func tabRenameWithControlOnlyTitleShowsAlertAndSendsNothing() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.tabCanRename = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    // Only an escape: it is not a clear, and it must not wipe the existing title.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: UUID(), title: "\u{1B}"))
+      )
+    )
+    #expect(store.state.alert?.title == TextState("Tab title is blank"))
+    #expect(sent.value.isEmpty)
+  }
+
+  @Test(.dependencies) func tabRenameDoesNotSelectWorktree() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.selection = nil
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.tabCanRename = { _, _ in true }
+    }
+
+    // Exhaustive: a `selectWorktree` would fail here, so renaming cannot steal focus.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review"))
+      )
+    )
+    await store.finish()
+    #expect(store.state.repositories.selection == nil)
+  }
+
+  @Test(.dependencies) func tabNewWithBlankTitleShowsAlertAndSendsNothing() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.tabExists = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: nil, id: nil, title: "   "))
+      )
+    )
+    #expect(store.state.alert?.title == TextState("Tab title is blank"))
+    #expect(!sent.value.contains { if case .createTab = $0 { true } else { false } })
+  }
+
+  @Test(.dependencies) func tabRenameMissingTabShowsAlertAndSendsNothing() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
       $0.terminalClient.tabExists = { _, _ in false }
     }
     store.exhaustivity = .off
@@ -1574,7 +1695,36 @@ struct AppFeatureDeeplinkTests {
         .worktree(id: worktree.id, action: .tabRename(tabID: UUID(), title: "review"))
       )
     )
-    #expect(store.state.alert != nil)
+    #expect(store.state.alert?.title == TextState("Tab not found"))
+    #expect(sent.value.isEmpty)
+  }
+
+  @Test(.dependencies) func tabRenameLockedTitleShowsAlertAndSendsNothing() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.tabCanRename = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: UUID(), title: "review"))
+      )
+    )
+    #expect(store.state.alert?.title == TextState("Tab cannot be renamed"))
+    #expect(sent.value.isEmpty)
   }
 
   // MARK: - Queuing before load.

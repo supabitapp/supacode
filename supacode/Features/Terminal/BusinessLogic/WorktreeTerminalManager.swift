@@ -315,7 +315,8 @@ final class WorktreeTerminalManager {
       guard let tabID = explicitTabID ?? terminal.tabManager.selectedTabId else { break }
       terminal.tabManager.beginTabRename(tabID)
     case .renameTab(let worktree, let tabID, let title):
-      state(for: worktree).renameTab(tabID, title: title)
+      let applied = stateIfExists(for: worktree.id)?.renameTab(tabID, title: title) ?? false
+      emit(.tabRenamed(worktreeID: worktree.id, tabID: tabID, applied: applied))
     case .selectTab(let worktree, let tabID):
       state(for: worktree).selectTab(tabID)
     case .selectTabAtIndex(let worktree, let index):

@@ -93,6 +93,9 @@ struct TerminalClient {
     /// A tab was destroyed in the worktree state. Parent removes the matching
     /// `TerminalTabFeature.State` from `terminalTabs`.
     case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    /// A rename command settled. `applied` is false when the tab vanished or its
+    /// title was locked, so the CLI ack reports the failure instead of ok.
+    case tabRenamed(worktreeID: Worktree.ID, tabID: TerminalTabID, applied: Bool)
     /// The entire `WorktreeTerminalState` was torn down (worktree pruned).
     /// Parent drops any orphan `terminalTabs` entries and removed-tab FIFO
     /// records owned by this worktree so a fresh re-attach starts clean.

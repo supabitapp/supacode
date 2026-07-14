@@ -341,6 +341,42 @@ struct LayoutPersistenceManagerTests {
     #expect(readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == "Renamed")
   }
 
+  @Test func renameWithEmptyTitlePersistsClearedOverride() async {
+    let harness = makeHarness()
+    let worktree = makeWorktree()
+    let state = harness.manager.state(for: worktree)
+    guard let tabID = state.createTab(focusing: false, customTitle: "implement") else {
+      Issue.record("Expected a tab")
+      return
+    }
+    await settleThenAdvance(harness.clock)
+    await waitUntil { readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == "implement" }
+
+    state.renameTab(tabID, title: "")
+    await settleThenAdvance(harness.clock)
+    await waitUntil { readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == nil }
+
+    #expect(readDict(harness)[worktree.id.rawValue]?.tabs.first?.customTitle == nil)
+  }
+
+  @Test func renameThatDoesNotApplySkipsThePersistWrite() async {
+    let harness = makeHarness()
+    let worktree = makeWorktree()
+    let state = harness.manager.state(for: worktree)
+    guard state.createTab(focusing: false) != nil else {
+      Issue.record("Expected a tab")
+      return
+    }
+    await settleThenAdvance(harness.clock)
+    await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }
+    let savesBefore = harness.saveCount.value
+
+    #expect(state.renameTab(TerminalTabID(), title: "implement") == false)
+    await settleThenAdvance(harness.clock)
+
+    #expect(harness.saveCount.value == savesBefore)
+  }
+
   @Test func onQuitFlushSyncPersistsLiveStatesAsTerminalWrite() {
     let harness = makeHarness()
     let wt1 = makeWorktree(id: "/tmp/repo/wt-1")

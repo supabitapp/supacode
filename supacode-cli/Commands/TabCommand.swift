@@ -83,6 +83,12 @@ extension TabCommand {
 
     @OptionGroup var timeoutOption: TimeoutOption
 
+    func validate() throws {
+      // A new tab has no override to clear, so a blank title would be dropped silently.
+      guard let title, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+      throw ValidationError("--title cannot be blank. Omit it to keep the terminal title.")
+    }
+
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let resolvedID = newID ?? UUID().uuidString

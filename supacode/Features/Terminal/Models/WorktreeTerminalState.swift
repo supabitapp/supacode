@@ -827,12 +827,13 @@ final class WorktreeTerminalState {
     onTabClosed?()
   }
 
-  /// User-initiated rename. Routes through the manager so the new title (or its
-  /// removal on an empty commit) persists incrementally, unlike the restore path
-  /// which seeds `setCustomTitle` directly from a snapshot.
-  func renameTab(_ tabId: TerminalTabID, title: String) {
-    tabManager.setCustomTitle(tabId, title: title)
+  /// Persists the new title (or its removal on an empty commit) incrementally.
+  /// Returns false when the rename did not apply, which also skips the write.
+  @discardableResult
+  func renameTab(_ tabId: TerminalTabID, title: String) -> Bool {
+    guard tabManager.setCustomTitle(tabId, title: title) else { return false }
     onTabRenamed?()
+    return true
   }
 
   func closeOtherTabs(keeping tabId: TerminalTabID) {

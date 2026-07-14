@@ -109,11 +109,11 @@ nonisolated enum CLISkillContent {
     ### Tab
 
     ```
-    supacode tab list [-w <id>] [-f]                              # List tab UUIDs in worktree (-f = focused only).
-    supacode tab focus [-w <id>] [-t <id>]                      # Focus tab.
+    supacode tab list [-w <id>] [-f]                                     # List tab UUIDs in worktree (-f = focused only).
+    supacode tab focus [-w <id>] [-t <id>]                               # Focus tab.
     supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>]  # Create named tab (prints UUID to stdout).
-    supacode tab rename [-w <id>] [-t <id>] --title <title>              # Rename tab (empty title clears override).
-    supacode tab close [-w <id>] [-t <id>]                              # Close tab.
+    supacode tab rename [-w <id>] [-t <id>] --title <title>              # Rename tab (empty title clears override; script tabs are locked).
+    supacode tab close [-w <id>] [-t <id>]                               # Close tab.
     ```
 
     ### Surface

@@ -104,7 +104,7 @@ extension AppFeature.Action {
       case .notificationReceived, .tabCreated, .tabClosed, .focusChanged,
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
-        .tabRemoved, .worktreeStateTornDown, .tabProgressDisplayChanged,
+        .tabRemoved, .tabRenamed, .worktreeStateTornDown, .tabProgressDisplayChanged,
         .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
         .surfaceCreationFailed:
         return false
