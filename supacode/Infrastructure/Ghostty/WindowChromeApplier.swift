@@ -54,6 +54,23 @@ enum WindowChromeApplier {
     window.backgroundColor = tintColor
   }
 
+  // Even-odd mask inputs: the full `bounds` fill plus a hole per region, clipped
+  // to `bounds`. A rect spanning the whole backdrop is dropped so it can't
+  // even-odd-cancel the entire tint into a fully transparent window (the terminal
+  // body never covers the frame view, titlebar included).
+  nonisolated static func maskHoleRects(
+    holeRects: [CGRect],
+    bounds: CGRect
+  ) -> [CGRect] {
+    var rects = [bounds]
+    for rect in holeRects {
+      let clipped = rect.intersection(bounds)
+      guard !clipped.isEmpty, clipped != bounds else { continue }
+      rects.append(clipped)
+    }
+    return rects
+  }
+
   // Stable per-color key for the dedupe (NSColor equality is color-space fragile).
   private static func colorKey(_ color: NSColor) -> String {
     guard let srgb = color.usingColorSpace(.sRGB) else { return "?" }
@@ -307,7 +324,7 @@ final class TintBackdropView: NSView {
 
   private func addObservers() {
     let center = NotificationCenter.default
-    // A background change only recolors the fill, a frame change only moves the
+    // A background change only recolors the fill, a region change re-cuts the
     // mask holes, and a config change can alter both (opacity + theme color).
     observers.append(
       center.addObserver(
@@ -316,11 +333,16 @@ final class TintBackdropView: NSView {
         Task { @MainActor [weak self] in self?.refreshColor() }
       }
     )
+    // Rebuild inline (queue: nil runs on the posting main thread) so the mask
+    // tracks the region in the SAME frame its layout/attach/detach lands. A
+    // deferred rebuild lags a runloop: a vacated hole flashes the transparent
+    // backing. The post is from main and a rebuild only reads geometry, so it is
+    // safe to run inside the region's layout pass.
     observers.append(
       center.addObserver(
-        forName: .ghosttySurfaceFrameDidChange, object: nil, queue: .main
+        forName: .ghosttyTintMaskRegionDidChange, object: nil, queue: nil
       ) { [weak self] _ in
-        Task { @MainActor [weak self] in self?.setNeedsMaskRebuild() }
+        MainActor.assumeIsolated { self?.rebuildMask() }
       }
     )
     observers.append(
@@ -358,23 +380,33 @@ final class TintBackdropView: NSView {
     }
   }
 
-  // Each terminal surface's rect is punched as a hole so behind a surface there
-  // is only blur, and the surface paints its own OSC 11 color over it at the same
-  // opacity (no double background, seamless with the chrome).
+  // The terminal body region is punched as a hole so behind it there is only
+  // blur, and each surface paints its own OSC 11 color over that blur at the same
+  // opacity (no double background, seamless with the chrome). The hole tracks the
+  // stable container, not individual surfaces: the container's frame is known
+  // before any surface paints, so a surface can never present over uncut tint.
   private func rebuildMask() {
     guard layer != nil else { return }
-    let path = CGMutablePath()
-    path.addRect(bounds)
+    var holeRects: [CGRect] = []
     if let frameView = superview {
-      for surface in Self.surfaceViews(in: frameView)
-      where !surface.isHiddenOrHasHiddenAncestor {
-        let rect = surface.convert(surface.bounds, to: self)
-        guard rect.width > 0, rect.height > 0, rect.intersects(bounds) else { continue }
-        path.addRect(rect)
+      for region in Self.maskRegions(in: frameView)
+      where !region.isHiddenOrHasHiddenAncestor {
+        let rect = region.convert(region.bounds, to: self)
+        // `maskHoleRects` drops a hole spanning the whole backdrop (it would
+        // even-odd-cancel the entire tint), so surface the doubled-tint outcome
+        // rather than let it drop silently like the no-superview branch below.
+        if rect.intersection(bounds) == bounds {
+          chromeLogger.warning("Tint mask region spans the full backdrop; hole dropped, tint will double")
+        }
+        holeRects.append(rect)
       }
     } else {
-      // No holes get punched, so the tint would double behind every surface.
-      chromeLogger.warning("Tint backdrop has no superview; mask rebuilt without surface holes")
+      // No holes get punched, so the tint would double behind the terminal body.
+      chromeLogger.warning("Tint backdrop has no superview; mask rebuilt without region holes")
+    }
+    let path = CGMutablePath()
+    for rect in WindowChromeApplier.maskHoleRects(holeRects: holeRects, bounds: bounds) {
+      path.addRect(rect)
     }
     let mask = CAShapeLayer()
     mask.frame = bounds
@@ -383,14 +415,19 @@ final class TintBackdropView: NSView {
     layer?.mask = mask
   }
 
-  private static func surfaceViews(in root: NSView) -> [GhosttySurfaceView] {
-    var result: [GhosttySurfaceView] = []
-    if let surface = root as? GhosttySurfaceView {
-      result.append(surface)
+  private static func maskRegions(in root: NSView) -> [WindowTintMaskRegion] {
+    var result: [WindowTintMaskRegion] = []
+    if let region = root as? WindowTintMaskRegion {
+      result.append(region)
     }
     for subview in root.subviews {
-      result.append(contentsOf: surfaceViews(in: subview))
+      result.append(contentsOf: maskRegions(in: subview))
     }
     return result
   }
 }
+
+// A view whose bounds are cut out of the window tint (the terminal body over
+// which surfaces composite). Conformers drive the tint mask via
+// `.ghosttyTintMaskRegionDidChange` on layout and window attach/detach.
+protocol WindowTintMaskRegion: NSView {}
