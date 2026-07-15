@@ -111,11 +111,8 @@ struct WorktreeDetailView: View {
         repositoriesStore: repositoriesStore,
         terminalManager: terminalManager,
         onSelectNotification: selectToolbarNotification,
-        onPullRequestAction: { action in
-          if let worktreeID = selectedWorktree?.id {
-            repositoriesStore.send(.pullRequestAction(worktreeID, action))
-          }
-        }
+        onSelectSurface: selectToolbarSurface,
+        onPullRequestAction: { sendPullRequestAction($0, worktree: selectedWorktree) }
       )
       .inspectorColumnWidth(min: 280, ideal: 320, max: 480)
       // Match the inspector's accent to the terminal background; the appearance
@@ -361,10 +358,24 @@ struct WorktreeDetailView: View {
     _ worktreeID: Worktree.ID,
     _ notification: WorktreeTerminalNotification
   ) {
+    selectToolbarSurface(worktreeID, notification.surfaceID)
+  }
+
+  /// Focuses a surface directly, used by the inspector's pruned-unread row where
+  /// no notification object survives to carry the surface ID.
+  private func selectToolbarSurface(_ worktreeID: Worktree.ID, _ surfaceID: UUID) {
     store.send(.repositories(.selectWorktree(worktreeID)))
     if let terminalState = terminalManager.stateIfExists(for: worktreeID) {
-      _ = terminalState.focusSurface(id: notification.surfaceID)
+      _ = terminalState.focusSurface(id: surfaceID)
     }
+  }
+
+  private func sendPullRequestAction(
+    _ action: RepositoriesFeature.PullRequestAction,
+    worktree: Worktree?
+  ) {
+    guard let worktreeID = worktree?.id else { return }
+    store.send(.repositories(.pullRequestAction(worktreeID, action)))
   }
 
   /// Toolbar notification bell host. Reads `toolbarNotificationGroupsCache`
@@ -380,12 +391,7 @@ struct WorktreeDetailView: View {
     var body: some View {
       if let repositoriesStore {
         let groups = repositoriesStore.toolbarNotificationGroupsCache
-        let unreadCount = groups.reduce(0) { count, repository in
-          count
-            + repository.worktrees.reduce(0) { worktreeCount, worktree in
-              worktreeCount + worktree.notifications.filter { !$0.isRead }.count
-            }
-        }
+        let unreadCount = groups.flatMap(\.worktrees).reduce(0) { $0 + $1.unseenNotificationCount }
         WorktreeNotificationsToolbarButton(
           unreadCount: unreadCount,
           isSelected: isSelected,

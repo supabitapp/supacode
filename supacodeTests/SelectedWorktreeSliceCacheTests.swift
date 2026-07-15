@@ -118,6 +118,36 @@ struct SelectedWorktreeSliceCacheTests {
     #expect(store.state.selectedWorktreeSlice?.runningScripts.contains(where: { $0.id == scriptID }) == true)
   }
 
+  @Test func pullRequestChangeRefreshesNotificationGlyphCache() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(worktree.id)
+    // A notification makes the row appear in the cache; the branch feeds PR gating.
+    state.sidebarItems[id: worktree.id]?.notifications = [
+      WorktreeTerminalNotification(surfaceID: UUID(), title: "N", body: "b", createdAt: .distantPast)
+    ]
+    state.sidebarItems[id: worktree.id]?.hasUnseenNotifications = true
+    state.sidebarItems[id: worktree.id]?.branchName = "wt"
+    state.reconcileSidebarForTesting()
+    #expect(state.toolbarNotificationGroupsCache.first?.worktrees.first?.pullRequestIcon == .branch)
+
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+    store.exhaustivity = .off
+    let pullRequest = GithubPullRequest(
+      number: 1, title: "PR", state: "OPEN", additions: 0, deletions: 0, isDraft: false,
+      reviewDecision: nil, mergeable: nil, mergeStateStatus: nil, updatedAt: nil,
+      url: "https://example.com/pull/1", headRefName: "wt", baseRefName: "main",
+      commitsCount: 0, authorLogin: nil, statusCheckRollup: nil, mergeQueueEntry: nil
+    )
+    await store.send(
+      .sidebarItems(.element(id: worktree.id, action: .pullRequestChanged(pullRequest, branchAtQueryTime: "wt")))
+    )
+
+    // The PR change must re-arm the notification cache, not just the selection slice.
+    #expect(store.state.toolbarNotificationGroupsCache.first?.worktrees.first?.pullRequestIcon == .open)
+  }
+
   private func makeWorktree(id: String, repoRoot: String) -> Worktree {
     Worktree(
       id: WorktreeID(id),

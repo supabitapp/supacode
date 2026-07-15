@@ -393,7 +393,7 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .setNotificationsEnabled,
-      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
+      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
       return false
     }
     return true
@@ -411,7 +411,7 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .setNotificationsEnabled,
-      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
+      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
       return false
     }
     return true
@@ -429,6 +429,8 @@ final class WorktreeTerminalManager {
       prune(keeping: ids, protectingRepositoryIDs: protectedRepositoryIDs)
     case .setNotificationsEnabled(let enabled):
       setNotificationsEnabled(enabled)
+    case .enforceNotificationRetentionLimit:
+      enforceNotificationRetentionLimit()
     case .refreshTabBarVisibility:
       for state in states.values {
         state.refreshTabBarVisibility()
@@ -1042,6 +1044,16 @@ final class WorktreeTerminalManager {
     emitNotificationIndicatorCountIfNeeded()
   }
 
+  /// Re-applies the retention limit to every worktree, e.g. after the user lowers
+  /// it in settings so an existing backlog is trimmed without waiting for the next
+  /// notification.
+  func enforceNotificationRetentionLimit() {
+    for state in states.values {
+      state.enforceNotificationRetentionLimit()
+    }
+    emitNotificationIndicatorCountIfNeeded()
+  }
+
   func hasUnseenNotifications(for worktreeID: Worktree.ID) -> Bool {
     states[worktreeID]?.hasUnseenNotification == true
   }
@@ -1299,9 +1311,7 @@ final class WorktreeTerminalManager {
   }
 
   private func emitNotificationIndicatorCountIfNeeded() {
-    let count = states.values.reduce(0) { count, state in
-      count + (state.hasUnseenNotification ? 1 : 0)
-    }
+    let count = states.values.reduce(0) { $0 + $1.totalUnseenNotificationCount }
     if count != lastNotificationIndicatorCount {
       lastNotificationIndicatorCount = count
       emit(.notificationIndicatorChanged(count: count))

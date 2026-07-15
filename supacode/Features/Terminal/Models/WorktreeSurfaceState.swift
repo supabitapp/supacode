@@ -5,6 +5,10 @@ import Observation
 @MainActor
 @Observable
 final class WorktreeSurfaceState {
-  /// Mirror of `WorktreeTerminalState.hasUnseenNotification(forSurfaceID:)`.
-  var hasUnseenNotification: Bool = false
+  /// Outstanding unread notifications for this surface. Decoupled from the
+  /// capped notification log: trimming never changes it, only reading or
+  /// dismissing does. Drives the sidebar dot, tab badge, and toolbar bell.
+  var unseenNotificationCount: Int = 0
+
+  var hasUnseenNotification: Bool { unseenNotificationCount > 0 }
 }
