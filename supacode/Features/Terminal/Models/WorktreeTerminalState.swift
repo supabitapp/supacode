@@ -49,6 +49,17 @@ final class WorktreeTerminalState {
     let isVisible: Bool
     let isFocused: Bool
   }
+  struct PendingTabCloseConfirmation: Equatable {
+    let tabIDs: [TerminalTabID]
+
+    var title: String {
+      tabIDs.count == 1 ? "Close Tab?" : "Close \(tabIDs.count) Tabs?"
+    }
+
+    var actionTitle: String {
+      tabIDs.count == 1 ? "Close Tab" : "Close Tabs"
+    }
+  }
 
   private struct SurfaceLaunchMetadata {
     let usesZmx: Bool
@@ -58,6 +69,7 @@ final class WorktreeTerminalState {
   let tabManager: TerminalTabManager
   private let runtime: GhosttyRuntime
   @ObservationIgnored private let splitPreserveZoomOnNavigation: () -> Bool
+  @ObservationIgnored private let surfaceNeedsCloseConfirmation: (GhosttySurfaceView) -> Bool
   private let worktree: Worktree
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
@@ -82,6 +94,7 @@ final class WorktreeTerminalState {
   @ObservationIgnored private var lastTabProgressDisplays: [TerminalTabID: TerminalTabProgressDisplay?] = [:]
   var socketPath: String?
   private(set) var shouldHideTabBar = false
+  private(set) var pendingTabCloseConfirmation: PendingTabCloseConfirmation?
   // Every mutation schedules a coalesced row-projection emit so the TCA
   // mirror of running scripts reconciles from this single source of truth (#573).
   private var blockingScripts: [TerminalTabID: BlockingScriptKind] = [:] {
@@ -213,10 +226,12 @@ final class WorktreeTerminalState {
     runtime: GhosttyRuntime,
     worktree: Worktree,
     runSetupScript: Bool = false,
-    splitPreserveZoomOnNavigation: (() -> Bool)? = nil
+    splitPreserveZoomOnNavigation: (() -> Bool)? = nil,
+    surfaceNeedsCloseConfirmation: ((GhosttySurfaceView) -> Bool)? = nil
   ) {
     self.runtime = runtime
     self.splitPreserveZoomOnNavigation = splitPreserveZoomOnNavigation ?? { runtime.splitPreserveZoomOnNavigation() }
+    self.surfaceNeedsCloseConfirmation = surfaceNeedsCloseConfirmation ?? { $0.needsCloseConfirmation }
     self.worktree = worktree
     self.pendingSetupScript = runSetupScript
     self.tabManager = TerminalTabManager()
@@ -723,8 +738,7 @@ final class WorktreeTerminalState {
   @discardableResult
   func closeFocusedTab() -> Bool {
     guard let tabId = tabManager.selectedTabId else { return false }
-    closeTab(tabId)
-    return true
+    return requestCloseTab(tabId)
   }
 
   @discardableResult
@@ -799,7 +813,73 @@ final class WorktreeTerminalState {
     return true
   }
 
+  @discardableResult
+  func requestCloseTab(_ tabId: TerminalTabID) -> Bool {
+    requestCloseTabs([tabId])
+  }
+
+  @discardableResult
+  func requestCloseOtherTabs(keeping tabId: TerminalTabID) -> Bool {
+    requestCloseTabs(tabManager.tabs.map(\.id).filter { $0 != tabId })
+  }
+
+  @discardableResult
+  func requestCloseTabsToRight(of tabId: TerminalTabID) -> Bool {
+    guard let index = tabManager.tabs.firstIndex(where: { $0.id == tabId }) else { return false }
+    return requestCloseTabs(Array(tabManager.tabs.dropFirst(index + 1).map(\.id)))
+  }
+
+  @discardableResult
+  func requestCloseAllTabs() -> Bool {
+    requestCloseTabs(tabManager.tabs.map(\.id))
+  }
+
+  func confirmPendingTabClose() {
+    guard let pending = pendingTabCloseConfirmation else { return }
+    pendingTabCloseConfirmation = nil
+    for tabId in pending.tabIDs {
+      closeTab(tabId)
+    }
+  }
+
+  func cancelPendingTabClose() {
+    pendingTabCloseConfirmation = nil
+  }
+
+  private func requestCloseTabs(_ requestedTabIDs: [TerminalTabID]) -> Bool {
+    let existingTabIDs = requestedTabIDs.filter { requested in
+      tabManager.tabs.contains(where: { $0.id == requested })
+    }
+    guard !existingTabIDs.isEmpty else { return false }
+
+    @Shared(.settingsFile) var settingsFile
+    let needsConfirmation =
+      settingsFile.global.confirmCloseTabsWithRunningProcesses
+      && existingTabIDs.contains(where: tabNeedsCloseConfirmation)
+    if needsConfirmation {
+      pendingTabCloseConfirmation = PendingTabCloseConfirmation(tabIDs: existingTabIDs)
+    } else {
+      for tabId in existingTabIDs {
+        closeTab(tabId)
+      }
+    }
+    return true
+  }
+
+  private func tabNeedsCloseConfirmation(_ tabId: TerminalTabID) -> Bool {
+    guard let tree = trees[tabId] else { return false }
+    return tree.leaves().contains(where: surfaceNeedsCloseConfirmation)
+  }
+
+  private func removeFromPendingTabClose(_ tabId: TerminalTabID) {
+    guard let pending = pendingTabCloseConfirmation else { return }
+    let remaining = pending.tabIDs.filter { $0 != tabId }
+    pendingTabCloseConfirmation =
+      remaining.isEmpty ? nil : PendingTabCloseConfirmation(tabIDs: remaining)
+  }
+
   func closeTab(_ tabId: TerminalTabID) {
+    removeFromPendingTabClose(tabId)
     let closedBlockingKind = blockingScripts.removeValue(forKey: tabId)
     cleanupBlockingScriptLaunchDirectory(for: tabId)
     // Clear lingering tab tracking for completed or non-blocking tabs.
@@ -1029,6 +1109,7 @@ final class WorktreeTerminalState {
   }
 
   func closeAllSurfaces() {
+    pendingTabCloseConfirmation = nil
     let closingSurfaces = Array(surfaces.values)
     let closingSurfaceIDs = closingSurfaces.map(\.id)
     for surface in closingSurfaces {
@@ -1655,8 +1736,7 @@ final class WorktreeTerminalState {
     }
     view.bridge.onCloseTab = { [weak self, weak view] _ in
       guard let self, let view, self.isLiveSurface(view) else { return false }
-      self.closeTab(tabId)
-      return true
+      return self.requestCloseTab(tabId)
     }
     view.bridge.onGotoTab = { [weak self, weak view] target in
       guard let self, let view, self.isLiveSurface(view) else { return false }
@@ -2608,6 +2688,7 @@ final class WorktreeTerminalState {
       killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
     }
     if newTree.isEmpty {
+      removeFromPendingTabClose(tabId)
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
       cleanupBlockingScriptLaunchDirectory(for: tabId)

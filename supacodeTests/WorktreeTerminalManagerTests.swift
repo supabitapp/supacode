@@ -1,9 +1,11 @@
 import AppKit
 import Clocks
 import Dependencies
+import DependenciesTestSupport
 import Foundation
 import GhosttyKit
 import IdentifiedCollections
+import Sharing
 import SupacodeSettingsShared
 import Testing
 
@@ -1053,6 +1055,78 @@ struct WorktreeTerminalManagerTests {
     state.closeTab(tabId)
 
     #expect(state.surfaceStates[surfaceID] == nil)
+  }
+  @Test(.dependencies) func requestCloseTabConfirmsWhenAnySplitSurfaceHasRunningProcess() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTabsWithRunningProcesses = true }
+    var runningSurfaceIDs: Set<UUID> = []
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { runningSurfaceIDs.contains($0.id) }
+    )
+    guard let tabId = state.createTab(focusing: true),
+      let initialSurface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    #expect(state.performSplitAction(.newSplit(direction: .right), for: initialSurface.id))
+    let leaves = state.splitTree(for: tabId).leaves()
+    guard leaves.count == 2 else {
+      Issue.record("Expected a split tab")
+      return
+    }
+    runningSurfaceIDs.insert(leaves[1].id)
+
+    #expect(state.requestCloseTab(tabId))
+    #expect(state.pendingTabCloseConfirmation?.tabIDs == [tabId])
+    #expect(state.tabManager.tabs.contains(where: { $0.id == tabId }))
+
+    state.cancelPendingTabClose()
+    #expect(state.pendingTabCloseConfirmation == nil)
+    #expect(state.tabManager.tabs.contains(where: { $0.id == tabId }))
+
+    #expect(state.requestCloseTab(tabId))
+    state.confirmPendingTabClose()
+    #expect(state.pendingTabCloseConfirmation == nil)
+    #expect(!state.tabManager.tabs.contains(where: { $0.id == tabId }))
+  }
+
+  @Test(.dependencies) func requestCloseTabClosesIdleTabWithoutConfirmation() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTabsWithRunningProcesses = true }
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { _ in false }
+    )
+    guard let tabId = state.createTab(focusing: true) else {
+      Issue.record("Expected a tab")
+      return
+    }
+
+    #expect(state.requestCloseTab(tabId))
+    #expect(state.pendingTabCloseConfirmation == nil)
+    #expect(!state.tabManager.tabs.contains(where: { $0.id == tabId }))
+  }
+
+  @Test(.dependencies) func disabledSettingClosesRunningTabWithoutConfirmation() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTabsWithRunningProcesses = false }
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { _ in true }
+    )
+    guard let tabId = state.createTab(focusing: true) else {
+      Issue.record("Expected a tab")
+      return
+    }
+
+    #expect(state.requestCloseTab(tabId))
+    #expect(state.pendingTabCloseConfirmation == nil)
+    #expect(!state.tabManager.tabs.contains(where: { $0.id == tabId }))
   }
 
   @Test func closeAllSurfacesClearsPerSurfaceBookkeeping() {

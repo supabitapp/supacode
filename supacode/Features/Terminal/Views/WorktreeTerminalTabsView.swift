@@ -23,6 +23,7 @@ struct WorktreeTerminalTabsView: View {
     // would reintroduce the closed-all flash on first render.
     let _: Void = state.ensureInitialTab(focusing: false)
     let unfocusedSplitOverlay = manager.unfocusedSplitOverlay()
+    let pendingTabClose = state.pendingTabCloseConfirmation
     let _ = colorScheme
     VStack(spacing: 0) {
       if !state.shouldHideTabBar {
@@ -36,16 +37,16 @@ struct WorktreeTerminalTabsView: View {
           },
           canSplit: state.tabManager.selectedTabId.flatMap { state.activeSurfaceID(for: $0) } != nil,
           closeTab: { tabId in
-            state.closeTab(tabId)
+            _ = state.requestCloseTab(tabId)
           },
           closeOthers: { tabId in
-            state.closeOtherTabs(keeping: tabId)
+            _ = state.requestCloseOtherTabs(keeping: tabId)
           },
           closeToRight: { tabId in
-            state.closeTabsToRight(of: tabId)
+            _ = state.requestCloseTabsToRight(of: tabId)
           },
           closeAll: {
-            state.closeAllTabs()
+            _ = state.requestCloseAllTabs()
           },
           dismissSplitZoom: { tabId in
             state.dismissSplitZoom(for: tabId)
@@ -70,6 +71,27 @@ struct WorktreeTerminalTabsView: View {
       }
     }
     .animation(.easeInOut(duration: 0.2), value: state.shouldHideTabBar)
+    .alert(
+      pendingTabClose?.title ?? "Close Tab?",
+      isPresented: Binding(
+        get: { state.pendingTabCloseConfirmation != nil },
+        set: { isPresented in
+          if !isPresented {
+            state.cancelPendingTabClose()
+          }
+        }
+      ),
+      presenting: pendingTabClose
+    ) { pending in
+      Button("Cancel", role: .cancel) {
+        state.cancelPendingTabClose()
+      }
+      Button(pending.actionTitle, role: .destructive) {
+        state.confirmPendingTabClose()
+      }
+    } message: { _ in
+      Text("One or more processes are still running. Closing will terminate them.")
+    }
     .background(
       WindowFocusObserverView { activity in
         windowActivity = activity

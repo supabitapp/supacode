@@ -386,6 +386,48 @@ struct SettingsFilePersistenceTests {
     #expect(reloaded.global.terminalThemeSyncEnabled == true)
   }
 
+  @Test(.dependencies) func decodesMissingConfirmCloseTabsWithRunningProcessesAsTrue() throws {
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmCloseTabsWithRunningProcesses)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitConfirmCloseTabsWithRunningProcessesDisabled() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.confirmCloseTabsWithRunningProcesses = false }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(!reloaded.global.confirmCloseTabsWithRunningProcesses)
+  }
+
   @Test(.dependencies) func decodesMissingRemoteSessionPersistenceEnabledAsTrue() throws {
     let legacy = LegacySettingsFile(
       global: LegacyGlobalSettings(
