@@ -1,6 +1,6 @@
-import AppKit
+import Foundation
 
-public enum OpenTarget: Equatable, Sendable {
+public nonisolated enum OpenTarget: Equatable, Sendable {
   case workingDirectory
   case url(URL)
   case search(String, excludeDirectories: String? = nil, maxDepth: Int = 3)
@@ -8,7 +8,7 @@ public enum OpenTarget: Equatable, Sendable {
   public static let `default`: Self = .workingDirectory
 }
 
-public enum OpenBehavior: Equatable, Sendable {
+public nonisolated enum OpenBehavior: Equatable, Sendable {
   public struct WorkspaceConfiguration: Equatable, Sendable {
     public var createsNewApplicationInstance: Bool
     public var arguments: [Argument]
@@ -41,7 +41,7 @@ public enum OpenBehavior: Equatable, Sendable {
 }
 
 /// How to open a remote SSH worktree through an editor's Remote-SSH CLI.
-public struct RemoteOpenInvocation: Equatable, Sendable {
+public nonisolated struct RemoteOpenInvocation: Equatable, Sendable {
   public var executable: OpenBehavior.ProcessExecutable
   /// argv following the resolved executable (and its prefix).
   public var arguments: [String]
@@ -52,12 +52,9 @@ public struct RemoteOpenInvocation: Equatable, Sendable {
   }
 }
 
-public enum OpenWorktreeAction: CaseIterable, Identifiable {
-  public enum MenuIcon {
-    case app(NSImage)
-    case symbol(String)
-  }
-
+/// A pure value: it never touches `NSWorkspace`. Availability and icons are
+/// resolved off the menu-build path (`OpenActionAvailabilityClient`).
+public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable, Sendable {
   case alacritty
   case androidStudio
   case antigravity
@@ -153,27 +150,18 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     }
   }
 
-  public var menuIcon: MenuIcon? {
-    switch self {
-    case .editor:
-      return .symbol("apple.terminal")
-    default:
-      guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
-      else { return nil }
-      return .app(NSWorkspace.shared.icon(forFile: appURL.path))
-    }
+  /// The SF Symbol standing in for this action, or `nil` when it renders the
+  /// app's own icon. Only `$EDITOR` has no bundle to draw from.
+  public var menuSymbolName: String? {
+    self == .editor ? "apple.terminal" : nil
   }
 
-  public var isInstalled: Bool {
+  /// Whether availability depends on an installed app bundle. Finder always
+  /// exists and `$EDITOR` resolves through the shell, so both are unconditional.
+  public var requiresInstalledApplication: Bool {
     switch self {
-    case .finder, .editor:
-      return true
-    case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm, .pycharm,
-      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae,
-      .traeCN, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode,
-      .zed, .zedPreview:
-      return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
+    case .finder, .editor: false
+    default: true
     }
   }
 
@@ -371,7 +359,7 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
     return "ssh://\(host.sshURLAuthority)\(encodedPath)"
   }
 
-  public nonisolated static let automaticSettingsID = "auto"
+  public static let automaticSettingsID = "auto"
 
   public static let editorPriority: [OpenWorktreeAction] = [
     .cursor,
@@ -418,46 +406,60 @@ public enum OpenWorktreeAction: CaseIterable, Identifiable {
   public static let menuOrder: [OpenWorktreeAction] =
     editorPriority + [.xcode] + [.finder] + terminalPriority + gitClientPriority + [.editor]
 
-  public static func normalizedDefaultEditorID(_ settingsID: String?) -> String {
+  public static func normalizedDefaultEditorID(
+    _ settingsID: String?,
+    installed: [OpenWorktreeAction]
+  ) -> String {
     guard let settingsID, settingsID != automaticSettingsID else {
       return automaticSettingsID
     }
     guard let action = allCases.first(where: { $0.settingsID == settingsID }),
-      action.isInstalled
+      installed.contains(action)
     else {
       return automaticSettingsID
     }
     return settingsID
   }
 
+  /// What to present for a repository the resolution pass has not reached yet: a cold
+  /// launch, or one just added. Resolving the same chain minus the repository's own
+  /// `supacode.json` keeps the value from jumping when the pass lands, which skipping
+  /// to `preferredDefault` would not: it ignores the user's default editor.
+  public static func unresolvedDefault(
+    defaultEditorID: String?,
+    installed: [OpenWorktreeAction]
+  ) -> OpenWorktreeAction {
+    fromSettingsID(nil, defaultEditorID: defaultEditorID, installed: installed)
+  }
+
   public static func fromSettingsID(
     _ settingsID: String?,
-    defaultEditorID: String?
+    defaultEditorID: String?,
+    installed: [OpenWorktreeAction]
   ) -> OpenWorktreeAction {
     if let settingsID, settingsID != automaticSettingsID,
       let action = allCases.first(where: { $0.settingsID == settingsID })
     {
       return action
     }
-    let normalizedDefaultEditorID = normalizedDefaultEditorID(defaultEditorID)
+    let normalizedDefaultEditorID = normalizedDefaultEditorID(defaultEditorID, installed: installed)
     if normalizedDefaultEditorID != automaticSettingsID,
       let action = allCases.first(where: { $0.settingsID == normalizedDefaultEditorID })
     {
       return action
     }
-    return preferredDefault()
+    return preferredDefault(installed: installed)
   }
 
-  public static var availableCases: [OpenWorktreeAction] {
-    menuOrder.filter(\.isInstalled)
+  public static func availableSelection(
+    _ selection: OpenWorktreeAction,
+    installed: [OpenWorktreeAction]
+  ) -> OpenWorktreeAction {
+    installed.contains(selection) ? selection : preferredDefault(installed: installed)
   }
 
-  public static func availableSelection(_ selection: OpenWorktreeAction) -> OpenWorktreeAction {
-    selection.isInstalled ? selection : preferredDefault()
-  }
-
-  public static func preferredDefault() -> OpenWorktreeAction {
-    defaultPriority.first(where: \.isInstalled) ?? .finder
+  public static func preferredDefault(installed: [OpenWorktreeAction]) -> OpenWorktreeAction {
+    defaultPriority.first { installed.contains($0) } ?? .finder
   }
 
   private static let xcodeSearchExcludedDirectories =

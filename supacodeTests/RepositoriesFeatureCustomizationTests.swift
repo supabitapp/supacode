@@ -32,6 +32,10 @@ struct RepositoriesFeatureCustomizationTests {
     var state = RepositoriesFeature.State()
     state.repositories = IdentifiedArray(uniqueElements: [repository])
     state.repositoryRoots = [repository.rootURL]
+    // Production seeds every cache on the roster load; without this the state
+    // under test starts stale (an empty open-action map, a placeholder structure)
+    // for a non-empty roster.
+    state.applyCacheRecomputes(.all)
     return state
   }
 

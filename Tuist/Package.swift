@@ -4,6 +4,12 @@ import PackageDescription
 #if TUIST
 import ProjectDescription
 
+// Deliberately no `baseSettings`. The app sets `SWIFT_APPROACHABLE_CONCURRENCY`, and
+// letting it reach these packages would make TCA's `Effect.run` operation
+// `nonisolated(nonsending)`, so every `.run` body would inherit its MainActor caller
+// instead of hopping to the global executor. Effects that exist to keep disk reads off
+// the main thread (`OpenActionResolver`) would silently move back onto it, with no
+// compile error and no failing test. See #657.
 let packageSettings = PackageSettings(
   productTypes: [
     "Sparkle": .framework,

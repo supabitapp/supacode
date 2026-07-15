@@ -394,6 +394,468 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
   }
 
+  @Test(.dependencies) func repeatedLockedTabRenameSocketDeeplinkFailsImmediately() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in false }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    for _ in 0..<2 {
+      let (readFD, writeFD) = makePipe()
+      defer { close(readFD) }
+      await store.send(
+        .deeplink(
+          .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+          source: .socket,
+          responseFD: writeFD,
+          timeoutSeconds: 0
+        )
+      )
+      await store.finish()
+      let response = readPipeJSON(readFD)
+      #expect(response?["ok"] as? Bool == false)
+      #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("locked") == true)
+    }
+    #expect(store.state.alert != nil)
+    #expect(sent.value.isEmpty)
+  }
+
+  @Test(.dependencies) func tabRenameSocketDeeplinkResolvesOnRenamedEvent() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+    )
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+    #expect(
+      sent.value.contains(
+        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "review")))
+  }
+
+  @Test(.dependencies) func tabRenameSocketDeeplinkFailsWhenRenameDoesNotApply() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    // The tab is closed between the guard and the terminal command.
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: false))
+    )
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("closed") == true)
+  }
+
+  @Test(.dependencies) func successfulSocketDeeplinkPreservesExistingAlert() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+    }
+    let (failReadFD, failWriteFD) = makePipe()
+    defer { close(failReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: "/tmp/gone/", action: .select),
+        source: .socket,
+        responseFD: failWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+    #expect(readPipeJSON(failReadFD)?["ok"] as? Bool == false)
+    let raisedAlert = store.state.alert
+    #expect(raisedAlert != nil)
+
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+    )
+    await store.finish()
+
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+    // The command raised no alert of its own, so the one on screen survives.
+    #expect(store.state.alert == raisedAlert)
+  }
+
+  @Test(.dependencies) func confirmedTabNewFailsWhenWorktreeVanishes() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in false }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    // An explicit id gives the command a completion match, so the ack would be
+    // deferred (and never resolved) if the dispatch failure did not suppress it.
+    let tabID = UUID()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "omp", id: tabID)),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    // The worktree is deleted while the confirmation dialog is open.
+    await store.send(
+      .repositories(
+        .worktreeDeleted(
+          worktree.id, repositoryID: "/tmp/repo", selectionWasRemoved: false, nextSelection: nil)
+      )
+    )
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(
+                worktreeID: worktree.id,
+                action: .tabNew(input: "omp", id: tabID),
+                alwaysAllow: false
+              )
+            )
+          )
+        )
+      )
+    }
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("worktree") == true)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(!sent.value.contains { if case .createTabWithInput = $0 { true } else { false } })
+  }
+
+  @Test(.dependencies) func commandAnswersWhileAnotherCommandsDialogIsOpen() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    // A shell-spawning command parks its fd on a confirmation dialog.
+    let (dialogReadFD, dialogWriteFD) = makePipe()
+    defer { close(dialogReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "omp", id: nil)),
+        source: .socket,
+        responseFD: dialogWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    // A second command on its own fd must still be answered, not stranded.
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tab(tabID: UUID())),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func supersededDialogAnswersOnlyTheDisplacedCommand() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in false }
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    let (firstReadFD, firstWriteFD) = makePipe()
+    defer { close(firstReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "one", id: nil)),
+        source: .socket,
+        responseFD: firstWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+
+    // A second confirmable command supersedes the first one's dialog.
+    let (secondReadFD, secondWriteFD) = makePipe()
+    defer { close(secondReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "two", id: nil)),
+        source: .socket,
+        responseFD: secondWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+
+    let superseded = readPipeJSON(firstReadFD)
+    #expect(superseded?["ok"] as? Bool == false)
+    #expect((superseded?["error"] as? String)?.localizedCaseInsensitiveContains("superseded") == true)
+    // The displacing command owns the dialog now, so its fd stays open for it.
+    #expect(readPipeJSON(secondReadFD) == nil)
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == secondWriteFD)
+  }
+
+  @Test(.dependencies) func deferredAckIsNotAnsweredEarlyWhileAnotherDialogIsOpen() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, candidate in candidate.rawValue == tabID }
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    let (dialogReadFD, dialogWriteFD) = makePipe()
+    defer { close(dialogReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "omp", id: nil)),
+        source: .socket,
+        responseFD: dialogWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    // A rename dispatched alongside the open dialog defers to its own completion.
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    #expect(readPipeJSON(readFD) == nil)
+
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+    )
+    await store.finish()
+
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func tabRenameSocketDeeplinkTimesOutWhenEventNeverArrives() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let clock = TestClock()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.continuousClock = clock
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 1
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+    await store.skipReceivedActions()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("timed out") == true)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+  }
+
+  @Test(.dependencies) func confirmedTabCloseFailsWhenTabVanishesWithMatchingAlert() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let tabExists = LockIsolated(false)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in tabExists.value }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    let (priorReadFD, priorWriteFD) = makePipe()
+    defer { close(priorReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tab(tabID: tabID)),
+        source: .socket,
+        responseFD: priorWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+    #expect(readPipeJSON(priorReadFD)?["ok"] as? Bool == false)
+    #expect(store.state.alert != nil)
+
+    tabExists.withValue { $0 = true }
+    let (closeReadFD, closeWriteFD) = makePipe()
+    defer { close(closeReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabDestroy(tabID: tabID)),
+        source: .socket,
+        responseFD: closeWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    tabExists.withValue { $0 = false }
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(
+                worktreeID: worktree.id,
+                action: .tabDestroy(tabID: tabID),
+                alwaysAllow: false
+              )
+            )
+          )
+        )
+      )
+    }
+    await store.finish()
+
+    let response = readPipeJSON(closeReadFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("no tab matching") == true)
+    #expect(!sent.value.contains { if case .destroyTab = $0 { true } else { false } })
+  }
+
   // MARK: - worktree delete.
 
   @Test(.dependencies) func deleteSocketDeeplinkResolvesOnWorktreeDeleted() async {
@@ -628,7 +1090,10 @@ struct AppFeatureCommandAckTests {
     return (fds[0], fds[1])
   }
 
+  /// Nil when the command left the fd unanswered. The read is non-blocking so an
+  /// unanswered fd fails its test instead of wedging the suite on a blocked read.
   private func readPipeJSON(_ fileDescriptor: Int32) -> [String: Any]? {
+    _ = fcntl(fileDescriptor, F_SETFL, fcntl(fileDescriptor, F_GETFL) | O_NONBLOCK)
     var data = Data()
     var buffer = [UInt8](repeating: 0, count: 4096)
     while true {

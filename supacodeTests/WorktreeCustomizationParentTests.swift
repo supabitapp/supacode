@@ -206,7 +206,7 @@ struct WorktreeCustomizationParentTests {
   @Test func saveDelegateRefreshesSelectedWorktreeSlice() async {
     var initial = makeInitialState()
     initial.setSingleWorktreeSelection(worktreeID)
-    initial.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+    initial.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     initial.worktreeCustomization = WorktreeCustomizationFeature.State(
       worktreeID: worktreeID,
       repositoryID: repoID,

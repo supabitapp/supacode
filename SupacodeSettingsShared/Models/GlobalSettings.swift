@@ -70,6 +70,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// When true, remote surfaces wrap their session in zmx on the host when
   /// the host has it installed, so the session survives disconnects.
   public var remoteSessionPersistenceEnabled: Bool
+  /// Where Supacode appears: Dock, menu bar, or both.
+  public var appVisibility: AppVisibility
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -81,7 +83,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     notificationSound: .hero,
     systemNotificationsEnabled: false,
     muteNotificationsForActiveSurface: true,
-    moveNotifiedWorktreeToTop: true,
+    moveNotifiedWorktreeToTop: false,
     analyticsEnabled: true,
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,
@@ -104,7 +106,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
     terminateSessionsOnQuit: false,
-    remoteSessionPersistenceEnabled: true
+    remoteSessionPersistenceEnabled: true,
+    appVisibility: .dock
   )
 
   public init(
@@ -140,7 +143,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
     terminateSessionsOnQuit: Bool = false,
-    remoteSessionPersistenceEnabled: Bool = true
+    remoteSessionPersistenceEnabled: Bool = true,
+    appVisibility: AppVisibility = .dock
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -175,6 +179,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.confirmQuitMode = confirmQuitMode
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
+    self.appVisibility = appVisibility
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -337,5 +342,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     remoteSessionPersistenceEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .remoteSessionPersistenceEnabled)
       ?? Self.default.remoteSessionPersistenceEnabled
+    // Reject unrecognized values (and a mistyped key) from corrupted or
+    // hand-edited settings files: a throw here resets the whole file to defaults.
+    appVisibility =
+      ((try? container.decodeIfPresent(String.self, forKey: .appVisibility)) ?? nil)
+      .flatMap(AppVisibility.init(rawValue:))
+      ?? Self.default.appVisibility
   }
 }

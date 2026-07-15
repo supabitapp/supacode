@@ -6,6 +6,7 @@ struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
   var events: @MainActor @Sendable () -> AsyncStream<Event>
   var tabExists: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
+  var tabCanRename: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
   var surfaceExists: @MainActor @Sendable (Worktree.ID, TerminalTabID, UUID) -> Bool
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
   var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TerminalTabID?
@@ -16,6 +17,8 @@ struct TerminalClient {
   var selectedSurfaceID: @MainActor @Sendable (Worktree.ID) -> UUID?
   var latestUnreadNotification: @MainActor @Sendable () -> NotificationLocation?
   var markNotificationRead: @MainActor @Sendable (Worktree.ID, UUID) -> Void
+  /// Marks every notification in every worktree read (menu bar "Mark All as Read").
+  var markAllNotificationsRead: @MainActor @Sendable () -> Void
   /// Blocking scripts (setup / archive / delete / run) bypass zmx and die
   /// with the app, so the auto-mode quit confirmation needs to know.
   var hasInflightBlockingScripts: @MainActor @Sendable () -> Bool
@@ -33,8 +36,14 @@ struct TerminalClient {
     ) -> Void
 
   enum Command: Equatable {
-    case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil)
-    case createTabWithInput(Worktree, input: String, runSetupScriptIfNew: Bool, id: UUID? = nil)
+    case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil, title: String? = nil)
+    case createTabWithInput(
+      Worktree,
+      input: String,
+      runSetupScriptIfNew: Bool,
+      id: UUID? = nil,
+      title: String? = nil
+    )
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case stopRunScript(Worktree)
     case stopScript(Worktree, definitionID: UUID)
@@ -58,6 +67,7 @@ struct TerminalClient {
     case destroyTab(Worktree, tabID: TerminalTabID)
     case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID)
     case beginTabRename(Worktree, tabID: TerminalTabID? = nil)
+    case renameTab(Worktree, tabID: TerminalTabID, title: String)
     case prune(keeping: Set<Worktree.ID>, protectingRepositoryIDs: Set<Repository.ID>)
     case setNotificationsEnabled(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
@@ -85,6 +95,9 @@ struct TerminalClient {
     /// A tab was destroyed in the worktree state. Parent removes the matching
     /// `TerminalTabFeature.State` from `terminalTabs`.
     case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    /// A rename command settled. `applied` is false when the tab vanished or its
+    /// title was locked, so the CLI ack reports the failure instead of ok.
+    case tabRenamed(worktreeID: Worktree.ID, tabID: TerminalTabID, applied: Bool)
     /// The entire `WorktreeTerminalState` was torn down (worktree pruned).
     /// Parent drops any orphan `terminalTabs` entries and removed-tab FIFO
     /// records owned by this worktree so a fresh re-attach starts clean.
@@ -116,6 +129,7 @@ extension TerminalClient: DependencyKey {
     send: { _ in fatalError("TerminalClient.send not configured") },
     events: { fatalError("TerminalClient.events not configured") },
     tabExists: { _, _ in fatalError("TerminalClient.tabExists not configured") },
+    tabCanRename: { _, _ in fatalError("TerminalClient.tabCanRename not configured") },
     surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
     surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
     tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
@@ -123,6 +137,7 @@ extension TerminalClient: DependencyKey {
     selectedSurfaceID: { _ in fatalError("TerminalClient.selectedSurfaceID not configured") },
     latestUnreadNotification: { fatalError("TerminalClient.latestUnreadNotification not configured") },
     markNotificationRead: { _, _ in fatalError("TerminalClient.markNotificationRead not configured") },
+    markAllNotificationsRead: { fatalError("TerminalClient.markAllNotificationsRead not configured") },
     hasInflightBlockingScripts: { fatalError("TerminalClient.hasInflightBlockingScripts not configured") },
     terminateAllSessions: { fatalError("TerminalClient.terminateAllSessions not configured") },
     reapOrphanSessions: { _ in fatalError("TerminalClient.reapOrphanSessions not configured") },
@@ -133,6 +148,7 @@ extension TerminalClient: DependencyKey {
     send: { _ in },
     events: { AsyncStream { $0.finish() } },
     tabExists: unimplemented("TerminalClient.tabExists", placeholder: true),
+    tabCanRename: unimplemented("TerminalClient.tabCanRename", placeholder: true),
     surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true),
     surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
     tabID: unimplemented("TerminalClient.tabID", placeholder: nil),
@@ -140,6 +156,7 @@ extension TerminalClient: DependencyKey {
     selectedSurfaceID: unimplemented("TerminalClient.selectedSurfaceID", placeholder: nil),
     latestUnreadNotification: unimplemented("TerminalClient.latestUnreadNotification", placeholder: nil),
     markNotificationRead: unimplemented("TerminalClient.markNotificationRead"),
+    markAllNotificationsRead: unimplemented("TerminalClient.markAllNotificationsRead"),
     hasInflightBlockingScripts: unimplemented("TerminalClient.hasInflightBlockingScripts", placeholder: false),
     terminateAllSessions: unimplemented("TerminalClient.terminateAllSessions"),
     reapOrphanSessions: unimplemented("TerminalClient.reapOrphanSessions"),

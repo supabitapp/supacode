@@ -1,10 +1,45 @@
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import supacode
 
 @MainActor
 struct GhosttyRuntimeBundledOverridesTests {
+  // The window tint + appearance source must track the resolved color scheme:
+  // a dark scheme yields a dark background, a light scheme a light one. Guards
+  // that the bundled themes actually differ so a missing embed hard-fails
+  // instead of passing vacuously (both sides would be `windowBackgroundColor`).
+  @Test func backgroundColorTracksColorScheme() throws {
+    let runtime = GhosttyRuntime(initialColorScheme: .light)
+    let light = runtime.backgroundColor()
+    runtime.setColorScheme(.dark)
+    let dark = runtime.backgroundColor()
+    try #require(!light.matchesTint(dark))
+    #expect(light.isLightColor)
+    #expect(!dark.isLightColor)
+    // Re-resolution works in both directions, not just the first transition.
+    runtime.setColorScheme(.light)
+    #expect(runtime.backgroundColor().isLightColor)
+  }
+
+  // The launch-flash fix: `init` seeds the resolved scheme so the FIRST
+  // `backgroundColor()` / `windowTintColor()` read (before any further
+  // `setColorScheme`) is already scheme-correct, not Ghostty's default-light
+  // resolution. Asserting with no interim `setColorScheme` also documents that
+  // the seed's config swap lands synchronously within `init`.
+  @Test func initSeedsResolvedColorSchemeBeforeFirstRead() {
+    let dark = GhosttyRuntime(initialColorScheme: .dark)
+    #expect(!dark.backgroundColor().isLightColor)
+    #expect(!dark.windowTintColor().isLightColor)
+    // With no focused-surface provider installed (the launch state),
+    // `windowTintColor()` falls through to exactly `backgroundColor()`.
+    #expect(dark.windowTintColor().matchesTint(dark.backgroundColor()))
+    let light = GhosttyRuntime(initialColorScheme: .light)
+    #expect(light.backgroundColor().isLightColor)
+    #expect(light.windowTintColor().isLightColor)
+  }
+
   /// Shell integration must NOT be disabled in the bundled overrides: surfaces
   /// run the real shell with zmx injected as a `command-wrapper`, so Ghostty
   /// integrates the shell exactly as without zmx. Forcing `none` here would

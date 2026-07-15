@@ -78,6 +78,10 @@ struct RepositoriesFeatureTests {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
     }
+    // The roster landed, so the open-action map resolves off the reducer.
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
+    }
   }
 
   @Test func refreshWorktreesWithoutRootsStopsRefreshingImmediately() async {
@@ -113,6 +117,9 @@ struct RepositoriesFeatureTests {
       $0.isRefreshingWorktrees = false
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
     }
   }
 
@@ -174,6 +181,9 @@ struct RepositoriesFeatureTests {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
     }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [mainOnlyRepository.id: .finder]
+    }
     #expect(
       store.state.sidebar.sections[RepositoryID(repoRoot)]?.buckets[.pinned]?.items[featureWorktree.id] != nil
     )
@@ -196,6 +206,8 @@ struct RepositoriesFeatureTests {
       }
       $0.reconcileSidebarForTesting()
     }
+    // Every roster load re-reads the open actions. Nothing changed, so it writes nothing.
+    await store.receive(\.openActionsResolved)
     #expect(
       store.state.sidebar.sections[RepositoryID(repoRoot)]?.buckets[.pinned]?.items[featureWorktree.id] == nil
     )
@@ -212,7 +224,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(worktree.id)
       $0.sidebarSelectedWorktreeIDs = [worktree.id]
       $0.worktreeMRU = [worktree.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -234,7 +246,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeMRU = [wt2.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -315,7 +327,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([])) {
       $0.selection = nil
       $0.sidebarSelectedWorktreeIDs = []
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -334,7 +346,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.archivedWorktrees])) {
       $0.selection = .archivedWorktrees
       $0.sidebarSelectedWorktreeIDs = []
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -569,7 +581,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeMRU = [wt2.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     #expect(store.state.sidebarItems.allSatisfy { !$0.shouldFocusTerminal })
@@ -636,6 +648,9 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repoA.id: .finder]
+    }
   }
 
   @Test func sidebarSelectionChangedWithAllUnknownWorktreeIDsClearsSelection() async {
@@ -651,7 +666,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.worktree("/tmp/unknown")])) {
       $0.selection = nil
       $0.sidebarSelectedWorktreeIDs = []
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -669,7 +684,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.archivedWorktrees, .worktree(worktree.id)])) {
       $0.selection = .archivedWorktrees
       $0.sidebarSelectedWorktreeIDs = []
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -754,6 +769,9 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
+    }
   }
 
   @Test func sidebarSelectionChangedWithMixedValidAndInvalidIDsKeepsValidOnly() async {
@@ -795,7 +813,7 @@ struct RepositoriesFeatureTests {
     #expect(state.sidebarSelections == [.archivedWorktrees])
   }
 
-  @Test func effectiveSidebarSelectedRowsFallsBackToSelectedWorktreeID() {
+  @Test func sidebarSelectionSliceFallsBackToSelectedWorktreeID() {
     let wt1 = makeWorktree(id: "/tmp/repo/wt1", name: "wt1", repoRoot: "/tmp/repo")
     let wt2 = makeWorktree(id: "/tmp/repo/wt2", name: "wt2", repoRoot: "/tmp/repo")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
@@ -805,13 +823,13 @@ struct RepositoriesFeatureTests {
     state.sidebarSelectedWorktreeIDs = []
 
     // Falls back to selectedWorktreeID.
-    let fallbackRows = state.effectiveSidebarSelectedRows
+    let fallbackRows = state.computeSidebarSelectionSlice().rows
     #expect(fallbackRows.count == 1)
     #expect(fallbackRows.first?.id == wt1.id)
 
     // Primary path: sidebarSelectedWorktreeIDs non-empty.
     state.sidebarSelectedWorktreeIDs = [wt1.id, wt2.id]
-    let primaryRows = state.effectiveSidebarSelectedRows
+    let primaryRows = state.computeSidebarSelectionSlice().rows
     #expect(primaryRows.count == 2)
   }
 
@@ -2203,7 +2221,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([.worktree(pendingID)])) {
       $0.selection = .worktree(pendingID)
       $0.sidebarSelectedWorktreeIDs = [pendingID]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     // `worktree(for:)` doesn't surface pending entries; the delegate fires nil
     // for a pending selection. The detail body still renders the loading view
@@ -2233,6 +2251,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.setSidebarSelectedWorktreeIDs([mainWorktree.id, pendingID])) {
       $0.sidebarSelectedWorktreeIDs = [mainWorktree.id, pendingID]
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
   }
 
@@ -3483,6 +3502,9 @@ struct RepositoriesFeatureTests {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
     }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
+    }
   }
 
   @Test(.dependencies) func deleteScriptCompletedFailureShowsAlert() async {
@@ -3596,6 +3618,9 @@ struct RepositoriesFeatureTests {
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
     }
   }
 
@@ -3738,86 +3763,6 @@ struct RepositoriesFeatureTests {
     await store.finish()
     #expect((store.state.sidebarItems[id: featureWorktree.id]?.lifecycle ?? .idle) == .idle)
     #expect(store.state.alert != nil)
-  }
-
-  @Test func worktreeNotificationReceivedDoesNotShowStatusToast() async {
-    let repoRoot = "/tmp/repo"
-    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
-    let featureWorktree = makeWorktree(id: "/tmp/repo/feature", name: "feature", repoRoot: repoRoot)
-    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    var state = makeState(repositories: [repository])
-    state.$sidebar.withLock { sidebar in
-      sidebar.sections[repository.id] = .init(
-        buckets: [.unpinned: .init(items: [featureWorktree.id: .init()])]
-      )
-    }
-    state.reconcileSidebarForTesting()
-    let store = TestStore(initialState: state) {
-      RepositoriesFeature()
-    }
-
-    await store.send(.worktreeNotificationReceived(featureWorktree.id))
-    #expect(store.state.statusToast == nil)
-  }
-
-  @Test func worktreeNotificationReceivedReordersUnpinnedWorktrees() async {
-    let repoRoot = "/tmp/repo"
-    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
-    let featureA = makeWorktree(id: "/tmp/repo/a", name: "a", repoRoot: repoRoot)
-    let featureB = makeWorktree(id: "/tmp/repo/b", name: "b", repoRoot: repoRoot)
-    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureA, featureB])
-    var state = makeState(repositories: [repository])
-    state.$sidebar.withLock { sidebar in
-      sidebar.sections[repository.id] = .init(
-        buckets: [
-          .unpinned: .init(
-            items: [featureA.id: .init(), featureB.id: .init()]
-          )
-        ]
-      )
-    }
-    state.reconcileSidebarForTesting()
-    let store = TestStore(initialState: state) {
-      RepositoriesFeature()
-    }
-
-    await store.send(.worktreeNotificationReceived(featureB.id)) {
-      $0.$sidebar.withLock { sidebar in
-        sidebar.reorder(bucket: .unpinned, in: repository.id, to: [featureB.id, featureA.id])
-      }
-    }
-    #expect(store.state.statusToast == nil)
-  }
-
-  @Test func worktreeNotificationReceivedDoesNotReorderWhenMoveToTopDisabled() async {
-    let repoRoot = "/tmp/repo"
-    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
-    let featureA = makeWorktree(id: "/tmp/repo/a", name: "a", repoRoot: repoRoot)
-    let featureB = makeWorktree(id: "/tmp/repo/b", name: "b", repoRoot: repoRoot)
-    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureA, featureB])
-    var state = makeState(repositories: [repository])
-    state.$sidebar.withLock { sidebar in
-      sidebar.sections[repository.id] = .init(
-        buckets: [
-          .unpinned: .init(
-            items: [featureA.id: .init(), featureB.id: .init()]
-          )
-        ]
-      )
-    }
-    state.moveNotifiedWorktreeToTop = false
-    state.reconcileSidebarForTesting()
-    let store = TestStore(initialState: state) {
-      RepositoriesFeature()
-    }
-
-    await store.send(.worktreeNotificationReceived(featureB.id))
-    #expect(
-      Array(
-        store.state.sidebar.sections[repository.id]?.buckets[.unpinned]?.items.keys ?? []
-      ) == [featureA.id, featureB.id]
-    )
-    #expect(store.state.statusToast == nil)
   }
 
   @Test func setMoveNotifiedWorktreeToTopUpdatesState() async {
@@ -4337,6 +4282,9 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
+    }
     await store.finish()
   }
 
@@ -4367,6 +4315,9 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
+    }
   }
 
   @Test func worktreeDeletedPrunesStateAndSendsDelegates() async {
@@ -4424,6 +4375,9 @@ struct RepositoriesFeatureTests {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
     }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
+    }
   }
 
   @Test func worktreeDeletedResetsSelectionWhenDriftedToDeletingWorktree() async {
@@ -4464,6 +4418,9 @@ struct RepositoriesFeatureTests {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
     }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
+    }
   }
 
   @Test func createRandomWorktreeSucceededSendsRepositoriesChanged() async {
@@ -4503,7 +4460,7 @@ struct RepositoriesFeatureTests {
       $0.repositories = [updatedRepository]
       RepositoriesFeature.syncSidebar(&$0)
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
-      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
+      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.shouldFocusTerminal = true
@@ -4517,6 +4474,9 @@ struct RepositoriesFeatureTests {
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
     }
   }
 
@@ -4811,6 +4771,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.mergePullRequest = { _, _, number, _ in
         mergedNumbers.withValue { $0.append(number) }
@@ -4851,6 +4812,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.closePullRequest = { _, _, number in
         closedNumbers.withValue { $0.append(number) }
@@ -4972,6 +4934,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.resolveRemoteInfo = { _ in
         GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
@@ -5010,6 +4973,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { true }
       $0.githubCLI.resolveRemoteInfo = { _ in nil }
       $0.gitClient.remoteInfo = { _ in
@@ -5076,6 +5040,108 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
+  @Test func successToastAutoDismissesAfterTheDelay() async {
+    var state = makeState(repositories: [])
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    await store.send(.showToast(.success("Pull request merged"))) {
+      $0.statusToast = .success("Pull request merged")
+    }
+    await clock.advance(by: .milliseconds(2400))
+    #expect(store.state.statusToast == .success("Pull request merged"))
+
+    await clock.advance(by: .milliseconds(100))
+    await store.receive(\.dismissToast) {
+      $0.statusToast = nil
+    }
+    await store.finish()
+  }
+
+  @Test func replacingASuccessToastDoesNotInheritTheCancelledAutoDismiss() async {
+    var state = makeState(repositories: [])
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    await store.send(.showToast(.success("Pull request merged"))) {
+      $0.statusToast = .success("Pull request merged")
+    }
+    await store.send(.showToast(.success("Pull request closed"))) {
+      $0.statusToast = .success("Pull request closed")
+    }
+    // `cancelInFlight` re-arms a single fresh 2.5s timer for the replacement toast rather than stacking a
+    // second dismissal: the toast survives the first timer's original deadline and dismisses once, later.
+    await clock.advance(by: .milliseconds(2400))
+    #expect(store.state.statusToast == .success("Pull request closed"))
+
+    await clock.advance(by: .milliseconds(100))
+    await store.receive(\.dismissToast) {
+      $0.statusToast = nil
+    }
+    await store.finish()
+  }
+
+  @Test func inProgressToastCancelsAPendingSuccessAutoDismiss() async {
+    var state = makeState(repositories: [])
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    await store.send(.showToast(.success("Pull request merged"))) {
+      $0.statusToast = .success("Pull request merged")
+    }
+    await store.send(.showToast(.inProgress("Closing pull request…"))) {
+      $0.statusToast = .inProgress("Closing pull request…")
+    }
+    // An in-progress toast schedules no auto-dismiss and cancels the success timer, so it never self-dismisses.
+    await clock.advance(by: .seconds(5))
+    #expect(store.state.statusToast == .inProgress("Closing pull request…"))
+    await store.finish()
+  }
+
+  @Test func delayedPullRequestRefreshFiresAfterTheDelay() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .disabled
+    state.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+    }
+
+    // Two rapid requests must collapse to a single fire (cancelInFlight), not stack two refreshes.
+    await store.send(.delayedPullRequestRefresh(featureWorktree.id))
+    await store.send(.delayedPullRequestRefresh(featureWorktree.id))
+    await clock.advance(by: .seconds(2))
+    // GitHub integration is disabled, so the refresh lands as a no-op. A second event would trip `finish()`, so
+    // matching exactly one here proves the two requests coalesced into a single refresh.
+    await store.receive(\.worktreeInfoEvent)
+    await store.finish()
+  }
+
   @Test func worktreeInfoEventRepositoryPullRequestRefreshQueuesWhileAvailabilityUnknown() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
@@ -5087,9 +5153,11 @@ struct RepositoriesFeatureTests {
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var initialState = makeState(repositories: [repository])
     initialState.reconcileSidebarForTesting()
+    let clock = TestClock()
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = clock
       $0.githubIntegration.isAvailable = { false }
       $0.gitClient.remoteInfo = { _ in
         Issue.record("remoteInfo should not be requested when GitHub integration is unavailable")
@@ -5122,12 +5190,66 @@ struct RepositoriesFeatureTests {
       $0.queuedPullRequestRefreshByRepositoryID = [:]
       $0.inFlightPullRequestRefreshRepositoryIDs = []
     }
+
+    // The recovery loop re-checks availability on every interval, and the pending refresh survives each failed check.
+    await clock.advance(by: .seconds(15))
+    await store.receive(\.refreshGithubIntegrationAvailability) {
+      $0.githubIntegrationAvailability = .checking
+    }
+    await store.receive(\.githubIntegrationAvailabilityUpdated) {
+      $0.githubIntegrationAvailability = .unavailable
+    }
+
     await store.send(.setGithubIntegrationEnabled(false)) {
       $0.githubIntegrationAvailability = .disabled
       $0.pendingPullRequestRefreshByRepositoryID = [:]
       $0.queuedPullRequestRefreshByRepositoryID = [:]
       $0.inFlightPullRequestRefreshRepositoryIDs = []
     }
+    await store.finish()
+  }
+
+  @Test func githubIntegrationRecoveryStopsRecheckingOnceAvailable() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .checking
+    initialState.reconcileSidebarForTesting()
+    let clock = TestClock()
+    let isAvailable = LockIsolated(false)
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+      $0.continuousClock = clock
+      $0.githubIntegration.isAvailable = { isAvailable.value }
+    }
+
+    await store.send(.githubIntegrationAvailabilityUpdated(false)) {
+      $0.githubIntegrationAvailability = .unavailable
+    }
+
+    // Still unavailable after the first interval: the loop re-arms and checks again on the next one.
+    await clock.advance(by: .seconds(15))
+    await store.receive(\.refreshGithubIntegrationAvailability) {
+      $0.githubIntegrationAvailability = .checking
+    }
+    await store.receive(\.githubIntegrationAvailabilityUpdated) {
+      $0.githubIntegrationAvailability = .unavailable
+    }
+
+    isAvailable.setValue(true)
+    await clock.advance(by: .seconds(15))
+    await store.receive(\.refreshGithubIntegrationAvailability) {
+      $0.githubIntegrationAvailability = .checking
+    }
+    await store.receive(\.githubIntegrationAvailabilityUpdated) {
+      $0.githubIntegrationAvailability = .available
+    }
+
+    // Recovering cancels the loop: further intervals must not re-check.
+    await clock.advance(by: .seconds(60))
     await store.finish()
   }
 
@@ -5225,6 +5347,8 @@ struct RepositoriesFeatureTests {
     )
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
     }
 
     await store.send(.githubIntegrationAvailabilityUpdated(false)) {
@@ -5840,7 +5964,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt2.id]
       $0.worktreeMRU = [wt1.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
@@ -5865,7 +5989,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeMRU = [wt2.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
@@ -5888,7 +6012,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeMRU = [wt1.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
@@ -5915,7 +6039,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeMRU = [wt2.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
@@ -5938,7 +6062,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
       $0.worktreeMRU = [wt2.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
@@ -5971,7 +6095,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [feature.id]
       $0.worktreeHistoryBackStack = [main.id]
       $0.worktreeMRU = [feature.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: feature.id].focusTerminalRequested) {
@@ -6002,7 +6126,7 @@ struct RepositoriesFeatureTests {
       $0.selection = .worktree(worktree.id)
       $0.sidebarSelectedWorktreeIDs = [worktree.id]
       $0.worktreeMRU = [worktree.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: worktree.id].focusTerminalRequested) {
@@ -6033,7 +6157,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt3.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeMRU = [wt3.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt3.id].focusTerminalRequested) {
@@ -6064,7 +6188,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt3.id]
       $0.worktreeMRU = [wt1.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
@@ -6127,7 +6251,7 @@ struct RepositoriesFeatureTests {
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt3.id]
       $0.worktreeMRU = [wt1.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
@@ -6155,7 +6279,7 @@ struct RepositoriesFeatureTests {
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeHistoryForwardStack = []
       $0.worktreeMRU = [wt2.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -6195,7 +6319,7 @@ struct RepositoriesFeatureTests {
       $0.worktreeHistoryBackStack = []
       $0.worktreeHistoryForwardStack = [wt2.id]
       $0.worktreeMRU = [wt1.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
@@ -6221,7 +6345,7 @@ struct RepositoriesFeatureTests {
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.worktreeHistoryForwardStack = []
       $0.worktreeMRU = [wt2.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt2.id].focusTerminalRequested) {
@@ -6276,7 +6400,7 @@ struct RepositoriesFeatureTests {
       $0.worktreeHistoryBackStack = []
       $0.worktreeHistoryForwardStack = [wt3.id]
       $0.worktreeMRU = [wt1.id]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     await store.receive(\.sidebarItems[id: wt1.id].focusTerminalRequested) {
@@ -6297,7 +6421,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.worktreeHistoryBack) {
       $0.worktreeHistoryBackStack = []
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
   }
 
@@ -6348,7 +6472,7 @@ struct RepositoriesFeatureTests {
       $0.repositories = [updatedRepository]
       RepositoriesFeature.syncSidebar(&$0)
       $0.sidebarItems[id: newWorktree.id]?.lifecycle = .pending
-      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
+      $0.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: newWorktree.id]?.shouldFocusTerminal = true
@@ -6361,6 +6485,9 @@ struct RepositoriesFeatureTests {
     await store.receive(\.repositoriesLoaded) {
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
     }
     #expect(store.state.worktreeHistoryBackStack == [mainWorktree.id])
     #expect(store.state.worktreeHistoryForwardStack.isEmpty)
@@ -6494,7 +6621,7 @@ struct RepositoriesFeatureTests {
     await store.send(.selectionChanged([])) {
       $0.selection = nil
       $0.sidebarSelectedWorktreeIDs = []
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
     #expect(store.state.worktreeHistoryBackStack.isEmpty)
@@ -6547,7 +6674,7 @@ struct RepositoriesFeatureTests {
       // Oldest entry is dropped when we exceed the 50-item cap.
       $0.worktreeHistoryBackStack = (2..<51).map { worktrees[$0].id } + [worktrees[0].id]
       $0.worktreeMRU = [target]
-      $0.applyPostReduceCacheRecomputes(.selectedWorktreeSlice)
+      $0.applyPostReduceCacheRecomputes([.selectedWorktreeSlice, .sidebarSelectionSlice])
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
   }
@@ -6699,6 +6826,10 @@ struct RepositoriesFeatureTests {
     var state = RepositoriesFeature.State()
     state.repositories = IdentifiedArray(uniqueElements: repositories)
     state.repositoryRoots = repositories.map(\.rootURL)
+    // Production seeds every cache on the roster load; without this the state
+    // under test starts stale (an empty open-action map, a placeholder structure)
+    // for a non-empty roster.
+    state.applyCacheRecomputes(.all)
     return state
   }
 
@@ -6958,6 +7089,9 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repoA.id: .finder, repoB.id: .finder]
+    }
     await store.finish()
   }
 
@@ -7012,6 +7146,9 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repoA.id: .finder, repoB.id: .finder]
+    }
     await store.finish()
   }
 
@@ -7188,6 +7325,9 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [folderRepo.id: .finder]
+    }
     await store.finish()
   }
 
@@ -7414,6 +7554,9 @@ struct RepositoriesFeatureTests {
       $0.isRefreshingWorktrees = false
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
     }
     await store.finish()
   }
@@ -7854,6 +7997,12 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [
+        RepositoryID(gitRoot): .finder,
+        RepositoryID(folderRoot): .finder,
+      ]
+    }
     await store.finish()
   }
 
@@ -7911,6 +8060,9 @@ struct RepositoriesFeatureTests {
       $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [folderRepo.id: .finder]
+    }
     await store.finish()
   }
 

@@ -37,6 +37,9 @@ TEST_PARALLEL ?= YES
 # The explicit workspace scheme carries every test bundle; the auto-generated
 # app scheme only tests supacodeTests.
 TEST_SCHEME := supacode-tests
+# xcodebuild's streamed log reduces a parallel-bundle failure to "Test case ... failed"; the assertion
+# text only lives in the result bundle, which `make test` dumps on failure.
+TEST_RESULT_BUNDLE := build/supacode-tests.xcresult
 
 # Export a Zig-linkable Xcode per build recipe (no global xcode-select -s). Plain
 # assignment so a missing Xcode aborts the recipe under -e.
@@ -143,11 +146,15 @@ export-archive: # Export xarchive
 
 test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	@$(SELECT_DEVELOPER_DIR); \
+	rm -rf "$(TEST_RESULT_BUNDLE)"; \
+	status=0; \
 	if [ -t 1 ]; then \
-		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'; \
+		bash -o pipefail -c 'xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" -resultBundlePath "$(TEST_RESULT_BUNDLE)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }' || status=$$?; \
 	else \
-		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL); \
-	fi
+		xcodebuild test -workspace "$(PROJECT_WORKSPACE)" -scheme "$(TEST_SCHEME)" -destination "platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" -resultBundlePath "$(TEST_RESULT_BUNDLE)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -parallel-testing-enabled $(TEST_PARALLEL) || status=$$?; \
+	fi; \
+	[ $$status -eq 0 ] || ./scripts/print-test-failures.sh "$(TEST_RESULT_BUNDLE)" || true; \
+	exit $$status
 
 format: # Format code with swift-format (mise-pinned for reproducibility).
 	mise exec -- swift-format --parallel --in-place --recursive --configuration ./.swift-format.json supacode supacode-cli supacodeTests SupacodeSettingsShared SupacodeSettingsFeature

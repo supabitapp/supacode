@@ -118,6 +118,20 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.first { $0.id == id }!.displayTitle == "my name")
   }
 
+  @Test func createTabSetsNormalizedCustomTitleAtomically() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", customTitle: "  implement  ", icon: nil)
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == "implement")
+    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "implement")
+  }
+
+  @Test func createTabWithEmptyCustomTitleUsesLiveTitle() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", customTitle: "", icon: nil)
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "tab 1")
+  }
+
   @Test func setCustomTitleDoesNotLockTitle() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
@@ -128,8 +142,51 @@ struct TerminalTabManagerTests {
   @Test func setCustomTitleIgnoresLockedTab() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "Run Script", icon: nil, isTitleLocked: true)
-    manager.setCustomTitle(id, title: "my name")
+    #expect(manager.setCustomTitle(id, title: "my name") == false)
     #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+  }
+
+  @Test func createTabIgnoresCustomTitleOnLockedTab() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(
+      title: "Run Script", customTitle: "implement", icon: nil, isTitleLocked: true)
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+    #expect(manager.tabs.first { $0.id == id }!.displayTitle == "Run Script")
+  }
+
+  @Test func customTitleBlanksControlCharacters() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", icon: nil)
+    manager.setCustomTitle(id, title: "a\nb\tc\rd")
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == "a b c d")
+
+    let created = manager.createTab(title: "tab 2", customTitle: "e\nf", icon: nil)
+    #expect(manager.tabs.first { $0.id == created }!.customTitle == "e f")
+
+    // Line / paragraph separators and escapes are control characters too.
+    manager.setCustomTitle(id, title: "g\u{2028}h\u{1B}i")
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == "g h i")
+
+    // The zero-width joiner is a format character, not a control one; it must survive.
+    manager.setCustomTitle(id, title: "👨‍💻 deploy")
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == "👨‍💻 deploy")
+  }
+
+  @Test func customTitleOfOnlyControlWhitespaceClears() {
+    let manager = TerminalTabManager()
+    let id = manager.createTab(title: "tab 1", customTitle: "seed", icon: nil)
+    #expect(manager.setCustomTitle(id, title: "\n\t ") == true)
+    #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
+  }
+
+  @Test func canRenameRequiresExistingUnlockedTab() {
+    let manager = TerminalTabManager()
+    let unlockedID = manager.createTab(title: "tab 1", icon: nil)
+    let lockedID = manager.createTab(title: "Run Script", icon: nil, isTitleLocked: true)
+
+    #expect(manager.canRename(unlockedID))
+    #expect(!manager.canRename(lockedID))
+    #expect(!manager.canRename(TerminalTabID()))
   }
 
   @Test func setCustomTitleTrimsLeadingAndTrailingWhitespace() {

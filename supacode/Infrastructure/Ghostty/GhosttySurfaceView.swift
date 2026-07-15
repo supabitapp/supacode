@@ -390,9 +390,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
       pendingFocusClaim?.cancel()
       pendingFocusClaim = nil
       focusDidChange(false)
-      // A removed surface can't post from layout(); without this the tint
-      // backdrop keeps its rect punched out as a stale untinted hole.
-      NotificationCenter.default.post(name: .ghosttySurfaceFrameDidChange, object: self)
     } else if hasBeenInWindow, shouldClaimFocus?() == true {
       // Re-attached after a split-tree rebuild dropped us. AppKit doesn't
       // auto-promote a re-attached view to firstResponder, so claim it back
@@ -451,7 +448,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
   override func layout() {
     super.layout()
     notifySizeChanged()
-    NotificationCenter.default.post(name: .ghosttySurfaceFrameDidChange, object: self)
   }
 
   private func notifySizeChanged() {

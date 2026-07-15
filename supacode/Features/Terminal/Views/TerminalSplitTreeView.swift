@@ -85,7 +85,10 @@ struct TerminalSplitTreeView: View {
             set: {
               action(.resize(node: node, ratio: Double($0)))
             }),
-          dividerColor: Color(nsColor: .separatorColor),
+          // Opaque asset color, not a system separator: the terminal body is cut
+          // out of the window tint, so a translucent divider would let the window
+          // blur show through the 1pt gap. No opaque system separator exists.
+          dividerColor: Color(.splitDivider),
           resizeIncrements: .init(width: 1, height: 1),
           left: {
             SubtreeView(
@@ -395,7 +398,7 @@ struct TerminalSplitTreeAXContainer: NSViewRepresentable {
 }
 
 @MainActor
-final class TerminalSplitAXContainerView: NSView {
+final class TerminalSplitAXContainerView: NSView, WindowTintMaskRegion {
   // Typed `NSHostingView<TerminalSplitTreeView>` (no `AnyView`) so re-assigning
   // `rootView` on every update lets SwiftUI diff against a stable concrete view
   // type instead of re-walking an erased tree.
@@ -435,6 +438,18 @@ final class TerminalSplitAXContainerView: NSView {
       // Assistive tech may cache the AX tree; nudge it to re-query when pane membership/order changes.
       NSAccessibility.post(element: self, notification: .layoutChanged)
     }
+  }
+
+  // Drive the window tint mask: this container's bounds are the hole cut out of
+  // the tint, so the terminal body composites over blur instead of doubling it.
+  override func layout() {
+    super.layout()
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
   }
 
   override func isAccessibilityElement() -> Bool {

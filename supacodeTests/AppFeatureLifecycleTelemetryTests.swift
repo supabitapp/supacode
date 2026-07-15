@@ -19,24 +19,32 @@ struct AppFeatureLifecycleTelemetryTests {
       AppFeature()
     } withDependencies: {
       $0.date = DateGenerator { currentDate.value }
+      // Activation also kicks the debounced editor-availability sweep.
+      $0.continuousClock = ImmediateClock()
       $0.analyticsClient.capture = { event, _ in
         events.withValue { $0.append(event) }
       }
     }
 
+    // Activation also re-reads every repository's open action, so an edit made
+    // while the app was away lands. The roster is empty here, so it resolves
+    // nothing.
     await store.send(.applicationDidBecomeActive) {
       $0.appLifecycleEventDebouncer.lastActivatedAt = base
     }
+    await store.receive(\.repositories.resolveOpenActions)
     expectNoDifference(events.value, ["app_activated_debounced"])
 
     currentDate.setValue(base.addingTimeInterval(899))
     await store.send(.applicationDidBecomeActive)
+    await store.receive(\.repositories.resolveOpenActions)
     expectNoDifference(events.value, ["app_activated_debounced"])
 
     currentDate.setValue(base.addingTimeInterval(900))
     await store.send(.applicationDidBecomeActive) {
       $0.appLifecycleEventDebouncer.lastActivatedAt = base.addingTimeInterval(900)
     }
+    await store.receive(\.repositories.resolveOpenActions)
     expectNoDifference(events.value, ["app_activated_debounced", "app_activated_debounced"])
 
     await store.finish()
@@ -51,6 +59,8 @@ struct AppFeatureLifecycleTelemetryTests {
       AppFeature()
     } withDependencies: {
       $0.date = DateGenerator { currentDate.value }
+      // Activation also kicks the debounced editor-availability sweep.
+      $0.continuousClock = ImmediateClock()
       $0.analyticsClient.capture = { event, _ in
         events.withValue { $0.append(event) }
       }
@@ -83,6 +93,8 @@ struct AppFeatureLifecycleTelemetryTests {
       AppFeature()
     } withDependencies: {
       $0.date = DateGenerator { currentDate.value }
+      // Activation also kicks the debounced editor-availability sweep.
+      $0.continuousClock = ImmediateClock()
       $0.analyticsClient.capture = { event, _ in
         events.withValue { $0.append(event) }
       }
@@ -91,6 +103,7 @@ struct AppFeatureLifecycleTelemetryTests {
     await store.send(.applicationDidBecomeActive) {
       $0.appLifecycleEventDebouncer.lastActivatedAt = base
     }
+    await store.receive(\.repositories.resolveOpenActions)
 
     currentDate.setValue(base.addingTimeInterval(1))
     await store.send(.applicationDidResignActive) {
