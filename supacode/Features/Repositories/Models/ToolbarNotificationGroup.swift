@@ -29,6 +29,21 @@ struct ToolbarNotificationWorktreeGroup: Identifiable, Equatable {
   let name: String
   let notifications: [WorktreeTerminalNotification]
   let hasUnseenNotifications: Bool
+  /// Per-surface outstanding unread, decoupled from `notifications`.
+  let unseenSurfaces: [WorktreeUnseenSurface]
+  let pullRequestIcon: SidebarPullRequestIcon
+
+  /// Total outstanding unread across surfaces, including pruned notifications.
+  var unseenNotificationCount: Int {
+    unseenSurfaces.reduce(0) { $0 + $1.count }
+  }
+
+  /// Surfaces whose unread notifications were all pruned from the visible log;
+  /// the inspector renders one "go to the surface" row per entry.
+  var prunedUnseenSurfaces: [WorktreeUnseenSurface] {
+    let visibleSurfaceIDs = Set(notifications.map(\.surfaceID))
+    return unseenSurfaces.filter { !visibleSurfaceIDs.contains($0.id) }
+  }
 }
 
 extension RepositoriesFeature.State {
@@ -57,14 +72,23 @@ extension RepositoriesFeature.State {
 
       let worktreeGroups: [ToolbarNotificationWorktreeGroup] =
         orderedWorktrees(in: repository).compactMap { worktree -> ToolbarNotificationWorktreeGroup? in
-          guard let row = sidebarItems[id: worktree.id], !row.notifications.isEmpty else {
+          // A row with no visible notifications still surfaces when unread was
+          // pruned by the cap, so the inspector can offer the jump-to-surface row.
+          guard let row = sidebarItems[id: worktree.id],
+            !row.notifications.isEmpty || !row.unseenSurfaces.isEmpty
+          else {
             return nil
           }
+          // Gate the PR against the worktree branch exactly like the sidebar so a
+          // stale PR from a renamed branch doesn't surface the wrong glyph.
+          let display = WorktreePullRequestDisplay(worktreeName: row.branchName, pullRequest: row.pullRequest)
           return ToolbarNotificationWorktreeGroup(
             id: worktree.id,
             name: row.resolvedSidebarTitle ?? worktree.name,
             notifications: Array(row.notifications),
-            hasUnseenNotifications: row.hasUnseenNotifications
+            hasUnseenNotifications: row.hasUnseenNotifications,
+            unseenSurfaces: row.unseenSurfaces,
+            pullRequestIcon: SidebarPullRequestIcon.resolve(display.pullRequest)
           )
         }
 

@@ -123,6 +123,10 @@ struct SidebarItemFeature {
     var isProgressBusy: Bool = false
     var hasUnseenNotifications: Bool = false
     var notifications: IdentifiedArrayOf<WorktreeTerminalNotification> = []
+    /// Per-surface outstanding unread counts. Survives cap trimming of
+    /// `notifications`; the inspector synthesizes a row for a surface here whose
+    /// notifications were all pruned.
+    var unseenSurfaces: [WorktreeUnseenSurface] = []
     /// True when either Ghostty progress is busy or an agent is busy on a surface.
     var isTaskRunning: Bool { isProgressBusy || hasAgentActivity }
 
@@ -190,6 +194,9 @@ struct SidebarItemFeature {
           state.hasUnseenNotifications = projection.hasUnseenNotifications
         }
         if state.notifications != projection.notifications { state.notifications = projection.notifications }
+        if state.unseenSurfaces != projection.unseenSurfaces {
+          state.unseenSurfaces = projection.unseenSurfaces
+        }
         if state.runningScripts != projection.runningScripts {
           state.runningScripts = projection.runningScripts
         }
@@ -282,9 +289,20 @@ struct WorktreeRowProjection: Equatable, Sendable {
   let isProgressBusy: Bool
   let hasUnseenNotifications: Bool
   let notifications: IdentifiedArrayOf<WorktreeTerminalNotification>
+  /// Per-surface outstanding unread counts, decoupled from `notifications` so
+  /// the cap can prune the log without clearing an indicator. Powers the
+  /// toolbar bell count and the inspector's pruned-unread rows.
+  var unseenSurfaces: [WorktreeUnseenSurface] = []
   /// Terminal-tracked user scripts; the sole populator of the row's
   /// `runningScripts`, so the dropdown can't drift from process state (#573).
   var runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = []
+}
+
+/// A surface with outstanding unread notifications. `count` counts unread
+/// arrivals not yet read/dismissed, including any the cap trimmed from the log.
+struct WorktreeUnseenSurface: Equatable, Sendable, Identifiable {
+  let id: UUID
+  let count: Int
 }
 
 /// Value-typed projection of the focused row's display fields, cached on

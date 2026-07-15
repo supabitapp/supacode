@@ -419,8 +419,10 @@ extension SidebarItemFeature.Action {
     // of what it carries, so it must not walk the selection on every notification.
     case .terminalProjectionChanged:
       return [.sidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups]
+    // `.toolbarNotificationGroups` because the notification header bakes the
+    // row's resolved pull-request glyph into that cache.
     case .pullRequestChanged:
-      return .selectedWorktreeSlice
+      return [.selectedWorktreeSlice, .toolbarNotificationGroups]
     case .diffStatsChanged, .pullRequestQueryStarted,
       .dragSessionChanged,
       .focusTerminalRequested, .focusTerminalConsumed:

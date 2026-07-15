@@ -149,18 +149,29 @@ final class WorktreeTerminalState {
     var debugCustomNotificationTimestampCount: Int { lastCustomNotificationAt.count }
     var debugPendingOSCCount: Int { pendingAgentOSCNotifications.count }
   #endif
+  /// Unread state reads the per-surface counters, not the capped log, so cap
+  /// trimming never clears an indicator; only reading or dismissing does.
   var hasUnseenNotification: Bool {
-    notifications.contains { !$0.isRead }
+    surfaceStates.values.contains { $0.unseenNotificationCount > 0 }
+  }
+
+  /// Total outstanding unread notifications across every surface in the worktree.
+  var totalUnseenNotificationCount: Int {
+    surfaceStates.values.reduce(0) { $0 + $1.unseenNotificationCount }
   }
 
   func hasUnseenNotification(forSurfaceID surfaceID: UUID) -> Bool {
-    notifications.contains { !$0.isRead && $0.surfaceID == surfaceID }
+    (surfaceStates[surfaceID]?.unseenNotificationCount ?? 0) > 0
   }
 
   func hasUnseenNotification(forTabID tabID: TerminalTabID) -> Bool {
-    guard let tree = trees[tabID] else { return false }
-    let surfaceIDs = Set(tree.leaves().map(\.id))
-    return notifications.contains { !$0.isRead && surfaceIDs.contains($0.surfaceID) }
+    unseenNotificationCount(forTabID: tabID) > 0
+  }
+
+  /// Sum of the tab's surfaces' outstanding unread counters.
+  func unseenNotificationCount(forTabID tabID: TerminalTabID) -> Int {
+    guard let tree = trees[tabID] else { return 0 }
+    return tree.leaves().reduce(0) { $0 + (surfaceStates[$1.id]?.unseenNotificationCount ?? 0) }
   }
 
   /// Returns the most recent unread notification in this worktree, or nil.
@@ -249,8 +260,21 @@ final class WorktreeTerminalState {
       isProgressBusy: taskStatus == .running,
       hasUnseenNotifications: hasUnseenNotification,
       notifications: IdentifiedArray(uniqueElements: notifications),
+      unseenSurfaces: unseenSurfacesProjection(),
       runningScripts: runningScriptsProjection(),
     )
+  }
+
+  /// Per-surface outstanding unread counters (count > 0). Feeds the inspector's
+  /// synthesized "go to the surface" rows for unread the cap pruned. Sorted so
+  /// non-deterministic `trees` iteration order can't churn the projection.
+  private func unseenSurfacesProjection() -> [WorktreeUnseenSurface] {
+    allSurfaceIDs.compactMap { surfaceID in
+      let count = surfaceStates[surfaceID]?.unseenNotificationCount ?? 0
+      guard count > 0 else { return nil }
+      return WorktreeUnseenSurface(id: surfaceID, count: count)
+    }
+    .sorted { $0.id.uuidString < $1.id.uuidString }
   }
 
   /// Order-stable snapshot of the user scripts currently tracked in
@@ -1080,7 +1104,7 @@ final class WorktreeTerminalState {
     for index in notifications.indices {
       notifications[index].isRead = true
     }
-    clearAllSurfaceUnseenFlags()
+    clearAllUnseenCounters()
     emitAllTabProjections()
     emitNotificationStateChanged()
   }
@@ -1089,7 +1113,9 @@ final class WorktreeTerminalState {
     for index in notifications.indices where notifications[index].surfaceID == surfaceID {
       notifications[index].isRead = true
     }
-    setSurfaceUnseenFlag(surfaceID, to: false)
+    // Focusing the surface clears its outstanding unread, including any that the
+    // cap already trimmed out of the visible log.
+    setUnseenCount(surfaceID, to: 0)
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
@@ -1102,7 +1128,7 @@ final class WorktreeTerminalState {
     guard !notifications[index].isRead else { return }
     let surfaceID = notifications[index].surfaceID
     notifications[index].isRead = true
-    refreshSurfaceUnseenFlag(surfaceID)
+    decrementUnseenCount(surfaceID)
     if let tabId = tabID(containing: surfaceID) {
       emitTabProjection(for: tabId)
     }
@@ -1110,40 +1136,51 @@ final class WorktreeTerminalState {
   }
 
   func dismissNotification(_ notificationID: WorktreeTerminalNotification.ID) {
-    let affectedSurface = notifications.first(where: { $0.id == notificationID })?.surfaceID
+    guard let dismissed = notifications.first(where: { $0.id == notificationID }) else { return }
     notifications.removeAll { $0.id == notificationID }
-    if let affectedSurface {
-      refreshSurfaceUnseenFlag(affectedSurface)
-      if let tabId = tabID(containing: affectedSurface) {
-        emitTabProjection(for: tabId)
-      }
+    if !dismissed.isRead {
+      decrementUnseenCount(dismissed.surfaceID)
+    }
+    if let tabId = tabID(containing: dismissed.surfaceID) {
+      emitTabProjection(for: tabId)
     }
     emitNotificationStateChanged()
   }
 
   func dismissAllNotifications() {
     notifications.removeAll()
-    clearAllSurfaceUnseenFlags()
+    clearAllUnseenCounters()
     emitAllTabProjections()
     emitNotificationStateChanged()
   }
 
-  /// Recomputes the surface's unseen flag through the canonical predicate so a
-  /// future tweak to `hasUnseenNotification(forSurfaceID:)` is picked up here
-  /// without a parallel branch silently drifting.
-  private func refreshSurfaceUnseenFlag(_ surfaceID: UUID) {
-    setSurfaceUnseenFlag(surfaceID, to: hasUnseenNotification(forSurfaceID: surfaceID))
-  }
-
-  private func setSurfaceUnseenFlag(_ surfaceID: UUID, to value: Bool) {
+  private func incrementUnseenCount(_ surfaceID: UUID) {
     guard let state = surfaceStates[surfaceID] else { return }
-    guard state.hasUnseenNotification != value else { return }
-    state.hasUnseenNotification = value
+    state.unseenNotificationCount += 1
   }
 
-  private func clearAllSurfaceUnseenFlags() {
-    for state in surfaceStates.values where state.hasUnseenNotification {
-      state.hasUnseenNotification = false
+  private func decrementUnseenCount(_ surfaceID: UUID) {
+    guard let state = surfaceStates[surfaceID], state.unseenNotificationCount > 0 else { return }
+    state.unseenNotificationCount -= 1
+  }
+
+  private func setUnseenCount(_ surfaceID: UUID, to value: Int) {
+    guard let state = surfaceStates[surfaceID] else { return }
+    guard state.unseenNotificationCount != value else { return }
+    state.unseenNotificationCount = value
+  }
+
+  private func clearAllUnseenCounters() {
+    for state in surfaceStates.values where state.unseenNotificationCount != 0 {
+      state.unseenNotificationCount = 0
+    }
+  }
+
+  /// Rebuilds every surface's unseen counter from the surviving unread log.
+  private func rebuildUnseenCounters() {
+    clearAllUnseenCounters()
+    for notification in notifications where !notification.isRead {
+      incrementUnseenCount(notification.surfaceID)
     }
   }
 
@@ -1319,11 +1356,10 @@ final class WorktreeTerminalState {
       }
     }
 
-    // Notifications outlive surfaces, so re-derive the freshly minted
-    // `WorktreeSurfaceState` flags or the per-surface dot stays dark after restore.
-    for surfaceID in Set(notifications.map(\.surfaceID)) {
-      refreshSurfaceUnseenFlag(surfaceID)
-    }
+    // Notifications outlive surfaces, so rebuild the freshly minted
+    // `WorktreeSurfaceState` unread counters from the surviving log or the
+    // per-surface dot stays dark after restore.
+    rebuildUnseenCounters()
   }
 
   private func restoreLayoutNode(
@@ -2139,13 +2175,53 @@ final class WorktreeTerminalState {
         ),
         at: 0
       )
-      refreshSurfaceUnseenFlag(surfaceID)
+      if !isViewed { incrementUnseenCount(surfaceID) }
+      // Trimming only prunes the visible log; the unseen counter is untouched.
+      trimNotificationsToRetentionLimit()
       if let tabId = tabID(containing: surfaceID) {
         emitTabProjection(for: tabId)
       }
       emitNotificationStateChanged()
     }
     onNotificationReceived?(surfaceID, trimmedTitle, trimmedBody, isViewed)
+  }
+
+  /// Re-applies the retention limit to the existing backlog, e.g. after the user
+  /// lowers it in settings. A no-op when nothing exceeds the limit. Unseen
+  /// counters are never touched: trimming the log must not clear an indicator.
+  func enforceNotificationRetentionLimit() {
+    guard trimNotificationsToRetentionLimit() else { return }
+    emitNotificationStateChanged()
+  }
+
+  /// Enforces the per-worktree retention limit, evicting read notifications
+  /// before unread ones regardless of age. Unread survive unless they alone
+  /// exceed the limit, in which case the oldest unread are dropped down to it.
+  /// Returns whether anything was removed. Never mutates unseen counters.
+  @discardableResult
+  private func trimNotificationsToRetentionLimit() -> Bool {
+    @Shared(.settingsFile) var settingsFile
+    let limit = settingsFile.global.notificationRetentionLimit.limit
+    let overflow = notifications.count - limit
+    guard overflow > 0 else { return false }
+    let readCount = notifications.reduce(0) { $0 + ($1.isRead ? 1 : 0) }
+    var readBudget = min(overflow, readCount)
+    var unreadBudget = overflow - readBudget
+    // `notifications` is newest-first, so iterating reversed drops the oldest
+    // read first, then the oldest unread; the newest of each group survives.
+    var kept: [WorktreeTerminalNotification] = []
+    kept.reserveCapacity(limit)
+    for notification in notifications.reversed() {
+      if notification.isRead, readBudget > 0 {
+        readBudget -= 1
+      } else if !notification.isRead, unreadBudget > 0 {
+        unreadBudget -= 1
+      } else {
+        kept.append(notification)
+      }
+    }
+    notifications = Array(kept.reversed())
+    return true
   }
 
   /// Detaches one surface from the local bookkeeping. The zmx session is NOT
@@ -2164,8 +2240,20 @@ final class WorktreeTerminalState {
   }
 
   private func cleanupSurfaceState(for surfaceID: UUID) {
+    // Closing a surface drops its unseen counter; refresh the indicators when it
+    // carried any so the sidebar dot, toolbar count, and projection don't strand
+    // a stale count.
+    let hadUnseen = (surfaceStates[surfaceID]?.unseenNotificationCount ?? 0) > 0
     discardSurfaceBookkeeping(for: surfaceID)
     onSurfacesClosed?([surfaceID])
+    guard hadUnseen else { return }
+    // The counter left with the surface, so mark its lingering log entries read;
+    // otherwise the inspector keeps drawing orange unread rows the cleared count
+    // contradicts, and their rows dead-end on a surface that no longer exists.
+    for index in notifications.indices where notifications[index].surfaceID == surfaceID {
+      notifications[index].isRead = true
+    }
+    onNotificationIndicatorChanged?()
   }
 
   /// Tears down persistent zmx sessions for surfaces the user just closed.
@@ -2370,12 +2458,7 @@ final class WorktreeTerminalState {
       return
     }
     let surfaceIDs = tree.leaves().map(\.id)
-    let surfaceIDSet = Set(surfaceIDs)
-    let unseenCount = notifications.reduce(into: 0) { partial, notification in
-      if !notification.isRead, surfaceIDSet.contains(notification.surfaceID) {
-        partial += 1
-      }
-    }
+    let unseenCount = surfaceIDs.reduce(0) { $0 + (surfaceStates[$1]?.unseenNotificationCount ?? 0) }
     let projection = WorktreeTabProjection(
       tabID: tabId,
       surfaceIDs: surfaceIDs,
@@ -2726,10 +2809,7 @@ final class WorktreeTerminalState {
     /// projection-bypass path.
     func setNotificationsForTesting(_ list: [WorktreeTerminalNotification]) {
       notifications = list
-      clearAllSurfaceUnseenFlags()
-      for surfaceID in Set(list.map(\.surfaceID)) {
-        refreshSurfaceUnseenFlag(surfaceID)
-      }
+      rebuildUnseenCounters()
       emitAllTabProjections()
     }
 

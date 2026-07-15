@@ -706,15 +706,17 @@ struct WorktreeTerminalManagerTests {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceID)
 
     state.setNotificationsForTesting([
-      makeNotification(isRead: true),
-      makeNotification(isRead: true),
+      makeNotification(surfaceID: surfaceID, isRead: true),
+      makeNotification(surfaceID: surfaceID, isRead: true),
     ])
 
     #expect(manager.hasUnseenNotifications(for: worktree.id) == false)
 
-    state.setNotificationsForTesting(state.notifications + [makeNotification(isRead: false)])
+    state.setNotificationsForTesting(state.notifications + [makeNotification(surfaceID: surfaceID, isRead: false)])
 
     #expect(manager.hasUnseenNotifications(for: worktree.id) == true)
   }
@@ -723,10 +725,12 @@ struct WorktreeTerminalManagerTests {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceID)
 
     state.setNotificationsForTesting([
-      makeNotification(isRead: false),
-      makeNotification(isRead: true),
+      makeNotification(surfaceID: surfaceID, isRead: false),
+      makeNotification(surfaceID: surfaceID, isRead: true),
     ])
 
     let stream = manager.eventStream()
@@ -743,12 +747,79 @@ struct WorktreeTerminalManagerTests {
     #expect(state.notifications.map(\.isRead) == [true, true])
   }
 
+  @Test func notificationIndicatorCountSumsEveryUnreadNotification() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceA)
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceB)
+
+    // Three unread across two surfaces: the indicator is the notification total,
+    // not the count of worktrees (or surfaces) carrying unread.
+    state.setNotificationsForTesting([
+      makeNotification(surfaceID: surfaceA, isRead: false),
+      makeNotification(surfaceID: surfaceB, isRead: false),
+      makeNotification(surfaceID: surfaceB, isRead: false),
+    ])
+
+    let stream = manager.eventStream()
+    var iterator = stream.makeAsyncIterator()
+    var event = await iterator.next()
+    while case .worktreeProjectionChanged = event { event = await iterator.next() }
+
+    #expect(event == .notificationIndicatorChanged(count: 3))
+  }
+
+  @Test func totalUnseenCountDecrementsOnEachReadAndDismiss() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceID)
+    let first = makeNotification(surfaceID: surfaceID, isRead: false)
+    let second = makeNotification(surfaceID: surfaceID, isRead: false)
+    let third = makeNotification(surfaceID: surfaceID, isRead: false)
+    state.setNotificationsForTesting([first, second, third])
+    #expect(state.totalUnseenNotificationCount == 3)
+
+    // Each single read/dismiss lowers the total the indicator and dock badge sum,
+    // and dismissing the last outstanding unread clears it.
+    state.markNotificationRead(id: first.id)
+    #expect(state.totalUnseenNotificationCount == 2)
+    state.dismissNotification(second.id)
+    #expect(state.totalUnseenNotificationCount == 1)
+    state.dismissNotification(third.id)
+    #expect(state.totalUnseenNotificationCount == 0)
+  }
+
+  @Test func dismissingReadNotificationLeavesSiblingUnreadCount() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let surfaceID = UUID()
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceID)
+    let unread = makeNotification(surfaceID: surfaceID, isRead: false)
+    let read = makeNotification(surfaceID: surfaceID, isRead: true)
+    state.setNotificationsForTesting([unread, read])
+    #expect(state.surfaceStates[surfaceID]?.unseenNotificationCount == 1)
+
+    state.dismissNotification(read.id)
+
+    // Dismissing a read entry must not decrement the still-outstanding unread.
+    #expect(state.surfaceStates[surfaceID]?.unseenNotificationCount == 1)
+    #expect(state.notifications.map(\.id) == [unread.id])
+  }
+
   @Test func markNotificationsReadOnlyAffectsMatchingSurface() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let surfaceA = UUID()
     let surfaceB = UUID()
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceA)
+    _ = installSurfaceState(on: state, forSurfaceID: surfaceB)
 
     state.setNotificationsForTesting([
       makeNotification(surfaceID: surfaceA, isRead: false),
@@ -1813,16 +1884,18 @@ struct WorktreeTerminalManagerTests {
     )
     manager.loadLayoutSnapshot = { _ in snapshot }
     let state = manager.state(for: worktree)
-    // Seed a notification for the not-yet-restored surface; the flag install
-    // is silently dropped because `surfaceStates[knownSurfaceID]` is absent.
+    // Seed two unread for the not-yet-restored surface; the flag install is
+    // silently dropped because `surfaceStates[knownSurfaceID]` is absent.
     state.setNotificationsForTesting([
-      makeNotification(surfaceID: knownSurfaceID, isRead: false)
+      makeNotification(surfaceID: knownSurfaceID, isRead: false),
+      makeNotification(surfaceID: knownSurfaceID, isRead: false),
     ])
     #expect(state.surfaceStates[knownSurfaceID] == nil)
 
     state.ensureInitialTab(focusing: false)
 
-    #expect(state.surfaceStates[knownSurfaceID]?.hasUnseenNotification == true)
+    // The rebuild counts each surviving unread once, not just sets the flag.
+    #expect(state.surfaceStates[knownSurfaceID]?.unseenNotificationCount == 2)
   }
 
   @Test func notificationsDisabledSkipsPerSurfaceFlag() {

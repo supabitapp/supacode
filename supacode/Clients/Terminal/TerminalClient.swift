@@ -70,6 +70,7 @@ struct TerminalClient {
     case renameTab(Worktree, tabID: TerminalTabID, title: String)
     case prune(keeping: Set<Worktree.ID>, protectingRepositoryIDs: Set<Repository.ID>)
     case setNotificationsEnabled(Bool)
+    case enforceNotificationRetentionLimit
     case setSelectedWorktreeID(Worktree.ID?)
     case refreshTabBarVisibility
   }
