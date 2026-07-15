@@ -129,6 +129,11 @@ final class WorktreeTerminalManager {
   /// (OSC 11 override or theme fallback). Single source for the window tint,
   /// `window.appearance`, and the toolbar title's color scheme.
   private(set) var focusedSurfaceBackground: NSColor
+  /// Bumped on every Ghostty config reload. Views that read config-derived
+  /// colors (split divider, unfocused-split overlay) observe this so they
+  /// re-render even when the focused background is unchanged and its dedup
+  /// suppresses a background post.
+  private(set) var configGeneration = 0
   @ObservationIgnored
   private nonisolated(unsafe) var runtimeObservers: [NSObjectProtocol] = []
   var saveLayoutSnapshot: ((Worktree.ID, TerminalLayoutSnapshot?) -> Void)?
@@ -158,7 +163,11 @@ final class WorktreeTerminalManager {
         object: runtime,
         queue: .main
       ) { [weak self] _ in
-        Task { @MainActor [weak self] in self?.refreshFocusedSurfaceBackground() }
+        Task { @MainActor [weak self] in
+          guard let self else { return }
+          self.configGeneration &+= 1
+          self.refreshFocusedSurfaceBackground()
+        }
       }
     )
     let resolvedServer = socketServer ?? AgentHookSocketServer()
@@ -1196,6 +1205,13 @@ final class WorktreeTerminalManager {
 
   func unfocusedSplitOverlay() -> (fill: Color?, opacity: Double) {
     (runtime.unfocusedSplitFill(), runtime.unfocusedSplitOverlayOpacity())
+  }
+
+  // The user's `split-divider-color`, or the opaque asset fallback when unset.
+  // Opaque, not a system separator: the terminal body is cut out of the window
+  // tint, so a translucent divider would let the window blur show through the gap.
+  func splitDividerColor() -> Color {
+    runtime.splitDividerColor() ?? Color(.splitDivider)
   }
 
   private func emit(_ event: TerminalClient.Event) {

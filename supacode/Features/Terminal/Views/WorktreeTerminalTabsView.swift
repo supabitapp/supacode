@@ -22,7 +22,11 @@ struct WorktreeTerminalTabsView: View {
     // Must precede the body's tab-state read. Deferring to `.task` / `.onAppear`
     // would reintroduce the closed-all flash on first render.
     let _: Void = state.ensureInitialTab(focusing: false)
+    // Re-read config-derived colors on every Ghostty config reload, even when
+    // the focused background is unchanged (e.g. only `split-divider-color` moved).
+    let _ = manager.configGeneration
     let unfocusedSplitOverlay = manager.unfocusedSplitOverlay()
+    let dividerColor = manager.splitDividerColor()
     let _ = colorScheme
     VStack(spacing: 0) {
       if !state.shouldHideTabBar {
@@ -62,7 +66,8 @@ struct WorktreeTerminalTabsView: View {
             tabId: tabId,
             terminalState: state,
             terminalsStore: terminalsStore,
-            unfocusedSplitOverlay: unfocusedSplitOverlay
+            unfocusedSplitOverlay: unfocusedSplitOverlay,
+            dividerColor: dividerColor
           )
         }
       } else {
@@ -120,6 +125,7 @@ private struct TerminalSplitTreePane: View {
   let terminalState: WorktreeTerminalState
   let terminalsStore: StoreOf<TerminalsFeature>
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+  let dividerColor: Color
 
   var body: some View {
     let projection = terminalsStore.terminalTabs[id: tabId]
@@ -132,6 +138,7 @@ private struct TerminalSplitTreePane: View {
       terminalState: terminalState,
       activeSurfaceID: terminalState.activeSurfaceID(for: tabId),
       unfocusedSplitOverlay: unfocusedSplitOverlay,
+      dividerColor: dividerColor,
       action: { operation in
         terminalState.performSplitOperation(operation, in: tabId)
       }

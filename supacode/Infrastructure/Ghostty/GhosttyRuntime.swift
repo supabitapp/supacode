@@ -737,6 +737,18 @@ final class GhosttyRuntime {
     return nil
   }
 
+  // The user's `split-divider-color`, or nil when unset so the caller keeps
+  // Supacode's asset divider. Ghostty leaves the key null unless set explicitly.
+  func splitDividerColor() -> Color? {
+    guard let config else { return nil }
+    var color = ghostty_config_color_s()
+    let key = "split-divider-color"
+    guard ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) else {
+      return nil
+    }
+    return Color(nsColor: NSColor(ghostty: color))
+  }
+
   func backgroundColor() -> NSColor {
     backgroundColorFromConfig() ?? NSColor.windowBackgroundColor
   }
