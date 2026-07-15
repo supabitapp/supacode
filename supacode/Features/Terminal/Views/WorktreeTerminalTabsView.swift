@@ -23,7 +23,7 @@ struct WorktreeTerminalTabsView: View {
     // would reintroduce the closed-all flash on first render.
     let _: Void = state.ensureInitialTab(focusing: false)
     let unfocusedSplitOverlay = manager.unfocusedSplitOverlay()
-    let pendingTabClose = state.pendingTabCloseConfirmation
+    let pendingClose = state.pendingCloseConfirmation
     let _ = colorScheme
     VStack(spacing: 0) {
       if !state.shouldHideTabBar {
@@ -72,25 +72,25 @@ struct WorktreeTerminalTabsView: View {
     }
     .animation(.easeInOut(duration: 0.2), value: state.shouldHideTabBar)
     .alert(
-      pendingTabClose?.title ?? "Close Tab?",
+      pendingClose?.title ?? "Close Terminal?",
       isPresented: Binding(
-        get: { state.pendingTabCloseConfirmation != nil },
+        get: { state.pendingCloseConfirmation != nil },
         set: { isPresented in
           if !isPresented {
-            state.cancelPendingTabClose()
+            state.cancelPendingClose()
           }
         }
       ),
-      presenting: pendingTabClose
+      presenting: pendingClose
     ) { pending in
       Button("Cancel", role: .cancel) {
-        state.cancelPendingTabClose()
+        state.cancelPendingClose()
       }
       Button(pending.actionTitle, role: .destructive) {
-        state.confirmPendingTabClose()
+        state.confirmPendingClose()
       }
-    } message: { _ in
-      Text("One or more processes are still running. Closing will terminate them.")
+    } message: { pending in
+      Text(pending.message)
     }
     .background(
       WindowFocusObserverView { activity in

@@ -48,6 +48,10 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(!GhosttyRuntime.bundledOverridesString.contains("shell-integration"))
   }
 
+  @Test func bundledOverridesKeepSurfaceCloseDetectionEnabled() {
+    #expect(GhosttyRuntime.bundledOverridesString.contains("confirm-close-surface = true"))
+  }
+
   /// Each line in the heredoc is parsed as a Ghostty `key = value` directive
   /// by `ghostty_config_load_file`. Catches accidental free-form text edits.
   @Test func bundledOverridesAreKeyValueDirectives() {

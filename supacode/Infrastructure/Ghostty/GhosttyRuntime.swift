@@ -566,8 +566,8 @@ final class GhosttyRuntime {
     return min(max(value, 0), 1)
   }
 
-  /// Applies Supacode-specific config (padding values) that takes precedence
-  /// over user settings.
+  /// Applies Supacode-specific config that takes precedence over user
+  /// settings.
   ///
   /// No `background-opacity` override: surfaces render translucent at the
   /// theme's opacity and keep their own OSC 11 color. The window tint behind
@@ -578,9 +578,15 @@ final class GhosttyRuntime {
   /// override): surfaces run the real shell with zmx injected as a Ghostty
   /// `command-wrapper`, so Ghostty resolves and integrates the shell exactly as
   /// it would without zmx, honoring the user's `command` / `shell-integration`.
+  ///
+  /// Supacode owns close-confirmation policy and UI. Keeping Ghostty's
+  /// predicate enabled makes its callback report prompt safety independently
+  /// of the user's Ghostty setting; `GlobalSettings.confirmCloseSurface`
+  /// decides whether Supacode presents the alert.
   internal static let bundledOverridesString = """
     window-padding-x = 14
     window-padding-y = 12,0
+    confirm-close-surface = true
     """
 
   /// Reports Supacode in `TERM_PROGRAM` so programs detect the real host

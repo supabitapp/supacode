@@ -76,7 +76,7 @@ public struct SettingsFeature {
     public var agentPresenceBadgesEnabled: Bool
     public var autoUpdateAgentIntegrationsEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
-    public var confirmCloseTabsWithRunningProcesses: Bool
+    public var confirmCloseSurface: Bool
     public var terminateSessionsOnQuit: Bool
     public var remoteSessionPersistenceEnabled: Bool
     public var appVisibility: AppVisibility
@@ -130,7 +130,7 @@ public struct SettingsFeature {
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       autoUpdateAgentIntegrationsEnabled = settings.autoUpdateAgentIntegrationsEnabled
       confirmQuitMode = settings.confirmQuitMode
-      confirmCloseTabsWithRunningProcesses = settings.confirmCloseTabsWithRunningProcesses
+      confirmCloseSurface = settings.confirmCloseSurface
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
       remoteSessionPersistenceEnabled = settings.remoteSessionPersistenceEnabled
       appVisibility = settings.appVisibility
@@ -173,7 +173,7 @@ public struct SettingsFeature {
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
         autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
         confirmQuitMode: confirmQuitMode,
-        confirmCloseTabsWithRunningProcesses: confirmCloseTabsWithRunningProcesses,
+        confirmCloseSurface: confirmCloseSurface,
         terminateSessionsOnQuit: terminateSessionsOnQuit,
         remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled,
         appVisibility: appVisibility
@@ -310,7 +310,7 @@ public struct SettingsFeature {
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
         state.autoUpdateAgentIntegrationsEnabled = normalizedSettings.autoUpdateAgentIntegrationsEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
-        state.confirmCloseTabsWithRunningProcesses = normalizedSettings.confirmCloseTabsWithRunningProcesses
+        state.confirmCloseSurface = normalizedSettings.confirmCloseSurface
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
         state.remoteSessionPersistenceEnabled = normalizedSettings.remoteSessionPersistenceEnabled
         state.appVisibility = normalizedSettings.appVisibility

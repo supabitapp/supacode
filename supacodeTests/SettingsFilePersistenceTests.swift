@@ -387,7 +387,7 @@ struct SettingsFilePersistenceTests {
     #expect(reloaded.global.terminalThemeSyncEnabled == true)
   }
 
-  @Test(.dependencies) func decodesMissingConfirmCloseTabsWithRunningProcessesAsTrue() throws {
+  @Test(.dependencies) func decodesMissingConfirmCloseSurfaceAsTrue() throws {
     let legacy = LegacySettingsFile(
       global: LegacyGlobalSettings(
         appearanceMode: .dark,
@@ -406,17 +406,17 @@ struct SettingsFilePersistenceTests {
       return settings
     }
 
-    #expect(settings.global.confirmCloseTabsWithRunningProcesses)
+    #expect(settings.global.confirmCloseSurface)
   }
 
-  @Test(.dependencies) func roundTripsExplicitConfirmCloseTabsWithRunningProcessesDisabled() throws {
+  @Test(.dependencies) func roundTripsExplicitConfirmCloseSurfaceDisabled() throws {
     let storage = SettingsTestStorage()
 
     withDependencies {
       $0.settingsFileStorage = storage.storage
     } operation: {
       @Shared(.settingsFile) var settings: SettingsFile
-      $settings.withLock { $0.global.confirmCloseTabsWithRunningProcesses = false }
+      $settings.withLock { $0.global.confirmCloseSurface = false }
     }
 
     let reloaded: SettingsFile = withDependencies {
@@ -426,7 +426,7 @@ struct SettingsFilePersistenceTests {
       return reloaded
     }
 
-    #expect(!reloaded.global.confirmCloseTabsWithRunningProcesses)
+    #expect(!reloaded.global.confirmCloseSurface)
   }
 
   @Test(.dependencies) func decodesMissingRemoteSessionPersistenceEnabledAsTrue() throws {

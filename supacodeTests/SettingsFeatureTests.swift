@@ -30,7 +30,7 @@ struct SettingsFeatureTests {
       promptForWorktreeCreation: true,
       terminalThemeSyncEnabled: false,
       automatedActionPolicy: .always,
-      confirmCloseTabsWithRunningProcesses: false,
+      confirmCloseSurface: false,
     )
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = loaded }
@@ -61,7 +61,7 @@ struct SettingsFeatureTests {
       $0.fetchOriginBeforeWorktreeCreation = true
       $0.terminalThemeSyncEnabled = false
       $0.automatedActionPolicy = .always
-      $0.confirmCloseTabsWithRunningProcesses = false
+      $0.confirmCloseSurface = false
     }
     await store.skipReceivedActions()
     receiveStartupHookChecks(from: store)
@@ -115,9 +115,9 @@ struct SettingsFeatureTests {
     expectNoDifference(settingsFile.global, expectedSettings)
   }
 
-  @Test(.dependencies) func confirmCloseTabsWithRunningProcessesPersistsChanges() async {
+  @Test(.dependencies) func confirmCloseSurfacePersistsChanges() async {
     var initialSettings = GlobalSettings.default
-    initialSettings.confirmCloseTabsWithRunningProcesses = true
+    initialSettings.confirmCloseSurface = true
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = initialSettings }
 
@@ -125,11 +125,11 @@ struct SettingsFeatureTests {
       SettingsFeature()
     }
 
-    await store.send(.binding(.set(\.confirmCloseTabsWithRunningProcesses, false))) {
-      $0.confirmCloseTabsWithRunningProcesses = false
+    await store.send(.binding(.set(\.confirmCloseSurface, false))) {
+      $0.confirmCloseSurface = false
     }
     await store.receive(\.delegate.settingsChanged)
-    #expect(!settingsFile.global.confirmCloseTabsWithRunningProcesses)
+    #expect(!settingsFile.global.confirmCloseSurface)
   }
 
   @Test(.dependencies) func setSystemNotificationsEnabledPersistsChanges() async {
