@@ -247,6 +247,33 @@ struct AppFeatureDeeplinkTests {
     await store.receive(\.repositories.requestArchiveWorktree)
   }
 
+  @Test(.dependencies) func cliArchiveDoesNotArchiveMainWorktree() async {
+    let worktree = makeWorktree(id: "/tmp/repo", name: "main")
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket
+      )
+    )
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+    await store.skipReceivedActions()
+    await store.finish()
+
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+  }
+
   @Test(.dependencies) func archiveWorktreeDeeplinkWithUnknownIDShowsAlert() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)

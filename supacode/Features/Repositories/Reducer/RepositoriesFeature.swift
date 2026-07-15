@@ -763,18 +763,23 @@ struct RepositoriesFeature {
         return .none
 
       case .archiveWorktreeConfirmed(let worktreeID, let repositoryID):
+        state.alert = nil
+        guard state.removingRepositoryIDs[repositoryID] == nil else {
+          return .none
+        }
         guard let repository = state.repositories[id: repositoryID],
           let worktree = repository.worktrees[id: worktreeID]
         else {
           return .none
         }
-        if state.isWorktreeArchived(worktreeID)
-          || state.sidebarItems[id: worktreeID]?.lifecycle == .archiving
+        let lifecycle = state.sidebarItems[id: worktreeID]?.lifecycle ?? .idle
+        if !repository.isGitRepository
+          || state.isMainWorktree(worktree)
+          || lifecycle.isTerminating
+          || state.isWorktreeArchived(worktreeID)
         {
-          state.alert = nil
           return .none
         }
-        state.alert = nil
         @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
         let script = repositorySettings.archiveScript
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
