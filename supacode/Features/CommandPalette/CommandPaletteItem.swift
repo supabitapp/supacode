@@ -19,6 +19,9 @@ struct CommandPaletteItem: Identifiable, Equatable {
   /// Presentation for a worktree-switcher row: text tints, leading icon, and
   /// the remote host, mirroring the sidebar. `nil` for every non-switcher item.
   let worktreeStyle: WorktreeRowStyle?
+  /// Tints the subtitle to match the target's sidebar color. Used by the
+  /// customize-appearance actions so the palette echoes the sidebar tint.
+  let subtitleTint: RepositoryColor?
 
   /// Tints, leading icon, and the remote host for a worktree-switcher row.
   /// Colors are applied to the title / subtitle text directly, matching the
@@ -54,7 +57,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
     kind: Kind,
     priorityTier: Int = defaultPriorityTier,
     isCurrentWorktree: Bool = false,
-    worktreeStyle: WorktreeRowStyle? = nil
+    worktreeStyle: WorktreeRowStyle? = nil,
+    subtitleTint: RepositoryColor? = nil
   ) {
     self.id = id
     self.title = title
@@ -63,6 +67,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
     self.priorityTier = priorityTier
     self.isCurrentWorktree = isCurrentWorktree
     self.worktreeStyle = worktreeStyle
+    self.subtitleTint = subtitleTint
   }
 
   enum Kind: Equatable {
@@ -75,6 +80,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case removeWorktree(Worktree.ID, Repository.ID)
     case archiveWorktree(Worktree.ID, Repository.ID)
     case renameBranch(Worktree.ID, Repository.ID)
+    case customizeRepositoryAppearance(Repository.ID)
+    case customizeWorktreeAppearance(Worktree.ID, Repository.ID)
     case viewArchivedWorktrees
     case refreshWorktrees
     case ghosttyCommand(String)
@@ -111,7 +118,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
       true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       false
-    case .renameBranch:
+    case .renameBranch, .customizeRepositoryAppearance, .customizeWorktreeAppearance:
       true
     case .runScript, .stopScript:
       true
@@ -140,7 +147,9 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .worktreeSelect,
       .removeWorktree,
       .archiveWorktree,
-      .renameBranch:
+      .renameBranch,
+      .customizeRepositoryAppearance,
+      .customizeWorktreeAppearance:
       false
     case .runScript, .stopScript:
       false
@@ -173,6 +182,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
       .removeWorktree,
       .archiveWorktree,
       .renameBranch,
+      .customizeRepositoryAppearance,
+      .customizeWorktreeAppearance,
       .stopScript:
       nil
     case .runScript(let definition):

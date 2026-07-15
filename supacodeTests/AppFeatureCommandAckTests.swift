@@ -394,6 +394,468 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
   }
 
+  @Test(.dependencies) func repeatedLockedTabRenameSocketDeeplinkFailsImmediately() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in false }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    for _ in 0..<2 {
+      let (readFD, writeFD) = makePipe()
+      defer { close(readFD) }
+      await store.send(
+        .deeplink(
+          .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+          source: .socket,
+          responseFD: writeFD,
+          timeoutSeconds: 0
+        )
+      )
+      await store.finish()
+      let response = readPipeJSON(readFD)
+      #expect(response?["ok"] as? Bool == false)
+      #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("locked") == true)
+    }
+    #expect(store.state.alert != nil)
+    #expect(sent.value.isEmpty)
+  }
+
+  @Test(.dependencies) func tabRenameSocketDeeplinkResolvesOnRenamedEvent() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+    )
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+    #expect(
+      sent.value.contains(
+        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "review")))
+  }
+
+  @Test(.dependencies) func tabRenameSocketDeeplinkFailsWhenRenameDoesNotApply() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    // The tab is closed between the guard and the terminal command.
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: false))
+    )
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("closed") == true)
+  }
+
+  @Test(.dependencies) func successfulSocketDeeplinkPreservesExistingAlert() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+    }
+    let (failReadFD, failWriteFD) = makePipe()
+    defer { close(failReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: "/tmp/gone/", action: .select),
+        source: .socket,
+        responseFD: failWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+    #expect(readPipeJSON(failReadFD)?["ok"] as? Bool == false)
+    let raisedAlert = store.state.alert
+    #expect(raisedAlert != nil)
+
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+    )
+    await store.finish()
+
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+    // The command raised no alert of its own, so the one on screen survives.
+    #expect(store.state.alert == raisedAlert)
+  }
+
+  @Test(.dependencies) func confirmedTabNewFailsWhenWorktreeVanishes() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in false }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    // An explicit id gives the command a completion match, so the ack would be
+    // deferred (and never resolved) if the dispatch failure did not suppress it.
+    let tabID = UUID()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "omp", id: tabID)),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    // The worktree is deleted while the confirmation dialog is open.
+    await store.send(
+      .repositories(
+        .worktreeDeleted(
+          worktree.id, repositoryID: "/tmp/repo", selectionWasRemoved: false, nextSelection: nil)
+      )
+    )
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(
+                worktreeID: worktree.id,
+                action: .tabNew(input: "omp", id: tabID),
+                alwaysAllow: false
+              )
+            )
+          )
+        )
+      )
+    }
+    await store.finish()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("worktree") == true)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(!sent.value.contains { if case .createTabWithInput = $0 { true } else { false } })
+  }
+
+  @Test(.dependencies) func commandAnswersWhileAnotherCommandsDialogIsOpen() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    // A shell-spawning command parks its fd on a confirmation dialog.
+    let (dialogReadFD, dialogWriteFD) = makePipe()
+    defer { close(dialogReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "omp", id: nil)),
+        source: .socket,
+        responseFD: dialogWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    // A second command on its own fd must still be answered, not stranded.
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tab(tabID: UUID())),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func supersededDialogAnswersOnlyTheDisplacedCommand() async {
+    let worktree = makeWorktree()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in false }
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    let (firstReadFD, firstWriteFD) = makePipe()
+    defer { close(firstReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "one", id: nil)),
+        source: .socket,
+        responseFD: firstWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+
+    // A second confirmable command supersedes the first one's dialog.
+    let (secondReadFD, secondWriteFD) = makePipe()
+    defer { close(secondReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "two", id: nil)),
+        source: .socket,
+        responseFD: secondWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+
+    let superseded = readPipeJSON(firstReadFD)
+    #expect(superseded?["ok"] as? Bool == false)
+    #expect((superseded?["error"] as? String)?.localizedCaseInsensitiveContains("superseded") == true)
+    // The displacing command owns the dialog now, so its fd stays open for it.
+    #expect(readPipeJSON(secondReadFD) == nil)
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == secondWriteFD)
+  }
+
+  @Test(.dependencies) func deferredAckIsNotAnsweredEarlyWhileAnotherDialogIsOpen() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, candidate in candidate.rawValue == tabID }
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    let (dialogReadFD, dialogWriteFD) = makePipe()
+    defer { close(dialogReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "omp", id: nil)),
+        source: .socket,
+        responseFD: dialogWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    // A rename dispatched alongside the open dialog defers to its own completion.
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    #expect(readPipeJSON(readFD) == nil)
+
+    await store.send(
+      .terminalEvent(
+        .tabRenamed(
+          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+    )
+    await store.finish()
+
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func tabRenameSocketDeeplinkTimesOutWhenEventNeverArrives() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let clock = TestClock()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.tabCanRename = { _, _ in true }
+      $0.continuousClock = clock
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabRename(tabID: tabID, title: "review")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 1
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+    await store.skipReceivedActions()
+
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("timed out") == true)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+  }
+
+  @Test(.dependencies) func confirmedTabCloseFailsWhenTabVanishesWithMatchingAlert() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let tabExists = LockIsolated(false)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.tabExists = { _, _ in tabExists.value }
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    let (priorReadFD, priorWriteFD) = makePipe()
+    defer { close(priorReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tab(tabID: tabID)),
+        source: .socket,
+        responseFD: priorWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+    #expect(readPipeJSON(priorReadFD)?["ok"] as? Bool == false)
+    #expect(store.state.alert != nil)
+
+    tabExists.withValue { $0 = true }
+    let (closeReadFD, closeWriteFD) = makePipe()
+    defer { close(closeReadFD) }
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabDestroy(tabID: tabID)),
+        source: .socket,
+        responseFD: closeWriteFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation != nil)
+
+    tabExists.withValue { $0 = false }
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(
+            .delegate(
+              .confirm(
+                worktreeID: worktree.id,
+                action: .tabDestroy(tabID: tabID),
+                alwaysAllow: false
+              )
+            )
+          )
+        )
+      )
+    }
+    await store.finish()
+
+    let response = readPipeJSON(closeReadFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("no tab matching") == true)
+    #expect(!sent.value.contains { if case .destroyTab = $0 { true } else { false } })
+  }
+
   // MARK: - worktree delete.
 
   @Test(.dependencies) func deleteSocketDeeplinkResolvesOnWorktreeDeleted() async {
@@ -484,6 +946,573 @@ struct AppFeatureCommandAckTests {
     #expect(store.state.pendingCommandAcks.isEmpty)
     #expect(store.state.alert != nil)
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  // MARK: - worktree archive.
+
+  @Test(.dependencies) func archiveSocketDeeplinkResolvesOnApply() async {
+    let worktree = makeWorktree()
+    // `@Shared(.repositorySettings)` is process-global; reset the archive script so
+    // the flow runs straight to apply instead of a leaked blocking script.
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "" }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    // `.cliOnly` (default) bypasses for a socket command, so the archive runs
+    // straight through (empty archive script -> apply) and drains ok.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    await store.receive(\.repositories.archiveWorktreeApplied)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkResolvesAfterArchiving() async {
+    let worktree = makeWorktree()
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "echo archive" }
+    defer { $settings.withLock { $0.archiveScript = "" } }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    // A non-empty archive script parks the socket ack through the `.archiving`
+    // lifecycle; the script's success then applies and drains the ack ok.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+    await store.skipReceivedActions()
+
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
+    await store.skipReceivedActions()
+    await store.finish()
+
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id))
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkFailsOnScriptCancellation() async {
+    let worktree = makeWorktree()
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "echo archive" }
+    defer { $settings.withLock { $0.archiveScript = "" } }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+    await store.skipReceivedActions()
+
+    // A cancelled script (nil exit) has no apply to follow, so the ack drains failed.
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: nil, tabId: nil)))
+    await store.skipReceivedActions()
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveAckResolvesOnApplied() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    await store.store.send(.repositories(.archiveWorktreeApplied("/tmp/repo/wt-1")))
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(store.readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveAckFailsOnApplyFailed() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    await store.store.send(.repositories(.archiveWorktreeApplyFailed("/tmp/repo/wt-1")))
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(store.readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveAckFailsOnScriptFailure() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    // A non-zero archive script exit has no apply to follow, so the ack drains as
+    // a failure now (nil would be a cancellation, also a failure).
+    await store.store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: "/tmp/repo/wt-1", exitCode: 1, tabId: nil)))
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    let response = readPipeJSON(store.readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.isEmpty == false)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkParksFDThenResolvesOnConfirm() async {
+    let worktree = makeWorktree()
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repoSettings
+    $repoSettings.withLock { $0.archiveScript = "" }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    var appState = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    appState.settings.automatedActionPolicy = .never
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    // A prompting policy parks the fd on the dialog and registers no ack yet.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == writeFD)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+
+    // Confirming re-dispatches with bypass and holds the ack until the archive lands.
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(.delegate(.confirm(worktreeID: worktree.id, action: .archive, alwaysAllow: false)))))
+    }
+    await store.receive(\.repositories.archiveWorktreeApplied)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkCancelDrainsFailure() async {
+    let worktree = makeWorktree()
+    var appState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree), settings: SettingsFeature.State())
+    appState.settings.automatedActionPolicy = .never
+    let store = TestStore(initialState: appState) { AppFeature() }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == writeFD)
+
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(.deeplinkInputConfirmation(.presented(.delegate(.cancel))))
+    }
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+    #expect(store.state.repositories.archivedWorktreeIDs.isEmpty)
+  }
+
+  @Test(.dependencies) func alreadyArchivedSocketDeeplinkAcksSuccessWithoutDialog() async {
+    let worktree = makeWorktree()
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.$sidebar.withLock { sidebar in
+      sidebar.archive(
+        worktree: worktree.id, in: "/tmp/repo", from: .unpinned,
+        at: Date(timeIntervalSince1970: 1))
+    }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    // Already archived: no dialog, no parked ack, immediate success.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    await store.finish()
+
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveConfirmedRepoMissingDrainsFailure() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    // Repository lookup fails: the confirmed handler must resolve the ack, not strand it.
+    await store.store.send(.repositories(.archiveWorktreeConfirmed("/tmp/repo/wt-1", "/does/not/exist")))
+    await store.store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(store.readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveConfirmedAlreadyArchivedDrainsSuccess() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.$sidebar.withLock { sidebar in
+      sidebar.archive(
+        worktree: worktree.id, in: "/tmp/repo", from: .unpinned,
+        at: Date(timeIntervalSince1970: 1))
+    }
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // A worktree archived between dialog and confirm resolves the ack as success.
+    await store.send(.repositories(.archiveWorktreeConfirmed(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplied)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveConfirmedTerminatingWorktreeDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // A concurrent delete moved the row to `.deleting` after the archive dialog opened.
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .deleting
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // Confirming the stale dialog must not archive mid-teardown; it fails the ack.
+    await store.send(.repositories(.archiveWorktreeConfirmed(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveApplyRemovingRepoDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    // Repo removal started while the archive script ran.
+    repositoriesState.removingRepositoryIDs["/tmp/repo"] =
+      RepositoriesFeature.RepositoryRemovalRecord(disposition: .folderTrash, batchID: UUID())
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // Applying into a repo mid-removal must not record a false success.
+    await store.send(.repositories(.archiveWorktreeApply(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveScriptSuccessRepoMissingDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    // The repository vanished while the archive script ran.
+    repositoriesState.repositories = []
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // Exit 0 but the worktree is gone: resolve the ack as failure instead of stranding it.
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveScriptSuccessAfterRepoRemovedDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // Completed repo removal reconciled the row away while the archive script ran,
+    // so the exit-0 completion finds no row and no apply can follow.
+    repositoriesState.repositories = []
+    repositoriesState.sidebarItems.remove(id: worktree.id)
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // The row vanished mid-script: resolve the ack as failure, not strand.
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func repositoriesRemovedFailsParkedArchiveAck() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+
+    // Removing the repo mid-archive fails the parked ack immediately; the later
+    // ignored script completion would otherwise strand it until the watchdog.
+    await store.send(.repositories(.repositoriesRemoved(["/tmp/repo"], selectionWasRemoved: false)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func staleScriptCompletionDoesNotFailNewerParkedAck() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer {
+      close(readFD)
+      close(writeFD)
+    }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // Healthy idle row: a new archive just parked its ack, before its confirm
+    // marks the row archiving.
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // A delayed exit-0 completion from an earlier operation must not fail the
+    // newer ack; the row is still present, so it is ignored and left to resolve.
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+  }
+
+  @Test(.dependencies) func staleFailedScriptCompletionDoesNotFailNewerParkedAck() async {
+    await expectStaleCompletionKeepsNewerAckParked(exitCode: 1)
+  }
+
+  @Test(.dependencies) func staleCancelledScriptCompletionDoesNotFailNewerParkedAck() async {
+    await expectStaleCompletionKeepsNewerAckParked(exitCode: nil)
+  }
+
+  /// A stale/duplicate completion from an earlier archive (any exit code) arriving
+  /// on a present, non-archiving row must leave a newer parked ack untouched.
+  private func expectStaleCompletionKeepsNewerAckParked(exitCode: Int?) async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer {
+      close(readFD)
+      close(writeFD)
+    }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: exitCode, tabId: nil)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkRejectsTerminatingWorktree() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // A worktree already winding down no-ops in the reducer, so registering an
+    // ack would strand the client: the command is rejected up front instead.
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(store.state.alert != nil)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveConfirmedRemovingRepoDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // Removal of the containing repo is in flight, so the confirmed archive
+    // no-ops; it must still resolve the parked ack instead of stranding it.
+    repositoriesState.removingRepositoryIDs["/tmp/repo"] =
+      RepositoriesFeature.RepositoryRemovalRecord(disposition: .folderTrash, batchID: UUID())
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.archiveWorktreeConfirmed(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  /// Store with a single pending archive ack pre-seeded, returned with the pipe
+  /// read end so the test can assert the drained response.
+  private func makeArchiveAckStore(
+    worktree: Worktree
+  ) -> (store: TestStoreOf<AppFeature>, readFD: Int32) {
+    let (readFD, writeFD) = makePipe()
+    var initial = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+    return (store, readFD)
   }
 
   // MARK: - folder delete.
@@ -628,7 +1657,10 @@ struct AppFeatureCommandAckTests {
     return (fds[0], fds[1])
   }
 
+  /// Nil when the command left the fd unanswered. The read is non-blocking so an
+  /// unanswered fd fails its test instead of wedging the suite on a blocked read.
   private func readPipeJSON(_ fileDescriptor: Int32) -> [String: Any]? {
+    _ = fcntl(fileDescriptor, F_SETFL, fcntl(fileDescriptor, F_GETFL) | O_NONBLOCK)
     var data = Data()
     var buffer = [UInt8](repeating: 0, count: 4096)
     while true {

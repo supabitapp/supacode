@@ -51,8 +51,17 @@ extension RepositoryLocalSettingsStorage {
   }
 }
 
-nonisolated enum RepositoryLocalSettingsStorageError: Error {
-  case missing
+nonisolated extension RepositoryLocalSettingsStorage {
+  /// Whether a read failed only because the repo owns no `supacode.json`, which is the
+  /// norm and stays quiet. Every other failure (permissions, a stalled mount) silently
+  /// downgrades the repo to global settings, so callers log those.
+  ///
+  /// `Data(contentsOf:)` reports an absent file as `.fileReadNoSuchFile`, not as the
+  /// `.fileNoSuchFile` its name suggests. Both count.
+  static func isMissingFile(_ error: any Error) -> Bool {
+    let code = (error as? CocoaError)?.code
+    return code == .fileReadNoSuchFile || code == .fileNoSuchFile
+  }
 }
 
 nonisolated final class InMemoryRepositoryLocalSettingsStorage: @unchecked Sendable {
@@ -63,7 +72,9 @@ nonisolated final class InMemoryRepositoryLocalSettingsStorage: @unchecked Senda
     lock.lock()
     defer { lock.unlock() }
     guard let data = dataByURL[url] else {
-      throw RepositoryLocalSettingsStorageError.missing
+      // Mirror real-disk semantics: `Data(contentsOf:)` reports an absent file as
+      // `.fileReadNoSuchFile`, and callers classify on it.
+      throw CocoaError(.fileReadNoSuchFile)
     }
     return data
   }

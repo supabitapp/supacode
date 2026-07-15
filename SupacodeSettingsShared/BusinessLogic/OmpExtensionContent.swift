@@ -29,7 +29,7 @@ nonisolated enum OmpExtensionContent {
      *   extension load      -> session_start  (agent presence badge)
      *   OMP agent_start     -> busy
      *   OMP agent_end       -> idle + notification with last_assistant_message
-     *   OMP session_shutdown -> session_end + idle (defensive activity reset)
+     *   OMP session_shutdown -> idle (subagents share the main process lifetime)
      */
 
     import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -185,7 +185,8 @@ nonisolated enum OmpExtensionContent {
       });
 
       omp.on("session_shutdown", (_event, _ctx) => {
-        emitPresence("session_end");
+        // OMP loads extensions into in-process subagent sessions. Their
+        // shutdown must not end the shared top-level process presence.
         emitPresence("idle");
       });
     }

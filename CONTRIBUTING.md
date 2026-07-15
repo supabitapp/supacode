@@ -10,9 +10,8 @@ By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 1. **Open an issue first.** Bugs and features both start as an issue. Blank issues are
    disabled, so pick the bug or feature form.
-2. **Wait for `ready`.** Bug reports are marked `ready` automatically. Feature requests are
-   marked `ready` by a maintainer once the direction is agreed. Do not open a feature pull
-   request before then.
+2. **Wait for `ready`.** A maintainer marks an issue `ready` once it is triaged: a bug is
+   confirmed, or a feature's direction is agreed. Do not open a pull request before then.
 3. **Open a focused pull request** that links the issue with `Closes #<number>`.
 4. **You sign your work.** Using AI tools is welcome, and you can disclose them in the pull
    request. An AI agent just cannot be the author or co-author of a commit: a human is
@@ -24,8 +23,8 @@ Contributors with write access to the repository are exempt from the automated c
 
 Use the **Bug report** form. It asks for the Supacode version and build, your macOS version,
 your locale, and a reliable set of reproduction steps. Those details are what make a bug
-fixable, so please fill them in. A bug is `ready` the moment it is filed, which means you can
-open a fix straight away and link it with `Closes #<number>`.
+fixable, so please fill them in. A maintainer confirms the bug and adds the `ready` label, and
+a comment lets you know. Once it is `ready`, open your fix and link it with `Closes #<number>`.
 
 ## Requesting a feature
 
@@ -33,9 +32,9 @@ Use the **Feature request** form and describe the problem you are trying to solv
 the solution you have in mind. Feature requests are discussed before code is written. A
 maintainer adds the `ready` label once the feature is approved.
 
-**Please do not open a feature pull request until the issue is `ready`.** A pull request
-linked to a feature that is not yet `ready` is labeled `invalid` and its policy check fails
-until the label is added. Once the feature is `ready`, push an update and the check clears.
+**Please do not open a pull request until the issue is `ready`.** A pull request linked to an
+issue that is not yet `ready` is labeled `invalid` and its policy check fails until the label is
+added. Once the issue is `ready`, push an update and the check clears.
 
 ## Opening a pull request
 
@@ -47,8 +46,8 @@ closed automatically after a few days; reopen it once fixed.
 
 - **A linked issue is required.** Link a valid, open issue in this repository with
   `Closes #<number>`.
-- **The issue must be `ready`.** For bugs this is automatic. For features a maintainer adds it
-  after approval.
+- **The issue must be `ready`.** A maintainer adds it once the issue is triaged, whether it is a
+  bug or a feature.
 - **Assigned issues are reserved.** If the linked issue is assigned to someone, only that
   person may open the pull request. If they have stopped working on it, ask a maintainer to
   reassign the issue to you first.

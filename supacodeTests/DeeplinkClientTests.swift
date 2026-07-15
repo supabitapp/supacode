@@ -151,6 +151,55 @@ struct DeeplinkClientTests {
     #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .tabNew(input: "echo hello", id: nil)))
   }
 
+  @Test func worktreeTabNewWithTitle() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/new?title=implement%20work")!
+    #expect(
+      parse(url)
+        == .worktree(
+          id: "/tmp/repo/wt-1",
+          action: .tabNew(input: nil, id: nil, title: "implement work")
+        )
+    )
+  }
+
+  @Test func worktreeTabRename() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/rename?title=review")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .tabRename(tabID: tabUUID, title: "review"))
+    )
+  }
+
+  @Test func worktreeTabRenameWithEmptyTitle() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/rename?title=")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .tabRename(tabID: tabUUID, title: ""))
+    )
+  }
+
+  @Test func worktreeTabRenameWithValuelessTitle() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/rename?title")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .tabRename(tabID: tabUUID, title: ""))
+    )
+  }
+
+  @Test func worktreeTabRenameWithoutTitleReturnsNil() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/rename")!
+    #expect(parse(url) == nil)
+  }
+
   @Test func worktreeTabDestroy() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!

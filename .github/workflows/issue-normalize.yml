@@ -55,9 +55,7 @@ jobs:
               (l) => (typeof l === 'string' ? l : l.name).toLowerCase() === label,
             );
             if (!hasLabel) {
-              // Bugs are auto-approved for a pull request, mirroring the bug report form.
-              const labels = label === 'bug' ? ['bug', 'ready'] : [label];
-              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels });
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [label] });
             }
 
             // Strip the tag and capitalize the first letter, leaving a first word that already

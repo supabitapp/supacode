@@ -1,3 +1,4 @@
+import Sharing
 import SupacodeSettingsShared
 import SwiftUI
 
@@ -13,12 +14,16 @@ struct WorktreeGitStatusButton: View {
   // doesn't change color when the toggle is selected.
   let foreground: Color
   let onActivate: () -> Void
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
     let icon = SidebarPullRequestIcon.resolve(pullRequest)
     let checkBadgeState = SidebarCheckBadgeState.resolve(pullRequest)
     let accessibilityLabel = checkBadgeState.map { "Pull request, \($0.statusDescription)" } ?? "Pull request"
-    let shortcut = WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.togglePullRequestInspector)
+    let shortcut = WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.togglePullRequestInspector,
+      overrides: settingsFile.global.shortcutOverrides
+    )
     Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
       Label {
         Text("Pull Request")
@@ -109,9 +114,13 @@ struct WorktreeNotificationsToolbarButton: View {
   // Drives the unread bell body's fade: an explicit palette color can't inherit
   // the automatic window-key dim the plain bell gets for free.
   @Environment(\.controlActiveState) private var controlActiveState
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
-    let shortcut = WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.toggleNotificationsInspector)
+    let shortcut = WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.toggleNotificationsInspector,
+      overrides: settingsFile.global.shortcutOverrides
+    )
     Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
       if unreadCount > 0 {
         // Palette keeps the badge dot orange; the bell body tracks the resting tint

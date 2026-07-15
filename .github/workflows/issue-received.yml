@@ -1,0 +1,50 @@
+name: Issue received
+
+# Comments once on every newly opened issue so the reporter knows it was received and that work
+# should wait for triage. Bugs and features must not be worked on until a maintainer adds `ready`;
+# questions get a lighter acknowledgement since they are not a pull-request path. Comments once,
+# via a hidden marker, and stays out of the way of an issue a maintainer opens already `ready`.
+on:
+  issues:
+    types: [opened]
+
+concurrency:
+  # No cancel-in-progress: serialize an issue's events so the idempotent comment check is reliable.
+  group: issue-received-${{ github.event.issue.number }}
+
+permissions:
+  issues: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- supacode-issue-received -->';
+            const issue = context.payload.issue;
+            const { owner, repo } = context.repo;
+
+            if (issue.pull_request || issue.state !== 'open') return; // Issues only, still open.
+
+            const hasLabel = (name) =>
+              issue.labels.some((l) => (typeof l === 'string' ? l : l.name).toLowerCase() === name);
+            if (hasLabel('ready')) return; // Opened already `ready`: `issue-ready` handles it.
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: issue.number, per_page: 100,
+            });
+            if (comments.some((c) => c.body && c.body.includes(marker))) return; // Already notified.
+
+            const body = hasLabel('question')
+              ? `${marker}\n\n` +
+                'Thanks for reaching out. A maintainer will read this and follow up here.'
+              : `${marker}\n\n` +
+                'Thank you for filing this. A maintainer will review it and follow up here.\n\n' +
+                '**Please do not start any work or open a pull request until this issue is labeled ' +
+                '`ready`.** That label is a maintainer\'s go-ahead: a pull request opened against an ' +
+                'issue that is not yet `ready` is labeled `invalid` until then. You will get a ' +
+                'comment here the moment it is marked `ready`.\n\n' +
+                'See [CONTRIBUTING.md](https://github.com/supabitapp/supacode/blob/main/CONTRIBUTING.md) for the full flow.';
+            await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body });

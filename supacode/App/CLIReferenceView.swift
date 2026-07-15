@@ -89,8 +89,13 @@ struct CLIReferenceView: View {
     .init(command: "supacode tab list [-w <id>] [-f]", description: "List tab UUIDs. -f for focused only."),
     .init(command: "supacode tab focus [-w <id>] [-t <id>]", description: "Focus a tab."),
     .init(
-      command: "supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>]",
-      description: "Create a new tab. Prints UUID to stdout."
+      command: "supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>]",
+      description: "Create a named tab. Prints UUID to stdout."
+    ),
+    .init(
+      command: "supacode tab rename [-w <id>] [-t <id>] --title <title>",
+      description:
+        "Set the persistent title override; an empty title clears it. Script tabs are locked."
     ),
     .init(command: "supacode tab close [-w <id>] [-t <id>]", description: "Close a tab."),
   ]
@@ -140,7 +145,9 @@ struct CLIReferenceView: View {
     .init(command: "-t, --tab", description: "Tab UUID. Defaults to $SUPACODE_TAB_ID."),
     .init(command: "-s, --surface", description: "Surface UUID. Defaults to $SUPACODE_SURFACE_ID."),
     .init(command: "-c, --script", description: "Script UUID (for `worktree run`/`stop`)."),
-    .init(command: "--title", description: "Sidebar title override; pass an empty string to clear."),
+    .init(
+      command: "--title",
+      description: "Tab title for tab new/rename, or sidebar title for worktree appearance; empty clears."),
     .init(command: "--color", description: "Sidebar tint override; pass none to clear."),
     .init(command: "-r, --repo", description: "Repository ID. Defaults to $SUPACODE_REPO_ID."),
     .init(command: "-i, --input", description: "Command to run in the terminal."),

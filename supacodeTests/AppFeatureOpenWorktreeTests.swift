@@ -254,7 +254,11 @@ struct AppFeatureOpenWorktreeTests {
   }
 
   @Test(.dependencies) func openSelectedWorktreeRoutesToSelectedAction() async {
-    let (store, context) = makeStore(appState: { $0.openActionSelection = .finder })
+    // The selection is derived from the resolved map, so seed it there.
+    let (store, context) = makeStore(repositoriesState: { state, worktree in
+      guard let repositoryID = state.repositoryID(containing: worktree.id) else { return }
+      state.openActionByRepositoryID[repositoryID] = .finder
+    })
 
     await store.send(.openSelectedWorktree)
     await store.receive(\.openWorktree)

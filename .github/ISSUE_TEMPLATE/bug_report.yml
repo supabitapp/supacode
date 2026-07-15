@@ -3,14 +3,13 @@ description: Report something that is broken or behaving incorrectly.
 title: "[Bug]: "
 labels:
   - bug
-  - ready
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for taking the time to file a bug. Please fill in the details below so it can be reproduced quickly.
 
-        Bugs are marked `ready` automatically, so once this is filed you are welcome to open a pull request that fixes it. Link it back here with `Closes #<this issue number>`.
+        **Please do not open a pull request yet.** A maintainer reviews the report and adds the `ready` label once it is confirmed, and a comment here will let you know. A pull request linked to a bug that is not yet `ready` is labeled `invalid` until then. Once it is `ready`, open your pull request and link it with `Closes #<this issue number>`.
   - type: textarea
     id: summary
     attributes:
@@ -74,9 +73,9 @@ body:
     id: contribution
     attributes:
       label: Are you planning to fix this yourself?
-      description: Optional. Bugs are `ready` on filing, so you can open a pull request right away.
+      description: Optional. Please wait for the `ready` label before opening a pull request.
       options:
-        - label: I intend to open a pull request that fixes this bug.
+        - label: I intend to open a pull request once this is confirmed and marked `ready`.
           required: false
   - type: checkboxes
     id: checks
@@ -86,6 +85,8 @@ body:
         - label: I searched existing issues and this is not a duplicate.
           required: true
         - label: I am on the latest available version of Supacode.
+          required: true
+        - label: I understand pull requests are closed until the issue is marked `ready`.
           required: true
         - label: I agree to follow this project's [Code of Conduct](https://github.com/supabitapp/supacode/blob/main/CODE_OF_CONDUCT.md).
           required: true

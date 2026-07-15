@@ -23,10 +23,16 @@ struct PullRequestMergeQueueStatusTests {
 
     #expect(status?.position == 3)
     #expect(status?.positionLabel == "Position 3")
-    let expectedTimeLabels: Set = ["~10 min left", "~10 mins left"]
-    let expectedDetails = Set(expectedTimeLabels.map { "Position 3 · \($0)" })
-    #expect(expectedTimeLabels.contains(status?.estimatedTimeLabel ?? ""))
-    #expect(expectedDetails.contains(status?.detail ?? ""))
+    // The abbreviated minute unit is format-version sensitive ("min" vs "mins"), so take the spelling from the
+    // formatter and assert the magnitude ourselves.
+    #expect(Self.tenMinutes.hasPrefix("10 "))
+    #expect(status?.estimatedTimeLabel == "~\(Self.tenMinutes) left")
+    #expect(status?.detail == "Position 3 · ~\(Self.tenMinutes) left")
+  }
+
+  private static var tenMinutes: String {
+    Duration.seconds(600)
+      .formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated, maximumUnitCount: 2))
   }
 
   @Test func dropsEstimatedTimeWhenZeroOrMissing() {
