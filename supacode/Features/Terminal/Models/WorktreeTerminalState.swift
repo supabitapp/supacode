@@ -75,6 +75,7 @@ final class WorktreeTerminalState {
   private let runtime: GhosttyRuntime
   @ObservationIgnored private let splitPreserveZoomOnNavigation: () -> Bool
   @ObservationIgnored private let surfaceNeedsCloseConfirmation: (GhosttySurfaceView) -> Bool
+  @ObservationIgnored private let surfaceBindingActionPerformer: (GhosttySurfaceView, String) -> Void
   private let worktree: Worktree
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
@@ -243,11 +244,13 @@ final class WorktreeTerminalState {
     worktree: Worktree,
     runSetupScript: Bool = false,
     splitPreserveZoomOnNavigation: (() -> Bool)? = nil,
-    surfaceNeedsCloseConfirmation: ((GhosttySurfaceView) -> Bool)? = nil
+    surfaceNeedsCloseConfirmation: ((GhosttySurfaceView) -> Bool)? = nil,
+    surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)? = nil
   ) {
     self.runtime = runtime
     self.splitPreserveZoomOnNavigation = splitPreserveZoomOnNavigation ?? { runtime.splitPreserveZoomOnNavigation() }
     self.surfaceNeedsCloseConfirmation = surfaceNeedsCloseConfirmation ?? { $0.needsCloseConfirmation }
+    self.surfaceBindingActionPerformer = surfaceBindingActionPerformer ?? { $0.performBindingAction($1) }
     self.worktree = worktree
     self.pendingSetupScript = runSetupScript
     self.tabManager = TerminalTabManager()
@@ -831,7 +834,7 @@ final class WorktreeTerminalState {
     if action == "close_surface" {
       pendingExplicitSurfaceCloseIDs.insert(surface.id)
     }
-    surface.performBindingAction(action)
+    surfaceBindingActionPerformer(surface, action)
   }
 
   @discardableResult
@@ -893,13 +896,13 @@ final class WorktreeTerminalState {
       tabManager.tabs.contains(where: { $0.id == requested })
     }
     guard !existingTabIDs.isEmpty else { return false }
+    guard pendingCloseConfirmation == nil else { return true }
 
     @Shared(.settingsFile) var settingsFile
     let needsConfirmation =
       settingsFile.global.confirmCloseSurface
       && existingTabIDs.contains(where: tabNeedsCloseConfirmation)
     if needsConfirmation {
-      cancelPendingClose()
       pendingCloseConfirmation = .tabs(existingTabIDs)
     } else {
       for tabId in existingTabIDs {
@@ -2656,13 +2659,19 @@ final class WorktreeTerminalState {
 
   private func handleCloseRequest(for view: GhosttySurfaceView, needsConfirmation: Bool) {
     guard surfaces[view.id] === view else { return }
+    let isExplicitClose = pendingExplicitSurfaceCloseIDs.contains(view.id)
+    if isExplicitClose, pendingCloseConfirmation != nil {
+      if pendingCloseConfirmation != .surface(view.id) {
+        pendingExplicitSurfaceCloseIDs.remove(view.id)
+      }
+      return
+    }
+
     @Shared(.settingsFile) var settingsFile
     if needsConfirmation,
-      pendingExplicitSurfaceCloseIDs.contains(view.id),
+      isExplicitClose,
       settingsFile.global.confirmCloseSurface
     {
-      cancelPendingClose()
-      pendingExplicitSurfaceCloseIDs.insert(view.id)
       pendingCloseConfirmation = .surface(view.id)
       return
     }

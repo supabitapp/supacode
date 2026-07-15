@@ -1131,7 +1131,11 @@ struct WorktreeTerminalManagerTests {
   @Test(.dependencies) func explicitSurfaceCloseConfirmsWhenProcessNeedsConfirmation() {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseSurface = true }
-    let state = WorktreeTerminalState(runtime: GhosttyRuntime(), worktree: makeWorktree())
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     guard let tabId = state.createTab(focusing: true),
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
     else {
@@ -1165,7 +1169,11 @@ struct WorktreeTerminalManagerTests {
   @Test(.dependencies) func confirmedSplitSurfaceCloseRemovesOnlyTargetPane() {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseSurface = true }
-    let state = WorktreeTerminalState(runtime: GhosttyRuntime(), worktree: makeWorktree())
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     guard let tabId = state.createTab(focusing: true),
       let initialSurface = state.splitTree(for: tabId).root?.leftmostLeaf()
     else {
@@ -1193,10 +1201,55 @@ struct WorktreeTerminalManagerTests {
     #expect(state.splitTree(for: tabId).leaves().map(\.id) == [initialSurface.id])
   }
 
+  @Test(.dependencies) func secondSurfaceCloseDoesNotRetargetPendingConfirmation() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
+    guard let tabId = state.createTab(focusing: true),
+      let initialSurface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    #expect(state.performSplitAction(.newSplit(direction: .right), for: initialSurface.id))
+    let leaves = state.splitTree(for: tabId).leaves()
+    guard leaves.count == 2 else {
+      Issue.record("Expected a split tab")
+      return
+    }
+    let secondSurface = leaves[1]
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: secondSurface.id))
+    secondSurface.bridge.closeSurface(processAlive: true)
+    #expect(state.pendingCloseConfirmation == .surface(secondSurface.id))
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: initialSurface.id))
+    initialSurface.bridge.closeSurface(processAlive: true)
+    #expect(state.pendingCloseConfirmation == .surface(secondSurface.id))
+
+    state.confirmPendingClose()
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(state.hasTab(tabId))
+    #expect(state.splitTree(for: tabId).leaves().map(\.id) == [initialSurface.id])
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: initialSurface.id))
+    initialSurface.bridge.closeSurface(processAlive: true)
+    #expect(state.pendingCloseConfirmation == .surface(initialSurface.id))
+    state.cancelPendingClose()
+  }
+
   @Test(.dependencies) func explicitIdleSurfaceCloseSkipsConfirmation() {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseSurface = true }
-    let state = WorktreeTerminalState(runtime: GhosttyRuntime(), worktree: makeWorktree())
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     guard let tabId = state.createTab(focusing: true),
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
     else {
@@ -1213,7 +1266,11 @@ struct WorktreeTerminalManagerTests {
   @Test(.dependencies) func disabledSettingClosesRunningSurfaceWithoutConfirmation() {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseSurface = false }
-    let state = WorktreeTerminalState(runtime: GhosttyRuntime(), worktree: makeWorktree())
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     guard let tabId = state.createTab(focusing: true),
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
     else {
@@ -1465,7 +1522,11 @@ struct WorktreeTerminalManagerTests {
     // host-side session dies alongside the local one.
     let probe = ZmxTestProbe(listing: [])
     let worktree = makeRemoteWorktree()
-    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let manager = makeZmxBackedManager(
+      probe: probe,
+      worktree: worktree,
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     let state = manager.state(for: worktree)
     guard let tabID = state.createTab(focusing: true),
       let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
@@ -1491,7 +1552,11 @@ struct WorktreeTerminalManagerTests {
     $settingsFile.withLock { $0.global.confirmCloseSurface = true }
     let probe = ZmxTestProbe(listing: [])
     let worktree = makeRemoteWorktree()
-    let manager = makeZmxBackedManager(probe: probe, worktree: worktree)
+    let manager = makeZmxBackedManager(
+      probe: probe,
+      worktree: worktree,
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     let state = manager.state(for: worktree)
     guard let tabID = state.createTab(focusing: true),
       let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
@@ -1956,7 +2021,10 @@ struct WorktreeTerminalManagerTests {
 
   @Test func explicitExitedZmxSurfaceCloseDoesNotRecoverLiveSession() async {
     let probe = ZmxTestProbe(listing: [])
-    let manager = makeZmxBackedManager(probe: probe)
+    let manager = makeZmxBackedManager(
+      probe: probe,
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: false),
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
@@ -1984,7 +2052,10 @@ struct WorktreeTerminalManagerTests {
 
   @Test func closeSurfaceBindingActionDoesNotRecoverLiveSession() async {
     let probe = ZmxTestProbe(listing: [])
-    let manager = makeZmxBackedManager(probe: probe)
+    let manager = makeZmxBackedManager(
+      probe: probe,
+      surfaceBindingActionPerformer: { _, _ in }
+    )
     let state = manager.state(for: makeWorktree())
     guard let tabId = state.createTab(focusing: false),
       let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
@@ -3064,7 +3135,11 @@ struct WorktreeTerminalManagerTests {
   /// `worktree` seeds the pre-created state INSIDE the dependency scope, so
   /// its `@Dependency(\.zmxClient)` captures the probe-backed client. Tests
   /// must fetch the state with the same worktree id.
-  private func makeZmxBackedManager(probe: ZmxTestProbe, worktree: Worktree? = nil) -> WorktreeTerminalManager {
+  private func makeZmxBackedManager(
+    probe: ZmxTestProbe,
+    worktree: Worktree? = nil,
+    surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)? = nil
+  ) -> WorktreeTerminalManager {
     let zmxURL = makeFakeZmxBinary()
 
     return withDependencies {
@@ -3076,7 +3151,10 @@ struct WorktreeTerminalManagerTests {
         listSessionsWithClients: { await probe.listSessionsWithClients() },
       )
     } operation: {
-      let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+      let manager = WorktreeTerminalManager(
+        runtime: GhosttyRuntime(),
+        surfaceBindingActionPerformer: surfaceBindingActionPerformer
+      )
       _ = manager.state(for: worktree ?? makeWorktree())
       return manager
     }
