@@ -270,7 +270,8 @@ private struct CommandPaletteRowView: View {
       .ghosttyCommand,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
       .copyCiFailureLogs,
-      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect:
+      .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect,
+      .customizeRepositoryAppearance, .customizeWorktreeAppearance:
       return nil
     case .removeWorktree:
       return "Remove"
@@ -331,6 +332,8 @@ private struct CommandPaletteRowView: View {
       return "archivebox"
     case .renameBranch:
       return "pencil"
+    case .customizeRepositoryAppearance, .customizeWorktreeAppearance:
+      return "paintbrush"
     case .runScript(let definition):
       return definition.resolvedSystemImage
     case .stopScript:
@@ -354,7 +357,7 @@ private struct CommandPaletteRowView: View {
       return true
     case .worktreeSelect, .removeWorktree, .archiveWorktree:
       return false
-    case .renameBranch:
+    case .renameBranch, .customizeRepositoryAppearance, .customizeWorktreeAppearance:
       return true
     case .runScript, .stopScript:
       return true
@@ -371,9 +374,12 @@ private struct CommandPaletteRowView: View {
     return AnyShapeStyle(tint.color)
   }
 
-  /// Worktree-switcher repo-subtitle tint (else secondary), matching the sidebar.
+  /// Subtitle tint matching the sidebar: the switcher's repo tint, else a
+  /// customize action's target tint, else secondary.
   private var subtitleForegroundStyle: AnyShapeStyle {
-    guard let tint = row.worktreeStyle?.repoTint else { return AnyShapeStyle(.secondary) }
+    guard let tint = row.worktreeStyle?.repoTint ?? row.subtitleTint else {
+      return AnyShapeStyle(.secondary)
+    }
     return AnyShapeStyle(tint.color)
   }
 
@@ -488,6 +494,8 @@ private struct CommandPaletteRowView: View {
       base = "Archive \(row.title)"
     case .renameBranch:
       base = "Rename the local branch for this worktree"
+    case .customizeRepositoryAppearance, .customizeWorktreeAppearance:
+      base = "Set a custom title or color"
     case .openPullRequest:
       base = "Open pull request on GitHub"
     case .markPullRequestReady:
