@@ -299,7 +299,10 @@ struct GitClientCloneStreamInvocationTests {
     }
 
     let snapshot = recorder.snapshot()
-    #expect(snapshot.executableURL?.path == "/usr/bin/env")
+    // The clone runs through the PATH-augmenting `/bin/sh` wrapper so `git` can
+    // find `git-lfs` during the checkout smudge filter (#663).
+    #expect(snapshot.executableURL?.path == "/bin/sh")
+    #expect(snapshot.arguments.contains { $0.contains("export PATH=") })
     #expect(snapshot.arguments.contains("GIT_TERMINAL_PROMPT=0"))
     let gitIndex = try #require(snapshot.arguments.firstIndex(of: "git"))
     #expect(

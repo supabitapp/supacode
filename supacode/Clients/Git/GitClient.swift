@@ -586,15 +586,19 @@ struct GitClient {
             baseRef: baseRef,
             directoryOverride: directoryOverride
           )
-          let envURL = URL(fileURLWithPath: "/usr/bin/env")
           let localeArguments = ["LANG=C", "LC_ALL=C", "LC_MESSAGES=C"]
-          let invocationArguments = localeArguments + [wtURL.path(percentEncoded: false)] + arguments
-          let command = ([envURL.path(percentEncoded: false)] + invocationArguments).joined(separator: " ")
+          let baseCommand =
+            ["/usr/bin/env"] + localeArguments
+            + [wtURL.path(percentEncoded: false)] + arguments
+          let command = baseCommand.joined(separator: " ")
+          // `git worktree add` checks out the working tree, which runs the LFS
+          // smudge filter; augment PATH so `git` can find `git-lfs` (#663).
+          let invocation = Self.pathAugmentedInvocation(command: baseCommand)
           var pathLine: String?
           do {
             for try await streamEvent in shell.runLoginStream(
-              envURL,
-              invocationArguments,
+              invocation.executable,
+              invocation.arguments,
               repoRoot
             ) {
               switch streamEvent {
@@ -667,7 +671,6 @@ struct GitClient {
       let destinationHadContent = Self.destinationHasContent(at: destinationURL)
       let arguments = Self.cloneArguments(
         repositoryURL: repositoryURL, destination: destinationURL, branch: branch, depth: depth)
-      let envURL = URL(fileURLWithPath: "/usr/bin/env")
       // `GIT_TERMINAL_PROMPT=0` suppresses git's own HTTPS prompt; the ssh command
       // fails fast on a passphrase / host-key prompt and a stalled connect instead
       // of hanging the modal with no tty to answer.
@@ -677,18 +680,21 @@ struct GitClient {
         "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new",
         "git",
       ]
-      let invocationArguments = environmentArguments + arguments
+      let baseCommand = ["/usr/bin/env"] + environmentArguments + arguments
       // Redact the url userinfo (token / password) from everything shown to the
       // user. Match the credential substring, not the whole url, so it survives
       // git's url normalization in echoed auth-failure messages.
       let credentials = Self.cloneCredentials(of: repositoryURL)
       let command = Self.redacting(
-        ([envURL.path(percentEncoded: false)] + invocationArguments).joined(separator: " "),
+        baseCommand.joined(separator: " "),
         credentials: credentials
       )
+      // Cloning an LFS repo checks out the working tree, which runs the LFS
+      // smudge filter; augment PATH so `git` can find `git-lfs` (#663).
+      let invocation = Self.pathAugmentedInvocation(command: baseCommand)
       // `log: false` keeps the clone command (and any embedded token) out of the
       // shell debug log.
-      let process = shell.runLoginProcess(envURL, invocationArguments, nil, log: false)
+      let process = shell.runLoginProcess(invocation.executable, invocation.arguments, nil, log: false)
       let cancelRequested = LockIsolated(false)
       // Drain to completion even after the consumer cancels so partial-clone
       // cleanup runs after git exits rather than racing its teardown.
@@ -736,6 +742,35 @@ struct GitClient {
         process.terminate()
       }
     }
+  }
+
+  /// Well-known fixed directories where `git-lfs` and similar PATH-based git
+  /// filter helpers install, appended to PATH so a non-interactive login shell
+  /// that misses them can still run the LFS smudge filter (#663). The per-user
+  /// `~/.local/bin` is added separately so it resolves on the execution host.
+  nonisolated static func gitFilterHelperDirectories() -> [String] {
+    [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/opt/local/bin",
+    ]
+  }
+
+  /// Wraps `command` so `directories` and the execution host's `~/.local/bin`
+  /// are appended to the caller login shell's PATH, then execs it in place:
+  /// appending keeps an rc-resolvable helper's precedence, and `exec` keeps a
+  /// single pid so termination still targets `git`.
+  nonisolated static func pathAugmentedInvocation(
+    command: [String],
+    directories: [String] = gitFilterHelperDirectories()
+  ) -> (executable: URL, arguments: [String]) {
+    // The fixed dirs are single-quoted literals; `$HOME/.local/bin` is left for
+    // the executing shell to expand so a remote host uses its own HOME (and it
+    // is dropped when HOME is unset). `${PATH:+$PATH:}` avoids a leading colon
+    // that would otherwise put the cwd on PATH.
+    let fixed = SSHCommand.shellQuote(directories.joined(separator: ":"))
+    let script = "export PATH=\"${PATH:+$PATH:}\"\(fixed)\"${HOME:+:$HOME/.local/bin}\"; exec \"$@\""
+    return (URL(fileURLWithPath: "/bin/sh"), ["-c", script, "sh"] + command)
   }
 
   /// `git clone` argv. The url and destination travel as positional arguments
