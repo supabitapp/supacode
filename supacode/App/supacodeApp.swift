@@ -587,7 +587,7 @@ struct SupacodeApp: App {
     MenuBarExtra(isInserted: menuBarInserted) {
       MenuBarNotificationsMenu(store: store)
     } label: {
-      MenuBarNotificationsLabel(store: store)
+      MenuBarNotificationsLabel(unreadCount: store.notificationIndicatorCount)
     }
     // `.window`, not `.menu`: a native menu item can't host the sidebar row's
     // dots, agent badges, and diff stats. The panel is styled to read like a menu.

@@ -673,6 +673,9 @@ struct AppFeature {
             await terminalClient.send(.setNotificationsEnabled(settings.inAppNotificationsEnabled))
           },
           .run { _ in
+            await terminalClient.send(.enforceNotificationRetentionLimit)
+          },
+          .run { _ in
             await terminalClient.send(.refreshTabBarVisibility)
           },
         ]
@@ -1532,7 +1535,7 @@ struct AppFeature {
         state.notificationIndicatorCount = count
         return .run { _ in
           await MainActor.run {
-            NSApplication.shared.dockTile.badgeLabel = nil
+            NSApplication.shared.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
           }
         }
 

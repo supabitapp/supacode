@@ -16,6 +16,7 @@ struct MenuBarNotificationsMenu: View {
 
   var body: some View {
     let sections = store.repositories.menuBarSectionsCache
+    let unreadCount = store.notificationIndicatorCount
     let repositories = store.scope(state: \.repositories, action: \.repositories)
     // The session list scrolls once it outgrows the screen so the action rows
     // below stay reachable; the action rows never scroll, exactly like a menu.
@@ -38,7 +39,12 @@ struct MenuBarNotificationsMenu: View {
         }
       }
       MenuBarDivider()
-      MenuBarActionRow(title: "Mark Unread Notifications as Read", isEnabled: sections.hasUnread) {
+      MenuBarActionRow(
+        title: unreadCount > 0
+          ? "Mark \(unreadCount) Unread Notification\(unreadCount == 1 ? "" : "s") as Read"
+          : "Mark Unread Notifications as Read",
+        isEnabled: unreadCount > 0
+      ) {
         dismissMenuBarExtra()
         store.send(.markAllNotificationsRead)
       }
@@ -306,30 +312,28 @@ extension View {
   }
 }
 
-/// Status item label: the app icon's "SC" monogram with a red dot while
-/// anything is unread.
+/// Status item label: the app icon's "SC" monogram plus the unread count. A
+/// status item renders only an image and text, so the count is text, not a
+/// badge; the glyph is template-rendered so it tints to the menu bar.
 struct MenuBarNotificationsLabel: View {
-  let store: StoreOf<AppFeature>
+  let unreadCount: Int
 
   var body: some View {
-    let hasUnread = store.repositories.menuBarSectionsCache.hasUnread
-    HStack {
-      // The glyph is lifted from the app icon so the monogram matches its
-      // typeface; template rendering tints its white fill to the menu bar's
-      // label color instead of leaving it white-on-white. The asset bakes in
-      // SF-Symbol-like margins, so it fills the menu bar height as-is.
+    Label {
+      Text(unreadCount > 0 ? "\(unreadCount)" : "")
+        .monospacedDigit()
+    } icon: {
       Image("MenuBarSC")
         .renderingMode(.template)
         .resizable()
         .aspectRatio(contentMode: .fit)
         .frame(maxHeight: .infinity)
-      if hasUnread {
-        Circle()
-          .fill(.orange)
-          .frame(width: 5, height: 5)
-          .fixedSize()
-      }
     }
-    .accessibilityLabel(hasUnread ? "Supacode, unread notifications" : "Supacode")
+    .labelStyle(.titleAndIcon)
+    .accessibilityLabel(
+      unreadCount > 0
+        ? "Supacode, \(unreadCount) unread notification\(unreadCount == 1 ? "" : "s")"
+        : "Supacode"
+    )
   }
 }
