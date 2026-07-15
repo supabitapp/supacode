@@ -50,32 +50,40 @@ final class WorktreeTerminalState {
     let isFocused: Bool
   }
   enum PendingCloseConfirmation: Equatable {
-    case surface(UUID)
+    case surface(UUID, closesTab: Bool)
     case tabs([TerminalTabID])
 
     var title: String {
       switch self {
-      case .surface:
-        return "Close Terminal?"
+      case .surface(_, closesTab: false):
+        return "Close Pane?"
+      case .surface(_, closesTab: true):
+        return "Close Tab?"
+      case .tabs(let tabIDs) where tabIDs.count == 1:
+        return "Close Tab?"
       case .tabs(let tabIDs):
-        return tabIDs.count == 1 ? "Close Tab?" : "Close \(tabIDs.count) Tabs?"
+        return "Close \(tabIDs.count) Tabs?"
       }
     }
 
     var actionTitle: String {
       switch self {
-      case .surface:
-        return "Close Terminal"
-      case .tabs(let tabIDs):
-        return tabIDs.count == 1 ? "Close Tab" : "Close Tabs"
+      case .surface(_, closesTab: false):
+        return "Close Pane"
+      case .surface(_, closesTab: true):
+        return "Close Tab"
+      case .tabs(let tabIDs) where tabIDs.count == 1:
+        return "Close Tab"
+      case .tabs:
+        return "Close Tabs"
       }
     }
 
     var message: String {
       switch self {
-      case .surface:
-        return "The terminal still has a running process. Closing it will terminate the process."
-      case .tabs:
+      case .surface(_, closesTab: false):
+        return "The pane still has a running process. Closing it will terminate the process."
+      case .surface(_, closesTab: true), .tabs:
         return "One or more processes are still running. Closing will terminate them."
       }
     }
@@ -862,7 +870,7 @@ final class WorktreeTerminalState {
     guard let pending = pendingCloseConfirmation else { return }
     pendingCloseConfirmation = nil
     switch pending {
-    case .surface(let surfaceID):
+    case .surface(let surfaceID, _):
       guard let surface = surfaces[surfaceID] else { return }
       completeCloseRequest(for: surface)
     case .tabs(let tabIDs):
@@ -873,7 +881,7 @@ final class WorktreeTerminalState {
   }
 
   func cancelPendingClose() {
-    if case .surface(let surfaceID)? = pendingCloseConfirmation {
+    if case .surface(let surfaceID, _)? = pendingCloseConfirmation {
       pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     }
     pendingCloseConfirmation = nil
@@ -2264,7 +2272,9 @@ final class WorktreeTerminalState {
   /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
   /// instant so a future surface ID can't reuse stale dedupe state.
   private func discardSurfaceBookkeeping(for surfaceID: UUID) {
-    if pendingCloseConfirmation == .surface(surfaceID) {
+    if case .surface(let pendingSurfaceID, _)? = pendingCloseConfirmation,
+      pendingSurfaceID == surfaceID
+    {
       pendingCloseConfirmation = nil
     }
     pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
@@ -2591,9 +2601,10 @@ final class WorktreeTerminalState {
       pendingExplicitSurfaceCloseIDs.contains(view.id),
       settingsFile.global.confirmCloseSurface
     {
+      let closesTab = tabID(containing: view.id).flatMap { trees[$0] }?.leaves().count == 1
       cancelPendingClose()
       pendingExplicitSurfaceCloseIDs.insert(view.id)
-      pendingCloseConfirmation = .surface(view.id)
+      pendingCloseConfirmation = .surface(view.id, closesTab: closesTab)
       return
     }
     completeCloseRequest(for: view)

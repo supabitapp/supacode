@@ -1070,7 +1070,12 @@ struct WorktreeTerminalManagerTests {
 
     #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
     surface.bridge.closeSurface(processAlive: true)
-    #expect(state.pendingCloseConfirmation == .surface(surface.id))
+    let pending = state.pendingCloseConfirmation
+    #expect(pending == .surface(surface.id, closesTab: true))
+    let tabClose = WorktreeTerminalState.PendingCloseConfirmation.tabs([tabId])
+    #expect(pending?.title == tabClose.title)
+    #expect(pending?.actionTitle == tabClose.actionTitle)
+    #expect(pending?.message == tabClose.message)
     #expect(state.hasTab(tabId))
 
     state.cancelPendingClose()
@@ -1104,7 +1109,10 @@ struct WorktreeTerminalManagerTests {
 
     #expect(state.performBindingAction("close_surface", onSurfaceID: target.id))
     target.bridge.closeSurface(processAlive: true)
-    #expect(state.pendingCloseConfirmation == .surface(target.id))
+    let pending = state.pendingCloseConfirmation
+    #expect(pending == .surface(target.id, closesTab: false))
+    #expect(pending?.title == "Close Pane?")
+    #expect(pending?.actionTitle == "Close Pane")
 
     state.confirmPendingClose()
     #expect(state.pendingCloseConfirmation == nil)
