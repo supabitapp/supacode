@@ -5,17 +5,18 @@ import Testing
 @testable import supacode
 
 struct WellKnownToolDirectoriesTests {
-  @Test func absoluteListCoversMacAndLinuxHomebrewPrefixes() {
+  @Test func absoluteListCoversMacAndLinuxToolPrefixes() {
     let dirs = WellKnownToolDirectories.absolute
-    #expect(dirs.contains("/opt/homebrew/bin"))  // macOS Apple Silicon
-    #expect(dirs.contains("/usr/local/bin"))  // macOS Intel / common
-    #expect(dirs.contains("/home/linuxbrew/.linuxbrew/bin"))  // Linux shared (#671)
+    #expect(dirs.contains("/opt/homebrew/bin"))  // macOS Apple Silicon.
+    #expect(dirs.contains("/usr/local/bin"))  // macOS Intel / common.
+    #expect(dirs.contains("/opt/local/bin"))  // macOS MacPorts.
+    #expect(dirs.contains("/home/linuxbrew/.linuxbrew/bin"))  // Linux shared (#671).
   }
 
   @Test func pathExportPrefixAppendsFixedDirsAfterExistingPath() {
     // Appending (via `${PATH:+$PATH:}`) keeps an rc-resolvable tool's own
     // precedence: the user's PATH comes first, the fixed dirs are a fallback.
-    let prefix = WellKnownToolDirectories.pathExportPrefix()
+    let prefix = WellKnownToolDirectories.pathExportPrefix
     #expect(prefix.hasPrefix("export PATH=\"${PATH:+$PATH:}\""))
     #expect(prefix.hasSuffix("; "))
     let existingPathIndex = prefix.range(of: "${PATH:+$PATH:}")?.lowerBound
@@ -23,22 +24,25 @@ struct WellKnownToolDirectoriesTests {
     #expect(existingPathIndex != nil && brewIndex != nil && existingPathIndex! < brewIndex!)
   }
 
-  @Test func pathExportPrefixGuardsEmptyPathAndUnsetHome() {
-    // `${PATH:+$PATH:}` avoids a leading colon on an empty PATH (which would
-    // silently put the CWD on PATH), and `${HOME:+…}` drops the per-user dirs
-    // when HOME is unset instead of emitting a bare `/.linuxbrew/bin`.
-    let prefix = WellKnownToolDirectories.pathExportPrefix()
-    #expect(prefix.contains("${PATH:+$PATH:}"))
-    #expect(prefix.contains("${HOME:+:$HOME/.linuxbrew/bin:$HOME/.local/bin}"))
-    #expect(!prefix.contains(":$PATH\""))  // no unguarded trailing $PATH form
+  @Test func pathExportPrefixGuardsEmptyPathAndUnsetHome() throws {
+    // Exercise the guards, not just the idioms: run the export under an empty
+    // PATH and unset HOME, then read PATH back. A leading colon would silently
+    // put the CWD on PATH, and a bare `/.linuxbrew/bin` would resolve from root.
+    let prefix = WellKnownToolDirectories.pathExportPrefix
+    let resolved = try Self.runSh(
+      "unset HOME; PATH=''; " + prefix + #"printf '%s' "$PATH""#)
+    #expect(!resolved.hasPrefix(":"))
+    #expect(!resolved.contains(":/.linuxbrew/bin"))
+    #expect(!resolved.contains("$HOME"))  // no per-user dirs survive an unset HOME.
+    #expect(resolved.hasPrefix("/opt/homebrew/bin"))
   }
 
   @Test func pathExportPrefixIsValidPosixSh() throws {
     // `sh -n` catches an unbalanced quote a golden-string rewrite could smuggle
     // in. The prefix must parse both standalone and spliced ahead of a command.
     for script in [
-      WellKnownToolDirectories.pathExportPrefix() + "true",
-      WellKnownToolDirectories.pathExportPrefix() + "command -v zmx >/dev/null 2>&1",
+      WellKnownToolDirectories.pathExportPrefix + "true",
+      WellKnownToolDirectories.pathExportPrefix + "command -v zmx >/dev/null 2>&1",
     ] {
       let check = Process()
       check.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -47,6 +51,19 @@ struct WellKnownToolDirectoriesTests {
       check.waitUntilExit()
       #expect(check.terminationStatus == 0, "not valid sh: \(script)")
     }
+  }
+
+  /// Runs `script` under `/bin/sh -c` and returns its stdout.
+  private static func runSh(_ script: String) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", script]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    try process.run()
+    process.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    return String(bytes: data, encoding: .utf8) ?? ""
   }
 }
 
@@ -546,7 +563,7 @@ struct ZmxAttachRemoteTests {
     #expect(command.contains("-p 2222 alice@box "))
   }
 
-  @Test func remoteKillInvocationGuardsMissingZmxAndRidesProbeOptions() {
+  @Test func remoteKillInvocationGuardsMissingZmxAndRidesProbeOptions() throws {
     let result = ZmxAttach.remoteKillInvocation(
       host: RemoteHost(alias: "box", username: "alice", port: 2222),
       sessionID: "supa-x"
@@ -577,8 +594,14 @@ struct ZmxAttachRemoteTests {
         ),
       ]
     )
-    // Guard the intent directly too: brew PATH precedes the zmx guard.
+    // Guard the intent directly: brew PATH precedes the zmx guard, and the
+    // spliced `-c` script parses as POSIX sh (symmetry with connect/reconnect).
     #expect(killScript.hasPrefix("export PATH="))
-    #expect(killScript.contains("/home/linuxbrew/.linuxbrew/bin"))
+    let check = Process()
+    check.executableURL = URL(fileURLWithPath: "/bin/sh")
+    check.arguments = ["-n", "-c", killScript]
+    try check.run()
+    check.waitUntilExit()
+    #expect(check.terminationStatus == 0, "kill script not valid sh: \(killScript)")
   }
 }
