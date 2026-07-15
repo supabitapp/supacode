@@ -4,6 +4,52 @@ import Testing
 @testable import SupacodeSettingsShared
 @testable import supacode
 
+struct WellKnownToolDirectoriesTests {
+  @Test func absoluteListCoversMacAndLinuxHomebrewPrefixes() {
+    let dirs = WellKnownToolDirectories.absolute
+    #expect(dirs.contains("/opt/homebrew/bin"))  // macOS Apple Silicon
+    #expect(dirs.contains("/usr/local/bin"))  // macOS Intel / common
+    #expect(dirs.contains("/home/linuxbrew/.linuxbrew/bin"))  // Linux shared (#671)
+  }
+
+  @Test func pathExportPrefixAppendsFixedDirsAfterExistingPath() {
+    // Appending (via `${PATH:+$PATH:}`) keeps an rc-resolvable tool's own
+    // precedence: the user's PATH comes first, the fixed dirs are a fallback.
+    let prefix = WellKnownToolDirectories.pathExportPrefix()
+    #expect(prefix.hasPrefix("export PATH=\"${PATH:+$PATH:}\""))
+    #expect(prefix.hasSuffix("; "))
+    let existingPathIndex = prefix.range(of: "${PATH:+$PATH:}")?.lowerBound
+    let brewIndex = prefix.range(of: "/home/linuxbrew/.linuxbrew/bin")?.lowerBound
+    #expect(existingPathIndex != nil && brewIndex != nil && existingPathIndex! < brewIndex!)
+  }
+
+  @Test func pathExportPrefixGuardsEmptyPathAndUnsetHome() {
+    // `${PATH:+$PATH:}` avoids a leading colon on an empty PATH (which would
+    // silently put the CWD on PATH), and `${HOME:+…}` drops the per-user dirs
+    // when HOME is unset instead of emitting a bare `/.linuxbrew/bin`.
+    let prefix = WellKnownToolDirectories.pathExportPrefix()
+    #expect(prefix.contains("${PATH:+$PATH:}"))
+    #expect(prefix.contains("${HOME:+:$HOME/.linuxbrew/bin:$HOME/.local/bin}"))
+    #expect(!prefix.contains(":$PATH\""))  // no unguarded trailing $PATH form
+  }
+
+  @Test func pathExportPrefixIsValidPosixSh() throws {
+    // `sh -n` catches an unbalanced quote a golden-string rewrite could smuggle
+    // in. The prefix must parse both standalone and spliced ahead of a command.
+    for script in [
+      WellKnownToolDirectories.pathExportPrefix() + "true",
+      WellKnownToolDirectories.pathExportPrefix() + "command -v zmx >/dev/null 2>&1",
+    ] {
+      let check = Process()
+      check.executableURL = URL(fileURLWithPath: "/bin/sh")
+      check.arguments = ["-n", "-c", script]
+      try check.run()
+      check.waitUntilExit()
+      #expect(check.terminationStatus == 0, "not valid sh: \(script)")
+    }
+  }
+}
+
 struct RemoteHostTests {
   @Test func bareAliasHasNoUserOrPortOptions() {
     let host = RemoteHost(alias: "devbox")
@@ -248,7 +294,9 @@ struct ZmxAttachRemoteTests {
     // shell) behind the banners, and a failed attach falls through to a
     // fresh default shell with a visible notice instead of an instant close.
     let script = ZmxAttach.remoteConnectScript(makeLaunch())
-    #expect(script.hasPrefix(surfaceExport + "if command -v zmx >/dev/null 2>&1; then "))
+    #expect(
+      script.hasPrefix(
+        surfaceExport + ZmxAttach.brewPathPrefix + "if command -v zmx >/dev/null 2>&1; then "))
     #expect(
       script.contains(
         "zmx attach \(hostSessionID) \"$SHELL\" -l -c "
@@ -306,12 +354,32 @@ struct ZmxAttachRemoteTests {
     )
   }
 
+  @Test func connectScriptPrependsBrewPathAheadOfZmxLookup() {
+    // Regression for issue #671: a non-interactive login shell never sources
+    // the interactive rc file where Homebrew's Linux installer puts
+    // `brew shellenv`, so brew-installed zmx is off PATH. The connect script
+    // must augment PATH with the brew prefixes before `command -v zmx`, and
+    // the surface-id export must still precede it so the session inherits it.
+    let script = ZmxAttach.remoteConnectScript(makeLaunch())
+    #expect(script.contains(ZmxAttach.brewPathPrefix + "if command -v zmx"))
+    let pathIndex = script.range(of: "export PATH=")?.lowerBound
+    let lookupIndex = script.range(of: "command -v zmx")?.lowerBound
+    #expect(pathIndex != nil && lookupIndex != nil && pathIndex! < lookupIndex!)
+    #expect(script.contains("/home/linuxbrew/.linuxbrew/bin"))
+    #expect(script.contains("$HOME/.linuxbrew/bin"))
+    #expect(script.contains("/opt/homebrew/bin"))
+  }
+
   @Test func reconnectScriptReattachesExistingSessionAndNeverRerunsUserCommand() {
     // Reconnects are attach-only: a session that ended while disconnected
     // closes the pane (exit 0, with a notice) instead of re-running a
     // one-shot command. The suffix-anchored grep matches names prefixed by a
     // host-side ZMX_SESSION_PREFIX.
     let script = ZmxAttach.remoteReconnectScript(makeLaunch(userCommand: "./deploy.sh"))
+    // The brew PATH augmentation precedes the zmx lookup here too (issue #671).
+    #expect(
+      script.hasPrefix(
+        surfaceExport + ZmxAttach.brewPathPrefix + "if command -v zmx >/dev/null 2>&1; then "))
     #expect(script.contains("if zmx list --short 2>/dev/null | grep -q '\(hostSessionID)$'; then "))
     #expect(script.contains("exec zmx attach \(hostSessionID)\n"))
     #expect(script.contains(ZmxAttach.sessionEndedNotice + "exit 0\n"))
@@ -483,6 +551,14 @@ struct ZmxAttachRemoteTests {
       host: RemoteHost(alias: "box", username: "alice", port: 2222),
       sessionID: "supa-x"
     )
+    // The `-c` script augments PATH with the brew dirs (#671) before the zmx
+    // guard. Compose the expected argument through the same quoting helpers
+    // rather than hand-escaping: `pathExportPrefix` embeds single quotes, so a
+    // literal golden would be fragile without adding review value.
+    let killScript =
+      ZmxAttach.brewPathPrefix
+      + "command -v zmx >/dev/null 2>&1 || exit 0; zmx kill supa-x; "
+      + "! zmx list --short 2>/dev/null | grep -q 'supa-x$'"
     #expect(result.executableURL == URL(fileURLWithPath: "/usr/bin/ssh"))
     #expect(
       result.arguments == [
@@ -496,10 +572,13 @@ struct ZmxAttachRemoteTests {
         "-p", "2222",
         "alice@box",
         SSHCommand.loginShellWrapped(
-          "'/bin/sh' '-c' 'command -v zmx >/dev/null 2>&1 || exit 0; zmx kill supa-x; "
-            + "! zmx list --short 2>/dev/null | grep -q '\\''supa-x$'\\'''"
+          SSHCommand.remoteCommand(
+            executable: "/bin/sh", arguments: ["-c", killScript], workingDirectory: nil)
         ),
       ]
     )
+    // Guard the intent directly too: brew PATH precedes the zmx guard.
+    #expect(killScript.hasPrefix("export PATH="))
+    #expect(killScript.contains("/home/linuxbrew/.linuxbrew/bin"))
   }
 }

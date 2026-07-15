@@ -554,6 +554,7 @@ nonisolated enum ZmxAttach {
     // `command`: attach can fail AFTER the session started running it, and a
     // second concurrent copy of a one-shot command must never spawn.
     return launch.export
+      + brewPathPrefix
       + "if command -v zmx >/dev/null 2>&1; then "
       + "zmx attach \(launch.sessionID) \(sessionCommand)\n"
       + "supa_rc=$?\n"
@@ -581,6 +582,7 @@ nonisolated enum ZmxAttach {
       return launch.export + reconnectShellNotice + loginShellRun(launch.reconnectFallbackCommand)
     }
     return launch.export
+      + brewPathPrefix
       + "if command -v zmx >/dev/null 2>&1; then "
       + "if zmx list --short 2>/dev/null | grep -q '\(launch.sessionID)$'; then "
       + "exec zmx attach \(launch.sessionID)\n"
@@ -610,13 +612,31 @@ nonisolated enum ZmxAttach {
       // `runProcess` logs.
       arguments: [
         "-c",
-        "command -v zmx >/dev/null 2>&1 || exit 0; zmx kill \(sessionID); "
+        brewPathPrefix
+          + "command -v zmx >/dev/null 2>&1 || exit 0; zmx kill \(sessionID); "
           + "! zmx list --short 2>/dev/null | grep -q '\(sessionID)$'",
       ],
       workingDirectory: nil,
       extraOptions: SSHCommand.backgroundProbeOptions
     )
   }
+
+  /// A `export PATH=…; ` statement that appends the well-known tool
+  /// directories to the wrapper shell's `PATH` before any `zmx` lookup or
+  /// invocation in the remote scripts. Supacode runs remote commands through a
+  /// *non-interactive* login shell (`$SHELL -l -c`, see
+  /// `SSHCommand.loginShellWrapped`), which never sources the interactive rc
+  /// files where Homebrew's Linux installer places `brew shellenv`, so a
+  /// brew-installed `zmx` is off `PATH` even though an interactive SSH session
+  /// finds it — the exact symptom in issue #671. Appending the fixed brew
+  /// prefixes makes detection and the `zmx attach` / `zmx kill` calls resilient
+  /// regardless of where the user placed `brew shellenv`. The created session
+  /// inherits the augmented `PATH` because the export precedes `zmx attach`, so
+  /// brew tools resolve inside the persisted session too. `$HOME` / `$PATH`
+  /// stay unexpanded through the outer login-shell and `/bin/sh -c` quoting
+  /// layers and are expanded only by the inner `/bin/sh` that runs the script,
+  /// where both are already set. See `WellKnownToolDirectories`.
+  static var brewPathPrefix: String { WellKnownToolDirectories.pathExportPrefix() }
 
   /// OSC 8 hyperlink to the zmx site (terminals without OSC 8 support just
   /// render the plain "zmx" text).
