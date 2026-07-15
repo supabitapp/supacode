@@ -554,6 +554,7 @@ nonisolated enum ZmxAttach {
     // `command`: attach can fail AFTER the session started running it, and a
     // second concurrent copy of a one-shot command must never spawn.
     return launch.export
+      + brewPathPrefix
       + "if command -v zmx >/dev/null 2>&1; then "
       + "zmx attach \(launch.sessionID) \(sessionCommand)\n"
       + "supa_rc=$?\n"
@@ -581,6 +582,7 @@ nonisolated enum ZmxAttach {
       return launch.export + reconnectShellNotice + loginShellRun(launch.reconnectFallbackCommand)
     }
     return launch.export
+      + brewPathPrefix
       + "if command -v zmx >/dev/null 2>&1; then "
       + "if zmx list --short 2>/dev/null | grep -q '\(launch.sessionID)$'; then "
       + "exec zmx attach \(launch.sessionID)\n"
@@ -610,13 +612,21 @@ nonisolated enum ZmxAttach {
       // `runProcess` logs.
       arguments: [
         "-c",
-        "command -v zmx >/dev/null 2>&1 || exit 0; zmx kill \(sessionID); "
+        brewPathPrefix
+          + "command -v zmx >/dev/null 2>&1 || exit 0; zmx kill \(sessionID); "
           + "! zmx list --short 2>/dev/null | grep -q '\(sessionID)$'",
       ],
       workingDirectory: nil,
       extraOptions: SSHCommand.backgroundProbeOptions
     )
   }
+
+  /// Appends the well-known tool directories to `PATH` before every `zmx`
+  /// lookup and invocation, so a brew-installed `zmx` that a non-interactive
+  /// login shell misses (#671) still resolves. Prepending the export before
+  /// `zmx attach` also lets the persisted session inherit the augmented `PATH`.
+  /// See `WellKnownToolDirectories`.
+  static var brewPathPrefix: String { WellKnownToolDirectories.pathExportPrefix }
 
   /// OSC 8 hyperlink to the zmx site (terminals without OSC 8 support just
   /// render the plain "zmx" text).
