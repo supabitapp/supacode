@@ -12,6 +12,7 @@ struct WorktreeStatusInspectorContainer: View {
   let repositoriesStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
+  let onSelectSurface: (Worktree.ID, UUID) -> Void
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
@@ -28,7 +29,8 @@ struct WorktreeStatusInspectorContainer: View {
         WorktreeNotificationsInspectorView(
           repositoriesStore: repositoriesStore,
           terminalManager: terminalManager,
-          onSelectNotification: onSelectNotification
+          onSelectNotification: onSelectNotification,
+          onSelectSurface: onSelectSurface
         )
       }
     }
@@ -407,12 +409,14 @@ struct WorktreeNotificationsInspectorView: View {
   let repositoriesStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
+  let onSelectSurface: (Worktree.ID, UUID) -> Void
 
   var body: some View {
     let groups = repositoriesStore.toolbarNotificationGroupsCache
     NotificationsInspectorContent(
       groups: groups,
       onSelectNotification: onSelectNotification,
+      onSelectSurface: onSelectSurface,
       onDismissAll: {
         for repositoryGroup in groups {
           for worktreeGroup in repositoryGroup.worktrees {
@@ -428,10 +432,12 @@ struct WorktreeNotificationsInspectorView: View {
 private struct NotificationsInspectorContent: View {
   let groups: [ToolbarNotificationRepositoryGroup]
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
+  let onSelectSurface: (Worktree.ID, UUID) -> Void
   let onDismissAll: () -> Void
 
   var body: some View {
     let count = groups.reduce(0) { $0 + $1.notificationCount }
+    let unseenCount = groups.flatMap(\.worktrees).reduce(0) { $0 + $1.unseenNotificationCount }
     VStack(spacing: 0) {
       HStack {
         Text("Notifications")
@@ -439,7 +445,7 @@ private struct NotificationsInspectorContent: View {
         Spacer()
         Button("Dismiss All", action: onDismissAll)
           .buttonStyle(.borderless)
-          .disabled(count == 0)
+          .disabled(count == 0 && unseenCount == 0)
           .help("Dismiss all notifications.")
       }
       .padding(.horizontal)
@@ -454,30 +460,37 @@ private struct NotificationsInspectorContent: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        // One clock for every relative timestamp, ticking each minute.
-        TimelineView(.everyMinute) { context in
-          Form {
-            ForEach(groups) { repository in
-              ForEach(repository.worktrees) { worktree in
-                Section {
-                  ForEach(worktree.notifications) { notification in
-                    NotificationRow(
-                      notification: notification,
-                      worktreeID: worktree.id,
-                      now: context.date,
-                      onSelect: onSelectNotification
-                    )
-                  }
-                } header: {
-                  NotificationWorktreeHeader(repository: repository, worktree: worktree)
+        // `List` virtualizes rows (NSTableView), so a large backlog builds only
+        // the on-screen rows on open, never the whole log or its markdown bodies.
+        List {
+          ForEach(groups) { repository in
+            ForEach(repository.worktrees) { worktree in
+              Section {
+                ForEach(worktree.notifications) { notification in
+                  NotificationRow(
+                    notification: notification,
+                    worktreeID: worktree.id,
+                    onSelect: onSelectNotification
+                  )
                 }
+                // Unread whose notifications the cap pruned still needs a way
+                // back to the surface, so synthesize a row per orphaned surface.
+                ForEach(worktree.prunedUnseenSurfaces) { surface in
+                  PrunedNotificationRow(
+                    surface: surface,
+                    worktreeID: worktree.id,
+                    onSelect: onSelectSurface
+                  )
+                }
+              } header: {
+                NotificationWorktreeHeader(repository: repository, worktree: worktree)
               }
             }
           }
-          .formStyle(.grouped)
-          // Let the window's terminal background (set in WindowChromeApplier) show through.
-          .scrollContentBackground(.hidden)
         }
+        .listStyle(.inset)
+        // Let the window's terminal background (set in WindowChromeApplier) show through.
+        .scrollContentBackground(.hidden)
       }
     }
   }
@@ -493,8 +506,20 @@ private struct NotificationWorktreeHeader: View {
     HStack(spacing: 5) {
       if repository.isFolder {
         Image(systemName: "folder")
-          .foregroundStyle(repositoryStyle)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .frame(width: 14, height: 14)
+          .foregroundStyle(.secondary)
           .accessibilityHidden(true)
+      } else {
+        Image(worktree.pullRequestIcon.assetName)
+          .renderingMode(.template)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .frame(width: 14, height: 14)
+          .foregroundStyle(worktree.pullRequestIcon.color)
+          .help(worktree.pullRequestIcon.statusDescription)
+          .accessibilityLabel(worktree.pullRequestIcon.statusDescription)
       }
       // Repo keeps layout priority so the colored tag doesn't truncate first,
       // mirroring the sidebar highlight subtitle.
@@ -522,7 +547,6 @@ private struct NotificationWorktreeHeader: View {
 private struct NotificationRow: View {
   let notification: WorktreeTerminalNotification
   let worktreeID: Worktree.ID
-  let now: Date
   let onSelect: (Worktree.ID, WorktreeTerminalNotification) -> Void
 
   var body: some View {
@@ -543,9 +567,13 @@ private struct NotificationRow: View {
               .foregroundStyle(notification.isRead ? Color.secondary : Color.primary)
               .lineLimit(1)
             Spacer(minLength: 6)
-            Text(Self.relativeTime(notification.createdAt, now: now))
+            // Self-updating relative time; no shared clock needed, so a row's
+            // markdown body is never re-parsed just to advance the timestamp.
+            Text(notification.createdAt, style: .relative)
               .font(.caption)
               .foregroundStyle(.tertiary)
+              .lineLimit(1)
+              .fixedSize()
             // Unread indicator, matching the sidebar; reserves space when read so rows align.
             Circle()
               .fill(notification.isRead ? AnyShapeStyle(.clear) : AnyShapeStyle(.orange))
@@ -561,6 +589,7 @@ private struct NotificationRow: View {
           }
         }
       }
+      .padding(.vertical, 4)
       .contentShape(.rect)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -574,10 +603,51 @@ private struct NotificationRow: View {
       options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
     )) ?? AttributedString(string)
   }
+}
 
-  private static func relativeTime(_ date: Date, now: Date) -> String {
-    guard now.timeIntervalSince(date) >= 60 else { return "now" }
-    return date.formatted(.relative(presentation: .named, unitsStyle: .narrow))
+/// Synthesized row for a surface whose unread notifications the cap already
+/// pruned from the log. Keeps the unread reachable: tapping focuses the surface.
+private struct PrunedNotificationRow: View {
+  let surface: WorktreeUnseenSurface
+  let worktreeID: Worktree.ID
+  let onSelect: (Worktree.ID, UUID) -> Void
+
+  var body: some View {
+    Button {
+      onSelect(worktreeID, surface.id)
+    } label: {
+      HStack(alignment: .top, spacing: 10) {
+        NotificationSourceIcon(agent: nil)
+          .padding(.top, 1)
+        VStack(alignment: .leading, spacing: 2) {
+          HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title)
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(.primary)
+              .lineLimit(1)
+            Spacer(minLength: 6)
+            Circle()
+              .fill(.orange)
+              .frame(width: 6, height: 6)
+              .accessibilityHidden(true)
+          }
+          Text("Cleared per your Notification settings.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+      .padding(.vertical, 4)
+      .contentShape(.rect)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .buttonStyle(.plain)
+    .help("Select worktree and focus terminal.")
+  }
+
+  private var title: String {
+    surface.count == 1 ? "1 unread notification" : "\(surface.count) unread notifications"
   }
 }
 
