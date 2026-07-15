@@ -950,17 +950,65 @@ struct AppFeatureCommandAckTests {
 
   // MARK: - worktree archive.
 
-  @Test(.dependencies) func archiveSocketDeeplinkResolvesAfterArchiving() async {
+  @Test(.dependencies) func archiveSocketDeeplinkResolvesOnApply() async {
     let worktree = makeWorktree()
-    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
-    $repositorySettings.withLock { $0.archiveScript = "echo archive" }
-    defer { $repositorySettings.withLock { $0.archiveScript = "" } }
-    let store = makeStore(worktree: worktree, tabExists: true, reconcileSidebar: true) {
+    // `@Shared(.repositorySettings)` is process-global; reset the archive script so
+    // the flow runs straight to apply instead of a leaked blocking script.
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "" }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
       $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
     }
+    store.exhaustivity = .off
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }
 
+    // `.cliOnly` (default) bypasses for a socket command, so the archive runs
+    // straight through (empty archive script -> apply) and drains ok.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    await store.receive(\.repositories.archiveWorktreeApplied)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkResolvesAfterArchiving() async {
+    let worktree = makeWorktree()
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "echo archive" }
+    defer { $settings.withLock { $0.archiveScript = "" } }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    // A non-empty archive script parks the socket ack through the `.archiving`
+    // lifecycle; the script's success then applies and drains the ack ok.
     await store.send(
       .deeplink(
         .worktree(id: worktree.id, action: .archive),
@@ -974,29 +1022,31 @@ struct AppFeatureCommandAckTests {
     await store.skipReceivedActions()
 
     await store.send(
-      .repositories(
-        .archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)
-      )
-    )
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
     await store.skipReceivedActions()
     await store.finish()
 
     #expect(store.state.repositories.isWorktreeArchived(worktree.id))
-    let ackResolved = store.state.pendingCommandAcks.isEmpty
-    #expect(ackResolved)
-    guard ackResolved else {
-      close(writeFD)
-      return
-    }
+    #expect(store.state.pendingCommandAcks.isEmpty)
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
   }
 
   @Test(.dependencies) func archiveSocketDeeplinkFailsOnScriptCancellation() async {
     let worktree = makeWorktree()
-    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
-    $repositorySettings.withLock { $0.archiveScript = "echo archive" }
-    defer { $repositorySettings.withLock { $0.archiveScript = "" } }
-    let store = makeStore(worktree: worktree, tabExists: true, reconcileSidebar: true)
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "echo archive" }
+    defer { $settings.withLock { $0.archiveScript = "" } }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }
 
@@ -1011,11 +1061,9 @@ struct AppFeatureCommandAckTests {
     await store.receive(\.repositories.archiveWorktreeConfirmed)
     await store.skipReceivedActions()
 
+    // A cancelled script (nil exit) has no apply to follow, so the ack drains failed.
     await store.send(
-      .repositories(
-        .archiveScriptCompleted(worktreeID: worktree.id, exitCode: nil, tabId: nil)
-      )
-    )
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: nil, tabId: nil)))
     await store.skipReceivedActions()
     await store.finish()
 
@@ -1024,20 +1072,391 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
   }
 
-  @Test(.dependencies) func archiveSocketConfirmationCancelDrainsAck() async {
+  @Test(.dependencies) func archiveAckResolvesOnApplied() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    await store.store.send(.repositories(.archiveWorktreeApplied("/tmp/repo/wt-1")))
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(store.readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveAckFailsOnApplyFailed() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    await store.store.send(.repositories(.archiveWorktreeApplyFailed("/tmp/repo/wt-1")))
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(store.readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveAckFailsOnScriptFailure() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    // A non-zero archive script exit has no apply to follow, so the ack drains as
+    // a failure now (nil would be a cancellation, also a failure).
+    await store.store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: "/tmp/repo/wt-1", exitCode: 1, tabId: nil)))
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    let response = readPipeJSON(store.readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect((response?["error"] as? String)?.isEmpty == false)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkParksFDThenResolvesOnConfirm() async {
     let worktree = makeWorktree()
-    var repositories = makeRepositoriesState(worktree: worktree)
-    repositories.reconcileSidebarForTesting()
-    var settings = SettingsFeature.State()
-    settings.automatedActionPolicy = .never
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repoSettings
+    $repoSettings.withLock { $0.archiveScript = "" }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    var appState = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    appState.settings.automatedActionPolicy = .never
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    // A prompting policy parks the fd on the dialog and registers no ack yet.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == writeFD)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+
+    // Confirming re-dispatches with bypass and holds the ack until the archive lands.
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(
+        .deeplinkInputConfirmation(
+          .presented(.delegate(.confirm(worktreeID: worktree.id, action: .archive, alwaysAllow: false)))))
+    }
+    await store.receive(\.repositories.archiveWorktreeApplied)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkCancelDrainsFailure() async {
+    let worktree = makeWorktree()
+    var appState = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree), settings: SettingsFeature.State())
+    appState.settings.automatedActionPolicy = .never
+    let store = TestStore(initialState: appState) { AppFeature() }
+    store.exhaustivity = .off
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    #expect(store.state.deeplinkInputConfirmation?.responseFD == writeFD)
+
+    await withKnownIssue("TCA @Presents dismiss tracking") {
+      await store.send(.deeplinkInputConfirmation(.presented(.delegate(.cancel))))
+    }
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+    #expect(store.state.repositories.archivedWorktreeIDs.isEmpty)
+  }
+
+  @Test(.dependencies) func alreadyArchivedSocketDeeplinkAcksSuccessWithoutDialog() async {
+    let worktree = makeWorktree()
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.$sidebar.withLock { sidebar in
+      sidebar.archive(
+        worktree: worktree.id, in: "/tmp/repo", from: .unpinned,
+        at: Date(timeIntervalSince1970: 1))
+    }
     let store = TestStore(
-      initialState: AppFeature.State(repositories: repositories, settings: settings)
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
     ) {
       AppFeature()
     }
     store.exhaustivity = .off
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }
+
+    // Already archived: no dialog, no parked ack, immediate success.
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .archive),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    await store.finish()
+
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveConfirmedRepoMissingDrainsFailure() async {
+    let store = makeArchiveAckStore(worktree: makeWorktree())
+    defer { close(store.readFD) }
+
+    // Repository lookup fails: the confirmed handler must resolve the ack, not strand it.
+    await store.store.send(.repositories(.archiveWorktreeConfirmed("/tmp/repo/wt-1", "/does/not/exist")))
+    await store.store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.store.finish()
+
+    #expect(store.store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(store.readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveConfirmedAlreadyArchivedDrainsSuccess() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.$sidebar.withLock { sidebar in
+      sidebar.archive(
+        worktree: worktree.id, in: "/tmp/repo", from: .unpinned,
+        at: Date(timeIntervalSince1970: 1))
+    }
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // A worktree archived between dialog and confirm resolves the ack as success.
+    await store.send(.repositories(.archiveWorktreeConfirmed(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplied)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+  }
+
+  @Test(.dependencies) func archiveConfirmedTerminatingWorktreeDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // A concurrent delete moved the row to `.deleting` after the archive dialog opened.
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .deleting
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // Confirming the stale dialog must not archive mid-teardown; it fails the ack.
+    await store.send(.repositories(.archiveWorktreeConfirmed(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveApplyRemovingRepoDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    // Repo removal started while the archive script ran.
+    repositoriesState.removingRepositoryIDs["/tmp/repo"] =
+      RepositoriesFeature.RepositoryRemovalRecord(disposition: .folderTrash, batchID: UUID())
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // Applying into a repo mid-removal must not record a false success.
+    await store.send(.repositories(.archiveWorktreeApply(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveScriptSuccessRepoMissingDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    // The repository vanished while the archive script ran.
+    repositoriesState.repositories = []
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // Exit 0 but the worktree is gone: resolve the ack as failure instead of stranding it.
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveScriptSuccessAfterRepoRemovedDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // Completed repo removal reconciled the row away while the archive script ran,
+    // so the exit-0 completion finds no row and no apply can follow.
+    repositoriesState.repositories = []
+    repositoriesState.sidebarItems.remove(id: worktree.id)
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // The row vanished mid-script: resolve the ack as failure, not strand.
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func repositoriesRemovedFailsParkedArchiveAck() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+
+    // Removing the repo mid-archive fails the parked ack immediately; the later
+    // ignored script completion would otherwise strand it until the watchdog.
+    await store.send(.repositories(.repositoriesRemoved(["/tmp/repo"], selectionWasRemoved: false)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func staleScriptCompletionDoesNotFailNewerParkedAck() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer {
+      close(readFD)
+      close(writeFD)
+    }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // Healthy idle row: a new archive just parked its ack, before its confirm
+    // marks the row archiving.
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    // A delayed exit-0 completion from an earlier operation must not fail the
+    // newer ack; the row is still present, so it is ignored and left to resolve.
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: 0, tabId: nil)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+  }
+
+  @Test(.dependencies) func staleFailedScriptCompletionDoesNotFailNewerParkedAck() async {
+    await expectStaleCompletionKeepsNewerAckParked(exitCode: 1)
+  }
+
+  @Test(.dependencies) func staleCancelledScriptCompletionDoesNotFailNewerParkedAck() async {
+    await expectStaleCompletionKeepsNewerAckParked(exitCode: nil)
+  }
+
+  /// A stale/duplicate completion from an earlier archive (any exit code) arriving
+  /// on a present, non-archiving row must leave a newer parked ack untouched.
+  private func expectStaleCompletionKeepsNewerAckParked(exitCode: Int?) async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer {
+      close(readFD)
+      close(writeFD)
+    }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositories(.archiveScriptCompleted(worktreeID: worktree.id, exitCode: exitCode, tabId: nil)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+  }
+
+  @Test(.dependencies) func archiveSocketDeeplinkRejectsTerminatingWorktree() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // A worktree already winding down no-ops in the reducer, so registering an
+    // ack would strand the client: the command is rejected up front instead.
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .archiving
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
 
     await store.send(
       .deeplink(
@@ -1047,14 +1466,53 @@ struct AppFeatureCommandAckTests {
         timeoutSeconds: 0
       )
     )
-    await store.receive(\.repositories.requestArchiveWorktree)
-    #expect(store.state.repositories.alert != nil)
+    await store.finish()
 
-    await store.send(.repositories(.alert(.dismiss)))
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(store.state.alert != nil)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test(.dependencies) func archiveConfirmedRemovingRepoDrainsFailure() async {
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    // Removal of the containing repo is in flight, so the confirmed archive
+    // no-ops; it must still resolve the parked ack instead of stranding it.
+    repositoriesState.removingRepositoryIDs["/tmp/repo"] =
+      RepositoriesFeature.RepositoryRemovalRecord(disposition: .folderTrash, batchID: UUID())
+    var initial = AppFeature.State(
+      repositories: repositoriesState, settings: SettingsFeature.State())
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.archiveWorktreeConfirmed(worktree.id, "/tmp/repo")))
+    await store.receive(\.repositories.archiveWorktreeApplyFailed)
     await store.finish()
 
     #expect(store.state.pendingCommandAcks.isEmpty)
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  /// Store with a single pending archive ack pre-seeded, returned with the pipe
+  /// read end so the test can assert the drained response.
+  private func makeArchiveAckStore(
+    worktree: Worktree
+  ) -> (store: TestStoreOf<AppFeature>, readFD: Int32) {
+    let (readFD, writeFD) = makePipe()
+    var initial = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1, match: .worktreeArchived(worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) { AppFeature() }
+    store.exhaustivity = .off
+    return (store, readFD)
   }
 
   // MARK: - folder delete.
@@ -1170,16 +1628,11 @@ struct AppFeatureCommandAckTests {
   private func makeStore(
     worktree: Worktree,
     tabExists: Bool,
-    reconcileSidebar: Bool = false,
     _ extraDependencies: (inout DependencyValues) -> Void = { _ in }
   ) -> TestStoreOf<AppFeature> {
-    var repositories = makeRepositoriesState(worktree: worktree)
-    if reconcileSidebar {
-      repositories.reconcileSidebarForTesting()
-    }
     let store = TestStore(
       initialState: AppFeature.State(
-        repositories: repositories,
+        repositories: makeRepositoriesState(worktree: worktree),
         settings: SettingsFeature.State()
       )
     ) {

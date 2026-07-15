@@ -2824,6 +2824,10 @@ struct RepositoriesFeatureTests {
     }
 
     await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id))
+    // `.archiving` must publish before the script-launch delegate: a synchronous
+    // launch-failure completion racing ahead of the lifecycle would be discarded
+    // as a stale non-archiving row and strand the ack, so `archiveWorktreeConfirmed`
+    // concatenates the row change ahead of the delegate.
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.lifecycle = .archiving
     }
@@ -3153,6 +3157,44 @@ struct RepositoriesFeatureTests {
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }
 
+  @Test(.dependencies) func archiveWorktreeApplyEmitsAppliedOnSuccess() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    store.exhaustivity = .off
+
+    await store.send(.archiveWorktreeApply(featureWorktree.id, repository.id))
+    await store.receive(\.archiveWorktreeApplied)
+    #expect(store.state.archivedWorktreeIDs.contains(featureWorktree.id))
+  }
+
+  @Test(.dependencies) func archiveWorktreeApplyEmitsFailedWhenWorktreeMissing() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.archiveWorktreeApply(WorktreeID("\(repoRoot)/gone"), repository.id))
+    await store.receive(\.archiveWorktreeApplyFailed)
+    #expect(store.state.alert != nil)
+  }
+
   @Test func archiveScriptCompletedCancellationClearsState() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
@@ -3192,6 +3234,8 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
 
+    // A present-but-non-archiving row is a stale/duplicate completion: ignored,
+    // and left for any newer archive operation to resolve its own ack.
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
     #expect(store.state.archivedWorktreeIDs.isEmpty)
   }

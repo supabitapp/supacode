@@ -266,7 +266,7 @@ struct AppFeature {
     case surfaceClosed(worktreeID: Worktree.ID, surfaceID: UUID)
     /// worktree delete (git worktree removed).
     case worktreeRemoved(worktreeID: Worktree.ID)
-    /// worktree archive (the row moved into the archived bucket).
+    /// worktree archive (moved to the archived bucket, after any archive script).
     case worktreeArchived(worktreeID: Worktree.ID)
     /// folder-repository delete (the folder is removed from Supacode / disk).
     case folderRemoved(repositoryID: Repository.ID)
@@ -520,12 +520,6 @@ struct AppFeature {
       case .repositories(.delegate(.repositoriesChanged(let repositories))):
         RepositoriesFeature.syncSidebar(&state.repositories)
         let archivedIDs = state.repositories.archivedWorktreeIDSet
-        let archiveAckEffect = resolveCommandAcks(ok: true, state: &state) { match in
-          if case .worktreeArchived(let worktreeID) = match {
-            return archivedIDs.contains(worktreeID)
-          }
-          return false
-        }
         let allowed = Set(
           state.repositories.sidebarItems
             .filter { item in
@@ -540,7 +534,6 @@ struct AppFeature {
         let worktrees = state.repositories.worktreesForInfoWatcher()
         var effects: [Effect<Action>] = []
         effects.append(contentsOf: [
-          archiveAckEffect,
           .send(
             .settings(
               .repositoriesChanged(
@@ -1223,6 +1216,59 @@ struct AppFeature {
           return false
         }
 
+      case .repositories(.archiveWorktreeApplied(let worktreeID)):
+        return resolveCommandAcks(ok: true, state: &state) { match in
+          if case .worktreeArchived(let ackWorktree) = match { return ackWorktree == worktreeID }
+          return false
+        }
+
+      case .repositories(.archiveWorktreeApplyFailed(let worktreeID)):
+        return resolveCommandAcks(
+          ok: false, error: "The worktree could not be found. It may have already been removed.",
+          state: &state
+        ) { match in
+          if case .worktreeArchived(let ackWorktree) = match { return ackWorktree == worktreeID }
+          return false
+        }
+
+      case .repositories(.archiveScriptCompleted(let worktreeID, let exitCode, _)):
+        // Exit 0 proceeds to archive (resolved by `.archiveWorktreeApplied`); a failed or
+        // cancelled archive script has no apply to follow, so resolve the ack now.
+        guard exitCode != 0 else { return .none }
+        // Only resolve for the active archive (row `.archiving`) or a torn-down row
+        // (`nil`); a present non-archiving row is a stale/duplicate completion whose
+        // ack belongs to a newer operation (the terminating guard kept that newer
+        // ack from parking while this row was archiving).
+        let lifecycle = state.repositories.sidebarItems[id: worktreeID]?.lifecycle
+        guard lifecycle == .archiving || lifecycle == nil else { return .none }
+        let message =
+          exitCode.map { "Archive script failed (exit code \($0))." } ?? "Archive cancelled."
+        return resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          if case .worktreeArchived(let ackWorktree) = match { return ackWorktree == worktreeID }
+          return false
+        }
+
+      case .repositories(.repositoriesRemoved(let repositoryIDs, _)):
+        // Removing a repo tears its worktrees' rows down (the row resets to `.idle`
+        // this tick, reconcile drops it next), after which an archive-script
+        // completion is ignored and would strand a parked ack. Resolve those acks
+        // as failure now, while the worktrees are still resolvable, so the later
+        // ignored completion is a harmless no-op.
+        let removed = Set(repositoryIDs)
+        let removedWorktreeIDs = Set(
+          state.repositories.repositories
+            .filter { removed.contains($0.id) }
+            .flatMap(\.worktrees.ids)
+        )
+        guard !removedWorktreeIDs.isEmpty else { return .none }
+        return resolveCommandAcks(
+          ok: false, error: "The worktree could not be found. It may have already been removed.",
+          state: &state
+        ) { match in
+          if case .worktreeArchived(let worktreeID) = match { return removedWorktreeIDs.contains(worktreeID) }
+          return false
+        }
+
       case .repositories(.repositoryRemovalCompleted(let repoID, let outcome, _)):
         // Resolve a folder-delete ack once removal concludes (the single action
         // that fires for both success and every failure mode).
@@ -1249,20 +1295,9 @@ struct AppFeature {
         // confirmation (its repo is removing) resolves on repositoryRemovalCompleted,
         // so an unrelated dismissal must not drain it.
         let removingRepoIDs = Set(state.repositories.removingRepositoryIDs.keys)
-        let archivingWorktreeIDs = Set(
-          state.repositories.sidebarItems.lazy
-            .filter { $0.lifecycle == .archiving }
-            .map(\.id)
-        )
         return resolveCommandAcks(ok: false, error: "Cancelled by user.", state: &state) { match in
-          switch match {
-          case .folderRemoved(let ackRepoID):
-            return !removingRepoIDs.contains(ackRepoID)
-          case .worktreeArchived(let worktreeID):
-            return !archivingWorktreeIDs.contains(worktreeID)
-          default:
-            return false
-          }
+          if case .folderRemoved(let ackRepoID) = match { return !removingRepoIDs.contains(ackRepoID) }
+          return false
         }
 
       case .repositories(.deleteWorktreeFailed(let message, let worktreeID)):
@@ -1279,17 +1314,6 @@ struct AppFeature {
           exitCode.map { "Delete script failed (exit code \($0))." } ?? "Delete cancelled."
         return resolveCommandAcks(ok: false, error: message, state: &state) { match in
           if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
-          return false
-        }
-
-      case .repositories(.archiveScriptCompleted(let worktreeID, let exitCode, _)):
-        // Exit 0 proceeds to archiveWorktreeApply and resolves when the archived
-        // bucket update is published. Failure or cancellation has no later signal.
-        guard exitCode != 0 else { return .none }
-        let message =
-          exitCode.map { "Archive script failed (exit code \($0))." } ?? "Archive cancelled."
-        return resolveCommandAcks(ok: false, error: message, state: &state) { match in
-          if case .worktreeArchived(let ackWorktree) = match { return ackWorktree == worktreeID }
           return false
         }
 
@@ -2127,19 +2151,13 @@ struct AppFeature {
     case .stopScript(let scriptID):
       return stopScriptDeeplinkEffect(worktreeID: worktreeID, scriptID: scriptID, state: &state)
     case .archive:
-      guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
-        return .none
-      }
-      let archiveEffect: Effect<Action> =
-        bypassConfirmation
-        ? .send(.repositories(.archiveWorktreeConfirmed(worktreeID, repositoryID)))
-        : .send(.repositories(.requestArchiveWorktree(worktreeID, repositoryID)))
-      return awaitingCompletion(
-        archiveEffect,
-        match: .worktreeArchived(worktreeID: worktreeID),
+      return deeplinkArchiveWorktreeEffect(
+        worktreeID: worktreeID,
+        action: action,
+        state: &state,
+        bypassConfirmation: bypassConfirmation,
         responseFD: responseFD,
-        timeoutSeconds: timeoutSeconds,
-        state: &state
+        timeoutSeconds: timeoutSeconds
       )
     case .unarchive:
       return .send(.repositories(.unarchiveWorktree(worktreeID)))
@@ -2537,6 +2555,63 @@ struct AppFeature {
     } message: {
       TextState("No repository matching the deeplink could be found.")
     }
+  }
+
+  private func deeplinkArchiveWorktreeEffect(
+    worktreeID: Worktree.ID,
+    action: Deeplink.WorktreeAction,
+    state: inout State,
+    bypassConfirmation: Bool,
+    responseFD: Int32? = nil,
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds
+  ) -> Effect<Action> {
+    guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
+      return .none
+    }
+    guard let repository = state.repositories.repositories[id: repositoryID],
+      let worktree = repository.worktrees[id: worktreeID]
+    else {
+      state.alert = scriptAlert(
+        title: "Archive failed",
+        message: "The worktree could not be found. It may have already been removed.")
+      return .none
+    }
+    // Defense in depth: the bypass path reaches `archiveWorktreeConfirmed`, which has no folder guard of its own.
+    guard repository.isGitRepository else {
+      let copy = RepositoriesFeature.FolderIncompatibleAction.archive.alertCopy
+      state.alert = scriptAlert(title: copy.title, message: copy.message)
+      return .none
+    }
+    guard !state.repositories.isMainWorktree(worktree) else {
+      state.alert = scriptAlert(
+        title: "Archive not allowed", message: "Archiving the main worktree is not allowed.")
+      return .none
+    }
+    // Already archived: nothing to do, so the command reports success without a dialog.
+    guard !state.repositories.isWorktreeArchived(worktreeID) else { return .none }
+    let lifecycle = state.repositories.sidebarItems[id: worktreeID]?.lifecycle ?? .idle
+    guard !lifecycle.isTerminating else {
+      state.alert = scriptAlert(
+        title: "Archive unavailable",
+        message: "\"\(worktree.name)\" can't be archived right now (another operation is in progress).")
+      return .none
+    }
+    // Merged worktrees and an allowing policy both skip the dialog but hold the
+    // ack until the archive completes, so the CLI exit code stays honest.
+    if bypassConfirmation || state.repositories.isWorktreeMerged(worktree) {
+      return awaitingCompletion(
+        .send(.repositories(.archiveWorktreeConfirmed(worktreeID, repositoryID))),
+        match: .worktreeArchived(worktreeID: worktreeID),
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    }
+    return presentDeeplinkConfirmation(
+      worktreeID: worktreeID,
+      responseFD: responseFD,
+      timeoutSeconds: timeoutSeconds,
+      message: .confirmation("Archive worktree \"\(worktree.name)\"?"),
+      action: action,
+      state: &state
+    )
   }
 
   private func deeplinkDeleteWorktreeEffect(

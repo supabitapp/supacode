@@ -239,20 +239,25 @@ struct AppFeatureDeeplinkTests {
     #expect(item?.title == "a b c")
   }
 
-  @Test(.dependencies) func archiveWorktreeDeeplink() async {
+  @Test(.dependencies) func archiveWorktreeDeeplinkShowsConfirmation() async {
     let worktree = makeWorktree()
     let store = makeStore(worktree: worktree)
 
+    // Default policy `.cliOnly` does not bypass a URL-scheme deeplink, so it prompts.
     await store.send(.deeplink(.worktree(id: worktree.id, action: .archive)))
-    await store.receive(\.repositories.requestArchiveWorktree)
+    #expect(store.state.deeplinkInputConfirmation?.message == .confirmation("Archive worktree \"wt-1\"?"))
+    #expect(store.state.deeplinkInputConfirmation?.action == .archive)
   }
 
-  @Test(.dependencies) func cliArchiveDoesNotArchiveMainWorktree() async {
-    let worktree = makeWorktree(id: "/tmp/repo", name: "main")
+  @Test(.dependencies) func archiveWorktreeDeeplinkSkipsConfirmationWhenPolicyAllows() async {
+    let worktree = makeWorktree()
+    clearArchiveScript(for: worktree)
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
     let store = TestStore(
       initialState: AppFeature.State(
         repositories: makeRepositoriesState(worktree: worktree),
-        settings: SettingsFeature.State()
+        settings: settings,
       )
     ) {
       AppFeature()
@@ -261,17 +266,64 @@ struct AppFeatureDeeplinkTests {
     }
     store.exhaustivity = .off
 
-    await store.send(
-      .deeplink(
-        .worktree(id: worktree.id, action: .archive),
-        source: .socket
-      )
-    )
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .archive)))
+    #expect(store.state.deeplinkInputConfirmation == nil)
     await store.receive(\.repositories.archiveWorktreeConfirmed)
-    await store.skipReceivedActions()
-    await store.finish()
+  }
 
-    #expect(store.state.repositories.isWorktreeArchived(worktree.id) == false)
+  @Test(.dependencies) func archiveWorktreeSocketDeeplinkSkipsConfirmationUnderCLIOnly() async {
+    let worktree = makeWorktree()
+    clearArchiveScript(for: worktree)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+
+    // `.cliOnly` (the default) bypasses for a socket command.
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .archive), source: .socket))
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+  }
+
+  @Test(.dependencies) func archiveWorktreeMergedDeeplinkSkipsConfirmation() async {
+    let worktree = makeWorktree()
+    clearArchiveScript(for: worktree)
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .never
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.reconcileSidebarForTesting()
+    repositories.setWorktreeInfoForTesting(id: worktree.id, pullRequest: makeMergedPullRequest())
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositories, settings: settings)
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+
+    // Merged worktrees never prompt, even when the policy would otherwise require it.
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .archive)))
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    await store.receive(\.repositories.archiveWorktreeConfirmed)
+  }
+
+  @Test(.dependencies) func archiveMainWorktreeDeeplinkRejected() async {
+    let main = makeWorktree(id: "/tmp/repo", name: "main")
+    let store = makeStore(worktree: main)
+
+    await store.send(.deeplink(.worktree(id: main.id, action: .archive), source: .socket))
+    #expect(store.state.alert != nil)
+    #expect(store.state.deeplinkInputConfirmation == nil)
+    #expect(store.state.pendingCommandAcks.isEmpty)
   }
 
   @Test(.dependencies) func archiveWorktreeDeeplinkWithUnknownIDShowsAlert() async {
@@ -2468,6 +2520,36 @@ struct AppFeatureDeeplinkTests {
     repositoriesState.selection = .worktree(worktree.id)
     repositoriesState.isInitialLoadComplete = true
     return repositoriesState
+  }
+
+  /// `@Shared(.repositorySettings)` is process-global and keyed by root URL, so a
+  /// prior test can leave a non-empty archive script that would divert the archive
+  /// into the blocking-script path. Reset it so the flow runs straight to apply.
+  private func clearArchiveScript(for worktree: Worktree) {
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "" }
+  }
+
+  private func makeMergedPullRequest() -> GithubPullRequest {
+    GithubPullRequest(
+      number: 1,
+      title: "PR",
+      state: "MERGED",
+      additions: 0,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      url: "https://example.com/pull/1",
+      headRefName: nil,
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "khoi",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
   }
 
   /// Store whose sidebar has `worktree` seeded into the `.pinned` bucket with

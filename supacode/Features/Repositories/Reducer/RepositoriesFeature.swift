@@ -407,6 +407,8 @@ struct RepositoriesFeature {
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID)
     case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
     case archiveWorktreeApply(Worktree.ID, Repository.ID)
+    case archiveWorktreeApplied(Worktree.ID)
+    case archiveWorktreeApplyFailed(Worktree.ID)
     case unarchiveWorktree(Worktree.ID)
     case requestDeleteSidebarItems([DeleteWorktreeTarget])
     case deleteSidebarItemConfirmed(Worktree.ID, Repository.ID)
@@ -765,20 +767,32 @@ struct RepositoriesFeature {
       case .archiveWorktreeConfirmed(let worktreeID, let repositoryID):
         state.alert = nil
         guard state.removingRepositoryIDs[repositoryID] == nil else {
-          return .none
+          // Repo is being removed, so the archive can't proceed; resolve a
+          // deferred CLI ack as a failure instead of stranding it until timeout.
+          return .send(.archiveWorktreeApplyFailed(worktreeID))
         }
         guard let repository = state.repositories[id: repositoryID],
           let worktree = repository.worktrees[id: worktreeID]
         else {
+          // Resolve a deferred CLI ack instead of stranding it until timeout.
+          return .send(.archiveWorktreeApplyFailed(worktreeID))
+        }
+        if state.isWorktreeArchived(worktreeID) {
+          // End state already reached, so a pending CLI ack resolves as success.
+          return .send(.archiveWorktreeApplied(worktreeID))
+        }
+        if state.sidebarItems[id: worktreeID]?.lifecycle == .archiving {
+          // The in-flight archive emits its own completion, which resolves any pending ack.
           return .none
         }
-        let lifecycle = state.sidebarItems[id: worktreeID]?.lifecycle ?? .idle
-        if !repository.isGitRepository
-          || state.isMainWorktree(worktree)
-          || lifecycle.isTerminating
-          || state.isWorktreeArchived(worktreeID)
-        {
-          return .none
+        // Revalidate at confirm: a stale UI dialog can outlive the conditions it
+        // was shown under (the row began deleting, or is a folder/main worktree).
+        // Reject and resolve any parked ack rather than archive mid-teardown.
+        guard repository.isGitRepository,
+          !state.isMainWorktree(worktree),
+          state.sidebarItems[id: worktreeID]?.lifecycle.isTerminating != true
+        else {
+          return .send(.archiveWorktreeApplyFailed(worktreeID))
         }
         @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var repositorySettings
         let script = repositorySettings.archiveScript
@@ -788,7 +802,11 @@ struct RepositoriesFeature {
         if trimmed.isEmpty || worktree.isMissing {
           return .send(.archiveWorktreeApply(worktreeID, repositoryID))
         }
-        return .merge(
+        // Publish `.archiving` before launching the script: `runBlockingScript`
+        // can synchronously emit a launch-failure completion, which the completion
+        // guards would discard as a stale non-archiving row if it raced ahead of
+        // the lifecycle transition. Concatenation orders the row change first.
+        return .concatenate(
           state.setRowLifecycleEffect(worktreeID, .archiving),
           .send(
             .delegate(.runBlockingScript(worktree, repositoryID: repositoryID, kind: .archive, script: script))
@@ -798,6 +816,15 @@ struct RepositoriesFeature {
       case .archiveScriptCompleted(let worktreeID, let exitCode, let tabId):
         guard state.sidebarItems[id: worktreeID]?.lifecycle == .archiving else {
           repositoriesLogger.debug("Ignoring archiveScriptCompleted for \(worktreeID): not archiving")
+          // A vanished row means the archive was torn down mid-script (its repo was
+          // removed and reconciled away), so no apply follows; resolve a parked CLI
+          // ack on exit 0 rather than strand it. A row that is merely present-but-
+          // non-archiving is a stale/duplicate completion: a newer archive re-parks
+          // its ack before marking the row archiving, so failing here would reject
+          // that newer ack. Leave it for the newer operation to resolve.
+          if exitCode == 0, state.sidebarItems[id: worktreeID] == nil {
+            return .send(.archiveWorktreeApplyFailed(worktreeID))
+          }
           return .none
         }
         let resetLifecycle = state.setRowLifecycleEffect(worktreeID, .idle)
@@ -812,7 +839,8 @@ struct RepositoriesFeature {
               message: "The archive script completed successfully, but the worktree could not be found."
                 + " It may have been removed."
             )
-            return resetLifecycle
+            // Resolve a deferred CLI ack instead of stranding it until timeout.
+            return .merge(resetLifecycle, .send(.archiveWorktreeApplyFailed(worktreeID)))
           }
           return .merge(resetLifecycle, .send(.archiveWorktreeApply(worktreeID, repositoryID)))
         case nil:
@@ -826,6 +854,11 @@ struct RepositoriesFeature {
         }
 
       case .archiveWorktreeApply(let worktreeID, let repositoryID):
+        guard state.removingRepositoryIDs[repositoryID] == nil else {
+          // Repo removal began while the archive ran; the archived end state would
+          // vanish with it, so fail the ack instead of recording a false success.
+          return .send(.archiveWorktreeApplyFailed(worktreeID))
+        }
         guard let repository = state.repositories[id: repositoryID],
           let worktree = repository.worktrees[id: worktreeID]
         else {
@@ -836,11 +869,12 @@ struct RepositoriesFeature {
             title: "Archive failed",
             message: "The worktree could not be found. It may have already been removed."
           )
-          return .none
+          return .send(.archiveWorktreeApplyFailed(worktreeID))
         }
         if state.isWorktreeArchived(worktreeID) {
           state.alert = nil
-          return .none
+          // End state already reached, so a pending CLI ack resolves as success.
+          return .send(.archiveWorktreeApplied(worktreeID))
         }
         let previousSelection = state.selectedWorktreeID
         let previousSelectedWorktree = state.worktree(for: previousSelection)
@@ -875,12 +909,17 @@ struct RepositoriesFeature {
           selectedWorktree: selectedWorktree,
         )
         var effects: [Effect<Action>] = [
-          .send(.delegate(.repositoriesChanged(repositories)))
+          .send(.delegate(.repositoriesChanged(repositories))),
+          .send(.archiveWorktreeApplied(worktree.id)),
         ]
         if selectionChanged {
           effects.append(.send(.delegate(.selectedWorktreeChanged(selectedWorktree))))
         }
         return .merge(effects)
+
+      case .archiveWorktreeApplied, .archiveWorktreeApplyFailed:
+        // Outbound completion signals; `AppFeature` resolves the CLI ack. No local state change.
+        return .none
 
       case .unarchiveWorktree(let worktreeID):
         guard let repositoryID = state.repositoryID(containing: worktreeID),
@@ -3962,7 +4001,8 @@ struct RepositoriesFeature {
         return .send(.sidebarItems(.element(id: id, action: .focusTerminalConsumed)))
 
       case .requestArchiveWorktree, .requestArchiveWorktrees, .scriptCompleted, .archiveWorktreeConfirmed,
-        .archiveScriptCompleted, .archiveWorktreeApply, .unarchiveWorktree, .requestDeleteSidebarItems:
+        .archiveScriptCompleted, .archiveWorktreeApply, .archiveWorktreeApplied, .archiveWorktreeApplyFailed,
+        .unarchiveWorktree, .requestDeleteSidebarItems:
         // Real handling lives in `worktreeRemovalReducer` (combined below) so `body` stays under the
         // type-checker's complexity limit; the `.alert(.presented(.confirm…))` arms there are matched
         // here by the trailing `.alert` catch-all returning `.none`.

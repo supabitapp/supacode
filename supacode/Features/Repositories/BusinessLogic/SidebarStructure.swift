@@ -474,8 +474,8 @@ extension RepositoriesFeature.Action {
     case .resolveRemoteRepositories:
       return []
 
-    // Pure signal observed by AppFeature to drain a parked CLI ack; no state.
-    case .cliWorktreeAckCancelled:
+    // Pure signals observed by AppFeature to drain a parked CLI ack; no state.
+    case .cliWorktreeAckCancelled, .archiveWorktreeApplied, .archiveWorktreeApplyFailed:
       return []
 
     // `worktreeBranchNameLoaded` mutates `worktree.name` via `updateWorktreeName`,
