@@ -42,6 +42,16 @@ public struct NotificationsSettingsView: View {
         }
         .disabled(!store.hasActiveNotificationChannel)
       }
+      Section {
+        Picker(selection: $store.notificationRetentionLimit) {
+          ForEach(NotificationRetentionLimit.allCases, id: \.self) { limit in
+            RetentionLimitLabel(limit: limit).tag(limit)
+          }
+        } label: {
+          Text("Keep notifications")
+          Text("Older notifications beyond this count are discarded per worktree.")
+        }
+      }
       Section("Worktrees") {
         Toggle(
           isOn: $store.inAppNotificationsEnabled
@@ -74,6 +84,18 @@ private struct NotificationSoundLabel: View {
       Text("\(sound.displayName) \(Text("Default").foregroundStyle(.secondary))")
     } else {
       Text(sound.displayName)
+    }
+  }
+}
+
+private struct RetentionLimitLabel: View {
+  let limit: NotificationRetentionLimit
+
+  var body: some View {
+    if limit == .defaultValue {
+      Text("\(limit.label) \(Text("Default").foregroundStyle(.secondary))")
+    } else {
+      Text(limit.label)
     }
   }
 }

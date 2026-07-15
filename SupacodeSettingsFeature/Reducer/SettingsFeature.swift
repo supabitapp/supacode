@@ -55,6 +55,7 @@ public struct SettingsFeature {
     public var systemNotificationsEnabled: Bool
     public var muteNotificationsForActiveSurface: Bool
     public var moveNotifiedWorktreeToTop: Bool
+    public var notificationRetentionLimit: NotificationRetentionLimit
     public var analyticsEnabled: Bool
     public var crashReportsEnabled: Bool
     public var githubIntegrationEnabled: Bool
@@ -109,6 +110,7 @@ public struct SettingsFeature {
       systemNotificationsEnabled = settings.systemNotificationsEnabled
       muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
+      notificationRetentionLimit = settings.notificationRetentionLimit
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
       githubIntegrationEnabled = settings.githubIntegrationEnabled
@@ -148,6 +150,7 @@ public struct SettingsFeature {
         systemNotificationsEnabled: systemNotificationsEnabled,
         muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
+        notificationRetentionLimit: notificationRetentionLimit,
         analyticsEnabled: analyticsEnabled,
         crashReportsEnabled: crashReportsEnabled,
         githubIntegrationEnabled: githubIntegrationEnabled,
@@ -287,6 +290,7 @@ public struct SettingsFeature {
         state.systemNotificationsEnabled = normalizedSettings.systemNotificationsEnabled
         state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
+        state.notificationRetentionLimit = normalizedSettings.notificationRetentionLimit
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
         state.githubIntegrationEnabled = normalizedSettings.githubIntegrationEnabled

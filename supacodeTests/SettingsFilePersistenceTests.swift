@@ -520,6 +520,71 @@ struct SettingsFilePersistenceTests {
 
     #expect(reloaded.global.remoteSessionPersistenceEnabled == false)
   }
+
+  @Test(.dependencies) func decodesMissingNotificationRetentionLimitAsDefault() throws {
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.notificationRetentionLimit == .twoHundred)
+  }
+
+  @Test(.dependencies) func decodesUnrecognizedNotificationRetentionLimitAsDefault() throws {
+    // A hand-edited file carrying a count that is not one of the offered tiers.
+    var global = GlobalSettings.default
+    global.systemNotificationsEnabled = true
+
+    let encoded = try JSONEncoder().encode(global)
+    var globalDict = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    globalDict["notificationRetentionLimit"] = 150
+    let data = try JSONSerialization.data(withJSONObject: ["global": globalDict, "repositories": [:]])
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // The out-of-range value falls back to the default without resetting siblings.
+    #expect(settings.global.notificationRetentionLimit == .twoHundred)
+    #expect(settings.global.systemNotificationsEnabled == true)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitNotificationRetentionLimit() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.notificationRetentionLimit = .oneThousand }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(reloaded.global.notificationRetentionLimit == .oneThousand)
+  }
 }
 
 nonisolated private final class MutableTestStorage: @unchecked Sendable {
