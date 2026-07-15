@@ -1,5 +1,7 @@
+import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
 import Sharing
 import Testing
 
@@ -75,23 +77,136 @@ struct MenuBarNotificationListTests {
 
     #expect(sections.active == [hoisted.id])
     #expect(sections.unread.isEmpty)
-    // The dot and "Mark All as Read" must still see the unread row.
+    // The dot and "Mark Unread Notifications as Read" must still see the unread row.
     #expect(sections.hasUnread)
   }
 
-  @Test func highlightSectionsAreTakenStraightFromTheSidebarStructure() {
+  @Test func menuIsEmptyWhenNothingNeedsAttention() {
     let worktree = makeWorktree(id: "/tmp/repo/wt", name: "wt")
     var state = RepositoriesFeature.State(
       reconciledRepositories: [makeRepository(worktrees: [worktree])]
     )
     state.reconcileSidebarForTesting()
 
-    // Nothing hoisted: the menu must not invent rows the sidebar doesn't show.
-    #expect(state.sidebarStructure.hoistedRowIDs.isEmpty)
+    // A plain worktree with no pin, agent, or notification classifies nowhere,
+    // so the menu must not invent a row for it.
     let sections = state.computeMenuBarSections()
     #expect(sections.pinned.isEmpty)
     #expect(sections.active.isEmpty)
     #expect(sections.isEmpty)
+  }
+
+  @Test func hoistsPinnedAndActiveEvenWhenSidebarGroupingIsOff() {
+    // Scope `defaultAppStorage = .inMemory` so the grouping-toggle writes don't
+    // leak into the parallel suite via the process-global UserDefaults.
+    withDependencies {
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      @Shared(.sidebarGroupPinnedRows) var groupPinned
+      @Shared(.sidebarGroupActiveRows) var groupActive
+      $groupPinned.withLock { $0 = false }
+      $groupActive.withLock { $0 = false }
+
+      let pinned = makeWorktree(id: "/tmp/repo/pinned", name: "pinned")
+      let working = makeWorktree(id: "/tmp/repo/working", name: "working")
+      var state = RepositoriesFeature.State(
+        reconciledRepositories: [makeRepository(worktrees: [pinned, working])]
+      )
+      state.$sidebar.withLock { sidebar in
+        sidebar.insert(worktree: pinned.id, in: Repository.ID("/tmp/repo/"), bucket: .pinned)
+        sidebar.sections[Repository.ID("/tmp/repo/"), default: .init()].title = "Pretty"
+        sidebar.sections[Repository.ID("/tmp/repo/"), default: .init()].color = .teal
+      }
+      let instance = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+      state.sidebarItems[id: working.id]?.agentSnapshot = .init(agents: [instance], isWorking: true)
+      state.reconcileSidebarForTesting()
+
+      // With the toggles honored, the sidebar itself hoists nothing, so the
+      // menu populating proves it no longer follows the grouping preference.
+      #expect(state.sidebarStructure.hoistedRowIDs.isEmpty)
+
+      // The menu lists Pinned and Active regardless, and each hoisted row keeps
+      // its `repo · worktree` subtitle tag, custom name and color included.
+      let sections = state.computeMenuBarSections()
+      #expect(sections.pinned == [pinned.id])
+      #expect(sections.active == [working.id])
+      let tag = sections.repositoryTagByID[Repository.ID("/tmp/repo/")]
+      #expect(tag?.repoName == "Pretty")
+      #expect(tag?.repoColor == .teal)
+    }
+  }
+
+  @Test func doesNotDuplicateAnActiveOrPinnedRowIntoUnreadWhenGroupingOff() {
+    withDependencies {
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      @Shared(.sidebarGroupPinnedRows) var groupPinned
+      @Shared(.sidebarGroupActiveRows) var groupActive
+      $groupPinned.withLock { $0 = false }
+      $groupActive.withLock { $0 = false }
+
+      let hot = makeWorktree(id: "/tmp/repo/hot", name: "hot")
+      let pinned = makeWorktree(id: "/tmp/repo/pinned", name: "pinned")
+      var state = RepositoriesFeature.State(
+        reconciledRepositories: [makeRepository(worktrees: [hot, pinned])]
+      )
+      state.$sidebar.withLock { sidebar in
+        sidebar.insert(worktree: pinned.id, in: Repository.ID("/tmp/repo/"), bucket: .pinned)
+      }
+      let instance = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+      state.sidebarItems[id: hot.id]?.agentSnapshot = .init(agents: [instance], isWorking: true)
+      // Both the Active row and the Pinned row are also unread.
+      setRowNotifications(&state, id: hot.id, notifications: [makeNotification(isRead: false)])
+      setRowNotifications(&state, id: pinned.id, notifications: [makeNotification(isRead: false)])
+      state.reconcileSidebarForTesting()
+
+      // Grouping off drops both rows from every sidebar highlight, so the menu's
+      // Unread must dedupe against its own forced hoists, not the sidebar's.
+      #expect(state.sidebarStructure.hoistedRowIDs.isEmpty)
+
+      let sections = state.computeMenuBarSections()
+      #expect(sections.active == [hot.id])
+      #expect(sections.pinned == [pinned.id])
+      // Neither the Active nor the Pinned unread row doubles into Unread.
+      #expect(sections.unread.isEmpty)
+      #expect(sections.hasUnread)
+    }
+  }
+
+  @Test func listsUnreadRemoteFolderByItsHostKeyedSyntheticRow() {
+    let host = RemoteHost(alias: "devbox")
+    let folderURL = URL(fileURLWithPath: "/remote/folder")
+    // A remote folder's row is keyed off the host-scoped worktree id, which
+    // differs from the local path id the old lookup used and never matched.
+    let syntheticID = WorktreeID("devbox/remote/folder")
+    let folderRow = Worktree(
+      id: syntheticID,
+      kind: .folder,
+      name: "folder",
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL,
+      host: host
+    )
+    var state = RepositoriesFeature.State(
+      reconciledRepositories: [
+        Repository(
+          id: RepositoryID("devbox/remote/folder"),
+          rootURL: folderURL,
+          name: "folder",
+          worktrees: IdentifiedArray(uniqueElements: [folderRow]),
+          isGitRepository: false,
+          host: host
+        )
+      ]
+    )
+    setRowNotifications(&state, id: syntheticID, notifications: [makeNotification(isRead: false)])
+
+    #expect(syntheticID != Repository.folderWorktreeID(for: folderURL))
+    let sections = state.computeMenuBarSections()
+    #expect(sections.unread == [syntheticID])
+    // The unread-only remote row still carries its host authority in the tag.
+    #expect(sections.repositoryTagByID[RepositoryID("devbox/remote/folder")]?.hostInfo == host.displayAuthority)
   }
 
   @Test func entriesRenderInPinnedThenActiveThenUnreadOrder() {

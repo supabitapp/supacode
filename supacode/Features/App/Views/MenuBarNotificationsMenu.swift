@@ -38,7 +38,7 @@ struct MenuBarNotificationsMenu: View {
         }
       }
       MenuBarDivider()
-      MenuBarActionRow(title: "Mark All as Read", isEnabled: sections.hasUnread) {
+      MenuBarActionRow(title: "Mark Unread Notifications as Read", isEnabled: sections.hasUnread) {
         dismissMenuBarExtra()
         store.send(.markAllNotificationsRead)
       }

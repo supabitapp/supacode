@@ -368,8 +368,9 @@ extension RepositoriesFeature.State {
   }
 
   /// Equatable-diffs the menu bar sections against the cache so the status menu
-  /// only rebuilds when the rows it renders actually change. Runs after
-  /// `recomputeSidebarStructureIfChanged()`, whose highlight sections it reads.
+  /// only rebuilds when the rows it renders actually change. Computes its own
+  /// Pinned/Active hoists (as if sidebar grouping were on), so the menu stays
+  /// independent of the user's grouping toggles.
   mutating func recomputeMenuBarSectionsIfChanged() {
     let new = computeMenuBarSections()
     if new != menuBarSectionsCache {
@@ -733,8 +734,16 @@ extension RepositoriesFeature.State {
     )
   }
 
-  /// Hoisted-row payload for a single structure pass.
-  private struct HighlightHoists {
+  /// Pinned and Active hoists computed as if both sidebar grouping toggles were
+  /// enabled, so the menu bar always lists them regardless of the user's sidebar
+  /// grouping preference. Carries their union for the menu's Unread dedupe.
+  func menuBarForcedHoists() -> HighlightHoists {
+    computeHighlightHoists(groupPinned: true, groupActive: true)
+  }
+
+  /// Hoisted-row payload for one highlight-hoist pass (the sidebar structure
+  /// pass, or the menu bar's forced-on pass).
+  struct HighlightHoists {
     var pinned: [Worktree.ID]
     var active: [Worktree.ID]
     var hoistedSet: Set<Worktree.ID>

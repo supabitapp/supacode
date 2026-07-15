@@ -49,6 +49,7 @@ extension RepositoriesFeature.State {
     let selectionSlice = sidebarSelectionSlice
     let selectedSlice = selectedWorktreeSlice
     let notificationGroups = toolbarNotificationGroupsCache
+    let menuBarSections = menuBarSectionsCache
 
     applyCacheRecomputes(.allSidebar)
 
@@ -57,6 +58,7 @@ extension RepositoriesFeature.State {
     #expect(sidebarSelectionSlice == selectionSlice, "\(message) sidebarSelectionSlice.")
     #expect(selectedWorktreeSlice == selectedSlice, "\(message) selectedWorktreeSlice.")
     #expect(toolbarNotificationGroupsCache == notificationGroups, "\(message) toolbarNotificationGroupsCache.")
+    #expect(menuBarSectionsCache == menuBarSections, "\(message) menuBarSectionsCache.")
 
     // Restore, so a shortfall surfaces as this assertion rather than as an
     // unrelated TestStore diff in every test that sends the offending action.
@@ -64,6 +66,7 @@ extension RepositoriesFeature.State {
     sidebarSelectionSlice = selectionSlice
     selectedWorktreeSlice = selectedSlice
     toolbarNotificationGroupsCache = notificationGroups
+    menuBarSectionsCache = menuBarSections
   }
 
   /// Convenience init for tests that need a populated row/grouping store from a roster.

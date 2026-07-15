@@ -3,21 +3,21 @@ import IdentifiedCollections
 import OrderedCollections
 import SupacodeSettingsShared
 
-/// The menu bar's sections, mirroring the sidebar: the Pinned and Active rows
-/// it hoists, then an Unread section for anything unread that neither one
-/// already shows. Only row IDs are cached; each row observes its own leaf,
-/// exactly like the sidebar does.
+/// The menu bar's sections: the Pinned and Active rows it hoists (always,
+/// regardless of the user's sidebar grouping toggles), then an Unread section
+/// for anything unread that neither one already shows. Only row IDs are cached;
+/// each row observes its own leaf, exactly like the sidebar.
 struct MenuBarSections: Equatable {
   var pinned: [Worktree.ID] = []
   var active: [Worktree.ID] = []
   var unread: [Worktree.ID] = []
-  /// Repo tags for the `repo · worktree` subtitle. `sidebarStructure` only
-  /// builds these for repos contributing a highlight row, so unread-only repos
-  /// need their own.
+  /// Repo tags for the `repo · worktree` subtitle, one per repo contributing a
+  /// Pinned, Active, or Unread row. Built by `computeMenuBarSections` rather than
+  /// reused from the sidebar so the tags survive when sidebar grouping is off.
   var repositoryTagByID: [Repository.ID: SidebarHighlightRepoTag] = [:]
   /// Any unread row at all, hoisted or not. Drives the status item's dot and
-  /// the "Mark All as Read" gate, which must not go dark just because the only
-  /// unread row is also Active.
+  /// the "Mark Unread Notifications as Read" gate, which must not go dark just
+  /// because the only unread row is also Active.
   var hasUnread = false
 
   var isEmpty: Bool { pinned.isEmpty && active.isEmpty && unread.isEmpty }
@@ -63,20 +63,24 @@ extension RepositoriesFeature.State {
   /// Cached on `menuBarSectionsCache`; the menu bar scene reads the cache
   /// rather than walking `sidebarItems` from its body.
   func computeMenuBarSections() -> MenuBarSections {
-    var sections = MenuBarSections(repositoryTagByID: sidebarStructure.repositoryHighlightByID)
-    for section in sidebarStructure.sections {
-      guard case .highlight(let kind, let rowIDs) = section else { continue }
-      switch kind {
-      case .pinned: sections.pinned = rowIDs
-      case .active: sections.active = rowIDs
-      }
-    }
+    // Force the Pinned/Active hoists on so the menu lists them even when the
+    // user turned sidebar grouping off.
+    let hoists = menuBarForcedHoists()
+    var sections = MenuBarSections()
+    sections.pinned = hoists.pinned
+    sections.active = hoists.active
+
     let unread = unreadRowIDs()
     sections.hasUnread = !unread.isEmpty
-    // The highlight sections already show their rows; listing them again under
-    // Unread would double them up.
-    sections.unread = unread.filter { !sidebarStructure.hoistedRowIDs.contains($0) }
-    for rowID in sections.unread {
+    // The Pinned and Active sections already show their rows; listing them again
+    // under Unread would double them up. Dedupe against the menu's own hoist set,
+    // not the sidebar's, which is empty when grouping is off.
+    sections.unread = unread.filter { !hoists.hoistedSet.contains($0) }
+
+    // Build the subtitle tag for every repo contributing a row. Rebuilt here
+    // rather than reused from `sidebarStructure` so the tags survive when the
+    // sidebar's grouping projections are empty.
+    for rowID in hoists.pinned + hoists.active + sections.unread {
       guard let repositoryID = sidebarItems[id: rowID]?.repositoryID,
         sections.repositoryTagByID[repositoryID] == nil,
         let repository = repositories[id: repositoryID]
@@ -106,8 +110,13 @@ extension RepositoriesFeature.State {
     for repositoryID in orderedIDs {
       guard let repository = repositoriesByID[repositoryID] else { continue }
       guard repository.isGitRepository else {
-        let folderID = Repository.folderWorktreeID(for: repository.rootURL)
-        if sidebarItems[id: folderID]?.hasUnseenNotifications == true {
+        // A remote folder keys its synthetic row off the host-scoped worktree id,
+        // not the local path id, so resolve it the same way the sidebar does.
+        let folderID =
+          repository.host != nil
+          ? repository.worktrees.first?.id
+          : Repository.folderWorktreeID(for: repository.rootURL)
+        if let folderID, sidebarItems[id: folderID]?.hasUnseenNotifications == true {
           rowIDs.append(folderID)
         }
         continue
