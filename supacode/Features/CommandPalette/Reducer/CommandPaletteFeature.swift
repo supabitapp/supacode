@@ -60,6 +60,8 @@ struct CommandPaletteFeature {
     case removeWorktree(Worktree.ID, Repository.ID)
     case archiveWorktree(Worktree.ID, Repository.ID)
     case renameBranch(Worktree.ID, Repository.ID)
+    case customizeRepositoryAppearance(Repository.ID)
+    case customizeWorktreeAppearance(Worktree.ID, Repository.ID)
     case viewArchivedWorktrees
     case refreshWorktrees
     case ghosttyCommand(String)
@@ -297,6 +299,7 @@ struct CommandPaletteFeature {
     if let renameBranchItem = renameBranchItem(from: repositories) {
       items.append(renameBranchItem)
     }
+    items.append(contentsOf: customizeAppearanceItems(from: repositories))
     // Worktree navigation is the ⌘P switcher's job (see `worktreeSwitcherItems`);
     // the ⌘⇧P command palette lists actions only, not worktree rows.
     return items
@@ -332,6 +335,77 @@ struct CommandPaletteFeature {
     )
   }
 
+  /// The "Customize Appearance" actions for the current selection. A folder or
+  /// non-main worktree customizes its own row; a git selection also offers
+  /// repository-level appearance (the sidebar exposes it on the section header,
+  /// so from any worktree the palette is the way to reach it). Subtitles echo
+  /// the sidebar's custom title and tint for each target.
+  static func customizeAppearanceItems(from repositories: RepositoriesFeature.State) -> [CommandPaletteItem] {
+    guard let selectedWorktreeID = repositories.selectedWorktreeID,
+      let selectedRow = repositories.sidebarItems[id: selectedWorktreeID],
+      let selectedRepositoryID = repositories.repositoryID(containing: selectedWorktreeID)
+    else {
+      return []
+    }
+    let section = repositories.sidebar.sections[selectedRepositoryID]
+    let isGitRepository = repositories.repositories[id: selectedRepositoryID]?.isGitRepository == true
+
+    var items: [CommandPaletteItem] = []
+    // The selected row itself, unless it's a git main worktree (that maps to the
+    // repository entry below). Folders are checked first since a folder row is
+    // also its repository's root. Pending rows have no stable target yet,
+    // mirroring the sidebar's `!lifecycle.isPending` gate.
+    if selectedRow.isFolder {
+      // A loaded folder row renders (and the customization sheet edits) its
+      // per-row bucket, so prefer that; the section is a fallback for a remote
+      // folder whose row hasn't loaded yet.
+      let folderName = Repository.sidebarDisplayName(
+        custom: selectedRow.customTitle ?? section?.title,
+        fallback: selectedRow.name
+      )
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.customizeWorktreeAppearance(selectedWorktreeID),
+          title: "Customize Appearance",
+          subtitle: folderName,
+          kind: .customizeWorktreeAppearance(selectedWorktreeID, selectedRepositoryID),
+          subtitleTint: selectedRow.customTint ?? section?.color
+        )
+      )
+    } else if !selectedRow.isMainWorktree, !selectedRow.lifecycle.isPending {
+      let worktreeDisplayName =
+        SidebarDisplayName.resolved(custom: selectedRow.customTitle, fallback: selectedRow.name)
+        ?? selectedRow.name
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.customizeWorktreeAppearance(selectedWorktreeID),
+          title: "Customize Appearance",
+          subtitle: worktreeDisplayName,
+          kind: .customizeWorktreeAppearance(selectedWorktreeID, selectedRepositoryID),
+          subtitleTint: selectedRow.customTint
+        )
+      )
+    }
+    // Repository-level appearance for git repos (folder repos have no section
+    // header to tint). Hidden mid-removal, matching the disabled sidebar entry.
+    if isGitRepository, repositories.removingRepositoryIDs[selectedRepositoryID] == nil {
+      let repositoryName = Repository.sidebarDisplayName(
+        custom: section?.title,
+        fallback: repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
+      )
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.customizeRepositoryAppearance(selectedRepositoryID),
+          title: "Customize Repository Appearance",
+          subtitle: repositoryName,
+          kind: .customizeRepositoryAppearance(selectedRepositoryID),
+          subtitleTint: section?.color
+        )
+      )
+    }
+    return items
+  }
+
   static func recencyRetentionIDs(
     from repositories: IdentifiedArrayOf<Repository>,
     scripts: [ScriptDefinition] = []
@@ -339,9 +413,11 @@ struct CommandPaletteFeature {
     var ids = CommandPaletteItemID.globalIDs
     for repository in repositories {
       ids.append(contentsOf: CommandPaletteItemID.pullRequestIDs(repositoryID: repository.id))
+      ids.append(CommandPaletteItemID.customizeRepositoryAppearance(repository.id))
       for worktree in repository.worktrees {
         ids.append(CommandPaletteItemID.worktreeSelect(worktree.id))
         ids.append(CommandPaletteItemID.renameBranch(worktree.id))
+        ids.append(CommandPaletteItemID.customizeWorktreeAppearance(worktree.id))
       }
     }
     for script in scripts {
@@ -661,6 +737,14 @@ private enum CommandPaletteItemID {
     "worktree.\(worktreeID).rename-branch"
   }
 
+  static func customizeRepositoryAppearance(_ repositoryID: Repository.ID) -> CommandPaletteItem.ID {
+    "repository.\(repositoryID).customize-appearance"
+  }
+
+  static func customizeWorktreeAppearance(_ worktreeID: Worktree.ID) -> CommandPaletteItem.ID {
+    "worktree.\(worktreeID).customize-appearance"
+  }
+
   static func ghosttyCommand(_ command: GhosttyCommand) -> CommandPaletteItem.ID {
     "\(ghosttyPrefix)\(command.action)|\(command.title)"
   }
@@ -769,8 +853,8 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
     return .removeWorktree(worktreeID, repositoryID)
   case .archiveWorktree(let worktreeID, let repositoryID):
     return .archiveWorktree(worktreeID, repositoryID)
-  case .renameBranch(let worktreeID, let repositoryID):
-    return .renameBranch(worktreeID, repositoryID)
+  case .renameBranch, .customizeRepositoryAppearance, .customizeWorktreeAppearance:
+    return selectedEntryDelegateAction(for: kind)!
   case .viewArchivedWorktrees:
     return .viewArchivedWorktrees
   case .refreshWorktrees:
@@ -792,6 +876,24 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
     case .debugTestToast(let toast):
       return .debugTestToast(toast)
   #endif
+  }
+}
+
+/// Delegates for actions that mutate the selected sidebar entry (rename or
+/// customize its appearance), grouped so the main dispatch stays under the
+/// cyclomatic-complexity limit.
+private func selectedEntryDelegateAction(
+  for kind: CommandPaletteItem.Kind
+) -> CommandPaletteFeature.Delegate? {
+  switch kind {
+  case .renameBranch(let worktreeID, let repositoryID):
+    return .renameBranch(worktreeID, repositoryID)
+  case .customizeRepositoryAppearance(let repositoryID):
+    return .customizeRepositoryAppearance(repositoryID)
+  case .customizeWorktreeAppearance(let worktreeID, let repositoryID):
+    return .customizeWorktreeAppearance(worktreeID, repositoryID)
+  default:
+    return nil
   }
 }
 
@@ -837,6 +939,8 @@ private func pullRequestDelegateAction(
     .removeWorktree,
     .archiveWorktree,
     .renameBranch,
+    .customizeRepositoryAppearance,
+    .customizeWorktreeAppearance,
     .viewArchivedWorktrees,
     .refreshWorktrees,
     .ghosttyCommand,

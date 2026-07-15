@@ -278,11 +278,24 @@ final class WorktreeTerminalManager {
   // swiftlint:disable:next cyclomatic_complexity
   private func handleTabCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
-    case .createTab(let worktree, let runSetupScriptIfNew, let id):
-      Task { createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, tabID: id) }
-    case .createTabWithInput(let worktree, let input, let runSetupScriptIfNew, let id):
+    case .createTab(let worktree, let runSetupScriptIfNew, let id, let title):
       Task {
-        createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, initialInput: input, tabID: id)
+        createTabAsync(
+          in: worktree,
+          runSetupScriptIfNew: runSetupScriptIfNew,
+          tabID: id,
+          customTitle: title
+        )
+      }
+    case .createTabWithInput(let worktree, let input, let runSetupScriptIfNew, let id, let title):
+      Task {
+        createTabAsync(
+          in: worktree,
+          runSetupScriptIfNew: runSetupScriptIfNew,
+          initialInput: input,
+          tabID: id,
+          customTitle: title
+        )
       }
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
@@ -301,6 +314,9 @@ final class WorktreeTerminalManager {
       let terminal = state(for: worktree)
       guard let tabID = explicitTabID ?? terminal.tabManager.selectedTabId else { break }
       terminal.tabManager.beginTabRename(tabID)
+    case .renameTab(let worktree, let tabID, let title):
+      let applied = stateIfExists(for: worktree.id)?.renameTab(tabID, title: title) ?? false
+      emit(.tabRenamed(worktreeID: worktree.id, tabID: tabID, applied: applied))
     case .selectTab(let worktree, let tabID):
       state(for: worktree).selectTab(tabID)
     case .selectTabAtIndex(let worktree, let index):
@@ -376,8 +392,8 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
-      .destroyTab, .destroySurface, .setImagePasteAgents, .prune, .setNotificationsEnabled, .setSelectedWorktreeID,
-      .refreshTabBarVisibility, .beginTabRename:
+      .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .setNotificationsEnabled,
+      .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
       return false
     }
     return true
@@ -394,7 +410,7 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
-      .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
+      .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .setNotificationsEnabled,
       .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename:
       return false
     }
@@ -435,7 +451,7 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
-      .splitSurface, .destroyTab, .destroySurface, .beginTabRename:
+      .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
   }
@@ -606,7 +622,8 @@ final class WorktreeTerminalManager {
     in worktree: Worktree,
     runSetupScriptIfNew: Bool,
     initialInput: String? = nil,
-    tabID: UUID? = nil
+    tabID: UUID? = nil,
+    customTitle: String? = nil
   ) {
     let state = state(for: worktree) { runSetupScriptIfNew }
     let setupScript: String?
@@ -617,7 +634,12 @@ final class WorktreeTerminalManager {
     } else {
       setupScript = nil
     }
-    let created = state.createTab(setupScript: setupScript, initialInput: initialInput, tabID: tabID)
+    let created = state.createTab(
+      setupScript: setupScript,
+      initialInput: initialInput,
+      tabID: tabID,
+      customTitle: customTitle
+    )
     guard created == nil, let tabID else { return }
     // Drain a waiting CLI ack now instead of stranding it until the timeout.
     emit(
@@ -820,6 +842,10 @@ final class WorktreeTerminalManager {
 
   func tabExists(worktreeID: Worktree.ID, tabID: TerminalTabID) -> Bool {
     states[worktreeID]?.hasTab(tabID) ?? false
+  }
+
+  func tabCanRename(worktreeID: Worktree.ID, tabID: TerminalTabID) -> Bool {
+    states[worktreeID]?.tabManager.canRename(tabID) ?? false
   }
 
   func surfaceExists(worktreeID: Worktree.ID, tabID: TerminalTabID, surfaceID: UUID) -> Bool {

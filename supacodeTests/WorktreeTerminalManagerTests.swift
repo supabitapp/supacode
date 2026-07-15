@@ -3230,6 +3230,59 @@ struct WorktreeTerminalManagerTests {
     #expect(state.splitTree(for: regularTab).leaves().count == 1)
   }
 
+  @Test func renameTabCommandAppliesTitleAndEmitsRenamedEvent() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    guard let tabID = state.createTab() else {
+      Issue.record("Expected a tab")
+      return
+    }
+    let stream = manager.eventStream()
+
+    manager.handleCommand(.renameTab(worktree, tabID: tabID, title: "implement"))
+
+    let event = await nextEvent(stream) { event in
+      if case .tabRenamed = event { return true }
+      return false
+    }
+    #expect(event == .tabRenamed(worktreeID: worktree.id, tabID: tabID, applied: true))
+    #expect(state.tabManager.tabs.first { $0.id == tabID }?.customTitle == "implement")
+  }
+
+  @Test func renameTabCommandOnLockedTabEmitsNotApplied() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    let tabID = state.tabManager.createTab(title: "Run Script", icon: nil, isTitleLocked: true)
+    let stream = manager.eventStream()
+
+    manager.handleCommand(.renameTab(worktree, tabID: tabID, title: "implement"))
+
+    let event = await nextEvent(stream) { event in
+      if case .tabRenamed = event { return true }
+      return false
+    }
+    #expect(event == .tabRenamed(worktreeID: worktree.id, tabID: tabID, applied: false))
+    #expect(state.tabManager.tabs.first { $0.id == tabID }?.customTitle == nil)
+  }
+
+  @Test func renameTabCommandOnUnknownWorktreeEmitsNotAppliedWithoutResurrectingState() async {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let tabID = TerminalTabID()
+    let stream = manager.eventStream()
+
+    manager.handleCommand(.renameTab(worktree, tabID: tabID, title: "implement"))
+
+    let event = await nextEvent(stream) { event in
+      if case .tabRenamed = event { return true }
+      return false
+    }
+    #expect(event == .tabRenamed(worktreeID: worktree.id, tabID: tabID, applied: false))
+    #expect(manager.stateIfExists(for: worktree.id) == nil)
+  }
+
   @Test func restoreFromSnapshotIgnoresWhitespaceOnlyCustomTitle() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()

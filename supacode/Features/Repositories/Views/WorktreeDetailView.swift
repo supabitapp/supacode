@@ -128,7 +128,7 @@ struct WorktreeDetailView: View {
     let resolvedSelection = Self.resolvedOpenSelection(
       hasActiveWorktree: hasActiveWorktree,
       selectedWorktree: selectedWorktree,
-      openActionSelection: store.openActionSelection
+      state: state
     )
     return applyFocusedActions(
       content: content,
@@ -169,10 +169,13 @@ struct WorktreeDetailView: View {
   private static func resolvedOpenSelection(
     hasActiveWorktree: Bool,
     selectedWorktree: Worktree?,
-    openActionSelection: OpenWorktreeAction
+    state: AppFeature.State
   ) -> OpenWorktreeAction? {
     guard hasActiveWorktree, let selectedWorktree else { return nil }
-    let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
+    let resolved = OpenWorktreeAction.availableSelection(
+      state.openActionSelection,
+      installed: state.installedOpenActions
+    )
     guard let host = selectedWorktree.host else { return resolved }
     let remotePath = selectedWorktree.location.workingDirectoryPath
     return resolved.remoteOpenInvocation(host: host, remotePath: remotePath) != nil ? resolved : nil
@@ -412,6 +415,8 @@ struct WorktreeDetailView: View {
   fileprivate struct OpenMenuIdentity: Hashable {
     let host: RemoteHost?
     let selection: OpenWorktreeAction
+    /// The menu's item list, so installing an editor rebuilds the cached NSMenu.
+    let installed: [OpenWorktreeAction]
   }
 
   struct ScriptFingerprint: Hashable {
@@ -446,7 +451,11 @@ struct WorktreeDetailView: View {
     let remoteOpenHost: RemoteHost?
     let remoteOpenPath: String
     let openActionSelection: OpenWorktreeAction
+    let installedOpenActions: [OpenWorktreeAction]
     let repoScripts: [ScriptDefinition]
+    /// False while the selected repository's settings are still being read, when
+    /// `repoScripts` is empty for want of an answer rather than for want of scripts.
+    let hasLoadedRepoScripts: Bool
     let globalScripts: [ScriptDefinition]
     let runningScriptIDs: Set<UUID>
 
@@ -497,12 +506,17 @@ struct WorktreeDetailView: View {
 
     // NSMenu cache key for the Open menu. See `OpenMenuIdentity`.
     var openMenuIdentity: OpenMenuIdentity {
-      OpenMenuIdentity(host: remoteOpenHost, selection: openActionSelection)
+      OpenMenuIdentity(
+        host: remoteOpenHost,
+        selection: openActionSelection,
+        installed: installedOpenActions
+      )
     }
 
-    /// The first `.run`-kind script, if any.
+    /// The first `.run`-kind script, if any. Nothing is primary until the repository's
+    /// scripts land: the globals alone would name a script the repository overrides.
     var primaryScript: ScriptDefinition? {
-      allScripts.primaryScript
+      hasLoadedRepoScripts ? allScripts.primaryScript : nil
     }
 
     /// Whether any `.run`-kind script is currently running.
@@ -510,17 +524,6 @@ struct WorktreeDetailView: View {
       allScripts.hasRunningRunScript(in: runningScriptIDs)
     }
 
-    var runScriptHelpText: String {
-      @Shared(.settingsFile) var settingsFile
-      let display = AppShortcuts.runScript.effective(from: settingsFile.global.shortcutOverrides)?.display ?? "none"
-      return "Run Script (\(display))"
-    }
-
-    var stopRunScriptHelpText: String {
-      @Shared(.settingsFile) var settingsFile
-      let display = AppShortcuts.stopRunScript.effective(from: settingsFile.global.shortcutOverrides)?.display ?? "none"
-      return "Stop Script (\(display))"
-    }
   }
 
   fileprivate struct WorktreeDetailToolbar: ToolbarContent {
@@ -575,7 +578,9 @@ struct WorktreeDetailView: View {
           remoteOpenHost: selectedWorktree.host,
           remoteOpenPath: selectedWorktree.location.workingDirectoryPath,
           openActionSelection: store.openActionSelection,
+          installedOpenActions: store.installedOpenActions,
           repoScripts: store.repoScripts,
+          hasLoadedRepoScripts: store.hasLoadedRepoScripts,
           globalScripts: store.globalScripts,
           runningScriptIDs: Set(selectedRow?.runningScripts.ids ?? [])
         )
@@ -595,10 +600,7 @@ struct WorktreeDetailView: View {
           onRunNamedScript: { store.send(.runNamedScript($0)) },
           onStopScript: { store.send(.stopScript($0)) },
           onStopRunScripts: { store.send(.stopRunScripts) },
-          onManageRepoScripts: {
-            let repositoryID = selectedWorktree.repositoryRootURL.path(percentEncoded: false)
-            store.send(.settings(.setSelection(.repositoryScripts(repositoryID))))
-          },
+          onManageRepoScripts: { store.send(.manageRepositoryScripts) },
           onManageGlobalScripts: { store.send(.settings(.setSelection(.scripts))) }
         )
       }
@@ -625,6 +627,7 @@ struct WorktreeDetailView: View {
     let onStopRunScripts: () -> Void
     let onManageRepoScripts: () -> Void
     let onManageGlobalScripts: () -> Void
+    @Shared(.settingsFile) private var settingsFile
 
     var body: some ToolbarContent {
       ToolbarItem(placement: .navigation) {
@@ -672,8 +675,9 @@ struct WorktreeDetailView: View {
 
     @ViewBuilder
     private func openMenu(openActionSelection: OpenWorktreeAction) -> some View {
-      let availableActions = OpenWorktreeAction.availableCases.filter { $0 != .finder }
-      let resolved = OpenWorktreeAction.availableSelection(openActionSelection)
+      let installed = toolbarState.installedOpenActions
+      let availableActions = installed.filter { $0 != .finder }
+      let resolved = OpenWorktreeAction.availableSelection(openActionSelection, installed: installed)
       // The primary (single-click) action is the resolved selected editor
       // (Finder falls back to the first available editor). It is NOT substituted
       // when it can't open the worktree, which would diverge from ⌘O / the menu
@@ -702,7 +706,7 @@ struct WorktreeDetailView: View {
             } label: {
               OpenWorktreeActionMenuLabelView(action: .finder)
             }
-            .help("Reveal in Finder (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.revealInFinder)))")
+            .help("Reveal in Finder (\(revealInFinderShortcut))")
             .disabled(toolbarState.remoteOpenHost != nil)
           }
         } label: {
@@ -724,10 +728,21 @@ struct WorktreeDetailView: View {
       }
     }
 
+    private var revealInFinderShortcut: String {
+      WorktreeDetailView.resolveShortcutDisplay(
+        for: AppShortcuts.revealInFinder,
+        overrides: settingsFile.global.shortcutOverrides
+      )
+    }
+
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
       if let reason = toolbarState.remoteOpenDisabledReason(action) { return reason }
       guard isDefault else { return action.title }
-      return "\(action.title) (\(WorktreeDetailView.resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
+      let display = WorktreeDetailView.resolveShortcutDisplay(
+        for: AppShortcuts.openWorktree,
+        overrides: settingsFile.global.shortcutOverrides
+      )
+      return "\(action.title) (\(display))"
     }
   }
 
@@ -884,9 +899,15 @@ struct WorktreeDetailView: View {
     return nil
   }
 
-  static func resolveShortcutDisplay(for shortcut: AppShortcut, fallback: String = "none") -> String {
-    @Shared(.settingsFile) var settingsFile
-    let display = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display ?? fallback
+  /// `overrides` is passed in (never read from a local `@Shared` here): the
+  /// shared reference is cached weakly, so constructing one per call would
+  /// re-read the settings file on every render.
+  static func resolveShortcutDisplay(
+    for shortcut: AppShortcut,
+    overrides: [AppShortcutID: AppShortcutOverride],
+    fallback: String = "none"
+  ) -> String {
+    let display = shortcut.effective(from: overrides)?.display ?? fallback
     return display.isEmpty ? fallback : display
   }
 }
@@ -1209,6 +1230,7 @@ private struct ScriptMenu: View {
   let onStopRunScripts: () -> Void
   let onManageRepoScripts: () -> Void
   let onManageGlobalScripts: () -> Void
+  @Shared(.settingsFile) private var settingsFile
 
   private var primaryScript: ScriptDefinition? {
     toolbarState.primaryScript
@@ -1243,12 +1265,12 @@ private struct ScriptMenu: View {
     } primaryAction: {
       if hasRunning {
         onStopRunScripts()
-      } else if primaryScript != nil {
-        onRunScript()
-      } else if toolbarState.repoScripts.isEmpty, !toolbarState.globalScripts.isEmpty {
-        onManageGlobalScripts()
       } else {
-        onManageRepoScripts()
+        // The reducer decides: run the primary script, or open whichever settings pane
+        // the user has to visit to configure one. Branching here too would answer from
+        // an empty `repoScripts` while the repository's are still being read, and send
+        // a repository that defines its own scripts to the global pane.
+        onRunScript()
       }
     }
     .help(primaryHelpText(hasRunning: hasRunning))
@@ -1301,13 +1323,16 @@ private struct ScriptMenu: View {
   }
 
   private func primaryHelpText(hasRunning: Bool) -> String {
+    let overrides = settingsFile.global.shortcutOverrides
     if hasRunning {
-      return toolbarState.stopRunScriptHelpText
+      let display = AppShortcuts.stopRunScript.effective(from: overrides)?.display ?? "none"
+      return "Stop Script (\(display))"
     }
     guard primaryScript != nil else {
       return "Configure scripts in Settings."
     }
-    return toolbarState.runScriptHelpText
+    let display = AppShortcuts.runScript.effective(from: overrides)?.display ?? "none"
+    return "Run Script (\(display))"
   }
 }
 
@@ -1335,7 +1360,9 @@ private struct WorktreeToolbarPreview: View {
       remoteOpenHost: nil,
       remoteOpenPath: "/tmp/preview",
       openActionSelection: .finder,
+      installedOpenActions: OpenWorktreeAction.menuOrder,
       repoScripts: [ScriptDefinition(kind: .run, command: "npm run dev")],
+      hasLoadedRepoScripts: true,
       globalScripts: [],
       runningScriptIDs: [],
     )

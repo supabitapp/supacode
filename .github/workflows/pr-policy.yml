@@ -138,7 +138,7 @@ jobs:
                 if (issue.pull_request || issue.state !== 'open') continue; // Not a real, open issue.
                 anyValidIssue = true;
                 const isReady = issue.labels.some((l) => (typeof l === 'string' ? l : l.name).toLowerCase() === 'ready');
-                if (!isReady) reasons.push(`Linked issue #${number} is not marked \`ready\` yet. Bugs are \`ready\` on filing; features are marked \`ready\` by a maintainer once approved.`);
+                if (!isReady) reasons.push(`Linked issue #${number} is not marked \`ready\` yet. A maintainer adds \`ready\` once the issue is triaged and approved for a pull request.`);
                 const assignees = issue.assignees || [];
                 if (assignees.length > 0 && !assignees.some((a) => a.id === pr.user.id)) {
                   const names = [...new Set(assignees.map((a) => '@' + a.login))].join(', ');

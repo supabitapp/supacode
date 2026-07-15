@@ -186,11 +186,11 @@ struct MenuBarNotificationListTests {
 
     #expect(state.menuBarSectionsCache.unread == [worktree.id])
 
-    // Agent activity only raises `.sidebarStructure`, so the cache must key off
-    // that flag too or an agent-only row would never reach the menu.
+    // Agent activity raises only `.sidebarStructure`, so the cache must key off
+    // that flag too, or a row the agent hoists to Active would never reach the
+    // menu. The row moves from Unread to Active once the agent lands.
     let instance = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
     state.sidebarItems[id: worktree.id]?.agentSnapshot = .init(agents: [instance], isWorking: true)
-    setRowNotifications(&state, id: worktree.id, notifications: [])
     state.applyPostReduceCacheRecomputes(.sidebarStructure)
 
     #expect(state.menuBarSectionsCache.unread.isEmpty)

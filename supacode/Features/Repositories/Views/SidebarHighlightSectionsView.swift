@@ -10,7 +10,6 @@ struct SidebarHighlightSection: View {
   let rowIDs: [Worktree.ID]
   let store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  let selectedWorktreeIDs: Set<Worktree.ID>
   let repositoryHighlightByID: [Repository.ID: SidebarHighlightRepoTag]
   /// Hint string to render in the row's trailing slot, keyed by `Worktree.ID`.
   /// Empty when Cmd isn't pressed; the caller builds it once for the whole
@@ -24,7 +23,6 @@ struct SidebarHighlightSection: View {
           rowID: rowID,
           store: store,
           terminalManager: terminalManager,
-          selectedWorktreeIDs: selectedWorktreeIDs,
           repositoryHighlightByID: repositoryHighlightByID,
           shortcutHint: shortcutHintByID[rowID]
         )
@@ -70,7 +68,6 @@ private struct SidebarHighlightRow: View {
   let rowID: SidebarItemID
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  let selectedWorktreeIDs: Set<Worktree.ID>
   let repositoryHighlightByID: [Repository.ID: SidebarHighlightRepoTag]
   let shortcutHint: String?
 
@@ -82,7 +79,6 @@ private struct SidebarHighlightRow: View {
       rowID: rowID,
       store: store,
       terminalManager: terminalManager,
-      selectedWorktreeIDs: selectedWorktreeIDs,
       isRepositoryRemoving: false,
       hideSubtitle: false,
       moveMode: .alwaysDisabled,

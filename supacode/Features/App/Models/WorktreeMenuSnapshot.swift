@@ -104,7 +104,7 @@ extension AppFeature.Action {
       case .notificationReceived, .tabCreated, .tabClosed, .focusChanged,
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
-        .tabRemoved, .worktreeStateTornDown, .tabProgressDisplayChanged,
+        .tabRemoved, .tabRenamed, .worktreeStateTornDown, .tabProgressDisplayChanged,
         .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
         .surfaceCreationFailed:
         return false
@@ -120,11 +120,13 @@ extension AppFeature.Action {
     // directly; any downstream mutation flows back through a classified arm.
     case .applicationDidBecomeActive, .applicationDidResignActive,
       .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
+      .refreshInstalledOpenActions, .installedOpenActionsResolved,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal,
       .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
+      .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch,

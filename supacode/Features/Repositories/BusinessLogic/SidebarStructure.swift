@@ -332,6 +332,25 @@ extension RepositoriesFeature.State {
     }
   }
 
+  /// Refreshes the cached `sidebarSelectionSlice` from the effective selection,
+  /// Equatable-diffed so a no-op rebuild doesn't invalidate the sidebar's
+  /// observation surface. Kept off `sidebarStructure` so an arrow-key selection
+  /// move recomputes a `|selection|`-sized value, not the whole render plan.
+  mutating func recomputeSidebarSelectionSliceIfChanged() {
+    let new = computeSidebarSelectionSlice()
+    if new != sidebarSelectionSlice {
+      sidebarSelectionSlice = new
+    }
+  }
+
+  /// Drops open-action entries for repositories that left the roster. Pure: the
+  /// resolution itself reads disk and lives in `.resolveOpenActions`, but pruning
+  /// needs nothing but the roster.
+  mutating func pruneOpenActionsForRemovedRepositoriesIfChanged() {
+    guard openActionByRepositoryID.contains(where: { repositories[id: $0.key] == nil }) else { return }
+    openActionByRepositoryID = openActionByRepositoryID.filter { repositories[id: $0.key] != nil }
+  }
+
   /// Equatable-diffs the toolbar notification snapshot against the cache so a
   /// per-row notification append only invalidates SwiftUI when the toolbar
   /// projection actually changes.
@@ -362,22 +381,37 @@ struct CacheInvalidations: OptionSet {
   static let sidebarStructure = CacheInvalidations(rawValue: 1 << 0)
   static let selectedWorktreeSlice = CacheInvalidations(rawValue: 1 << 1)
   static let toolbarNotificationGroups = CacheInvalidations(rawValue: 1 << 2)
-  static let all: CacheInvalidations = [
-    .sidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups,
+  static let sidebarSelectionSlice = CacheInvalidations(rawValue: 1 << 3)
+  /// Barely a cache recompute: the post-reduce hook prunes entries for dropped
+  /// repositories (pure) and launches the off-main resolution effect (the read).
+  /// Set it on any arm whose inputs (the repository roster, the installed
+  /// editors, the open-action settings) can change the map.
+  static let openActionResolution = CacheInvalidations(rawValue: 1 << 4)
+  /// The four row-derived sidebar caches. Excludes `.openActionResolution`,
+  /// which is keyed by repository: no worktree-level mutation (rename, archive,
+  /// delete, customize) can change the open-action map.
+  static let allSidebar: CacheInvalidations = [
+    .sidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups, .sidebarSelectionSlice,
   ]
+  /// Every bit: the row-derived caches plus the roster-scoped open-action resolution.
+  static let all: CacheInvalidations = [.allSidebar, .openActionResolution]
 }
 
 extension SidebarItemFeature.Action {
   var cacheInvalidations: CacheInvalidations {
     switch self {
+    // `.sidebarSelectionSlice` because the context menu gates archive / delete
+    // / rename on the selected rows' lifecycle.
     case .lifecycleChanged:
-      return [.sidebarStructure, .selectedWorktreeSlice]
+      return [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
     case .agentSnapshotChanged:
       return .sidebarStructure
     // `.selectedWorktreeSlice` because the projection carries the focused row's
-    // `runningScripts` (toolbar Run/Stop state).
+    // `runningScripts` (toolbar Run/Stop state). Never `.sidebarSelectionSlice`:
+    // this is the per-leaf terminal tick and the selection slice projects none
+    // of what it carries, so it must not walk the selection on every notification.
     case .terminalProjectionChanged:
-      return .all
+      return [.sidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups]
     case .pullRequestChanged:
       return .selectedWorktreeSlice
     case .diffStatsChanged, .pullRequestQueryStarted,
@@ -404,20 +438,39 @@ extension RepositoriesFeature.Action {
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
       .repositoryExpansionChanged, .branchNestExpansionChanged,
       .setAllSidebarGroupsExpanded,
-      .repositoriesMoved, .pinnedWorktreesMoved, .unpinnedWorktreesMoved,
       .worktreeNotificationReceived, .worktreeLineChangesLoaded,
       .consumeTerminalFocus:
       return .sidebarStructure
 
-    // Bulk repository / worktree set changes that touch all caches.
+    // Reorders rewrite the bucket order the selection slice's rows are walked
+    // in, so the cached selection order would otherwise go stale.
+    case .repositoriesMoved, .pinnedWorktreesMoved, .unpinnedWorktreesMoved:
+      return [.sidebarStructure, .sidebarSelectionSlice]
+
+    // Repository-roster changes (repos added, removed, or reloaded): the only
+    // bulk arms that rewrite the open-action map's repo keys.
     case .repositoriesLoaded, .openRepositoriesFinished,
       .repositoryRemovalCompleted, .repositoriesRemoved,
-      .removeFailedRepository, .remoteRepositoryResolved,
-      .archiveWorktreeApply, .unarchiveWorktree,
+      .removeFailedRepository, .remoteRepositoryResolved:
+      return .all
+
+    // The other inputs of the open-action map: the installed editors and the
+    // per-repo / global open-action settings. Neither touches a sidebar row.
+    case .setInstalledOpenActions, .openActionSettingsChanged:
+      return .openActionResolution
+
+    // Resolution itself: `.resolveOpenActions` runs the effect the bits above
+    // arm, and `.openActionsResolved` only stores its result. Neither may re-arm
+    // resolution, or the two would feed each other.
+    case .resolveOpenActions, .openActionsResolved:
+      return []
+
+    // Worktree-set changes inside an unchanged repo roster.
+    case .archiveWorktreeApply, .unarchiveWorktree,
       .deleteWorktreeApply, .worktreeDeleted,
       .createWorktreeInRepository, .createRandomWorktreeInRepository,
       .autoDeleteExpiredArchivedWorktrees:
-      return .all
+      return .allSidebar
 
     // `worktreeInfoEvent` is a pure effect-launcher (HEAD watcher tick): the
     // arm only spawns `.run { ... await send(.branchNameLoaded(...)) }` etc.
@@ -440,44 +493,67 @@ extension RepositoriesFeature.Action {
     // Without `.toolbarNotificationGroups` the popover would show the old name
     // until an unrelated bulk action recomputed the cache.
     case .worktreeBranchNameLoaded:
-      return .all
+      return .allSidebar
 
-    // Layout + slice but not the notification snapshot (no notification touch).
+    // Layout + slices but not the notification snapshot (no notification touch).
+    // The pin flips and the create / script paths rewrite `isPinned`, the row
+    // roster, or the selection, all of which the selection slice projects.
     case .createRandomWorktreeSucceeded, .createRandomWorktreeFailed,
       .pendingWorktreeProgressUpdated,
       .archiveScriptCompleted, .deleteScriptCompleted, .scriptCompleted,
       .consumeSetupScript,
-      .pinWorktree, .unpinWorktree,
-      .repositoryPullRequestsLoaded:
+      .pinWorktree, .unpinWorktree:
+      return [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
+
+    // Pull-request data isn't projected into the selection slice.
+    case .repositoryPullRequestsLoaded:
       return [.sidebarStructure, .selectedWorktreeSlice]
 
-    // Selection changes only refresh the slice.
+    // Selection changes refresh both selection-derived caches.
     case .selectionChanged, .selectWorktree, .selectArchivedWorktrees,
       .selectNextWorktree, .selectPreviousWorktree, .selectWorktreeAtHotkeySlot,
-      .worktreeHistoryBack, .worktreeHistoryForward:
-      return .selectedWorktreeSlice
+      .worktreeHistoryBack, .worktreeHistoryForward,
+      .setSidebarSelectedWorktreeIDs:
+      return [.selectedWorktreeSlice, .sidebarSelectionSlice]
 
     // Repo customization save mutates the section title / color, which flow
     // into the sidebar layout's highlight tag and the notification group name.
     case .repositoryCustomization(.presented(.delegate(.save))):
-      return .all
+      return .allSidebar
     case .repositoryCustomization:
       return []
 
     // Worktree customization save mutates the bucketed Item's title / color, picked up via
     // per-row `customTitle` / `customTint` mirror (highlight tags + notification group name).
     case .worktreeCustomization(.presented(.delegate(.save))):
-      return .all
+      return .allSidebar
     // Deeplink / CLI appearance update mutates the same fields as the sheet save.
     case .setWorktreeAppearance:
-      return .all
+      return .allSidebar
     case .worktreeCustomization:
       return []
 
     // Branch rename updates the worktree.name shown in the sidebar row and notification group.
     case .renameBranchPrompt(.presented(.delegate(.renamed))):
-      return .all
+      return .allSidebar
     case .renameBranchPrompt:
+      return []
+
+    // The two confirm handlers that seed `removingRepositoryIDs` and resync the
+    // sidebar. `syncSidebar` is the only path that births or kills a row, and it
+    // flips a pending row's lifecycle to `.deleting`, which every row-derived
+    // cache projects (the context menu gates archive / delete / rename on it).
+    case .alert(.presented(.confirmDeleteSidebarItems)),
+      .alert(.presented(.confirmDeleteRepository)):
+      return .allSidebar
+    // The remaining alert arms only clear `state.alert` and forward an action;
+    // the forwarded action declares its own invalidations. Listed one by one so a
+    // new alert that mutates a row cannot default into this bucket.
+    case .alert(.presented(.confirmArchiveWorktree)),
+      .alert(.presented(.confirmArchiveWorktrees)),
+      .alert(.presented(.confirmRemoveFailedRepository)),
+      .alert(.presented(.viewTerminalTab)),
+      .alert(.dismiss):
       return []
 
     // Everything else is UI / effects / transient state, no cache touched.
@@ -490,7 +566,6 @@ extension RepositoriesFeature.Action {
       // Blocked-git warning rows recompute via the paired bulk load action that
       // always follows `.gitEnvironmentChanged`, so this needs no invalidation.
       .gitEnvironmentChanged,
-      .setSidebarSelectedWorktreeIDs,
       .openRepositories,
       .revealSelectedWorktreeInSidebar, .revealHoistedWorktreeInSidebar,
       .consumePendingSidebarReveal,
@@ -520,7 +595,6 @@ extension RepositoriesFeature.Action {
       .requestRenameBranch,
       .contextMenuOpenWorktree,
       .worktreeCreationPrompt,
-      .alert,
       .delegate:
       return []
     }
@@ -530,8 +604,12 @@ extension RepositoriesFeature.Action {
 extension RepositoriesFeature.State {
   /// Single source of truth for the post-reduce cache recompute. The
   /// production hook in `RepositoriesFeature.body` and the test mirror in
-  /// `RepositoriesSidebarTestHelpers` both call this so a fourth cache lands
+  /// `RepositoriesSidebarTestHelpers` both call this so a new cache lands
   /// in one place instead of needing two coordinated updates.
+  ///
+  /// Pure by contract: every recompute here is a function of state alone.
+  /// `.openActionResolution` only prunes here; resolving an entry reads that
+  /// repository's `supacode.json`, and a reducer must not touch disk.
   @MainActor
   mutating func applyCacheRecomputes(_ invalidations: CacheInvalidations) {
     if invalidations.contains(.sidebarStructure) {
@@ -540,6 +618,9 @@ extension RepositoriesFeature.State {
     if invalidations.contains(.selectedWorktreeSlice) {
       recomputeSelectedWorktreeSliceIfChanged()
     }
+    if invalidations.contains(.sidebarSelectionSlice) {
+      recomputeSidebarSelectionSliceIfChanged()
+    }
     if invalidations.contains(.toolbarNotificationGroups) {
       recomputeToolbarNotificationGroupsIfChanged()
     }
@@ -547,6 +628,9 @@ extension RepositoriesFeature.State {
     // snapshots only invalidate `.sidebarStructure`, so they need both flags.
     if !invalidations.isDisjoint(with: [.sidebarStructure, .toolbarNotificationGroups]) {
       recomputeMenuBarSectionsIfChanged()
+    }
+    if invalidations.contains(.openActionResolution) {
+      pruneOpenActionsForRemovedRepositoriesIfChanged()
     }
   }
 

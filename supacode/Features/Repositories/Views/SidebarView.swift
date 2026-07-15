@@ -10,26 +10,11 @@ struct SidebarView: View {
 
   var body: some View {
     let state = store.state
-    let effectiveSelectedRows = state.effectiveSidebarSelectedRows
     let confirmAlert = state.confirmWorktreeAlert
-    let archiveTargets =
-      effectiveSelectedRows
-      .filter { $0.lifecycle == .idle && !$0.isMainWorktree }
-      .map {
-        RepositoriesFeature.ArchiveWorktreeTarget(
-          worktreeID: $0.id,
-          repositoryID: $0.repositoryID
-        )
-      }
-    let deleteTargets =
-      effectiveSelectedRows
-      .filter { $0.lifecycle == .idle }
-      .map {
-        RepositoriesFeature.DeleteWorktreeTarget(
-          worktreeID: $0.id,
-          repositoryID: $0.repositoryID
-        )
-      }
+    // Reducer-cached: deriving these from `sidebarItems` here would
+    // observation-track every row and fan per-leaf ticks out to the whole List.
+    let archiveTargets = state.sidebarSelectionSlice.archiveTargets
+    let deleteTargets = state.sidebarSelectionSlice.deleteTargets
     let openRepo = AppShortcuts.openRepository.effective(from: settingsFile.global.shortcutOverrides)
 
     return SidebarListView(

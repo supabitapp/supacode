@@ -35,7 +35,9 @@ struct AppFeatureTerminalSetupScriptTests {
     await store.receive(\.repositories.consumeSetupScript)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
-      $0.repositories.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
+      $0.repositories.applyPostReduceCacheRecomputes(
+        [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
+      )
     }
     await store.finish()
     #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true, id: nil)])
@@ -108,7 +110,9 @@ struct AppFeatureTerminalSetupScriptTests {
     await store.receive(\.repositories.consumeSetupScript)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
-      $0.repositories.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
+      $0.repositories.applyPostReduceCacheRecomputes(
+        [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
+      )
     }
     await store.finish()
   }

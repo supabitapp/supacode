@@ -1,3 +1,4 @@
+import ConcurrencyExtras
 import Dependencies
 import DependenciesTestSupport
 import Foundation
@@ -19,7 +20,7 @@ struct RepositorySettingsKeyTests {
     #expect(!json.contains("pullRequestMergeStrategy"))
   }
 
-  @Test(.dependencies) func loadCreatesDefaultAndPersists() throws {
+  @Test(.dependencies) func loadReturnsDefaultsWithoutPersistingThem() throws {
     let storage = SettingsTestStorage()
     let rootURL = URL(fileURLWithPath: "/tmp/repo")
 
@@ -39,9 +40,218 @@ struct RepositorySettingsKeyTests {
       return settings
     }
 
-    #expect(
-      saved.repositories[rootURL.path(percentEncoded: false)] == RepositorySettings.default
+    // Seeding defaults here would mutate (and persist) the settings file from a
+    // read, re-invalidating every observer. The entry only appears on a real save.
+    #expect(saved.repositories[rootURL.path(percentEncoded: false)] == nil)
+  }
+
+  // MARK: - A read must never write (#657)
+
+  /// Each evaluation rebuilds the `@Shared` reference (`PersistentReferences`
+  /// caches weakly), so a writing `load` re-saves and re-invalidates observers
+  /// on every read. A view body that observes `settingsFile` then loops.
+  @Test(.dependencies) func repeatedLoadNeverWritesWhenLocalFileMissing() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let rootURL = URL(fileURLWithPath: "/tmp/repo-no-local")
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      _ = settingsFile
+      globalStorage.resetCounts()
+
+      for _ in 0..<10 {
+        @Shared(.repositorySettings(rootURL)) var repositorySettings: RepositorySettings
+        #expect(repositorySettings == RepositorySettings.default)
+      }
+    }
+
+    #expect(globalStorage.saveCount == 0)
+    #expect(localStorage.saveCount == 0)
+  }
+
+  @Test(.dependencies) func repeatedLoadNeverWritesWhenLocalFilePresent() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let rootURL = URL(fileURLWithPath: "/tmp/repo-with-local")
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    var localSettings = RepositorySettings.default
+    localSettings.setupScript = "echo local"
+    try localStorage.save(
+      encode(localSettings),
+      at: SupacodePaths.repositorySettingsURL(for: rootURL)
     )
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      _ = settingsFile
+      globalStorage.resetCounts()
+
+      for _ in 0..<10 {
+        @Shared(.repositorySettings(rootURL)) var repositorySettings: RepositorySettings
+        #expect(repositorySettings == localSettings)
+      }
+    }
+
+    #expect(globalStorage.saveCount == 0)
+    #expect(localStorage.saveCount == 0)
+  }
+
+  /// Most repos own no `supacode.json`, so that read must stay quiet while a real fault
+  /// (permissions, a stalled mount) is logged. The live storage is `Data(contentsOf:)`,
+  /// which reports an absent file as `.fileReadNoSuchFile` (260), not the
+  /// `.fileNoSuchFile` (4) its name suggests. Assert against the error the real call
+  /// throws: an in-memory double can be made to agree with whatever the classifier says.
+  @Test func absentFileIsClassifiedFromTheErrorTheLiveStorageThrows() throws {
+    let absent = URL(fileURLWithPath: "/tmp/supacode-absent-\(UUID().uuidString)/supacode.json")
+    var thrown: (any Error)?
+    do {
+      _ = try Data(contentsOf: absent)
+    } catch {
+      thrown = error
+    }
+
+    let error = try #require(thrown)
+    #expect(RepositoryLocalSettingsStorage.isMissingFile(error))
+    #expect(!RepositoryLocalSettingsStorage.isMissingFile(CocoaError(.fileReadNoPermission)))
+  }
+
+  /// An undecodable `supacode.json` (merge markers, a stray comma) must survive a
+  /// save. `load` falls back to the global settings, so encoding those defaults over
+  /// the file would replace the user's scripts with the values its own failed decode
+  /// produced. The write goes to the global settings file and the file is left alone.
+  @Test(.dependencies) func saveNeverOverwritesAnUndecodableLocalSettingsFile() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let rootURL = URL(fileURLWithPath: "/tmp/repo-with-corrupt-local")
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    let localURL = SupacodePaths.repositorySettingsURL(for: rootURL)
+    let corrupt = Data(#"{ "setupScript": "echo local",, }"#.utf8)
+    try localStorage.save(corrupt, at: localURL)
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.repositorySettings(rootURL)) var repositorySettings: RepositorySettings
+      // The undecodable file falls back to the global settings rather than throwing.
+      #expect(repositorySettings == RepositorySettings.default)
+      $repositorySettings.withLock { $0.setupScript = "echo new" }
+    }
+
+    #expect(localStorage.data(at: localURL) == corrupt)
+    #expect(localStorage.saveCount == 0)
+    #expect(globalStorage.saveCount > 0)
+  }
+
+  /// A remote repo always skips the local-file branch, so it took the writing
+  /// path unconditionally.
+  @Test(.dependencies) func repeatedLoadNeverWritesForRemoteRepository() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let rootURL = URL(fileURLWithPath: "/srv/repo")
+    let host = RemoteHost(alias: "box")
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      _ = settingsFile
+      globalStorage.resetCounts()
+
+      for _ in 0..<10 {
+        @Shared(.repositorySettings(rootURL, host: host)) var repositorySettings: RepositorySettings
+        #expect(repositorySettings == RepositorySettings.default)
+      }
+    }
+
+    #expect(globalStorage.saveCount == 0)
+    #expect(localStorage.saveCount == 0)
+  }
+
+  /// The steady state for anyone who has ever saved repository settings: the
+  /// global entry already exists. The old seeding `withLock` wrote back the same
+  /// bytes here, so a save-counting assertion alone would not have caught it.
+  @Test(.dependencies) func repeatedLoadNeverWritesWhenGlobalEntryAlreadyExists() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let rootURL = URL(fileURLWithPath: "/tmp/repo-seeded-entry")
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
+    var seeded = RepositorySettings.default
+    seeded.setupScript = "echo seeded"
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      $settingsFile.withLock { $0.repositories[repositoryID] = seeded }
+      globalStorage.resetCounts()
+
+      for _ in 0..<10 {
+        @Shared(.repositorySettings(rootURL)) var repositorySettings: RepositorySettings
+        #expect(repositorySettings == seeded)
+      }
+    }
+
+    #expect(globalStorage.saveCount == 0)
+    #expect(localStorage.saveCount == 0)
+  }
+
+  /// The save is a *sibling* of the loop's engine, not its cause: `withLock` fires
+  /// `withMutation(keyPath: \.value)` whether or not the closure changes anything,
+  /// which is what re-invalidates every `settingsFile` observer mid-read. Observe
+  /// that signal directly so a byte-identical-write dedupe in `save` could never
+  /// make this pass while the loop is live.
+  @Test(.dependencies) func repeatedLoadNeverMutatesSettingsFileObservers() throws {
+    let globalStorage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let rootURL = URL(fileURLWithPath: "/tmp/repo-observed")
+    let settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    let repositoryID = rootURL.standardizedFileURL.path(percentEncoded: false)
+    var seeded = RepositorySettings.default
+    seeded.setupScript = "echo seeded"
+    let mutations = LockIsolated(0)
+
+    withDependencies {
+      $0.settingsFileStorage = globalStorage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      // Held for the whole loop: the sharing cache is weak, so dropping this
+      // would rebuild the reference and lose the observers under test. A view
+      // observing `settingsFile` holds it exactly this way.
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      $settingsFile.withLock { $0.repositories[repositoryID] = seeded }
+
+      for _ in 0..<10 {
+        // Tracking is one-shot, so re-arm it on every read.
+        withObservationTracking {
+          _ = settingsFile
+        } onChange: {
+          mutations.withValue { $0 += 1 }
+        }
+        @Shared(.repositorySettings(rootURL)) var repositorySettings: RepositorySettings
+        #expect(repositorySettings == seeded)
+      }
+    }
+
+    #expect(mutations.value == 0)
   }
 
   @Test(.dependencies) func saveOverwritesExistingSettings() throws {

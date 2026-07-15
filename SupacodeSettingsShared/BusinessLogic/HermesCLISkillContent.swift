@@ -16,8 +16,9 @@ nonisolated enum HermesCLISkillContent {
     resources you create later.
 
     ```sh
-    TAB_ID=$(supacode tab new -i "npm start")
+    TAB_ID=$(supacode tab new --title "server" -i "npm start")
     SPLIT_ID=$(supacode surface split -t "$TAB_ID" -s "$TAB_ID" -d v -i "npm test")
+    supacode tab rename -t "$TAB_ID" --title "app"
     supacode surface close -t "$TAB_ID" -s "$SPLIT_ID"
     supacode tab close -t "$TAB_ID"
     ```

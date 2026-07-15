@@ -18,12 +18,17 @@ struct AppFeatureRunScriptTests {
     settingsState.repositorySummaries = [
       SettingsRepositorySummary(id: expectedRepositoryID, name: "repo")
     ]
-    let store = TestStore(
-      initialState: AppFeature.State(
-        repositories: repositories,
-        settings: settingsState
-      )
-    ) {
+    var initialState = AppFeature.State(
+      repositories: repositories,
+      settings: settingsState
+    )
+    // Loaded, and the repository configures nothing: that is what routes to settings.
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
+    let store = TestStore(initialState: initialState) {
       AppFeature()
     }
     store.exhaustivity = .off
@@ -42,7 +47,11 @@ struct AppFeatureRunScriptTests {
       repositories: repositories,
       settings: SettingsFeature.State()
     )
-    initialState.repoScripts = [definition]
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [definition],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
@@ -135,7 +144,11 @@ struct AppFeatureRunScriptTests {
       repositories: repositories,
       settings: SettingsFeature.State()
     )
-    initialState.repoScripts = [definition]
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [definition],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     // Pre-populate running state to simulate an already-running script.
     initialState.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
       .init(id: definition.id, tint: definition.resolvedTintColor)
@@ -321,8 +334,10 @@ struct AppFeatureRunScriptTests {
     }
     store.exhaustivity = .off
 
-    await store.send(.worktreeSettingsLoaded(settings, worktreeID: worktree.id))
+    let source = RepositorySettingsKey(rootURL: worktree.repositoryRootURL, host: worktree.host).id
+    await store.send(.worktreeSettingsLoaded(settings, worktreeID: worktree.id, source: source))
     #expect(store.state.repoScripts == [definition])
+    #expect(store.state.loadedRepoScripts?.source == source)
   }
 
   @Test(.dependencies) func scriptCompletedFailureAlertsWithoutTrackedRow() async {
@@ -365,7 +380,11 @@ struct AppFeatureRunScriptTests {
       repositories: repositories,
       settings: SettingsFeature.State()
     )
-    initialState.repoScripts = [repoScript]
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [repoScript],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     initialState.globalScripts = [globalScript]
 
     #expect(initialState.allScripts == [repoScript, globalScript])
@@ -382,6 +401,12 @@ struct AppFeatureRunScriptTests {
       settings: SettingsFeature.State()
     )
     initialState.globalScripts = [globalScript]
+    // Loaded, and the repository configures none: a global may then win the id.
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     let store = TestStore(initialState: initialState) {
       AppFeature()
     } withDependencies: {
@@ -437,7 +462,11 @@ struct AppFeatureRunScriptTests {
       repositories: makeRepositoriesState(worktree: worktree),
       settings: SettingsFeature.State()
     )
-    initialState.repoScripts = [repoScript]
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [repoScript],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     initialState.globalScripts = [globalScript]
 
     #expect(initialState.allScripts == [repoScript])
@@ -469,7 +498,11 @@ struct AppFeatureRunScriptTests {
     let repositories = makeRepositoriesState(worktree: worktree)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
-    initialState.repoScripts = [repoScript]
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [repoScript],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     initialState.globalScripts = [collidingGlobal]
     let store = TestStore(initialState: initialState) {
       AppFeature()
@@ -501,7 +534,11 @@ struct AppFeatureRunScriptTests {
     let repositories = makeRepositoriesState(worktree: worktree)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
-    initialState.repoScripts = [repoScript]
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [repoScript],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     initialState.globalScripts = [collidingGlobal]
     let store = TestStore(initialState: initialState) {
       AppFeature()
@@ -530,7 +567,11 @@ struct AppFeatureRunScriptTests {
     let repositories = makeRepositoriesState(worktree: worktree)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     var initialState = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
-    initialState.repoScripts = []
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     initialState.globalScripts = []
     let store = TestStore(initialState: initialState) {
       AppFeature()
@@ -563,7 +604,11 @@ struct AppFeatureRunScriptTests {
       repositories: makeRepositoriesState(worktree: worktree),
       settings: SettingsFeature.State()
     )
-    initialState.repoScripts = [repoScript]
+    initialState.loadedRepoScripts = LoadedRepositoryScripts(
+      scripts: [repoScript],
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    )
     initialState.globalScripts = [injected]
 
     #expect(initialState.primaryScript == repoScript)

@@ -57,3 +57,16 @@ custom_rules:
     message: "Do not mutate store state directly in views. Send actions instead."
     severity: error
     included: "supacode/.*/Views/.*\\.swift"
+  # Two signals, both required: the declaration is indented into a body (4+
+  # spaces, since even a nested view struct's own members sit at 4), and it
+  # carries no access modifier (Swift forbids one on a local, so a `private`
+  # stored property is exempt at any nesting depth).
+  shared_construction_in_view_body:
+    name: "Shared Construction In View Body"
+    regex: "^\\s{4,}@(Shared|SharedReader)\\(.*\\)\\s+var\\s"
+    message: >
+      Do not construct @Shared in a body, computed property, or function: references are cached
+      weakly, so the key's load (a disk read) re-runs on every evaluation. Hold it as a private
+      stored property on the view, or resolve it in the reducer and pass a value.
+    severity: error
+    included: ".*/Views/.*\\.swift"
