@@ -406,6 +406,71 @@ struct SidebarStructureTests {
     #expect(!perRepoTailIDs.contains(busy.id))
   }
 
+  private func activeIDs(in structure: SidebarStructure) -> [Worktree.ID] {
+    structure.sections.compactMap { section -> [Worktree.ID]? in
+      if case .highlight(.active, let ids) = section { return ids }
+      return nil
+    }.flatMap { $0 }
+  }
+
+  @Test func activeSectionSortsAlphabeticallyRegardlessOfClassification() {
+    // #678: agent state (errored / awaiting / running) must not drive order.
+    // An errored row no longer floats to the top; every row sorts by name.
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let charlie = makeWorktree(id: "/tmp/repo/charlie", name: "charlie", repoRoot: repoRoot)
+    let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
+    let bravo = makeWorktree(id: "/tmp/repo/bravo", name: "bravo", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, charlie, alpha, bravo])
+    )
+    var state = makeState(repositories: [repository])
+    // Three distinct classifications whose priority order (errored, agent,
+    // running) is the reverse of alphabetical, proving classification no longer
+    // drives order.
+    state.sidebarItems[id: charlie.id]?.agentSnapshot.hasError = true
+    state.sidebarItems[id: bravo.id]?.agentSnapshot.agents = [.init(agent: .claude, activity: .idle)]
+    state.sidebarItems[id: alpha.id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: true)
+    #expect(activeIDs(in: structure) == [alpha.id, bravo.id, charlie.id])
+  }
+
+  @Test func unreadRowFloatsToTopOfActiveOnlyWhenPrioritized() {
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let alpha = makeWorktree(id: "/tmp/repo/alpha", name: "alpha", repoRoot: repoRoot)
+    let bravo = makeWorktree(id: "/tmp/repo/bravo", name: "bravo", repoRoot: repoRoot)
+    let zulu = makeWorktree(id: "/tmp/repo/zulu", name: "zulu", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main, alpha, bravo, zulu])
+    )
+    var state = makeState(repositories: [repository])
+    // Every row classifies into Active via a running script; zulu is also unread.
+    for id in [alpha.id, bravo.id, zulu.id] {
+      state.sidebarItems[id: id]?.runningScripts.append(.init(id: UUID(), tint: .blue))
+    }
+    state.sidebarItems[id: zulu.id]?.hasUnseenNotifications = true
+
+    state.moveNotifiedWorktreeToTop = false
+    #expect(
+      activeIDs(in: state.computeSidebarStructure(groupPinned: false, groupActive: true))
+        == [alpha.id, bravo.id, zulu.id]
+    )
+
+    state.moveNotifiedWorktreeToTop = true
+    #expect(
+      activeIDs(in: state.computeSidebarStructure(groupPinned: false, groupActive: true))
+        == [zulu.id, alpha.id, bravo.id]
+    )
+  }
+
   // MARK: - Archived filter.
 
   @Test func archivedRowsExcludedFromBothHighlights() {
@@ -1207,7 +1272,6 @@ struct SidebarStructureTests {
           )
         )
       ),
-      .worktreeNotificationReceived(feature.id),
     ]
 
     for tick in ticks {
@@ -1258,6 +1322,13 @@ struct SidebarStructureTests {
     state.applyCacheRecomputes(action.cacheInvalidations)
 
     #expect(state.sidebarSelectionSlice.rows.first?.isPinned == true)
+  }
+
+  @Test func setMoveNotifiedWorktreeToTopArmsSidebarStructureRecompute() {
+    // The setting drives the highlight sort, so toggling it at runtime must
+    // recompute the cached structure. Guards the mapping from reverting to [].
+    let action = RepositoriesFeature.Action.setMoveNotifiedWorktreeToTop(true)
+    #expect(action.cacheInvalidations.contains(.sidebarStructure))
   }
 
   @Test func mixedKindSelectionIsFlaggedAndAllFolderSelectionIsBulk() {
@@ -1570,7 +1641,6 @@ struct SidebarStructureTests {
       .sidebarItems(.element(id: feature.id, action: .agentSnapshotChanged(.init(isWorking: true)))),
       .sidebarItems(.element(id: feature.id, action: .diffStatsChanged(added: 3, removed: 1))),
       .sidebarItems(.element(id: feature.id, action: .dragSessionChanged(isDragging: true))),
-      .worktreeNotificationReceived(feature.id),
       .contextMenuOpenWorktree(feature.id, .finder),
       .pinWorktree(feature.id),
     ]

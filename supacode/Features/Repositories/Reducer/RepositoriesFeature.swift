@@ -131,7 +131,7 @@ struct RepositoriesFeature {
     var activeRemovalBatches: [BatchID: ActiveRemovalBatch] = [:]
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     var mergedWorktreeAction: MergedWorktreeAction?
-    var moveNotifiedWorktreeToTop = true
+    var moveNotifiedWorktreeToTop = false
     /// Installed editors in menu order, mirrored down from `AppFeature` so the
     /// sidebar context menu never probes LaunchServices while building.
     var installedOpenActions: [OpenWorktreeAction] = []
@@ -450,7 +450,6 @@ struct RepositoriesFeature {
     case unpinWorktree(Worktree.ID)
     case presentAlert(title: String, message: String)
     case worktreeInfoEvent(WorktreeInfoWatcherClient.Event)
-    case worktreeNotificationReceived(Worktree.ID)
     case worktreeBranchNameLoaded(worktreeID: Worktree.ID, name: String)
     case worktreeLineChangesLoaded(worktreeID: Worktree.ID, added: Int, removed: Int)
     case refreshGithubIntegrationAvailability
@@ -2868,37 +2867,6 @@ struct RepositoriesFeature {
         }
         .cancellable(id: CancelID.delayedPRRefresh(worktreeID), cancelInFlight: true)
 
-      case .worktreeNotificationReceived(let worktreeID):
-        guard let repositoryID = state.repositoryID(containing: worktreeID),
-          let repository = state.repositories[id: repositoryID],
-          let worktree = repository.worktrees[id: worktreeID]
-        else {
-          return .none
-        }
-        if state.isWorktreeArchived(worktree.id) {
-          return .none
-        }
-
-        if state.moveNotifiedWorktreeToTop, !state.isMainWorktree(worktree), !state.isWorktreePinned(worktree) {
-          let reordered = state.reorderedUnpinnedWorktreeIDs(for: worktreeID, in: repository)
-          // Only reorder when the bumped worktree currently lives in
-          // (or is about to land in) the unpinned bucket, pinned
-          // rows live in `.pinned` and should not be perturbed by
-          // notification arrivals on a sibling.
-          let currentUnpinned = Array(
-            state.sidebar.sections[repositoryID]?.buckets[.unpinned]?.items.keys ?? []
-          )
-          if currentUnpinned != reordered {
-            withAnimation(.snappy(duration: 0.2)) {
-              state.$sidebar.withLock { sidebar in
-                sidebar.reorder(bucket: .unpinned, in: repositoryID, to: reordered)
-              }
-            }
-          }
-        }
-
-        return .none
-
       case .worktreeInfoEvent(let event):
         switch event {
         case .branchChanged(let worktreeID):
@@ -3974,7 +3942,7 @@ struct RepositoriesFeature {
 
       case .pinWorktree, .unpinWorktree, .presentAlert, .showToast, .dismissToast, .delayedPullRequestRefresh,
         .toggleInspectorPane, .setInspectorPresented,
-        .worktreeNotificationReceived, .worktreeInfoEvent:
+        .worktreeInfoEvent:
         // Real handling lives in `worktreeNotificationReducer` (combined below) to keep `body`
         // under the type-checker's complexity limit.
         return .none
@@ -5659,14 +5627,6 @@ extension RepositoriesFeature.State {
         )
       )
     )
-  }
-
-  func reorderedUnpinnedWorktreeIDs(for worktreeID: Worktree.ID, in repository: Repository) -> [Worktree.ID] {
-    var ordered = orderedUnpinnedWorktreeIDs(in: repository)
-    guard let index = ordered.firstIndex(of: worktreeID) else { return ordered }
-    ordered.remove(at: index)
-    ordered.insert(worktreeID, at: 0)
-    return ordered
   }
 }
 

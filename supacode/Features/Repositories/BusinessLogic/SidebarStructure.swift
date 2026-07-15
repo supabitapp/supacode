@@ -21,13 +21,13 @@ extension DependencyValues {
   }
 }
 
-/// Classification buckets for the global Active section. Lower raw value =
-/// higher priority. Rows that don't classify into one of the buckets are
-/// excluded from Active and (when the Pinned section is in play) fall to the
-/// bottom of Pinned alphabetically.
+/// Classification buckets for the global Active section. Membership only:
+/// a non-nil classification means the row belongs in Active (ordering is
+/// alphabetical, see `SidebarHighlightOrdering`). Rows that don't classify
+/// are excluded from Active but still appear in Pinned. Cases are ordered by
+/// severity; `classify` returns the most severe that matches (errored first).
 enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
-  /// An agent stopped on an error. Highest priority, so a broken session floats
-  /// above every other Active state.
+  /// An agent stopped on an error.
   case errored = 0
   case unreadAwaitingRunning = 1
   case unreadAwaiting = 2
@@ -68,7 +68,7 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   /// Active even when the agent isn't actively working; `state.agents` is
   /// already empty when badges are disabled by the user.
   static func classify(_ state: SidebarItemFeature.State) -> Self? {
-    // A broken session outranks every other Active state.
+    // Error wins the classification when a row also has other Active signals.
     if state.hasAgentError { return .errored }
     return classify(
       hasUnread: state.hasUnseenNotifications,
@@ -79,44 +79,50 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
   }
 }
 
-/// Pure ordering layer behind the highlight aggregator: priority sort over
-/// `SidebarActiveClassification`, alphabetical tie-break. Pinned keeps
-/// unclassified rows at the bottom; Active drops them.
+/// Pure ordering layer behind the highlight aggregator. Alphabetical
+/// (case-insensitive) by branch name, with unread rows floated to the top
+/// when `prioritizeNotified` is set. Classification only gates membership:
+/// Active drops unclassified rows, Pinned keeps them. `id` is the final
+/// tie-break so rows sharing a branch name across repos keep a deterministic
+/// order (the sort is otherwise unstable).
 enum SidebarHighlightOrdering {
   struct Candidate: Equatable, Sendable {
     let id: SidebarItemID
     let branchName: String
+    let isNotified: Bool
     let classification: SidebarActiveClassification?
   }
 
   static func orderedRowIDs(
     forPinned: Bool,
+    prioritizeNotified: Bool,
     candidates: [Candidate]
   ) -> [SidebarItemID] {
-    struct Entry {
-      let id: SidebarItemID
-      let priority: Int
-      let sortKey: String
-    }
-    let unclassifiedPriority = SidebarActiveClassification.allCases.count + 1
-    var entries: [Entry] = []
-    entries.reserveCapacity(candidates.count)
-    for candidate in candidates {
-      if forPinned {
-        let priority = candidate.classification?.rawValue ?? unclassifiedPriority
-        entries.append(Entry(id: candidate.id, priority: priority, sortKey: candidate.branchName))
-      } else {
-        guard let classification = candidate.classification else { continue }
-        entries.append(
-          Entry(id: candidate.id, priority: classification.rawValue, sortKey: candidate.branchName)
-        )
+    let included = forPinned ? candidates : candidates.filter { $0.classification != nil }
+    return
+      included
+      .sorted { lhs, rhs in
+        if prioritizeNotified, lhs.isNotified != rhs.isNotified {
+          return lhs.isNotified
+        }
+        return branchNameOrdersBefore(lhs.branchName, id: lhs.id, rhs.branchName, id: rhs.id)
       }
+      .map(\.id)
+  }
+
+  /// Case-insensitive branch-name order with `id` as the deterministic final
+  /// tie-break (the sort is otherwise unstable, so equal names could flip).
+  static func branchNameOrdersBefore(
+    _ lhsName: String,
+    id lhsID: SidebarItemID,
+    _ rhsName: String,
+    id rhsID: SidebarItemID
+  ) -> Bool {
+    switch lhsName.localizedCaseInsensitiveCompare(rhsName) {
+    case .orderedAscending: return true
+    case .orderedDescending: return false
+    case .orderedSame: return lhsID.rawValue < rhsID.rawValue
     }
-    entries.sort { lhs, rhs in
-      if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
-      return lhs.sortKey.localizedCaseInsensitiveCompare(rhs.sortKey) == .orderedAscending
-    }
-    return entries.map(\.id)
   }
 }
 
@@ -424,11 +430,13 @@ extension RepositoriesFeature.Action {
     case .sidebarItems:
       return []
 
-    // Sidebar layout toggles only.
+    // Sidebar layout toggles only. `setMoveNotifiedWorktreeToTop` re-sorts the
+    // highlight sections (unread float), so a runtime toggle must recompute.
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
       .repositoryExpansionChanged, .branchNestExpansionChanged,
       .setAllSidebarGroupsExpanded,
-      .worktreeNotificationReceived, .worktreeLineChangesLoaded,
+      .setMoveNotifiedWorktreeToTop,
+      .worktreeLineChangesLoaded,
       .consumeTerminalFocus:
       return .sidebarStructure
 
@@ -575,7 +583,6 @@ extension RepositoriesFeature.Action {
       .setGithubIntegrationEnabled,
       .setMergedWorktreeAction,
       .setAutoDeleteArchivedWorktreesAfterDays,
-      .setMoveNotifiedWorktreeToTop,
       .pullRequestAction,
       .showToast, .dismissToast,
       .toggleInspectorPane, .setInspectorPresented,
@@ -967,9 +974,9 @@ extension RepositoriesFeature.State {
     return ids
   }
 
-  /// Materialize candidates by reading branchName + classification flags
-  /// from each leaf, then delegate to the pure `SidebarHighlightOrdering`
-  /// sorter.
+  /// Materialize candidates by reading branchName + notification / classification
+  /// flags from each leaf, then delegate to the pure `SidebarHighlightOrdering`
+  /// sorter. `moveNotifiedWorktreeToTop` floats unread rows to the top.
   private func orderedHighlightCandidates(
     forPinned: Bool,
     candidateIDs: [SidebarItemID],
@@ -984,11 +991,16 @@ extension RepositoriesFeature.State {
         SidebarHighlightOrdering.Candidate(
           id: id,
           branchName: state.branchName,
+          isNotified: state.hasUnseenNotifications,
           classification: SidebarActiveClassification.classify(state)
         )
       )
     }
-    return SidebarHighlightOrdering.orderedRowIDs(forPinned: forPinned, candidates: candidates)
+    return SidebarHighlightOrdering.orderedRowIDs(
+      forPinned: forPinned,
+      prioritizeNotified: moveNotifiedWorktreeToTop,
+      candidates: candidates
+    )
   }
 }
 
@@ -1099,7 +1111,8 @@ extension SidebarItemGroup {
 
   /// Case-insensitive sort by `branchName`, matching `SidebarBranchNesting.buildRows`.
   /// Fallback to the row id keeps a transient missing leaf from breaking sort
-  /// stability rather than crashing.
+  /// stability rather than crashing. `id` is the final tie-break so equal
+  /// branch names keep a deterministic order.
   private static func sortedByBranchName(
     _ ids: [SidebarItemID],
     in state: RepositoriesFeature.State
@@ -1107,7 +1120,7 @@ extension SidebarItemGroup {
     ids.sorted { lhs, rhs in
       let lhsName = state.sidebarItems[id: lhs]?.branchName ?? lhs.rawValue
       let rhsName = state.sidebarItems[id: rhs]?.branchName ?? rhs.rawValue
-      return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
+      return SidebarHighlightOrdering.branchNameOrdersBefore(lhsName, id: lhs, rhsName, id: rhs)
     }
   }
 

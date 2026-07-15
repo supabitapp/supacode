@@ -172,7 +172,8 @@ struct SettingsFilePersistenceTests {
     // Missing key (pre-feature file) decodes to the default sound.
     #expect(settings.global.notificationSound == .hero)
     #expect(settings.global.systemNotificationsEnabled == false)
-    #expect(settings.global.moveNotifiedWorktreeToTop == true)
+    // Missing key (pre-feature file) decodes to the default, now false.
+    #expect(settings.global.moveNotifiedWorktreeToTop == false)
     #expect(settings.global.analyticsEnabled == true)
     #expect(settings.global.crashReportsEnabled == true)
     #expect(settings.global.githubIntegrationEnabled == true)

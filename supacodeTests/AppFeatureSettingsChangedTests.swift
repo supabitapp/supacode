@@ -14,7 +14,7 @@ struct AppFeatureSettingsChangedTests {
     var settings = GlobalSettings.default
     settings.githubIntegrationEnabled = false
     settings.mergedWorktreeAction = .archive
-    settings.moveNotifiedWorktreeToTop = false
+    settings.moveNotifiedWorktreeToTop = true
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
     }
@@ -27,7 +27,7 @@ struct AppFeatureSettingsChangedTests {
       $0.repositories.mergedWorktreeAction = .archive
     }
     await store.receive(\.repositories.setMoveNotifiedWorktreeToTop) {
-      $0.repositories.moveNotifiedWorktreeToTop = false
+      $0.repositories.moveNotifiedWorktreeToTop = true
     }
     await store.receive(\.repositories.openActionSettingsChanged)
     await store.receive(\.repositories.setAutoDeleteArchivedWorktreesAfterDays)

@@ -52,8 +52,8 @@ public struct NotificationsSettingsView: View {
         Toggle(
           isOn: $store.moveNotifiedWorktreeToTop
         ) {
-          Text("Prioritize unread worktrees")
-          Text("Worktrees with unread notifications will be shown first in the list.")
+          Text("Prioritize unread in Active and Pinned sections")
+          Text("Worktrees with unread notifications will be shown first.")
         }
       }
     }

@@ -81,7 +81,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     notificationSound: .hero,
     systemNotificationsEnabled: false,
     muteNotificationsForActiveSurface: true,
-    moveNotifiedWorktreeToTop: true,
+    moveNotifiedWorktreeToTop: false,
     analyticsEnabled: true,
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,

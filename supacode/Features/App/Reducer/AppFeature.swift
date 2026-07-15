@@ -1404,9 +1404,7 @@ struct AppFeature {
 
       case .terminalEvent(
         .notificationReceived(let worktreeID, let surfaceID, let title, let body, let isViewed)):
-        var effects: [Effect<Action>] = [
-          .send(.repositories(.worktreeNotificationReceived(worktreeID)))
-        ]
+        var effects: [Effect<Action>] = []
         let isMuted = isViewed && state.settings.muteNotificationsForActiveSurface
         if state.settings.systemNotificationsEnabled && !isMuted {
           let deeplinkURL = surfaceDeeplinkURL(worktreeID: worktreeID, surfaceID: surfaceID)
