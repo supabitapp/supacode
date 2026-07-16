@@ -15,6 +15,8 @@ struct TerminalSplitTreeView: View {
   // and `unfocused-split-opacity` config values. Fill is nil when the config
   // is unreadable; callers must skip the overlay in that case.
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+  // Resolved `split-divider-color`, or the asset fallback when the user hasn't set it.
+  let dividerColor: Color
   let action: (Operation) -> Void
 
   private static let dragType = UTType(exportedAs: "sh.supacode.ghosttySurfaceId")
@@ -39,6 +41,7 @@ struct TerminalSplitTreeView: View {
         terminalState: terminalState,
         activeSurfaceID: activeSurfaceID,
         unfocusedSplitOverlay: unfocusedSplitOverlay,
+        dividerColor: dividerColor,
         action: action
       )
       .id(node.structuralIdentity)
@@ -57,6 +60,7 @@ struct TerminalSplitTreeView: View {
     let terminalState: WorktreeTerminalState
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+    let dividerColor: Color
     let action: (Operation) -> Void
 
     var body: some View {
@@ -85,10 +89,7 @@ struct TerminalSplitTreeView: View {
             set: {
               action(.resize(node: node, ratio: Double($0)))
             }),
-          // Opaque asset color, not a system separator: the terminal body is cut
-          // out of the window tint, so a translucent divider would let the window
-          // blur show through the 1pt gap. No opaque system separator exists.
-          dividerColor: Color(.splitDivider),
+          dividerColor: dividerColor,
           resizeIncrements: .init(width: 1, height: 1),
           left: {
             SubtreeView(
@@ -96,6 +97,7 @@ struct TerminalSplitTreeView: View {
               terminalState: terminalState,
               activeSurfaceID: activeSurfaceID,
               unfocusedSplitOverlay: unfocusedSplitOverlay,
+              dividerColor: dividerColor,
               action: action
             )
           },
@@ -105,6 +107,7 @@ struct TerminalSplitTreeView: View {
               terminalState: terminalState,
               activeSurfaceID: activeSurfaceID,
               unfocusedSplitOverlay: unfocusedSplitOverlay,
+              dividerColor: dividerColor,
               action: action
             )
           },
@@ -377,6 +380,7 @@ struct TerminalSplitTreeAXContainer: NSViewRepresentable {
   let terminalState: WorktreeTerminalState
   let activeSurfaceID: UUID?
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
+  let dividerColor: Color
   let action: (TerminalSplitTreeView.Operation) -> Void
 
   func makeNSView(context: Context) -> TerminalSplitAXContainerView {
@@ -390,6 +394,7 @@ struct TerminalSplitTreeAXContainer: NSViewRepresentable {
         terminalState: terminalState,
         activeSurfaceID: activeSurfaceID,
         unfocusedSplitOverlay: unfocusedSplitOverlay,
+        dividerColor: dividerColor,
         action: action
       ),
       panes: tree.visibleLeaves()
