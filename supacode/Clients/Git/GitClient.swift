@@ -234,8 +234,10 @@ struct GitClient {
     _ = try await runGit(operation: .worktreeCreate, arguments: arguments)
   }
 
-  // Backfill-only: never drop Supacode-owned locks here. Supacode-initiated
-  // `removeWorktree` is the sole release path.
+  // Backfill-only, with one exception: a worktree whose `.git` link is broken
+  // has its Supacode lock released so the prune can reclaim the orphan (#616).
+  // Every other Supacode-owned lock is left intact; `removeWorktree` is the
+  // normal release path.
   nonisolated func reconcileSupacodeLocks(for repoRoot: URL) async {
     // Folder-kind roots have no git admin dir; skip the shell-outs.
     guard Repository.isGitRepository(at: repoRoot) else { return }
@@ -250,10 +252,31 @@ struct GitClient {
     }
     let fileManager = FileManager.default
     for entry in entries {
-      guard entry.lockReason == nil else { continue }
       let exists = fileManager.fileExists(
         atPath: entry.worktreeDirectory.path(percentEncoded: false)
       )
+      // A worktree whose `.git` link is gone is an orphan git can't use, yet its
+      // path resolves up to the repo root and shadows the main worktree (#616).
+      // Release our own lock (checked before the `lockReason` guard, since the
+      // orphan is already locked) so the prune below reclaims it. `exists` gates
+      // this so a transiently missing worktree keeps its lock (#338).
+      if exists, Self.isGitdirLinkBroken(worktreeDirectory: entry.worktreeDirectory) {
+        let name = entry.worktreeDirectory.lastPathComponent
+        switch Self.removeSupacodeLock(at: entry.adminDirectory) {
+        case .removed:
+          gitLogger.info("Released Supacode lock on broken worktree \(name)")
+        case .keptForeignLock:
+          // A user `git worktree lock --reason` orphan is never reclaimed here, so
+          // flag it rather than let the prune silently skip it.
+          gitLogger.warning("Broken worktree \(name) keeps a user lock; prune cannot reclaim it")
+        case .failed(let error):
+          gitLogger.warning("Failed to release Supacode lock on broken worktree \(name): \(error)")
+        case .notPresent:
+          break
+        }
+        continue
+      }
+      guard entry.lockReason == nil else { continue }
       guard exists else { continue }
       Self.writeSupacodeLock(at: entry.adminDirectory)
       gitLogger.info(
@@ -344,21 +367,45 @@ struct GitClient {
     return nil
   }
 
+  /// A linked worktree whose `.git` pointer file is missing: git can't use it and
+  /// resolves its path up to the repo root (#616). Only the missing-file case
+  /// counts (git's own prune criterion), so a transiently unreadable `.git` is
+  /// never treated as broken.
+  nonisolated static func isGitdirLinkBroken(worktreeDirectory: URL) -> Bool {
+    let gitPointer = worktreeDirectory.appending(path: ".git")
+    return !FileManager.default.fileExists(atPath: gitPointer.path(percentEncoded: false))
+  }
+
+  /// Outcome of `removeSupacodeLock`, so callers can log precisely rather than
+  /// assume a release happened.
+  nonisolated enum SupacodeLockRemoval {
+    case removed
+    case keptForeignLock
+    case notPresent
+    case failed(Error)
+  }
+
   nonisolated static func writeSupacodeLock(at adminDirectory: URL) {
     let lockFile = adminDirectory.appending(path: "locked")
     try? currentSupacodeLockPayload().write(to: lockFile, atomically: true, encoding: .utf8)
   }
 
-  nonisolated static func removeSupacodeLock(at adminDirectory: URL) {
+  @discardableResult
+  nonisolated static func removeSupacodeLock(at adminDirectory: URL) -> SupacodeLockRemoval {
     let lockFile = adminDirectory.appending(path: "locked")
     let path = lockFile.path(percentEncoded: false)
-    guard FileManager.default.fileExists(atPath: path) else { return }
-    // Don't strip a user's `git worktree lock --reason "..."`; only
-    // remove the file when it parses as a Supacode-owned payload.
+    guard FileManager.default.fileExists(atPath: path) else { return .notPresent }
+    // Don't strip a user's `git worktree lock --reason "..."`; only remove the
+    // file when it parses as a Supacode-owned payload.
     guard let raw = try? String(contentsOf: lockFile, encoding: .utf8),
       parseSupacodeLockMetadata(from: raw) != nil
-    else { return }
-    try? FileManager.default.removeItem(at: lockFile)
+    else { return .keptForeignLock }
+    do {
+      try FileManager.default.removeItem(at: lockFile)
+      return .removed
+    } catch {
+      return .failed(error)
+    }
   }
 
   // Stamp version/build for forensics on stranded lock files.
