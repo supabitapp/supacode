@@ -51,6 +51,71 @@ struct GitClientSupacodeLockTests {
     #expect(reason.trimmingCharacters(in: .whitespacesAndNewlines) == "user-set")
   }
 
+  @Test func reconcileDoesNotLockBrokenGitdirWorktree() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-broken")
+    let adminDir = fixture.adminDirectory(for: "feature-broken")
+    // Break the gitdir link: the worktree dir stays, its `.git` pointer is gone.
+    try FileManager.default.removeItem(at: worktreeURL.appending(path: ".git"))
+
+    await GitClient().reconcileSupacodeLocks(for: fixture.workURL)
+
+    // Never locked, so the trailing prune reclaims the orphan admin entry.
+    #expect(!FileManager.default.fileExists(atPath: adminDir.path(percentEncoded: false)))
+  }
+
+  @Test func reconcileReleasesSupacodeLockOnBrokenGitdirWorktree() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-stuck")
+    let adminDir = fixture.adminDirectory(for: "feature-stuck")
+    // The #616 stuck state: Supacode locked it, then its `.git` link broke, so
+    // prune could never reclaim it.
+    GitClient.writeSupacodeLock(at: adminDir)
+    try FileManager.default.removeItem(at: worktreeURL.appending(path: ".git"))
+
+    await GitClient().reconcileSupacodeLocks(for: fixture.workURL)
+
+    // The lock is released and the orphan admin entry is pruned.
+    #expect(!FileManager.default.fileExists(atPath: adminDir.path(percentEncoded: false)))
+  }
+
+  @Test func reconcilePreservesUserLockOnBrokenGitdirWorktree() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-user-broken")
+    let adminDir = fixture.adminDirectory(for: "feature-user-broken")
+    let lockFile = adminDir.appending(path: "locked")
+    try "user-set".write(to: lockFile, atomically: true, encoding: .utf8)
+    try FileManager.default.removeItem(at: worktreeURL.appending(path: ".git"))
+
+    await GitClient().reconcileSupacodeLocks(for: fixture.workURL)
+
+    // A user `git worktree lock --reason` is never dropped, so the entry survives.
+    let reason = try String(contentsOf: lockFile, encoding: .utf8)
+    #expect(reason.trimmingCharacters(in: .whitespacesAndNewlines) == "user-set")
+  }
+
+  @Test func reconcileKeepsLockWhenGitdirPointerIsPresentButUnreadable() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-garbled")
+    let adminDir = fixture.adminDirectory(for: "feature-garbled")
+    GitClient.writeSupacodeLock(at: adminDir)
+    // Only a MISSING `.git` counts as broken; a present-but-garbage pointer must
+    // not be treated as broken, so a valid lock is never dropped on a transient.
+    let gitPointer = worktreeURL.appending(path: ".git")
+    try FileManager.default.removeItem(at: gitPointer)
+    try "garbage".write(to: gitPointer, atomically: true, encoding: .utf8)
+
+    await GitClient().reconcileSupacodeLocks(for: fixture.workURL)
+
+    let lockFile = adminDir.appending(path: "locked")
+    let reason = try String(contentsOf: lockFile, encoding: .utf8)
+    #expect(GitClient.parseSupacodeLockMetadata(from: reason)?.owner == GitClient.supacodeLockOwner)
+  }
+
   @Test func reconcileHandlesRelativePathGitdir() async throws {
     let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
