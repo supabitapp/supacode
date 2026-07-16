@@ -7426,39 +7426,51 @@ struct RepositoriesFeatureTests {
     #expect(RepositoriesFeature.firstDuplicateWorktreeID(in: [feature, collision]) == WorktreeID("/r/feature"))
   }
 
-  @Test func loadPersistedRepositoriesRefusesRepoWithDuplicateWorktreePaths() async {
-    // A corrupt repo (e.g. a stale `core.worktree` redirect) can make the
-    // worktree listing report the same path twice. Rather than crash building an
-    // `IdentifiedArray` of duplicate ids (or silently guess which entry is real),
-    // the loader refuses the repo and routes it through the failure row.
-    let repoRoot = "/tmp/\(UUID().uuidString)-corrupt-git"
-    let duplicatePath = "\(repoRoot)/feature"
-    let first = makeWorktree(id: duplicatePath, name: "main", repoRoot: repoRoot)
-    let second = makeWorktree(id: duplicatePath, name: "feature", repoRoot: repoRoot)
+  @Test func deduplicatedWorktreesKeepsFirstSeenPerPath() {
+    let main = makeWorktree(id: "/r/main", name: "main", repoRoot: "/r")
+    let feature = makeWorktree(id: "/r/feature", name: "feature", repoRoot: "/r")
+    let collision = makeWorktree(id: "/r/main", name: "orphan", repoRoot: "/r")
 
-    // Pin the user-facing copy and that it threads the colliding path.
-    let message = RepositoriesFeature.duplicateWorktreePathMessage(path: duplicatePath)
-    #expect(message.contains("more than one worktree at the same path"))
-    #expect(message.contains(duplicatePath))
+    #expect(RepositoriesFeature.deduplicatedWorktrees([]).isEmpty)
+    #expect(RepositoriesFeature.deduplicatedWorktrees([main, feature]) == [main, feature])
+    // The repeat is dropped and the first-seen (main) entry is kept, not the orphan.
+    #expect(RepositoriesFeature.deduplicatedWorktrees([main, feature, collision]) == [main, feature])
+    #expect(RepositoriesFeature.deduplicatedWorktrees([main, collision]) == [main])
+  }
+
+  @Test func loadPersistedRepositoriesDeduplicatesWorktreePaths() async {
+    // A broken inner worktree can make the listing report the same path twice
+    // (#616). Rather than refuse the whole repo, the loader drops the duplicate
+    // and loads the remaining worktrees, keeping the first-seen (main) entry.
+    let repoRoot = "/tmp/\(UUID().uuidString)-corrupt-git"
+    let duplicatePath = "\(repoRoot)/main"
+    let main = makeWorktree(id: duplicatePath, name: "main", repoRoot: repoRoot)
+    let collision = makeWorktree(id: duplicatePath, name: "orphan", repoRoot: repoRoot)
+    let repository = makeRepository(
+      id: repoRoot,
+      name: URL(fileURLWithPath: repoRoot).lastPathComponent,
+      worktrees: [main]
+    )
 
     let store = TestStore(initialState: RepositoriesFeature.State()) {
       RepositoriesFeature()
     } withDependencies: {
       $0.repositoryPersistence.loadRoots = { [repoRoot] }
       $0.gitClient.isGitRepository = { _ in true }
-      $0.gitClient.worktrees = { _ in [first, second] }
+      $0.gitClient.worktrees = { _ in [main, collision] }
     }
 
     await store.send(.loadPersistedRepositories)
     await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.repositoriesLoaded) {
-      $0.repositories = []
+      $0.repositories = [repository]
       $0.repositoryRoots = [URL(fileURLWithPath: repoRoot)]
       $0.isInitialLoadComplete = true
-      $0.loadFailuresByID = [
-        RepositoryID(repoRoot): RepositoriesFeature.duplicateWorktreePathMessage(path: duplicatePath)
-      ]
       $0.reconcileSidebarForTesting()
+    }
+    await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(\.openActionsResolved) {
+      $0.openActionByRepositoryID = [repository.id: .finder]
     }
     await store.finish()
   }

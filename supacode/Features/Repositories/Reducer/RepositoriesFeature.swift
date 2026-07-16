@@ -4362,6 +4362,14 @@ struct RepositoriesFeature {
     return worktrees.first(where: { !seen.insert($0.id).inserted })?.id
   }
 
+  /// Worktrees with duplicate ids removed, keeping the first occurrence (git
+  /// lists the main worktree first, so it wins a collision). See #616. Applied to
+  /// the raw listing, so a future sort must not run before it or the orphan wins.
+  nonisolated static func deduplicatedWorktrees(_ worktrees: [Worktree]) -> [Worktree] {
+    var seen: Set<Worktree.ID> = []
+    return worktrees.filter { seen.insert($0.id).inserted }
+  }
+
   /// Failure-row copy for a repository whose worktree listing names the same
   /// path more than once.
   nonisolated static func duplicateWorktreePathMessage(path: String) -> String {
@@ -4401,19 +4409,21 @@ struct RepositoriesFeature {
     }
     do {
       let worktrees = try await gitClient.worktrees(root)
-      // A duplicate path means the repo's git config is corrupt (e.g. a stale
-      // `core.worktree`). Refuse it and surface a failure rather than guess
-      // which of the colliding entries is real.
+      // A duplicate path (e.g. a broken inner worktree git resolves up to the
+      // repo root, #616) must not take down the whole repo. Drop the repeat and
+      // load the remaining worktrees instead of refusing the repository.
       if let duplicate = firstDuplicateWorktreeID(in: worktrees) {
-        return WorktreesFetchResult(
-          root: root,
-          isGitRepository: true,
-          worktrees: nil,
-          errorMessage: duplicateWorktreePathMessage(path: duplicate.rawValue)
+        repositoriesLogger.warning(
+          "Dropping duplicate worktree path \(duplicate.rawValue) in "
+            + "\(root.lastPathComponent); loading the remaining worktrees."
         )
       }
       return WorktreesFetchResult(
-        root: root, isGitRepository: true, worktrees: worktrees, errorMessage: nil)
+        root: root,
+        isGitRepository: true,
+        worktrees: deduplicatedWorktrees(worktrees),
+        errorMessage: nil
+      )
     } catch {
       // Any git listing failure (blocked binary, transient error, or a real repo
       // problem). Report it as a failed git root and let the loader's
