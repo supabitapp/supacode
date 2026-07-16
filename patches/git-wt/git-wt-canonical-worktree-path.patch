@@ -1,0 +1,24 @@
+diff --git a/wt b/wt
+index 55b2baa..4f4e594 100755
+--- a/wt
++++ b/wt
+@@ -184,7 +184,18 @@ canonical_worktree_path() {
+   local path="$1"
+   local resolved
+   if resolved=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null); then
+-    normalize_dir "$resolved"
++    resolved=$(normalize_dir "$resolved")
++    # A broken in-tree worktree (missing `.git` link) makes git resolve UP to an
++    # ancestor repo root, collapsing two worktrees onto one path. When the
++    # worktree's own physical path sits below that toplevel, git walked up: keep
++    # the worktree's own path. Submodule worktrees resolve to a sibling working
++    # tree (never an ancestor), so they still translate correctly.
++    local physical
++    physical=$(cd "$path" 2>/dev/null && pwd -P)
++    case "$physical" in
++    "$resolved"/*) printf '%s\n' "$physical" ;;
++    *) printf '%s\n' "$resolved" ;;
++    esac
+     return
+   fi
+   normalize_dir "$path"
