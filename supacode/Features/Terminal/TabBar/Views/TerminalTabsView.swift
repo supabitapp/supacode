@@ -6,6 +6,7 @@ struct TerminalTabsView: View {
   @Bindable var manager: TerminalTabManager
   let terminalState: WorktreeTerminalState
   let terminalsStore: StoreOf<TerminalsFeature>
+  let isLifecycleBusy: Bool
   let closeTab: (TerminalTabID) -> Void
   let closeOthers: (TerminalTabID) -> Void
   let closeToRight: (TerminalTabID) -> Void
@@ -31,6 +32,7 @@ struct TerminalTabsView: View {
             manager: manager,
             terminalState: terminalState,
             terminalsStore: terminalsStore,
+            isLifecycleBusy: isLifecycleBusy,
             openedTabs: $openedTabs,
             tabLocations: $tabLocations,
             draggingTabId: $draggingTabId,

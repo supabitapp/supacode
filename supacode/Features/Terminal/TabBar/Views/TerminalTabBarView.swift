@@ -6,6 +6,7 @@ struct TerminalTabBarView: View {
   @Bindable var manager: TerminalTabManager
   let terminalState: WorktreeTerminalState
   let terminalsStore: StoreOf<TerminalsFeature>
+  let isLifecycleBusy: Bool
   let createTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
@@ -24,6 +25,7 @@ struct TerminalTabBarView: View {
         manager: manager,
         terminalState: terminalState,
         terminalsStore: terminalsStore,
+        isLifecycleBusy: isLifecycleBusy,
         closeTab: closeTab,
         closeOthers: closeOthers,
         closeToRight: closeToRight,

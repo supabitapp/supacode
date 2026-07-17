@@ -280,6 +280,7 @@ struct WorktreeDetailView: View {
           manager: terminalManager,
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           shouldRunSetupScript: shouldRunSetupScript,
+          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false,
           forceAutoFocus: shouldFocusTerminal,
           createTab: { store.send(.newTerminal) }
         )

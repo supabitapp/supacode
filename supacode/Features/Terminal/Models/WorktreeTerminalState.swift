@@ -21,6 +21,8 @@ struct WorktreeTabProjection: Equatable, Sendable {
   let surfaceIDs: [UUID]
   let activeSurfaceID: UUID?
   let unseenNotificationCount: Int
+  /// Ghostty progress or a blocking script is active in this tab.
+  let hasTerminalActivity: Bool
   let isSplitZoomed: Bool
   /// Per-tab repaint epoch, bumped on same-UUID surface replacement so the view rebuilds.
   let surfaceGeneration: Int
@@ -30,6 +32,7 @@ struct WorktreeTabProjection: Equatable, Sendable {
     surfaceIDs: [UUID],
     activeSurfaceID: UUID?,
     unseenNotificationCount: Int,
+    hasTerminalActivity: Bool = false,
     isSplitZoomed: Bool = false,
     surfaceGeneration: Int = 0,
   ) {
@@ -37,6 +40,7 @@ struct WorktreeTabProjection: Equatable, Sendable {
     self.surfaceIDs = surfaceIDs
     self.activeSurfaceID = activeSurfaceID
     self.unseenNotificationCount = unseenNotificationCount
+    self.hasTerminalActivity = hasTerminalActivity
     self.isSplitZoomed = isSplitZoomed
     self.surfaceGeneration = surfaceGeneration
   }
@@ -242,18 +246,25 @@ final class WorktreeTerminalState {
     self.shouldHideTabBar = settingsFile.global.hideSingleTabBar
   }
 
+  /// Workspace terminal activity derived from live tab state, not the
+  /// Equatable-diff cache used only for projection delivery.
   var taskStatus: WorktreeTaskStatus {
-    trees.keys.contains(where: { isTabBusy($0) }) ? .running : .idle
+    trees.keys.contains(where: isTabActivityBusy) ? .running : .idle
   }
 
-  private func isTabBusy(_ tabId: TerminalTabID) -> Bool {
+  private func isTabActivityBusy(_ tabId: TerminalTabID) -> Bool {
+    guard trees[tabId] != nil, !isBlockingScriptCompleted(tabId) else { return false }
+    return blockingScripts[tabId] != nil || hasRunningProgress(in: tabId)
+  }
+
+  private func hasRunningProgress(in tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
     return tree.leaves().contains { isRunningProgressState($0.bridge.state.progressState) }
   }
 
   /// Per-row projection consumed by `SidebarItemFeature.terminalProjectionChanged`.
-  /// `isProgressBusy` reflects Ghostty progress state only; AppFeature merges
-  /// agent activity downstream of this event.
+  /// `isProgressBusy` covers terminal progress and active blocking scripts;
+  /// AppFeature merges agent activity downstream of this event.
   func currentProjection() -> WorktreeRowProjection {
     WorktreeRowProjection(
       surfaceIDs: allSurfaceIDs,
@@ -527,7 +538,7 @@ final class WorktreeTerminalState {
       blockingScriptLaunchDirectories[tabId] = launchDirectory
     }
     lastBlockingScriptTabByKind[kind] = tabId
-    tabManager.updateDirty(tabId, isDirty: true)
+    emitTabProjection(for: tabId)
     emitTaskStatusIfChanged()
 
     blockingScriptLogger.info("Started \(kind.tabTitle) for worktree \(worktree.id)")
@@ -1514,6 +1525,7 @@ final class WorktreeTerminalState {
     reportedTabId: TerminalTabID?
   ) {
     tabManager.markBlockingScriptCompleted(tabId)
+    emitTabProjection(for: tabId)
     freezeBlockingScriptSurfaces(in: tabId)
     emitTaskStatusIfChanged()
 
@@ -2340,11 +2352,7 @@ final class WorktreeTerminalState {
 
   private func updateRunningState(for tabId: TerminalTabID) {
     guard trees[tabId] != nil else { return }
-    // Frozen tabs stay sticky: the bridge's stale watch re-fires
-    // `onProgressReport(REMOVE)` after `command_finished` and would otherwise
-    // resurrect the dirty shimmer on a tab the user reads as done.
-    let isFrozen = isBlockingScriptCompleted(tabId)
-    tabManager.updateDirty(tabId, isDirty: isFrozen ? false : isTabBusy(tabId))
+    emitTabProjection(for: tabId)
     emitTabProgressDisplay(for: tabId)
     emitTaskStatusIfChanged()
   }
@@ -2459,11 +2467,14 @@ final class WorktreeTerminalState {
     }
     let surfaceIDs = tree.leaves().map(\.id)
     let unseenCount = surfaceIDs.reduce(0) { $0 + (surfaceStates[$1]?.unseenNotificationCount ?? 0) }
+    let isActivityBusy = isTabActivityBusy(tabId)
+    tabManager.updateDirty(tabId, isDirty: isActivityBusy)
     let projection = WorktreeTabProjection(
       tabID: tabId,
       surfaceIDs: surfaceIDs,
       activeSurfaceID: focusedSurfaceIdByTab[tabId],
       unseenNotificationCount: unseenCount,
+      hasTerminalActivity: isActivityBusy,
       isSplitZoomed: tree.zoomed != nil,
       surfaceGeneration: surfaceGenerationByTab[tabId, default: 0],
     )

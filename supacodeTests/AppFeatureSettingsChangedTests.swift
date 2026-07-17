@@ -54,8 +54,9 @@ struct AppFeatureSettingsChangedTests {
     )
     var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
     let surfaceID = UUID()
+    let idleSurfaceID = UUID()
     let agent = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
-    repositoriesState.sidebarItems[id: worktree.id]?.surfaceIDs = [surfaceID]
+    repositoriesState.sidebarItems[id: worktree.id]?.surfaceIDs = [surfaceID, idleSurfaceID]
     repositoriesState.sidebarItems[id: worktree.id]?.agentSnapshot.agents = [agent]
     repositoriesState.sidebarItems[id: worktree.id]?.agentSnapshot.isWorking = true
     var appState = AppFeature.State(
@@ -66,6 +67,23 @@ struct AppFeatureSettingsChangedTests {
     appState.agentPresence.records[
       AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
     ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
+    let tabID = TerminalTabID(rawValue: UUID())
+    let idleTabID = TerminalTabID(rawValue: UUID())
+    appState.terminals.terminalTabs.append(
+      TerminalTabFeature.State(
+        id: tabID,
+        worktreeID: worktree.id,
+        surfaceIDs: [surfaceID],
+        agentSnapshot: .init(agents: [agent], isWorking: true)
+      )
+    )
+    appState.terminals.terminalTabs.append(
+      TerminalTabFeature.State(
+        id: idleTabID,
+        worktreeID: worktree.id,
+        surfaceIDs: [idleSurfaceID]
+      )
+    )
 
     let store = TestStore(initialState: appState) {
       AppFeature()
@@ -82,6 +100,20 @@ struct AppFeatureSettingsChangedTests {
       $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot.agents = []
       $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot.isWorking = true
     }
+    await store.receive(\.terminals.terminalTabs[id: tabID].agentSnapshotChanged) {
+      $0.terminals.terminalTabs[id: tabID]?.agentSnapshot = .init(isWorking: true)
+    }
+    #expect(store.state.terminals.terminalTabs[id: tabID]?.agents.isEmpty == true)
+    #expect(
+      store.state.terminals.terminalTabs[id: tabID]?.shouldShimmer(
+        isLifecycleRepresentative: false
+      ) == true
+    )
+    #expect(
+      store.state.terminals.terminalTabs[id: idleTabID]?.shouldShimmer(
+        isLifecycleRepresentative: false
+      ) == false
+    )
     await store.finish()
     #expect(store.state.lastKnownAgentPresenceBadgesEnabled == false)
 
@@ -92,8 +124,99 @@ struct AppFeatureSettingsChangedTests {
     ) {
       $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot.agents = [agent]
     }
+    await store.receive(\.terminals.terminalTabs[id: tabID].agentSnapshotChanged) {
+      $0.terminals.terminalTabs[id: tabID]?.agentSnapshot = .init(
+        agents: [agent],
+        isWorking: true
+      )
+    }
+    #expect(
+      store.state.terminals.terminalTabs[id: idleTabID]?.shouldShimmer(
+        isLifecycleRepresentative: false
+      ) == false
+    )
     await store.finish()
     #expect(store.state.lastKnownAgentPresenceBadgesEnabled == true)
+  }
+
+  @Test(.dependencies) func agentPresenceDeltaFansOutOnlyToTabsContainingChangedSurfaces() async {
+    let rootURL = URL(fileURLWithPath: "/tmp/repo")
+    let worktree = Worktree(
+      id: "/tmp/repo/wt-feature",
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-feature"),
+      repositoryRootURL: rootURL
+    )
+    let repository = Repository(
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
+      rootURL: rootURL,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [worktree])
+    )
+    let changedSurfaceID = UUID()
+    let siblingSurfaceID = UUID()
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    repositoriesState.sidebarItems[id: worktree.id]?.surfaceIDs = [
+      changedSurfaceID,
+      siblingSurfaceID,
+    ]
+    var appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    appState.agentPresence.bySurface[changedSurfaceID] = [.claude]
+    appState.agentPresence.records[
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: changedSurfaceID)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
+    let changedTabID = TerminalTabID(rawValue: UUID())
+    let siblingTabID = TerminalTabID(rawValue: UUID())
+    appState.terminals.terminalTabs.append(
+      TerminalTabFeature.State(
+        id: changedTabID,
+        worktreeID: worktree.id,
+        surfaceIDs: [changedSurfaceID]
+      )
+    )
+    appState.terminals.terminalTabs.append(
+      TerminalTabFeature.State(
+        id: siblingTabID,
+        worktreeID: worktree.id,
+        surfaceIDs: [siblingSurfaceID]
+      )
+    )
+    let clock = TestClock()
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.sidebarStructureAutoRecompute = false
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.terminalClient.send = { _ in }
+    }
+    let agent = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+
+    await store.send(.agentPresence(.delegate(.surfacesChanged([changedSurfaceID]))))
+    await store.receive(
+      \.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged
+    ) {
+      $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot = .init(
+        agents: [agent],
+        isWorking: true
+      )
+    }
+    await store.receive(
+      \.terminals.terminalTabs[id: changedTabID].agentSnapshotChanged
+    ) {
+      $0.terminals.terminalTabs[id: changedTabID]?.agentSnapshot = .init(
+        agents: [agent],
+        isWorking: true
+      )
+    }
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+
+    #expect(store.state.terminals.terminalTabs[id: siblingTabID]?.agentSnapshot == .init())
   }
 
   @Test(.dependencies) func focusingASurfaceClearsTheStatesParkedOnIt() async {

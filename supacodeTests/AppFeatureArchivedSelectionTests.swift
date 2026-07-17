@@ -332,6 +332,90 @@ struct AppFeatureArchivedSelectionTests {
     #expect(sentCommands.value == [.setImagePasteAgents(surfaceID: surfaceID, agents: [.claude])])
   }
 
+  @Test(.dependencies) func restoredTabProjectionHydratesBusyAgentWhenBadgesAreDisabled() async throws {
+    let surfaceID = UUID()
+    let tabID = TerminalTabID(rawValue: UUID())
+    let worktree = Worktree(
+      id: "/tmp/repo/wt-feature",
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-feature"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.sidebarItems.append(
+      SidebarItemFeature.State(
+        id: worktree.id,
+        repositoryID: RepositoryID("/tmp/repo"),
+        kind: .gitWorktree,
+        name: worktree.name,
+        branchName: worktree.name,
+        workingDirectory: worktree.workingDirectory,
+        isMainWorktree: false,
+        isPinned: false,
+        hasMergedBadge: false
+      )
+    )
+    var settings = GlobalSettings.default
+    settings.agentPresenceBadgesEnabled = false
+    var appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State(settings: settings)
+    )
+    appState.agentPresence.bySurface[surfaceID] = [.claude]
+    appState.agentPresence.records[
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
+    let clock = TestClock()
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    // `eventStream()` replays worktree projections before tab projections.
+    await store.send(
+      .terminalEvent(
+        .worktreeProjectionChanged(
+          worktree.id,
+          WorktreeRowProjection(
+            surfaceIDs: [surfaceID],
+            isProgressBusy: false,
+            hasUnseenNotifications: false,
+            notifications: []
+          )
+        )
+      )
+    )
+    await store.receive(
+      \.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged
+    )
+
+    await store.send(
+      .terminalEvent(
+        .tabProjectionChanged(
+          worktreeID: worktree.id,
+          WorktreeTabProjection(
+            tabID: tabID,
+            surfaceIDs: [surfaceID],
+            activeSurfaceID: surfaceID,
+            unseenNotificationCount: 0
+          )
+        )
+      )
+    )
+    await store.receive(\.terminals.terminalTabs)
+    await store.finish()
+
+    let tab = try #require(store.state.terminals.terminalTabs[id: tabID])
+    #expect(tab.agents.isEmpty)
+    #expect(tab.agentSnapshot.isWorking)
+    #expect(tab.shouldShimmer(isLifecycleRepresentative: false))
+  }
+
   @Test(.dependencies) func agentPresenceDeltaPersistsLayoutsAfterDebounceWindow() async {
     let surfaceID = UUID()
     var appState = AppFeature.State(

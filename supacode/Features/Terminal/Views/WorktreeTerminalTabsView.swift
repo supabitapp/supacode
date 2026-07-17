@@ -10,6 +10,7 @@ struct WorktreeTerminalTabsView: View {
   /// tab-bar surface area stays bounded to terminal state.
   let terminalsStore: StoreOf<TerminalsFeature>
   let shouldRunSetupScript: Bool
+  let isLifecycleBusy: Bool
   let forceAutoFocus: Bool
   let createTab: () -> Void
   @State private var windowActivity = WindowActivityState.inactive
@@ -34,6 +35,7 @@ struct WorktreeTerminalTabsView: View {
           manager: state.tabManager,
           terminalState: state,
           terminalsStore: terminalsStore,
+          isLifecycleBusy: isLifecycleBusy,
           createTab: createTab,
           split: { direction in
             _ = state.performBindingActionOnFocusedSurface(direction.ghosttyBinding)

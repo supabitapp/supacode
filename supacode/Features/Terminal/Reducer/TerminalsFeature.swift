@@ -35,8 +35,13 @@ struct TerminalsFeature {
   enum Action {
     case terminalTabs(IdentifiedActionOf<TerminalTabFeature>)
     /// Tab projection arrived from `WorktreeTerminalState`. Inserts a new
-    /// per-tab state if missing, then forwards to the tab's reducer.
-    case tabProjectionChanged(worktreeID: Worktree.ID, projection: WorktreeTabProjection)
+    /// per-tab state with its current agent snapshot if missing, then forwards
+    /// the projection to the tab's reducer.
+    case tabProjectionChanged(
+      worktreeID: Worktree.ID,
+      projection: WorktreeTabProjection,
+      initialAgentSnapshot: AgentPresenceFeature.RowSnapshot
+    )
     /// Tab destroyed in the worktree state. Drops the matching feature state.
     case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
     /// Worktree's entire terminal state was torn down (prune path). Drops any
@@ -51,7 +56,7 @@ struct TerminalsFeature {
       case .terminalTabs:
         return .none
 
-      case .tabProjectionChanged(let worktreeID, let projection):
+      case .tabProjectionChanged(let worktreeID, let projection, let initialAgentSnapshot):
         let tabID = projection.tabID
         if state.terminalTabs[id: tabID] == nil {
           // Drop stale projections arriving after the tab was removed in this
@@ -64,7 +69,11 @@ struct TerminalsFeature {
             })
           else { return .none }
           state.terminalTabs.append(
-            TerminalTabFeature.State(id: tabID, worktreeID: worktreeID)
+            TerminalTabFeature.State(
+              id: tabID,
+              worktreeID: worktreeID,
+              agentSnapshot: initialAgentSnapshot
+            )
           )
         }
         return .send(.terminalTabs(.element(id: tabID, action: .projectionChanged(projection))))

@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -9,6 +10,10 @@ struct TerminalsFeatureTests {
   @Test func tabProjectionChangedInsertsNewTabThenForwards() async {
     let tabID = TerminalTabID(rawValue: UUID())
     let surface = UUID()
+    let agentSnapshot = AgentPresenceFeature.RowSnapshot(
+      agents: [.init(agent: .claude, activity: .busy)],
+      isWorking: true
+    )
     let store = TestStore(initialState: TerminalsFeature.State()) { TerminalsFeature() }
     store.exhaustivity = .off
 
@@ -20,11 +25,16 @@ struct TerminalsFeatureTests {
           surfaceIDs: [surface],
           activeSurfaceID: surface,
           unseenNotificationCount: 0
-        )
+        ),
+        initialAgentSnapshot: agentSnapshot
       )
     ) {
       $0.terminalTabs.append(
-        TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
+        TerminalTabFeature.State(
+          id: tabID,
+          worktreeID: "/tmp/repo",
+          agentSnapshot: agentSnapshot
+        )
       )
     }
     await store.receive(\.terminalTabs)
@@ -70,7 +80,8 @@ struct TerminalsFeatureTests {
           surfaceIDs: [],
           activeSurfaceID: nil,
           unseenNotificationCount: 0
-        )
+        ),
+        initialAgentSnapshot: .init()
       )
     )
 
@@ -157,7 +168,8 @@ struct TerminalsFeatureTests {
           surfaceIDs: [surface],
           activeSurfaceID: surface,
           unseenNotificationCount: 0
-        )
+        ),
+        initialAgentSnapshot: .init()
       )
     ) {
       $0.terminalTabs.append(TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repoA"))

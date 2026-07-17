@@ -18,6 +18,8 @@ struct TerminalTabFeature {
     /// Surface IDs in this tab in split-tree order. Mirrored from
     /// `WorktreeTerminalState`'s `onTabProjectionChanged`.
     var surfaceIDs: [UUID] = []
+    /// Ghostty progress or a blocking script is active in this tab.
+    var hasTerminalActivity = false
     /// Focused pane in this tab. Drives the stripe-progress's per-tab source
     /// (focused tab → focused surface; non-focused → worst-of aggregate).
     var activeSurfaceID: UUID?
@@ -29,20 +31,30 @@ struct TerminalTabFeature {
     /// Monotonic invalidation token for same-UUID surface view replacement.
     var surfaceGeneration = 0
     /// Per-tab agent snapshot pushed by `AppFeature.agentPresenceFanOutEffect`.
-    /// Leaf reads `state.agents` instead of iterating worktree-wide presence on
-    /// every storm tick.
-    var agents: [AgentPresenceFeature.AgentInstance] = []
+    /// `isWorking` remains populated when badges are disabled, so shimmer is
+    /// independent of badge visibility.
+    var agentSnapshot: AgentPresenceFeature.RowSnapshot = .init()
+    var agents: [AgentPresenceFeature.AgentInstance] { agentSnapshot.agents }
+    var hasAgentActivity: Bool { agentSnapshot.isWorking }
     /// Stripe-progress summary. Computed from the active surface's
     /// `GhosttySurfaceState.progressState` (focused tabs) or worst-of-all
     /// surfaces (unfocused tabs). Nil = no progress to display.
     var progressDisplay: TerminalTabProgressDisplay?
 
     var hasUnseenNotifications: Bool { unseenNotificationCount > 0 }
+
+    func shouldShimmer(isLifecycleRepresentative: Bool) -> Bool {
+      WorkspaceActivity.isActive(
+        hasTerminalActivity: hasTerminalActivity,
+        hasAgentActivity: hasAgentActivity,
+        isLifecycleBusy: isLifecycleRepresentative
+      )
+    }
   }
 
   enum Action: Equatable, Sendable {
     case projectionChanged(WorktreeTabProjection)
-    case agentSnapshotChanged([AgentPresenceFeature.AgentInstance])
+    case agentSnapshotChanged(AgentPresenceFeature.RowSnapshot)
     case progressDisplayChanged(TerminalTabProgressDisplay?)
   }
 
@@ -51,6 +63,9 @@ struct TerminalTabFeature {
       switch action {
       case .projectionChanged(let projection):
         if state.surfaceIDs != projection.surfaceIDs { state.surfaceIDs = projection.surfaceIDs }
+        if state.hasTerminalActivity != projection.hasTerminalActivity {
+          state.hasTerminalActivity = projection.hasTerminalActivity
+        }
         if state.activeSurfaceID != projection.activeSurfaceID {
           state.activeSurfaceID = projection.activeSurfaceID
         }
@@ -65,9 +80,9 @@ struct TerminalTabFeature {
         }
         return .none
 
-      case .agentSnapshotChanged(let agents):
-        guard state.agents != agents else { return .none }
-        state.agents = agents
+      case .agentSnapshotChanged(let snapshot):
+        guard state.agentSnapshot != snapshot else { return .none }
+        state.agentSnapshot = snapshot
         return .none
 
       case .progressDisplayChanged(let display):

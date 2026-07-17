@@ -45,11 +45,13 @@ struct TerminalTabFeatureTests {
           surfaceIDs: [surface],
           activeSurfaceID: surface,
           unseenNotificationCount: 3,
+          hasTerminalActivity: true,
           isSplitZoomed: true
         )
       )
     ) {
       $0.surfaceIDs = [surface]
+      $0.hasTerminalActivity = true
       $0.activeSurfaceID = surface
       $0.unseenNotificationCount = 3
       $0.isSplitZoomed = true
@@ -115,30 +117,59 @@ struct TerminalTabFeatureTests {
     }
   }
 
-  @Test func agentSnapshotChangedShortCircuitsOnEqualArray() async {
+  @Test func agentSnapshotChangedShortCircuitsOnEqualSnapshot() async {
     let tabID = TerminalTabID(rawValue: UUID())
-    let agents = [
-      AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
-    ]
+    let snapshot = AgentPresenceFeature.RowSnapshot(
+      agents: [AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)],
+      isWorking: true
+    )
     let store = TestStore(
-      initialState: TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo", agents: agents)
+      initialState: TerminalTabFeature.State(
+        id: tabID,
+        worktreeID: "/tmp/repo",
+        agentSnapshot: snapshot
+      )
     ) { TerminalTabFeature() }
 
-    await store.send(.agentSnapshotChanged(agents))
+    await store.send(.agentSnapshotChanged(snapshot))
   }
 
-  @Test func agentSnapshotChangedReplacesArrayOnDiff() async {
+  @Test func agentSnapshotChangedReplacesSnapshotOnDiff() async {
     let tabID = TerminalTabID(rawValue: UUID())
     let store = TestStore(
       initialState: TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
     ) { TerminalTabFeature() }
-    let agents = [
-      AgentPresenceFeature.AgentInstance(agent: .codex, activity: .idle)
-    ]
+    let snapshot = AgentPresenceFeature.RowSnapshot(
+      agents: [AgentPresenceFeature.AgentInstance(agent: .codex, activity: .idle)]
+    )
 
-    await store.send(.agentSnapshotChanged(agents)) {
-      $0.agents = agents
+    await store.send(.agentSnapshotChanged(snapshot)) {
+      $0.agentSnapshot = snapshot
     }
+  }
+
+  @Test func shimmerCombinesProgressAgentAndSelectedLifecycleActivity() {
+    let tabID = TerminalTabID(rawValue: UUID())
+    var state = TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
+
+    #expect(!state.shouldShimmer(isLifecycleRepresentative: false))
+    #expect(state.shouldShimmer(isLifecycleRepresentative: true))
+
+    state.hasTerminalActivity = true
+    #expect(state.shouldShimmer(isLifecycleRepresentative: false))
+
+    state.hasTerminalActivity = false
+    state.agentSnapshot = AgentPresenceFeature.RowSnapshot(isWorking: true)
+    #expect(state.agents.isEmpty)
+    #expect(state.shouldShimmer(isLifecycleRepresentative: false))
+
+    state.agentSnapshot = AgentPresenceFeature.RowSnapshot(
+      agents: [
+        AgentPresenceFeature.AgentInstance(agent: .claude, activity: .awaitingInput),
+        AgentPresenceFeature.AgentInstance(agent: .codex, activity: .error),
+      ]
+    )
+    #expect(!state.shouldShimmer(isLifecycleRepresentative: false))
   }
 
   @Test func progressDisplayChangedShortCircuitsOnEqualDisplay() async {

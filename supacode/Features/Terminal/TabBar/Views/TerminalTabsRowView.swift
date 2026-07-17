@@ -6,6 +6,7 @@ struct TerminalTabsRowView: View {
   @Bindable var manager: TerminalTabManager
   let terminalState: WorktreeTerminalState
   let terminalsStore: StoreOf<TerminalsFeature>
+  let isLifecycleBusy: Bool
   @Binding var openedTabs: [TerminalTabID]
   @Binding var tabLocations: [TerminalTabID: CGRect]
   @Binding var draggingTabId: TerminalTabID?
@@ -40,6 +41,7 @@ struct TerminalTabsRowView: View {
               tabIndex: index,
               fixedWidth: fixedTabWidth,
               tabStore: tabStore,
+              isLifecycleBusy: isLifecycleBusy,
               onSelect: {
                 // Route through WorktreeTerminalState so selecting a tab also focuses its focused surface.
                 terminalState.selectTab(id)

@@ -11,8 +11,12 @@ struct TerminalTabLabelView: View {
   /// instead of iterating worktree-wide presence, so an agent storm on tab B
   /// doesn't invalidate tab A's label body.
   let tabStore: StoreOf<TerminalTabFeature>
+  let isLifecycleRepresentative: Bool
 
   var body: some View {
+    let isShimmering = tabStore.state.shouldShimmer(
+      isLifecycleRepresentative: isLifecycleRepresentative
+    )
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
       TerminalTabAgentBadge(tabStore: tabStore)
       if let icon = tab.icon {
@@ -25,7 +29,7 @@ struct TerminalTabLabelView: View {
           )
           .accessibilityHidden(true)
       }
-      TerminalTabTitleLabel(title: tab.displayTitle, isActive: isActive, isDirty: tab.isDirty)
+      TerminalTabTitleLabel(title: tab.displayTitle, isActive: isActive, isShimmering: isShimmering)
         .equatable()
       Spacer(minLength: TerminalTabBarMetrics.contentTrailingSpacing)
     }
@@ -37,12 +41,12 @@ struct TerminalTabLabelView: View {
 }
 
 /// Equatable barrier around the shimmering title: a busy trigger that doesn't
-/// change the title / active / dirty inputs skips this leaf, so the shimmer
+/// change the title / active / activity inputs skips this leaf, so the shimmer
 /// sweep keeps running uninterrupted instead of re-rendering per report.
 private struct TerminalTabTitleLabel: View, Equatable {
   let title: String
   let isActive: Bool
-  let isDirty: Bool
+  let isShimmering: Bool
 
   var body: some View {
     Text(title)
@@ -50,7 +54,7 @@ private struct TerminalTabTitleLabel: View, Equatable {
       .fontWeight(isActive ? .semibold : .regular)
       .lineLimit(1)
       .foregroundStyle(TerminalTabBarColors.activeText)
-      .shimmer(isActive: isDirty)
+      .shimmer(isActive: isShimmering)
   }
 }
 
