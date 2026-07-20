@@ -361,13 +361,14 @@ struct SupacodeApp: App {
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
     case "worktrees":
-      let data = repos.flatMap { repo in
-        repo.worktrees.map { worktree in
-          let encodedID =
-            worktree.id.rawValue.addingPercentEncoding(withAllowedCharacters: pctSet) ?? worktree.id.rawValue
-          var entry = ["id": encodedID]
-          if worktree.id == selectedWorktreeID { entry["focused"] = "1" }
-          return entry
+      let data = repos.flatMap { repository in
+        repository.worktrees.map { worktree in
+          WorktreeListQueryResponse.fields(
+            repositoryID: repository.id,
+            worktreeID: worktree.id,
+            sidebar: store.repositories.sidebar,
+            selectedWorktreeID: selectedWorktreeID
+          )
         }
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)

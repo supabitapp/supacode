@@ -28,18 +28,52 @@ extension WorktreeCommand {
   struct List: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "List worktrees.")
 
+    struct OutputRow: Equatable {
+      let text: String
+      let focused: Bool
+    }
+
     @Flag(name: [.short, .long], help: "Print only the focused worktree.")
     var focused = false
+
+    @Flag(name: .long, help: "Print only worktrees visible in the sidebar.")
+    var visible = false
+
+    @Flag(name: .long, help: "Append tab-separated sidebar visibility (`visible` or `archived`).")
+    var withVisibility = false
 
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
       let items = try QueryDispatcher.query(resource: "worktrees", timeoutSeconds: timeoutOption.timeout)
+      for row in Self.outputRows(
+        items: items,
+        focusedOnly: focused,
+        visibleOnly: visible,
+        withVisibility: withVisibility
+      ) {
+        print(formatListLine(row.text, focused: row.focused))
+      }
+    }
+
+    static func outputRows(
+      items: [[String: String]],
+      focusedOnly: Bool,
+      visibleOnly: Bool,
+      withVisibility: Bool
+    ) -> [OutputRow] {
+      var rows: [OutputRow] = []
+      rows.reserveCapacity(items.count)
       for item in items {
         let isFocused = !(item["focused"] ?? "").isEmpty
-        guard !focused || isFocused else { continue }
-        print(formatListLine(item["id"] ?? "", focused: isFocused))
+        guard !focusedOnly || isFocused else { continue }
+        let visibility = item["visibility"] ?? ""
+        guard !visibleOnly || visibility == "visible" else { continue }
+        let id = item["id"] ?? ""
+        let text = withVisibility ? "\(id)\t\(visibility)" : id
+        rows.append(OutputRow(text: text, focused: isFocused))
       }
+      return rows
     }
   }
 

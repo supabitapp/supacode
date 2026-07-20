@@ -4989,7 +4989,7 @@ extension RepositoriesFeature.State {
     guard let repositoryID = repositoryID(containing: id) else {
       return false
     }
-    return sidebar.sections[repositoryID]?.buckets[.archived]?.items[id] != nil
+    return sidebar.visibility(of: id, in: repositoryID) == .archived
   }
 
   /// Archived rows show no running-script dots, except while their delete script

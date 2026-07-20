@@ -60,7 +60,10 @@ struct CLIReferenceView: View {
   ]
 
   private static let worktreeRows: [CLIEntry] = [
-    .init(command: "supacode worktree list [-f]", description: "List worktree IDs. -f for focused only."),
+    .init(
+      command: "supacode worktree list [-f] [--visible] [--with-visibility]",
+      description: "List IDs; filter to sidebar-visible rows or append tab-separated visibility."
+    ),
     .init(command: "supacode worktree focus [-w <id>]", description: "Focus a worktree."),
     .init(
       command: "supacode worktree run [-w <id>] [-c <uuid>]",

@@ -77,6 +77,11 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     case archived
   }
 
+  nonisolated enum WorktreeVisibility: String, Equatable, Sendable {
+    case visible
+    case archived
+  }
+
   nonisolated struct Section: Equatable, Sendable, Codable {
     var collapsed: Bool
     var buckets: OrderedDictionary<BucketID, Bucket>
@@ -282,6 +287,13 @@ nonisolated extension SidebarState {
       return bucketID
     }
     return nil
+  }
+
+  /// Public-facing classification for a registered worktree. The archived
+  /// bucket is the only hidden state; main, pinned, unpinned, and newly
+  /// discovered unbucketed worktrees are visible.
+  func visibility(of worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> WorktreeVisibility {
+    sections[repositoryID]?.buckets[.archived]?.items[worktreeID] == nil ? .visible : .archived
   }
 }
 
