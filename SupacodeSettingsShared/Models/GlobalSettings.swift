@@ -104,6 +104,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var remoteSessionPersistenceEnabled: Bool
   /// Where Supacode appears: Dock, menu bar, or both.
   public var appVisibility: AppVisibility
+  /// Beta: hidden terminal tabs release their renderer after a few minutes of
+  /// inactivity and reconnect when viewed. On by default.
+  public var terminalHibernationEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -178,7 +181,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmQuitMode: ConfirmQuitMode = .auto,
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
-    appVisibility: AppVisibility = .dock
+    appVisibility: AppVisibility = .dock,
+    terminalHibernationEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -215,6 +219,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
     self.appVisibility = appVisibility
+    self.terminalHibernationEnabled = terminalHibernationEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -388,5 +393,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .appVisibility)) ?? nil)
       .flatMap(AppVisibility.init(rawValue:))
       ?? Self.default.appVisibility
+    // Pre-feature files omit this key; the Beta feature falls back to the default.
+    terminalHibernationEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .terminalHibernationEnabled)
+      ?? Self.default.terminalHibernationEnabled
   }
 }

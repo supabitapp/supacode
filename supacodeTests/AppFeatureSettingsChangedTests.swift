@@ -96,6 +96,40 @@ struct AppFeatureSettingsChangedTests {
     #expect(store.state.lastKnownAgentPresenceBadgesEnabled == true)
   }
 
+  @Test(.dependencies) func togglingHibernationFlagFansOutToTerminalClient() async {
+    let sentEnabled = LockIsolated<[Bool]>([])
+    var appState = AppFeature.State(
+      repositories: RepositoriesFeature.State(),
+      settings: SettingsFeature.State()
+    )
+    appState.lastKnownTerminalHibernationEnabled = true
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        guard case .setTerminalHibernationEnabled(let enabled) = command else { return }
+        sentEnabled.withValue { $0.append(enabled) }
+      }
+    }
+    store.exhaustivity = .off
+
+    var settings = GlobalSettings.default
+    settings.terminalHibernationEnabled = false
+
+    // The flip fires the command once with the new value and tracks the flag.
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.finish()
+    #expect(sentEnabled.value == [false])
+    #expect(store.state.lastKnownTerminalHibernationEnabled == false)
+
+    // A settingsChanged that does not flip hibernation emits no further command.
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.finish()
+    #expect(sentEnabled.value == [false])
+    #expect(store.state.lastKnownTerminalHibernationEnabled == false)
+  }
+
   @Test(.dependencies) func focusingASurfaceClearsTheStatesParkedOnIt() async {
     let rootURL = URL(fileURLWithPath: "/tmp/repo")
     let worktree = Worktree(

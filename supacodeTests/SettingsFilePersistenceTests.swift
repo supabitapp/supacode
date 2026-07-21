@@ -410,6 +410,29 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.remoteSessionPersistenceEnabled == true)
   }
 
+  @Test(.dependencies) func decodesMissingTerminalHibernationEnabledAsTrue() throws {
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // The Beta feature defaults on, so a pre-feature file decodes to on.
+    #expect(settings.global.terminalHibernationEnabled == true)
+  }
+
   @Test(.dependencies) func decodesMissingAppVisibilityAsDock() throws {
     // A file predating the menu bar feature was Dock-only, and the menu bar
     // stays opt-in.
