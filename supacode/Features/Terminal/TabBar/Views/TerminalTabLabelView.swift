@@ -14,6 +14,7 @@ struct TerminalTabLabelView: View {
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
+      TerminalTabDormantIndicator(tabStore: tabStore)
       TerminalTabAgentBadge(tabStore: tabStore)
       if let icon = tab.icon {
         Image(systemName: icon)
@@ -51,6 +52,28 @@ private struct TerminalTabTitleLabel: View, Equatable {
       .lineLimit(1)
       .foregroundStyle(TerminalTabBarColors.activeText)
       .shimmer(isActive: isDirty)
+  }
+}
+
+/// Leading sleep marker for a hibernated tab, read off the per-tab scoped store
+/// so wake clears it via the normal projection update without touching siblings.
+private struct TerminalTabDormantIndicator: View {
+  let tabStore: StoreOf<TerminalTabFeature>
+
+  var body: some View {
+    if tabStore.state.isDormant {
+      // Semibold compensates for the zzz glyph's thin strokes (see the sidebar twin).
+      Image(systemName: "zzz")
+        .imageScale(.small)
+        .fontWeight(.semibold)
+        .foregroundStyle(.secondary)
+        .frame(
+          width: TerminalTabBarMetrics.closeButtonSize,
+          height: TerminalTabBarMetrics.closeButtonSize
+        )
+        .accessibilityLabel("Hibernated tab")
+        .help("Hibernated to save resources. Select to reconnect.")
+    }
   }
 }
 
