@@ -30,6 +30,7 @@ struct SettingsFeatureTests {
       promptForWorktreeCreation: true,
       terminalThemeSyncEnabled: false,
       automatedActionPolicy: .always,
+      confirmCloseSurface: false,
     )
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = loaded }
@@ -60,6 +61,7 @@ struct SettingsFeatureTests {
       $0.fetchOriginBeforeWorktreeCreation = true
       $0.terminalThemeSyncEnabled = false
       $0.automatedActionPolicy = .always
+      $0.confirmCloseSurface = false
     }
     await store.skipReceivedActions()
     receiveStartupHookChecks(from: store)
@@ -111,6 +113,23 @@ struct SettingsFeatureTests {
     await store.receive(\.delegate.settingsChanged)
 
     expectNoDifference(settingsFile.global, expectedSettings)
+  }
+
+  @Test(.dependencies) func confirmCloseSurfacePersistsChanges() async {
+    var initialSettings = GlobalSettings.default
+    initialSettings.confirmCloseSurface = true
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.confirmCloseSurface, false))) {
+      $0.confirmCloseSurface = false
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(!settingsFile.global.confirmCloseSurface)
   }
 
   @Test(.dependencies) func setSystemNotificationsEnabledPersistsChanges() async {

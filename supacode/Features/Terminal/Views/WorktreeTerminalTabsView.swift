@@ -40,16 +40,16 @@ struct WorktreeTerminalTabsView: View {
           },
           canSplit: state.tabManager.selectedTabId.flatMap { state.activeSurfaceID(for: $0) } != nil,
           closeTab: { tabId in
-            state.closeTab(tabId)
+            _ = state.requestCloseTab(tabId)
           },
           closeOthers: { tabId in
-            state.closeOtherTabs(keeping: tabId)
+            _ = state.requestCloseOtherTabs(keeping: tabId)
           },
           closeToRight: { tabId in
-            state.closeTabsToRight(of: tabId)
+            _ = state.requestCloseTabsToRight(of: tabId)
           },
           closeAll: {
-            state.closeAllTabs()
+            _ = state.requestCloseAllTabs()
           },
           dismissSplitZoom: { tabId in
             state.dismissSplitZoom(for: tabId)
@@ -75,6 +75,22 @@ struct WorktreeTerminalTabsView: View {
       }
     }
     .animation(.easeInOut(duration: 0.2), value: state.shouldHideTabBar)
+    .alert(
+      item: Binding(
+        get: { state.pendingCloseConfirmation },
+        set: { if $0 == nil { state.dismissPendingCloseConfirmation() } }
+      ),
+      title: { _ in Text(WorktreeTerminalState.PendingCloseConfirmation.title) },
+      actions: { pending in
+        Button("Cancel", role: .cancel) {
+          state.cancelPendingClose(pending)
+        }
+        Button(WorktreeTerminalState.PendingCloseConfirmation.actionTitle, role: .destructive) {
+          state.confirmPendingClose(pending)
+        }
+      },
+      message: { _ in Text(WorktreeTerminalState.PendingCloseConfirmation.message) }
+    )
     .background(
       WindowFocusObserverView { activity in
         windowActivity = activity
