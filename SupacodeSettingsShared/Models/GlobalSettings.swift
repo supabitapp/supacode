@@ -140,7 +140,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmQuitMode: .auto,
     terminateSessionsOnQuit: false,
     remoteSessionPersistenceEnabled: true,
-    appVisibility: .dock
+    appVisibility: .dockAndMenuBar
   )
 
   public init(
@@ -178,7 +178,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmQuitMode: ConfirmQuitMode = .auto,
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
-    appVisibility: AppVisibility = .dock
+    appVisibility: AppVisibility = .dockAndMenuBar
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
