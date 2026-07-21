@@ -77,7 +77,9 @@ struct WorktreeTerminalManagerTests {
     let state = manager.state(for: worktree)
 
     state.ensureInitialTab(focusing: false)
-    state.closeAllTabs()
+    for tab in state.tabManager.tabs {
+      state.closeTab(tab.id)
+    }
 
     state.ensureInitialTab(focusing: false)
 
@@ -370,7 +372,9 @@ struct WorktreeTerminalManagerTests {
         #expect(state.currentProjection().runningScripts.isEmpty)
         continuation.resume()
       }
-      state.closeAllTabs()
+      for tab in state.tabManager.tabs {
+        state.closeTab(tab.id)
+      }
     }
   }
 
@@ -1147,12 +1151,8 @@ struct WorktreeTerminalManagerTests {
     surface.bridge.closeSurface(processAlive: true)
     let pending = state.pendingCloseConfirmation
     #expect(pending == .surface(surface.id))
-    let tabClose = WorktreeTerminalState.PendingCloseConfirmation.tabs([tabId])
-    #expect(pending?.title == tabClose.title)
-    #expect(pending?.actionTitle == tabClose.actionTitle)
-    #expect(pending?.message == tabClose.message)
-    #expect(pending?.title == "Close Terminal?")
-    #expect(pending?.actionTitle == "Close Terminal")
+    #expect(WorktreeTerminalState.PendingCloseConfirmation.title == "Close Terminal?")
+    #expect(WorktreeTerminalState.PendingCloseConfirmation.actionTitle == "Close Terminal")
     #expect(state.hasTab(tabId))
 
     state.cancelPendingClose()
@@ -1190,10 +1190,7 @@ struct WorktreeTerminalManagerTests {
 
     #expect(state.performBindingAction("close_surface", onSurfaceID: target.id))
     target.bridge.closeSurface(processAlive: true)
-    let pending = state.pendingCloseConfirmation
-    #expect(pending == .surface(target.id))
-    #expect(pending?.title == "Close Terminal?")
-    #expect(pending?.actionTitle == "Close Terminal")
+    #expect(state.pendingCloseConfirmation == .surface(target.id))
 
     state.confirmPendingClose()
     #expect(state.pendingCloseConfirmation == nil)
@@ -1354,6 +1351,229 @@ struct WorktreeTerminalManagerTests {
     #expect(state.requestCloseTab(tabId))
     #expect(state.pendingCloseConfirmation == nil)
     #expect(!state.tabManager.tabs.contains(where: { $0.id == tabId }))
+  }
+
+  @Test(.dependencies) func programmaticSurfaceDestroyBypassesConfirmation() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
+    guard let tabId = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+
+    #expect(state.closeSurface(id: surface.id))
+    surface.bridge.closeSurface(processAlive: true)
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(tabId))
+  }
+
+  @Test(.dependencies) func confirmingCapturedTargetClosesEvenAfterDismissalClearedState() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
+    guard let tabId = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
+    surface.bridge.closeSurface(processAlive: true)
+    guard let pending = state.pendingCloseConfirmation else {
+      Issue.record("Expected a pending confirmation")
+      return
+    }
+
+    // Simulate SwiftUI writing the dismissal back through the alert binding
+    // before the confirm button's action runs on the same tap.
+    state.dismissPendingCloseConfirmation()
+    #expect(state.pendingCloseConfirmation == nil)
+    state.confirmPendingClose(pending)
+    #expect(!state.hasTab(tabId))
+  }
+
+  @Test(.dependencies) func requestCloseOtherTabsConfirmsThenClosesExactlyOthers() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    var runningSurfaceIDs: Set<UUID> = []
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { runningSurfaceIDs.contains($0.id) }
+    )
+    guard let first = state.createTab(focusing: true),
+      let second = state.createTab(focusing: true),
+      let third = state.createTab(focusing: true),
+      let secondSurface = state.splitTree(for: second).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected three tabs")
+      return
+    }
+    runningSurfaceIDs.insert(secondSurface.id)
+
+    #expect(state.requestCloseOtherTabs(keeping: first))
+    #expect(state.pendingCloseConfirmation == .tabs([second, third]))
+
+    state.confirmPendingClose()
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(state.tabManager.tabs.map(\.id) == [first])
+  }
+
+  @Test(.dependencies) func requestCloseTabsToRightTargetsOnlyRightwardTabs() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    var runningSurfaceIDs: Set<UUID> = []
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { runningSurfaceIDs.contains($0.id) }
+    )
+    guard let first = state.createTab(focusing: true),
+      let second = state.createTab(focusing: true),
+      let third = state.createTab(focusing: true),
+      let thirdSurface = state.splitTree(for: third).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected three tabs")
+      return
+    }
+    runningSurfaceIDs.insert(thirdSurface.id)
+
+    #expect(state.requestCloseTabsToRight(of: first))
+    #expect(state.pendingCloseConfirmation == .tabs([second, third]))
+
+    state.confirmPendingClose()
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(state.tabManager.tabs.map(\.id) == [first])
+  }
+
+  @Test(.dependencies) func requestCloseAllTabsConfirmsThenClosesEveryTab() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    var runningSurfaceIDs: Set<UUID> = []
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { runningSurfaceIDs.contains($0.id) }
+    )
+    guard let first = state.createTab(focusing: true),
+      let second = state.createTab(focusing: true),
+      let third = state.createTab(focusing: true),
+      let secondSurface = state.splitTree(for: second).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected three tabs")
+      return
+    }
+    runningSurfaceIDs.insert(secondSurface.id)
+
+    #expect(state.requestCloseAllTabs())
+    #expect(state.pendingCloseConfirmation == .tabs([first, second, third]))
+
+    state.confirmPendingClose()
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(state.tabManager.tabs.isEmpty)
+  }
+
+  @Test(.dependencies) func ghosttyCloseTabModesRouteThroughConfirmation() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    var runningSurfaceIDs: Set<UUID> = []
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { runningSurfaceIDs.contains($0.id) }
+    )
+    guard let first = state.createTab(focusing: true),
+      let second = state.createTab(focusing: true),
+      let third = state.createTab(focusing: true),
+      let firstSurface = state.splitTree(for: first).root?.leftmostLeaf(),
+      let secondSurface = state.splitTree(for: second).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected three tabs")
+      return
+    }
+    runningSurfaceIDs.insert(secondSurface.id)
+
+    // "Close Other Tabs" from the first tab confirms because a sibling is busy.
+    #expect(firstSurface.bridge.onCloseTab?(GHOSTTY_ACTION_CLOSE_TAB_MODE_OTHER) == true)
+    #expect(state.pendingCloseConfirmation == .tabs([second, third]))
+    state.cancelPendingClose()
+
+    // "Close Tabs to the Right" of the first tab targets the same siblings.
+    #expect(firstSurface.bridge.onCloseTab?(GHOSTTY_ACTION_CLOSE_TAB_MODE_RIGHT) == true)
+    #expect(state.pendingCloseConfirmation == .tabs([second, third]))
+    state.cancelPendingClose()
+
+    // "Close Tab" scopes to the invoking (idle) tab and closes immediately.
+    #expect(firstSurface.bridge.onCloseTab?(GHOSTTY_ACTION_CLOSE_TAB_MODE_THIS) == true)
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(first))
+  }
+
+  @Test(.dependencies) func closingTabIndependentlyNarrowsPendingTabPayload() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    var runningSurfaceIDs: Set<UUID> = []
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { runningSurfaceIDs.contains($0.id) }
+    )
+    guard let first = state.createTab(focusing: true),
+      let second = state.createTab(focusing: true),
+      let third = state.createTab(focusing: true),
+      let secondSurface = state.splitTree(for: second).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected three tabs")
+      return
+    }
+    runningSurfaceIDs.insert(secondSurface.id)
+
+    #expect(state.requestCloseAllTabs())
+    #expect(state.pendingCloseConfirmation == .tabs([first, second, third]))
+
+    state.closeTab(first)
+    #expect(state.pendingCloseConfirmation == .tabs([second, third]))
+    #expect(!state.hasTab(first))
+
+    state.closeTab(second)
+    state.closeTab(third)
+    #expect(state.pendingCloseConfirmation == nil)
+  }
+
+  @Test(.dependencies) func tearingDownPendingSurfaceTabClearsConfirmation() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
+    guard let tabId = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
+    surface.bridge.closeSurface(processAlive: true)
+    #expect(state.pendingCloseConfirmation == .surface(surface.id))
+
+    state.closeTab(tabId)
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(tabId))
   }
 
   @Test func closeAllSurfacesClearsPerSurfaceBookkeeping() {
@@ -1807,6 +2027,47 @@ struct WorktreeTerminalManagerTests {
     #expect(surface.shouldClaimFocus?() == false)
     #expect(state.surfaceStates[surfaceID] === originalSurfaceState)
     #expect(projections.value.last?.surfaceGeneration == 1)
+    #expect(await probe.killedSessions() == [])
+  }
+
+  @Test(.dependencies) func canceledSurfaceCloseClearsExplicitFlagSoUnexpectedExitReattaches() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    let probe = ZmxTestProbe(listing: [])
+    let manager = makeZmxBackedManager(
+      probe: probe,
+      surfaceBindingActionPerformer: { _, _ in }
+    )
+    let state = manager.state(for: makeWorktree())
+    guard let tabId = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    let surfaceID = surface.id
+    await probe.setListing([.init(name: session(for: surfaceID), clients: 0)])
+
+    // Park a surface-close confirmation, then cancel it the way the alert does:
+    // the item binding nils the published value before the Cancel action runs.
+    #expect(state.performBindingAction("close_surface", onSurfaceID: surfaceID))
+    surface.bridge.closeSurface(processAlive: true)
+    guard let pending = state.pendingCloseConfirmation else {
+      Issue.record("Expected a pending confirmation")
+      return
+    }
+    state.dismissPendingCloseConfirmation()
+    state.cancelPendingClose(pending)
+
+    // The explicit-close flag must have been cleared, so a later unexpected exit
+    // reattaches the live session instead of tearing it down.
+    surface.bridge.closeSurface(processAlive: false)
+    await probe.waitForListCalls(atLeast: 1)
+    await waitUntil("zmx surface replacement") {
+      guard let replacement = state.splitTree(for: tabId).root?.leftmostLeaf() else { return false }
+      return replacement.id == surfaceID && replacement !== surface
+    }
+    #expect(state.tabManager.tabs.contains(where: { $0.id == tabId }))
     #expect(await probe.killedSessions() == [])
   }
 

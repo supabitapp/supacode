@@ -26,7 +26,6 @@ struct WorktreeTerminalTabsView: View {
     // the focused background is unchanged (e.g. only `split-divider-color` moved).
     let _ = manager.configGeneration
     let unfocusedSplitOverlay = manager.unfocusedSplitOverlay()
-    let pendingClose = state.pendingCloseConfirmation
     let dividerColor = manager.splitDividerColor()
     let _ = colorScheme
     VStack(spacing: 0) {
@@ -77,26 +76,21 @@ struct WorktreeTerminalTabsView: View {
     }
     .animation(.easeInOut(duration: 0.2), value: state.shouldHideTabBar)
     .alert(
-      pendingClose?.title ?? "Close Terminal?",
-      isPresented: Binding(
-        get: { state.pendingCloseConfirmation != nil },
-        set: { isPresented in
-          if !isPresented {
-            state.cancelPendingClose()
-          }
-        }
+      item: Binding(
+        get: { state.pendingCloseConfirmation },
+        set: { if $0 == nil { state.dismissPendingCloseConfirmation() } }
       ),
-      presenting: pendingClose
-    ) { pending in
-      Button("Cancel", role: .cancel) {
-        state.cancelPendingClose()
-      }
-      Button(pending.actionTitle, role: .destructive) {
-        state.confirmPendingClose()
-      }
-    } message: { pending in
-      Text(pending.message)
-    }
+      title: { _ in Text(WorktreeTerminalState.PendingCloseConfirmation.title) },
+      actions: { pending in
+        Button("Cancel", role: .cancel) {
+          state.cancelPendingClose(pending)
+        }
+        Button(WorktreeTerminalState.PendingCloseConfirmation.actionTitle, role: .destructive) {
+          state.confirmPendingClose(pending)
+        }
+      },
+      message: { _ in Text(WorktreeTerminalState.PendingCloseConfirmation.message) }
+    )
     .background(
       WindowFocusObserverView { activity in
         windowActivity = activity

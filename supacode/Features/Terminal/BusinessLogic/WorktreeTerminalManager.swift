@@ -527,7 +527,7 @@ final class WorktreeTerminalManager {
         existing.enableSetupScriptIfNeeded()
       }
       // Reload snapshot if the state has no tabs (e.g., setting was just enabled).
-      // If `hasAttemptedInitialTab` is sticky-true (closeAllTabs path), the snapshot
+      // If `hasAttemptedInitialTab` is sticky-true (every tab was closed), the snapshot
       // stays staged but ensureInitialTab won't consume it; that's intentional.
       if existing.tabManager.tabs.isEmpty,
         existing.pendingLayoutSnapshot == nil,

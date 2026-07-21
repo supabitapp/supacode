@@ -53,17 +53,10 @@ final class WorktreeTerminalState {
     case surface(UUID)
     case tabs([TerminalTabID])
 
-    var title: String {
-      "Close Terminal?"
-    }
-
-    var actionTitle: String {
-      "Close Terminal"
-    }
-
-    var message: String {
-      "One or more terminal processes are still running. Closing will terminate them."
-    }
+    // Copy is identical for surface and tab closes, so it lives on the type.
+    static let title = "Close Terminal?"
+    static let actionTitle = "Close Terminal"
+    static let message = "One or more terminal processes are still running. Closing will terminate them."
   }
 
   private struct SurfaceLaunchMetadata {
@@ -88,6 +81,8 @@ final class WorktreeTerminalState {
   @ObservationIgnored private var surfaceLaunchMetadata: [UUID: SurfaceLaunchMetadata] = [:]
   // Surfaces the user explicitly closed, so an unexpected zmx exit isn't mistaken for one and reattached.
   @ObservationIgnored private var pendingExplicitSurfaceCloseIDs: Set<UUID> = []
+  // Explicit closes that skip the confirmation alert (programmatic destroys already gated upstream).
+  @ObservationIgnored private var bypassCloseConfirmationSurfaceIDs: Set<UUID> = []
   @ObservationIgnored private var surfaceGenerationByTab: [TerminalTabID: Int] = [:]
   @ObservationIgnored private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   /// Per-tab projection cache. `WorktreeTerminalState` recomputes from `trees`
@@ -113,7 +108,7 @@ final class WorktreeTerminalState {
   private var blockingScriptLaunchDirectories: [TerminalTabID: URL] = [:]
   private var lastBlockingScriptTabByKind: [BlockingScriptKind: TerminalTabID] = [:]
   private var pendingSetupScript: Bool
-  /// Sticky after first attempt so a reselect after `closeAllTabs` doesn't auto-recreate.
+  /// Sticky after first attempt so a reselect after closing every tab doesn't auto-recreate.
   /// Intentionally never reset; resetting would re-arm the bug.
   @ObservationIgnored private(set) var hasAttemptedInitialTab = false
   @ObservationIgnored var pendingLayoutSnapshot: TerminalLayoutSnapshot?
@@ -796,11 +791,15 @@ final class WorktreeTerminalState {
         "closeSurface: surface \(surfaceID) not found. Known: \(surfaces.keys.map(\.uuidString))")
       return false
     }
-    requestExplicitSurfaceClose(surface)
+    // Programmatic destroys (deeplink/CLI) resolve confirmation upstream, so skip the alert here.
+    requestExplicitSurfaceClose(surface, confirm: false)
     return true
   }
 
-  private func requestExplicitSurfaceClose(_ surface: GhosttySurfaceView) {
+  private func requestExplicitSurfaceClose(_ surface: GhosttySurfaceView, confirm: Bool = true) {
+    if !confirm {
+      bypassCloseConfirmationSurfaceIDs.insert(surface.id)
+    }
     performBindingAction("close_surface", on: surface)
   }
 
@@ -872,10 +871,19 @@ final class WorktreeTerminalState {
 
   func confirmPendingClose() {
     guard let pending = pendingCloseConfirmation else { return }
+    confirmPendingClose(pending)
+  }
+
+  // Takes the target explicitly so the alert confirms against the captured
+  // payload, never a published value a concurrent dismissal may have cleared.
+  func confirmPendingClose(_ pending: PendingCloseConfirmation) {
     pendingCloseConfirmation = nil
     switch pending {
     case .surface(let surfaceID):
-      guard let surface = surfaces[surfaceID] else { return }
+      guard let surface = surfaces[surfaceID] else {
+        terminalStateLogger.debug("confirmPendingClose: surface \(surfaceID) already gone.")
+        return
+      }
       completeCloseRequest(for: surface)
     case .tabs(let tabIDs):
       for tabId in tabIDs {
@@ -885,9 +893,22 @@ final class WorktreeTerminalState {
   }
 
   func cancelPendingClose() {
-    if case .surface(let surfaceID)? = pendingCloseConfirmation {
+    guard let pending = pendingCloseConfirmation else { return }
+    cancelPendingClose(pending)
+  }
+
+  // Takes the target explicitly so a dismissal that clears the published value
+  // first can't strip the surface's explicit-close flag out from under cancel.
+  func cancelPendingClose(_ pending: PendingCloseConfirmation) {
+    if case .surface(let surfaceID) = pending {
       pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     }
+    pendingCloseConfirmation = nil
+  }
+
+  // The alert binding writes nil back on dismissal; the buttons own the real
+  // transitions, so this only clears without any cancel side effects.
+  func dismissPendingCloseConfirmation() {
     pendingCloseConfirmation = nil
   }
 
@@ -955,28 +976,6 @@ final class WorktreeTerminalState {
     guard tabManager.setCustomTitle(tabId, title: title) else { return false }
     onTabRenamed?()
     return true
-  }
-
-  func closeOtherTabs(keeping tabId: TerminalTabID) {
-    let ids = tabManager.tabs.map(\.id).filter { $0 != tabId }
-    for id in ids {
-      closeTab(id)
-    }
-  }
-
-  func closeTabsToRight(of tabId: TerminalTabID) {
-    guard let index = tabManager.tabs.firstIndex(where: { $0.id == tabId }) else { return }
-    let ids = tabManager.tabs.dropFirst(index + 1).map(\.id)
-    for id in ids {
-      closeTab(id)
-    }
-  }
-
-  func closeAllTabs() {
-    let ids = tabManager.tabs.map(\.id)
-    for id in ids {
-      closeTab(id)
-    }
   }
 
   func splitTree(
@@ -1792,9 +1791,18 @@ final class WorktreeTerminalState {
       guard self.isLiveSurface(view) else { return false }
       return self.createTab(inheritingFromSurfaceId: view.id) != nil
     }
-    view.bridge.onCloseTab = { [weak self, weak view] _ in
+    view.bridge.onCloseTab = { [weak self, weak view] mode in
       guard let self, let view, self.isLiveSurface(view) else { return false }
-      return self.requestCloseTab(tabId)
+      // Ghostty's palette/keybind close-tab carries the scope; honor each so
+      // "close others" / "close to the right" route through confirmation too.
+      switch mode {
+      case GHOSTTY_ACTION_CLOSE_TAB_MODE_OTHER:
+        return self.requestCloseOtherTabs(keeping: tabId)
+      case GHOSTTY_ACTION_CLOSE_TAB_MODE_RIGHT:
+        return self.requestCloseTabsToRight(of: tabId)
+      default:
+        return self.requestCloseTab(tabId)
+      }
     }
     view.bridge.onGotoTab = { [weak self, weak view] target in
       guard let self, let view, self.isLiveSurface(view) else { return false }
@@ -2338,6 +2346,7 @@ final class WorktreeTerminalState {
     surfaces.removeValue(forKey: surfaceID)
     surfaceLaunchMetadata.removeValue(forKey: surfaceID)
     pendingExplicitSurfaceCloseIDs.remove(surfaceID)
+    bypassCloseConfirmationSurfaceIDs.remove(surfaceID)
     surfaceStates.removeValue(forKey: surfaceID)
   }
 
@@ -2659,6 +2668,11 @@ final class WorktreeTerminalState {
 
   private func handleCloseRequest(for view: GhosttySurfaceView, needsConfirmation: Bool) {
     guard surfaces[view.id] === view else { return }
+    if bypassCloseConfirmationSurfaceIDs.remove(view.id) != nil {
+      terminalStateLogger.debug("handleCloseRequest: bypassing confirmation for \(view.id).")
+      completeCloseRequest(for: view)
+      return
+    }
     let isExplicitClose = pendingExplicitSurfaceCloseIDs.contains(view.id)
     if isExplicitClose, pendingCloseConfirmation != nil {
       if pendingCloseConfirmation != .surface(view.id) {
