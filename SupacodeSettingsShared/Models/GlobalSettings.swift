@@ -95,6 +95,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// entries from earlier wire-protocol revisions).
   public var autoUpdateAgentIntegrationsEnabled: Bool
   public var confirmQuitMode: ConfirmQuitMode
+  /// When true, user-initiated closes ask for confirmation when a terminal
+  /// surface has foreground work that Ghostty considers unsafe to interrupt.
+  public var confirmCloseSurface: Bool
   /// When true, quitting Supacode also closes every terminal tab and tears
   /// down zmx sessions, local and host-side, so nothing keeps running in the
   /// background. Default off because persistence is the headline feature.
@@ -138,6 +141,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: true,
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
+    confirmCloseSurface: true,
     terminateSessionsOnQuit: false,
     remoteSessionPersistenceEnabled: true,
     appVisibility: .dock
@@ -176,6 +180,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: Bool = true,
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
+    confirmCloseSurface: Bool = true,
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
     appVisibility: AppVisibility = .dock
@@ -212,6 +217,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
     self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
     self.confirmQuitMode = confirmQuitMode
+    self.confirmCloseSurface = confirmCloseSurface
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
     self.appVisibility = appVisibility
@@ -376,6 +382,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     } else {
       confirmQuitMode = Self.default.confirmQuitMode
     }
+    confirmCloseSurface =
+      try container.decodeIfPresent(Bool.self, forKey: .confirmCloseSurface)
+      ?? Self.default.confirmCloseSurface
     terminateSessionsOnQuit =
       try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
       ?? Self.default.terminateSessionsOnQuit

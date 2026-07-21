@@ -387,6 +387,48 @@ struct SettingsFilePersistenceTests {
     #expect(reloaded.global.terminalThemeSyncEnabled == true)
   }
 
+  @Test(.dependencies) func decodesMissingConfirmCloseSurfaceAsTrue() throws {
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmCloseSurface)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitConfirmCloseSurfaceDisabled() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.confirmCloseSurface = false }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(!reloaded.global.confirmCloseSurface)
+  }
+
   @Test(.dependencies) func decodesMissingRemoteSessionPersistenceEnabledAsTrue() throws {
     let legacy = LegacySettingsFile(
       global: LegacyGlobalSettings(

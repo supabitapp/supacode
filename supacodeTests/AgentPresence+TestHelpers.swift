@@ -114,9 +114,15 @@ extension WorktreeTerminalManager {
     runtime: GhosttyRuntime = GhosttyRuntime(),
     socketServer: AgentHookSocketServer? = nil,
     clock: some Clock<Duration> = ContinuousClock(),
+    surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)? = nil
   ) -> (manager: WorktreeTerminalManager, presence: PresenceTestHarness) {
     let harness = PresenceTestHarness()
-    let manager = WorktreeTerminalManager(runtime: runtime, socketServer: socketServer, clock: clock)
+    let manager = WorktreeTerminalManager(
+      runtime: runtime,
+      socketServer: socketServer,
+      clock: clock,
+      surfaceBindingActionPerformer: surfaceBindingActionPerformer
+    )
     harness.attach(to: manager)
     return (manager, harness)
   }
