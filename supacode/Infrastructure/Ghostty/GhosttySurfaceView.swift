@@ -279,6 +279,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
   }
 
+  var needsCloseConfirmation: Bool {
+    guard let surface else { return false }
+    return ghostty_surface_needs_confirm_quit(surface)
+  }
+
   func closeSurface() {
     clearNotificationObservers()
     if let surface {

@@ -13,6 +13,7 @@ private let terminalLogger = SupaLogger("Terminal")
 @Observable
 final class WorktreeTerminalManager {
   private let runtime: GhosttyRuntime
+  @ObservationIgnored private let surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)?
   private(set) var socketServer: AgentHookSocketServer?
   private var states: [Worktree.ID: WorktreeTerminalState] = [:]
   @ObservationIgnored
@@ -151,9 +152,11 @@ final class WorktreeTerminalManager {
     socketServer: AgentHookSocketServer? = nil,
     clock: C = ContinuousClock(),
     eventBufferCap: Int = WorktreeTerminalManager.defaultEventBufferCap,
+    surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)? = nil
   ) {
     self.eventBufferCap = eventBufferCap
     self.runtime = runtime
+    self.surfaceBindingActionPerformer = surfaceBindingActionPerformer
     self.focusedSurfaceBackground = runtime.backgroundColor()
     self.hookEventSleep = { duration in try await clock.sleep(for: duration) }
     self.layoutDebounceSleep = { duration in try await clock.sleep(for: duration) }
@@ -576,7 +579,7 @@ final class WorktreeTerminalManager {
         existing.enableSetupScriptIfNeeded()
       }
       // Reload snapshot if the state has no tabs (e.g., setting was just enabled).
-      // If `hasAttemptedInitialTab` is sticky-true (closeAllTabs path), the snapshot
+      // If `hasAttemptedInitialTab` is sticky-true (every tab was closed), the snapshot
       // stays staged but ensureInitialTab won't consume it; that's intentional.
       if existing.tabManager.tabs.isEmpty,
         existing.pendingLayoutSnapshot == nil,
@@ -591,7 +594,8 @@ final class WorktreeTerminalManager {
       runtime: runtime,
       worktree: worktree,
       runSetupScript: runSetupScript,
-      hibernationClock: clock
+      hibernationClock: clock,
+      surfaceBindingActionPerformer: surfaceBindingActionPerformer
     )
     state.socketPath = socketServer?.socketPath
     // Load saved layout snapshot for restoration (skip when a setup script is pending).
