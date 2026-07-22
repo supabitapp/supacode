@@ -1064,6 +1064,7 @@ final class WorktreeTerminalState {
 
   /// Nil when the tab closes without asking.
   private func closeConfirmationReason(_ tabId: TerminalTabID) -> CloseConfirmationReason? {
+    guard !isBlockingScriptCompleted(tabId) else { return nil }
     // A woken surface reports "not at a prompt" until the zmx replay lands, so a
     // dormant tab always confirms.
     guard dormantTabLayouts[tabId] == nil else { return .dormant }
@@ -2742,6 +2743,15 @@ final class WorktreeTerminalState {
     tabManager.tabs.first(where: { $0.id == tabId })?.isBlockingScriptCompleted == true
   }
 
+  /// Ghostty keeps reporting a finished blocking-script surface as needing
+  /// confirmation (it is read-only, and the runner parks on `tail` so the
+  /// cursor never returns to a prompt), but the script is done and the surface
+  /// is frozen, so there is nothing live left to lose.
+  private func isFrozenBlockingScriptSurface(_ surfaceID: UUID) -> Bool {
+    guard let tabId = tabID(containing: surfaceID) else { return false }
+    return isBlockingScriptCompleted(tabId)
+  }
+
   private func updateRunningState(for tabId: TerminalTabID) {
     guard trees[tabId] != nil else { return }
     // Frozen tabs stay sticky: the bridge's stale watch re-fires
@@ -3018,7 +3028,8 @@ final class WorktreeTerminalState {
     @Shared(.settingsFile) var settingsFile
     if needsConfirmation,
       isExplicitClose,
-      settingsFile.global.confirmCloseSurface
+      settingsFile.global.confirmCloseSurface,
+      !isFrozenBlockingScriptSurface(view.id)
     {
       pendingCloseConfirmation = .surface(view.id)
       return
