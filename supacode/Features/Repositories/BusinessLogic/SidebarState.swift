@@ -77,6 +77,17 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     case archived
   }
 
+  /// Curation state of a worktree row, flattened for external consumers.
+  /// The raw values are the `supacode worktree` wire and stdout contract.
+  nonisolated enum WorktreeStatus: String, Equatable, Sendable, CaseIterable {
+    case main
+    case pinned
+    case unpinned
+    case archived
+
+    var isArchived: Bool { self == .archived }
+  }
+
   nonisolated struct Section: Equatable, Sendable, Codable {
     var collapsed: Bool
     var buckets: OrderedDictionary<BucketID, Bucket>
@@ -282,6 +293,26 @@ nonisolated extension SidebarState {
       return bucketID
     }
     return nil
+  }
+
+  /// Whether `worktreeID` sits in the archived bucket. Not a proxy for "on
+  /// screen": collapsed or failed repositories render no rows, and an archived
+  /// worktree re-enters the sidebar while its delete script runs.
+  func isArchived(_ worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> Bool {
+    sections[repositoryID]?.buckets[.archived]?.items[worktreeID] != nil
+  }
+
+  /// Flattens the bucket layout into the four states the CLI reports. Archiving
+  /// wins over `isMain` (the default workspace can be archived) and an unbucketed
+  /// worktree reads as `unpinned` (the bucket the sidebar renders it into).
+  func status(
+    of worktreeID: Worktree.ID,
+    in repositoryID: Repository.ID,
+    isMain: Bool
+  ) -> WorktreeStatus {
+    guard !isArchived(worktreeID, in: repositoryID) else { return .archived }
+    guard !isMain else { return .main }
+    return currentBucket(of: worktreeID, in: repositoryID) == .pinned ? .pinned : .unpinned
   }
 }
 

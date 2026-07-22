@@ -43,7 +43,7 @@ extension SurfaceCommand {
       for item in items {
         let isFocused = !(item["focused"] ?? "").isEmpty
         guard !focused || isFocused else { continue }
-        print(formatListLine(item["id"] ?? "", focused: isFocused))
+        print(ListFormatting.line(item["id"] ?? "", focused: isFocused))
       }
     }
   }

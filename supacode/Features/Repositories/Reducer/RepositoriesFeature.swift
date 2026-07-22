@@ -927,7 +927,7 @@ struct RepositoriesFeature {
 
       case .unarchiveWorktree(let worktreeID):
         guard let repositoryID = state.repositoryID(containing: worktreeID),
-          state.sidebar.sections[repositoryID]?.buckets[.archived]?.items[worktreeID] != nil
+          state.sidebar.isArchived(worktreeID, in: repositoryID)
         else {
           return .none
         }
@@ -4989,7 +4989,7 @@ extension RepositoriesFeature.State {
     guard let repositoryID = repositoryID(containing: id) else {
       return false
     }
-    return sidebar.sections[repositoryID]?.buckets[.archived]?.items[id] != nil
+    return sidebar.isArchived(id, in: repositoryID)
   }
 
   /// Archived rows show no running-script dots, except while their delete script

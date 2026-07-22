@@ -93,7 +93,8 @@ nonisolated enum CLISkillContent {
     ### Worktree
 
     ```
-    supacode worktree list [-f]                          # List worktree IDs (-f = focused only).
+    supacode worktree list [-f] [--status <status>] [--not-archived] [--with-status]  # List worktree IDs (-f = focused only).
+    supacode worktree status [-w <id>]                  # Read status/archived/focused for one worktree.
     supacode worktree focus [-w <id>]                   # Focus worktree.
     supacode worktree run [-w <id>] [-c <uuid>]         # Run script (default: primary run-kind; -c for a specific UUID).
     supacode worktree stop [-w <id>] [-c <uuid>]        # Stop script (default: all run-kind; -c for a specific UUID).
@@ -205,7 +206,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f] [--status <status>] [--not-archived] [--with-status]|status|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new [--title <title>]|rename --title <title>|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -213,6 +214,8 @@ nonisolated enum CLISkillContent {
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
+    `worktree list` filters with `--status main|pinned|unpinned|archived` (comma-separated) or `--not-archived`; `--with-status` appends a tab-separated status column.
+    `worktree status` outputs `status=<value>`, `archived=<true|false>`, and `focused=<true|false>` for a single worktree.
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
     `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
     With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
@@ -302,7 +305,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f] [--status <status>] [--not-archived] [--with-status]|status|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new [--title <title>]|rename --title <title>|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -310,6 +313,8 @@ nonisolated enum CLISkillContent {
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
+    `worktree list` filters with `--status main|pinned|unpinned|archived` (comma-separated) or `--not-archived`; `--with-status` appends a tab-separated status column.
+    `worktree status` outputs `status=<value>`, `archived=<true|false>`, and `focused=<true|false>` for a single worktree.
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
     `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
     With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
@@ -362,7 +367,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f] [--status <status>] [--not-archived] [--with-status]|status|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new [--title <title>]|rename --title <title>|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -370,6 +375,8 @@ nonisolated enum CLISkillContent {
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
+    `worktree list` filters with `--status main|pinned|unpinned|archived` (comma-separated) or `--not-archived`; `--with-status` appends a tab-separated status column.
+    `worktree status` outputs `status=<value>`, `archived=<true|false>`, and `focused=<true|false>` for a single worktree.
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
     `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
     With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
@@ -421,7 +428,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f] [--status <status>] [--not-archived] [--with-status]|status|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new [--title <title>]|rename --title <title>|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -429,6 +436,8 @@ nonisolated enum CLISkillContent {
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
+    `worktree list` filters with `--status main|pinned|unpinned|archived` (comma-separated) or `--not-archived`; `--with-status` appends a tab-separated status column.
+    `worktree status` outputs `status=<value>`, `archived=<true|false>`, and `focused=<true|false>` for a single worktree.
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
     `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
     With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
@@ -480,7 +489,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f] [--status <status>] [--not-archived] [--with-status]|status|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new [--title <title>]|rename --title <title>|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -488,6 +497,8 @@ nonisolated enum CLISkillContent {
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
+    `worktree list` filters with `--status main|pinned|unpinned|archived` (comma-separated) or `--not-archived`; `--with-status` appends a tab-separated status column.
+    `worktree status` outputs `status=<value>`, `archived=<true|false>`, and `focused=<true|false>` for a single worktree.
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
     `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
     With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
@@ -538,7 +549,7 @@ nonisolated enum CLISkillContent {
 
     ## Commands
 
-    - `supacode worktree [list [-f]|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
+    - `supacode worktree [list [-f] [--status <status>] [--not-archived] [--with-status]|status|focus|run [-c]|stop [-c]|script list|archive|unarchive|delete|pin|unpin|appearance [--title <title>] [--color <value>]] [-w <id>]`
     - `supacode tab [list [-w] [-f]|focus|new [--title <title>]|rename --title <title>|close] [-w <id>] [-t <id>] [-i <cmd>] [-n <uuid>]`
     - `supacode surface [list [-w] [-t] [-f]|focus|split|close] [-w <id>] [-t <id>] [-s <id>] [-i <cmd>] [-d h|v] [-n <uuid>]`
     - `supacode repo [list | open <path> | worktree-new [-r <id>] [--branch] [--base] [--fetch] [--name] [--location]]`
@@ -546,6 +557,8 @@ nonisolated enum CLISkillContent {
     - `supacode socket`
 
     `list` outputs one ID per line (percent-encoded for worktrees/repos, UUIDs for tabs/surfaces).
+    `worktree list` filters with `--status main|pinned|unpinned|archived` (comma-separated) or `--not-archived`; `--with-status` appends a tab-separated status column.
+    `worktree status` outputs `status=<value>`, `archived=<true|false>`, and `focused=<true|false>` for a single worktree.
     `worktree script list` outputs tab-separated `<uuid>\\t<kind>\\t<displayName>` rows; running scripts are ANSI-underlined.
     `worktree appearance` with no flags outputs `title=<stored override>`, `color=<stored override or none>`, and `displayTitle=<effective title>`.
     With `--title` / `--color`, omitted update flags preserve existing values; `--title ""` clears the title override and `--color none` clears the tint.
