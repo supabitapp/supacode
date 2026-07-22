@@ -81,7 +81,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var copyUntrackedOnWorktreeCreate: Bool
   public var pullRequestMergeStrategy: PullRequestMergeStrategy
   public var terminalThemeSyncEnabled: Bool
-  public var hideSingleTabBar: Bool
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
@@ -134,7 +133,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyUntrackedOnWorktreeCreate: false,
     pullRequestMergeStrategy: .merge,
     terminalThemeSyncEnabled: true,
-    hideSingleTabBar: false,
     automatedActionPolicy: .cliOnly,
     defaultWorktreeBaseDirectoryPath: nil,
     autoDeleteArchivedWorktreesAfterDays: nil,
@@ -173,7 +171,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyUntrackedOnWorktreeCreate: Bool = false,
     pullRequestMergeStrategy: PullRequestMergeStrategy = .merge,
     terminalThemeSyncEnabled: Bool = true,
-    hideSingleTabBar: Bool = false,
     automatedActionPolicy: AutomatedActionPolicy = .cliOnly,
     defaultWorktreeBaseDirectoryPath: String? = nil,
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
@@ -211,7 +208,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
     self.terminalThemeSyncEnabled = terminalThemeSyncEnabled
-    self.hideSingleTabBar = hideSingleTabBar
     self.automatedActionPolicy = automatedActionPolicy
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
@@ -326,9 +322,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalThemeSyncEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalThemeSyncEnabled)
       ?? false
-    hideSingleTabBar =
-      try container.decodeIfPresent(Bool.self, forKey: .hideSingleTabBar)
-      ?? Self.default.hideSingleTabBar
     // Migrate from the old Bool `allowArbitraryDeeplinkInput` to the new enum.
     if let policy = try container.decodeIfPresent(AutomatedActionPolicy.self, forKey: .automatedActionPolicy) {
       automatedActionPolicy = policy

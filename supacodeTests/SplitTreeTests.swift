@@ -134,37 +134,6 @@ struct SplitTreeTests {
     #expect(lastProjection?.isSplitZoomed == false)
   }
 
-  @Test func tabBarStaysVisibleOnSingleZoomedTabWhenHideSingleTabBarOn() throws {
-    @Shared(.settingsFile) var settingsFile: SettingsFile
-    let originalHide = settingsFile.global.hideSingleTabBar
-    $settingsFile.withLock { $0.global.hideSingleTabBar = true }
-    defer { $settingsFile.withLock { $0.global.hideSingleTabBar = originalHide } }
-
-    let state = WorktreeTerminalState(
-      runtime: GhosttyRuntime(),
-      worktree: Worktree(
-        id: "/tmp/repo/wt-zoom",
-        name: "wt-zoom",
-        detail: "detail",
-        workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-zoom"),
-        repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
-      ),
-      splitPreserveZoomOnNavigation: { false }
-    )
-    let tabId = state.createTab()!
-    let first = state.splitTree(for: tabId).root!.leftmostLeaf()
-    _ = state.performSplitAction(.newSplit(direction: .right), for: first.id)
-    state.refreshTabBarVisibility()
-    // Two surfaces in one tab; bar hidden by the single-tab setting.
-    #expect(state.shouldHideTabBar)
-
-    #expect(state.performSplitAction(.toggleSplitZoom, for: first.id))
-    #expect(!state.shouldHideTabBar)
-
-    state.dismissSplitZoom(for: tabId)
-    #expect(state.shouldHideTabBar)
-  }
-
   // Locks in that both the AppKit responder path (clicks -> onFocusChange)
   // and the explicit focus path (goto_split / focusSurface) route through
   // the same choke point and produce one focus-changed emission per real

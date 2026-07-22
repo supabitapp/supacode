@@ -680,9 +680,6 @@ struct AppFeature {
           .run { _ in
             await terminalClient.send(.enforceNotificationRetentionLimit)
           },
-          .run { _ in
-            await terminalClient.send(.refreshTabBarVisibility)
-          },
         ]
         if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
           effects.append(

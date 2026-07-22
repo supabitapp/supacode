@@ -72,7 +72,6 @@ struct TerminalClient {
     case setNotificationsEnabled(Bool)
     case enforceNotificationRetentionLimit
     case setSelectedWorktreeID(Worktree.ID?)
-    case refreshTabBarVisibility
     /// Fans a hibernation Beta-flag flip into every worktree state: enabling
     /// re-arms grace timers for hidden tabs, disabling cancels pending ones.
     case setTerminalHibernationEnabled(Bool)

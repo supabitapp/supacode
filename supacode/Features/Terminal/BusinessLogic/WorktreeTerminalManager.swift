@@ -417,7 +417,7 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .setNotificationsEnabled,
-      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename,
+      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled:
       return false
     }
@@ -436,7 +436,7 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .setNotificationsEnabled,
-      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .refreshTabBarVisibility, .beginTabRename,
+      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled:
       return false
     }
@@ -457,10 +457,6 @@ final class WorktreeTerminalManager {
       setNotificationsEnabled(enabled)
     case .enforceNotificationRetentionLimit:
       enforceNotificationRetentionLimit()
-    case .refreshTabBarVisibility:
-      for state in states.values {
-        state.refreshTabBarVisibility()
-      }
     case .setTerminalHibernationEnabled(let enabled):
       for state in states.values {
         state.applyHibernationEnabled(enabled)

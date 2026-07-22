@@ -177,7 +177,6 @@ final class WorktreeTerminalState {
   /// aggregate so `onTabProgressDisplayChanged` only fires on diff.
   @ObservationIgnored private var lastTabProgressDisplays: [TerminalTabID: TerminalTabProgressDisplay?] = [:]
   var socketPath: String?
-  private(set) var shouldHideTabBar = false
   private(set) var pendingCloseConfirmation: PendingCloseConfirmation?
   // Every mutation schedules a coalesced row-projection emit so the TCA
   // mirror of running scripts reconciles from this single source of truth (#573).
@@ -352,11 +351,7 @@ final class WorktreeTerminalState {
     dormantSessionWatchers.onOSCSequence = { [weak self] surfaceID, sequence in
       self?.handleDormantOSCSequence(surfaceID: surfaceID, sequence: sequence)
     }
-    // Pre-hide the tab bar before the first tab is created to
-    // avoid a visible flash. updateShouldHideTabBar() handles
-    // the steady state once tabs exist.
     @Shared(.settingsFile) var settingsFile
-    self.shouldHideTabBar = settingsFile.global.hideSingleTabBar
     self.isHibernationEnabled = settingsFile.global.terminalHibernationEnabled
   }
 
@@ -436,19 +431,6 @@ final class WorktreeTerminalState {
 
   var hasInflightBlockingScripts: Bool {
     !blockingScripts.isEmpty
-  }
-
-  private func updateShouldHideTabBar() {
-    @Shared(.settingsFile) var settingsFile
-    // Force the bar visible on a split-zoomed single tab so the dismiss-zoom indicator has somewhere to live.
-    let wouldHide = settingsFile.global.hideSingleTabBar && tabManager.tabs.count == 1
-    let newValue = wouldHide && !trees.values.contains { $0.zoomed != nil }
-    guard shouldHideTabBar != newValue else { return }
-    shouldHideTabBar = newValue
-  }
-
-  func refreshTabBarVisibility() {
-    updateShouldHideTabBar()
   }
 
   func isSplitZoomed(forTabID tabID: TerminalTabID) -> Bool {
@@ -716,7 +698,6 @@ final class WorktreeTerminalState {
       surfaceID: creation.tabID != nil ? tabId.rawValue : nil,
       bypassZmx: creation.bypassZmx
     )
-    updateShouldHideTabBar()
     if creation.focusing, let surface = tree.root?.leftmostLeaf() {
       focusSurface(surface, in: tabId)
     }
@@ -1105,7 +1086,6 @@ final class WorktreeTerminalState {
     removeTree(for: tabId)
     removeDormantTab(tabId)
     tabManager.closeTab(tabId)
-    updateShouldHideTabBar()
     if let selected = tabManager.selectedTabId {
       focusSurface(in: selected)
     } else {
@@ -2850,8 +2830,6 @@ final class WorktreeTerminalState {
   /// + the tab's unread count + focus without observing worktree-wide state.
   private func setTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
     trees[tabId] = tree
-    // Zoom transitions flip the hide-single-tab-bar gate.
-    updateShouldHideTabBar()
     emitTabProjection(for: tabId)
   }
 
@@ -3195,7 +3173,6 @@ final class WorktreeTerminalState {
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
       cleanupBlockingScriptLaunchDirectory(for: tabId)
       tabManager.closeTab(tabId)
-      updateShouldHideTabBar()
       if let kind = blockingScripts.removeValue(forKey: tabId) {
         lastBlockingScriptTabByKind.removeValue(forKey: kind)
 
