@@ -147,7 +147,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmCloseSurface: true,
     terminateSessionsOnQuit: false,
     remoteSessionPersistenceEnabled: true,
-    appVisibility: .dock
+    appVisibility: .dockAndMenuBar
   )
 
   public init(
@@ -186,7 +186,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmCloseSurface: Bool = true,
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
-    appVisibility: AppVisibility = .dock,
+    appVisibility: AppVisibility = .dockAndMenuBar,
     terminalHibernationEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
