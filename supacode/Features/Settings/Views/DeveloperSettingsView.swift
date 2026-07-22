@@ -52,8 +52,10 @@ struct DeveloperSettingsView: View {
             Text(policy.displayName).tag(policy)
           }
         } label: {
-          Text("Allow destructive actions")
-          Text("Lets CLI commands and deeplinks skip confirmation for commands and actions that cannot be undone.")
+          Text("Allow dangerous actions")
+          Text(
+            "Skips the confirmation dialog when running commands or scripts, closing tabs or splits, "
+              + "and archiving or deleting worktrees.")
         }
       }
     }

@@ -17,7 +17,7 @@ struct DeeplinkReferenceView: View {
         .foregroundStyle(.secondary)
         Text(
           "Deeplinks that run commands or perform destructive actions require confirmation"
-            + " unless \"Allow destructive actions\" permits them in Developer settings."
+            + " unless \"Allow dangerous actions\" permits them in Developer settings."
         )
         .foregroundStyle(.secondary)
       } header: {
