@@ -35,6 +35,12 @@ print_fingerprint() {
       git ls-files --others --exclude-standard | LC_ALL=C sort | shasum -a 256
       shasum -a 256 "${script_path}" | awk '{print $1}'
       shasum -a 256 "${srcroot}/mise.toml" | awk '{print $1}'
+      # The patches are applied at build time, so an edited patch must bust the cache.
+      for patch in "${ghostty_patches_dir}"/*.patch; do
+        [ -e "${patch}" ] || continue
+        basename "${patch}"
+        shasum -a 256 "${patch}" | awk '{print $1}'
+      done | shasum -a 256
     } | shasum -a 256 | awk '{print $1}'
   )
 }
