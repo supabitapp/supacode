@@ -110,6 +110,7 @@ public struct RepositorySettingsView: View {
       }
     }
     .formStyle(.grouped)
+    .contentMargins(.trailing, 6, for: .scrollIndicators)
     .padding(.top, -20)
     .padding(.leading, -8)
     .padding(.trailing, -6)
