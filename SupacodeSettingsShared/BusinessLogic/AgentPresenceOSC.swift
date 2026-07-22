@@ -189,14 +189,21 @@ public nonisolated enum AgentPresenceOSC {
     "\(eventField)=\(event.rawValue)\(pidSuffix)"
   }
 
-  /// Shell that resolves `$__tty` to a writable terminal device for the OSC emits.
-  /// Agents run hooks without a controlling terminal (`/dev/tty` open fails), so
-  /// the hook recovers the terminal its parent agent is attached to via
-  /// `ps -o tty=`. `ps` reports a bare name (`ttys039` on macOS, `pts/5` on
-  /// Linux), so a `/dev/` prefix is added; a parent with no tty (`??`) falls back
-  /// to `/dev/tty` for the rare context that does have a controlling terminal.
+  /// Shell that resolves `$__ppid` (parent agent) and `$__tty` (that process's
+  /// terminal) for the OSC emits. Agents run hooks without a controlling
+  /// terminal (`/dev/tty` open fails), so the hook recovers the terminal its
+  /// parent is attached to via `ps -o tty=`. `ps` reports a bare name
+  /// (`ttys039` on macOS, `pts/5` on Linux), so a `/dev/` prefix is added; a
+  /// parent with no tty (`??`) falls back to `/dev/tty` for the rare context
+  /// that does have a controlling terminal.
+  ///
+  /// Parent pid is taken from `ps -o ppid= -p $$` rather than the shell special
+  /// `$PPID`. Grok preflights `$VAR` / `${VAR}` in hook commands as required
+  /// env and refuses to run when unset; `PPID` is shell-only, not env, so an
+  /// inline `$PPID` no-ops every managed Grok presence hook.
   static let ttyResolveSnippet =
-    #"__tty=$(ps -o tty= -p "$PPID" 2>/dev/null | tr -d '[:space:]'); "#
+    #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
+    + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
     + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac"#
 
   /// Shell `printf` that emits the OSC 3008 presence sequence for `event`. Written
@@ -206,14 +213,16 @@ public nonisolated enum AgentPresenceOSC {
   /// `ttyResolveSnippet` first.
   ///
   /// The pid suffix is gated on `SUPACODE_SOCKET_PATH` (set only on the local
-  /// host) so a local hook carries `$PPID` and a remote one omits it; a forged
+  /// host) so a local hook carries `$__ppid` and a remote one omits it; a forged
   /// positive pid at worst pins a live-looking badge until surface close. The
   /// suffix is built in shell and filled into a trailing `%s`, empty when remote.
+  /// Uses `$__ppid` from `ttyResolveSnippet` (not `$PPID`) so Grok's env
+  /// preflight does not reject the command.
   static func emitShell(event: HookEvent, agent: SkillAgent) -> String {
     // Trailing %s for the shell-built, conditionally-empty pid suffix.
     let meta = metadata(event: event, pidSuffix: "%s")
     let payload = #"\033]3008;\#(action(for: event))=\#(agent.rawValue);\#(meta)\033\\"#
-    return #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";\#(pidField)=$PPID"; "#
+    return #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";\#(pidField)=$__ppid"; "#
       + #"printf '\#(payload)' "$__sp" > "$__tty""#
   }
 

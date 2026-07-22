@@ -284,9 +284,9 @@ struct AgentHookCommandTests {
     )
     #expect(composite.contains("event=session_end"))
     #expect(composite.contains("event=idle"))
-    // Both presence emits live inside one guarded brace group (opened by the tty
-    // resolve) that closes before the error-suppression tail.
-    #expect(composite.contains("&& { __tty="))
+    // Both presence emits live inside one guarded brace group (opened by the
+    // parent-pid / tty resolve) that closes before the error-suppression tail.
+    #expect(composite.contains("&& { __ppid="))
     #expect(composite.contains("; } >/dev/null 2>&1 || true"))
     // Order matters: the session_end presence is emitted before idle so the app
     // sees the lifecycle close-out before the activity reset.
@@ -380,9 +380,10 @@ struct AgentHookCommandTests {
     )
     let expected =
       #"[ -n "${SUPACODE_SURFACE_ID:-}" ] && { "#
-      + #"__tty=$(ps -o tty= -p "$PPID" 2>/dev/null | tr -d '[:space:]'); "#
+      + #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
+      + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
       + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac; "#
-      + #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";pid=$PPID"; "#
+      + #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";pid=$__ppid"; "#
       + #"printf '\033]3008;start=claude;event=busy%s\033\\' "$__sp" > "$__tty"; "#
       + #"} >/dev/null 2>&1 || true # supacode-managed-hook"#
     #expect(composite == expected)
@@ -748,7 +749,7 @@ struct AgentHookCommandTests {
     let signal = try #require(Self.parsePresence(fromTTY: captured))
     #expect(signal.agent == "claude")
     #expect(signal.eventRawValue == "session_start")
-    // PPID inside the shell is whatever spawned it (Process), not the test's
+    // __ppid inside the shell is whatever spawned it (Process), not the test's
     // pid, so just check it decoded as positive.
     #expect((signal.pid ?? 0) > 0)
   }
@@ -788,16 +789,18 @@ struct AgentHookCommandTests {
     return AgentPresenceOSC.parseNotify(id: id, metadata: metadata)
   }
 
-  // Shared head: surface-id guard, then (inside one brace group) resolve $__tty
-  // from the parent agent's controlling terminal since the hook has none of its own.
+  // Shared head: surface-id guard, then (inside one brace group) resolve $__ppid
+  // / $__tty from the parent agent's controlling terminal since the hook has none
+  // of its own. Avoid `$PPID` — Grok preflights it as required env and skips the hook.
   private static let guardAndTTY =
     #"[ -n "${SUPACODE_SURFACE_ID:-}" ] && { "#
-    + #"__tty=$(ps -o tty= -p "$PPID" 2>/dev/null | tr -d '[:space:]'); "#
+    + #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
+    + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
     + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac; "#
   private static let suppressTail = #"} >/dev/null 2>&1 || true # supacode-managed-hook"#
 
   private static func presence(_ action: String, _ agent: String, _ event: String) -> String {
-    #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";pid=$PPID"; "#
+    #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";pid=$__ppid"; "#
       + #"printf '\033]3008;\#(action)=\#(agent);event=\#(event)%s\033\\' "$__sp" > "$__tty"; "#
   }
 

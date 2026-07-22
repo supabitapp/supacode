@@ -230,7 +230,7 @@ struct AgentPresenceFeature {
     }
   }
 
-  /// A pid is the local-hook source (OSC presence carries `pid=$PPID` only on the
+  /// A pid is the local-hook source (OSC presence carries `pid=$__ppid` only on the
   /// local host); a missing pid is the OSC-over-SSH source, which attributes by the
   /// receiving surface and has no local pid to track. Either way the restart clears
   /// a sticky state, or an SSH session that errored would never recover.
