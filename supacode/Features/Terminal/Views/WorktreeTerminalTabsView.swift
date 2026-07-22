@@ -89,7 +89,7 @@ struct WorktreeTerminalTabsView: View {
           state.confirmPendingClose(pending)
         }
       },
-      message: { _ in Text(WorktreeTerminalState.PendingCloseConfirmation.message) }
+      message: { pending in Text(pending.message) }
     )
     .background(
       WindowFocusObserverView { activity in

@@ -190,8 +190,9 @@ struct AppFeatureMenuBarNotificationsTests {
       }
     }
 
+    // Change a non-visibility field only; leaving appVisibility at the store's
+    // current value must not touch the activation policy.
     var settings = GlobalSettings.default
-    settings.appVisibility = .dock
     settings.agentPresenceBadgesEnabled.toggle()
     await store.send(.settings(.delegate(.settingsChanged(settings))))
     await store.finish()

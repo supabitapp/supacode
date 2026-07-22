@@ -12,8 +12,19 @@ final class TerminalTabManager {
       editingTabID = nil
     }
   }
-  var selectedTabId: TerminalTabID?
+  var selectedTabId: TerminalTabID? {
+    // Single choke point for the ~nine selection write sites: the owning state
+    // recomputes tab visibility (and its hibernation timers) once per change.
+    didSet {
+      guard oldValue != selectedTabId else { return }
+      onSelectedTabChanged?()
+    }
+  }
   private(set) var editingTabID: TerminalTabID?
+
+  /// Fires whenever `selectedTabId` changes. Set by `WorktreeTerminalState` so a
+  /// selection change drives `refreshTabVisibility()` from one place.
+  @ObservationIgnored var onSelectedTabChanged: (() -> Void)?
 
   private static let logger = SupaLogger("TabManager")
 

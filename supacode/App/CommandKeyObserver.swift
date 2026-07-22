@@ -1,4 +1,6 @@
 import AppKit
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 /// Tracks whether the user is currently holding ⌘ or ⌃ so the UI can surface shortcut hints.
@@ -6,16 +8,24 @@ import SwiftUI
 @Observable
 final class CommandKeyObserver {
   var isPressed: Bool
+  /// Slot-aligned Select Tab N chords, resolved here so no tab-bar view body observes the settings file.
+  private var tabSelectionHints: [String?]
   private var monitor: Any?
   private var didBecomeActiveObserver: NSObjectProtocol?
   private var didResignActiveObserver: NSObjectProtocol?
 
   init() {
     isPressed = false
+    tabSelectionHints = Self.resolvedTabSelectionHints()
     monitor = nil
     didBecomeActiveObserver = nil
     didResignActiveObserver = nil
     configureObservers()
+  }
+
+  func tabSelectionHint(atSlot index: Int) -> String? {
+    guard tabSelectionHints.indices.contains(index) else { return nil }
+    return tabSelectionHints[index]
   }
 
   private func configureObservers() {
@@ -51,7 +61,19 @@ final class CommandKeyObserver {
   }
 
   private func handleCommandKeyChange(isDown: Bool) {
+    // Re-resolve on the way in only: the hints must survive the release so consumers can fade them out.
+    if isDown {
+      let hints = Self.resolvedTabSelectionHints()
+      if hints != tabSelectionHints {
+        tabSelectionHints = hints
+      }
+    }
     // Flip immediately; consumers fade the visual change in/out themselves.
     isPressed = isDown
+  }
+
+  private static func resolvedTabSelectionHints() -> [String?] {
+    @Shared(.settingsFile) var settingsFile
+    return AppShortcuts.tabSelectionShortcutDisplays(overrides: settingsFile.global.shortcutOverrides)
   }
 }

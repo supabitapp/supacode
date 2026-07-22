@@ -594,7 +594,6 @@ private struct NotificationRow: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .buttonStyle(.plain)
-    .help("Select worktree and focus terminal.")
   }
 
   private static func markdown(_ string: String) -> AttributedString {
@@ -643,7 +642,6 @@ private struct PrunedNotificationRow: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .buttonStyle(.plain)
-    .help("Select worktree and focus terminal.")
   }
 
   private var title: String {

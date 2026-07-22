@@ -469,6 +469,12 @@ public enum AppShortcuts {
     return worktreeSelection[index].effective(from: overrides)?.display
   }
 
+  public static func tabSelectionShortcutDisplays(
+    overrides: [AppShortcutID: AppShortcutOverride]
+  ) -> [String?] {
+    tabSelection.map { $0.effective(from: overrides)?.display }
+  }
+
   // Drops disabled bindings and out-of-range slots so neither leaves a stale NSMenuItem keyEquivalent.
   public static func activeWorktreeSelectionSlots(
     overrides: [AppShortcutID: AppShortcutOverride],
