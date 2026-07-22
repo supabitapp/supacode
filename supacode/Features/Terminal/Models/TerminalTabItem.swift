@@ -8,7 +8,6 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
   /// User-supplied override; nil means follow the live shell title.
   var customTitle: String?
   var icon: String?
-  var isDirty: Bool
   var isTitleLocked: Bool
   var tintColor: RepositoryColor?
   /// Sticky marker for tabs born from `runBlockingScript`; stays true after
@@ -25,7 +24,6 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
     title: String,
     customTitle: String? = nil,
     icon: String?,
-    isDirty: Bool = false,
     isTitleLocked: Bool = false,
     tintColor: RepositoryColor? = nil,
     isBlockingScript: Bool = false,
@@ -35,7 +33,6 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
     self.title = title
     self.customTitle = customTitle
     self.icon = icon
-    self.isDirty = isDirty
     self.isTitleLocked = isTitleLocked
     self.tintColor = tintColor
     self.isBlockingScript = isBlockingScript

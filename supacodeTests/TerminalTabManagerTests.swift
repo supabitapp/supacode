@@ -56,15 +56,6 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.map(\.id) == [third, first, second])
   }
 
-  @Test func updateDirtyUpdatesTabState() {
-    let manager = TerminalTabManager()
-    let tabId = manager.createTab(title: "one", icon: nil)
-    manager.updateDirty(tabId, isDirty: true)
-    #expect(manager.tabs.first?.isDirty == true)
-    manager.updateDirty(tabId, isDirty: false)
-    #expect(manager.tabs.first?.isDirty == false)
-  }
-
   @Test func createTabWithTintColorSetsColor() {
     let manager = TerminalTabManager()
     let tabId = manager.createTab(title: "script", icon: "play.fill", tintColor: .green)
@@ -82,7 +73,6 @@ struct TerminalTabManagerTests {
       tintColor: .green,
       isBlockingScript: true
     )
-    manager.updateDirty(tabId, isDirty: true)
 
     manager.markBlockingScriptCompleted(tabId)
 
@@ -93,7 +83,6 @@ struct TerminalTabManagerTests {
     #expect(after?.isBlockingScript == true)
     #expect(after?.isBlockingScriptCompleted == true)
     #expect(after?.tintColor == nil)
-    #expect(after?.isDirty == false)
   }
 
   @Test func markBlockingScriptCompletedKeepsTitleImmutable() {

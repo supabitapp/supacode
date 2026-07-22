@@ -3,6 +3,7 @@ import ConcurrencyExtras
 import Dependencies
 import DependenciesTestSupport
 import Foundation
+import GhosttyKit
 import SupacodeSettingsShared
 import Testing
 
@@ -163,6 +164,57 @@ struct AgentBusyStateTests {
     surface.bridge.closeSurface(processAlive: false)
 
     #expect(statuses == [.running, .idle])
+  }
+
+  @Test func tabStaysBusyUntilEverySplitPaneIdles() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    guard
+      let tab = state.createTab(),
+      let first = state.splitTree(for: tab).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab with one surface")
+      return
+    }
+    _ = state.performSplitAction(.newSplit(direction: .right), for: first.id)
+    let leaves = state.splitTree(for: tab).leaves()
+    guard leaves.count == 2 else {
+      Issue.record("Expected two surfaces in one tab")
+      return
+    }
+
+    // Both panes report running progress: the tab is busy. Any wired leaf's
+    // report re-runs the tab's worst-of aggregate, so drive them all through
+    // the first pane.
+    for leaf in leaves { leaf.bridge.state.progressState = GHOSTTY_PROGRESS_STATE_INDETERMINATE }
+    leaves[0].bridge.onProgressReport?(GHOSTTY_PROGRESS_STATE_INDETERMINATE)
+    #expect(state.currentTabProjections().first { $0.tabID == tab }?.hasTerminalActivity == true)
+
+    // One pane finishes; the sibling pane keeps the tab busy.
+    leaves[0].bridge.state.progressState = nil
+    leaves[0].bridge.onProgressReport?(GHOSTTY_PROGRESS_STATE_REMOVE)
+    #expect(state.currentTabProjections().first { $0.tabID == tab }?.hasTerminalActivity == true)
+
+    // The last pane finishes: the tab goes idle.
+    leaves[1].bridge.state.progressState = nil
+    leaves[0].bridge.onProgressReport?(GHOSTTY_PROGRESS_STATE_REMOVE)
+    #expect(state.currentTabProjections().first { $0.tabID == tab }?.hasTerminalActivity == false)
+  }
+
+  @Test func rowSnapshotIsWorkingWhenAnySurfaceHasABusyAgent() {
+    var presence = AgentPresenceFeature.State()
+    let busySurface = UUID()
+    let idleSurface = UUID()
+    presence.records[
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: busySurface)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [1])
+    presence.records[
+      AgentPresenceFeature.PresenceKey(agent: .codex, surfaceID: idleSurface)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .awaitingInput, pids: [2])
+
+    #expect(!presence.rowSnapshot(across: [idleSurface], badgesEnabled: true).isWorking)
+    #expect(presence.rowSnapshot(across: [busySurface, idleSurface], badgesEnabled: true).isWorking)
   }
 
   // MARK: - Notification deduplication.

@@ -376,6 +376,27 @@ struct DormantTerminalTests {
     #expect(dormantProjection?.activeSurfaceID == surface)
   }
 
+  @Test func hibernatingAProgressBusyTabClearsTerminalActivity() {
+    let state = makeState()
+    let tab = state.createTab(focusing: false)!
+    let surface = state.splitTree(for: tab).root!.leftmostLeaf()
+
+    var projections: [WorktreeTabProjection] = []
+    state.onTabProjectionChanged = { projections.append($0) }
+
+    // Live Ghostty progress: the tab reports terminal activity and shimmers.
+    surface.bridge.state.progressState = GHOSTTY_PROGRESS_STATE_INDETERMINATE
+    surface.bridge.onProgressReport?(GHOSTTY_PROGRESS_STATE_INDETERMINATE)
+    #expect(projections.last { $0.tabID == tab }?.hasTerminalActivity == true)
+
+    // Hibernation tears the surfaces down, so the dormant projection drops the
+    // terminal-activity signal even though the tab is not removed.
+    state.hibernateTabForTesting(tab)
+    let dormant = projections.last { $0.tabID == tab }
+    #expect(dormant?.isDormant == true)
+    #expect(dormant?.hasTerminalActivity == false)
+  }
+
   @Test func allTabsDormantOnlyWhenEveryTabHibernated() {
     let state = makeState()
     #expect(!state.allTabsDormant)

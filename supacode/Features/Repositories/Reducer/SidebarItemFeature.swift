@@ -130,12 +130,7 @@ struct SidebarItemFeature {
     /// notifications were all pruned.
     var unseenSurfaces: [WorktreeUnseenSurface] = []
     /// True when either Ghostty progress is busy or an agent is busy on a surface.
-    var isTaskRunning: Bool {
-      WorkspaceActivity.isActive(
-        hasTerminalActivity: isProgressBusy,
-        hasAgentActivity: hasAgentActivity
-      )
-    }
+    var isTaskRunning: Bool { isProgressBusy || hasAgentActivity }
 
     var isDragging: Bool = false
     /// One-shot focus token: set when a selection arrives with `focusTerminal: true`.

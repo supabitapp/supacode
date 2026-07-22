@@ -2891,7 +2891,6 @@ final class WorktreeTerminalState {
     let surfaceIDs = tree.leaves().map(\.id)
     let unseenCount = unseenNotificationCount(inSurfaces: surfaceIDs)
     let isActivityBusy = isTabActivityBusy(tabId)
-    tabManager.updateDirty(tabId, isDirty: isActivityBusy)
     let projection = WorktreeTabProjection(
       tabID: tabId,
       surfaceIDs: surfaceIDs,

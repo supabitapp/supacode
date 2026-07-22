@@ -2845,7 +2845,7 @@ struct WorktreeTerminalManagerTests {
     #expect(updatedTab?.isBlockingScript == true)
     #expect(updatedTab?.isBlockingScriptCompleted == true)
     #expect(updatedTab?.tintColor == nil)
-    #expect(updatedTab?.isDirty == false)
+    #expect(state.currentTabProjections().first { $0.tabID == tabId }?.hasTerminalActivity == false)
     // Both the mirror update and the binding dispatch must land; without the
     // recorded-bindings check a regression that drops the toggle but keeps
     // the optimistic mirror would still pass.
@@ -2880,7 +2880,7 @@ struct WorktreeTerminalManagerTests {
     #expect(updatedTab?.isTitleLocked == true)
     #expect(updatedTab?.isBlockingScript == true)
     #expect(updatedTab?.tintColor == nil)
-    #expect(updatedTab?.isDirty == false)
+    #expect(state.currentTabProjections().first { $0.tabID == tabId }?.hasTerminalActivity == false)
   }
 
   @Test func runBlockingScriptClosesLingeringFrozenTabOfSameKind() {
@@ -2922,15 +2922,15 @@ struct WorktreeTerminalManagerTests {
       return
     }
     surface.bridge.onCommandFinished?(0)
-    #expect(state.tabManager.tabs.first { $0.id == tabId }?.isDirty == false)
+    #expect(state.currentTabProjections().first { $0.tabID == tabId }?.hasTerminalActivity == false)
 
     // Simulate the stale watch re-firing a fresh in-flight progress
-    // report just before its REMOVE. Without the gate in `updateRunningState`,
-    // `isTabBusy` would see the running state and flip dirty back to true.
+    // report just before its REMOVE. Without the completed guard in
+    // `isTabActivityBusy`, the running state would flip activity back to true.
     surface.bridge.state.progressState = GHOSTTY_PROGRESS_STATE_INDETERMINATE
     surface.bridge.onProgressReport?(GHOSTTY_PROGRESS_STATE_INDETERMINATE)
 
-    #expect(state.tabManager.tabs.first { $0.id == tabId }?.isDirty == false)
+    #expect(state.currentTabProjections().first { $0.tabID == tabId }?.hasTerminalActivity == false)
     #expect(state.isBlockingScriptCompleted(tabId))
   }
 

@@ -46,11 +46,7 @@ struct TerminalTabFeature {
     var hasUnseenNotifications: Bool { unseenNotificationCount > 0 }
 
     func shouldShimmer(isLifecycleRepresentative: Bool) -> Bool {
-      WorkspaceActivity.isActive(
-        hasTerminalActivity: hasTerminalActivity,
-        hasAgentActivity: hasAgentActivity,
-        isLifecycleBusy: isLifecycleRepresentative
-      )
+      hasTerminalActivity || hasAgentActivity || isLifecycleRepresentative
     }
   }
 

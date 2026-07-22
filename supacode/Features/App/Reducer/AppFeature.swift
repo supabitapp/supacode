@@ -1636,10 +1636,15 @@ struct AppFeature {
             return false
           }
         }
-        let initialAgentSnapshot = state.agentPresence.rowSnapshot(
-          across: projection.surfaceIDs,
-          badgesEnabled: state.lastKnownAgentPresenceBadgesEnabled
-        )
+        // Only a brand-new tab consumes this snapshot; existing tabs already
+        // track agent state, so skip the rollup on their projection churn.
+        let initialAgentSnapshot =
+          state.terminals.terminalTabs[id: projection.tabID] == nil
+          ? state.agentPresence.rowSnapshot(
+            across: projection.surfaceIDs,
+            badgesEnabled: state.lastKnownAgentPresenceBadgesEnabled
+          )
+          : AgentPresenceFeature.RowSnapshot()
         return .merge(
           .send(
             .terminals(
@@ -1881,7 +1886,7 @@ struct AppFeature {
       )
     }
     // Per-tab fanout: any tab containing an affected surface re-projects its
-    // agent snapshot. Tab leaves observe `state.agents` directly so per-tab
+    // agent snapshot. Each tab reads its own `agentSnapshot`, so per-tab
     // mutations don't invalidate sibling tab leaves.
     for tab in state.terminals.terminalTabs
     where tab.surfaceIDs.contains(where: tabSurfaceIDs.contains) {

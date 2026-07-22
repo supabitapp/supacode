@@ -123,20 +123,12 @@ final class TerminalTabManager {
   }
 
   /// Mark a blocking-script tab as completed. Title / icon / lock survive so
-  /// the row reads as "this WAS an Archive Script run"; tint + dirty clear and
-  /// the completed flag flips so views can show the freeze indicator.
+  /// the row reads as "this WAS an Archive Script run"; tint clears and the
+  /// completed flag flips so views can show the freeze indicator.
   func markBlockingScriptCompleted(_ id: TerminalTabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     tabs[index].tintColor = nil
-    tabs[index].isDirty = false
     tabs[index].isBlockingScriptCompleted = true
-  }
-
-  func updateDirty(_ id: TerminalTabID, isDirty: Bool) {
-    guard let index = tabs.firstIndex(where: { $0.id == id }),
-      tabs[index].isDirty != isDirty
-    else { return }
-    tabs[index].isDirty = isDirty
   }
 
   func reorderTabs(_ orderedIds: [TerminalTabID]) {
