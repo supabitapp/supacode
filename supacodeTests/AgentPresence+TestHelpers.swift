@@ -2,7 +2,32 @@ import Clocks
 import ComposableArchitecture
 import Foundation
 
+@testable import SupacodeSettingsShared
 @testable import supacode
+
+/// Approximates Grok's textual preflight over a managed hook command: it scans the
+/// command string for `$NAME` references and refuses to run the hook when one is not
+/// in the env it forwards. So a managed command may only name a forwarded var or a
+/// `__`-prefixed local the command assigns itself.
+enum ManagedHookCommandVariables {
+  /// Matches `$NAME` and `${NAME...}`. `$$` and awk's `$0` are excluded by the
+  /// leading `[A-Za-z_]`, and `${__tty#/dev/}` captures just the name. Models the
+  /// textual scan, not shell expansion, so it misses `${#NAME}`, `${!NAME}` and
+  /// arithmetic `$((NAME))`; none of which belong in a hook command.
+  private static let pattern = #/\$\{?([A-Za-z_][A-Za-z0-9_]*)/#
+
+  static func names(in command: String) -> Set<String> {
+    Set(command.matches(of: pattern).map { String($0.1) })
+  }
+
+  /// Names outside the allowlist, i.e. the ones that would break the preflight.
+  /// The forwarded set is Grok's, applied to every agent because they share one
+  /// command shape; an agent-specific env var would need its own allowlist.
+  static func unexpected(in command: String) -> Set<String> {
+    let forwarded = Set(AgentHookSettingsCommand.grokHookEnvPassthrough.keys)
+    return names(in: command).filter { !forwarded.contains($0) && !$0.hasPrefix("__") }
+  }
+}
 
 /// Test-only harness around an `AgentPresenceFeature.State`. A background task
 /// drains the manager's event stream and routes `agentHookEventReceived` /

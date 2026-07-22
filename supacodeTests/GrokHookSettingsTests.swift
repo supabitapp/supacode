@@ -51,16 +51,18 @@ struct GrokHookSettingsTests {
     #expect(commands.allSatisfy { $0.contains("start=grok;") })
   }
 
-  @Test func everyCommandAvoidsShellSpecialPPID() throws {
-    // Grok preflights `$VAR` / `${VAR}` as required env before spawn; `PPID` is a
-    // shell special, not env, so an inline `$PPID` no-ops every managed presence hook
-    // (`hook not executed: required env var(s) not set: ${PPID}`). Resolve parent
-    // pid via `ps` into `$__ppid` instead.
+  @Test func everyCommandOnlyNamesForwardedOrLocalVariables() throws {
+    // Grok preflights `$VAR` / `${VAR}` as required env before spawn, so any name it
+    // does not forward no-ops the hook (`required env var(s) not set: ${PPID}`, the
+    // shell special that broke every managed presence hook). The parent pid comes
+    // from `ps` into the local `$__ppid` instead.
     let commands = try Self.commandStrings(from: try GrokHookSettings.hooksByEvent())
     #expect(!commands.isEmpty)
-    #expect(commands.allSatisfy { !$0.contains("$PPID") && !$0.contains("${PPID}") })
-    #expect(commands.allSatisfy { $0.contains("$__ppid") })
+    #expect(commands.allSatisfy { !ManagedHookCommandVariables.names(in: $0).isEmpty })
+    #expect(commands.allSatisfy { ManagedHookCommandVariables.unexpected(in: $0).isEmpty })
+    // The allowlist accepts any `__` local, so pin the two spellings that must agree.
     #expect(commands.allSatisfy { $0.contains("ps -o ppid= -p $$") })
+    #expect(commands.allSatisfy { $0.contains("$__ppid") })
   }
 
   @Test func postToolUseFiresIdleNotBusy() throws {

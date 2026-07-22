@@ -284,8 +284,8 @@ struct AgentHookCommandTests {
     )
     #expect(composite.contains("event=session_end"))
     #expect(composite.contains("event=idle"))
-    // Both presence emits live inside one guarded brace group (opened by the
-    // parent-pid / tty resolve) that closes before the error-suppression tail.
+    // Both presence emits live inside one guarded brace group that closes before
+    // the error-suppression tail.
     #expect(composite.contains("&& { __ppid="))
     #expect(composite.contains("; } >/dev/null 2>&1 || true"))
     // Order matters: the session_end presence is emitted before idle so the app
@@ -383,7 +383,8 @@ struct AgentHookCommandTests {
       + #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
       + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
       + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac; "#
-      + #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";pid=$__ppid"; "#
+      + #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && [ -n "$__ppid" ] "#
+      + #"&& __sp=";pid=$__ppid"; "#
       + #"printf '\033]3008;start=claude;event=busy%s\033\\' "$__sp" > "$__tty"; "#
       + #"} >/dev/null 2>&1 || true # supacode-managed-hook"#
     #expect(composite == expected)
@@ -461,7 +462,7 @@ struct AgentHookCommandTests {
       command, env: base.merging(["SUPACODE_SOCKET_PATH": "/tmp/sock-\(UUID().uuidString)"]) { $1 })
     let localSignal = try #require(Self.parsePresence(fromTTY: local))
     #expect(localSignal.eventRawValue == "busy")
-    #expect((localSignal.pid ?? 0) > 0)
+    #expect(localSignal.pid == ProcessInfo.processInfo.processIdentifier)
 
     // Remote (socket absent): the presence OSC lands but carries no pid.
     let remote = try await runHookCommandCapturingTTY(command, env: base)
@@ -749,9 +750,55 @@ struct AgentHookCommandTests {
     let signal = try #require(Self.parsePresence(fromTTY: captured))
     #expect(signal.agent == "claude")
     #expect(signal.eventRawValue == "session_start")
-    // __ppid inside the shell is whatever spawned it (Process), not the test's
-    // pid, so just check it decoded as positive.
-    #expect((signal.pid ?? 0) > 0)
+    // `Process` spawns the hook shell straight from the test runner, so `$__ppid`
+    // must decode to this pid. A weaker "is positive" check would pass for an emit
+    // that sent the shell's own `$$`, which is the regression this pins.
+    #expect(signal.pid == ProcessInfo.processInfo.processIdentifier)
+  }
+
+  @Test func presenceOmitsPidWhenParentLookupFails() async throws {
+    // `ps` unreachable leaves `$__ppid` empty; the emit must then drop the pid field
+    // rather than send a dangling `pid=`. In production the same `ps` failure also
+    // empties `$__tty`, so this only lands when the hook has a usable controlling
+    // terminal; the harness rewrites the sink, which decouples the two here.
+    let emptyPath = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-nops-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: emptyPath, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: emptyPath) }
+
+    let captured = try await runHookCommandCapturingTTY(
+      AgentHookSettingsCommand.compositeCommand(
+        events: [.busy], forwardStdinAsNotification: false, agent: .claude),
+      env: [
+        "SUPACODE_SURFACE_ID": UUID().uuidString,
+        "SUPACODE_SOCKET_PATH": "/tmp/supacode-nops-\(UUID().uuidString)",
+        "PATH": emptyPath.path,
+      ]
+    )
+    #expect(!captured.contains("pid="))
+    let signal = try #require(Self.parsePresence(fromTTY: captured))
+    #expect(signal.eventRawValue == "busy")
+    #expect(signal.pid == nil)
+  }
+
+  @Test func everyAgentCommandOnlyNamesForwardedOrLocalVariables() {
+    // Grok preflights `$VAR` / `${VAR}` in a hook command as required env and skips
+    // the hook when one is unset, which is how the shell special `$PPID` no-opped
+    // every managed presence hook. The command shape is shared, so hold every agent
+    // to the allowlist, not just Grok.
+    var commands: [String] = SkillAgent.allCases.flatMap { agent in
+      [
+        AgentHookSettingsCommand.compositeCommand(
+          events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: agent),
+        AgentHookSettingsCommand.compositeCommand(
+          events: [.idle], forwardStdinAsNotification: true, agent: agent),
+        AgentHookSettingsCommand.compositeCommand(
+          events: [], forwardStdinAsNotification: true, agent: agent),
+      ]
+    }
+    commands.append(AgentHookSettingsCommand.claudeStopCommand(agent: .claude))
+    #expect(commands.allSatisfy { !ManagedHookCommandVariables.names(in: $0).isEmpty })
+    #expect(commands.allSatisfy { ManagedHookCommandVariables.unexpected(in: $0).isEmpty })
   }
 
   /// Reconstructs libghostty's OSC 3008 split from a captured tty stream: the
@@ -789,9 +836,8 @@ struct AgentHookCommandTests {
     return AgentPresenceOSC.parseNotify(id: id, metadata: metadata)
   }
 
-  // Shared head: surface-id guard, then (inside one brace group) resolve $__ppid
-  // / $__tty from the parent agent's controlling terminal since the hook has none
-  // of its own. Avoid `$PPID` — Grok preflights it as required env and skips the hook.
+  // Shared head: surface-id guard, then (inside one brace group) resolve $__ppid /
+  // $__tty from the parent agent's terminal since the hook has none of its own.
   private static let guardAndTTY =
     #"[ -n "${SUPACODE_SURFACE_ID:-}" ] && { "#
     + #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
@@ -800,7 +846,8 @@ struct AgentHookCommandTests {
   private static let suppressTail = #"} >/dev/null 2>&1 || true # supacode-managed-hook"#
 
   private static func presence(_ action: String, _ agent: String, _ event: String) -> String {
-    #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";pid=$__ppid"; "#
+    #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && [ -n "$__ppid" ] "#
+      + #"&& __sp=";pid=$__ppid"; "#
       + #"printf '\033]3008;\#(action)=\#(agent);event=\#(event)%s\033\\' "$__sp" > "$__tty"; "#
   }
 
@@ -854,7 +901,9 @@ struct AgentHookCommandTests {
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    process.arguments = ["-c", patched]
+    // `-f` skips the rc files, which commonly rewrite PATH and would undo a test's
+    // deliberately stripped environment.
+    process.arguments = ["-f", "-c", patched]
     var environment = ProcessInfo.processInfo.environment
     // The host may already export Supacode-surface vars (tests can run inside a
     // Supacode surface); clear them so every absent-variable assertion is genuine.

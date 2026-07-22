@@ -226,6 +226,19 @@ struct CopilotHooksInstallerTests {
     #expect(branch.contains("kind=notify"))
   }
 
+  /// The notification leg hand-composes its shell instead of going through
+  /// `compositeCommand`, so it needs its own allowlist check: any `$VAR` Supacode
+  /// does not forward would be preflighted as required env and skip the hook.
+  @Test func everyInstalledCommandOnlyNamesForwardedOrLocalVariables() throws {
+    let data = Data(try CopilotHookSettings.source().utf8)
+    let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let hooks = try #require(root["hooks"] as? [String: [[String: Any]]])
+    let commands = hooks.values.flatMap { $0.compactMap { $0["bash"] as? String } }
+    #expect(!commands.isEmpty)
+    #expect(commands.allSatisfy { !ManagedHookCommandVariables.names(in: $0).isEmpty })
+    #expect(commands.allSatisfy { ManagedHookCommandVariables.unexpected(in: $0).isEmpty })
+  }
+
   @Test func installStateNotInstalledForNonUTF8File() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }

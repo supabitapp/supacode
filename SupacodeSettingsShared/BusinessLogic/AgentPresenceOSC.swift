@@ -189,18 +189,10 @@ public nonisolated enum AgentPresenceOSC {
     "\(eventField)=\(event.rawValue)\(pidSuffix)"
   }
 
-  /// Shell that resolves `$__ppid` (parent agent) and `$__tty` (that process's
-  /// terminal) for the OSC emits. Agents run hooks without a controlling
-  /// terminal (`/dev/tty` open fails), so the hook recovers the terminal its
-  /// parent is attached to via `ps -o tty=`. `ps` reports a bare name
-  /// (`ttys039` on macOS, `pts/5` on Linux), so a `/dev/` prefix is added; a
-  /// parent with no tty (`??`) falls back to `/dev/tty` for the rare context
-  /// that does have a controlling terminal.
-  ///
-  /// Parent pid is taken from `ps -o ppid= -p $$` rather than the shell special
-  /// `$PPID`. Grok preflights `$VAR` / `${VAR}` in hook commands as required
-  /// env and refuses to run when unset; `PPID` is shell-only, not env, so an
-  /// inline `$PPID` no-ops every managed Grok presence hook.
+  /// Shell that resolves `$__ppid` (the hook's parent agent) and its `$__tty`, since
+  /// hooks run with no controlling terminal and `ps` reports a bare tty name (`??`
+  /// falls back to `/dev/tty`). Parent pid comes from `ps`, not the shell special
+  /// `$PPID`, which Grok preflights as a required env var and then skips the hook.
   static let ttyResolveSnippet =
     #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
     + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
@@ -212,17 +204,19 @@ public nonisolated enum AgentPresenceOSC {
   /// stdout. The caller guards emission on `SUPACODE_SURFACE_ID` and runs
   /// `ttyResolveSnippet` first.
   ///
-  /// The pid suffix is gated on `SUPACODE_SOCKET_PATH` (set only on the local
-  /// host) so a local hook carries `$__ppid` and a remote one omits it; a forged
-  /// positive pid at worst pins a live-looking badge until surface close. The
-  /// suffix is built in shell and filled into a trailing `%s`, empty when remote.
-  /// Uses `$__ppid` from `ttyResolveSnippet` (not `$PPID`) so Grok's env
-  /// preflight does not reject the command.
+  /// The pid suffix is gated on `SUPACODE_SOCKET_PATH` (set only on the local host)
+  /// and on `$__ppid` having resolved, so a remote hook or a failed `ps` leaves the
+  /// field off the wire instead of sending a dangling `pid=`. Both shapes parse to
+  /// `pid: nil` today, so this is wire hygiene, not a behavior fix: a local agent
+  /// with no resolvable parent stays untracked by the liveness sweep either way. A
+  /// forged positive pid at worst pins a live-looking badge until surface close. The
+  /// suffix is built in shell and filled into a trailing `%s`.
   static func emitShell(event: HookEvent, agent: SkillAgent) -> String {
     // Trailing %s for the shell-built, conditionally-empty pid suffix.
     let meta = metadata(event: event, pidSuffix: "%s")
     let payload = #"\033]3008;\#(action(for: event))=\#(agent.rawValue);\#(meta)\033\\"#
-    return #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && __sp=";\#(pidField)=$__ppid"; "#
+    return #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && [ -n "$__ppid" ] "#
+      + #"&& __sp=";\#(pidField)=$__ppid"; "#
       + #"printf '\#(payload)' "$__sp" > "$__tty""#
   }
 
