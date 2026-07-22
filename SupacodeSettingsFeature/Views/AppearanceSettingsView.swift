@@ -75,7 +75,6 @@ public struct AppearanceSettingsView: View {
               + "and reconnect instantly when viewed. Sessions and running agents are unaffected."
           )
         }
-        .help("Free memory by suspending the renderer of terminal tabs you are not viewing.")
       }
       Section {
         Toggle(isOn: $store.confirmCloseSurface) {

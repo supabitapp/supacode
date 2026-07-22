@@ -44,7 +44,6 @@ struct DeveloperSettingsView: View {
           Text(
             "Re-installs hooks for any agent reporting an outdated integration when Supacode comes to the foreground.")
         }
-        .help("Silently re-applies the canonical hook layout to outdated agent integrations when Supacode activates.")
       }
       Section("Advanced") {
         Picker(selection: $store.automatedActionPolicy.sending(\.setAutomatedActionPolicy)) {

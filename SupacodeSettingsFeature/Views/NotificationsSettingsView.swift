@@ -17,7 +17,6 @@ public struct NotificationsSettingsView: View {
         ) {
           Text("System notifications")
         }
-        .help("Show macOS system notifications")
         Picker(selection: $store.notificationSound) {
           Text(NotificationSound.never.displayName).tag(NotificationSound.never)
           Divider()
