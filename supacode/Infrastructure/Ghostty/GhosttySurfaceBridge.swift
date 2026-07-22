@@ -88,6 +88,9 @@ final class GhosttySurfaceBridge {
   private var progressFlushTask: Task<Void, Never>?
   private var progressStaleTask: Task<Void, Never>?
 
+  /// Test seam: mirrors the leading-edge gate in `scheduleProgressFlush`.
+  var isProgressFlushIdleForTesting: Bool { progressFlushTask == nil }
+
   init(
     clock: any Clock<Duration> = ContinuousClock(),
     progressThrottleInterval: Duration = .milliseconds(50),

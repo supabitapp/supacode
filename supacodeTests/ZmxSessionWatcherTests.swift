@@ -350,6 +350,13 @@ private final class FakeZmxDaemon {
   }
 }
 
+/// Real-time budget for watcher signals delivered off the reader thread.
+/// Generous so a saturated CI machine cannot starve a passing run into a
+/// timeout; only a failing run ever waits this long.
+private enum ZmxTestBudget {
+  static let signalTimeout: TimeInterval = 30
+}
+
 @MainActor
 @Suite(.serialized)
 struct ZmxSessionWatcherLifecycleTests {
@@ -383,7 +390,7 @@ struct ZmxSessionWatcherLifecycleTests {
     watcher.start()
     defer { watcher.stop() }
 
-    #expect(semaphore.wait(timeout: .now() + 3) == .success)
+    #expect(semaphore.wait(timeout: .now() + ZmxTestBudget.signalTimeout) == .success)
     #expect(received.value == [ZmxOSCSequence(code: 9, payload: ZmxWireFixture.bytes("ping"))])
   }
 
@@ -423,7 +430,7 @@ struct ZmxSessionWatcherLifecycleTests {
     watcher.start()
     defer { watcher.stop() }
 
-    #expect(resumed.wait(timeout: .now() + 3) == .success)
+    #expect(resumed.wait(timeout: .now() + ZmxTestBudget.signalTimeout) == .success)
   }
 
   @Test func givesUpAfterExhaustingBudgetOnDeadSocket() {
@@ -439,7 +446,7 @@ struct ZmxSessionWatcherLifecycleTests {
     watcher.start()
     defer { watcher.stop() }
 
-    #expect(finished.wait(timeout: .now() + 3) == .success)
+    #expect(finished.wait(timeout: .now() + ZmxTestBudget.signalTimeout) == .success)
     #expect(delivered.value == false)
   }
 
@@ -474,7 +481,7 @@ struct ZmxSessionWatcherLifecycleTests {
     defer { watcher.stop() }
 
     // Gave up despite delivering a valid frame in each cycle before desyncing.
-    #expect(finished.wait(timeout: .now() + 3) == .success)
+    #expect(finished.wait(timeout: .now() + ZmxTestBudget.signalTimeout) == .success)
     #expect(delivered.value == true)
   }
 
@@ -655,7 +662,7 @@ struct ZmxSessionWatcherRegistryDeliveryTests {
     // run while we await the signal.
     let result: DispatchTimeoutResult = await withCheckedContinuation { continuation in
       Thread.detachNewThread {
-        continuation.resume(returning: delivered.wait(timeout: .now() + 3))
+        continuation.resume(returning: delivered.wait(timeout: .now() + ZmxTestBudget.signalTimeout))
       }
     }
     #expect(result == .success)
