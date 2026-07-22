@@ -56,7 +56,7 @@ private struct NestedWorktreesOnboardingCardBody: View {
       header: {
         Image(systemName: "list.bullet.indent")
           .font(.title2)
-          .foregroundStyle(.tint)
+          .foregroundStyle(.blue)
           .accessibilityHidden(true)
       }
     )

@@ -23,7 +23,6 @@ struct TerminalTabView: View {
   let onEndRename: () -> Void
 
   @State private var isHovering = false
-  @State private var isHoveringClose = false
   @State private var isPressing = false
   @State private var editingTitle = ""
   @State private var initialEditingTitle = ""
@@ -33,78 +32,80 @@ struct TerminalTabView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    ZStack(alignment: .trailing) {
-      Button(action: onSelect) {
-        TerminalTabLabelView(
-          tab: tab,
-          isActive: isActive,
-          isHoveringTab: isHovering,
-          isHoveringClose: isHoveringClose,
-          tabStore: tabStore,
-        )
-      }
-      .buttonStyle(TerminalTabButtonStyle(isPressing: $isPressing))
-      .frame(
-        minWidth: TerminalTabBarMetrics.tabMinWidth,
-        maxWidth: TerminalTabBarMetrics.tabMaxWidth,
-        minHeight: TerminalTabBarMetrics.tabHeight,
-        maxHeight: TerminalTabBarMetrics.tabHeight
+    // The trailing slot is a layout sibling, so it takes only the width it needs and
+    // gives the rest to the title.
+    HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
+      TerminalTabLabelView(
+        tab: tab,
+        isActive: isActive,
+        tabStore: tabStore,
       )
-      .frame(width: fixedWidth)
-      .contentShape(.rect)
-      .help("Open tab \(tab.displayTitle)")
+      .allowsHitTesting(false)
+      // The select button already carries the tab's label, so this would double-announce it.
+      .accessibilityHidden(true)
+
+      if hasTrailingContent {
+        ZStack(alignment: .trailing) {
+          if tab.isBlockingScriptCompleted {
+            TerminalTabLockIndicator(
+              suppress: suppressIdleIndicator
+            )
+          } else {
+            TerminalTabNotificationIndicator(
+              hasUnseenNotifications: hasUnseenNotifications,
+              suppress: suppressIdleIndicator
+            )
+          }
+          // At zero opacity it would still hold the slot open at the chord's width.
+          if isShowingHint, let shortcutHint {
+            TerminalTabShortcutHintText(hint: shortcutHint)
+              .transition(.opacity)
+          }
+          if isSplitZoomed {
+            TerminalTabTrailingButton(
+              title: "Exit Split Zoom",
+              systemImage: "arrow.up.right.and.arrow.down.left",
+              ghosttyAction: "toggle_split_zoom",
+              // Always offered while zoomed, unlike close, which waits for hover.
+              isVisible: !isDragging && !isShowingHint,
+              action: onDismissSplitZoom,
+              gestureActive: $closeButtonGestureActive
+            )
+          } else {
+            TerminalTabTrailingButton(
+              title: "Close Tab",
+              systemImage: "xmark",
+              ghosttyAction: "close_tab",
+              isVisible: isHovering && !isDragging && !isShowingHint,
+              action: onClose,
+              gestureActive: $closeButtonGestureActive
+            )
+          }
+        }
+        .frame(minWidth: TerminalTabBarMetrics.closeButtonSize, maxHeight: TerminalTabBarMetrics.closeButtonSize)
+        .transition(.opacity)
+      }
+    }
+    .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
+    .animation(slotAnimation, value: isShowingHint)
+    .animation(slotAnimation, value: hasTrailingContent)
+    .opacity(isEditing ? 0 : 1)
+    .allowsHitTesting(!isEditing)
+    .frame(
+      minWidth: TerminalTabBarMetrics.tabMinWidth,
+      maxWidth: TerminalTabBarMetrics.tabMaxWidth,
+      minHeight: TerminalTabBarMetrics.tabHeight,
+      maxHeight: TerminalTabBarMetrics.tabHeight
+    )
+    .frame(width: fixedWidth)
+    // Behind the content so the whole tab selects, not just the label.
+    .background {
+      Button(action: onSelect) {
+        Color.clear.contentShape(.rect)
+      }
+      .buttonStyle(TerminalPressTrackingButtonStyle(isPressed: $isPressing))
       .accessibilityLabel(tab.displayTitle)
       .accessibilityValue(accessibilityValue)
-      .allowsHitTesting(!isEditing)
-      .opacity(isEditing ? 0 : 1)
-
-      // Fixed 24pt trailing slot. Lock and notification dot are mutually exclusive;
-      // the hint, close, and zoom-dismiss buttons cross-fade via opacity. Close/zoom
-      // suppress lock/dot via the `suppress:` parameter when hovering, dragging,
-      // hint-showing, or split-zoomed.
-      ZStack(alignment: .trailing) {
-        if tab.isBlockingScriptCompleted {
-          TerminalTabLockIndicator(
-            suppress: isHovering || isHoveringClose || isDragging || isShowingHint || isSplitZoomed
-          )
-        } else {
-          TerminalTabNotificationIndicator(
-            tabStore: tabStore,
-            suppress: isHovering || isHoveringClose || isDragging || isShowingHint || isSplitZoomed
-          )
-        }
-        if let shortcutHint {
-          Text(shortcutHint)
-            .font(.caption)
-            // Explicit `.regular` because the tab bar lacks the sidebar's List/vibrancy
-            // context, where `.font(.caption)` would otherwise render heavier.
-            .fontWeight(.regular)
-            .foregroundStyle(.secondary)
-            .opacity(isShowingHint ? 1 : 0)
-            .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: isShowingHint)
-        }
-        if isSplitZoomed {
-          TerminalTabExitSplitZoomButton(
-            isDragging: isDragging,
-            isShowingShortcutHint: isShowingHint,
-            dismissAction: onDismissSplitZoom,
-            closeButtonGestureActive: $closeButtonGestureActive
-          )
-        } else {
-          TerminalTabCloseButton(
-            isHoveringTab: isHovering,
-            isDragging: isDragging,
-            isShowingShortcutHint: isShowingHint,
-            closeAction: onClose,
-            closeButtonGestureActive: $closeButtonGestureActive,
-            isHoveringClose: $isHoveringClose
-          )
-        }
-      }
-      .frame(width: TerminalTabBarMetrics.trailingSlotWidth, height: TerminalTabBarMetrics.closeButtonSize)
-      .animation(.easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration), value: isHovering)
-      .padding(.trailing, TerminalTabBarMetrics.tabHorizontalPadding)
-      .opacity(isEditing ? 0 : 1)
       .allowsHitTesting(!isEditing)
     }
     .overlay {
@@ -116,10 +117,6 @@ struct TerminalTabView: View {
           .foregroundStyle(TerminalTabBarColors.activeText)
           .accessibilityLabel("Rename tab")
           .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
-          .padding(
-            .trailing,
-            TerminalTabBarMetrics.trailingSlotWidth + TerminalTabBarMetrics.contentSpacing
-          )
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
           .onSubmit { onEndRename() }
           .onExitCommand {
@@ -234,9 +231,25 @@ struct TerminalTabView: View {
   }
 
   private var shortcutHint: String? {
-    let number = tabIndex + 1
-    guard number > 0 && number <= 9 else { return nil }
-    return "⌘\(number)"
+    commandKeyObserver.tabSelectionHint(atSlot: tabIndex)
+  }
+
+  /// Whether anything can occupy the trailing slot; false collapses it so the title gets
+  /// the full width. Not gated on `isDragging`, which would reflow the tab under the pointer.
+  private var hasTrailingContent: Bool {
+    isShowingHint || isSplitZoomed || tab.isBlockingScriptCompleted || isHovering || hasUnseenNotifications
+  }
+
+  private var suppressIdleIndicator: Bool {
+    isHovering || isDragging || isShowingHint || isSplitZoomed
+  }
+
+  private var hasUnseenNotifications: Bool {
+    tabStore.state.hasUnseenNotifications
+  }
+
+  private var slotAnimation: Animation? {
+    reduceMotion ? nil : .easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration)
   }
 
   /// True when the cmd-pressed hotkey hint should occupy the trailing slot.
@@ -254,15 +267,29 @@ struct TerminalTabView: View {
   }
 }
 
-/// Reads the tab's unread notification count off the per-tab scoped store.
-/// `suppress` short-circuits the count check when the dot would be hidden
-/// anyway (hover, drag, shortcut hint).
+private struct TerminalTabShortcutHintText: View {
+  let hint: String
+
+  var body: some View {
+    Text(hint)
+      .font(.caption)
+      // Explicit `.regular` because the tab bar lacks the sidebar's List/vibrancy
+      // context, where `.font(.caption)` would otherwise render heavier.
+      .fontWeight(.regular)
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+      .fixedSize()
+  }
+}
+
+/// `suppress` hides the dot in the states the trailing slot is held for something else
+/// (hover, drag, shortcut hint, split zoom).
 private struct TerminalTabNotificationIndicator: View {
-  let tabStore: StoreOf<TerminalTabFeature>
+  let hasUnseenNotifications: Bool
   let suppress: Bool
 
   var body: some View {
-    let isShowing = !suppress && tabStore.state.hasUnseenNotifications
+    let isShowing = !suppress && hasUnseenNotifications
     TabNotificationDot()
       .opacity(isShowing ? 1 : 0)
       .allowsHitTesting(false)
@@ -285,7 +312,6 @@ private struct TerminalTabLockIndicator: View {
       .opacity(suppress ? 0 : 1)
       .allowsHitTesting(false)
       .accessibilityLabel("Locked tab")
-      .help("Script finished. This tab is read-only and won't survive quitting Supacode.")
       .animation(.easeInOut(duration: 0.2), value: suppress)
   }
 }

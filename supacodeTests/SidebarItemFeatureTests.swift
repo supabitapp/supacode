@@ -174,6 +174,23 @@ struct SidebarItemFeatureTests {
     }
   }
 
+  @Test func terminalProjectionTogglesAllTabsDormant() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    // Every tab hibernated: the row lights its sleep marker.
+    await store.send(.terminalProjectionChanged(makeProjection(allTabsDormant: true))) {
+      $0.hasTerminalProjection = true
+      $0.allTabsDormant = true
+    }
+    // Same value: no-op.
+    await store.send(.terminalProjectionChanged(makeProjection(allTabsDormant: true)))
+    // A tab wakes: the marker clears.
+    await store.send(.terminalProjectionChanged(makeProjection(allTabsDormant: false))) {
+      $0.allTabsDormant = false
+    }
+  }
+
   // MARK: - Stale-PR guard.
 
   @Test func pullRequestChangedDropsResultWhenBranchHasFlipped() async {
@@ -319,14 +336,16 @@ struct SidebarItemFeatureTests {
     isProgressBusy: Bool = false,
     hasUnseenNotifications: Bool = false,
     notifications: IdentifiedArrayOf<WorktreeTerminalNotification> = [],
-    runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = []
+    runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = [],
+    allTabsDormant: Bool = false
   ) -> WorktreeRowProjection {
     WorktreeRowProjection(
       surfaceIDs: surfaceIDs,
       isProgressBusy: isProgressBusy,
       hasUnseenNotifications: hasUnseenNotifications,
       notifications: notifications,
-      runningScripts: runningScripts
+      runningScripts: runningScripts,
+      allTabsDormant: allTabsDormant
     )
   }
 }

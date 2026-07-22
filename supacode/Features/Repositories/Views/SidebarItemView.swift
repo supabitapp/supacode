@@ -7,6 +7,12 @@ import SwiftUI
 enum SidebarNestLayout {
   /// Pixel step a row indents per branch-nesting depth level.
   static let indentStep: CGFloat = 14
+  /// Width of a row's leading slot, so group chevrons and leaf icons put their
+  /// titles on the same baseline.
+  static let leadingSlotWidth: CGFloat = 16
+  /// Width of a group header's disclosure chevron, narrower than the slot it
+  /// sits in; the remainder is padded out after it.
+  static let groupChevronWidth: CGFloat = 12
 }
 
 /// Repo identity carried alongside a sidebar row so the highlight sections
@@ -468,7 +474,7 @@ private struct IconContent: View, Equatable {
           .opacity(isEmphasized ? 1 : 0.6)
       }
     }
-    .frame(width: 16, height: 16)
+    .frame(width: SidebarNestLayout.leadingSlotWidth, height: 16)
     .overlay(alignment: .bottomTrailing) {
       if let checkBadgeState, !isSystemImage {
         let badgeColor = AnyShapeStyle(checkBadgeState.color)
@@ -510,6 +516,7 @@ private struct TrailingView: View {
     let agents = store.agents
     let scriptColors = store.runningScripts.map(\.tint)
     let showsNotificationIndicator = store.hasUnseenNotifications
+    let showsDormantIndicator = store.allTabsDormant
     let notifications = Array(store.notifications)
     let added = store.addedLines ?? 0
     let removed = store.removedLines ?? 0
@@ -526,6 +533,9 @@ private struct TrailingView: View {
             .foregroundStyle(.secondary)
             .help(host.displayAuthority)
             .accessibilityLabel("Remote host \(host.displayAuthority)")
+        }
+        if showsDormantIndicator {
+          SidebarDormantIndicator()
         }
         if hasStats {
           DiffStatsContent(addedLines: added, removedLines: removed)
@@ -559,6 +569,22 @@ private struct TrailingView: View {
         .opacity(hasHint ? 1 : 0)
     }
     .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: hasHint)
+  }
+}
+
+/// Sleep marker shown when every tab in the worktree is hibernated. Clears via
+/// the normal row projection once any tab wakes.
+private struct SidebarDormantIndicator: View, Equatable {
+  var body: some View {
+    // The zzz glyph draws thinner than its neighbors at regular weight and its
+    // descending tail skews the optical center; compensate to match the wifi glyph.
+    Image(systemName: "zzz")
+      .imageScale(.small)
+      .font(.subheadline.weight(.semibold))
+      .offset(y: 0.5)
+      .foregroundStyle(.secondary)
+      .help("Hibernated to save resources. Select to reconnect.")
+      .accessibilityLabel("Hibernated")
   }
 }
 

@@ -595,7 +595,7 @@ struct AgentBusyStateTests {
       $0.continuousClock = ImmediateClock()
     } operation: {
       withRetentionLimit(.oneHundred) {
-        let fixture = makeStateWithSurface()
+        let fixture = makeStateWithSurface(surfaceBindingActionPerformer: { _, _ in })
         // Split so the tab keeps a sibling pane; the split focuses the sibling,
         // leaving the original pane unfocused so its notification lands unread.
         let sibling = UUID()
@@ -720,8 +720,13 @@ struct AgentBusyStateTests {
     Self.makeHookEvent(name, agent: agent, surfaceID: surfaceID, pid: pid)
   }
 
-  private func makeStateWithSurface(worktree: Worktree? = nil) -> SurfaceFixture {
-    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness()
+  private func makeStateWithSurface(
+    worktree: Worktree? = nil,
+    surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)? = nil
+  ) -> SurfaceFixture {
+    let (manager, presence) = WorktreeTerminalManager.withPresenceHarness(
+      surfaceBindingActionPerformer: surfaceBindingActionPerformer
+    )
     let resolvedWorktree = worktree ?? makeWorktree()
 
     let state = manager.state(for: resolvedWorktree) { false }

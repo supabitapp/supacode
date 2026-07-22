@@ -115,6 +115,49 @@ struct TerminalTabFeatureTests {
     }
   }
 
+  @Test func projectionChangedTogglesDormantIndependently() async {
+    let tabID = TerminalTabID(rawValue: UUID())
+    let surface = UUID()
+    let store = TestStore(
+      initialState: TerminalTabFeature.State(
+        id: tabID,
+        worktreeID: "/tmp/repo",
+        surfaceIDs: [surface],
+        activeSurfaceID: surface,
+        unseenNotificationCount: 0
+      )
+    ) { TerminalTabFeature() }
+
+    // Hibernate: the dormancy flag flows through so the tab bar shows the marker.
+    await store.send(
+      .projectionChanged(
+        WorktreeTabProjection(
+          tabID: tabID,
+          surfaceIDs: [surface],
+          activeSurfaceID: surface,
+          unseenNotificationCount: 0,
+          isDormant: true
+        )
+      )
+    ) {
+      $0.isDormant = true
+    }
+    // Wake: the flag clears via the same channel.
+    await store.send(
+      .projectionChanged(
+        WorktreeTabProjection(
+          tabID: tabID,
+          surfaceIDs: [surface],
+          activeSurfaceID: surface,
+          unseenNotificationCount: 0,
+          isDormant: false
+        )
+      )
+    ) {
+      $0.isDormant = false
+    }
+  }
+
   @Test func agentSnapshotChangedShortCircuitsOnEqualArray() async {
     let tabID = TerminalTabID(rawValue: UUID())
     let agents = [

@@ -271,8 +271,11 @@ struct GhosttySurfaceBridgeTests {
 
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_INDETERMINATE, value: nil)
     // No further reports: the stale window synthesizes a REMOVE and tears down
-    // the driver.
-    await settleThenAdvance(clock, by: .milliseconds(100))
+    // the driver. The stale watch can register its sleep after the first
+    // advance under load, so keep advancing until the REMOVE lands.
+    for _ in 0..<50 where bridge.state.progressState != nil {
+      await settleThenAdvance(clock, by: .milliseconds(100))
+    }
     #expect(bridge.state.progressState == nil)
 
     // A report after the stale REMOVE must re-arm the driver, not freeze.

@@ -77,9 +77,11 @@ public struct SettingsFeature {
     public var agentPresenceBadgesEnabled: Bool
     public var autoUpdateAgentIntegrationsEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
+    public var confirmCloseSurface: Bool
     public var terminateSessionsOnQuit: Bool
     public var remoteSessionPersistenceEnabled: Bool
     public var appVisibility: AppVisibility
+    public var terminalHibernationEnabled: Bool
     public var cliInstallState = CLIInstallState.checking
     /// Installed editors in menu order, resolved once off the picker's body.
     public var installedOpenActions: [OpenWorktreeAction]
@@ -131,9 +133,11 @@ public struct SettingsFeature {
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       autoUpdateAgentIntegrationsEnabled = settings.autoUpdateAgentIntegrationsEnabled
       confirmQuitMode = settings.confirmQuitMode
+      confirmCloseSurface = settings.confirmCloseSurface
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
       remoteSessionPersistenceEnabled = settings.remoteSessionPersistenceEnabled
       appVisibility = settings.appVisibility
+      terminalHibernationEnabled = settings.terminalHibernationEnabled
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -174,9 +178,11 @@ public struct SettingsFeature {
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
         autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
         confirmQuitMode: confirmQuitMode,
+        confirmCloseSurface: confirmCloseSurface,
         terminateSessionsOnQuit: terminateSessionsOnQuit,
         remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled,
-        appVisibility: appVisibility
+        appVisibility: appVisibility,
+        terminalHibernationEnabled: terminalHibernationEnabled
       )
     }
   }
@@ -311,9 +317,11 @@ public struct SettingsFeature {
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
         state.autoUpdateAgentIntegrationsEnabled = normalizedSettings.autoUpdateAgentIntegrationsEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
+        state.confirmCloseSurface = normalizedSettings.confirmCloseSurface
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
         state.remoteSessionPersistenceEnabled = normalizedSettings.remoteSessionPersistenceEnabled
         state.appVisibility = normalizedSettings.appVisibility
+        state.terminalHibernationEnabled = normalizedSettings.terminalHibernationEnabled
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)

@@ -120,6 +120,10 @@ public struct AppearanceSettingsView: View {
           Text("Hide Tab Bar for Single Tab")
           Text("Automatically hides the tab bar when only one tab is open.")
         }
+        Toggle(isOn: $store.confirmCloseSurface) {
+          Text("Confirm before Closing Terminals")
+          Text("Ask before closing a terminal that has a running process.")
+        }
         Picker(selection: $store.automatedActionPolicy.sending(\.setAutomatedActionPolicy)) {
           ForEach(AutomatedActionPolicy.allCases, id: \.self) { policy in
             Text(policy.displayName).tag(policy)
@@ -128,6 +132,17 @@ public struct AppearanceSettingsView: View {
           Text("Allow Arbitrary Actions")
           Text("Skip the confirmation dialog for commands and destructive actions.")
         }
+        Toggle(isOn: $store.terminalHibernationEnabled) {
+          HStack(spacing: 6) {
+            Text("Hibernate inactive terminals")
+            BetaBadge()
+          }
+          Text(
+            "Background terminal tabs release their renderer after a few minutes of inactivity "
+              + "and reconnect instantly when viewed. Sessions and running agents are unaffected."
+          )
+        }
+        .help("Free memory by suspending the renderer of terminal tabs you are not viewing.")
       }
     }
     .formStyle(.grouped)
@@ -136,5 +151,19 @@ public struct AppearanceSettingsView: View {
     .padding(.trailing, -6)
 
     .navigationTitle("General")
+  }
+}
+
+/// Small system-styled tag marking a setting as Beta. Uses `.quaternary` fill so
+/// it tracks the theme and never introduces a custom color.
+private struct BetaBadge: View {
+  var body: some View {
+    Text("Beta")
+      .font(.caption2)
+      .fontWeight(.semibold)
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(.quaternary, in: .capsule)
   }
 }

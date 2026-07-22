@@ -95,6 +95,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// entries from earlier wire-protocol revisions).
   public var autoUpdateAgentIntegrationsEnabled: Bool
   public var confirmQuitMode: ConfirmQuitMode
+  /// When true, user-initiated closes ask for confirmation when a terminal
+  /// surface has foreground work that Ghostty considers unsafe to interrupt.
+  public var confirmCloseSurface: Bool
   /// When true, quitting Supacode also closes every terminal tab and tears
   /// down zmx sessions, local and host-side, so nothing keeps running in the
   /// background. Default off because persistence is the headline feature.
@@ -104,6 +107,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var remoteSessionPersistenceEnabled: Bool
   /// Where Supacode appears: Dock, menu bar, or both.
   public var appVisibility: AppVisibility
+  /// Beta: hidden terminal tabs release their renderer after a few minutes of
+  /// inactivity and reconnect when viewed. On by default.
+  public var terminalHibernationEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -138,9 +144,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: true,
     autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
+    confirmCloseSurface: true,
     terminateSessionsOnQuit: false,
     remoteSessionPersistenceEnabled: true,
-    appVisibility: .dock
+    appVisibility: .dockAndMenuBar
   )
 
   public init(
@@ -176,9 +183,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: Bool = true,
     autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
+    confirmCloseSurface: Bool = true,
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
-    appVisibility: AppVisibility = .dock
+    appVisibility: AppVisibility = .dockAndMenuBar,
+    terminalHibernationEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -212,9 +221,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
     self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
     self.confirmQuitMode = confirmQuitMode
+    self.confirmCloseSurface = confirmCloseSurface
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
     self.appVisibility = appVisibility
+    self.terminalHibernationEnabled = terminalHibernationEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -376,6 +387,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     } else {
       confirmQuitMode = Self.default.confirmQuitMode
     }
+    confirmCloseSurface =
+      try container.decodeIfPresent(Bool.self, forKey: .confirmCloseSurface)
+      ?? Self.default.confirmCloseSurface
     terminateSessionsOnQuit =
       try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
       ?? Self.default.terminateSessionsOnQuit
@@ -388,5 +402,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .appVisibility)) ?? nil)
       .flatMap(AppVisibility.init(rawValue:))
       ?? Self.default.appVisibility
+    // Pre-feature files omit this key; the Beta feature falls back to the default.
+    terminalHibernationEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .terminalHibernationEnabled)
+      ?? Self.default.terminalHibernationEnabled
   }
 }
