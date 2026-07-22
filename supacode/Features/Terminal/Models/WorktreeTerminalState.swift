@@ -53,14 +53,44 @@ final class WorktreeTerminalState {
     let isVisible: Bool
     let isFocused: Bool
   }
-  enum PendingCloseConfirmation: Equatable {
-    case surface(UUID)
-    case tabs([TerminalTabID])
+  /// Why a close needs confirming. Nil where the close needs none.
+  enum CloseConfirmationReason: Equatable {
+    case runningProcess
+    /// A hibernated tab has no live surface to ask, so nothing was checked.
+    case dormant
+
+    var message: String {
+      switch self {
+      case .runningProcess: "One or more terminal processes are still running. Closing will terminate them."
+      case .dormant: "This terminal is asleep. Closing will end its background session."
+      }
+    }
+  }
+
+  struct PendingCloseConfirmation: Equatable {
+    enum Target: Equatable {
+      case surface(UUID)
+      case tabs([TerminalTabID])
+    }
+
+    let target: Target
+    /// Carried from the raise site: re-deriving it at render time would flip the
+    /// copy if a process reaches its prompt while the alert is up.
+    let reason: CloseConfirmationReason
 
     // Copy is identical for surface and tab closes, so it lives on the type.
     static let title = "Close Terminal?"
     static let actionTitle = "Close Terminal"
-    static let message = "One or more terminal processes are still running. Closing will terminate them."
+
+    var message: String { reason.message }
+
+    static func surface(_ surfaceID: UUID, reason: CloseConfirmationReason = .runningProcess) -> Self {
+      Self(target: .surface(surfaceID), reason: reason)
+    }
+
+    static func tabs(_ tabIDs: [TerminalTabID], reason: CloseConfirmationReason = .runningProcess) -> Self {
+      Self(target: .tabs(tabIDs), reason: reason)
+    }
   }
 
   private struct SurfaceLaunchMetadata {
@@ -848,13 +878,19 @@ final class WorktreeTerminalState {
 
   @discardableResult
   func focusSurface(id: UUID) -> Bool {
-    guard let tabId = tabID(containing: id),
-      let surface = surfaces[id]
-    else {
+    guard let tabId = tabID(containing: id) else {
       terminalStateLogger.warning("focusSurface: surface \(id) not found in worktree \(worktree.id).")
       return false
     }
+    // Wake first: a dormant leaf has no entry in `surfaces` to focus.
+    wakeTab(tabId)
     tabManager.selectTab(tabId)
+    guard let surface = surfaces[id] else {
+      // A partial wake reaped this leaf, so land on whatever the tab rebuilt.
+      terminalStateLogger.error("focusSurface: surface \(id) missing after waking tab \(tabId.rawValue).")
+      focusSurface(in: tabId)
+      return false
+    }
     focusSurface(surface, in: tabId)
     return true
   }
@@ -971,7 +1007,7 @@ final class WorktreeTerminalState {
   // payload, never a published value a concurrent dismissal may have cleared.
   func confirmPendingClose(_ pending: PendingCloseConfirmation) {
     pendingCloseConfirmation = nil
-    switch pending {
+    switch pending.target {
     case .surface(let surfaceID):
       guard let surface = surfaces[surfaceID] else {
         terminalStateLogger.debug("confirmPendingClose: surface \(surfaceID) already gone.")
@@ -993,7 +1029,7 @@ final class WorktreeTerminalState {
   // Takes the target explicitly so a dismissal that clears the published value
   // first can't strip the surface's explicit-close flag out from under cancel.
   func cancelPendingClose(_ pending: PendingCloseConfirmation) {
-    if case .surface(let surfaceID) = pending {
+    if case .surface(let surfaceID) = pending.target {
       pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     }
     pendingCloseConfirmation = nil
@@ -1013,28 +1049,36 @@ final class WorktreeTerminalState {
     guard pendingCloseConfirmation == nil else { return true }
 
     @Shared(.settingsFile) var settingsFile
-    let needsConfirmation =
-      settingsFile.global.confirmCloseSurface
-      && existingTabIDs.contains(where: tabNeedsCloseConfirmation)
-    if needsConfirmation {
-      pendingCloseConfirmation = .tabs(existingTabIDs)
-    } else {
+    let reasons = existingTabIDs.compactMap(closeConfirmationReason)
+    guard settingsFile.global.confirmCloseSurface, !reasons.isEmpty else {
       for tabId in existingTabIDs {
         closeTab(tabId)
       }
+      return true
     }
+    // A live process outranks dormancy, so the copy names what was actually found.
+    pendingCloseConfirmation = .tabs(
+      existingTabIDs, reason: reasons.contains(.runningProcess) ? .runningProcess : .dormant)
     return true
   }
 
-  private func tabNeedsCloseConfirmation(_ tabId: TerminalTabID) -> Bool {
-    guard let tree = trees[tabId] else { return false }
-    return tree.leaves().contains(where: surfaceNeedsCloseConfirmation)
+  /// Nil when the tab closes without asking.
+  private func closeConfirmationReason(_ tabId: TerminalTabID) -> CloseConfirmationReason? {
+    // A woken surface reports "not at a prompt" until the zmx replay lands, so a
+    // dormant tab always confirms.
+    guard dormantTabLayouts[tabId] == nil else { return .dormant }
+    guard let tree = trees[tabId], tree.leaves().contains(where: surfaceNeedsCloseConfirmation) else {
+      return nil
+    }
+    return .runningProcess
   }
 
   private func removeFromPendingClose(tabId: TerminalTabID) {
-    guard case .tabs(let tabIDs)? = pendingCloseConfirmation else { return }
+    guard case .tabs(let tabIDs) = pendingCloseConfirmation?.target,
+      let reason = pendingCloseConfirmation?.reason
+    else { return }
     let remaining = tabIDs.filter { $0 != tabId }
-    pendingCloseConfirmation = remaining.isEmpty ? nil : .tabs(remaining)
+    pendingCloseConfirmation = remaining.isEmpty ? nil : .tabs(remaining, reason: reason)
   }
 
   func closeTab(_ tabId: TerminalTabID) {
@@ -2560,10 +2604,11 @@ final class WorktreeTerminalState {
   /// killed here; callers route the kill through `killZmxSessions(forSurfaceIDs:)`
   /// so a single multi-pane close emits one `count=N` analytics event + one
   /// `withTaskGroup` instead of N events and N detached Tasks.
-  /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
-  /// instant so a future surface ID can't reuse stale dedupe state.
+  /// Also drops any close confirmation aimed at this surface, cancels its held
+  /// agent OSC 9, and forgets the last-custom-notification instant so a future
+  /// surface ID can't reuse stale dedupe state.
   private func discardSurfaceBookkeeping(for surfaceID: UUID, preserveSurfaceState: Bool = false) {
-    if case .surface(let pendingSurfaceID)? = pendingCloseConfirmation,
+    if case .surface(let pendingSurfaceID) = pendingCloseConfirmation?.target,
       pendingSurfaceID == surfaceID
     {
       pendingCloseConfirmation = nil
@@ -2964,7 +3009,7 @@ final class WorktreeTerminalState {
     }
     let isExplicitClose = pendingExplicitSurfaceCloseIDs.contains(view.id)
     if isExplicitClose, pendingCloseConfirmation != nil {
-      if pendingCloseConfirmation != .surface(view.id) {
+      if pendingCloseConfirmation?.target != .surface(view.id) {
         pendingExplicitSurfaceCloseIDs.remove(view.id)
       }
       return
@@ -3369,7 +3414,18 @@ final class WorktreeTerminalState {
   func canHibernate(tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId], tree.root != nil else { return false }
     guard !tabManager.isBlockingScript(tabId) else { return false }
+    // An alert is waiting on this tab; hibernating would tear its target down
+    // and drop the user's close request without a trace.
+    guard !hasPendingCloseConfirmation(forTabID: tabId) else { return false }
     return tree.leaves().allSatisfy { surfaceLaunchMetadata[$0.id]?.usesZmx == true }
+  }
+
+  private func hasPendingCloseConfirmation(forTabID tabId: TerminalTabID) -> Bool {
+    switch pendingCloseConfirmation?.target {
+    case .surface(let surfaceID): tabID(containing: surfaceID) == tabId
+    case .tabs(let tabIDs): tabIDs.contains(tabId)
+    case nil: false
+    }
   }
 
   /// Hibernates a tab: freeze the layout, tear down the leaf surfaces WITHOUT

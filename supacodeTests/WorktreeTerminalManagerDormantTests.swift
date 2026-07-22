@@ -22,6 +22,11 @@ enum HibernationTestSupport {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.terminalHibernationEnabled = enabled }
   }
+
+  static func setConfirmCloseSurface(_ enabled: Bool) {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = enabled }
+  }
 }
 
 /// Dormant-storage coverage: seeded dormant entries must keep every bookkeeping
@@ -532,7 +537,10 @@ struct DormantTerminalTests {
 
   /// State bound to a zmx client that reports an executable (so every surface is
   /// `usesZmx` and thus hibernation-eligible) and records each local kill.
-  private func makeZmxState(killed: LockIsolated<[String]>) -> WorktreeTerminalState {
+  private func makeZmxState(
+    killed: LockIsolated<[String]> = LockIsolated([]),
+    surfaceNeedsCloseConfirmation: @escaping (GhosttySurfaceView) -> Bool = { _ in false }
+  ) -> WorktreeTerminalState {
     HibernationTestSupport.enableHibernation()
     return withDependencies {
       $0.continuousClock = ImmediateClock()
@@ -548,7 +556,8 @@ struct DormantTerminalTests {
       WorktreeTerminalState(
         runtime: GhosttyRuntime(),
         worktree: makeWorktree(),
-        splitPreserveZoomOnNavigation: { false }
+        splitPreserveZoomOnNavigation: { false },
+        surfaceNeedsCloseConfirmation: surfaceNeedsCloseConfirmation
       )
     }
   }
@@ -595,6 +604,143 @@ struct DormantTerminalTests {
     }
     // Reattach never kills: the zmx sessions must outlive every cycle.
     #expect(killed.value.isEmpty)
+  }
+
+  @Test func focusSurfaceWakesDormantTabAndSelectsIt() {
+    let killed = LockIsolated<[String]>([])
+    let state = makeZmxState(killed: killed)
+    let dormantTab = state.createTab(focusing: false)!
+    let dormantID = firstSurfaceID(state, tab: dormantTab)
+    let otherTab = state.createTab(focusing: true)!
+    _ = firstSurfaceID(state, tab: otherTab)
+
+    state.hibernateTab(dormantTab)
+    #expect(state.dormantTabLayouts[dormantTab] != nil)
+
+    #expect(state.focusSurface(id: dormantID))
+    #expect(state.dormantTabLayouts[dormantTab] == nil)
+    #expect(state.tabManager.selectedTabId == dormantTab)
+    #expect(state.surfaceIDs(inTab: dormantTab) == [dormantID])
+    #expect(killed.value.isEmpty)
+  }
+
+  @Test func closingDormantTabAlwaysConfirms() async {
+    HibernationTestSupport.setConfirmCloseSurface(true)
+    let killed = LockIsolated<[String]>([])
+    let state = makeZmxState(killed: killed)
+    let tab = state.createTab(focusing: false)!
+    let surfaceID = firstSurfaceID(state, tab: tab)
+    // Control: no live leaf reports a running process, so dormancy is the only
+    // thing that can raise the prompt below.
+    let idleTab = state.createTab(focusing: true)!
+    _ = firstSurfaceID(state, tab: idleTab)
+    #expect(state.requestCloseTab(idleTab))
+    #expect(state.pendingCloseConfirmation == nil)
+
+    state.hibernateTab(tab)
+    #expect(state.requestCloseTab(tab))
+    #expect(state.pendingCloseConfirmation == .tabs([tab], reason: .dormant))
+    #expect(state.hasTab(tab))
+
+    state.confirmPendingClose()
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(tab))
+    // Confirming must run the full dormant teardown, not just drop the row.
+    await waitUntil { killed.value.contains(session(for: surfaceID)) }
+    #expect(killed.value.contains(session(for: surfaceID)))
+    #expect(state.watchedDormantSurfaceIDsForTesting.isEmpty)
+    #expect(state.surfaceStates[surfaceID] == nil)
+  }
+
+  @Test func closeAllTabsConfirmsOnceAndDrainsLiveAndDormantTabs() async {
+    HibernationTestSupport.setConfirmCloseSurface(true)
+    let killed = LockIsolated<[String]>([])
+    let state = makeZmxState(killed: killed)
+    let liveTab = state.createTab(focusing: true)!
+    let liveSurface = firstSurfaceID(state, tab: liveTab)
+    let dormantTab = state.createTab(focusing: false)!
+    let dormantSurface = firstSurfaceID(state, tab: dormantTab)
+    state.hibernateTab(dormantTab)
+
+    #expect(state.requestCloseAllTabs())
+    // The live tab is idle, so dormancy alone raised the prompt.
+    #expect(state.pendingCloseConfirmation == .tabs([liveTab, dormantTab], reason: .dormant))
+
+    state.confirmPendingClose()
+    await waitUntil { killed.value.contains(session(for: dormantSurface)) }
+    #expect(!state.hasTab(liveTab))
+    #expect(!state.hasTab(dormantTab))
+    #expect(state.dormantTabLayouts.isEmpty)
+    #expect(!state.hasSurfaceAnywhere(liveSurface))
+  }
+
+  @Test func liveRunningTabInBatchKeepsTheRunningProcessCopy() {
+    HibernationTestSupport.setConfirmCloseSurface(true)
+    let running = LockIsolated<Set<UUID>>([])
+    let state = makeZmxState(surfaceNeedsCloseConfirmation: { view in running.value.contains(view.id) })
+    let liveTab = state.createTab(focusing: true)!
+    let liveSurface = firstSurfaceID(state, tab: liveTab)
+    running.withValue { $0.insert(liveSurface) }
+    let dormantTab = state.createTab(focusing: false)!
+    _ = firstSurfaceID(state, tab: dormantTab)
+    state.hibernateTab(dormantTab)
+
+    // A live leaf really is running, so that outranks the dormant tab.
+    #expect(state.requestCloseAllTabs())
+    #expect(state.pendingCloseConfirmation == .tabs([liveTab, dormantTab], reason: .runningProcess))
+
+    // The reason rides on the payload: the process reaching its prompt while the
+    // alert is up must not flip the copy to the dormant wording.
+    running.withValue { $0.removeAll() }
+    #expect(
+      state.pendingCloseConfirmation?.message == WorktreeTerminalState.CloseConfirmationReason.runningProcess.message)
+  }
+
+  @Test func wokenTabNoLongerForcesConfirmation() {
+    HibernationTestSupport.setConfirmCloseSurface(true)
+    let state = makeZmxState()
+    let tab = state.createTab(focusing: false)!
+    _ = firstSurfaceID(state, tab: tab)
+
+    state.hibernateTab(tab)
+    state.wakeTab(tab)
+
+    // Dormancy was the only reason this tab confirmed; awake and idle, it must not.
+    #expect(state.requestCloseTab(tab))
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(tab))
+  }
+
+  @Test func tabWithPendingCloseConfirmationDoesNotHibernate() {
+    HibernationTestSupport.setConfirmCloseSurface(true)
+    let state = makeZmxState(surfaceNeedsCloseConfirmation: { _ in true })
+    let tab = state.createTab(focusing: true)!
+    let surfaceID = firstSurfaceID(state, tab: tab)
+
+    #expect(state.requestCloseTab(tab))
+    #expect(state.pendingCloseConfirmation == .tabs([tab], reason: .runningProcess))
+
+    // Hibernating here would tear the alert's target down and drop the request.
+    #expect(!state.canHibernate(tabId: tab))
+    state.hibernateTab(tab)
+    #expect(state.dormantTabLayouts[tab] == nil)
+    #expect(state.pendingCloseConfirmation == .tabs([tab], reason: .runningProcess))
+
+    state.confirmPendingClose()
+    #expect(!state.hasTab(tab))
+    #expect(!state.hasSurfaceAnywhere(surfaceID))
+  }
+
+  @Test func closingDormantTabSkipsConfirmationWhenSettingIsOff() {
+    HibernationTestSupport.setConfirmCloseSurface(false)
+    let state = makeZmxState()
+    let tab = state.createTab(focusing: false)!
+    _ = firstSurfaceID(state, tab: tab)
+
+    state.hibernateTab(tab)
+    #expect(state.requestCloseTab(tab))
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(tab))
   }
 
   @Test func hibernateWakeRestoresSplitShapeAndZoom() {
