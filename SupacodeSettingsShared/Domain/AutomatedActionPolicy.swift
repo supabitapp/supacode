@@ -13,9 +13,9 @@ public enum AutomatedActionPolicy: String, Codable, Equatable, Sendable, CaseIte
   /// Human-readable label for the settings picker.
   public var displayName: String {
     switch self {
-    case .always: "Always"
-    case .cliOnly: "CLI Only"
-    case .deeplinksOnly: "Deeplinks Only"
+    case .always: "CLI & deeplinks"
+    case .cliOnly: "CLI only"
+    case .deeplinksOnly: "Deeplinks only"
     case .never: "Never"
     }
   }

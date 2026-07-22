@@ -46,6 +46,16 @@ struct DeveloperSettingsView: View {
         }
         .help("Silently re-applies the canonical hook layout to outdated agent integrations when Supacode activates.")
       }
+      Section("Advanced") {
+        Picker(selection: $store.automatedActionPolicy.sending(\.setAutomatedActionPolicy)) {
+          ForEach(AutomatedActionPolicy.allCases, id: \.self) { policy in
+            Text(policy.displayName).tag(policy)
+          }
+        } label: {
+          Text("Allow destructive actions")
+          Text("Lets CLI commands and deeplinks skip confirmation for commands and actions that cannot be undone.")
+        }
+      }
     }
     .formStyle(.grouped)
     .padding(.top, -20)
