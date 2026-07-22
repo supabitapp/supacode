@@ -352,22 +352,25 @@ struct SupacodeApp: App {
   ) {
     let repos = store.repositories.repositories
     let selectedWorktreeID = store.repositories.selectedWorktreeID
-    let pctSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
 
     switch resource {
     case "repos":
       let data = repos.map {
-        ["id": $0.id.rawValue.addingPercentEncoding(withAllowedCharacters: pctSet) ?? $0.id.rawValue]
+        ["id": WorktreeStatusQueryResponse.encoded(id: $0.id.rawValue)]
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: data)
     case "worktrees":
+      let repositories = store.repositories
       let data = repos.flatMap { repository in
         repository.worktrees.map { worktree in
-          WorktreeListQueryResponse.fields(
-            repositoryID: repository.id,
+          WorktreeStatusQueryResponse.listFields(
             worktreeID: worktree.id,
-            sidebar: store.repositories.sidebar,
-            selectedWorktreeID: selectedWorktreeID
+            status: repositories.sidebar.status(
+              of: worktree.id,
+              in: repository.id,
+              isMain: repositories.isMainWorktree(worktree)
+            ),
+            isFocused: worktree.id == selectedWorktreeID
           )
         }
       }
@@ -401,6 +404,8 @@ struct SupacodeApp: App {
         return
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: surfaces)
+    case "worktreeStatus":
+      handleWorktreeStatusQuery(params: params, repos: repos, clientFD: clientFD, store: store)
     case "worktreeAppearance":
       handleWorktreeAppearanceQuery(params: params, repos: repos, clientFD: clientFD, store: store)
     case "scripts":
@@ -409,6 +414,38 @@ struct SupacodeApp: App {
       AgentHookSocketServer.sendCommandResponse(
         clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
     }
+  }
+
+  private static func handleWorktreeStatusQuery(
+    params: [String: String],
+    repos: IdentifiedArrayOf<Repository>,
+    clientFD: Int32,
+    store: StoreOf<AppFeature>
+  ) {
+    guard let worktreeID = params["worktreeID"] else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Missing worktreeID for status.")
+      return
+    }
+    guard let (repository, worktree) = resolveWorktree(worktreeID, in: repos) else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+      return
+    }
+    let repositories = store.repositories
+    AgentHookSocketServer.sendQueryResponse(
+      clientFD: clientFD,
+      data: [
+        WorktreeStatusQueryResponse.statusFields(
+          status: repositories.sidebar.status(
+            of: worktree.id,
+            in: repository.id,
+            isMain: repositories.isMainWorktree(worktree)
+          ),
+          isFocused: worktree.id == repositories.selectedWorktreeID
+        )
+      ]
+    )
   }
 
   private static func handleWorktreeAppearanceQuery(

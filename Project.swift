@@ -93,6 +93,7 @@ let gitTestSources: [Path] = [
   "supacodeTests/RemoteSSHCommandTests.swift",
   "supacodeTests/ShellClient*.swift",
   "supacodeTests/WorktreeEnvironmentTests.swift",
+  "supacodeTests/WorktreeStatusCLITests.swift",
 ]
 
 // AppFeature and RepositoriesFeature suites, the two biggest TestStore

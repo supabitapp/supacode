@@ -32,7 +32,7 @@ extension WorktreeScriptCommand {
       )
       for item in items {
         let running = !(item["running"] ?? "").isEmpty
-        print(formatScriptListLine(item, running: running))
+        print(ListFormatting.scriptLine(item, running: running))
       }
     }
   }
