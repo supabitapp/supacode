@@ -20,6 +20,20 @@ struct GhosttySurfaceBridgeTests {
     await clock.advance(by: duration)
   }
 
+  /// Advances in bounded ticks until `condition` holds: a freshly spawned task
+  /// can register its sleep after a single advance under load, so one tick
+  /// isn't guaranteed to be enough. The bound only guards a regression from
+  /// spinning forever.
+  private func settleThenAdvance(
+    _ clock: TestClock<Duration>,
+    by duration: Duration,
+    until condition: () -> Bool
+  ) async {
+    for _ in 0..<50 where !condition() {
+      await settleThenAdvance(clock, by: duration)
+    }
+  }
+
   @Test
   func openUrlRequestPreservesHTTPSURL() {
     let request = ghosttyOpenURLRequest(
@@ -200,14 +214,10 @@ struct GhosttySurfaceBridgeTests {
     #expect(bridge.state.progressValue == 10)
     #expect(callbackCount == 1)
 
-    // One throttle tick flushes only the latest coalesced value. The flush
-    // task can register its sleep after the advance under load, so keep
-    // advancing until the trailing flush lands; the bound only guards a
-    // regression. Extra ticks can't over-fire the callback: a flush task that
-    // wakes with nothing pending exits without applying or rescheduling.
-    for _ in 0..<50 where bridge.state.progressValue != 50 {
-      await settleThenAdvance(clock, by: .milliseconds(50))
-    }
+    // One throttle tick flushes only the latest coalesced value. Extra ticks
+    // can't over-fire the callback: a flush task that wakes with nothing
+    // pending exits without applying or rescheduling.
+    await settleThenAdvance(clock, by: .milliseconds(50)) { bridge.state.progressValue == 50 }
     #expect(bridge.state.progressValue == 50)
     #expect(callbackCount == 2)
   }
@@ -226,13 +236,8 @@ struct GhosttySurfaceBridgeTests {
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_INDETERMINATE, value: nil)
     #expect(bridge.state.progressState == GHOSTTY_PROGRESS_STATE_INDETERMINATE)
 
-    // No further reports: the driver synthesizes a REMOVE once the window
-    // lapses. The stale watch can register its sleep after the first advance
-    // under load, so keep advancing until the REMOVE lands; the bound only
-    // guards a regression.
-    for _ in 0..<50 where bridge.state.progressState != nil {
-      await settleThenAdvance(clock, by: .milliseconds(200))
-    }
+    // No further reports: the driver synthesizes a REMOVE once the window lapses.
+    await settleThenAdvance(clock, by: .milliseconds(200)) { bridge.state.progressState == nil }
     #expect(bridge.state.progressState == nil)
     #expect(lastState == GHOSTTY_PROGRESS_STATE_REMOVE)
   }
@@ -264,25 +269,25 @@ struct GhosttySurfaceBridgeTests {
     let bridge = GhosttySurfaceBridge(
       clock: clock,
       progressThrottleInterval: .milliseconds(50),
-      progressIdleInterval: .milliseconds(50),
-      progressStaleTimeout: .milliseconds(100)
+      // Coarse idle with a wide window: teardown needs only 15 wakes, so the
+      // loop below converges even when a starved tick lands a single wake, and
+      // the re-arm ticks after it can't accrue a second stale REMOVE.
+      progressIdleInterval: .seconds(1),
+      progressStaleTimeout: .seconds(15)
     )
     bridge.onProgressReport = { _ in }
 
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_INDETERMINATE, value: nil)
     // No further reports: the stale window synthesizes a REMOVE and tears down
-    // the driver. The stale watch can register its sleep after the first
-    // advance under load, so keep advancing until the REMOVE lands.
-    for _ in 0..<50 where bridge.state.progressState != nil {
-      await settleThenAdvance(clock, by: .milliseconds(100))
-    }
+    // the driver.
+    await settleThenAdvance(clock, by: .seconds(1)) { bridge.state.progressState == nil }
     #expect(bridge.state.progressState == nil)
 
     // A report after the stale REMOVE must re-arm the driver, not freeze.
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_SET, value: 30)
     #expect(bridge.state.progressValue == 30)
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_SET, value: 60)
-    await settleThenAdvance(clock, by: .milliseconds(50))
+    await settleThenAdvance(clock, by: .milliseconds(50)) { bridge.state.progressValue == 60 }
     #expect(bridge.state.progressValue == 60)
   }
 
@@ -299,9 +304,13 @@ struct GhosttySurfaceBridgeTests {
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_SET, value: 10)
     #expect(bridge.state.progressValue == 10)
 
-    // Sit idle well past the throttle window, then a fresh value must paint on
-    // its leading edge instead of waiting for a slow idle tick.
-    await settleThenAdvance(clock, by: .seconds(1))
+    // Sit idle past the throttle window, then a fresh value must paint on its
+    // leading edge instead of waiting for a slow idle tick. Drain the in-flight
+    // flush first so the leading-edge gate is actually open; the short ticks
+    // keep the loop's whole budget below the stale window, so a stale REMOVE
+    // can never open the gate on a flush that failed to drain.
+    await settleThenAdvance(clock, by: .milliseconds(50)) { bridge.isProgressFlushIdleForTesting }
+    #expect(bridge.state.progressValue == 10)
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_SET, value: 80)
     #expect(bridge.state.progressValue == 80)
   }
@@ -372,9 +381,13 @@ struct GhosttySurfaceBridgeTests {
     bridge.ingestProgressReport(state: GHOSTTY_PROGRESS_STATE_SET, value: 90)
 
     // The cancelled task resuming must not clobber the new run's flush handle:
-    // each distinct value flushes exactly once (leading 50, leading 30 after
-    // the REMOVE, trailing 90), with no redundant re-apply.
-    await settleThenAdvance(clock, by: .milliseconds(50))
+    // before any tick only the leading edges (50, then 30 after the REMOVE)
+    // have applied; a clobber would leading-apply the trailing 90 early.
+    await Task.megaYield()
+    #expect(applied == [50, 30])
+
+    // Then each distinct value flushes exactly once, with no redundant re-apply.
+    await settleThenAdvance(clock, by: .milliseconds(50)) { bridge.state.progressValue == 90 }
     #expect(bridge.state.progressValue == 90)
     #expect(applied == [50, 30, 90])
   }
