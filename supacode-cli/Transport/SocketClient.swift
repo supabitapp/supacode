@@ -48,15 +48,7 @@ nonisolated enum SocketClient {
   /// Connects, sends data, returns the raw response bytes.
   /// `readTimeoutSeconds <= 0` skips the read timeout and blocks until EOF.
   static func sendAndReceiveData(to path: String, data: Data, readTimeoutSeconds: Int) throws -> Data {
-    try withConnection(to: path, sending: data) { socketFD in
-      if readTimeoutSeconds > 0 {
-        var timeout = timeval(tv_sec: readTimeoutSeconds, tv_usec: 0)
-        guard setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0
-        else {
-          throw Error.socketConfigFailed(errno: errno)
-        }
-      }
-
+    try withConnection(to: path, sending: data, readTimeoutSeconds: readTimeoutSeconds) { socketFD in
       var responseData = Data()
       var buffer = [UInt8](repeating: 0, count: 4096)
       while true {
@@ -85,6 +77,7 @@ nonisolated enum SocketClient {
   private static func withConnection<T>(
     to path: String,
     sending data: Data,
+    readTimeoutSeconds: Int,
     body: (Int32) throws -> T
   ) throws -> T {
     let socketFD = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -92,6 +85,17 @@ nonisolated enum SocketClient {
       throw Error.connectionFailed(path: path, errno: errno)
     }
     defer { close(socketFD) }
+
+    // Must precede the write-side shutdown below: once both directions are
+    // closed (a fast app replies and hangs up first) the kernel rejects every
+    // further setsockopt with EINVAL.
+    if readTimeoutSeconds > 0 {
+      var timeout = timeval(tv_sec: readTimeoutSeconds, tv_usec: 0)
+      guard setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0
+      else {
+        throw Error.socketConfigFailed(errno: errno)
+      }
+    }
 
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_UNIX)

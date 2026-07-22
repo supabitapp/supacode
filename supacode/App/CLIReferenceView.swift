@@ -60,7 +60,16 @@ struct CLIReferenceView: View {
   ]
 
   private static let worktreeRows: [CLIEntry] = [
-    .init(command: "supacode worktree list [-f]", description: "List worktree IDs. -f for focused only."),
+    .init(
+      command: "supacode worktree list [-f] [--status <status>] [--not-archived] [--with-status]",
+      description:
+        "List worktree IDs. -f for focused only; --status main|pinned|unpinned|archived "
+        + "or --not-archived filters; --with-status appends a status column."
+    ),
+    .init(
+      command: "supacode worktree status [-w <id>]",
+      description: "Read the worktree's sidebar status, archived flag, and focus."
+    ),
     .init(command: "supacode worktree focus [-w <id>]", description: "Focus a worktree."),
     .init(
       command: "supacode worktree run [-w <id>] [-c <uuid>]",
