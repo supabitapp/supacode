@@ -30,6 +30,8 @@ struct TerminalTabFeature {
     var isSplitZoomed: Bool = false
     /// Monotonic invalidation token for same-UUID surface view replacement.
     var surfaceGeneration = 0
+    /// True while the tab's surfaces are hibernated. Drives the tab-bar sleep accessory.
+    var isDormant: Bool = false
     /// Per-tab agent snapshot pushed by `AppFeature.agentPresenceFanOutEffect`.
     /// `isWorking` remains populated when badges are disabled, so shimmer is
     /// independent of badge visibility.
@@ -77,6 +79,9 @@ struct TerminalTabFeature {
         }
         if state.surfaceGeneration != projection.surfaceGeneration {
           state.surfaceGeneration = projection.surfaceGeneration
+        }
+        if state.isDormant != projection.isDormant {
+          state.isDormant = projection.isDormant
         }
         return .none
 

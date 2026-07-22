@@ -5,8 +5,6 @@ import SwiftUI
 struct TerminalTabLabelView: View {
   let tab: TerminalTabItem
   let isActive: Bool
-  let isHoveringTab: Bool
-  let isHoveringClose: Bool
   /// Per-tab scoped store. The badge subview observes `state.agents` here
   /// instead of iterating worktree-wide presence, so an agent storm on tab B
   /// doesn't invalidate tab A's label body.
@@ -18,6 +16,7 @@ struct TerminalTabLabelView: View {
       isLifecycleRepresentative: isLifecycleRepresentative
     )
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
+      TerminalTabDormantIndicator(tabStore: tabStore)
       TerminalTabAgentBadge(tabStore: tabStore)
       if let icon = tab.icon {
         Image(systemName: icon)
@@ -34,9 +33,6 @@ struct TerminalTabLabelView: View {
       Spacer(minLength: TerminalTabBarMetrics.contentTrailingSpacing)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    .contentShape(.rect)
-    .padding(.horizontal, TerminalTabBarMetrics.tabHorizontalPadding)
-    .padding(.trailing, TerminalTabBarMetrics.trailingSlotWidth + TerminalTabBarMetrics.contentSpacing)
   }
 }
 
@@ -55,6 +51,28 @@ private struct TerminalTabTitleLabel: View, Equatable {
       .lineLimit(1)
       .foregroundStyle(TerminalTabBarColors.activeText)
       .shimmer(isActive: isShimmering)
+  }
+}
+
+/// Leading sleep marker for a hibernated tab, read off the per-tab scoped store
+/// so wake clears it via the normal projection update without touching siblings.
+private struct TerminalTabDormantIndicator: View {
+  let tabStore: StoreOf<TerminalTabFeature>
+
+  var body: some View {
+    if tabStore.state.isDormant {
+      // Semibold compensates for the zzz glyph's thin strokes (see the sidebar twin).
+      Image(systemName: "zzz")
+        .imageScale(.small)
+        .fontWeight(.semibold)
+        .foregroundStyle(.secondary)
+        .frame(
+          width: TerminalTabBarMetrics.closeButtonSize,
+          height: TerminalTabBarMetrics.closeButtonSize
+        )
+        .accessibilityLabel("Hibernated tab")
+        .help("Hibernated to save resources. Select to reconnect.")
+    }
   }
 }
 

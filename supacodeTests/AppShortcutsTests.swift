@@ -130,6 +130,29 @@ struct AppShortcutsTests {
     }
   }
 
+  @Test func tabSelectionShortcutDisplaysFallBackToDefaults() {
+    expectNoDifference(
+      AppShortcuts.tabSelectionShortcutDisplays(overrides: [:]),
+      ["⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6", "⌘7", "⌘8", "⌘9"]
+    )
+  }
+
+  @Test func tabSelectionShortcutDisplaysFollowOverride() {
+    let displays = AppShortcuts.tabSelectionShortcutDisplays(
+      overrides: [.selectTab(1): AppShortcutOverride(keyCode: UInt16(kVK_ANSI_1), modifiers: .control)]
+    )
+
+    expectNoDifference(displays[0], "⌃1")
+    expectNoDifference(displays[1], "⌘2")
+  }
+
+  @Test func tabSelectionShortcutDisplaysAreNilWhenDisabled() {
+    let displays = AppShortcuts.tabSelectionShortcutDisplays(overrides: [.selectTab(3): .disabled])
+
+    #expect(displays[2] == nil)
+    expectNoDifference(displays[3], "⌘4")
+  }
+
   @Test func tabSelectionGhosttyKeybindArgumentsMatchExpected() {
     expectNoDifference(
       AppShortcuts.tabSelectionGhosttyKeybindArguments(from: [:]),
@@ -330,7 +353,7 @@ struct AppShortcutsTests {
 
   @Test func worktreeSelectionShortcutDisplayReturnsNilForOutOfRange() {
     #expect(AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: -1, overrides: [:]) == nil)
-    #expect(AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: 10, overrides: [:]) == nil)
+    #expect(AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: 9, overrides: [:]) == nil)
   }
 
   @Test func worktreeSelectionShortcutDisplayReturnsNilForDisabledSlot() {

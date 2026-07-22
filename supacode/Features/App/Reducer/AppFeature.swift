@@ -160,6 +160,7 @@ struct AppFeature {
     var lastKnownSystemNotificationsEnabled: Bool
     var lastKnownAgentPresenceBadgesEnabled: Bool
     var lastKnownAppVisibility: AppVisibility
+    var lastKnownTerminalHibernationEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
     var isDeeplinkReferenceRequested = false
     /// Cached projection of every primitive the menu-bar `WorktreeCommands`
@@ -199,6 +200,7 @@ struct AppFeature {
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
       lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       lastKnownAppVisibility = settings.appVisibility
+      lastKnownTerminalHibernationEnabled = settings.terminalHibernationEnabled
       // Seed from settings so `state.allScripts` doesn't start empty before the
       // first `settingsChanged` delegate fires. Globals aren't worktree-scoped,
       // so deselection (line below in `selectedWorktreeChanged(nil)`)
@@ -640,6 +642,9 @@ struct AppFeature {
         let agentBadgesFlipped =
           settings.agentPresenceBadgesEnabled != state.lastKnownAgentPresenceBadgesEnabled
         state.lastKnownAgentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
+        let hibernationFlipped =
+          settings.terminalHibernationEnabled != state.lastKnownTerminalHibernationEnabled
+        state.lastKnownTerminalHibernationEnabled = settings.terminalHibernationEnabled
         let visibilityChanged = settings.appVisibility != state.lastKnownAppVisibility
         let previousVisibility = state.lastKnownAppVisibility
         // Surface the main window when the Dock icon comes back, so leaving
@@ -740,6 +745,12 @@ struct AppFeature {
               badgesEnabled: settings.agentPresenceBadgesEnabled,
               state: state
             )
+          )
+        }
+        if hibernationFlipped {
+          let enabled = settings.terminalHibernationEnabled
+          effects.append(
+            .run { _ in await terminalClient.send(.setTerminalHibernationEnabled(enabled)) }
           )
         }
         return .merge(effects)

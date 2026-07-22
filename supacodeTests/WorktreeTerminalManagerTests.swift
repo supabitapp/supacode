@@ -1335,6 +1335,53 @@ struct WorktreeTerminalManagerTests {
     #expect(!state.tabManager.tabs.contains(where: { $0.id == tabId }))
   }
 
+  @Test(.dependencies) func requestCloseTabSkipsConfirmationOnceBlockingScriptCompletes() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    // Ghostty keeps reporting the frozen surface as needing confirmation.
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceNeedsCloseConfirmation: { _ in true }
+    )
+    guard let tabId = state.createTab(focusing: true) else {
+      Issue.record("Expected a tab")
+      return
+    }
+
+    #expect(state.requestCloseTab(tabId))
+    #expect(state.pendingCloseConfirmation == .tabs([tabId]))
+    state.cancelPendingClose()
+
+    state.tabManager.markBlockingScriptCompleted(tabId)
+    #expect(state.requestCloseTab(tabId))
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(tabId))
+  }
+
+  @Test(.dependencies) func surfaceCloseSkipsConfirmationOnceBlockingScriptCompletes() {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseSurface = true }
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      surfaceBindingActionPerformer: { _, _ in }
+    )
+    guard let tabId = state.createTab(focusing: true),
+      let surface = state.splitTree(for: tabId).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected a tab and surface")
+      return
+    }
+    state.tabManager.markBlockingScriptCompleted(tabId)
+
+    #expect(state.performBindingAction("close_surface", onSurfaceID: surface.id))
+    surface.bridge.closeSurface(processAlive: true)
+
+    #expect(state.pendingCloseConfirmation == nil)
+    #expect(!state.hasTab(tabId))
+  }
+
   @Test(.dependencies) func disabledSettingClosesRunningTabWithoutConfirmation() {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseSurface = false }

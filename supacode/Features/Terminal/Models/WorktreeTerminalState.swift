@@ -26,6 +26,8 @@ struct WorktreeTabProjection: Equatable, Sendable {
   let isSplitZoomed: Bool
   /// Per-tab repaint epoch, bumped on same-UUID surface replacement so the view rebuilds.
   let surfaceGeneration: Int
+  /// True while the tab's surfaces are hibernated (torn down, zmx sessions kept).
+  let isDormant: Bool
 
   init(
     tabID: TerminalTabID,
@@ -35,6 +37,7 @@ struct WorktreeTabProjection: Equatable, Sendable {
     hasTerminalActivity: Bool = false,
     isSplitZoomed: Bool = false,
     surfaceGeneration: Int = 0,
+    isDormant: Bool = false,
   ) {
     self.tabID = tabID
     self.surfaceIDs = surfaceIDs
@@ -43,6 +46,7 @@ struct WorktreeTabProjection: Equatable, Sendable {
     self.hasTerminalActivity = hasTerminalActivity
     self.isSplitZoomed = isSplitZoomed
     self.surfaceGeneration = surfaceGeneration
+    self.isDormant = isDormant
   }
 }
 
@@ -53,19 +57,59 @@ final class WorktreeTerminalState {
     let isVisible: Bool
     let isFocused: Bool
   }
-  enum PendingCloseConfirmation: Equatable {
-    case surface(UUID)
-    case tabs([TerminalTabID])
+  /// Why a close needs confirming. Nil where the close needs none.
+  enum CloseConfirmationReason: Equatable {
+    case runningProcess
+    /// A hibernated tab has no live surface to ask, so nothing was checked.
+    case dormant
+
+    var message: String {
+      switch self {
+      case .runningProcess: "One or more terminal processes are still running. Closing will terminate them."
+      case .dormant: "This terminal is asleep. Closing will end its background session."
+      }
+    }
+  }
+
+  struct PendingCloseConfirmation: Equatable {
+    enum Target: Equatable {
+      case surface(UUID)
+      case tabs([TerminalTabID])
+    }
+
+    let target: Target
+    /// Carried from the raise site: re-deriving it at render time would flip the
+    /// copy if a process reaches its prompt while the alert is up.
+    let reason: CloseConfirmationReason
 
     // Copy is identical for surface and tab closes, so it lives on the type.
     static let title = "Close Terminal?"
     static let actionTitle = "Close Terminal"
-    static let message = "One or more terminal processes are still running. Closing will terminate them."
+
+    var message: String { reason.message }
+
+    static func surface(_ surfaceID: UUID, reason: CloseConfirmationReason = .runningProcess) -> Self {
+      Self(target: .surface(surfaceID), reason: reason)
+    }
+
+    static func tabs(_ tabIDs: [TerminalTabID], reason: CloseConfirmationReason = .runningProcess) -> Self {
+      Self(target: .tabs(tabIDs), reason: reason)
+    }
   }
 
   private struct SurfaceLaunchMetadata {
     let usesZmx: Bool
     let context: ghostty_surface_context_e
+  }
+
+  /// Frozen state of a hibernated tab: layout snapshot (pwd + agent records
+  /// freeze at teardown), focused leaf, and zoom. In-memory only; the dormant
+  /// surface UUIDs still reach layouts.json via `captureLayoutSnapshot`.
+  struct DormantTabLayout {
+    let layout: TerminalLayoutSnapshot.LayoutNode
+    /// Indexes `layout.leafSurfaceIDs`; consumers must bounds-check.
+    let focusedLeafIndex: Int?
+    let zoomedSurfaceID: UUID?
   }
 
   let tabManager: TerminalTabManager
@@ -80,6 +124,41 @@ final class WorktreeTerminalState {
   // from user-initiated structural changes; per-surface churn must stay on
   // `surfaceStates` / `WorktreeTabProjection` to keep agent storms cold.
   private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
+  /// Hibernated tabs keyed by tab id. Invariant: keys ⊆ `tabManager` tab ids.
+  /// `@ObservationIgnored` since the tab bar reads dormancy via
+  /// `WorktreeTabProjection`, not this dict. The `didSet` keeps the session
+  /// watchers in lock-step with the dormant leaf set.
+  @ObservationIgnored private(set) var dormantTabLayouts: [TerminalTabID: DormantTabLayout] = [:] {
+    didSet { syncDormantSessionWatchers() }
+  }
+  /// Passive tail readers over dormant sessions' zmx sockets, one per dormant
+  /// leaf. While a tab is dark no surface parses its pty stream, so these recover
+  /// OSC-borne signals (notifications, presence, titles).
+  @ObservationIgnored private let dormantSessionWatchers = ZmxSessionWatcherRegistry()
+  /// True while this state's worktree is the selected one. Only the selected tab
+  /// of the selected worktree renders, so a tab is "hidden" (hibernation
+  /// candidate) unless it is that one tab. Fed by `setWorktreeSelected`.
+  @ObservationIgnored private var isWorktreeSelected = false
+  /// Beta opt-in gate, cached so the hot schedule / fire paths don't re-read the
+  /// shared file. Seeded at init, kept in sync by `applyHibernationEnabled`.
+  @ObservationIgnored private var isHibernationEnabled = false
+  /// Per-tab grace timers. A hidden tab hibernates once its timer fires; the
+  /// timer is a plain `Task` owned here so teardown drains the dict.
+  @ObservationIgnored private var hibernationTimers: [TerminalTabID: Task<Void, Never>] = [:]
+  /// Tabs whose ineligible-deferral was already logged, so a permanently
+  /// ineligible hidden tab re-firing every grace window doesn't spam the log.
+  /// Cleared when the tab becomes eligible, visible, hibernates, or closes.
+  @ObservationIgnored private var loggedIneligibleDeferralTabs: Set<TerminalTabID> = []
+  /// Drives the grace timers. Injected from the manager's clock so a TestClock
+  /// advances everything in tests.
+  @ObservationIgnored private let hibernationClock: any Clock<Duration>
+  /// Frozen agent records per surface, read at teardown to freeze presence badges
+  /// into the dormant layout. Wired by the manager to its `currentAgentsBySurface`
+  /// source.
+  @ObservationIgnored var hibernationAgentsBySurface: (() -> [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]])?
+  /// Logged once per state instance if the agent-records closure is unwired.
+  /// Production always wires it, so a nil means broken wiring, not "no agents".
+  @ObservationIgnored private var hasLoggedMissingAgentsClosure = false
   @ObservationIgnored private var surfaces: [UUID: GhosttySurfaceView] = [:]
   // `usesZmx` + `context` retained per surface so an unexpected zmx exit can recreate it on reattach.
   @ObservationIgnored private var surfaceLaunchMetadata: [UUID: SurfaceLaunchMetadata] = [:]
@@ -186,10 +265,11 @@ final class WorktreeTerminalState {
     unseenNotificationCount(forTabID: tabID) > 0
   }
 
-  /// Sum of the tab's surfaces' outstanding unread counters.
+  /// Sum of the tab's surfaces' outstanding unread counters. Dormant-aware:
+  /// `surfaceIDs(inTab:)` unions a hibernated tab's frozen leaves, whose
+  /// `surfaceStates` counters survive hibernation, so a dark tab keeps its count.
   func unseenNotificationCount(forTabID tabID: TerminalTabID) -> Int {
-    guard let tree = trees[tabID] else { return 0 }
-    return tree.leaves().reduce(0) { $0 + (surfaceStates[$1.id]?.unseenNotificationCount ?? 0) }
+    unseenNotificationCount(inSurfaces: surfaceIDs(inTab: tabID))
   }
 
   /// Returns the most recent unread notification in this worktree, or nil.
@@ -223,6 +303,13 @@ final class WorktreeTerminalState {
   var onSetupScriptConsumed: (() -> Void)?
   /// Forwarded to the manager so it can emit a `surfacesClosed` event into TCA.
   var onSurfacesClosed: ((Set<UUID>) -> Void)?
+  /// Fires when a tab hibernates. Manager cancels the debounced idle hooks for
+  /// those surfaces WITHOUT the presence drop `onSurfacesClosed` would trigger.
+  var onSurfacesHibernated: ((Set<UUID>) -> Void)?
+  /// Fires when the worktree's dormant composition changes (a tab hibernates or
+  /// wakes). Manager re-emits the row projection so the sidebar sleep marker
+  /// tracks `allTabsDormant`; nothing else re-emits on these transitions.
+  var onDormancyChanged: (() -> Void)?
   /// Forwarded to the manager's `dispatchHookEvent` so an OSC-sourced presence
   /// event joins the same funnel as the socket path (idle-debounce, badge).
   var onAgentHookEvent: ((AgentHookEvent) -> Void)?
@@ -243,6 +330,7 @@ final class WorktreeTerminalState {
     worktree: Worktree,
     runSetupScript: Bool = false,
     splitPreserveZoomOnNavigation: (() -> Bool)? = nil,
+    hibernationClock: (any Clock<Duration>)? = nil,
     surfaceNeedsCloseConfirmation: ((GhosttySurfaceView) -> Bool)? = nil,
     surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)? = nil
   ) {
@@ -252,16 +340,24 @@ final class WorktreeTerminalState {
     self.surfaceBindingActionPerformer = surfaceBindingActionPerformer ?? { $0.performBindingAction($1) }
     self.worktree = worktree
     self.pendingSetupScript = runSetupScript
+    self.hibernationClock = hibernationClock ?? ContinuousClock()
     self.tabManager = TerminalTabManager()
     _repositorySettings = SharedReader(
       wrappedValue: RepositorySettings.default,
       .repositorySettings(worktree.repositoryRootURL, host: worktree.host)
     )
+    // Route every selection write through the single visibility choke point.
+    tabManager.onSelectedTabChanged = { [weak self] in self?.refreshTabVisibility() }
+    // Route dormant-session OSC signals into the notification / presence handlers.
+    dormantSessionWatchers.onOSCSequence = { [weak self] surfaceID, sequence in
+      self?.handleDormantOSCSequence(surfaceID: surfaceID, sequence: sequence)
+    }
     // Pre-hide the tab bar before the first tab is created to
     // avoid a visible flash. updateShouldHideTabBar() handles
     // the steady state once tabs exist.
     @Shared(.settingsFile) var settingsFile
     self.shouldHideTabBar = settingsFile.global.hideSingleTabBar
+    self.isHibernationEnabled = settingsFile.global.terminalHibernationEnabled
   }
 
   /// Workspace terminal activity derived from live tab state, not the
@@ -291,6 +387,7 @@ final class WorktreeTerminalState {
       notifications: IdentifiedArray(uniqueElements: notifications),
       unseenSurfaces: unseenSurfacesProjection(),
       runningScripts: runningScriptsProjection(),
+      allTabsDormant: allTabsDormant,
     )
   }
 
@@ -641,15 +738,28 @@ final class WorktreeTerminalState {
     tabManager.tabs.contains(where: { $0.id == tabId })
   }
 
-  /// Surface IDs in a single tab (one entry per leaf of the tab's split tree).
-  /// Empty if the tab does not exist.
+  /// Surface IDs in a single tab, resolving through the live tree or, when the
+  /// tab is hibernated, its frozen dormant leaves so validation / focus / split
+  /// paths still address a dark pane. Empty if the tab does not exist.
   func surfaceIDs(inTab tabId: TerminalTabID) -> [UUID] {
-    trees[tabId]?.leaves().map(\.id) ?? []
+    if let tree = trees[tabId] {
+      return tree.leaves().map(\.id)
+    }
+    if let dormant = dormantTabLayouts[tabId] {
+      return dormant.layout.leafSurfaceIDs
+    }
+    return []
   }
 
-  /// All surface IDs across every tab in this worktree state.
+  /// All surface IDs across every tab in this worktree state, including the
+  /// frozen leaves of hibernated tabs so teardown / reaper / prune stay total.
   var allSurfaceIDs: [UUID] {
-    trees.values.flatMap { $0.leaves().map(\.id) }
+    trees.values.flatMap { $0.leaves().map(\.id) } + dormantLeafSurfaceIDs
+  }
+
+  /// Frozen leaves across every hibernated tab in this worktree state.
+  private var dormantLeafSurfaceIDs: [UUID] {
+    dormantTabLayouts.values.flatMap { $0.layout.leafSurfaceIDs }
   }
 
   /// Host of a remote worktree, nil for local. Every surface in this state
@@ -670,16 +780,29 @@ final class WorktreeTerminalState {
   }
 
   /// O(1) emptiness check that skips the split-tree walk in `allSurfaceIDs`.
-  var hasAnySurface: Bool { !surfaces.isEmpty }
+  /// Counts hibernated tabs so a fully-dormant app still shows the
+  /// quit-and-terminate confirmation and tears their sessions down.
+  var hasAnySurface: Bool { !surfaces.isEmpty || !dormantTabLayouts.isEmpty }
 
-  func hasSurface(_ surfaceID: UUID, in tabId: TerminalTabID) -> Bool {
-    guard let tree = trees[tabId] else { return false }
-    return tree.find(id: surfaceID) != nil
+  /// True when the worktree has at least one tab and every tab is hibernated.
+  /// Drives the sidebar row's sleep marker; a single live tab keeps it false.
+  var allTabsDormant: Bool {
+    guard !tabManager.tabs.isEmpty else { return false }
+    return tabManager.tabs.allSatisfy { dormantTabLayouts[$0.id] != nil }
   }
 
-  /// Checks whether a surface UUID exists anywhere in the worktree (across all tabs).
+  /// Whether a surface lives in this tab, live or frozen in its dormant leaves,
+  /// so validation accepts a dormant pane before the wake-first command runs.
+  func hasSurface(_ surfaceID: UUID, in tabId: TerminalTabID) -> Bool {
+    if trees[tabId]?.find(id: surfaceID) != nil { return true }
+    return dormantTabLayouts[tabId]?.layout.leafSurfaceIDs.contains(surfaceID) == true
+  }
+
+  /// Checks whether a surface UUID exists anywhere in the worktree (across all
+  /// tabs), including the frozen leaves of hibernated tabs so validation accepts
+  /// a dormant pane and duplicate-id checks catch it.
   func hasSurfaceAnywhere(_ surfaceID: UUID) -> Bool {
-    surfaces[surfaceID] != nil
+    isKnownSurface(surfaceID)
   }
 
   func selectTab(_ tabId: TerminalTabID) {
@@ -766,13 +889,19 @@ final class WorktreeTerminalState {
 
   @discardableResult
   func focusSurface(id: UUID) -> Bool {
-    guard let tabId = tabID(containing: id),
-      let surface = surfaces[id]
-    else {
+    guard let tabId = tabID(containing: id) else {
       terminalStateLogger.warning("focusSurface: surface \(id) not found in worktree \(worktree.id).")
       return false
     }
+    // Wake first: a dormant leaf has no entry in `surfaces` to focus.
+    wakeTab(tabId)
     tabManager.selectTab(tabId)
+    guard let surface = surfaces[id] else {
+      // A partial wake reaped this leaf, so land on whatever the tab rebuilt.
+      terminalStateLogger.error("focusSurface: surface \(id) missing after waking tab \(tabId.rawValue).")
+      focusSurface(in: tabId)
+      return false
+    }
     focusSurface(surface, in: tabId)
     return true
   }
@@ -889,7 +1018,7 @@ final class WorktreeTerminalState {
   // payload, never a published value a concurrent dismissal may have cleared.
   func confirmPendingClose(_ pending: PendingCloseConfirmation) {
     pendingCloseConfirmation = nil
-    switch pending {
+    switch pending.target {
     case .surface(let surfaceID):
       guard let surface = surfaces[surfaceID] else {
         terminalStateLogger.debug("confirmPendingClose: surface \(surfaceID) already gone.")
@@ -911,7 +1040,7 @@ final class WorktreeTerminalState {
   // Takes the target explicitly so a dismissal that clears the published value
   // first can't strip the surface's explicit-close flag out from under cancel.
   func cancelPendingClose(_ pending: PendingCloseConfirmation) {
-    if case .surface(let surfaceID) = pending {
+    if case .surface(let surfaceID) = pending.target {
       pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     }
     pendingCloseConfirmation = nil
@@ -931,31 +1060,41 @@ final class WorktreeTerminalState {
     guard pendingCloseConfirmation == nil else { return true }
 
     @Shared(.settingsFile) var settingsFile
-    let needsConfirmation =
-      settingsFile.global.confirmCloseSurface
-      && existingTabIDs.contains(where: tabNeedsCloseConfirmation)
-    if needsConfirmation {
-      pendingCloseConfirmation = .tabs(existingTabIDs)
-    } else {
+    let reasons = existingTabIDs.compactMap(closeConfirmationReason)
+    guard settingsFile.global.confirmCloseSurface, !reasons.isEmpty else {
       for tabId in existingTabIDs {
         closeTab(tabId)
       }
+      return true
     }
+    // A live process outranks dormancy, so the copy names what was actually found.
+    pendingCloseConfirmation = .tabs(
+      existingTabIDs, reason: reasons.contains(.runningProcess) ? .runningProcess : .dormant)
     return true
   }
 
-  private func tabNeedsCloseConfirmation(_ tabId: TerminalTabID) -> Bool {
-    guard let tree = trees[tabId] else { return false }
-    return tree.leaves().contains(where: surfaceNeedsCloseConfirmation)
+  /// Nil when the tab closes without asking.
+  private func closeConfirmationReason(_ tabId: TerminalTabID) -> CloseConfirmationReason? {
+    guard !isBlockingScriptCompleted(tabId) else { return nil }
+    // A woken surface reports "not at a prompt" until the zmx replay lands, so a
+    // dormant tab always confirms.
+    guard dormantTabLayouts[tabId] == nil else { return .dormant }
+    guard let tree = trees[tabId], tree.leaves().contains(where: surfaceNeedsCloseConfirmation) else {
+      return nil
+    }
+    return .runningProcess
   }
 
   private func removeFromPendingClose(tabId: TerminalTabID) {
-    guard case .tabs(let tabIDs)? = pendingCloseConfirmation else { return }
+    guard case .tabs(let tabIDs) = pendingCloseConfirmation?.target,
+      let reason = pendingCloseConfirmation?.reason
+    else { return }
     let remaining = tabIDs.filter { $0 != tabId }
-    pendingCloseConfirmation = remaining.isEmpty ? nil : .tabs(remaining)
+    pendingCloseConfirmation = remaining.isEmpty ? nil : .tabs(remaining, reason: reason)
   }
 
   func closeTab(_ tabId: TerminalTabID) {
+    cancelHibernationTimer(for: tabId)
     removeFromPendingClose(tabId: tabId)
     let closedBlockingKind = blockingScripts.removeValue(forKey: tabId)
     cleanupBlockingScriptLaunchDirectory(for: tabId)
@@ -964,6 +1103,7 @@ final class WorktreeTerminalState {
       lastBlockingScriptTabByKind.removeValue(forKey: kind)
     }
     removeTree(for: tabId)
+    removeDormantTab(tabId)
     tabManager.closeTab(tabId)
     updateShouldHideTabBar()
     if let selected = tabManager.selectedTabId {
@@ -1005,6 +1145,31 @@ final class WorktreeTerminalState {
     // resurrect it: the replacement surface would be invisible, unclosable, and
     // hold its local and host zmx sessions alive.
     guard hasTab(tabId) else { return SplitTree() }
+    // Wake a hibernated tab before minting a fresh surface: rebuild from the
+    // frozen layout with the ORIGINAL UUIDs so `zmx attach` reattaches.
+    if let dormant = dormantTabLayouts.removeValue(forKey: tabId) {
+      // `removeValue` fires the didSet, stopping the woken leaves' watchers; a
+      // live surface now parses their streams.
+      let expectedLeafIDs = dormant.layout.leafSurfaceIDs
+      let tree = wakeDormantTab(tabId, dormant: dormant)
+      // A partial rebuild (an `inserting` throw in `createRestorationSplit`) can
+      // strand frozen leaves that end up neither live nor dormant; kill their
+      // orphaned zmx sessions so they don't linger until the next-launch reap.
+      let orphanedLeafIDs = Self.orphanedWakeLeafIDs(
+        expected: expectedLeafIDs, rebuilt: Set(tree.leaves().map(\.id)))
+      if !orphanedLeafIDs.isEmpty {
+        let count = orphanedLeafIDs.count
+        terminalStateLogger.error(
+          "Partial wake for tab \(tabId.rawValue): \(count) leaf/leaves failed to rebuild; requesting session kill."
+        )
+        killZmxSessions(forSurfaceIDs: orphanedLeafIDs, includeRemote: true)
+      }
+      // A wake from a non-selection mutation leaves the tab hidden; re-arm here
+      // since the selection choke point never fired.
+      refreshTabVisibility()
+      onDormancyChanged?()
+      return tree
+    }
     let surface = createSurface(
       tabId: tabId,
       command: command,
@@ -1017,6 +1182,9 @@ final class WorktreeTerminalState {
     let tree = SplitTree(view: surface)
     setTree(tree, for: tabId)
     setFocusedSurface(surface.id, for: tabId)
+    // A tab created while hidden (e.g. background worktree) has its tree only
+    // now, after the selection choke point already ran; schedule its timer.
+    refreshTabVisibility()
     return tree
   }
 
@@ -1165,6 +1333,8 @@ final class WorktreeTerminalState {
   }
 
   func closeAllSurfaces() {
+    // Drain the grace timers first so nothing fires into a torn-down state.
+    cancelAllHibernationTimers()
     cancelPendingClose()
     let closingSurfaces = Array(surfaces.values)
     let closingSurfaceIDs = closingSurfaces.map(\.id)
@@ -1175,10 +1345,22 @@ final class WorktreeTerminalState {
       discardSurfaceBookkeeping(for: surfaceID)
     }
     cleanupBlockingScriptLaunchDirectories()
+    // Drain hibernated tabs: the presence drop must include their frozen leaves
+    // so prune / quit clear the badges. Callers already kill these sessions off
+    // the dormant-inclusive `allSurfaceIDs` snapshot, so no kill happens here.
+    let dormantSurfaceIDs = dormantLeafSurfaceIDs
+    // Drop the surface states hibernation preserved for their unseen counters so
+    // a full teardown doesn't strand the worktree dot / total.
+    for surfaceID in dormantSurfaceIDs {
+      discardDormantLeafSurfaceState(for: surfaceID)
+    }
+    // `removeAll` fires the `dormantTabLayouts` didSet, reconciling the watchers
+    // to an empty set (stopping every one).
+    dormantTabLayouts.removeAll()
     trees.removeAll()
     surfaceGenerationByTab.removeAll()
     focusedSurfaceIdByTab.removeAll()
-    onSurfacesClosed?(Set(closingSurfaceIDs))
+    onSurfacesClosed?(Set(closingSurfaceIDs).union(dormantSurfaceIDs))
     let pendingKinds = Set(blockingScripts.values)
     blockingScripts.removeAll()
     lastBlockingScriptTabByKind.removeAll()
@@ -1300,24 +1482,32 @@ final class WorktreeTerminalState {
   /// into the per-surface dict before invoking this so agents persist
   /// atomically with their owning surface and vanish on prune.
   func captureLayoutSnapshot(
-    agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]] = [:]
+    agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]]? = nil
   ) -> TerminalLayoutSnapshot? {
     guard !tabManager.tabs.isEmpty else { return nil }
     var tabSnapshots: [TerminalLayoutSnapshot.TabSnapshot] = []
     for tab in tabManager.tabs {
       // Blocking-script tabs die with the app; persisting them would resurrect a dead session.
       if tab.isBlockingScript { continue }
-      guard let tree = trees[tab.id], let root = tree.root else {
+      let layout: TerminalLayoutSnapshot.LayoutNode
+      let focusedLeafIndex: Int
+      if let tree = trees[tab.id], let root = tree.root {
+        layout = captureLayoutNode(root, agentsBySurface: agentsBySurface ?? [:])
+        let leaves = root.leaves()
+        let focusedId = focusedSurfaceIdByTab[tab.id]
+        focusedLeafIndex =
+          focusedId.flatMap { id in
+            leaves.firstIndex(where: { $0.id == id })
+          } ?? 0
+      } else if let dormant = dormantTabLayouts[tab.id] {
+        // A hibernated tab has no tree; refresh its frozen leaf agents from the
+        // live map so a busy->idle drift during dormancy still reaches disk.
+        layout = refreshDormantAgents(dormant.layout, agentsBySurface: agentsBySurface)
+        focusedLeafIndex = dormant.focusedLeafIndex ?? 0
+      } else {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
       }
-      let layout = captureLayoutNode(root, agentsBySurface: agentsBySurface)
-      let leaves = root.leaves()
-      let focusedId = focusedSurfaceIdByTab[tab.id]
-      let focusedLeafIndex =
-        focusedId.flatMap { id in
-          leaves.firstIndex(where: { $0.id == id })
-        } ?? 0
       tabSnapshots.append(
         TerminalLayoutSnapshot.TabSnapshot(
           id: tab.id.rawValue,
@@ -1385,6 +1575,37 @@ final class WorktreeTerminalState {
     }
   }
 
+  /// Rebuild a dormant layout's leaf agent records against `agentsBySurface`.
+  /// A nil map (no source wired) keeps frozen records unchanged. A non-nil map is
+  /// authoritative: a present leaf takes the refreshed records, an absent leaf is
+  /// cleared (its agent ended while dormant).
+  private func refreshDormantAgents(
+    _ node: TerminalLayoutSnapshot.LayoutNode,
+    agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]]?
+  ) -> TerminalLayoutSnapshot.LayoutNode {
+    guard let agentsBySurface else { return node }
+    switch node {
+    case .leaf(let surface):
+      guard let id = surface.id else { return node }
+      return .leaf(
+        TerminalLayoutSnapshot.SurfaceSnapshot(
+          id: id,
+          workingDirectory: surface.workingDirectory,
+          agents: agentsBySurface[id] ?? []
+        )
+      )
+    case .split(let split):
+      return .split(
+        TerminalLayoutSnapshot.SplitSnapshot(
+          direction: split.direction,
+          ratio: split.ratio,
+          left: refreshDormantAgents(split.left, agentsBySurface: agentsBySurface),
+          right: refreshDormantAgents(split.right, agentsBySurface: agentsBySurface)
+        )
+      )
+    }
+  }
+
   private func restoreFromSnapshot(_ snapshot: TerminalLayoutSnapshot, focusing: Bool) {
     guard !snapshot.tabs.isEmpty else {
       layoutLogger.warning("Attempted to restore empty layout snapshot, skipping restoration.")
@@ -1395,8 +1616,6 @@ final class WorktreeTerminalState {
     pendingSetupScript = false
 
     for (index, tabSnapshot) in snapshot.tabs.enumerated() {
-      let firstLeafPwd = tabSnapshot.layout.firstLeaf.workingDirectory
-      let workingDir = firstLeafPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
       let context: ghostty_surface_context_e =
         index == 0 ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB
       let tabId = tabManager.createTab(
@@ -1409,36 +1628,12 @@ final class WorktreeTerminalState {
       if let customTitle = tabSnapshot.customTitle {
         tabManager.setCustomTitle(tabId, title: customTitle)
       }
-      let surface = createSurface(
+      restoreTabLayout(
         tabId: tabId,
-        initialInput: nil,
-        workingDirectoryOverride: workingDir,
-        inheritingFromSurfaceId: nil,
-        context: context,
-        surfaceID: tabSnapshot.layout.firstLeaf.id,
+        layout: tabSnapshot.layout,
+        focusedLeafIndex: tabSnapshot.focusedLeafIndex,
+        context: context
       )
-      let tree = SplitTree(view: surface)
-      setTree(tree, for: tabId)
-      setFocusedSurface(surface.id, for: tabId)
-
-      // Recursively restore splits.
-      restoreLayoutNode(tabSnapshot.layout, anchor: surface, tabId: tabId)
-
-      // Log if partial restoration produced fewer panes than expected.
-      let leaves = trees[tabId]?.root?.leaves() ?? []
-      let expectedLeaves = tabSnapshot.layout.leafCount
-      if leaves.count != expectedLeaves {
-        layoutLogger.warning(
-          "Partial restore for tab '\(tabSnapshot.title)': expected \(expectedLeaves) panes, got \(leaves.count)"
-        )
-      }
-
-      // Focus the correct leaf.
-      let focusedIndex = max(0, min(tabSnapshot.focusedLeafIndex, leaves.count - 1))
-      if focusedIndex < leaves.count {
-        setFocusedSurface(leaves[focusedIndex].id, for: tabId)
-      }
-
       onTabCreated?()
     }
 
@@ -1468,6 +1663,45 @@ final class WorktreeTerminalState {
     // `WorktreeSurfaceState` unread counters from the surviving log or the
     // per-surface dot stays dark after restore.
     rebuildUnseenCounters()
+  }
+
+  /// Rebuilds a tab's split tree from a snapshot layout using the ORIGINAL
+  /// surface UUIDs (so `zmx attach` reattaches), restores the split structure,
+  /// and clamps focus to `focusedLeafIndex`.
+  private func restoreTabLayout(
+    tabId: TerminalTabID,
+    layout: TerminalLayoutSnapshot.LayoutNode,
+    focusedLeafIndex: Int,
+    context: ghostty_surface_context_e
+  ) {
+    let firstLeafPwd = layout.firstLeaf.workingDirectory
+    let workingDir = firstLeafPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
+    let surface = createSurface(
+      tabId: tabId,
+      initialInput: nil,
+      workingDirectoryOverride: workingDir,
+      inheritingFromSurfaceId: nil,
+      context: context,
+      surfaceID: layout.firstLeaf.id,
+    )
+    let tree = SplitTree(view: surface)
+    setTree(tree, for: tabId)
+    setFocusedSurface(surface.id, for: tabId)
+
+    restoreLayoutNode(layout, anchor: surface, tabId: tabId)
+
+    let leaves = trees[tabId]?.root?.leaves() ?? []
+    let expectedLeaves = layout.leafCount
+    if leaves.count != expectedLeaves {
+      layoutLogger.warning(
+        "Partial restore for tab \(tabId.rawValue): expected \(expectedLeaves) panes, got \(leaves.count)"
+      )
+    }
+
+    let focusedIndex = max(0, min(focusedLeafIndex, leaves.count - 1))
+    if focusedIndex < leaves.count {
+      setFocusedSurface(leaves[focusedIndex].id, for: tabId)
+    }
   }
 
   private func restoreLayoutNode(
@@ -1761,7 +1995,11 @@ final class WorktreeTerminalState {
     wireSurfaceCallbacks(view: view, tabId: tabId)
     surfaces[view.id] = view
     surfaceLaunchMetadata[view.id] = SurfaceLaunchMetadata(usesZmx: launch.usesZmx, context: context)
-    surfaceStates[view.id] = WorktreeSurfaceState()
+    // Preserve an existing surface state (a woken dormant leaf re-adopts its
+    // unseen counter under the original UUID); mint fresh only for a new surface.
+    if surfaceStates[view.id] == nil {
+      surfaceStates[view.id] = WorktreeSurfaceState()
+    }
     return view
   }
 
@@ -1881,6 +2119,17 @@ final class WorktreeTerminalState {
     surfaces[view.id] === view
   }
 
+  // A surface this worktree owns: a live view or a dormant leaf whose session the
+  // watcher tails. OSC ingest guards accept both so a dark tab's recovered signals
+  // land, while a truly unknown id (e.g. a just-closed surface) is still dropped.
+  private func isKnownSurface(_ surfaceID: UUID) -> Bool {
+    surfaces[surfaceID] != nil || isDormantSurface(surfaceID)
+  }
+
+  private func isDormantSurface(_ surfaceID: UUID) -> Bool {
+    dormantTabLayouts.values.contains { $0.layout.leafSurfaceIDs.contains(surfaceID) }
+  }
+
   // The bridge state of the focused surface in the selected tab, if any. Used to
   // resolve the window tint from the focused surface's OSC 11 background.
   func focusedSurfaceState() -> GhosttySurfaceState? {
@@ -1911,7 +2160,7 @@ final class WorktreeTerminalState {
       id: id,
       metadata: metadata,
       surfaceID: surfaceID,
-      surfaceExists: surfaces[surfaceID] != nil
+      surfaceExists: isKnownSurface(surfaceID)
     ) {
     case .success(let event):
       onAgentHookEvent?(event)
@@ -1951,13 +2200,36 @@ final class WorktreeTerminalState {
         agent: signal.agent, event: signal.eventRawValue, surfaceID: surfaceID, pid: signal.pid))
   }
 
+  /// Splits a raw OSC 3008 payload (`<action>=<id>[;<metadata>]`) into context id
+  /// and raw metadata, mirroring libghostty's context-signal parser for the
+  /// dormant channel that bypasses it. Returns nil without a `start=` / `end=`
+  /// prefix or a spec-valid id (1-64 printable ASCII bytes).
+  nonisolated static func contextSignalFields(payload: String) -> (id: String, metadata: String)? {
+    let rest: Substring
+    if payload.hasPrefix("start=") {
+      rest = payload.dropFirst("start=".count)
+    } else if payload.hasPrefix("end=") {
+      rest = payload.dropFirst("end=".count)
+    } else {
+      return nil
+    }
+    guard !rest.isEmpty else { return nil }
+    let idEnd = rest.firstIndex(of: ";") ?? rest.endIndex
+    let id = rest[..<idEnd]
+    guard (1...64).contains(id.count),
+      id.unicodeScalars.allSatisfy({ (0x20...0x7e).contains($0.value) })
+    else { return nil }
+    let metadata = idEnd < rest.endIndex ? rest[rest.index(after: idEnd)...] : ""
+    return (String(id), String(metadata))
+  }
+
   /// Parse an OSC 3008 notify signal for the receiving surface, then sanitize and
   /// display it. Gated by the rich-notifications setting.
   private func handleNotifySignal(surfaceID: UUID, id: String, metadata: String) {
     switch Self.notification(
       id: id,
       metadata: metadata,
-      surfaceExists: surfaces[surfaceID] != nil
+      surfaceExists: isKnownSurface(surfaceID)
     ) {
     case .success(let resolved):
       // Gate AFTER parse so the setting can't be probed via drop-rate signals.
@@ -2231,7 +2503,7 @@ final class WorktreeTerminalState {
   /// time so the agent's own OSC 9 for the same event is deduped, and cancels any
   /// OSC 9 currently held for this surface (the expanded one supersedes it).
   func appendHookNotification(title: String, body: String, surfaceID: UUID) {
-    guard surfaces[surfaceID] != nil else {
+    guard isKnownSurface(surfaceID) else {
       terminalStateLogger.debug("Dropped hook notification for unknown surface \(surfaceID) in worktree \(worktree.id)")
       return
     }
@@ -2271,7 +2543,7 @@ final class WorktreeTerminalState {
       }
       guard !Task.isCancelled, let self else { return }
       self.pendingAgentOSCNotifications.removeValue(forKey: surfaceID)
-      guard self.surfaces[surfaceID] != nil else { return }
+      guard self.isKnownSurface(surfaceID) else { return }
       self.appendNotification(title: title, body: body, surfaceID: surfaceID)
     }
   }
@@ -2345,10 +2617,11 @@ final class WorktreeTerminalState {
   /// killed here; callers route the kill through `killZmxSessions(forSurfaceIDs:)`
   /// so a single multi-pane close emits one `count=N` analytics event + one
   /// `withTaskGroup` instead of N events and N detached Tasks.
-  /// Also cancels any held agent OSC 9 and forgets the last-custom-notification
-  /// instant so a future surface ID can't reuse stale dedupe state.
-  private func discardSurfaceBookkeeping(for surfaceID: UUID) {
-    if case .surface(let pendingSurfaceID)? = pendingCloseConfirmation,
+  /// Also drops any close confirmation aimed at this surface, cancels its held
+  /// agent OSC 9, and forgets the last-custom-notification instant so a future
+  /// surface ID can't reuse stale dedupe state.
+  private func discardSurfaceBookkeeping(for surfaceID: UUID, preserveSurfaceState: Bool = false) {
+    if case .surface(let pendingSurfaceID) = pendingCloseConfirmation?.target,
       pendingSurfaceID == surfaceID
     {
       pendingCloseConfirmation = nil
@@ -2359,6 +2632,9 @@ final class WorktreeTerminalState {
     surfaceLaunchMetadata.removeValue(forKey: surfaceID)
     pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     bypassCloseConfirmationSurfaceIDs.remove(surfaceID)
+    // Hibernation keeps the surface state so its unseen counter survives the dark
+    // period; the reused UUID re-adopts it on wake.
+    guard !preserveSurfaceState else { return }
     surfaceStates.removeValue(forKey: surfaceID)
   }
 
@@ -2377,6 +2653,21 @@ final class WorktreeTerminalState {
       notifications[index].isRead = true
     }
     onNotificationIndicatorChanged?()
+  }
+
+  /// Permanently drops a dormant leaf's preserved surface state (hibernation kept
+  /// it alive for its unseen counter) and marks its lingering unread read, so
+  /// closing a hibernated tab strands neither the worktree dot / total nor an
+  /// inspector row. Returns whether it cleared an outstanding count.
+  @discardableResult
+  private func discardDormantLeafSurfaceState(for surfaceID: UUID) -> Bool {
+    let hadUnseen = (surfaceStates[surfaceID]?.unseenNotificationCount ?? 0) > 0
+    surfaceStates.removeValue(forKey: surfaceID)
+    guard hadUnseen else { return false }
+    for index in notifications.indices where notifications[index].surfaceID == surfaceID {
+      notifications[index].isRead = true
+    }
+    return true
   }
 
   /// Tears down persistent zmx sessions for surfaces the user just closed.
@@ -2434,6 +2725,9 @@ final class WorktreeTerminalState {
     for (tabId, tree) in trees where tree.find(id: surfaceID) != nil {
       return tabId
     }
+    for (tabId, dormant) in dormantTabLayouts where dormant.layout.leafSurfaceIDs.contains(surfaceID) {
+      return tabId
+    }
     return nil
   }
 
@@ -2459,6 +2753,15 @@ final class WorktreeTerminalState {
   /// True for a blocking-script tab whose script has already finished.
   func isBlockingScriptCompleted(_ tabId: TerminalTabID) -> Bool {
     tabManager.tabs.first(where: { $0.id == tabId })?.isBlockingScriptCompleted == true
+  }
+
+  /// Ghostty keeps reporting a finished blocking-script surface as needing
+  /// confirmation (it is read-only, and the runner parks on `tail` so the
+  /// cursor never returns to a prompt), but the script is done and the surface
+  /// is frozen, so there is nothing live left to lose.
+  private func isFrozenBlockingScriptSurface(_ surfaceID: UUID) -> Bool {
+    guard let tabId = tabID(containing: surfaceID) else { return false }
+    return isBlockingScriptCompleted(tabId)
   }
 
   private func updateRunningState(for tabId: TerminalTabID) {
@@ -2570,6 +2873,15 @@ final class WorktreeTerminalState {
   /// not fire the callback.
   private func emitTabProjection(for tabId: TerminalTabID) {
     guard let tree = trees[tabId] else {
+      // A hibernated tab is still in `tabManager`; project from its frozen
+      // leaves rather than signalling removal.
+      if let dormant = dormantTabLayouts[tabId] {
+        emitDormantTabProjection(for: tabId, dormant: dormant)
+        return
+      }
+      // Removal fires only for a tab genuinely gone from `tabManager`; a tab
+      // still present with no tree is mid-creation and settles once the tree lands.
+      guard !hasTab(tabId) else { return }
       surfaceGenerationByTab.removeValue(forKey: tabId)
       if lastTabProjections.removeValue(forKey: tabId) != nil {
         onTabRemoved?(tabId)
@@ -2577,7 +2889,7 @@ final class WorktreeTerminalState {
       return
     }
     let surfaceIDs = tree.leaves().map(\.id)
-    let unseenCount = surfaceIDs.reduce(0) { $0 + (surfaceStates[$1]?.unseenNotificationCount ?? 0) }
+    let unseenCount = unseenNotificationCount(inSurfaces: surfaceIDs)
     let isActivityBusy = isTabActivityBusy(tabId)
     tabManager.updateDirty(tabId, isDirty: isActivityBusy)
     let projection = WorktreeTabProjection(
@@ -2589,15 +2901,48 @@ final class WorktreeTerminalState {
       isSplitZoomed: tree.zoomed != nil,
       surfaceGeneration: surfaceGenerationByTab[tabId, default: 0],
     )
-    guard lastTabProjections[tabId] != projection else { return }
-    lastTabProjections[tabId] = projection
+    commitTabProjection(projection)
+  }
+
+  /// Projection for a hibernated tab: surfaces and unseen count come from the
+  /// frozen leaves, zoom and focus from the stashed indices, and `isDormant` is
+  /// set so the tab bar can render the dormancy accessory.
+  private func emitDormantTabProjection(for tabId: TerminalTabID, dormant: DormantTabLayout) {
+    let surfaceIDs = dormant.layout.leafSurfaceIDs
+    let activeSurfaceID = dormant.focusedLeafIndex.flatMap { index in
+      surfaceIDs.indices.contains(index) ? surfaceIDs[index] : nil
+    }
+    let projection = WorktreeTabProjection(
+      tabID: tabId,
+      surfaceIDs: surfaceIDs,
+      activeSurfaceID: activeSurfaceID,
+      unseenNotificationCount: unseenNotificationCount(inSurfaces: surfaceIDs),
+      isSplitZoomed: dormant.zoomedSurfaceID != nil,
+      surfaceGeneration: surfaceGenerationByTab[tabId, default: 0],
+      isDormant: true,
+    )
+    commitTabProjection(projection)
+  }
+
+  /// Sum of the surfaces' outstanding unread counters, for the projection badge.
+  /// Counter-based, not a log scan: the capped notification log would undercount.
+  /// Dormant-safe while hibernated leaves keep their `surfaceStates` entry.
+  private func unseenNotificationCount(inSurfaces surfaceIDs: [UUID]) -> Int {
+    surfaceIDs.reduce(0) { $0 + (surfaceStates[$1]?.unseenNotificationCount ?? 0) }
+  }
+
+  /// Stores the projection and fires `onTabProjectionChanged` only when it drifts
+  /// from the cached value, keeping a no-op rebuild idempotent.
+  private func commitTabProjection(_ projection: WorktreeTabProjection) {
+    guard lastTabProjections[projection.tabID] != projection else { return }
+    lastTabProjections[projection.tabID] = projection
     onTabProjectionChanged?(projection)
   }
 
   /// Recompute every tab's projection. Used after notification-list mutations
   /// that may span multiple tabs (mark-all-read, dismiss-all).
   private func emitAllTabProjections() {
-    for tabId in trees.keys {
+    for tabId in Set(trees.keys).union(dormantTabLayouts.keys) {
       emitTabProjection(for: tabId)
     }
   }
@@ -2686,7 +3031,7 @@ final class WorktreeTerminalState {
     }
     let isExplicitClose = pendingExplicitSurfaceCloseIDs.contains(view.id)
     if isExplicitClose, pendingCloseConfirmation != nil {
-      if pendingCloseConfirmation != .surface(view.id) {
+      if pendingCloseConfirmation?.target != .surface(view.id) {
         pendingExplicitSurfaceCloseIDs.remove(view.id)
       }
       return
@@ -2695,7 +3040,8 @@ final class WorktreeTerminalState {
     @Shared(.settingsFile) var settingsFile
     if needsConfirmation,
       isExplicitClose,
-      settingsFile.global.confirmCloseSurface
+      settingsFile.global.confirmCloseSurface,
+      !isFrozenBlockingScriptSurface(view.id)
     {
       pendingCloseConfirmation = .surface(view.id)
       return
@@ -2844,6 +3190,7 @@ final class WorktreeTerminalState {
       killZmxSessions(forSurfaceIDs: [view.id], includeRemote: includeRemoteSession)
     }
     if newTree.isEmpty {
+      cancelHibernationTimer(for: tabId)
       removeFromPendingClose(tabId: tabId)
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
@@ -2949,13 +3296,337 @@ final class WorktreeTerminalState {
     return maxIndex + 1
   }
 
+  // MARK: - Hibernation
+
+  /// Grace window a tab must stay hidden before it hibernates.
+  private static let hibernationGraceWindow: Duration = .seconds(5 * 60)
+
+  /// Marks whether this state's worktree is selected and re-diffs visibility.
+  func setWorktreeSelected(_ selected: Bool) {
+    guard isWorktreeSelected != selected else { return }
+    isWorktreeSelected = selected
+    refreshTabVisibility()
+  }
+
+  /// A tab is hidden unless it is the selected tab of the selected worktree.
+  private func isTabHidden(_ tabId: TerminalTabID) -> Bool {
+    !(isWorktreeSelected && tabManager.selectedTabId == tabId)
+  }
+
+  /// Diffs the hidden set against the scheduled timers: cancel for tabs that
+  /// became visible or vanished, schedule for newly hidden live tabs. A treeless
+  /// live tab (mid-creation) is scheduled once its tree lands via `splitTree`.
+  func refreshTabVisibility() {
+    let liveTabIDs = Set(tabManager.tabs.map(\.id))
+    for scheduledTabId in Array(hibernationTimers.keys)
+    where !liveTabIDs.contains(scheduledTabId) || !isTabHidden(scheduledTabId) {
+      cancelHibernationTimer(for: scheduledTabId)
+    }
+    for tab in tabManager.tabs {
+      guard isTabHidden(tab.id), trees[tab.id] != nil else { continue }
+      guard hibernationTimers[tab.id] == nil else { continue }
+      scheduleHibernationTimer(for: tab.id)
+    }
+  }
+
+  /// Applies a flip of the hibernation Beta flag. Enabling re-arms grace timers
+  /// for every currently hidden live tab; disabling cancels all pending timers so
+  /// a mid-window flip never hibernates. Already-dormant tabs stay dormant.
+  func applyHibernationEnabled(_ enabled: Bool) {
+    isHibernationEnabled = enabled
+    if enabled {
+      refreshTabVisibility()
+    } else {
+      cancelAllHibernationTimers()
+    }
+  }
+
+  private func scheduleHibernationTimer(for tabId: TerminalTabID) {
+    // Inert while the Beta feature is off; a later opt-in re-arms via the
+    // visibility funnel, so no timer is silently stranded.
+    guard isHibernationEnabled else { return }
+    let clock = hibernationClock
+    hibernationTimers[tabId] = Task { [weak self] in
+      do {
+        try await clock.sleep(for: Self.hibernationGraceWindow)
+      } catch {
+        return
+      }
+      guard !Task.isCancelled, let self else { return }
+      self.handleHibernationTimerFired(for: tabId)
+    }
+  }
+
+  /// Cancels a tab's timer (the tab is now visible, gone, or hibernated).
+  private func cancelHibernationTimer(for tabId: TerminalTabID) {
+    hibernationTimers.removeValue(forKey: tabId)?.cancel()
+    loggedIneligibleDeferralTabs.remove(tabId)
+  }
+
+  private func cancelAllHibernationTimers() {
+    for task in hibernationTimers.values { task.cancel() }
+    hibernationTimers.removeAll()
+    loggedIneligibleDeferralTabs.removeAll()
+  }
+
+  /// The fire path runs in ONE synchronous main-actor turn: re-check the tab is
+  /// still hidden and eligible, then hibernate or re-arm. No awaits between the
+  /// check and teardown, so a concurrent selection can't slip a visible tab into
+  /// hibernation. An actively-working agent does not block: its zmx session keeps
+  /// the process alive and the dormant watcher keeps notifications lossless.
+  private func handleHibernationTimerFired(for tabId: TerminalTabID) {
+    hibernationTimers.removeValue(forKey: tabId)
+    // Re-check at fire time so a flip to off mid-window never hibernates.
+    guard isHibernationEnabled else { return }
+    guard hasTab(tabId), isTabHidden(tabId) else {
+      // Tab gone or now visible: nothing re-arms it (becoming hidden reschedules
+      // via the visibility funnel).
+      return
+    }
+    guard canHibernate(tabId: tabId) else {
+      // Still hidden but momentarily ineligible (e.g. a non-zmx leaf); re-arm so
+      // a later eligibility flip still hibernates instead of wedging forever.
+      // Log once until the tab becomes eligible or visible again, so a permanently
+      // ineligible hidden tab doesn't spam every grace-window re-fire.
+      if loggedIneligibleDeferralTabs.insert(tabId).inserted {
+        terminalStateLogger.debug("Hibernation for tab \(tabId.rawValue) deferred: not currently eligible; re-armed.")
+      }
+      scheduleHibernationTimer(for: tabId)
+      return
+    }
+    loggedIneligibleDeferralTabs.remove(tabId)
+    performHibernation(tabId)
+  }
+
+  /// Resolves the frozen agent records, warning once and returning nil when the
+  /// closure is unwired so callers distinguish "no agents" from "no wiring".
+  private func resolvedAgentsBySurface() -> [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]]? {
+    guard let agents = hibernationAgentsBySurface?() else {
+      warnMissingAgentsClosureOnce()
+      return nil
+    }
+    return agents
+  }
+
+  /// Warns once per state instance when the agent-records closure is unwired, so
+  /// broken wiring is not silently read as "no agents".
+  private func warnMissingAgentsClosureOnce() {
+    guard !hasLoggedMissingAgentsClosure else { return }
+    hasLoggedMissingAgentsClosure = true
+    terminalStateLogger.warning(
+      "hibernationAgentsBySurface closure is unwired for worktree \(worktree.id); treating as no agents.")
+  }
+
+  /// Frozen leaves that failed to rebuild on wake: present in the stashed layout
+  /// but absent from the rebuilt tree, so their zmx sessions are orphaned.
+  nonisolated static func orphanedWakeLeafIDs(expected: [UUID], rebuilt: Set<UUID>) -> [UUID] {
+    expected.filter { !rebuilt.contains($0) }
+  }
+
+  /// True when an OSC 9 payload is a ConEmu subcommand (its first `;`-separated
+  /// field is an integer 1...12), not an iTerm2 notification body. Mirrors
+  /// libghostty's OSC-9 ConEmu-vs-notification split.
+  nonisolated static func isConEmuOSC9Payload(_ payload: String) -> Bool {
+    guard let subcommand = Int(payload.prefix { $0 != ";" }) else { return false }
+    return (1...12).contains(subcommand)
+  }
+
+  /// Whether a tab may hibernate. A blocking-script tab is excluded (it dies with
+  /// the app), and every leaf must be zmx-wrapped or teardown would kill a shell
+  /// that can't reattach.
+  func canHibernate(tabId: TerminalTabID) -> Bool {
+    guard let tree = trees[tabId], tree.root != nil else { return false }
+    guard !tabManager.isBlockingScript(tabId) else { return false }
+    // An alert is waiting on this tab; hibernating would tear its target down
+    // and drop the user's close request without a trace.
+    guard !hasPendingCloseConfirmation(forTabID: tabId) else { return false }
+    return tree.leaves().allSatisfy { surfaceLaunchMetadata[$0.id]?.usesZmx == true }
+  }
+
+  private func hasPendingCloseConfirmation(forTabID tabId: TerminalTabID) -> Bool {
+    switch pendingCloseConfirmation?.target {
+    case .surface(let surfaceID): tabID(containing: surfaceID) == tabId
+    case .tabs(let tabIDs): tabIDs.contains(tabId)
+    case nil: false
+    }
+  }
+
+  /// Hibernates a tab: freeze the layout, tear down the leaf surfaces WITHOUT
+  /// killing their zmx sessions or dropping presence, and keep the tab in
+  /// `tabManager` so its row, title, and unseen count survive. Surfaces return
+  /// with the same UUIDs on wake so `zmx attach` reattaches.
+  func hibernateTab(_ tabId: TerminalTabID) {
+    guard canHibernate(tabId: tabId) else { return }
+    performHibernation(tabId)
+  }
+
+  /// Explicit wake for CLI / deeplink / unread-jump call sites. Routes through
+  /// the single `splitTree` wake funnel.
+  func wakeTab(_ tabId: TerminalTabID) {
+    _ = splitTree(for: tabId)
+  }
+
+  /// Shared teardown for `hibernateTab` and the DEBUG bypass seam. Captures the
+  /// dormant layout, drops the tree plus per-tab focus / generation and surface
+  /// bookkeeping, and cancels the manager's idle hooks without a presence drop.
+  private func performHibernation(_ tabId: TerminalTabID) {
+    guard let tree = trees[tabId], let root = tree.root else { return }
+    // The tab is going dormant; a leftover timer (manual hibernate path) must not
+    // survive to fire into the dormant entry.
+    cancelHibernationTimer(for: tabId)
+    let leaves = root.leaves()
+    let leafIDs = leaves.map(\.id)
+    // Freeze the live agent records into the layout so a snapshot persisted while
+    // dormant keeps its presence badges and image-paste routing across relaunch.
+    let layout = captureLayoutNode(root, agentsBySurface: resolvedAgentsBySurface() ?? [:])
+    let focusedId = focusedSurfaceIdByTab[tabId]
+    let focusedLeafIndex = focusedId.flatMap { id in leaves.firstIndex(where: { $0.id == id }) }
+    // The assignment fires the didSet, starting the dormant-session watchers.
+    dormantTabLayouts[tabId] = DormantTabLayout(
+      layout: layout,
+      focusedLeafIndex: focusedLeafIndex,
+      zoomedSurfaceID: tree.zoomed?.leftmostLeaf().id
+    )
+    // Teardown in one turn: the `surfaces[id] === view` guards in the close /
+    // unexpected-close handlers make any late callback or in-flight probe inert.
+    trees.removeValue(forKey: tabId)
+    surfaceGenerationByTab.removeValue(forKey: tabId)
+    focusedSurfaceIdByTab.removeValue(forKey: tabId)
+    for leaf in leaves {
+      leaf.closeSurface()
+      discardSurfaceBookkeeping(for: leaf.id, preserveSurfaceState: true)
+    }
+    onSurfacesHibernated?(Set(leafIDs))
+    emitTabProjection(for: tabId)
+    // The torn-down tree emits no more OSC progress, so clear the stripe and
+    // re-derive task status without this tab (dormant progress is ConEmu-dropped).
+    emitTabProgressDisplay(for: tabId)
+    emitTaskStatusIfChanged()
+    onDormancyChanged?()
+  }
+
+  /// Reconciles the passive session watchers against the current dormant leaf
+  /// set. Stopping a watcher closes its socket, so on an explicit close this runs
+  /// before the session kill.
+  private func syncDormantSessionWatchers() {
+    let dormantSurfaceIDs = Set(dormantLeafSurfaceIDs)
+    dormantSessionWatchers.reconcile(dormantSurfaceIDs: dormantSurfaceIDs)
+  }
+
+  /// Single ingress for a dormant session's OSC signal, routed into the same
+  /// notification / presence / title handlers a live surface uses. Accepts a
+  /// live-or-dormant surface (wake/close overlap), drops unknown; delivered once.
+  private func handleDormantOSCSequence(surfaceID: UUID, sequence: ZmxOSCSequence) {
+    guard isKnownSurface(surfaceID) else { return }
+    switch sequence.code {
+    case 9:
+      // OSC 9 is shared by iTerm2 notifications and ConEmu subcommands (progress,
+      // sleep, ...); a leading small-integer field marks a ConEmu form, not a body.
+      guard let body = sequence.payloadString else {
+        logDroppedNonUTF8DormantOSC(surfaceID: surfaceID, code: sequence.code)
+        return
+      }
+      guard !Self.isConEmuOSC9Payload(body) else {
+        terminalStateLogger.debug("Dropped ConEmu-shaped OSC 9 for dormant surface \(surfaceID).")
+        return
+      }
+      handleAgentOSCNotification(title: "", body: body, surfaceID: surfaceID)
+    case 3008:
+      guard let payload = sequence.payloadString else {
+        logDroppedNonUTF8DormantOSC(surfaceID: surfaceID, code: sequence.code)
+        return
+      }
+      guard let fields = Self.contextSignalFields(payload: payload) else { return }
+      handleContextSignal(surfaceID: surfaceID, id: fields.id, metadata: fields.metadata)
+    case 0, 2:
+      guard let title = sequence.payloadString else {
+        logDroppedNonUTF8DormantOSC(surfaceID: surfaceID, code: sequence.code)
+        return
+      }
+      updateDormantTabTitle(surfaceID: surfaceID, title: title)
+    default:
+      break
+    }
+  }
+
+  private func logDroppedNonUTF8DormantOSC(surfaceID: UUID, code: Int) {
+    terminalStateLogger.debug("Dropped dormant OSC \(code) with non-UTF-8 payload for surface \(surfaceID).")
+  }
+
+  /// Updates a dormant tab's row title from an OSC 0/2 on its focused leaf,
+  /// mirroring the live `updateTabTitle` where only the focused surface drives
+  /// the row. A now-live surface is skipped: its own title pipeline is authoritative.
+  private func updateDormantTabTitle(surfaceID: UUID, title: String) {
+    guard let tabId = tabID(containing: surfaceID),
+      let dormant = dormantTabLayouts[tabId]
+    else { return }
+    let focusedLeaf = dormant.focusedLeafIndex.flatMap { index in
+      dormant.layout.leafSurfaceIDs.indices.contains(index) ? dormant.layout.leafSurfaceIDs[index] : nil
+    }
+    guard focusedLeaf == surfaceID else { return }
+    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    tabManager.updateTitle(tabId, title: trimmed)
+  }
+
+  /// Rebuilds a hibernated tab's tree from its frozen layout via the shared
+  /// restore core and re-applies zoom. No generation bump (the nil->tree
+  /// transition invalidates by itself) and no AppKit first-responder calls, since
+  /// this may run from a view-body evaluation.
+  private func wakeDormantTab(
+    _ tabId: TerminalTabID,
+    dormant: DormantTabLayout
+  ) -> SplitTree<GhosttySurfaceView> {
+    // Re-derive the anchor context from the live tab order (mirrors
+    // `restoreFromSnapshot`), so a since-closed first tab wakes the now-first tab
+    // as WINDOW instead of replaying a context frozen at hibernate.
+    let isFirstTab = tabManager.tabs.first?.id == tabId
+    let context: ghostty_surface_context_e =
+      isFirstTab ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB
+    restoreTabLayout(
+      tabId: tabId,
+      layout: dormant.layout,
+      focusedLeafIndex: dormant.focusedLeafIndex ?? 0,
+      context: context
+    )
+    guard let tree = trees[tabId] else { return SplitTree() }
+    if let zoomedID = dormant.zoomedSurfaceID,
+      let zoomedSurface = surfaces[zoomedID],
+      let node = tree.root?.node(view: zoomedSurface)
+    {
+      setTree(tree.settingZoomed(node), for: tabId)
+    }
+    // The unseen counters rode through hibernation on the preserved
+    // `surfaceStates`, re-adopted here under the original UUIDs; wake neither
+    // re-derives nor clears them.
+    return trees[tabId] ?? SplitTree()
+  }
+
+  /// Explicit close of a hibernated tab: kill its frozen zmx sessions, drop the
+  /// presence records, and purge the dormant entry synchronously so an orphan
+  /// can't feed the next-launch reaper. No live surfaces exist to close.
+  private func removeDormantTab(_ tabId: TerminalTabID) {
+    // `removeValue` fires the didSet, stopping the leaf watchers (closing their
+    // sockets) before the session kill below.
+    guard let dormant = dormantTabLayouts.removeValue(forKey: tabId) else { return }
+    let leafIDs = dormant.layout.leafSurfaceIDs
+    surfaceGenerationByTab.removeValue(forKey: tabId)
+    var clearedUnseen = false
+    for leafID in leafIDs {
+      clearedUnseen = discardDormantLeafSurfaceState(for: leafID) || clearedUnseen
+    }
+    killZmxSessions(forSurfaceIDs: leafIDs, includeRemote: true)
+    onSurfacesClosed?(Set(leafIDs))
+    if clearedUnseen { onNotificationIndicatorChanged?() }
+    if lastTabProjections.removeValue(forKey: tabId) != nil {
+      onTabRemoved?(tabId)
+    }
+  }
+
   #if DEBUG
-    /// Test-only seam for bulk-assigning the notifications log. Fans
-    /// `emitAllTabProjections()` so `lastTabProjections` stays in sync with
-    /// the raw log; production code must go through the per-event helpers
-    /// (`appendHookNotification`, `markNotificationsRead`, etc.) which already
-    /// emit. Gated `#if DEBUG` so release builds genuinely can't reach the
-    /// projection-bypass path.
+    /// Test-only seam for bulk-assigning the notifications log, fanning
+    /// `emitAllTabProjections()` so `lastTabProjections` stays in sync with the
+    /// raw log. Production writes go through the per-event helpers, which emit.
     func setNotificationsForTesting(_ list: [WorktreeTerminalNotification]) {
       notifications = list
       rebuildUnseenCounters()
@@ -2967,6 +3638,40 @@ final class WorktreeTerminalState {
     /// `createSurface` / `cleanupSurfaceState`.
     func installSurfaceStateForTesting(_ state: WorktreeSurfaceState, forSurfaceID surfaceID: UUID) {
       surfaceStates[surfaceID] = state
+    }
+
+    /// Test-only seam that hibernates a tab while bypassing `canHibernate`, so
+    /// tests can exercise the dormant path without a live zmx executable making
+    /// every surface eligible. Shares `performHibernation` with production.
+    func hibernateTabForTesting(_ tabId: TerminalTabID) {
+      performHibernation(tabId)
+    }
+
+    /// Tabs with a live grace timer, so visibility / cancel behavior is
+    /// assertable without reaching into the private dict.
+    var scheduledHibernationTabsForTesting: Set<TerminalTabID> { Set(hibernationTimers.keys) }
+
+    /// Surface ids currently tailed by a dormant-session watcher, so the
+    /// `watched == dormant leaves` invariant is assertable without a live socket.
+    var watchedDormantSurfaceIDsForTesting: Set<UUID> { dormantSessionWatchers.watchedSurfaceIDs }
+
+    /// Resolved surface context (WINDOW vs TAB) for a live surface, so the
+    /// wake-time context re-derivation is assertable.
+    func surfaceContextForTesting(_ surfaceID: UUID) -> ghostty_surface_context_e? {
+      surfaceLaunchMetadata[surfaceID]?.context
+    }
+
+    /// Drives the fire path directly so the fire-time re-check backstops (tab
+    /// gone, tab visible) are assertable without a real grace-window elapse.
+    func fireHibernationTimerForTesting(_ tabId: TerminalTabID) {
+      handleHibernationTimerFired(for: tabId)
+    }
+
+    /// Drives a dormant-session OSC straight into the ingest, so the watcher's
+    /// delivery path (notifications / presence / titles, and the wake-overlap
+    /// acceptance rule) is assertable without a live socket.
+    func deliverDormantOSCForTesting(surfaceID: UUID, sequence: ZmxOSCSequence) {
+      handleDormantOSCSequence(surfaceID: surfaceID, sequence: sequence)
     }
 
   #endif
