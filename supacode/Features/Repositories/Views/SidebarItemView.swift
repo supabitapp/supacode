@@ -7,6 +7,12 @@ import SwiftUI
 enum SidebarNestLayout {
   /// Pixel step a row indents per branch-nesting depth level.
   static let indentStep: CGFloat = 14
+  /// Width of a row's leading slot, so group chevrons and leaf icons put their
+  /// titles on the same baseline.
+  static let leadingSlotWidth: CGFloat = 16
+  /// Width of a group header's disclosure chevron, narrower than the slot it
+  /// sits in; the remainder is padded out after it.
+  static let groupChevronWidth: CGFloat = 12
 }
 
 /// Repo identity carried alongside a sidebar row so the highlight sections
@@ -468,7 +474,7 @@ private struct IconContent: View, Equatable {
           .opacity(isEmphasized ? 1 : 0.6)
       }
     }
-    .frame(width: 16, height: 16)
+    .frame(width: SidebarNestLayout.leadingSlotWidth, height: 16)
     .overlay(alignment: .bottomTrailing) {
       if let checkBadgeState, !isSystemImage {
         let badgeColor = AnyShapeStyle(checkBadgeState.color)

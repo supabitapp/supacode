@@ -280,7 +280,10 @@ private struct SidebarPathGroupHeaderRow: View {
           .foregroundStyle(.secondary)
           .rotationEffect(.degrees(isCollapsed ? 0 : 90))
           .animation(.easeInOut(duration: 0.15), value: isCollapsed)
-          .frame(width: 12)
+          .frame(width: SidebarNestLayout.groupChevronWidth)
+          .padding(
+            .trailing, SidebarNestLayout.leadingSlotWidth - SidebarNestLayout.groupChevronWidth
+          )
           .accessibilityHidden(true)
         Text(label)
           .font(.body)
