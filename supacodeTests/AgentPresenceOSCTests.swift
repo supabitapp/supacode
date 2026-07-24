@@ -13,6 +13,13 @@ struct AgentPresenceOSCTests {
     #expect(signal?.eventRawValue == "busy")
   }
 
+  @Test func parsesAntigravitySignal() {
+    let signal = AgentPresenceOSC.parse(id: "antigravity", metadata: "event=busy")
+    #expect(signal?.agent == "antigravity")
+    #expect(signal?.eventRawValue == "busy")
+    #expect(SkillAgent(rawValue: signal?.agent ?? "") == .antigravity)
+  }
+
   @Test func rejectsEmptyId() {
     #expect(AgentPresenceOSC.parse(id: "", metadata: "event=busy") == nil)
   }

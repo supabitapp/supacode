@@ -7,6 +7,7 @@ import Testing
 struct CodingAgentsSidebarCardModeTests {
   @Test func anyOutdatedAgentReturnsUpdatesAvailableWithJustThoseAgents() {
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.installed),
       .codex: .ready(.outdated),
       .copilot: .ready(.notInstalled),
@@ -28,6 +29,7 @@ struct CodingAgentsSidebarCardModeTests {
 
   @Test func updatesCardShowsEvenIfDismissed() {
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.installed),
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
@@ -45,6 +47,7 @@ struct CodingAgentsSidebarCardModeTests {
 
   @Test func anyInstalledSuppressesPromptInstall() {
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.installed),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
@@ -61,6 +64,7 @@ struct CodingAgentsSidebarCardModeTests {
 
   @Test func dismissedSuppressesPromptInstall() {
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
@@ -77,6 +81,7 @@ struct CodingAgentsSidebarCardModeTests {
 
   @Test func nothingInstalledAndNotDismissedShowsPromptInstall() {
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
@@ -93,6 +98,7 @@ struct CodingAgentsSidebarCardModeTests {
 
   @Test func stillCheckingSuppressesPromptInstallToAvoidLaunchFlash() {
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.notInstalled),
       .codex: .checking,
       .copilot: .ready(.notInstalled),
@@ -111,6 +117,7 @@ struct CodingAgentsSidebarCardModeTests {
     // While an agent is mid-install we can't know its final state, so suppress
     // the prompt card so it doesn't flash off, then back on, on completion.
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.notInstalled),
       .codex: .installing,
       .copilot: .ready(.notInstalled),
@@ -129,6 +136,7 @@ struct CodingAgentsSidebarCardModeTests {
     // Symmetric to the installing case: an in-flight uninstall shouldn't
     // race the prompt card.
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.installed),
       .codex: .uninstalling,
       .copilot: .ready(.notInstalled),
@@ -148,6 +156,7 @@ struct CodingAgentsSidebarCardModeTests {
     // resolved to "we can't tell", not "still in flight". Treat as resolved
     // so a single failed agent doesn't permanently suppress the prompt.
     let states: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.notInstalled),
       .codex: .failed("boom"),
       .copilot: .ready(.notInstalled),
@@ -167,6 +176,7 @@ struct CodingAgentsSidebarCardModeTests {
     // re-installs outdated agents on every refresh. The prompt-install
     // card still surfaces for the never-installed case.
     let outdated: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.installed),
       .claude: .ready(.outdated),
       .codex: .ready(.installed),
       .copilot: .ready(.installed),
@@ -183,6 +193,7 @@ struct CodingAgentsSidebarCardModeTests {
     )
 
     let untouched: [SkillAgent: AgentIntegrationRowState] = [
+      .antigravity: .ready(.notInstalled),
       .claude: .ready(.notInstalled),
       .codex: .ready(.notInstalled),
       .copilot: .ready(.notInstalled),
@@ -211,11 +222,11 @@ struct CodingAgentsSidebarCardModeTests {
     #expect(CodingAgentsSidebarCardView.isDismissed(at: future, relevantSince: cutoff) == true)
   }
 
-  @Test func cardRelevantSinceDateMatchesGrokLaunchReEngagement() {
-    let grokLaunchCutoff = Date(timeIntervalSince1970: 1_783_382_400)
-    let previouslyDismissedUser = Date(timeIntervalSince1970: 1_783_209_600)
+  @Test func cardRelevantSinceDateMatchesAntigravityLaunchReEngagement() {
+    let antigravityLaunchCutoff = Date(timeIntervalSince1970: 1_784_937_600)
+    let previouslyDismissedUser = Date(timeIntervalSince1970: 1_783_382_400)
 
-    #expect(CodingAgentsSidebarCardView.cardRelevantSinceDate == grokLaunchCutoff)
+    #expect(CodingAgentsSidebarCardView.cardRelevantSinceDate == antigravityLaunchCutoff)
     #expect(CodingAgentsSidebarCardView.isDismissed(at: previouslyDismissedUser) == false)
   }
 }

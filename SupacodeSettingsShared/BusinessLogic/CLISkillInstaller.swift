@@ -51,6 +51,7 @@ nonisolated struct CLISkillInstaller {
 
   private func skillContent(for agent: SkillAgent) -> String {
     switch agent {
+    case .antigravity: CLISkillContent.antigravitySkill
     case .claude: CLISkillContent.claudeSkill
     case .codex: CLISkillContent.codexSkillMd
     case .copilot: CLISkillContent.copilotSkillMd

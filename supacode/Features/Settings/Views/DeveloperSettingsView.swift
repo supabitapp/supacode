@@ -186,6 +186,11 @@ private struct AgentIntegrationRow: View {
 extension SkillAgent {
   fileprivate var integrationSubtitle: LocalizedStringKey {
     switch self {
+    case .antigravity:
+      """
+      Hooks in `~/.gemini/config/hooks.json` & `~/.gemini/antigravity-cli/settings.json` \
+      and skill in `~/.gemini/antigravity-cli/skills/`.
+      """
     case .claude: "Hooks in `~/.claude/settings.json` and skill in `~/.claude/skills/`."
     case .codex:
       """

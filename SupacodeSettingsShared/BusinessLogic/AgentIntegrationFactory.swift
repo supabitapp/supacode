@@ -10,6 +10,7 @@ nonisolated enum AgentIntegrationFactory {
     fileManager: FileManager = .default
   ) -> AgentIntegration {
     switch agent {
+    case .antigravity: antigravity(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
     case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
@@ -24,6 +25,24 @@ nonisolated enum AgentIntegrationFactory {
   }
 
   // MARK: - Per-agent component lists.
+
+  private static func antigravity(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
+    let installer = AntigravitySettingsInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
+    return AgentIntegration(
+      agent: .antigravity,
+      components: [
+        AgentIntegration.Component(
+          kind: .unifiedHooks,
+          state: { installer.installState() },
+          install: { try installer.installAllHooks() },
+          uninstall: { try installer.uninstallAllHooks() }
+        ),
+        skillComponent(agent: .antigravity, installer: skill),
+      ]
+    )
+  }
 
   private static func claude(homeDirectoryURL: URL, fileManager: FileManager) -> AgentIntegration {
     let installer = ClaudeSettingsInstaller(

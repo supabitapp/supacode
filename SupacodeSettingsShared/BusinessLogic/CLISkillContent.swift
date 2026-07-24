@@ -568,9 +568,10 @@ nonisolated enum CLISkillContent {
     Env var defaults only target your own shell session. Pass explicit IDs for created resources.
     """
 
-  // MARK: - Copilot.
+  // MARK: - Generic Skills (Antigravity, Copilot, OMP).
 
   // Generic CLI doc, same as OpenCode's (content is agent-agnostic).
+  static let antigravitySkill = opencodeSkillMd
   static let copilotSkillMd = opencodeSkillMd
   static let ompSkillMd = opencodeSkillMd
 

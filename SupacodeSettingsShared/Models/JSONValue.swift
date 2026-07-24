@@ -79,6 +79,11 @@ public nonisolated
     return value
   }
 
+  public var boolValue: Bool? {
+    guard case .bool(let value) = self else { return nil }
+    return value
+  }
+
   // MARK: - Encodable bridging.
 
   public init<T: Encodable>(_ value: T) throws {
