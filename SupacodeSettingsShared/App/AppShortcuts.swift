@@ -16,6 +16,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectWorktree(Int)
   case selectTab(Int)
   case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
+  case newScratchpad
   case runScript, stopRunScript
   case jumpToLatestUnread
   case togglePullRequestInspector, toggleNotificationsInspector
@@ -67,6 +68,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .cloneRepository: "cloneRepository"
     case .openPullRequest: "openPullRequest"
     case .copyPath: "copyPath"
+    case .newScratchpad: "newScratchpad"
     case .runScript: "runScript"
     case .stopRunScript: "stopRunScript"
     case .jumpToLatestUnread: "jumpToLatestUnread"
@@ -103,6 +105,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "cloneRepository": .cloneRepository,
     "openPullRequest": .openPullRequest,
     "copyPath": .copyPath,
+    "newScratchpad": .newScratchpad,
     "runScript": .runScript,
     "stopRunScript": .stopRunScript,
     "jumpToLatestUnread": .jumpToLatestUnread,
@@ -158,6 +161,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .cloneRepository: "Clone Repository to Local Folder"
     case .openPullRequest: "Open Pull Request"
     case .copyPath: "Copy Path"
+    case .newScratchpad: "New Scratchpad"
     case .runScript: "Run Script"
     case .stopRunScript: "Stop Run Script"
     case .jumpToLatestUnread: "Jump to Latest Unread"
@@ -439,6 +443,7 @@ public enum AppShortcuts {
   )
   public static let openPullRequest = AppShortcut(id: .openPullRequest, key: "g", modifiers: [.command, .control])
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
+  public static let newScratchpad = AppShortcut(id: .newScratchpad, key: "t", modifiers: [.command, .option])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
   public static let stopRunScript = AppShortcut(id: .stopRunScript, key: ".", modifiers: .command)
   public static let jumpToLatestUnread = AppShortcut(
@@ -512,7 +517,7 @@ public enum AppShortcuts {
       category: .actions,
       shortcuts: [
         openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
-        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread,
+        openPullRequest, copyPath, newScratchpad, runScript, stopRunScript, jumpToLatestUnread,
         togglePullRequestInspector, toggleNotificationsInspector,
       ]
     ),

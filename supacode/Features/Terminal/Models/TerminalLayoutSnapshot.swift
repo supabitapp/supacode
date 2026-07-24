@@ -13,6 +13,12 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
     let tintColor: RepositoryColor?
     let layout: LayoutNode
     let focusedLeafIndex: Int
+    /// Nil means `.terminal`: legacy snapshots predate the field, and an
+    /// unrecognized future kind decodes to nil so the tab degrades to a
+    /// terminal instead of dropping.
+    let kind: TerminalTabItem.Kind?
+    /// Scratchpad tabs only; their `layout` is an empty sentinel leaf.
+    let scratchpadText: String?
 
     init(
       id: UUID?,
@@ -21,7 +27,9 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
       icon: String?,
       tintColor: RepositoryColor?,
       layout: LayoutNode,
-      focusedLeafIndex: Int
+      focusedLeafIndex: Int,
+      kind: TerminalTabItem.Kind? = nil,
+      scratchpadText: String? = nil
     ) {
       self.id = id
       self.title = title
@@ -30,10 +38,12 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
       self.tintColor = tintColor
       self.layout = layout
       self.focusedLeafIndex = focusedLeafIndex
+      self.kind = kind
+      self.scratchpadText = scratchpadText
     }
 
     private enum CodingKeys: String, CodingKey {
-      case id, title, customTitle, icon, tintColor, layout, focusedLeafIndex
+      case id, title, customTitle, icon, tintColor, layout, focusedLeafIndex, kind, scratchpadText
     }
 
     init(from decoder: any Decoder) throws {
@@ -47,6 +57,9 @@ struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
       tintColor = (try? container.decodeIfPresent(RepositoryColor.self, forKey: .tintColor)) ?? nil
       layout = try container.decode(LayoutNode.self, forKey: .layout)
       focusedLeafIndex = try container.decode(Int.self, forKey: .focusedLeafIndex)
+      // `try?` so a kind minted by a newer build degrades to terminal here.
+      kind = (try? container.decodeIfPresent(TerminalTabItem.Kind.self, forKey: .kind)) ?? nil
+      scratchpadText = try container.decodeIfPresent(String.self, forKey: .scratchpadText)
     }
   }
 

@@ -1,9 +1,13 @@
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabBarTrailingAccessories: View {
   let createTab: () -> Void
+  let createScratchpad: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentTrailingSpacing) {
@@ -12,6 +16,13 @@ struct TerminalTabBarTrailingAccessories: View {
         systemImage: "plus",
         shortcutBinding: "new_tab",
         action: createTab
+      )
+      TerminalTabBarAccessoryButton(
+        title: "New Scratchpad",
+        systemImage: "note.text",
+        staticShortcutDisplay: AppShortcuts.newScratchpad
+          .effective(from: settingsFile.global.shortcutOverrides)?.display,
+        action: createScratchpad
       )
       TerminalTabBarSplitMenu(primary: .right, secondary: .left, split: split)
         .disabled(!canSplit)
@@ -26,14 +37,17 @@ struct TerminalTabBarTrailingAccessories: View {
 private struct TerminalTabBarAccessoryButton: View {
   let title: String
   let systemImage: String
-  let shortcutBinding: String
+  /// Ghostty binding whose user-resolved shortcut the tooltip shows.
+  var shortcutBinding: String?
+  /// Fixed display for app-level (non-Ghostty) shortcuts like the scratchpad's.
+  var staticShortcutDisplay: String?
   let action: () -> Void
 
   @Environment(GhosttyShortcutManager.self)
   private var ghosttyShortcuts
 
   var body: some View {
-    let shortcut = ghosttyShortcuts.display(for: shortcutBinding)
+    let shortcut = shortcutBinding.flatMap(ghosttyShortcuts.display(for:)) ?? staticShortcutDisplay
 
     Button(action: action) {
       Label(title, systemImage: systemImage)

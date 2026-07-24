@@ -207,6 +207,10 @@ final class WorktreeTerminalState {
   /// the observed signal.
   @ObservationIgnored private(set) var surfaceStates: [UUID: WorktreeSurfaceState] = [:]
   var notificationsEnabled = true
+  /// Scratchpad tab text keyed by tab id. Observed so the pane view re-renders
+  /// on external mutation (snapshot restore); per-keystroke writes invalidate
+  /// only views that read this dict (the visible scratchpad pane).
+  private(set) var scratchpadContents: [TerminalTabID: String] = [:]
   @ObservationIgnored @Dependency(\.date.now) private var now
   @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
   @ObservationIgnored @Dependency(\.analyticsClient) private var analyticsClient
@@ -289,6 +293,9 @@ final class WorktreeTerminalState {
   /// Fires when the user renames a tab. Manager forwards to the layout-persist
   /// sink so a custom title survives relaunch without waiting for quit.
   var onTabRenamed: (() -> Void)?
+  /// Fires on every scratchpad text edit. Manager forwards to the debounced
+  /// layout-persist sink so scratchpad text survives a crash, not just quit.
+  var onScratchpadContentChanged: (() -> Void)?
   var onFocusChanged: ((UUID) -> Void)?
   // Fired when the currently focused surface's background color changes (OSC 11).
   var onFocusedSurfaceColorChanged: (() -> Void)?
@@ -467,10 +474,12 @@ final class WorktreeTerminalState {
     tabID: UUID? = nil,
     customTitle: String? = nil
   ) -> TerminalTabID? {
+    // Keyed off terminal tabs, not all tabs: a scratchpad-only workspace still
+    // hands WINDOW context to its first real surface.
     let context: ghostty_surface_context_e =
-      tabManager.tabs.isEmpty
-      ? GHOSTTY_SURFACE_CONTEXT_WINDOW
-      : GHOSTTY_SURFACE_CONTEXT_TAB
+      tabManager.tabs.contains(where: { $0.kind == .terminal })
+      ? GHOSTTY_SURFACE_CONTEXT_TAB
+      : GHOSTTY_SURFACE_CONTEXT_WINDOW
     let resolvedInheritanceSurfaceId = inheritingFromSurfaceId ?? currentFocusedSurfaceId()
     let title = "\(worktree.name) \(nextTabIndex())"
     let setupInput = setupScriptInput(setupScript: setupScript)
@@ -508,6 +517,49 @@ final class WorktreeTerminalState {
       onSetupScriptConsumed?()
     }
     return tabId
+  }
+
+  /// Creates a scratchpad tab: a plain-text pane with no Ghostty surface, no
+  /// split tree, and no zmx session. Selected on creation like a terminal tab.
+  @discardableResult
+  func createScratchpadTab() -> TerminalTabID {
+    let tabId = tabManager.createTab(
+      kind: .scratchpad,
+      title: nextScratchpadTitle(),
+      icon: "note.text"
+    )
+    scratchpadContents[tabId] = ""
+    // No tree ever lands for this tab, so emit the (empty) projection here or
+    // the tab-bar leaf never gets a `TerminalTabFeature.State` and won't render.
+    emitTabProjection(for: tabId)
+    onTabCreated?()
+    return tabId
+  }
+
+  func scratchpadText(for tabId: TerminalTabID) -> String {
+    scratchpadContents[tabId] ?? ""
+  }
+
+  func setScratchpadText(_ text: String, for tabId: TerminalTabID) {
+    guard tabManager.isScratchpad(tabId) else { return }
+    guard scratchpadContents[tabId] != text else { return }
+    scratchpadContents[tabId] = text
+    onScratchpadContentChanged?()
+  }
+
+  /// "Scratchpad", then "Scratchpad 2", ... against the highest live suffix,
+  /// mirroring `nextTabIndex()` so a close-and-reopen doesn't collide.
+  private func nextScratchpadTitle() -> String {
+    let base = "Scratchpad"
+    var maxIndex = 0
+    for tab in tabManager.tabs where tab.kind == .scratchpad {
+      if tab.title == base {
+        maxIndex = max(maxIndex, 1)
+      } else if tab.title.hasPrefix("\(base) "), let value = Int(tab.title.dropFirst(base.count + 1)) {
+        maxIndex = max(maxIndex, value)
+      }
+    }
+    return maxIndex == 0 ? base : "\(base) \(maxIndex + 1)"
   }
 
   /// Stops a single user-defined script identified by its definition ID.
@@ -1086,6 +1138,10 @@ final class WorktreeTerminalState {
     removeTree(for: tabId)
     removeDormantTab(tabId)
     tabManager.closeTab(tabId)
+    scratchpadContents.removeValue(forKey: tabId)
+    // A scratchpad tab has no tree, so `removeTree` didn't emit its removal;
+    // this settles it (no-op for terminal tabs whose projection already left).
+    emitTabProjection(for: tabId)
     if let selected = tabManager.selectedTabId {
       focusSurface(in: selected)
     } else {
@@ -1125,6 +1181,9 @@ final class WorktreeTerminalState {
     // resurrect it: the replacement surface would be invisible, unclosable, and
     // hold its local and host zmx sessions alive.
     guard hasTab(tabId) else { return SplitTree() }
+    // Scratchpad tabs never own surfaces; a stray call here (e.g. a future
+    // caller keyed off selection) must not mint one.
+    guard !tabManager.isScratchpad(tabId) else { return SplitTree() }
     // Wake a hibernated tab before minting a fresh surface: rebuild from the
     // frozen layout with the ORIGINAL UUIDs so `zmx attach` reattaches.
     if let dormant = dormantTabLayouts.removeValue(forKey: tabId) {
@@ -1340,6 +1399,7 @@ final class WorktreeTerminalState {
     trees.removeAll()
     surfaceGenerationByTab.removeAll()
     focusedSurfaceIdByTab.removeAll()
+    scratchpadContents.removeAll()
     onSurfacesClosed?(Set(closingSurfaceIDs).union(dormantSurfaceIDs))
     let pendingKinds = Set(blockingScripts.values)
     blockingScripts.removeAll()
@@ -1469,6 +1529,24 @@ final class WorktreeTerminalState {
     for tab in tabManager.tabs {
       // Blocking-script tabs die with the app; persisting them would resurrect a dead session.
       if tab.isBlockingScript { continue }
+      // Scratchpad tabs have no split tree; persist the text with an empty
+      // sentinel leaf (id nil claims no zmx session from the orphan reaper).
+      if tab.kind == .scratchpad {
+        tabSnapshots.append(
+          TerminalLayoutSnapshot.TabSnapshot(
+            id: tab.id.rawValue,
+            title: tab.title,
+            customTitle: tab.customTitle,
+            icon: tab.icon,
+            tintColor: tab.tintColor,
+            layout: .leaf(TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: nil)),
+            focusedLeafIndex: 0,
+            kind: .scratchpad,
+            scratchpadText: scratchpadContents[tab.id] ?? ""
+          )
+        )
+        continue
+      }
       let layout: TerminalLayoutSnapshot.LayoutNode
       let focusedLeafIndex: Int
       if let tree = trees[tab.id], let root = tree.root {
@@ -1595,10 +1673,12 @@ final class WorktreeTerminalState {
     // Skip setup script when restoring a saved layout.
     pendingSetupScript = false
 
-    for (index, tabSnapshot) in snapshot.tabs.enumerated() {
-      let context: ghostty_surface_context_e =
-        index == 0 ? GHOSTTY_SURFACE_CONTEXT_WINDOW : GHOSTTY_SURFACE_CONTEXT_TAB
+    // WINDOW context goes to the first restored TERMINAL tab, not blindly to
+    // index 0: a scratchpad first tab has no surface to claim it.
+    var hasRestoredTerminalTab = false
+    for tabSnapshot in snapshot.tabs {
       let tabId = tabManager.createTab(
+        kind: tabSnapshot.kind ?? .terminal,
         title: tabSnapshot.title,
         icon: tabSnapshot.icon,
         isTitleLocked: false,
@@ -1608,6 +1688,15 @@ final class WorktreeTerminalState {
       if let customTitle = tabSnapshot.customTitle {
         tabManager.setCustomTitle(tabId, title: customTitle)
       }
+      if tabSnapshot.kind == .scratchpad {
+        scratchpadContents[tabId] = tabSnapshot.scratchpadText ?? ""
+        emitTabProjection(for: tabId)
+        onTabCreated?()
+        continue
+      }
+      let context: ghostty_surface_context_e =
+        hasRestoredTerminalTab ? GHOSTTY_SURFACE_CONTEXT_TAB : GHOSTTY_SURFACE_CONTEXT_WINDOW
+      hasRestoredTerminalTab = true
       restoreTabLayout(
         tabId: tabId,
         layout: tabSnapshot.layout,
@@ -2437,6 +2526,9 @@ final class WorktreeTerminalState {
   }
 
   private func focusSurface(in tabId: TerminalTabID) {
+    // A scratchpad tab has no surface to focus, and falling through to
+    // `splitTree` would mint one; its pane claims first responder itself.
+    guard !tabManager.isScratchpad(tabId) else { return }
     if let focusedId = focusedSurfaceIdByTab[tabId], let surface = surfaces[focusedId] {
       focusSurface(surface, in: tabId)
       return
@@ -2855,6 +2947,20 @@ final class WorktreeTerminalState {
       // leaves rather than signalling removal.
       if let dormant = dormantTabLayouts[tabId] {
         emitDormantTabProjection(for: tabId, dormant: dormant)
+        return
+      }
+      // A scratchpad tab never grows a tree; it still needs a (surface-less)
+      // projection so `TerminalsFeature.terminalTabs` holds a row for it —
+      // the tab-bar leaf scopes through that store and won't render without one.
+      if tabManager.isScratchpad(tabId) {
+        commitTabProjection(
+          WorktreeTabProjection(
+            tabID: tabId,
+            surfaceIDs: [],
+            activeSurfaceID: nil,
+            unseenNotificationCount: 0
+          )
+        )
         return
       }
       // Removal fires only for a tab genuinely gone from `tabManager`; a tab

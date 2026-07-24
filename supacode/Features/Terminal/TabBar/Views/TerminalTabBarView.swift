@@ -8,6 +8,7 @@ struct TerminalTabBarView: View {
   let terminalsStore: StoreOf<TerminalsFeature>
   let isLifecycleBusy: Bool
   let createTab: () -> Void
+  let createScratchpad: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
   let closeTab: (TerminalTabID) -> Void
@@ -36,6 +37,7 @@ struct TerminalTabBarView: View {
       Spacer(minLength: 0)
       TerminalTabBarTrailingAccessories(
         createTab: createTab,
+        createScratchpad: createScratchpad,
         split: split,
         canSplit: canSplit
       )

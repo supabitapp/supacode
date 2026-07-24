@@ -313,6 +313,8 @@ final class WorktreeTerminalManager {
           customTitle: title
         )
       }
+    case .createScratchpadTab(let worktree):
+      createScratchpadTab(in: worktree)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
@@ -401,6 +403,16 @@ final class WorktreeTerminalManager {
     return true
   }
 
+  private func createScratchpadTab(in worktree: Worktree) {
+    let state = state(for: worktree)
+    // Consume a cold-staged snapshot first, mirroring `createTabAsync`, so a
+    // scratchpad on an unopened worktree doesn't strand the persisted layout.
+    if state.pendingLayoutSnapshot != nil, !state.hasAttemptedInitialTab {
+      state.ensureInitialTab(focusing: false)
+    }
+    state.createScratchpadTab()
+  }
+
   private func handleSearchCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
     case .startSearch(let worktree):
@@ -413,7 +425,7 @@ final class WorktreeTerminalManager {
       state(for: worktree).navigateSearchOnFocusedSurface(.previous)
     case .endSearch(let worktree):
       state(for: worktree).performBindingActionOnFocusedSurface("end_search")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createScratchpadTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .setNotificationsEnabled,
@@ -432,7 +444,7 @@ final class WorktreeTerminalManager {
       state(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createScratchpadTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .setNotificationsEnabled,
@@ -482,7 +494,7 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createScratchpadTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
@@ -627,6 +639,11 @@ final class WorktreeTerminalManager {
       self?.markLayoutDirty(worktreeID: worktree.id)
     }
     state.onTabRenamed = { [weak self] in
+      self?.markLayoutDirty(worktreeID: worktree.id)
+    }
+    // Debounced by `markLayoutDirty`, so per-keystroke edits coalesce into one
+    // snapshot flush and scratchpad text survives a crash, not just quit.
+    state.onScratchpadContentChanged = { [weak self] in
       self?.markLayoutDirty(worktreeID: worktree.id)
     }
     state.onFocusChanged = { [weak self] surfaceID in

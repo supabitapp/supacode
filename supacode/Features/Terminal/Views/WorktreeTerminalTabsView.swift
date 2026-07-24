@@ -13,6 +13,7 @@ struct WorktreeTerminalTabsView: View {
   let isLifecycleBusy: Bool
   let forceAutoFocus: Bool
   let createTab: () -> Void
+  let createScratchpad: () -> Void
   @State private var windowActivity = WindowActivityState.inactive
   // Reading `\.colorScheme` invalidates this body when the window appearance
   // flips (terminal-driven Light/Dark), so the unfocused-split overlay retints.
@@ -36,6 +37,7 @@ struct WorktreeTerminalTabsView: View {
         terminalsStore: terminalsStore,
         isLifecycleBusy: isLifecycleBusy,
         createTab: createTab,
+        createScratchpad: createScratchpad,
         split: { direction in
           _ = state.performBindingActionOnFocusedSurface(direction.ghosttyBinding)
         },
@@ -61,13 +63,17 @@ struct WorktreeTerminalTabsView: View {
       )
       if let selectedId = state.tabManager.selectedTabId {
         TerminalTabContentStack(tabs: state.tabManager.tabs, selectedTabId: selectedId) { tabId in
-          TerminalSplitTreePane(
-            tabId: tabId,
-            terminalState: state,
-            terminalsStore: terminalsStore,
-            unfocusedSplitOverlay: unfocusedSplitOverlay,
-            dividerColor: dividerColor
-          )
+          if state.tabManager.isScratchpad(tabId) {
+            ScratchpadPaneView(tabId: tabId, terminalState: state)
+          } else {
+            TerminalSplitTreePane(
+              tabId: tabId,
+              terminalState: state,
+              terminalsStore: terminalsStore,
+              unfocusedSplitOverlay: unfocusedSplitOverlay,
+              dividerColor: dividerColor
+            )
+          }
         }
       } else {
         EmptyTerminalPaneView(message: "No terminals open")

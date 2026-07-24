@@ -282,7 +282,8 @@ struct WorktreeDetailView: View {
           shouldRunSetupScript: shouldRunSetupScript,
           isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false,
           forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) }
+          createTab: { store.send(.newTerminal) },
+          createScratchpad: { store.send(.newScratchpad) }
         )
         .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -322,6 +323,9 @@ struct WorktreeDetailView: View {
       }
       .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
         store.send(.newTerminal)
+      }
+      .focusedSceneAction(\.newScratchpadAction, enabled: hasActiveWorktree) {
+        store.send(.newScratchpad)
       }
       .focusedAction(\.splitTerminalAction, enabled: hasActiveWorktree) { direction in
         store.send(.splitTerminal(direction))

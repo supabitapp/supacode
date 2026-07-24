@@ -44,6 +44,8 @@ struct TerminalClient {
       id: UUID? = nil,
       title: String? = nil
     )
+    /// Creates a scratchpad tab (plain-text pane, no surface) in the worktree.
+    case createScratchpadTab(Worktree)
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case stopRunScript(Worktree)
     case stopScript(Worktree, definitionID: UUID)

@@ -307,6 +307,7 @@ struct AppFeature {
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
+    case newScratchpad
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
@@ -873,6 +874,17 @@ struct AppFeature {
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+        }
+
+      case .newScratchpad:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        analyticsClient.capture("scratchpad_tab_created", nil)
+        return .run { _ in
+          await terminalClient.send(.createScratchpadTab(worktree))
         }
 
       case .selectTerminalTabAtIndex(let tabNumber):

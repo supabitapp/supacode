@@ -5,7 +5,9 @@ import SwiftUI
 
 struct TerminalCommands: Commands {
   let ghosttyShortcuts: GhosttyShortcutManager
+  @Shared(.settingsFile) private var settingsFile
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
+  @FocusedValue(\.newScratchpadAction) private var newScratchpadAction
   @FocusedValue(\.splitTerminalAction) private var splitTerminalAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
@@ -21,6 +23,12 @@ struct TerminalCommands: Commands {
       }
       .ghosttyKeyboardShortcut("new_tab", in: ghosttyShortcuts)
       .disabled(newTerminalAction?.isEnabled != true)
+
+      Button("New Scratchpad", systemImage: "note.text") {
+        newScratchpadAction?()
+      }
+      .appKeyboardShortcut(AppShortcuts.newScratchpad.effective(from: settingsFile.global.shortcutOverrides))
+      .disabled(newScratchpadAction?.isEnabled != true)
 
       Divider()
 
@@ -110,6 +118,17 @@ extension FocusedValues {
   var newTerminalAction: FocusedAction<Void>? {
     get { self[NewTerminalActionKey.self] }
     set { self[NewTerminalActionKey.self] = newValue }
+  }
+}
+
+private struct NewScratchpadActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
+extension FocusedValues {
+  var newScratchpadAction: FocusedAction<Void>? {
+    get { self[NewScratchpadActionKey.self] }
+    set { self[NewScratchpadActionKey.self] = newValue }
   }
 }
 

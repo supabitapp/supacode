@@ -2,7 +2,17 @@ import Foundation
 import SupacodeSettingsShared
 
 struct TerminalTabItem: Identifiable, Equatable, Sendable {
+  /// What the tab renders. `.terminal` tabs own a split tree of Ghostty
+  /// surfaces; `.scratchpad` tabs render a plain-text editor and have no
+  /// surfaces at all. Raw `String` so layout snapshots persist it stably.
+  enum Kind: String, Equatable, Sendable, Codable {
+    case terminal
+    case scratchpad
+  }
+
   let id: TerminalTabID
+  /// Immutable for the tab's lifetime: a tab never changes what it renders.
+  let kind: Kind
   /// Live shell title; for display use `displayTitle`.
   var title: String
   /// User-supplied override; nil means follow the live shell title.
@@ -21,6 +31,7 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
 
   init(
     id: TerminalTabID = TerminalTabID(),
+    kind: Kind = .terminal,
     title: String,
     customTitle: String? = nil,
     icon: String?,
@@ -30,6 +41,7 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
     isBlockingScriptCompleted: Bool = false
   ) {
     self.id = id
+    self.kind = kind
     self.title = title
     self.customTitle = customTitle
     self.icon = icon

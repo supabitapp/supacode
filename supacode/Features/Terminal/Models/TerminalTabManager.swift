@@ -29,6 +29,7 @@ final class TerminalTabManager {
   private static let logger = SupaLogger("TabManager")
 
   func createTab(
+    kind: TerminalTabItem.Kind = .terminal,
     title: String,
     customTitle: String? = nil,
     icon: String?,
@@ -54,6 +55,7 @@ final class TerminalTabManager {
     }
     let tab = TerminalTabItem(
       id: tabID,
+      kind: kind,
       title: title,
       customTitle: isTitleLocked ? nil : customTitle.flatMap(Self.normalizedCustomTitle),
       icon: icon,
@@ -120,6 +122,10 @@ final class TerminalTabManager {
 
   func isBlockingScript(_ id: TerminalTabID) -> Bool {
     tabs.first(where: { $0.id == id })?.isBlockingScript == true
+  }
+
+  func isScratchpad(_ id: TerminalTabID) -> Bool {
+    tabs.first(where: { $0.id == id })?.kind == .scratchpad
   }
 
   /// Mark a blocking-script tab as completed. Title / icon / lock survive so
