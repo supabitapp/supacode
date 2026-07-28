@@ -23,7 +23,7 @@ struct AppVisibilityOptionCardView: View {
               )
           }
         Text(visibility.title)
-          .font(.callout)
+          .appFont(.callout)
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
           .foregroundStyle(isSelected ? .primary : .secondary)

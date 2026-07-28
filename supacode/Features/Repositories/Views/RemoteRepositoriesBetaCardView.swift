@@ -1,4 +1,5 @@
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 /// Bottom-of-sidebar card announcing the remote SSH repositories feature, marked
@@ -41,18 +42,18 @@ private struct RemoteRepositoriesBetaCardBody: View {
         VStack(alignment: .leading, spacing: 4) {
           HStack(spacing: 6) {
             Text("Remote repositories")
-              .font(.subheadline)
+              .appFont(.subheadline)
               .fontWeight(.semibold)
             BetaBadge()
           }
           Text(description)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
       },
       header: {
         Image(systemName: "wifi")
-          .font(.title2)
+          .appFont(.title2)
           .foregroundStyle(.teal)
           .accessibilityHidden(true)
       }
@@ -71,7 +72,7 @@ private struct RemoteRepositoriesBetaCardBody: View {
 private struct BetaBadge: View {
   var body: some View {
     Text("Beta")
-      .font(.caption2)
+      .appFont(.caption2)
       .fontWeight(.semibold)
       .foregroundStyle(.teal)
       .padding(.horizontal, 6)

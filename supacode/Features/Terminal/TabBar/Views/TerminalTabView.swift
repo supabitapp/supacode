@@ -115,7 +115,7 @@ struct TerminalTabView: View {
       if isEditing {
         TextField("", text: $editingTitle)
           .textFieldStyle(.plain)
-          .font(.caption)
+          .appFont(.caption)
           .focused($isFieldFocused)
           .foregroundStyle(TerminalTabBarColors.activeText)
           .accessibilityLabel("Rename tab")
@@ -283,10 +283,9 @@ private struct TerminalTabShortcutHintText: View {
 
   var body: some View {
     Text(hint)
-      .font(.caption)
       // Explicit `.regular` because the tab bar lacks the sidebar's List/vibrancy
-      // context, where `.font(.caption)` would otherwise render heavier.
-      .fontWeight(.regular)
+      // context, where `.caption` would otherwise render heavier.
+      .appFont(.caption, weight: .regular)
       .foregroundStyle(.secondary)
       .lineLimit(1)
       .fixedSize()

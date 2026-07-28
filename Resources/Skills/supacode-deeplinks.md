@@ -83,7 +83,7 @@ supacode://repo/<repo_id>/worktree/new?branch=<name>&base=<ref>&upstream=<ref>&f
 
 ```
 supacode://settings                           # Open settings.
-supacode://settings/<section>                 # general|notifications|worktrees|developer|shortcuts|scripts|updates|github.
+supacode://settings/<section>                 # general|accessibility|notifications|worktrees|developer|shortcuts|scripts|updates|github.
 supacode://settings/repo/<repo_id>            # Open repository settings.
 supacode://settings/repo/<repo_id>/scripts    # Open repository Scripts settings.
 ```

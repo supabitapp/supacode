@@ -640,6 +640,11 @@ struct WorktreeDetailView: View {
       ToolbarItem(placement: .navigation) {
         TerminalSchemeHost(scheme: scheme) {
           WorktreeToolbarTitleView(content: toolbarState.titleContent)
+            // `TerminalSchemeHost` re-hosts its content in a fresh
+            // `NSHostingView`, which starts a new environment rather than
+            // inheriting the window's. Publish the size inside the closure so it
+            // travels with the content value.
+            .appChromeTextSize(settingsFile.global.chromeTextSize)
         }
       }
       .sharedBackgroundVisibility(.hidden)
@@ -1014,7 +1019,7 @@ private struct DetailPlaceholderView: View {
       ProgressView()
         .controlSize(.large)
       Text(Self.messages[messageIndex])
-        .font(.title3)
+        .appFont(.title3)
         .foregroundStyle(.secondary)
         .contentTransition(.numericText())
         .shimmer(isActive: true)
@@ -1056,7 +1061,7 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
               .foregroundStyle(.secondary)
             Text("feature/branch")
           }
-          .font(.headline)
+          .appFont(.headline)
         }
         .redacted(reason: .placeholder)
         .shimmer(isActive: true)
@@ -1135,7 +1140,7 @@ private struct MultiSelectedWorktreesDetailView: View {
     let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
     VStack(alignment: .leading, spacing: 20) {
       Text("\(rows.count) items selected")
-        .font(.title3)
+        .appFont(.title3)
 
       if !worktreeRows.isEmpty {
         selectionSection(
@@ -1167,12 +1172,12 @@ private struct MultiSelectedWorktreesDetailView: View {
       if isMixedKindSelection {
         VStack(alignment: .leading, spacing: 6) {
           Label("No bulk action available", systemImage: "exclamationmark.triangle")
-            .font(.headline)
+            .appFont(.headline)
           Text(
             "Worktrees and folders don't share bulk actions. Deselect "
               + "one kind to archive/delete worktrees or remove folders."
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -1191,7 +1196,7 @@ private struct MultiSelectedWorktreesDetailView: View {
   ) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(title)
-        .font(.headline)
+        .appFont(.headline)
       ForEach(Array(rows.prefix(visibleRowsLimit))) { row in
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(row.name)
@@ -1202,23 +1207,23 @@ private struct MultiSelectedWorktreesDetailView: View {
               .lineLimit(1)
           }
         }
-        .font(.body)
+        .appFont(.body)
       }
       if rows.count > visibleRowsLimit {
         Text("+\(rows.count - visibleRowsLimit) more")
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       if !actions.isEmpty {
         VStack(alignment: .leading, spacing: 4) {
           Text("Available actions")
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(.secondary)
           ForEach(actions, id: \.self) { action in
             Text(action)
           }
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .padding(.top, 4)
       }

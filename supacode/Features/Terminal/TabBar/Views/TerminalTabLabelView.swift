@@ -46,7 +46,7 @@ private struct TerminalTabTitleLabel: View, Equatable {
 
   var body: some View {
     Text(title)
-      .font(.caption)
+      .appFont(.caption)
       .fontWeight(isActive ? .semibold : .regular)
       .lineLimit(1)
       .foregroundStyle(TerminalTabBarColors.activeText)

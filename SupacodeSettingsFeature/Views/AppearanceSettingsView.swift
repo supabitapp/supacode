@@ -161,8 +161,7 @@ public struct AppearanceSettingsView: View {
 private struct BetaBadge: View {
   var body: some View {
     Text("Beta")
-      .font(.caption2)
-      .fontWeight(.semibold)
+      .appFont(.caption2, weight: .semibold)
       .foregroundStyle(.secondary)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)

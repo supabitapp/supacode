@@ -128,6 +128,8 @@ private struct SettingsSidebarView: View {
     List(selection: $settingsStore.selection.sending(\.setSelection)) {
       Label("General", systemImage: "gearshape")
         .tag(SettingsSection.general)
+      Label("Accessibility", systemImage: "accessibility")
+        .tag(SettingsSection.accessibility)
       Label("Notifications", systemImage: "bell")
         .tag(SettingsSection.notifications)
       Label("Worktrees", systemImage: "list.dash")
@@ -186,6 +188,8 @@ private struct SettingsDetailView: View {
     switch selection {
     case .general:
       AppearanceSettingsView(store: settingsStore)
+    case .accessibility:
+      AccessibilitySettingsView(store: settingsStore)
     case .notifications:
       NotificationsSettingsView(store: settingsStore)
     case .worktree:

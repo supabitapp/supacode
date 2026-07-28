@@ -1,4 +1,5 @@
 import AppKit
+import SupacodeSettingsShared
 import SwiftUI
 
 /// Non-dismissible sidebar banner shown while the `git` binary is blocked at the
@@ -18,7 +19,7 @@ struct GitEnvironmentErrorCardView: View {
 private struct GitEnvironmentErrorCardIcon: View {
   var body: some View {
     Image(systemName: "exclamationmark.triangle.fill")
-      .font(.title2)
+      .appFont(.title2)
       .foregroundStyle(.orange)
       .accessibilityHidden(true)
   }
@@ -30,10 +31,10 @@ private struct GitEnvironmentErrorCardContent: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(error.title)
-        .font(.subheadline)
+        .appFont(.subheadline)
         .fontWeight(.semibold)
       Text(error.message)
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       GitEnvironmentRemedyRow(command: error.remedyCommand)
     }
@@ -46,7 +47,7 @@ private struct GitEnvironmentRemedyRow: View {
   var body: some View {
     HStack(spacing: 6) {
       Text(command)
-        .font(.caption.monospaced())
+        .appFont(.caption, monospaced: true)
         .textSelection(.enabled)
         .lineLimit(1)
         // Truncate the tail so the leading verb (sudo / xcode-select) stays
@@ -71,7 +72,7 @@ private struct CopyCommandButton: View {
       pasteboard.setString(command, forType: .string)
     } label: {
       Image(systemName: "doc.on.doc")
-        .font(.caption)
+        .appFont(.caption)
         .contentShape(.rect)
     }
     .buttonStyle(.plain)

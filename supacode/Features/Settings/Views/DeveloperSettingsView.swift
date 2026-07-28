@@ -102,7 +102,7 @@ private struct AgentInstallPromptRow: View {
         VStack(alignment: .leading, spacing: 2) {
           Text("Agent integrations")
           Text(subtitle)
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(.secondary)
         }
       }
@@ -256,10 +256,10 @@ private struct AgentIntegrationRow: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(agent.displayName)
         Text(agent.integrationSubtitle)
-          .font(.subheadline)
+          .appFont(.subheadline)
           .foregroundStyle(.secondary)
         if let message = state.errorMessage {
-          Text(message).font(.subheadline).foregroundStyle(.red)
+          Text(message).appFont(.subheadline).foregroundStyle(.red)
         }
       }
       Spacer()

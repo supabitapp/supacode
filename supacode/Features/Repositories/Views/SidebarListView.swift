@@ -339,7 +339,7 @@ private struct SidebarHoistSummaryRow: View {
         }
         Spacer(minLength: 0)
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .lineLimit(1)
       .contentShape(.interaction, .rect)
@@ -544,12 +544,12 @@ private struct SidebarPlaceholderView: View {
           Label {
             VStack(alignment: .leading, spacing: 2) {
               Text("placeholder-branch")
-                .font(.body)
+                .appFont(.body)
                 .lineLimit(1)
                 .redacted(reason: .placeholder)
                 .shimmer(isActive: true)
               Text("placeholder")
-                .font(.footnote)
+                .appFont(.footnote)
                 .lineLimit(1)
                 .redacted(reason: .placeholder)
                 .shimmer(isActive: true)

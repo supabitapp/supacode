@@ -1,4 +1,5 @@
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 /// Bottom-of-sidebar onboarding card announcing that Supacode now lives in the
@@ -45,14 +46,14 @@ private struct MenuBarOnboardingCardBody: View {
         VStack(alignment: .leading, spacing: 4) {
           SidebarCardLabel(title: "Supacode in the menu bar", description: description)
           Text("Turn off in Settings → General")
-            .font(.caption2)
+            .appFont(.caption2)
             .foregroundStyle(.tertiary)
             .padding(.top, 2)
         }
       },
       header: {
         Image(systemName: "menubar.rectangle")
-          .font(.title2)
+          .appFont(.title2)
           .foregroundStyle(.green)
           .accessibilityHidden(true)
       }

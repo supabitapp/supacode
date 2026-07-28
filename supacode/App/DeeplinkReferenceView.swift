@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import SupacodeSettingsShared
 import SwiftUI
 
 struct DeeplinkReferenceView: View {
@@ -26,7 +27,7 @@ struct DeeplinkReferenceView: View {
         )
         .foregroundStyle(.secondary)
       } header: {
-        Text("Deeplink Reference").font(.title.bold())
+        Text("Deeplink Reference").appFont(.title, weight: .bold)
         Text("Use the \(code("supacode://")) URL scheme to control Supacode from the terminal, scripts, or other apps.")
       }
 
@@ -129,7 +130,7 @@ struct DeeplinkReferenceView: View {
     .init(
       url: "supacode://settings/<section>",
       description: "Open a specific section.",
-      params: "general|notifications|worktrees|developer|shortcuts|scripts|updates|github"
+      params: "general|accessibility|notifications|worktrees|developer|shortcuts|scripts|updates|github"
     ),
     .init(url: "supacode://settings/repo/<repo_id>", description: "Open repository settings."),
     .init(
@@ -163,7 +164,7 @@ private struct DeeplinkSection: View {
         ForEach(rows) { row in
           GridRow {
             Text(row.url)
-              .font(.body.monospaced())
+              .appFont(.body, monospaced: true)
               .gridColumnAlignment(.leading)
             row.descriptionText
               .foregroundStyle(.secondary)

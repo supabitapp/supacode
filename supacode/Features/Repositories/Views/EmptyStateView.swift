@@ -12,18 +12,18 @@ struct EmptyStateView: View {
 
     VStack(spacing: 12) {
       Image(systemName: "tray")
-        .font(.title)
+        .appFont(.title)
         .imageScale(.large)
         .accessibilityHidden(true)
         .foregroundStyle(.secondary)
       VStack(spacing: 4) {
         Text("Open a repository or folder")
-          .font(.title3)
+          .appFont(.title3)
         Text(
           "Press \(openRepo?.display ?? AppShortcuts.openRepository.display) "
             + "or click Open Repository or Folder to choose one."
         )
-        .font(.subheadline)
+        .appFont(.subheadline)
         .foregroundStyle(.secondary)
       }
       Button("Open Repository or Folder...") {

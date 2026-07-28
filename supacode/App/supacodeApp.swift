@@ -539,6 +539,7 @@ struct SupacodeApp: App {
           .environment(ghosttyShortcuts)
           .environment(commandKeyObserver)
           .environment(openActionIcons)
+          .appChromeTextSize(store.settings.chromeTextSize)
       }
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)
@@ -601,6 +602,7 @@ struct SupacodeApp: App {
       SettingsView(store: store)
         .environment(ghosttyShortcuts)
         .environment(commandKeyObserver)
+        .appChromeTextSize(store.settings.chromeTextSize)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
         .movesSettingsWindowToActiveSpace()
@@ -611,6 +613,7 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     Window("Deeplink Reference", id: WindowID.deeplinkReference) {
       DeeplinkReferenceView()
+        .appChromeTextSize(store.settings.chromeTextSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
@@ -618,6 +621,7 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     Window("CLI Reference", id: WindowID.cliReference) {
       CLIReferenceView()
+        .appChromeTextSize(store.settings.chromeTextSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
@@ -625,6 +629,7 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     MenuBarExtra(isInserted: menuBarInserted) {
       MenuBarNotificationsMenu(store: store)
+        .appChromeTextSize(store.settings.chromeTextSize)
     } label: {
       MenuBarNotificationsLabel(unreadCount: store.notificationIndicatorCount)
     }

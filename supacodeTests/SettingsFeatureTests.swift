@@ -130,6 +130,41 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.terminalHibernationEnabled == false)
   }
 
+  @Test(.dependencies) func chromeTextSizePersistsChanges() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.chromeTextSize, .extraLarge))) {
+      $0.chromeTextSize = .extraLarge
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.chromeTextSize == .extraLarge)
+  }
+
+  @Test(.dependencies) func unrelatedSettingsChangeKeepsChromeTextSize() async {
+    // `persist` assigns `$0.global` wholesale, so a field missing from this
+    // feature's state would be written back as its default on every unrelated
+    // change.
+    var initialSettings = GlobalSettings.default
+    initialSettings.chromeTextSize = .large
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.terminalHibernationEnabled, false))) {
+      $0.terminalHibernationEnabled = false
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.chromeTextSize == .large)
+  }
+
   @Test(.dependencies) func confirmCloseSurfacePersistsChanges() async {
     var initialSettings = GlobalSettings.default
     initialSettings.confirmCloseSurface = true

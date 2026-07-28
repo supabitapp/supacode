@@ -144,7 +144,7 @@ supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--upstrea
 ### Settings
 
 ```
-supacode settings [<section>]        # Open settings (general|notifications|worktrees|developer|shortcuts|scripts|updates|github).
+supacode settings [<section>]        # Open settings (general|accessibility|notifications|worktrees|developer|shortcuts|scripts|updates|github).
 supacode settings repo [-r <id>]     # Open repository settings.
 supacode settings repo scripts [-r <id>]  # Open repository Scripts settings.
 ```

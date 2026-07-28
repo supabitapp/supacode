@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 enum PullRequestBadgeStyle {
@@ -38,7 +39,7 @@ struct PullRequestBadgeView: View {
 
   var body: some View {
     Text(text)
-      .font(.caption2)
+      .appFont(.caption2)
       .foregroundStyle(color)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)

@@ -59,7 +59,7 @@ public struct GlobalScriptsSettingsView: View {
           } header: {
             Label {
               Text("\(script.displayName) Script")
-                .font(.body)
+                .appFont(.body)
                 .bold()
             } icon: {
               Image(systemName: script.resolvedSystemImage)

@@ -1,4 +1,5 @@
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 /// Bottom-of-sidebar onboarding card surfacing the new "Highlight Relevant
@@ -54,14 +55,14 @@ private struct HighlightRelevantOnboardingCardBody: View {
         VStack(alignment: .leading, spacing: 4) {
           SidebarCardLabel(title: "Pinned and Active at a glance", description: description)
           Text("Toggle in View → Group Relevant Sidebar Rows")
-            .font(.caption2)
+            .appFont(.caption2)
             .foregroundStyle(.tertiary)
             .padding(.top, 2)
         }
       },
       header: {
         Image(systemName: "sparkles")
-          .font(.title2)
+          .appFont(.title2)
           .foregroundStyle(.orange)
           .accessibilityHidden(true)
       }

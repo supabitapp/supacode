@@ -1,4 +1,5 @@
 import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 /// Pinned bottom-of-sidebar onboarding card surfacing the new branch-nesting
@@ -48,14 +49,14 @@ private struct NestedWorktreesOnboardingCardBody: View {
         VStack(alignment: .leading, spacing: 4) {
           SidebarCardLabel(title: "Worktrees nested by branch", description: description)
           Text("Toggle in View → Nest Worktrees by Branch")
-            .font(.caption2)
+            .appFont(.caption2)
             .foregroundStyle(.tertiary)
             .padding(.top, 2)
         }
       },
       header: {
         Image(systemName: "list.bullet.indent")
-          .font(.title2)
+          .appFont(.title2)
           .foregroundStyle(.blue)
           .accessibilityHidden(true)
       }
