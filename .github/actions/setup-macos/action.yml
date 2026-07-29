@@ -5,6 +5,9 @@ inputs:
   disable-tools:
     description: Comma-separated mise tools to skip, so CI installs only what it needs.
     default: spm:swiftlang/swift-format,npm:create-dmg
+  install-fish:
+    description: Install Fish for shell-compatibility regression tests.
+    default: "false"
 
 runs:
   using: composite
@@ -27,6 +30,10 @@ runs:
       with:
         version: 2026.3.0
         cache: true
+    - name: Install Fish
+      if: ${{ inputs.install-fish == 'true' }}
+      shell: bash
+      run: brew install fish
     - name: Authenticate with Tuist
       if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       shell: bash
