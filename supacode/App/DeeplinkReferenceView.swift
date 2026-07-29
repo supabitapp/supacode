@@ -20,6 +20,11 @@ struct DeeplinkReferenceView: View {
             + " unless \"Allow dangerous actions\" permits them in Developer settings."
         )
         .foregroundStyle(.secondary)
+        Text(
+          // swiftlint:disable:next line_length
+          "Any worktree action, and \(code("repo/<repo_id>/worktree/new")), accepts \(code("background=true")) to leave the sidebar selection and keyboard focus untouched. New tabs and splits then stay in the background instead of becoming active."
+        )
+        .foregroundStyle(.secondary)
       } header: {
         Text("Deeplink Reference").font(.title.bold())
         Text("Use the \(code("supacode://")) URL scheme to control Supacode from the terminal, scripts, or other apps.")

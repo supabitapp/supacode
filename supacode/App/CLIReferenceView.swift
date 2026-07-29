@@ -163,6 +163,10 @@ struct CLIReferenceView: View {
     .init(command: "-d, --direction", description: "Split direction: horizontal (h) or vertical (v)."),
     .init(command: "-n, --id", description: "UUID for a new tab or surface."),
     .init(command: "-f, --focused", description: "Print only the focused item in list commands."),
+    .init(
+      command: "--background",
+      description: "Leave the selection and focus alone; new tabs and splits stay in the background."
+    ),
   ]
 }
 

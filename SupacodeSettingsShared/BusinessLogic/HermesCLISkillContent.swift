@@ -26,5 +26,10 @@ nonisolated enum HermesCLISkillContent {
     Commands: `supacode worktree`, `supacode tab`, `supacode surface`, `supacode repo`, `supacode settings`,
     and `supacode socket`. Use `list` commands to discover IDs, then pass them explicitly with `-w`, `-t`,
     `-s`, `-r`, or `-c`.
+
+    Pass `--background` to any action that would otherwise focus its target (`tab new`, `surface split`,
+    `repo worktree-new`, `worktree run`/`stop`/`delete`/`archive`/`unarchive`/`pin`/`unpin`, and the
+    `close` commands) to leave the user's selection and keyboard focus alone. New tabs and splits then
+    stay in the background. The `focus` commands do not accept it.
     """
 }
