@@ -459,8 +459,12 @@ struct RemoteDefaultShellCommandTests {
 
     try await process.runToExit()
 
-    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let output = try #require(
+      String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
+    let error = try #require(
+      String(bytes: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
     #expect(process.terminationStatus == 0, "Fish rejected the remote worktree path: \(error)")
     #expect(output == "-l\n")
     #expect(error.isEmpty)

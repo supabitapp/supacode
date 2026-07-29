@@ -235,9 +235,11 @@ struct WorktreeEnvironmentTests {
     try await parser.runToExit()
 
     #expect(parser.terminationStatus == 0)
-    let remoteCommand = String(
-      decoding: parsedCommand.fileHandleForReading.readDataToEndOfFile(),
-      as: UTF8.self
+    let remoteCommand = try #require(
+      String(
+        bytes: parsedCommand.fileHandleForReading.readDataToEndOfFile(),
+        encoding: .utf8
+      )
     )
     let process = Process()
     process.executableURL = fishURL
@@ -255,8 +257,12 @@ struct WorktreeEnvironmentTests {
 
     try await process.runToExit()
 
-    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let output = try #require(
+      String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
+    let error = try #require(
+      String(bytes: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
     #expect(process.terminationStatus == 0, "Fish rejected the remote blocking script: \(error)")
     #expect(output.contains(marker), "The remote blocking script did not run: \(output)")
     #expect(error.isEmpty)

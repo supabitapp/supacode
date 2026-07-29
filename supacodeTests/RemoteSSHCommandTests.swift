@@ -209,8 +209,12 @@ struct SSHCommandTests {
 
     try await process.runToExit()
 
-    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let output = try #require(
+      String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
+    let error = try #require(
+      String(bytes: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
     #expect(process.terminationStatus == 0, "Fish rejected the remote command: \(error)")
     #expect(output == "\(workingDirectory.path)\n\(argument)\n")
     #expect(error.isEmpty)
@@ -286,8 +290,12 @@ struct SSHCommandTests {
 
     try await process.runToExit()
 
-    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let output = try #require(
+      String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
+    let error = try #require(
+      String(bytes: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
     #expect(process.terminationStatus == 0, "Fish rejected the login-shell wrapper: \(error)")
     #expect(output == "\(environmentValue)\nsupacode-test\n\(argument)\n")
     #expect(error.isEmpty)
@@ -642,8 +650,12 @@ struct ZmxAttachRemoteTests {
 
     try await process.runToExit()
 
-    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let output = try #require(
+      String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
+    let error = try #require(
+      String(bytes: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
     #expect(process.terminationStatus == 0, "Fish rejected the nested remote command: \(error)")
     #expect(output == "single:'\nosc:\\033\\\\zmx\n")
     #expect(error.isEmpty)
