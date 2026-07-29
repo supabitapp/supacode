@@ -291,37 +291,51 @@ final class WorktreeTerminalManager {
     handleManagementCommand(command)
   }
 
+  // swiftlint:disable:next function_parameter_count
+  private func scheduleTabCreation(
+    in worktree: Worktree,
+    runSetupScriptIfNew: Bool,
+    input: String?,
+    tabID: UUID?,
+    customTitle: String?,
+    focusing: Bool
+  ) {
+    Task {
+      createTabAsync(
+        in: worktree,
+        runSetupScriptIfNew: runSetupScriptIfNew,
+        initialInput: input,
+        tabID: tabID,
+        customTitle: customTitle,
+        focusing: focusing
+      )
+    }
+  }
+
   // swiftlint:disable:next cyclomatic_complexity
   private func handleTabCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
-    case .createTab(let worktree, let runSetupScriptIfNew, let id, let title):
-      Task {
-        createTabAsync(
-          in: worktree,
-          runSetupScriptIfNew: runSetupScriptIfNew,
-          tabID: id,
-          customTitle: title
-        )
-      }
-    case .createTabWithInput(let worktree, let input, let runSetupScriptIfNew, let id, let title):
-      Task {
-        createTabAsync(
-          in: worktree,
-          runSetupScriptIfNew: runSetupScriptIfNew,
-          initialInput: input,
-          tabID: id,
-          customTitle: title
-        )
-      }
+    case .createTab(let worktree, let runSetupScriptIfNew, let id, let title, let focusing):
+      scheduleTabCreation(
+        in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, input: nil,
+        tabID: id, customTitle: title, focusing: focusing)
+    case .createTabWithInput(
+      let worktree, let input, let runSetupScriptIfNew, let id, let title, let focusing
+    ):
+      scheduleTabCreation(
+        in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, input: input,
+        tabID: id, customTitle: title, focusing: focusing)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
-    case .stopRunScript(let worktree):
-      stopBlockingScripts(in: worktree) { $0.stopRunScripts() }
-    case .stopScript(let worktree, let definitionID):
-      stopBlockingScripts(in: worktree) { $0.stopScript(definitionID: definitionID) }
-    case .runBlockingScript(let worktree, let kind, let script):
-      _ = state(for: worktree).runBlockingScript(kind: kind, script)
+    case .stopRunScript(let worktree, let focusing):
+      stopBlockingScripts(in: worktree) { $0.stopRunScripts(focusing: focusing) }
+    case .stopScript(let worktree, let definitionID, let focusing):
+      stopBlockingScripts(in: worktree) {
+        $0.stopScript(definitionID: definitionID, focusing: focusing)
+      }
+    case .runBlockingScript(let worktree, let kind, let script, let focusing):
+      _ = state(for: worktree).runBlockingScript(kind: kind, script, focusing: focusing)
     case .closeFocusedTab(let worktree):
       _ = closeFocusedTab(in: worktree)
     case .closeFocusedSurface(let worktree):
@@ -350,19 +364,25 @@ final class WorktreeTerminalManager {
       if let input, !input.isEmpty {
         terminal.focusAndInsertText(input + "\r")
       }
-    case .splitSurface(let worktree, let tabID, let surfaceID, let direction, let input, let id):
+    case .splitSurface(
+      let worktree, let tabID, let surfaceID, let direction, let input, let id, let focusing
+    ):
       let terminal = state(for: worktree)
       // Wake explicitly for parity with the focus and destroy handlers; selectTab
-      // would wake a dormant tab anyway.
+      // would wake a dormant tab anyway. The wake runs even when not focusing,
+      // since splitting a dormant tab would otherwise land in a frozen layout.
       terminal.wakeTab(tabID)
-      terminal.selectTab(tabID)
+      if focusing {
+        terminal.selectTab(tabID)
+      }
       let ghosttyDirection: GhosttySplitAction.NewDirection = direction == .vertical ? .down : .right
       let resolvedInput = BlockingScriptRunner.makeCommandInput(script: input ?? "")
       let splitSucceeded = terminal.performSplitAction(
         .newSplit(direction: ghosttyDirection),
         for: surfaceID,
         newSurfaceID: id,
-        initialInput: resolvedInput
+        initialInput: resolvedInput,
+        focusing: focusing
       )
       guard splitSucceeded else {
         terminalLogger.warning("splitSurface: failed for surface \(surfaceID) in worktree \(worktree.id).")
@@ -374,7 +394,7 @@ final class WorktreeTerminalManager {
         }
         break
       }
-    case .destroyTab(let worktree, let tabID):
+    case .destroyTab(let worktree, let tabID, let focusing):
       let terminal = state(for: worktree)
       guard terminal.tabManager.tabs.contains(where: { $0.id == tabID }) else {
         terminalLogger.warning("destroyTab: tab \(tabID.rawValue) not found in worktree \(worktree.id).")
@@ -382,12 +402,16 @@ final class WorktreeTerminalManager {
         emit(.tabRemoved(worktreeID: worktree.id, tabID: tabID))
         break
       }
-      terminal.closeTab(tabID)
-    case .destroySurface(let worktree, let tabID, let surfaceID):
+      terminal.closeTab(tabID, focusing: focusing)
+    case .destroySurface(let worktree, let tabID, let surfaceID, let focusing):
       let terminal = state(for: worktree)
-      // Wake explicitly for parity with the focus and split handlers.
+      // Wake explicitly for parity with the focus and split handlers. The wake
+      // runs even when not focusing, since closing inside a dormant tab would
+      // otherwise operate on a frozen layout.
       terminal.wakeTab(tabID)
-      terminal.selectTab(tabID)
+      if focusing {
+        terminal.selectTab(tabID)
+      }
       if !terminal.closeSurface(id: surfaceID) {
         terminalLogger.warning("destroySurface: surface \(surfaceID) not found in worktree \(worktree.id).")
         // Don't synthesize a `surfacesClosed` here: it drives global presence
@@ -675,7 +699,8 @@ final class WorktreeTerminalManager {
     runSetupScriptIfNew: Bool,
     initialInput: String? = nil,
     tabID: UUID? = nil,
-    customTitle: String? = nil
+    customTitle: String? = nil,
+    focusing: Bool = true
   ) {
     let state = state(for: worktree) { runSetupScriptIfNew }
     // A CLI `tab new` on a cold-staged worktree must consume the persisted layout
@@ -693,6 +718,7 @@ final class WorktreeTerminalManager {
       setupScript = nil
     }
     let created = state.createTab(
+      activation: focusing ? .focused : .background,
       setupScript: setupScript,
       initialInput: initialInput,
       tabID: tabID,

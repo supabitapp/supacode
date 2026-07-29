@@ -71,11 +71,66 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func runWorktreeDeeplink() async {
     let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree)
+    let definition = seedRunScript(for: worktree, command: "npm start")
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .run)))
     await store.receive(\.repositories.selectWorktree)
-    await store.receive(\.runScript)
+    await store.finish()
+    let ranTarget = sent.value.contains {
+      if case .runBlockingScript(let target, _, let script, _) = $0 {
+        return target.id == worktree.id && script == definition.command
+      }
+      return false
+    }
+    #expect(ranTarget)
+  }
+
+  /// Bare `run` used to resolve its script from the selected worktree, so a
+  /// cross-worktree call ran the wrong repository's script.
+  @Test(.dependencies) func runWorktreeDeeplinkResolvesScriptFromTargetNotSelection() async {
+    let worktree = makeWorktree()
+    let target = makeWorktree(id: "/tmp/repo/wt-2", name: "wt-2")
+    let definition = seedRunScript(for: target, command: "npm start")
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktrees: [worktree, target], selected: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
+
+    // Backgrounded, so nothing selects the target first.
+    await store.send(.deeplink(.worktree(id: target.id, action: .run, background: true)))
+    await store.finish()
+    #expect(store.state.repositories.selection == .worktree(worktree.id))
+    let ranTarget = sent.value.contains {
+      if case .runBlockingScript(let ran, _, let script, _) = $0 {
+        return ran.id == target.id && script == definition.command
+      }
+      return false
+    }
+    #expect(ranTarget)
   }
 
   @Test(.dependencies) func pinWorktreeDeeplink() async {
@@ -237,6 +292,231 @@ struct AppFeatureDeeplinkTests {
     let item = store.state.repositories.sidebar
       .sections[repositoryID]?.buckets[.pinned]?.items[worktree.id]
     #expect(item?.title == "a b c")
+  }
+
+  // MARK: - Background opt-out.
+
+  /// The gate is shared by every selecting action, so one action pins it in both
+  /// directions rather than repeating the assertion per command.
+  @Test(.dependencies) func backgroundDeeplinkSkipsWorktreeSelection() async {
+    let worktree = makeWorktree()
+    let other = makeWorktree(id: "/tmp/repo/wt-2", name: "wt-2")
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktrees: [worktree, other], selected: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: other.id, action: .pin, background: true)))
+    await store.receive(\.repositories.pinWorktree)
+    await store.finish()
+    #expect(store.state.repositories.selection == .worktree(worktree.id))
+  }
+
+  @Test(.dependencies) func foregroundDeeplinkStillSelectsWorktree() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .pin)))
+    await store.receive(\.repositories.selectWorktree)
+  }
+
+  /// The script tab is created by a terminal command, not by the deeplink gate,
+  /// so the intent has to survive all the way into `runBlockingScript`.
+  @Test(.dependencies) func backgroundRunLaunchesTheScriptTabUnfocused() async {
+    let worktree = makeWorktree()
+    let definition = seedRunScript(for: worktree, command: "npm start")
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .run, background: true)))
+    await store.finish()
+    let launchedUnfocused = sent.value.contains {
+      if case .runBlockingScript(_, _, let script, let focusing) = $0 {
+        return script == definition.command && focusing == false
+      }
+      return false
+    }
+    #expect(launchedUnfocused)
+  }
+
+  @Test(.dependencies) func backgroundStopLeavesFocusAlone() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .stop, background: true)))
+    await store.finish()
+    let stoppedUnfocused = sent.value.contains {
+      if case .stopRunScript(_, let focusing) = $0 { return focusing == false }
+      return false
+    }
+    #expect(stoppedUnfocused)
+  }
+
+  @Test(.dependencies) func backgroundStopScriptLeavesFocusAlone() async {
+    let worktree = makeWorktree()
+    let definition = seedRunScript(for: worktree, command: "npm start")
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.reconcileSidebarForTesting()
+    repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+      .init(id: definition.id, tint: definition.resolvedTintColor)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .stopScript(scriptID: definition.id), background: true)
+      )
+    )
+    await store.finish()
+    let stoppedUnfocused = sent.value.contains {
+      if case .stopScript(_, let definitionID, let focusing) = $0 {
+        return definitionID == definition.id && focusing == false
+      }
+      return false
+    }
+    #expect(stoppedUnfocused)
+  }
+
+  /// Archive and delete reach their lifecycle script through the repositories
+  /// delegate, which is the one relay that does not see the deeplink.
+  @Test(.dependencies) func backgroundArchiveRunsItsScriptUnfocused() async {
+    let worktree = makeWorktree()
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.archiveScript = "echo archiving" }
+    defer { $settings.withLock { $0.archiveScript = "" } }
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    var appSettings = SettingsFeature.State()
+    appSettings.automatedActionPolicy = .always
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: appSettings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.date = .constant(Date(timeIntervalSince1970: 1_000_000))
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .archive, background: true)))
+    await store.finish()
+    let archivedUnfocused = sent.value.contains {
+      if case .runBlockingScript(_, .archive, _, let focusing) = $0 { return focusing == false }
+      return false
+    }
+    #expect(archivedUnfocused)
+  }
+
+  /// Archive prompts before it runs, and the confirm path replays the action
+  /// without the deeplink, so the intent has to be on the dialog state.
+  @Test(.dependencies) func backgroundArchiveSurvivesItsConfirmation() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .archive, background: true)))
+    #expect(store.state.deeplinkInputConfirmation?.background == true)
+  }
+
+  /// Bare `run` never prompted before this routing change, so it must not start.
+  @Test(.dependencies) func bareRunDoesNotPromptUnderTheDefaultPolicy() async {
+    let worktree = makeWorktree()
+    seedRunScript(for: worktree, command: "npm start")
+    let store = makeStore(worktree: worktree)
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .run)))
+    await store.finish()
+    #expect(store.state.deeplinkInputConfirmation == nil)
+  }
+
+  @Test(.dependencies) func backgroundTabCloseLeavesFocusAlone() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    // Closing a tab confirms by default; bypass so the command actually dispatches.
+    var settings = SettingsFeature.State()
+    settings.automatedActionPolicy = .always
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: settings,
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.tabExists = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .tabDestroy(tabID: tabID), background: true))
+    )
+    await store.finish()
+    let closedUnfocused = sent.value.contains {
+      if case .destroyTab(_, _, let focusing) = $0 { return focusing == false }
+      return false
+    }
+    #expect(closedUnfocused)
+  }
+
+  /// The confirm path re-enters `worktreeActionEffect` without the original
+  /// deeplink, so the opt-out has to survive on the dialog state or a confirmed
+  /// command would focus while an auto-approved one would not.
+  @Test(.dependencies) func backgroundSurvivesInputConfirmation() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: "npm test", id: nil, title: nil), background: true)
+      )
+    )
+    #expect(store.state.deeplinkInputConfirmation?.background == true)
+  }
+
+  @Test(.dependencies) func foregroundConfirmationCarriesFocusingIntent() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .tabNew(input: "npm test", id: nil, title: nil)))
+    )
+    #expect(store.state.deeplinkInputConfirmation?.background == false)
   }
 
   @Test(.dependencies) func archiveWorktreeDeeplinkShowsConfirmation() async {
@@ -466,11 +746,55 @@ struct AppFeatureDeeplinkTests {
 
   @Test(.dependencies) func stopWorktreeDeeplink() async {
     let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .stop)))
     await store.receive(\.repositories.selectWorktree)
-    await store.receive(\.stopRunScripts)
+    await store.finish()
+    let stoppedTarget = sent.value.contains {
+      if case .stopRunScript(let target, _) = $0 { return target.id == worktree.id }
+      return false
+    }
+    #expect(stoppedTarget)
+  }
+
+  /// Bare `stop` used to read the selected worktree, so a backgrounded call
+  /// would have stopped whatever the user happened to be looking at.
+  @Test(.dependencies) func stopWorktreeDeeplinkTargetsNamedWorktreeWhenBackgrounded() async {
+    let worktree = makeWorktree()
+    let target = makeWorktree(id: "/tmp/repo/wt-2", name: "wt-2")
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktrees: [worktree, target], selected: worktree),
+        settings: SettingsFeature.State(),
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: target.id, action: .stop, background: true)))
+    await store.finish()
+    #expect(store.state.repositories.selection == .worktree(worktree.id))
+    let stoppedTarget = sent.value.contains {
+      if case .stopRunScript(let stopped, _) = $0 { return stopped.id == target.id }
+      return false
+    }
+    #expect(stoppedTarget)
   }
 
   // MARK: - Named script deeplinks.
@@ -526,7 +850,7 @@ struct AppFeatureDeeplinkTests {
 
     #expect(store.state.deeplinkInputConfirmation == nil)
     let hasRun = sent.value.contains(where: {
-      if case .runBlockingScript(_, .script(let sentDefinition), _) = $0 {
+      if case .runBlockingScript(_, .script(let sentDefinition), _, _) = $0 {
         return sentDefinition.id == definition.id
       }
       return false
@@ -571,7 +895,7 @@ struct AppFeatureDeeplinkTests {
 
     #expect(store.state.deeplinkInputConfirmation == nil)
     let hasStop = sent.value.contains(where: {
-      if case .stopScript(_, let definitionID) = $0 { return definitionID == definition.id }
+      if case .stopScript(_, let definitionID, _) = $0 { return definitionID == definition.id }
       return false
     })
     #expect(hasStop)
@@ -612,7 +936,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let hasRun = sent.value.contains(where: {
-      if case .runBlockingScript(_, .script(let definition), _) = $0 {
+      if case .runBlockingScript(_, .script(let definition), _, _) = $0 {
         return definition.id == globalScript.id
       }
       return false
@@ -647,7 +971,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let hasStop = sent.value.contains(where: {
-      if case .stopScript(_, let definitionID) = $0 { return definitionID == globalScript.id }
+      if case .stopScript(_, let definitionID, _) = $0 { return definitionID == globalScript.id }
       return false
     })
     #expect(hasStop)
@@ -687,7 +1011,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let runCommands = sent.value.compactMap { command -> ScriptDefinition? in
-      if case .runBlockingScript(_, .script(let def), _) = command { return def }
+      if case .runBlockingScript(_, .script(let def), _, _) = command { return def }
       return nil
     }
     #expect(runCommands.count == 1)
@@ -837,7 +1161,7 @@ struct AppFeatureDeeplinkTests {
     await store.finish()
 
     let hasRun = sent.value.contains(where: {
-      if case .runBlockingScript(_, .script(let sentDefinition), _) = $0 {
+      if case .runBlockingScript(_, .script(let sentDefinition), _, _) = $0 {
         return sentDefinition.id == definition.id
       }
       return false
@@ -1499,7 +1823,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tabNew(input: nil, id: nil))))
     let hasCreateTab = sent.value.contains(where: {
-      if case .createTab(let target, _, _, _) = $0 { return target.id == worktree.id }
+      if case .createTab(let target, _, _, _, _) = $0 { return target.id == worktree.id }
       return false
     })
     #expect(hasCreateTab)
@@ -2511,6 +2835,40 @@ struct AppFeatureDeeplinkTests {
       name: "repo",
       worktrees: [worktree],
     )
+  }
+
+  /// Seeds a `.run`-kind script into the worktree's repository settings so the
+  /// storage-backed primary-script lookup resolves.
+  @discardableResult
+  private func seedRunScript(for worktree: Worktree, command: String) -> ScriptDefinition {
+    let definition = ScriptDefinition(
+      id: UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!,
+      kind: .run,
+      command: command
+    )
+    @Shared(.repositorySettings(worktree.repositoryRootURL, host: worktree.host)) var settings
+    $settings.withLock { $0.scripts = [definition] }
+    return definition
+  }
+
+  /// State holding both worktrees with `selected` selected, so a background action
+  /// on the other one can be shown not to move the selection.
+  private func makeRepositoriesState(
+    worktrees: IdentifiedArrayOf<Worktree>,
+    selected: Worktree
+  ) -> RepositoriesFeature.State {
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [
+      Repository(
+        id: "/tmp/repo",
+        rootURL: URL(fileURLWithPath: "/tmp/repo"),
+        name: "repo",
+        worktrees: worktrees,
+      )
+    ]
+    repositoriesState.selection = .worktree(selected.id)
+    repositoriesState.isInitialLoadComplete = true
+    return repositoriesState
   }
 
   private func makeRepositoriesState(worktree: Worktree) -> RepositoriesFeature.State {

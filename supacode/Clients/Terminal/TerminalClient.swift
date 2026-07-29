@@ -36,18 +36,25 @@ struct TerminalClient {
     ) -> Void
 
   enum Command: Equatable {
-    case createTab(Worktree, runSetupScriptIfNew: Bool, id: UUID? = nil, title: String? = nil)
+    case createTab(
+      Worktree,
+      runSetupScriptIfNew: Bool,
+      id: UUID? = nil,
+      title: String? = nil,
+      focusing: Bool = true
+    )
     case createTabWithInput(
       Worktree,
       input: String,
       runSetupScriptIfNew: Bool,
       id: UUID? = nil,
-      title: String? = nil
+      title: String? = nil,
+      focusing: Bool = true
     )
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
-    case stopRunScript(Worktree)
-    case stopScript(Worktree, definitionID: UUID)
-    case runBlockingScript(Worktree, kind: BlockingScriptKind, script: String)
+    case stopRunScript(Worktree, focusing: Bool = true)
+    case stopScript(Worktree, definitionID: UUID, focusing: Bool = true)
+    case runBlockingScript(Worktree, kind: BlockingScriptKind, script: String, focusing: Bool = true)
     case closeFocusedTab(Worktree)
     case closeFocusedSurface(Worktree)
     case performBindingAction(Worktree, action: String)
@@ -63,9 +70,9 @@ struct TerminalClient {
     case focusSurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, input: String? = nil)
     case splitSurface(
       Worktree, tabID: TerminalTabID, surfaceID: UUID, direction: SplitDirection,
-      input: String?, id: UUID? = nil)
-    case destroyTab(Worktree, tabID: TerminalTabID)
-    case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID)
+      input: String?, id: UUID? = nil, focusing: Bool = true)
+    case destroyTab(Worktree, tabID: TerminalTabID, focusing: Bool = true)
+    case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, focusing: Bool = true)
     case beginTabRename(Worktree, tabID: TerminalTabID? = nil)
     case renameTab(Worktree, tabID: TerminalTabID, title: String)
     case prune(keeping: Set<Worktree.ID>, protectingRepositoryIDs: Set<Repository.ID>)

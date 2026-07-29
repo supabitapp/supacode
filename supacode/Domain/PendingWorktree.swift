@@ -16,16 +16,21 @@ struct PendingWorktree: Identifiable, Hashable {
   let repositoryID: Repository.ID
   var progress: WorktreeCreationProgress
   var customization: Customization?
+  /// Carried across the pending → real swap so a backgrounded creation skips both
+  /// the selection and the terminal focus once the worktree materializes.
+  var background: Bool
 
   init(
     id: Worktree.ID,
     repositoryID: Repository.ID,
     progress: WorktreeCreationProgress,
-    customization: Customization? = nil
+    customization: Customization? = nil,
+    background: Bool = false
   ) {
     self.id = id
     self.repositoryID = repositoryID
     self.progress = progress
     self.customization = customization
+    self.background = background
   }
 }

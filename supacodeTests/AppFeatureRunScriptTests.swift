@@ -68,7 +68,7 @@ struct AppFeatureRunScriptTests {
     // terminal's row projection once the script tab is tracked.
     #expect(store.state.repositories.sidebarItems[id: worktree.id]?.runningScripts.isEmpty == true)
     #expect(sent.value.count == 1)
-    guard case .runBlockingScript(let sentWorktree, let kind, let script) = sent.value.first else {
+    guard case .runBlockingScript(let sentWorktree, let kind, let script, _) = sent.value.first else {
       Issue.record("Expected runBlockingScript command")
       return
     }
@@ -281,7 +281,7 @@ struct AppFeatureRunScriptTests {
     await store.finish()
 
     #expect(sent.value.count == 1)
-    guard case .stopRunScript(let sentWorktree) = sent.value.first else {
+    guard case .stopRunScript(let sentWorktree, _) = sent.value.first else {
       Issue.record("Expected stopRunScript command")
       return
     }
@@ -310,7 +310,7 @@ struct AppFeatureRunScriptTests {
     await store.finish()
 
     #expect(sent.value.count == 1)
-    guard case .stopScript(let sentWorktree, let definitionID) = sent.value.first else {
+    guard case .stopScript(let sentWorktree, let definitionID, _) = sent.value.first else {
       Issue.record("Expected stopScript command")
       return
     }
@@ -419,7 +419,7 @@ struct AppFeatureRunScriptTests {
     await store.finish()
 
     #expect(sent.value.count == 1)
-    guard case .runBlockingScript(_, let kind, let script) = sent.value.first else {
+    guard case .runBlockingScript(_, let kind, let script, _) = sent.value.first else {
       Issue.record("Expected runBlockingScript command")
       return
     }
@@ -519,7 +519,7 @@ struct AppFeatureRunScriptTests {
     await store.finish()
 
     let runCommands = sent.value.compactMap { command -> ScriptDefinition? in
-      if case .runBlockingScript(_, .script(let def), _) = command { return def }
+      if case .runBlockingScript(_, .script(let def), _, _) = command { return def }
       return nil
     }
     #expect(runCommands.count == 1)
@@ -554,7 +554,7 @@ struct AppFeatureRunScriptTests {
     await store.finish()
 
     let runCommands = sent.value.compactMap { command -> ScriptDefinition? in
-      if case .runBlockingScript(_, .script(let def), _) = command { return def }
+      if case .runBlockingScript(_, .script(let def), _, _) = command { return def }
       return nil
     }
     #expect(runCommands.count == 1)

@@ -619,14 +619,15 @@ struct AppFeature {
           repository.isGitRepository ? .repository(repositoryID.rawValue) : .repositoryScripts(repositoryID.rawValue)
         return .send(.settings(.setSelection(section)))
 
-      case .repositories(.delegate(.runBlockingScript(let worktree, _, let kind, let script))):
+      case .repositories(.delegate(.runBlockingScript(let worktree, _, let kind, let script, let focusing))):
         // Defense-in-depth against a future emitter forgetting the pre-screen.
         if worktree.isMissing {
           appLogger.info("Skipping \(kind) blocking script on missing worktree \(worktree.id)")
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.runBlockingScript(worktree, kind: kind, script: script))
+          await terminalClient.send(
+            .runBlockingScript(worktree, kind: kind, script: script, focusing: focusing))
         }
 
       case .repositories(.delegate(.selectTerminalTab(let worktreeID, let tabId))):
@@ -1196,10 +1197,10 @@ struct AppFeature {
         let pendingFD = state.deeplinkInputConfirmation?.responseFD
         let timeoutSeconds =
           state.deeplinkInputConfirmation?.timeoutSeconds ?? defaultCommandTimeoutSeconds
+        let background = state.deeplinkInputConfirmation?.background ?? false
         state.deeplinkInputConfirmation = nil
-        // The initial deeplink dispatch already selected the worktree via
-        // `handleWorktreeDeeplink`. Re-dispatch only the action effect, skipping
-        // the redundant select.
+        // The initial deeplink dispatch already ran the select (or deliberately
+        // skipped it when backgrounded). Re-dispatch only the action effect.
         let command = isolateSocketCommandAlert(responseFD: pendingFD, state: &state) { state in
           worktreeActionEffect(
             worktreeID: worktreeID,
@@ -1208,6 +1209,7 @@ struct AppFeature {
             bypassConfirmation: true,
             responseFD: pendingFD,
             timeoutSeconds: timeoutSeconds,
+            background: background,
           )
         }
         let responseEffect: Effect<Action>
@@ -1979,10 +1981,10 @@ struct AppFeature {
     case .help:
       state.isDeeplinkReferenceRequested = true
       return .none
-    case .worktree(let worktreeID, let action):
+    case .worktree(let worktreeID, let action, let background):
       return handleWorktreeDeeplink(
         worktreeID: worktreeID, action: action, source: source, responseFD: responseFD,
-        timeoutSeconds: timeoutSeconds, state: &state
+        timeoutSeconds: timeoutSeconds, state: &state, background: background
       )
     case .repoOpen(let path):
       return .send(.repositories(.openRepositories([path])))
@@ -1992,12 +1994,14 @@ struct AppFeature {
       let baseRef,
       let fetchOrigin,
       let worktreeName,
-      let worktreePath
+      let worktreePath,
+      let background
     ):
       return handleRepoWorktreeNewDeeplink(
         repositoryID: repositoryID, branch: branch, baseRef: baseRef, fetchOrigin: fetchOrigin,
         worktreeName: worktreeName, worktreePath: worktreePath,
-        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state,
+        background: background)
     case .settings(let section):
       return handleSettingsDeeplink(section: section)
     case .settingsRepo(let repositoryID):
@@ -2032,7 +2036,8 @@ struct AppFeature {
     worktreePath: String? = nil,
     responseFD: Int32? = nil,
     timeoutSeconds: Int = defaultCommandTimeoutSeconds,
-    state: inout State
+    state: inout State,
+    background: Bool = false
   ) -> Effect<Action> {
     guard let repository = state.repositories.repositories[id: repositoryID] else {
       deeplinkLogger.warning("Repository not found: \(repositoryID)")
@@ -2084,7 +2089,13 @@ struct AppFeature {
     }
     guard let branch else {
       return awaitingCompletion(
-        .send(.repositories(.createRandomWorktreeInRepository(repositoryID, pendingID: pendingID))),
+        .send(
+          .repositories(
+            .createRandomWorktreeInRepository(
+              repositoryID, pendingID: pendingID, background: background
+            )
+          )
+        ),
         match: completionMatch,
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     }
@@ -2102,6 +2113,7 @@ struct AppFeature {
             fetchOrigin: fetchOrigin,
             placement: placement,
             pendingID: pendingID,
+            background: background,
           )
         )
       ),
@@ -2118,7 +2130,8 @@ struct AppFeature {
     responseFD: Int32? = nil,
     timeoutSeconds: Int = defaultCommandTimeoutSeconds,
     state: inout State,
-    bypassConfirmation: Bool = false
+    bypassConfirmation: Bool = false,
+    background: Bool = false
   ) -> Effect<Action> {
     let worktreeID = resolveWorktreeID(rawWorktreeID, state: state)
     guard state.repositories.worktree(for: worktreeID) != nil else {
@@ -2164,7 +2177,7 @@ struct AppFeature {
     let policyBypass = state.settings.automatedActionPolicy.allowsBypass(from: source)
     // Appearance and tab rename are metadata-only updates; don't steal focus for a title change.
     let selectEffect: Effect<Action> =
-      action.selectsWorktree
+      action.selectsWorktree && !background
       ? .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
       : .none
     let actionEffect = worktreeActionEffect(
@@ -2174,6 +2187,7 @@ struct AppFeature {
       bypassConfirmation: bypassConfirmation || policyBypass,
       responseFD: responseFD,
       timeoutSeconds: timeoutSeconds,
+      background: background,
     )
     return .concatenate(selectEffect, actionEffect)
   }
@@ -2185,7 +2199,8 @@ struct AppFeature {
     state: inout State,
     bypassConfirmation: Bool,
     responseFD: Int32? = nil,
-    timeoutSeconds: Int = defaultCommandTimeoutSeconds
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
+    background: Bool = false
   ) -> Effect<Action> {
     // Block only the actions that would spawn a shell/script at the
     // missing working dir. Cleanup actions (delete/archive/pin) and
@@ -2223,9 +2238,39 @@ struct AppFeature {
     case .select:
       return .none
     case .run:
-      return .send(.runScript)
+      // Resolve against the target worktree rather than the selection: a background
+      // dispatch never selects, and `.runScript` reads the selected worktree.
+      guard let worktree = state.repositories.worktree(for: worktreeID) else {
+        state.alert = worktreeNotFoundAlert()
+        return .none
+      }
+      guard let definition = mergedScripts(in: worktree).primaryScript else {
+        // A foreground call on the selected worktree keeps the old affordance of
+        // opening the pane where the missing script would be configured. Anything
+        // else alerts: opening a window interrupts more than a focus move.
+        if !background, worktreeID == state.repositories.selectedWorktreeID {
+          return .send(.runScript)
+        }
+        state.alert = scriptAlert(
+          title: "No run script",
+          message: "\(worktree.name) has no run script configured. Add one in Settings first."
+        )
+        return .none
+      }
+      // Bare `run` never prompted, so keep it unprompted; `run --script` still does.
+      return runScriptDeeplinkEffect(
+        worktreeID: worktreeID,
+        scriptID: definition.id,
+        state: &state,
+        bypassConfirmation: true,
+        responseFD: responseFD,
+        timeoutSeconds: timeoutSeconds,
+        background: background
+      )
     case .stop:
-      return .send(.stopRunScripts)
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .stopRunScript(worktree, focusing: !background)
+      }
     case .runScript(let scriptID):
       return runScriptDeeplinkEffect(
         worktreeID: worktreeID,
@@ -2233,10 +2278,12 @@ struct AppFeature {
         state: &state,
         bypassConfirmation: bypassConfirmation,
         responseFD: responseFD,
-        timeoutSeconds: timeoutSeconds
+        timeoutSeconds: timeoutSeconds,
+        background: background
       )
     case .stopScript(let scriptID):
-      return stopScriptDeeplinkEffect(worktreeID: worktreeID, scriptID: scriptID, state: &state)
+      return stopScriptDeeplinkEffect(
+        worktreeID: worktreeID, scriptID: scriptID, state: &state, background: background)
     case .archive:
       return deeplinkArchiveWorktreeEffect(
         worktreeID: worktreeID,
@@ -2244,7 +2291,8 @@ struct AppFeature {
         state: &state,
         bypassConfirmation: bypassConfirmation,
         responseFD: responseFD,
-        timeoutSeconds: timeoutSeconds
+        timeoutSeconds: timeoutSeconds,
+        background: background
       )
     case .unarchive:
       return .send(.repositories(.unarchiveWorktree(worktreeID)))
@@ -2255,7 +2303,8 @@ struct AppFeature {
         state: &state,
         bypassConfirmation: bypassConfirmation,
         responseFD: responseFD,
-        timeoutSeconds: timeoutSeconds
+        timeoutSeconds: timeoutSeconds,
+        background: background
       )
     case .pin:
       return .send(.repositories(.pinWorktree(worktreeID)))
@@ -2342,7 +2391,7 @@ struct AppFeature {
       }
       guard let input, !input.isEmpty else {
         let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-          .createTab(worktree, runSetupScriptIfNew: true, id: id, title: title)
+          .createTab(worktree, runSetupScriptIfNew: true, id: id, title: title, focusing: !background)
         }
         return awaitingCompletion(
           effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2351,7 +2400,7 @@ struct AppFeature {
       if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
         return presentDeeplinkConfirmation(
           worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
-          message: .command(input), action: action, state: &state)
+          message: .command(input), action: action, state: &state, background: background)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .createTabWithInput(
@@ -2359,7 +2408,8 @@ struct AppFeature {
           input: input,
           runSetupScriptIfNew: false,
           id: id,
-          title: title
+          title: title,
+          focusing: !background
         )
       }
       return awaitingCompletion(
@@ -2404,10 +2454,11 @@ struct AppFeature {
           timeoutSeconds: timeoutSeconds,
           message: .confirmation("Close tab \(tabID.uuidString.prefix(8))…?"),
           action: action,
-          state: &state)
+          state: &state,
+          background: background)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID))
+        .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID), focusing: !background)
       }
       return awaitingCompletion(
         effect, match: .tabRemoved(worktreeID: worktreeID, tabID: TerminalTabID(rawValue: tabID)),
@@ -2452,12 +2503,12 @@ struct AppFeature {
       {
         return presentDeeplinkConfirmation(
           worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
-          message: .command(input), action: action, state: &state)
+          message: .command(input), action: action, state: &state, background: background)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .splitSurface(
           worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
-          direction: direction, input: input, id: id)
+          direction: direction, input: input, id: id, focusing: !background)
       }
       return awaitingCompletion(
         effect, match: id.map { .surfaceSplit(worktreeID: worktreeID, surfaceID: $0) },
@@ -2473,10 +2524,12 @@ struct AppFeature {
           timeoutSeconds: timeoutSeconds,
           message: .confirmation("Close surface \(surfaceID.uuidString.prefix(8))…?"),
           action: action,
-          state: &state)
+          state: &state,
+          background: background)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .destroySurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID)
+        .destroySurface(
+          worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, focusing: !background)
       }
       return awaitingCompletion(
         effect, match: .surfaceClosed(worktreeID: worktreeID, surfaceID: surfaceID),
@@ -2490,7 +2543,8 @@ struct AppFeature {
     state: inout State,
     bypassConfirmation: Bool,
     responseFD: Int32?,
-    timeoutSeconds: Int = defaultCommandTimeoutSeconds
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
+    background: Bool = false
   ) -> Effect<Action> {
     // Read scripts from storage so cross-worktree deeplinks are selection-agnostic.
     guard let worktree = state.repositories.worktree(for: worktreeID) else {
@@ -2526,7 +2580,8 @@ struct AppFeature {
         timeoutSeconds: timeoutSeconds,
         message: .command(definition.command),
         action: .runScript(scriptID: scriptID),
-        state: &state
+        state: &state,
+        background: background
       )
     }
     analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
@@ -2535,7 +2590,8 @@ struct AppFeature {
     // once the script tab is tracked; no optimistic mirror write (#573).
     return .run { _ in
       await terminalClient.send(
-        .runBlockingScript(worktree, kind: .script(definition), script: definition.command)
+        .runBlockingScript(
+          worktree, kind: .script(definition), script: definition.command, focusing: !background)
       )
     }
   }
@@ -2543,7 +2599,8 @@ struct AppFeature {
   private func stopScriptDeeplinkEffect(
     worktreeID: Worktree.ID,
     scriptID: UUID,
-    state: inout State
+    state: inout State,
+    background: Bool = false
   ) -> Effect<Action> {
     // Read scripts from storage so cross-worktree deeplinks are selection-agnostic.
     guard let worktree = state.repositories.worktree(for: worktreeID) else {
@@ -2567,7 +2624,8 @@ struct AppFeature {
     }
     let terminalClient = terminalClient
     return .run { _ in
-      await terminalClient.send(.stopScript(worktree, definitionID: scriptID))
+      await terminalClient.send(
+        .stopScript(worktree, definitionID: scriptID, focusing: !background))
     }
   }
 
@@ -2579,21 +2637,25 @@ struct AppFeature {
     return .send(.commandPalette(.pruneRecency(ids)))
   }
 
-  /// Resolves a script by ID across the worktree's repo scripts and the user's globals.
-  /// Repo entries win when both buckets carry the same ID.
-  private func resolveScript(scriptID: UUID, in worktree: Worktree) -> ScriptDefinition? {
-    // `currentSettings()`, not `@SharedReader(.repositorySettings(...))`: a deeplink must
-    // run the script the file names today, not the one it named when the terminal opened.
+  /// The worktree's repo scripts merged over the user's globals, repo winning on ID
+  /// collisions. `currentSettings()`, not `@SharedReader(.repositorySettings(...))`: a
+  /// deeplink must act on the script the file names today, not the one it named when
+  /// the terminal opened.
+  private func mergedScripts(in worktree: Worktree) -> [ScriptDefinition] {
     let repositorySettings = RepositorySettingsKey(
       rootURL: worktree.repositoryRootURL,
       host: worktree.host
     ).currentSettings()
     @SharedReader(.settingsFile) var settingsFile
-    let merged: [ScriptDefinition] = .merged(
+    return .merged(
       repo: repositorySettings.scripts,
       global: settingsFile.global.globalScripts,
     )
-    return merged.first(where: { $0.id == scriptID })
+  }
+
+  /// Resolves a script by ID across the worktree's repo scripts and the user's globals.
+  private func resolveScript(scriptID: UUID, in worktree: Worktree) -> ScriptDefinition? {
+    mergedScripts(in: worktree).first(where: { $0.id == scriptID })
   }
 
   private func scriptAlert(title: String, message: String) -> AlertState<Alert> {
@@ -2650,7 +2712,8 @@ struct AppFeature {
     state: inout State,
     bypassConfirmation: Bool,
     responseFD: Int32? = nil,
-    timeoutSeconds: Int = defaultCommandTimeoutSeconds
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
+    background: Bool = false
   ) -> Effect<Action> {
     guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "archive", state: &state) else {
       return .none
@@ -2687,7 +2750,7 @@ struct AppFeature {
     // ack until the archive completes, so the CLI exit code stays honest.
     if bypassConfirmation || state.repositories.isWorktreeMerged(worktree) {
       return awaitingCompletion(
-        .send(.repositories(.archiveWorktreeConfirmed(worktreeID, repositoryID))),
+        .send(.repositories(.archiveWorktreeConfirmed(worktreeID, repositoryID, background: background))),
         match: .worktreeArchived(worktreeID: worktreeID),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     }
@@ -2697,7 +2760,8 @@ struct AppFeature {
       timeoutSeconds: timeoutSeconds,
       message: .confirmation("Archive worktree \"\(worktree.name)\"?"),
       action: action,
-      state: &state
+      state: &state,
+      background: background
     )
   }
 
@@ -2707,7 +2771,8 @@ struct AppFeature {
     state: inout State,
     bypassConfirmation: Bool,
     responseFD: Int32? = nil,
-    timeoutSeconds: Int = defaultCommandTimeoutSeconds
+    timeoutSeconds: Int = defaultCommandTimeoutSeconds,
+    background: Bool = false
   ) -> Effect<Action> {
     guard let repositoryID = resolveRepositoryID(for: worktreeID, label: "delete", state: &state) else {
       return .none
@@ -2792,11 +2857,12 @@ struct AppFeature {
         timeoutSeconds: timeoutSeconds,
         message: .confirmation("Delete worktree \"\(worktreeName)\"?"),
         action: action,
-        state: &state
+        state: &state,
+        background: background
       )
     }
     return awaitingCompletion(
-      .send(.repositories(.deleteSidebarItemConfirmed(worktreeID, repositoryID))),
+      .send(.repositories(.deleteSidebarItemConfirmed(worktreeID, repositoryID, background: background))),
       match: .worktreeRemoved(worktreeID: worktreeID),
       responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
   }
@@ -3160,7 +3226,8 @@ struct AppFeature {
     timeoutSeconds: Int = defaultCommandTimeoutSeconds,
     message: DeeplinkConfirmationMessage,
     action: Deeplink.WorktreeAction,
-    state: inout State
+    state: inout State,
+    background: Bool = false
   ) -> Effect<Action> {
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? "Unknown"
     let repoName = state.repositories.repositoryID(containing: worktreeID)
@@ -3180,6 +3247,7 @@ struct AppFeature {
       action: action,
       responseFD: responseFD,
       timeoutSeconds: timeoutSeconds,
+      background: background,
       timeoutToken: token
     )
     // A socket-backed dialog left open would strand its fd, so time it out on the

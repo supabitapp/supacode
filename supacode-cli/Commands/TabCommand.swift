@@ -81,6 +81,8 @@ extension TabCommand {
     @Option(name: .long, help: "Persistent title for the new tab.")
     var title: String?
 
+    @OptionGroup var backgroundOption: BackgroundOption
+
     @OptionGroup var timeoutOption: TimeoutOption
 
     func validate() throws {
@@ -93,12 +95,13 @@ extension TabCommand {
       let wID = try resolveWorktreeID(worktree)
       let resolvedID = newID ?? UUID().uuidString
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.tabNew(
-          worktreeID: wID,
-          input: input,
-          id: resolvedID,
-          title: title
-        ),
+        deeplinkURL: backgroundOption.applied(
+          to: DeeplinkURLBuilder.tabNew(
+            worktreeID: wID,
+            input: input,
+            id: resolvedID,
+            title: title
+          )),
         timeoutSeconds: timeoutOption.timeout
       )
       print(resolvedID)
@@ -138,13 +141,16 @@ extension TabCommand {
     @Option(name: [.short, .long], help: "Tab ID. Defaults to $SUPACODE_TAB_ID.")
     var tab: String?
 
+    @OptionGroup var backgroundOption: BackgroundOption
+
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
       let wID = try resolveWorktreeID(worktree)
       let tID = try resolveTabID(tab)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.tabClose(worktreeID: wID, tabID: tID),
+        deeplinkURL: backgroundOption.applied(
+          to: DeeplinkURLBuilder.tabClose(worktreeID: wID, tabID: tID)),
         timeoutSeconds: timeoutOption.timeout
       )
     }

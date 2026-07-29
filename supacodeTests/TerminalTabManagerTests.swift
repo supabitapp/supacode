@@ -15,6 +15,43 @@ struct TerminalTabManagerTests {
     #expect(ids == [first, third, second])
   }
 
+  @Test func backgroundCreateLeavesSelectionAlone() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let background = manager.createTab(title: "two", icon: nil, selecting: false)
+    #expect(manager.selectedTabId == first)
+    #expect(manager.tabs.map(\.id) == [first, background])
+  }
+
+  /// Appending matters: inserting after the unchanged selection would land a run
+  /// of background creates in reverse order.
+  @Test func successiveBackgroundCreatesKeepTheirOrder() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil, selecting: false)
+    let third = manager.createTab(title: "three", icon: nil, selecting: false)
+    #expect(manager.tabs.map(\.id) == [first, second, third])
+    #expect(manager.selectedTabId == first)
+  }
+
+  /// "Don't move the selection" cannot strand the worktree with no visible tab,
+  /// so the very first tab selects even when created in the background.
+  @Test func backgroundCreateStillSelectsWhenNothingWasSelected() {
+    let manager = TerminalTabManager()
+    let only = manager.createTab(title: "one", icon: nil, selecting: false)
+    #expect(manager.selectedTabId == only)
+  }
+
+  @Test(arguments: [
+    (TabActivation.focused, true, true),
+    (TabActivation.selected, true, false),
+    (TabActivation.background, false, false),
+  ])
+  func tabActivationMapsToSelectionAndFocus(_ activation: TabActivation, selects: Bool, focuses: Bool) {
+    #expect(activation.selects == selects)
+    #expect(activation.focuses == focuses)
+  }
+
   @Test func closeTabSelectsAdjacent() {
     let manager = TerminalTabManager()
     let first = manager.createTab(title: "one", icon: nil)

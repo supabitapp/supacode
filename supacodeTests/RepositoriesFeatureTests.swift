@@ -1446,6 +1446,41 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
+  /// `repo worktree-new` never reaches the deeplink select gate, so its opt-out
+  /// is asserted on its own path: the pending row must not take the selection.
+  @Test func backgroundCreateWorktreeInRepositoryLeavesSelectionAlone() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let pendingID: Worktree.ID = "pending:00000000-0000-0000-0000-000000000001"
+    let validationClock = TestClock()
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .constant(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+      $0.gitClient.localBranchNames = { _ in
+        try await validationClock.sleep(for: .seconds(1))
+        return []
+      }
+      $0.gitClient.isValidBranchName = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      RepositoriesFeature.Action.createWorktreeInRepository(
+        repositoryID: repository.id,
+        nameSource: .explicit("feature/new-branch"),
+        baseRefSource: .repositorySetting,
+        fetchOrigin: false,
+        background: true
+      )
+    )
+    #expect(store.state.selection != SidebarSelection.worktree(pendingID))
+    #expect(store.state.sidebarSelectedWorktreeIDs.contains(pendingID) == false)
+    #expect(store.state.pendingWorktrees.first?.background == true)
+    await store.finish()
+  }
+
   @Test func createWorktreeInRepositoryPreservesExplicitNameDuringInitialProgressUpdate() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)

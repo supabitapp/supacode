@@ -543,7 +543,7 @@ struct ZmxDormantWatcherRegistryTests {
 
   @Test func hibernateStartsWatchersForTabLeaves() {
     let state = makeState()
-    let tab = state.createTab(focusing: false)!
+    let tab = state.createTab(activation: .selected)!
     let surface = firstSurfaceID(state, tab: tab)
 
     state.hibernateTabForTesting(tab)
@@ -553,9 +553,9 @@ struct ZmxDormantWatcherRegistryTests {
 
   @Test func wakeStopsOnlyTheWokenTabsWatchers() {
     let state = makeState()
-    let first = state.createTab(focusing: false)!
+    let first = state.createTab(activation: .selected)!
     let firstSurface = firstSurfaceID(state, tab: first)
-    let second = state.createTab(focusing: false)!
+    let second = state.createTab(activation: .selected)!
     let secondSurface = firstSurfaceID(state, tab: second)
 
     state.hibernateTabForTesting(first)
@@ -568,7 +568,7 @@ struct ZmxDormantWatcherRegistryTests {
 
   @Test func closingDormantTabStopsItsWatchers() {
     let state = makeState()
-    let tab = state.createTab(focusing: false)!
+    let tab = state.createTab(activation: .selected)!
     _ = firstSurfaceID(state, tab: tab)
 
     state.hibernateTabForTesting(tab)
@@ -580,9 +580,9 @@ struct ZmxDormantWatcherRegistryTests {
 
   @Test func closeAllSurfacesStopsAllWatchers() {
     let state = makeState()
-    let first = state.createTab(focusing: false)!
+    let first = state.createTab(activation: .selected)!
     _ = firstSurfaceID(state, tab: first)
-    let second = state.createTab(focusing: false)!
+    let second = state.createTab(activation: .selected)!
     _ = firstSurfaceID(state, tab: second)
 
     state.hibernateTabForTesting(first)
@@ -595,9 +595,9 @@ struct ZmxDormantWatcherRegistryTests {
 
   @Test func watchedSetEqualsDormantLeavesAfterEveryMutation() {
     let state = makeState()
-    let first = state.createTab(focusing: false)!
+    let first = state.createTab(activation: .selected)!
     let firstSurface = firstSurfaceID(state, tab: first)
-    let second = state.createTab(focusing: false)!
+    let second = state.createTab(activation: .selected)!
     let secondSurface = firstSurfaceID(state, tab: second)
 
     func dormantLeaves() -> Set<UUID> {

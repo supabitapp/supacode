@@ -69,15 +69,18 @@ extension RepoCommand {
     @Option(help: "Parent directory the worktree folder is created in.")
     var location: String?
 
+    @OptionGroup var backgroundOption: BackgroundOption
+
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
       let rID = try resolveRepoID(repo)
       let id = try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.repoWorktreeNew(
-          repoID: rID,
-          options: .init(branch: branch, base: base, fetch: fetch, name: name, location: location)
-        ),
+        deeplinkURL: backgroundOption.applied(
+          to: DeeplinkURLBuilder.repoWorktreeNew(
+            repoID: rID,
+            options: .init(branch: branch, base: base, fetch: fetch, name: name, location: location)
+          )),
         timeoutSeconds: timeoutOption.timeout
       )
       if let id { print(id) }

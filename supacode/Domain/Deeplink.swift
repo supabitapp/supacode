@@ -4,7 +4,7 @@ import Foundation
 enum Deeplink: Equatable, Sendable {
   case open
   case help
-  case worktree(id: Worktree.ID, action: WorktreeAction)
+  case worktree(id: Worktree.ID, action: WorktreeAction, background: Bool = false)
   case repoOpen(path: URL)
   case repoWorktreeNew(
     repositoryID: Repository.ID,
@@ -12,7 +12,8 @@ enum Deeplink: Equatable, Sendable {
     baseRef: String?,
     fetchOrigin: Bool,
     worktreeName: String?,
-    worktreePath: String?
+    worktreePath: String?,
+    background: Bool = false
   )
   case settings(section: DeeplinkSettingsSection?)
   case settingsRepo(repositoryID: Repository.ID)

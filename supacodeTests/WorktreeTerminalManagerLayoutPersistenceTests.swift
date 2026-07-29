@@ -111,9 +111,9 @@ struct LayoutPersistenceManagerTests {
     let state = harness.manager.state(for: worktree)
 
     // Several structural mutations within the window must coalesce to one flush.
-    _ = state.createTab(focusing: false)
-    _ = state.createTab(focusing: false)
-    _ = state.createTab(focusing: false)
+    _ = state.createTab(activation: .selected)
+    _ = state.createTab(activation: .selected)
+    _ = state.createTab(activation: .selected)
 
     #expect(harness.saveCount.value == 0)
     await settleThenAdvance(harness.clock)
@@ -126,14 +126,14 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    _ = state.createTab(focusing: false)
+    _ = state.createTab(activation: .selected)
 
     // Seed disk with a prior snapshot so the delete has something to remove.
     await settleThenAdvance(harness.clock)
     await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }
 
     // Queue a positive save, then prune before the window elapses.
-    _ = state.createTab(focusing: false)
+    _ = state.createTab(activation: .selected)
     harness.manager.prune(keeping: [])
     await waitUntil { readDict(harness)[worktree.id.rawValue] == nil }
 
@@ -151,7 +151,7 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    _ = state.createTab(focusing: false)
+    _ = state.createTab(activation: .selected)
 
     // Seed disk with a prior snapshot so the delete has something to remove.
     await settleThenAdvance(harness.clock)
@@ -162,7 +162,7 @@ struct LayoutPersistenceManagerTests {
     let release = DispatchSemaphore(value: 0)
     let gatedID = worktree.id.rawValue
     harness.gate.setValue((worktreeID: gatedID, semaphore: release))
-    _ = state.createTab(focusing: false)
+    _ = state.createTab(activation: .selected)
     await settleThenAdvance(harness.clock)
 
     // The positive flush Task is provably suspended inside `writer.flush` (save
@@ -182,7 +182,7 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    _ = state.createTab(focusing: false)
+    _ = state.createTab(activation: .selected)
 
     harness.manager.cancelPendingLayoutSaves()
     await harness.clock.advance(by: .seconds(1))
@@ -193,7 +193,7 @@ struct LayoutPersistenceManagerTests {
     // rather than mere lag.
     let control = makeWorktree(id: "/tmp/repo/wt-control")
     let controlState = harness.manager.state(for: control)
-    _ = controlState.createTab(focusing: false)
+    _ = controlState.createTab(activation: .selected)
     await settleThenAdvance(harness.clock)
     await waitUntil { readDict(harness)[control.id.rawValue] != nil }
 
@@ -208,12 +208,12 @@ struct LayoutPersistenceManagerTests {
     let wt2 = makeWorktree(id: "/tmp/repo/wt-2")
 
     let state1 = harness.manager.state(for: wt1)
-    _ = state1.createTab(focusing: false)
+    _ = state1.createTab(activation: .selected)
     await settleThenAdvance(harness.clock)
     await waitUntil { readDict(harness)[wt1.id.rawValue] != nil }
 
     let state2 = harness.manager.state(for: wt2)
-    _ = state2.createTab(focusing: false)
+    _ = state2.createTab(activation: .selected)
     await settleThenAdvance(harness.clock)
     await waitUntil { readDict(harness)[wt2.id.rawValue] != nil }
 
@@ -225,7 +225,7 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    guard let tabID = state.createTab(focusing: false),
+    guard let tabID = state.createTab(activation: .selected),
       let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
     else {
       Issue.record("Expected a tab and surface")
@@ -281,12 +281,12 @@ struct LayoutPersistenceManagerTests {
     let wt1 = makeWorktree(id: "/tmp/repo/wt-1")
     let wt2 = makeWorktree(id: "/tmp/repo/wt-2")
     let state1 = manager.state(for: wt1)
-    _ = state1.createTab(focusing: false)
+    _ = state1.createTab(activation: .selected)
     await Task.megaYield()
     await clock.advance(by: .seconds(1))
     await waitUntil { readRaw()[wt1.id.rawValue] != nil }
     let state2 = manager.state(for: wt2)
-    _ = state2.createTab(focusing: false)
+    _ = state2.createTab(activation: .selected)
     await Task.megaYield()
     await clock.advance(by: .seconds(1))
     await waitUntil { readRaw()[wt2.id.rawValue] != nil }
@@ -297,7 +297,7 @@ struct LayoutPersistenceManagerTests {
     failLoad.setValue(true)
     let wt3 = makeWorktree(id: "/tmp/repo/wt-3")
     let state3 = manager.state(for: wt3)
-    _ = state3.createTab(focusing: false)
+    _ = state3.createTab(activation: .selected)
     await Task.megaYield()
     await clock.advance(by: .seconds(1))
     await waitUntil { loadFailCount.value > 0 }
@@ -312,7 +312,7 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    guard state.createTab(focusing: false, customTitle: "implement") != nil else {
+    guard state.createTab(activation: .selected, customTitle: "implement") != nil else {
       Issue.record("Expected a tab")
       return
     }
@@ -327,7 +327,7 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    guard let tabID = state.createTab(focusing: false) else {
+    guard let tabID = state.createTab(activation: .selected) else {
       Issue.record("Expected a tab")
       return
     }
@@ -345,7 +345,7 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    guard let tabID = state.createTab(focusing: false, customTitle: "implement") else {
+    guard let tabID = state.createTab(activation: .selected, customTitle: "implement") else {
       Issue.record("Expected a tab")
       return
     }
@@ -363,7 +363,7 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    guard state.createTab(focusing: false) != nil else {
+    guard state.createTab(activation: .selected) != nil else {
       Issue.record("Expected a tab")
       return
     }
@@ -381,8 +381,8 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let wt1 = makeWorktree(id: "/tmp/repo/wt-1")
     let wt2 = makeWorktree(id: "/tmp/repo/wt-2")
-    _ = harness.manager.state(for: wt1).createTab(focusing: false)
-    _ = harness.manager.state(for: wt2).createTab(focusing: false)
+    _ = harness.manager.state(for: wt1).createTab(activation: .selected)
+    _ = harness.manager.state(for: wt2).createTab(activation: .selected)
 
     // Mirror the quit path: drop queued debounce saves, then the synchronous
     // on-quit flush must land every live state as the terminal on-disk write.
@@ -396,8 +396,8 @@ struct LayoutPersistenceManagerTests {
     let harness = makeHarness()
     let worktree = makeWorktree()
     let state = harness.manager.state(for: worktree)
-    _ = state.createTab(focusing: false)
-    _ = state.createTab(focusing: false)
+    _ = state.createTab(activation: .selected)
+    _ = state.createTab(activation: .selected)
 
     await settleThenAdvance(harness.clock)
     await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }

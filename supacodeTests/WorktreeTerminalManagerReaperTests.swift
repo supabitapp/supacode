@@ -86,7 +86,7 @@ struct WorktreeTerminalManagerReaperTests {
 
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
-    guard let tabID = state.createTab(focusing: false),
+    guard let tabID = state.createTab(activation: .selected),
       let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
     else {
       Issue.record("Expected a tab and surface")

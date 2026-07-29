@@ -24,6 +24,55 @@ struct DeeplinkClientTests {
     #expect(parse(url) == nil)
   }
 
+  // MARK: - Background opt-out.
+
+  @Test func backgroundQueryItemSuppressesFocus() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/delete?background=true")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .delete, background: true))
+  }
+
+  @Test func backgroundDefaultsToFocusingWhenAbsent() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/delete")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .delete, background: false))
+  }
+
+  /// Only a literal `true` suppresses focus, so a typo can't silently stop
+  /// focusing the way an `!= "false"` reading would.
+  @Test(arguments: ["background=banana", "background", "background=", "background=false", "background=TRUE"])
+  func malformedBackgroundValueStillFocuses(_ query: String) {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/delete?\(query)")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .delete, background: false))
+  }
+
+  @Test func backgroundAppliesToTabNewAlongsideItsOwnParams() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/new?input=ls&background=true")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .tabNew(input: "ls", id: nil, title: nil), background: true)
+    )
+  }
+
+  @Test func backgroundAppliesToRepoWorktreeNew() {
+    let encoded = "%2Ftmp%2Frepo"
+    let url = URL(string: "supacode://repo/\(encoded)/worktree/new?branch=feat&background=true")!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feat",
+          baseRef: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil,
+          background: true
+        )
+    )
+  }
+
   // MARK: - Worktree actions.
 
   @Test func worktreeRun() {

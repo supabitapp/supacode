@@ -32,6 +32,9 @@ struct DeeplinkInputConfirmationFeature {
     /// Seconds the deferred completion ack may wait once confirmed (carried from
     /// the CLI's `timeout` so the re-run registers with the right budget).
     var timeoutSeconds: Int = 180
+    /// Carried from the caller's `background` so confirming re-runs the action
+    /// without focusing, matching what the unconfirmed dispatch would have done.
+    var background: Bool = false
     /// Generation stamp so a stale timeout action can't fire against a later
     /// dialog that recycled the same `responseFD`.
     var timeoutToken: Int = 0

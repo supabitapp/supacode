@@ -44,7 +44,14 @@ private nonisolated enum DeeplinkParser {
 
     switch host {
     case "worktree":
-      return parseWorktree(pathSegments: pathSegments, queryItems: queryItems)
+      // Rewrapped here so the action parsers stay unaware of the dispatch flag.
+      guard
+        case .worktree(let id, let action, _)? = parseWorktree(
+          pathSegments: pathSegments,
+          queryItems: queryItems,
+        )
+      else { return nil }
+      return .worktree(id: id, action: action, background: parseBackground(from: queryItems))
     case "repo":
       return parseRepo(pathSegments: pathSegments, queryItems: queryItems)
     case "help":
@@ -82,6 +89,17 @@ private nonisolated enum DeeplinkParser {
       logger.warning("Unrecognized deeplink host: \(host)")
       return nil
     }
+  }
+
+  /// Only an explicit `background=true` suppresses focus, so a malformed or absent
+  /// value keeps the pre-existing focus-follow.
+  private static func parseBackground(from queryItems: [URLQueryItem]) -> Bool {
+    guard let item = queryItems.first(where: { $0.name == "background" }) else { return false }
+    if item.value == "true" { return true }
+    if item.value != "false" {
+      logger.warning("Ignoring unrecognized background value: \(item.value ?? "nil")")
+    }
+    return false
   }
 
   // MARK: - Worktree.
@@ -323,6 +341,7 @@ private nonisolated enum DeeplinkParser {
       fetchOrigin: fetchOrigin,
       worktreeName: worktreeName,
       worktreePath: worktreePath,
+      background: parseBackground(from: queryItems),
     )
   }
 }

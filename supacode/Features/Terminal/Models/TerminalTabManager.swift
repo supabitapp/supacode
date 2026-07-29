@@ -28,6 +28,8 @@ final class TerminalTabManager {
 
   private static let logger = SupaLogger("TabManager")
 
+  /// `selecting: false` appends a background tab and leaves the selection alone.
+  /// Keyboard focus is the caller's business; see `TabActivation`.
   func createTab(
     title: String,
     customTitle: String? = nil,
@@ -35,7 +37,8 @@ final class TerminalTabManager {
     isTitleLocked: Bool = false,
     tintColor: RepositoryColor? = nil,
     isBlockingScript: Bool = false,
-    id: UUID? = nil
+    id: UUID? = nil,
+    selecting: Bool = true
   ) -> TerminalTabID {
     let tabID: TerminalTabID
     if let id {
@@ -61,14 +64,20 @@ final class TerminalTabManager {
       tintColor: tintColor,
       isBlockingScript: isBlockingScript
     )
-    if let selectedTabId,
+    // Background tabs append: inserting after the unchanged selection would land a
+    // run of them in reverse order.
+    if selecting, let selectedTabId,
       let selectedIndex = tabs.firstIndex(where: { $0.id == selectedTabId })
     {
       tabs.insert(tab, at: selectedIndex + 1)
     } else {
       tabs.append(tab)
     }
-    selectedTabId = tab.id
+    // Still select when nothing was selected: "don't move the selection" cannot
+    // mean leaving the worktree with no visible tab at all.
+    if selecting || selectedTabId == nil {
+      selectedTabId = tab.id
+    }
     return tab.id
   }
 

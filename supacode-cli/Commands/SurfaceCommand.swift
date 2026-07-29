@@ -97,6 +97,8 @@ extension SurfaceCommand {
     @Option(name: [.short, .customLong("id")], help: "UUID for the new surface.")
     var newID: String?
 
+    @OptionGroup var backgroundOption: BackgroundOption
+
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
@@ -105,12 +107,13 @@ extension SurfaceCommand {
       let sID = try resolveSurfaceID(surface)
       let resolvedID = newID ?? UUID().uuidString
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.surfaceSplit(
-          worktreeID: wID,
-          tabID: tID,
-          surfaceID: sID,
-          options: .init(direction: direction?.rawValue, input: input, id: resolvedID)
-        ),
+        deeplinkURL: backgroundOption.applied(
+          to: DeeplinkURLBuilder.surfaceSplit(
+            worktreeID: wID,
+            tabID: tID,
+            surfaceID: sID,
+            options: .init(direction: direction?.rawValue, input: input, id: resolvedID)
+          )),
         timeoutSeconds: timeoutOption.timeout
       )
       print(resolvedID)
@@ -129,6 +132,8 @@ extension SurfaceCommand {
     @Option(name: [.short, .long], help: "Surface ID. Defaults to $SUPACODE_SURFACE_ID.")
     var surface: String?
 
+    @OptionGroup var backgroundOption: BackgroundOption
+
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
@@ -136,7 +141,8 @@ extension SurfaceCommand {
       let tID = try resolveTabID(tab)
       let sID = try resolveSurfaceID(surface)
       try Dispatcher.dispatch(
-        deeplinkURL: DeeplinkURLBuilder.surfaceClose(worktreeID: wID, tabID: tID, surfaceID: sID),
+        deeplinkURL: backgroundOption.applied(
+          to: DeeplinkURLBuilder.surfaceClose(worktreeID: wID, tabID: tID, surfaceID: sID)),
         timeoutSeconds: timeoutOption.timeout
       )
     }
