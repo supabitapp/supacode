@@ -68,8 +68,10 @@ if [ -n "${developer_dir}" ]; then
       "sudo DEVELOPER_DIR=${developer_dir} xcodebuild -license accept && sudo DEVELOPER_DIR=${developer_dir} xcodebuild -runFirstLaunch"
   fi
 
-  # 5. Metal Toolchain
-  if DEVELOPER_DIR="${developer_dir}" xcrun metal --version >/dev/null 2>&1; then
+  # 5. Metal Toolchain. xcrun caches a negative tool lookup, so a freshly
+  # downloaded toolchain can read as missing until the cache is killed.
+  metal_installed() { DEVELOPER_DIR="${developer_dir}" xcrun metal --version >/dev/null 2>&1; }
+  if metal_installed || { DEVELOPER_DIR="${developer_dir}" xcrun --kill-cache >/dev/null 2>&1; metal_installed; }; then
     pass "Metal Toolchain installed"
   else
     fail "Metal Toolchain missing (ghostty compiles Metal shaders)" \
@@ -88,6 +90,16 @@ if has_mise; then
   else
     fail "mise tools missing: ${missing_tools[*]}" "mise install"
   fi
+fi
+
+# 7. msgfmt (GNU gettext). Ghostty shells out to msgfmt to compile its .po
+# catalogs, which macOS does not ship. Run it, not just probe PATH, so a
+# broken shim or a non-GNU command named msgfmt can't read as installed.
+if msgfmt --version 2>/dev/null | grep -q "GNU gettext"; then
+  pass "msgfmt available (GNU gettext)"
+else
+  fail "msgfmt missing or not GNU gettext (ghostty compiles .po catalogs)" \
+    "brew install gettext && brew link --force gettext (or, without Homebrew: nix profile install nixpkgs#gettext)"
 fi
 
 if [ "${failures}" -gt 0 ]; then
