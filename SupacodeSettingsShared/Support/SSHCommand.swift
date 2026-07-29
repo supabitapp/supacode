@@ -93,11 +93,11 @@ public nonisolated enum SSHCommand {
     arguments: [String],
     workingDirectory: URL?
   ) -> String {
-    let invocation = ([executable] + arguments).map(shellQuote).joined(separator: " ")
+    let invocation = ([executable] + arguments).map(loginShellQuote).joined(separator: " ")
     guard let workingDirectory else {
       return invocation
     }
-    let directory = shellQuote(workingDirectory.path(percentEncoded: false))
+    let directory = loginShellQuote(workingDirectory.path(percentEncoded: false))
     return "cd -- \(directory) && exec \(invocation)"
   }
 
