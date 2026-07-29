@@ -128,20 +128,20 @@ public nonisolated enum SSHCommand {
   ) -> String {
     var line = "exec " + environmentPrefix(environment) + "\"$SHELL\" -l -c " + loginShellQuote(remoteScript)
     for argument in positionalArguments {
-      line += " " + shellQuote(argument)
+      line += " " + loginShellQuote(argument)
     }
     return line
   }
 
-  /// An `env NAME='value' …` prefix (sorted, each value shell-quoted) or `""`
-  /// when there is nothing to set. Names are fixed identifiers so they stay
-  /// unquoted; values are quoted, so the prefix can't inject extra tokens.
+  /// An `env NAME='value' …` prefix (sorted, each value login-shell-quoted) or
+  /// `""` when there is nothing to set. Names are fixed identifiers so they
+  /// stay unquoted; values are quoted, so the prefix can't inject extra tokens.
   private static func environmentPrefix(_ environment: [String: String]) -> String {
     guard !environment.isEmpty else { return "" }
     let assignments =
       environment
       .sorted { $0.key < $1.key }
-      .map { "\($0.key)=\(shellQuote($0.value))" }
+      .map { "\($0.key)=\(loginShellQuote($0.value))" }
       .joined(separator: " ")
     return "env \(assignments) "
   }

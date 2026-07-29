@@ -166,7 +166,7 @@ struct SSHCommandTests {
     // never interpolated into the script text.
     #expect(
       SSHCommand.loginShellWrapped("$0 \"$@\"", positionalArguments: ["claude", "it's a test"])
-        == "exec \"$SHELL\" -l -c '$0 \"$@\"' 'claude' 'it'\\''s a test'"
+        == "exec \"$SHELL\" -l -c '$0 \"$@\"' 'claude' 'it'\"'\"'s a test'"
     )
   }
 
@@ -187,6 +187,50 @@ struct SSHCommandTests {
       SSHCommand.loginShellWrapped("$0", positionalArguments: ["x"], environment: [:])
         == "exec \"$SHELL\" -l -c '$0' 'x'"
     )
+  }
+
+  @Test func fishLoginShellReceivesArgumentsAndEnvironmentByteForByte() async throws {
+    let fishURL = try #require(
+      ["/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish"]
+        .map { URL(fileURLWithPath: $0) }
+        .first { FileManager.default.isExecutableFile(atPath: $0.path) },
+      "Fish is required for the remote-shell quoting regression test"
+    )
+    let configRoot = FileManager.default.temporaryDirectory
+      .appending(path: "supacode-fish-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: configRoot.appending(path: "fish"),
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: configRoot) }
+
+    let argument = #"argument:it's\\literal"#
+    let environmentValue = #"environment:it's\\literal"#
+    let command = SSHCommand.loginShellWrapped(
+      #"printf '%s\n' "$SUPACODE_TEST_VALUE" "$argv[1]" "$argv[2]""#,
+      positionalArguments: ["supacode-test", argument],
+      environment: ["SUPACODE_TEST_VALUE": environmentValue]
+    )
+    let process = Process()
+    process.executableURL = fishURL
+    process.arguments = ["--no-config", "-c", command]
+    var environment = ProcessInfo.processInfo.environment
+    environment["HOME"] = configRoot.path
+    environment["XDG_CONFIG_HOME"] = configRoot.path
+    environment["SHELL"] = fishURL.path
+    process.environment = environment
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    try await process.runToExit()
+
+    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(process.terminationStatus == 0, "Fish rejected the login-shell wrapper: \(error)")
+    #expect(output == "\(environmentValue)\nsupacode-test\n\(argument)\n")
+    #expect(error.isEmpty)
   }
 
   /// The fixed control-option argv every ssh invocation starts with. Keepalives
