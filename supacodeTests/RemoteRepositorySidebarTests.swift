@@ -412,8 +412,58 @@ struct RemoteDefaultShellCommandTests {
   @Test func escapesSingleQuotesInRemotePath() {
     #expect(
       WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/home/o'brien/proj")
-        == "cd '/home/o'\\''brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
+        == "cd '/home/o'\"'\"'brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
     )
+  }
+
+  @Test func fishChangesToRemotePathWithoutChangingBytes() async throws {
+    let fishURL = try #require(
+      ["/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish"]
+        .map { URL(fileURLWithPath: $0) }
+        .first { FileManager.default.isExecutableFile(atPath: $0.path) },
+      "Fish is required for the remote-shell quoting regression test"
+    )
+    let temporaryRoot = FileManager.default.temporaryDirectory
+      .appending(path: "supacode-fish-default-shell-\(UUID().uuidString)")
+    let configRoot = temporaryRoot.appending(path: "config")
+    let remoteDirectory = temporaryRoot.appending(path: #"working:it's\\literal"#)
+    try FileManager.default.createDirectory(
+      at: configRoot.appending(path: "fish"),
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+      at: remoteDirectory,
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createSymbolicLink(
+      at: remoteDirectory.appending(path: "probe-shell"),
+      withDestinationURL: URL(fileURLWithPath: "/bin/echo")
+    )
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+    let command = try #require(
+      WorktreeTerminalState.remoteDefaultShellCommand(remotePath: remoteDirectory.path)
+    )
+    let process = Process()
+    process.executableURL = fishURL
+    process.arguments = ["--no-config", "-c", command]
+    var environment = ProcessInfo.processInfo.environment
+    environment["HOME"] = configRoot.path
+    environment["XDG_CONFIG_HOME"] = configRoot.path
+    environment["SHELL"] = "./probe-shell"
+    process.environment = environment
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    try await process.runToExit()
+
+    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(process.terminationStatus == 0, "Fish rejected the remote worktree path: \(error)")
+    #expect(output == "-l\n")
+    #expect(error.isEmpty)
   }
 
   @Test func nilForRootOrEmptyPath() {
