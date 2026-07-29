@@ -538,21 +538,62 @@ struct ZmxAttachRemoteTests {
   @Test func buildRemoteCommandFallsBackToBareReconnectLoopWhenLocalZmxUnavailable() {
     let launch = makeLaunch(hostPersistenceEnabled: false)
     let command = ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: nil)
-    // No local zmx: still a reconnect loop, just without quit persistence.
-    #expect(
-      command
-        == SSHReconnectLoop.script(
-          connect: SSHCommand.commandLine(
-            host: launch.host,
-            remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
-          ),
-          reconnect: SSHCommand.commandLine(
-            host: launch.host,
-            remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
-          )
-        )
+    let loop = SSHReconnectLoop.script(
+      connect: SSHCommand.commandLine(
+        host: launch.host,
+        remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
+      ),
+      reconnect: SSHCommand.commandLine(
+        host: launch.host,
+        remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
+      )
     )
+    // No local zmx: still a reconnect loop, just without quit persistence, but
+    // wrapped in `/bin/sh -c` so Ghostty's `exec -l <command>` leads with an
+    // executable and not the loop's opening `trap` builtin (#737).
+    #expect(command == "/bin/sh -c " + ZmxAttach.shellQuote(loop))
+    #expect(command.hasPrefix("/bin/sh -c "))
     #expect(!command.contains("zmx attach"))
+  }
+
+  @Test func bareReconnectLoopSurvivesGhosttyExecLoginWrapping() async throws {
+    // Ghostty runs a surface command as `bash -c "exec -l <command>"`, so it
+    // must lead with an executable. `sh -n` confirms the fallback's outer
+    // wrapper is balanced (it can't descend into the single-quoted inner loop;
+    // that template is parse-checked in
+    // `reconnectLoopScriptsAreValidShAndPassExitCodesThrough`). The benign runs
+    // below then prove the `/bin/sh -c` prefix lets `exec -l` resolve an
+    // executable, while the unwrapped loop still dies with `trap: not found`
+    // (#737).
+    let launch = makeLaunch(hostPersistenceEnabled: false)
+    let command = ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: nil)
+    let parse = Process()
+    parse.executableURL = URL(fileURLWithPath: "/bin/sh")
+    parse.arguments = ["-n", "-c", command]
+    try await parse.runToExit()
+    #expect(parse.terminationStatus == 0, "sh -n rejected: \(command)")
+
+    // A stand-in loop with connect lines that exit 0 (non-255, so the retry
+    // body never runs) exercises the exact `bash -c "exec -l <command>"` shape
+    // Ghostty applies, isolated from real ssh dialing.
+    let benignLoop = SSHReconnectLoop.script(connect: "sh -c 'exit 0'", reconnect: "sh -c 'exit 0'")
+
+    let wrapped = Process()
+    wrapped.executableURL = URL(fileURLWithPath: "/bin/bash")
+    wrapped.arguments = ["--noprofile", "--norc", "-c", "exec -l /bin/sh -c \(ZmxAttach.shellQuote(benignLoop))"]
+    wrapped.standardOutput = FileHandle.nullDevice
+    wrapped.standardError = FileHandle.nullDevice
+    try await wrapped.runToExit()
+    #expect(wrapped.terminationStatus == 0, "wrapped loop failed under exec -l")
+
+    // Control: the unwrapped loop is exactly what broke #737.
+    let bare = Process()
+    bare.executableURL = URL(fileURLWithPath: "/bin/bash")
+    bare.arguments = ["--noprofile", "--norc", "-c", "exec -l \(benignLoop)"]
+    bare.standardOutput = FileHandle.nullDevice
+    bare.standardError = FileHandle.nullDevice
+    try await bare.runToExit()
+    #expect(bare.terminationStatus == 127, "bare loop unexpectedly survived exec -l")
   }
 
   @Test func buildRemoteCommandForwardsUsernameAndPort() {

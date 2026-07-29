@@ -488,6 +488,11 @@ nonisolated enum ZmxAttach {
   /// reconnect loop (ssh lines included) is single-quoted by `buildCommand`
   /// for the local zmx-wrapping `/bin/sh -c`; the ssh lines' inner quoting
   /// survives that outer level.
+  ///
+  /// Ghostty runs a surface command as `bash -c "exec -l <command>"`, so it
+  /// must lead with an executable. The zmx form leads with the zmx path; the
+  /// bare loop leads with a `trap` builtin `exec` can't run (#737), so wrap it
+  /// in `/bin/sh -c` (no leading `exec`, which would break the same way).
   static func buildRemoteCommand(
     _ launch: RemoteSurfaceLaunch,
     localZmxExecutablePath: String?
@@ -501,7 +506,7 @@ nonisolated enum ZmxAttach {
       remoteCommand: posixShellWrapped(remoteReconnectScript(launch))
     )
     let loop = SSHReconnectLoop.script(connect: connectLine, reconnect: reconnectLine)
-    guard let localZmxExecutablePath else { return loop }
+    guard let localZmxExecutablePath else { return "/bin/sh -c " + shellQuote(loop) }
     // The local and host-side sessions share the `supa-<surfaceID>` name.
     return buildCommand(
       executablePath: localZmxExecutablePath,
