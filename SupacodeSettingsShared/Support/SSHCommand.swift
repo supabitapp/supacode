@@ -63,6 +63,26 @@ public nonisolated enum SSHCommand {
     "'" + value.replacing("'", with: "'\\''") + "'"
   }
 
+  /// Quotes a token for either Fish or a POSIX-family login shell. Both accept
+  /// single-quoted spans, but Fish interprets backslashes inside them while
+  /// POSIX shells do not. Emit apostrophes and backslashes as double-quoted
+  /// spans so every supported parser reconstructs the original bytes.
+  public static func loginShellQuote(_ value: String) -> String {
+    var quoted = "'"
+    for character in value {
+      switch character {
+      case "'":
+        quoted += "'\"'\"'"
+      case "\\":
+        quoted += "'\"\\\\\"'"
+      default:
+        quoted.append(character)
+      }
+    }
+    quoted += "'"
+    return quoted
+  }
+
   /// The command string the *remote* shell runs for a local
   /// `(executable, arguments, workingDirectory)` invocation. A working
   /// directory becomes `cd -- <dir> && exec ...` so the remote process starts
@@ -90,7 +110,7 @@ public nonisolated enum SSHCommand {
   /// (`brew shellenv`), restoring the full PATH. `$SHELL` is expanded by ssh's
   /// own outer shell; `exec` replaces it so signals / exit status pass through.
   public static func loginShellWrapped(_ remoteScript: String) -> String {
-    "exec \"$SHELL\" -l -c " + shellQuote(remoteScript)
+    "exec \"$SHELL\" -l -c " + loginShellQuote(remoteScript)
   }
 
   /// Login-shell-wrapped remote command that also forwards positional arguments
@@ -106,7 +126,7 @@ public nonisolated enum SSHCommand {
     positionalArguments: [String],
     environment: [String: String] = [:]
   ) -> String {
-    var line = "exec " + environmentPrefix(environment) + "\"$SHELL\" -l -c " + shellQuote(remoteScript)
+    var line = "exec " + environmentPrefix(environment) + "\"$SHELL\" -l -c " + loginShellQuote(remoteScript)
     for argument in positionalArguments {
       line += " " + shellQuote(argument)
     }

@@ -158,7 +158,7 @@ struct SSHCommandTests {
 
   @Test func loginShellWrappedExecsLoginShellWithQuotedScript() {
     #expect(SSHCommand.loginShellWrapped("zmx attach s") == "exec \"$SHELL\" -l -c 'zmx attach s'")
-    #expect(SSHCommand.loginShellWrapped("echo 'hi'") == "exec \"$SHELL\" -l -c 'echo '\\''hi'\\'''")
+    #expect(SSHCommand.loginShellWrapped("echo 'hi'") == "exec \"$SHELL\" -l -c 'echo '\"'\"'hi'\"'\"''")
   }
 
   @Test func loginShellWrappedQuotesEachPositionalArgumentSeparately() {
@@ -496,8 +496,50 @@ struct ZmxAttachRemoteTests {
     // POSIX if/fi script runs in /bin/sh.
     #expect(
       ZmxAttach.posixShellWrapped("if true; then echo 'a'; fi")
-        == "exec /bin/sh -c 'if true; then echo '\\''a'\\''; fi'"
+        == "exec /bin/sh -c 'if true; then echo '\"'\"'a'\"'\"'; fi'"
     )
+  }
+
+  @Test func fishLoginShellReceivesNestedPosixScriptByteForByte() async throws {
+    let fishURL = try #require(
+      ["/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish"]
+        .map { URL(fileURLWithPath: $0) }
+        .first { FileManager.default.isExecutableFile(atPath: $0.path) },
+      "Fish is required for the remote-shell quoting regression test"
+    )
+    let configRoot = FileManager.default.temporaryDirectory
+      .appending(path: "supacode-fish-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: configRoot.appending(path: "fish"),
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: configRoot) }
+
+    let script = #"""
+      printf '%s\n' "single:'"
+      printf '%s\n' 'osc:\033\\zmx'
+      """#
+    let command = SSHCommand.loginShellWrapped(ZmxAttach.posixShellWrapped(script))
+    let process = Process()
+    process.executableURL = fishURL
+    process.arguments = ["--no-config", "-c", command]
+    var environment = ProcessInfo.processInfo.environment
+    environment["HOME"] = configRoot.path
+    environment["XDG_CONFIG_HOME"] = configRoot.path
+    environment["SHELL"] = fishURL.path
+    process.environment = environment
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    try await process.runToExit()
+
+    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(process.terminationStatus == 0, "Fish rejected the nested remote command: \(error)")
+    #expect(output == "single:'\nosc:\\033\\\\zmx\n")
+    #expect(error.isEmpty)
   }
 
   @Test func loginShellRunExecsLoginShellWithQuotedCommand() {

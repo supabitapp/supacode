@@ -516,11 +516,11 @@ nonisolated enum ZmxAttach {
   }
 
   /// Re-quotes a remote script behind `exec /bin/sh -c`, so the login shell
-  /// (which may be fish or csh) only has to parse that one portable line; the
-  /// POSIX `if/fi` script runs in /bin/sh with the login shell's exported
+  /// (Fish or a POSIX-family shell) only has to parse that one portable line;
+  /// the POSIX `if/fi` script runs in /bin/sh with the login shell's exported
   /// PATH already in place.
   static func posixShellWrapped(_ script: String) -> String {
-    "exec /bin/sh -c " + shellQuote(script)
+    "exec /bin/sh -c " + SSHCommand.loginShellQuote(script)
   }
 
   /// Runs a command under a fresh login shell. Commands must never execute in
