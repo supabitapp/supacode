@@ -192,6 +192,76 @@ struct WorktreeEnvironmentTests {
     #expect(line?.contains("supacode-blocking-script-") == false)
   }
 
+  @Test func remoteBlockingScriptRunsThroughFishLoginShell() async throws {
+    let fishURL = try #require(
+      ["/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish"]
+        .map { URL(fileURLWithPath: $0) }
+        .first { FileManager.default.isExecutableFile(atPath: $0.path) },
+      "Fish is required for the remote-shell quoting regression test"
+    )
+    let configRoot = FileManager.default.temporaryDirectory
+      .appending(path: "supacode-fish-blocking-script-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: configRoot.appending(path: "fish"),
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: configRoot) }
+
+    let marker = "remote-blocking-script-ran"
+    let commandLine = try #require(
+      BlockingScriptRunner.remoteCommand(
+        host: RemoteHost(alias: "devbox"),
+        script: "printf '\(marker)\\n'",
+        remoteWorktreePath: "/"
+      )
+    )
+    let parser = Process()
+    parser.executableURL = URL(fileURLWithPath: "/bin/sh")
+    parser.arguments = [
+      "-c",
+      """
+      set -- \(commandLine)
+      for remote_command
+      do
+        :
+      done
+      printf '%s' "$remote_command"
+      """,
+    ]
+    let parsedCommand = Pipe()
+    parser.standardOutput = parsedCommand
+    parser.standardError = Pipe()
+
+    try await parser.runToExit()
+
+    #expect(parser.terminationStatus == 0)
+    let remoteCommand = String(
+      decoding: parsedCommand.fileHandleForReading.readDataToEndOfFile(),
+      as: UTF8.self
+    )
+    let process = Process()
+    process.executableURL = fishURL
+    process.arguments = ["--no-config", "-c", remoteCommand]
+    var environment = ProcessInfo.processInfo.environment
+    environment["HOME"] = configRoot.path
+    environment["XDG_CONFIG_HOME"] = configRoot.path
+    environment["SHELL"] = fishURL.path
+    process.environment = environment
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardInput = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    try await process.runToExit()
+
+    let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(process.terminationStatus == 0, "Fish rejected the remote blocking script: \(error)")
+    #expect(output.contains(marker), "The remote blocking script did not run: \(output)")
+    #expect(error.isEmpty)
+  }
+
   @Test func remoteCommandReturnsNilForEmptyScript() {
     let host = RemoteHost(alias: "devbox")
     #expect(BlockingScriptRunner.remoteCommand(host: host, script: "   ", remoteWorktreePath: "/p") == nil)

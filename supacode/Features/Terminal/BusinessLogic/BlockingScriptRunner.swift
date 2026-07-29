@@ -135,11 +135,12 @@ enum BlockingScriptRunner {
     )
   }
 
-  /// The script the *remote* login shell runs for a blocking script. Mirrors
-  /// `runnerScript` (OSC 133 begin/end framing, read-only `tail -f /dev/null`
-  /// on completion) but runs on the host: it `cd`s into the remote worktree,
-  /// prints the remote beta banner, and runs the user script (`$1`) as a login
-  /// shell child so a `exit` in the script can't skip the completion emit.
+  /// The POSIX script `/bin/sh` runs after the remote login shell initializes
+  /// the host environment. Mirrors `runnerScript` (OSC 133 begin/end framing,
+  /// read-only `tail -f /dev/null` on completion) but runs on the host: it
+  /// `cd`s into the remote worktree, prints the remote beta banner, and runs
+  /// the user script (`$1`) as a login-shell child so a `exit` in the script
+  /// can't skip the completion emit.
   ///
   /// Blocking-script marker env vars are applied by the caller via the
   /// `SSHCommand` `env` prefix so the login shell inherits them before sourcing

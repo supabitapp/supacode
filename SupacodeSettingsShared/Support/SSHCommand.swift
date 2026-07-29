@@ -133,6 +133,22 @@ public nonisolated enum SSHCommand {
     return line
   }
 
+  /// Loads the remote login-shell environment, then replaces that shell with
+  /// `/bin/sh` to execute a POSIX script. The login shell only parses one
+  /// Fish/POSIX-portable invocation; positional arguments become the sh
+  /// script's `$0`, `$1`, … values.
+  public static func loginShellWrappedPosixScript(
+    _ remoteScript: String,
+    positionalArguments: [String],
+    environment: [String: String] = [:]
+  ) -> String {
+    var invocation = "exec /bin/sh -c " + loginShellQuote(remoteScript)
+    for argument in positionalArguments {
+      invocation += " " + loginShellQuote(argument)
+    }
+    return loginShellWrapped(invocation, positionalArguments: [], environment: environment)
+  }
+
   /// An `env NAME='value' …` prefix (sorted, each value login-shell-quoted) or
   /// `""` when there is nothing to set. Names are fixed identifiers so they
   /// stay unquoted; values are quoted, so the prefix can't inject extra tokens.
@@ -207,9 +223,8 @@ public nonisolated enum SSHCommand {
     )
   }
 
-  /// `commandLine` variant that forwards positional arguments to the remote
-  /// login-shell `-c` script, for callers that pass an arbitrary payload as
-  /// `$1` (e.g. a blocking script's user command).
+  /// `commandLine` variant that loads the remote login-shell environment, then
+  /// runs a POSIX script under `/bin/sh` with forwarded positional arguments.
   public static func commandLine(
     host: RemoteHost,
     remoteScript: String,
@@ -220,7 +235,7 @@ public nonisolated enum SSHCommand {
   ) -> String {
     commandLine(
       host: host,
-      loginShellCommand: loginShellWrapped(
+      loginShellCommand: loginShellWrappedPosixScript(
         remoteScript,
         positionalArguments: positionalArguments,
         environment: environment

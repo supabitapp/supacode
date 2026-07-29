@@ -446,7 +446,10 @@ struct SSHCommandTests {
     )
     let expectedTail = SSHCommand.shellQuote(
       SSHCommand.terminalCompatibleLoginShellCommand(
-        SSHCommand.loginShellWrapped("$0 \"$@\"", positionalArguments: ["claude", "it's a test"])
+        SSHCommand.loginShellWrappedPosixScript(
+          "$0 \"$@\"",
+          positionalArguments: ["claude", "it's a test"]
+        )
       )
     )
     #expect(line == Self.commandLinePrefix + expectedTail)
