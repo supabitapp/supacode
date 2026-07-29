@@ -1,5 +1,7 @@
 import Foundation
 
+private nonisolated let antigravityInstallerLogger = SupaLogger("Settings")
+
 /// Manages hook installation for Antigravity CLI.
 ///
 /// Note: Unlike agents using the standard grouped `hooks` schema (handled by `AgentHookSettingsFileInstaller`),
@@ -18,46 +20,39 @@ nonisolated struct AntigravitySettingsInstaller {
     self.fileManager = fileManager
   }
 
+  private static let supacodeHooksKey = "supacode-hooks"
+  private static let enableJSONHooksSnakeKey = "enable_json_hooks"
+  private static let enableJSONHooksCamelKey = "enableJsonHooks"
+
+  // Historical root-level event names a prior Supacode version may have written before the
+  // `supacode-hooks` namespace existed. Intentionally frozen and kept independent of the canonical
+  // Antigravity events (names may overlap; these match at the JSON root, not under `supacode-hooks`).
   private static let legacyEvents = [
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
     "Notification", "PreCompact", "Stop", "SessionEnd",
   ]
 
-  private static func extractUserHooks(from jsonValue: JSONValue?) -> [JSONValue] {
-    guard let jsonValue else { return [] }
-    if let array = jsonValue.arrayValue {
-      return array.filter { hookValue in
-        guard let hookObj = hookValue.objectValue,
-          let command = hookObj["command"]?.stringValue
-        else { return true }
-        return !AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-      }
-    } else if let hookObj = jsonValue.objectValue {
-      if let command = hookObj["command"]?.stringValue,
-        AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-      {
-        return []
-      }
-      return [jsonValue]
-    } else if jsonValue != .null {
-      return [jsonValue]
-    }
+  /// Normalize an event value to its hook entries: an array, or a single hook object; scalar and null have none.
+  private static func hookEntries(in value: JSONValue?) -> [JSONValue] {
+    guard let value else { return [] }
+    if let array = value.arrayValue { return array }
+    if value.objectValue != nil { return [value] }
     return []
   }
 
+  /// The event's entries whose command is not Supacode-managed (mirror of `containsSupacodeHook`).
+  private static func extractUserHooks(from jsonValue: JSONValue?) -> [JSONValue] {
+    hookEntries(in: jsonValue).filter { hookValue in
+      guard let command = hookValue.objectValue?["command"]?.stringValue else { return true }
+      return !AgentHookCommandOwnership.isSupacodeManagedCommand(command)
+    }
+  }
+
   private static func containsSupacodeHook(in jsonValue: JSONValue?) -> Bool {
-    guard let jsonValue else { return false }
-    if let array = jsonValue.arrayValue {
-      return array.contains { hookValue in
-        guard let command = hookValue.objectValue?["command"]?.stringValue else { return false }
-        return AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-      }
-    } else if let hookObj = jsonValue.objectValue,
-      let command = hookObj["command"]?.stringValue
-    {
+    hookEntries(in: jsonValue).contains { hookValue in
+      guard let command = hookValue.objectValue?["command"]?.stringValue else { return false }
       return AgentHookCommandOwnership.isSupacodeManagedCommand(command)
     }
-    return false
   }
 
   private static func pruneLegacyEvents(from rootObject: inout [String: JSONValue]) {
@@ -73,90 +68,109 @@ nonisolated struct AntigravitySettingsInstaller {
   }
 
   private static func hasLegacySupacodeHooks(in rootObject: [String: JSONValue]) -> Bool {
-    for event in legacyEvents {
-      if let hooksArray = rootObject[event]?.arrayValue {
-        for hookValue in hooksArray {
-          if let command = hookValue.objectValue?["command"]?.stringValue,
-            AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-          {
-            return true
-          }
-        }
-      } else if let hookObj = rootObject[event]?.objectValue {
-        if let command = hookObj["command"]?.stringValue,
-          AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-        {
-          return true
-        }
-      }
+    legacyEvents.contains { containsSupacodeHook(in: rootObject[$0]) }
+  }
+
+  /// Read the `supacode-hooks` namespace. Refuses a present-but-non-object value rather than
+  /// silently overwriting configuration Supacode does not own.
+  private static func supacodeHooksObject(in rootObject: [String: JSONValue]) throws -> [String: JSONValue] {
+    guard let value = rootObject[supacodeHooksKey] else { return [:] }
+    guard let object = value.objectValue else {
+      throw AntigravitySettingsInstallerError.invalidHooksObject
     }
-    return false
+    return object
+  }
+
+  /// Reject scalar or null event values under `supacode-hooks`; only arrays or single hook objects are valid.
+  private static func validateEventShapes(in supacodeHooks: [String: JSONValue]) throws {
+    for (event, value) in supacodeHooks where value.arrayValue == nil && value.objectValue == nil {
+      throw AntigravitySettingsInstallerError.invalidEventHooks(event)
+    }
+  }
+
+  private static func featureTogglesEnabled(in mainSettingsObject: [String: JSONValue]?) -> Bool {
+    guard let mainSettingsObject else { return false }
+    return mainSettingsObject[enableJSONHooksSnakeKey]?.boolValue == true
+      || mainSettingsObject[enableJSONHooksCamelKey]?.boolValue == true
   }
 
   func installState() -> ComponentInstallState {
     guard fileManager.fileExists(atPath: settingsURL.path) else { return .notInstalled }
-    guard let mainSettingsObject = try? file.load(at: mainSettingsURL) else { return .outdated }
-
-    let flag1 = mainSettingsObject["enable_json_hooks"]?.boolValue == true
-    let flag2 = mainSettingsObject["enableJsonHooks"]?.boolValue == true
-    guard flag1 || flag2 else { return .outdated }
 
     do {
       let rootObject = try file.load(at: settingsURL)
-      if Self.hasLegacySupacodeHooks(in: rootObject) {
-        return .outdated
-      }
 
-      guard let supacodeHooks = rootObject["supacode-hooks"]?.objectValue else {
+      // Legacy root-level Supacode hooks mean a stale install that must be migrated.
+      if Self.hasLegacySupacodeHooks(in: rootObject) { return .outdated }
+
+      // No managed hooks anywhere means the integration was never installed, regardless of the
+      // feature toggles. Checking presence before the toggles keeps a user's own pre-existing
+      // `hooks.json` from being reported `.outdated` and auto-installed over without consent.
+      guard let supacodeHooks = rootObject[Self.supacodeHooksKey]?.objectValue else {
         return .notInstalled
       }
+      // A malformed event shape can't be cleanly managed: install and uninstall reject it, so it
+      // must not read as installed here.
+      do {
+        try Self.validateEventShapes(in: supacodeHooks)
+      } catch {
+        antigravityInstallerLogger.warning(
+          "Antigravity supacode-hooks has an unsupported shape at \(settingsURL.path): \(error)")
+        return .notInstalled
+      }
+      let actualByEvent = Self.actualSupacodeCommandsByEvent(in: supacodeHooks)
+      guard !actualByEvent.isEmpty else { return .notInstalled }
 
-      let canonicalGroupsByEvent = AntigravityHookSettings.hooksByEvent()
-      let expectedCommands = Self.expectedCommands(from: canonicalGroupsByEvent)
-      guard !expectedCommands.isEmpty else { return .notInstalled }
-
-      let actualCommands = Self.actualSupacodeCommands(in: supacodeHooks)
-      if actualCommands.isEmpty { return .notInstalled }
-      return actualCommands == expectedCommands ? .installed : .outdated
+      guard Self.featureTogglesEnabled(in: loadMainSettingsForStateCheck()) else {
+        return .outdated
+      }
+      let expectedByEvent = Self.expectedCommandsByEvent(from: AntigravityHookSettings.hooksByEvent())
+      guard !expectedByEvent.isEmpty else { return .notInstalled }
+      return actualByEvent == expectedByEvent ? .installed : .outdated
     } catch {
       if !JSONHookSettingsFile.isFileNotFound(error) {
-        Self.reportInvalidHookConfiguration(error)
+        antigravityInstallerLogger.warning("Failed to inspect Antigravity hooks at \(settingsURL.path): \(error)")
       }
       return .notInstalled
     }
   }
 
-  private static func expectedCommands(from groups: [String: [JSONValue]]) -> Set<String> {
-    var commands: Set<String> = []
-    for (_, hooks) in groups {
-      for hook in hooks {
-        if let command = hook.objectValue?["command"]?.stringValue {
-          commands.insert(command)
-        }
+  /// Load the main settings for a read-only state probe, logging (rather than throwing on) a corrupt
+  /// file so a bad `settings.json` surfaces in the logs instead of silently reading as unset flags.
+  private func loadMainSettingsForStateCheck() -> [String: JSONValue]? {
+    do {
+      return try file.load(at: mainSettingsURL)
+    } catch {
+      if !JSONHookSettingsFile.isFileNotFound(error) {
+        antigravityInstallerLogger.warning(
+          "Failed to inspect Antigravity settings at \(mainSettingsURL.path): \(error)")
       }
+      return nil
     }
-    return commands
   }
 
-  private static func actualSupacodeCommands(in supacodeHooks: [String: JSONValue]) -> Set<String> {
-    var commands: Set<String> = []
-    for (_, value) in supacodeHooks {
-      if let hooksArray = value.arrayValue {
-        for hook in hooksArray {
-          if let command = hook.objectValue?["command"]?.stringValue,
-            AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-          {
-            commands.insert(command)
-          }
-        }
-      } else if let hookObj = value.objectValue,
-        let command = hookObj["command"]?.stringValue,
-        AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-      {
-        commands.insert(command)
-      }
+  /// Canonical Supacode commands per event. Comparing per event (not a flattened set) is required
+  /// because several events intentionally share a command (`Pre*` use busy, `Post*` use idle), so a
+  /// flattened set cannot tell a removed event apart from a survivor with the same command.
+  private static func expectedCommandsByEvent(from groups: [String: [JSONValue]]) -> [String: Set<String>] {
+    var byEvent: [String: Set<String>] = [:]
+    for (event, hooks) in groups {
+      let commands = Set(hooks.compactMap { $0.objectValue?["command"]?.stringValue })
+      if !commands.isEmpty { byEvent[event] = commands }
     }
-    return commands
+    return byEvent
+  }
+
+  private static func actualSupacodeCommandsByEvent(in supacodeHooks: [String: JSONValue]) -> [String: Set<String>] {
+    var byEvent: [String: Set<String>] = [:]
+    for (event, value) in supacodeHooks {
+      let commands = Set(
+        hookEntries(in: value)
+          .compactMap { $0.objectValue?["command"]?.stringValue }
+          .filter { AgentHookCommandOwnership.isSupacodeManagedCommand($0) })
+      if !commands.isEmpty { byEvent[event] = commands }
+    }
+    return byEvent
   }
 
   func installAllHooks() throws {
@@ -164,14 +178,14 @@ nonisolated struct AntigravitySettingsInstaller {
 
     Self.pruneLegacyEvents(from: &rootObject)
 
+    let existingSupacodeHooks = try Self.supacodeHooksObject(in: rootObject)
+    try Self.validateEventShapes(in: existingSupacodeHooks)
+
     var supacodeHooks: [String: JSONValue] = [:]
     let canonicalGroupsByEvent = AntigravityHookSettings.hooksByEvent()
-    let existingSupacodeHooks = rootObject["supacode-hooks"]?.objectValue ?? [:]
 
     for (event, canonicalHooks) in canonicalGroupsByEvent {
-      var merged: [JSONValue] = []
-      let existingUserHooks = Self.extractUserHooks(from: existingSupacodeHooks[event])
-      merged.append(contentsOf: existingUserHooks)
+      var merged = Self.extractUserHooks(from: existingSupacodeHooks[event])
       for hook in canonicalHooks where hook != .null {
         merged.append(hook)
       }
@@ -188,17 +202,17 @@ nonisolated struct AntigravitySettingsInstaller {
     }
 
     if !supacodeHooks.isEmpty {
-      rootObject["supacode-hooks"] = .object(supacodeHooks)
+      rootObject[Self.supacodeHooksKey] = .object(supacodeHooks)
     } else {
-      rootObject.removeValue(forKey: "supacode-hooks")
+      rootObject.removeValue(forKey: Self.supacodeHooksKey)
     }
 
     try file.write(rootObject, to: settingsURL)
 
     var mainSettingsObject = try file.load(at: mainSettingsURL)
     // Set both snake_case and camelCase flags for compatibility across Antigravity CLI versions.
-    mainSettingsObject["enable_json_hooks"] = .bool(true)
-    mainSettingsObject["enableJsonHooks"] = .bool(true)
+    mainSettingsObject[Self.enableJSONHooksSnakeKey] = .bool(true)
+    mainSettingsObject[Self.enableJSONHooksCamelKey] = .bool(true)
     try file.write(mainSettingsObject, to: mainSettingsURL)
   }
 
@@ -208,13 +222,15 @@ nonisolated struct AntigravitySettingsInstaller {
       rootObject = try file.load(at: settingsURL)
     } catch {
       if JSONHookSettingsFile.isFileNotFound(error) {
-        removeMainSettingsFlagsIfNoHooksRemain(hooksRemain: false)
+        try removeMainSettingsFlagsIfNoHooksRemain(hooksRemain: false)
         return
       }
       throw error
     }
 
-    if var supacodeHooks = rootObject["supacode-hooks"]?.objectValue {
+    if rootObject[Self.supacodeHooksKey] != nil {
+      var supacodeHooks = try Self.supacodeHooksObject(in: rootObject)
+      try Self.validateEventShapes(in: supacodeHooks)
       for (event, value) in supacodeHooks {
         guard Self.containsSupacodeHook(in: value) else { continue }
         let filtered = Self.extractUserHooks(from: value)
@@ -225,9 +241,9 @@ nonisolated struct AntigravitySettingsInstaller {
         }
       }
       if !supacodeHooks.isEmpty {
-        rootObject["supacode-hooks"] = .object(supacodeHooks)
+        rootObject[Self.supacodeHooksKey] = .object(supacodeHooks)
       } else {
-        rootObject.removeValue(forKey: "supacode-hooks")
+        rootObject.removeValue(forKey: Self.supacodeHooksKey)
       }
     }
 
@@ -235,32 +251,39 @@ nonisolated struct AntigravitySettingsInstaller {
 
     let hooksRemain = !rootObject.isEmpty
     if rootObject.isEmpty {
-      try? fileManager.removeItem(at: settingsURL)
+      // Let a failed delete surface: swallowing it would report a clean uninstall while the
+      // `supacode-hooks` block still lives on disk.
+      if fileManager.fileExists(atPath: settingsURL.path) {
+        try fileManager.removeItem(at: settingsURL)
+      }
     } else {
       try file.write(rootObject, to: settingsURL)
     }
 
-    removeMainSettingsFlagsIfNoHooksRemain(hooksRemain: hooksRemain)
+    try removeMainSettingsFlagsIfNoHooksRemain(hooksRemain: hooksRemain)
   }
 
-  private func removeMainSettingsFlagsIfNoHooksRemain(hooksRemain: Bool) {
-    guard !hooksRemain,
-      var mainSettingsObject = try? file.load(at: mainSettingsURL)
-    else { return }
+  private func removeMainSettingsFlagsIfNoHooksRemain(hooksRemain: Bool) throws {
+    guard !hooksRemain, fileManager.fileExists(atPath: mainSettingsURL.path) else { return }
 
-    mainSettingsObject.removeValue(forKey: "enable_json_hooks")
-    mainSettingsObject.removeValue(forKey: "enableJsonHooks")
-    if mainSettingsObject.isEmpty {
-      try? fileManager.removeItem(at: mainSettingsURL)
-    } else {
-      try? file.write(mainSettingsObject, to: mainSettingsURL)
+    var mainSettingsObject: [String: JSONValue]
+    do {
+      mainSettingsObject = try file.load(at: mainSettingsURL)
+    } catch {
+      // Corrupt main settings: leave the flags orphaned rather than fail the whole uninstall
+      // (harmless once hooks.json is gone), but log at error since this mutation didn't complete.
+      antigravityInstallerLogger.error(
+        "Failed to strip Antigravity hook flags at \(mainSettingsURL.path): \(error)")
+      return
     }
-  }
 
-  private static func reportInvalidHookConfiguration(_ error: Error) {
-    #if DEBUG
-      assertionFailure("Antigravity hook configuration is invalid: \(error)")
-    #endif
+    mainSettingsObject.removeValue(forKey: Self.enableJSONHooksSnakeKey)
+    mainSettingsObject.removeValue(forKey: Self.enableJSONHooksCamelKey)
+    if mainSettingsObject.isEmpty {
+      try fileManager.removeItem(at: mainSettingsURL)
+    } else {
+      try file.write(mainSettingsObject, to: mainSettingsURL)
+    }
   }
 
   private var file: JSONHookSettingsFile {

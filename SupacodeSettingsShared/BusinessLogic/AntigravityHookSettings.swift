@@ -1,10 +1,19 @@
 import Foundation
 
 nonisolated enum AntigravityHookSettings {
-  private struct EventSpec {
+  private struct EventSpec: Equatable, Sendable {
     let name: String
     let command: String
     let timeout: Int
+
+    init(name: String, command: String, timeout: Int) {
+      assert(!name.isEmpty, "Antigravity hook event name must not be empty.")
+      assert(!command.isEmpty, "Antigravity hook command must not be empty.")
+      assert(timeout > 0, "Antigravity hook timeout must be positive.")
+      self.name = name
+      self.command = command
+      self.timeout = timeout
+    }
   }
 
   static func hooksByEvent() -> [String: [JSONValue]] {

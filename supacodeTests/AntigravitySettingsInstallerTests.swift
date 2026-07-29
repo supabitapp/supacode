@@ -330,4 +330,225 @@ struct AntigravitySettingsInstallerTests {
     #expect(mainSettingsJson["enable_json_hooks"]?.boolValue == true)
     #expect(mainSettingsJson["enableJsonHooks"]?.boolValue == true)
   }
+
+  // MARK: - Drift detection
+
+  @Test func installStateIsNotInstalledForPreexistingHooksWithoutSupacode() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    // A user of the Gemini CLI already has a hooks.json with their own hook and no settings.json,
+    // and never installed Supacode. It must read as notInstalled so auto-update doesn't silently
+    // install hooks over a config the user never opted into.
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    let userConfig: [String: JSONValue] = [
+      "SessionStart": .array([.object(["command": .string("/usr/local/bin/user.sh")])])
+    ]
+    try encode(userConfig, to: settingsURL)
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(installer.installState() == .notInstalled)
+
+    // An empty-object hooks.json is likewise notInstalled.
+    try encode([:], to: settingsURL)
+    #expect(installer.installState() == .notInstalled)
+  }
+
+  @Test func installStateReturnsOutdatedWhenAManagedEventIsRemoved() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+    #expect(installer.installState() == .installed)
+
+    // PreToolUse shares its managed busy command with PreInvocation. A flattened command-set check
+    // would still see busy and report installed; per-event detection must flag the missing event.
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    var root = try decodeObject(at: settingsURL)
+    var supacodeHooks = try #require(root["supacode-hooks"]?.objectValue)
+    #expect(supacodeHooks["PreToolUse"] != nil)
+    #expect(supacodeHooks["PreInvocation"] != nil)
+    supacodeHooks.removeValue(forKey: "PreToolUse")
+    root["supacode-hooks"] = .object(supacodeHooks)
+    try encode(root, to: settingsURL)
+
+    #expect(installer.installState() == .outdated)
+  }
+
+  @Test func installStateReturnsOutdatedWhenAnEventUsesAnotherEventsCommand() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+    #expect(installer.installState() == .installed)
+
+    // Swap PreToolUse's managed command for PostInvocation's (idle). The flattened command set is
+    // unchanged, so only a per-event comparison can tell PreToolUse now carries the wrong command.
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    var root = try decodeObject(at: settingsURL)
+    var supacodeHooks = try #require(root["supacode-hooks"]?.objectValue)
+    let idleCommand = try #require(
+      supacodeHooks["PostInvocation"]?.arrayValue?.first?.objectValue?["command"]?.stringValue)
+    supacodeHooks["PreToolUse"] = .array([.object(["command": .string(idleCommand)])])
+    root["supacode-hooks"] = .object(supacodeHooks)
+    try encode(root, to: settingsURL)
+
+    #expect(installer.installState() == .outdated)
+  }
+
+  @Test func installStateIsNotInstalledForCorruptHooksJson() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    // A corrupt hooks.json must degrade gracefully to notInstalled, not trap.
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("{ not json".utf8).write(to: settingsURL)
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(installer.installState() == .notInstalled)
+  }
+
+  @Test func installStateIsNotInstalledWhenAnEventEntryIsMalformed() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+    #expect(installer.installState() == .installed)
+
+    // A scalar entry alongside the canonical hooks is a shape install/uninstall reject, so the
+    // state must stop reporting installed.
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    var root = try decodeObject(at: settingsURL)
+    var supacodeHooks = try #require(root["supacode-hooks"]?.objectValue)
+    supacodeHooks["GarbageEvent"] = .int(5)
+    root["supacode-hooks"] = .object(supacodeHooks)
+    try encode(root, to: settingsURL)
+
+    #expect(installer.installState() == .notInstalled)
+  }
+
+  // MARK: - Legacy migration
+
+  @Test func installMigratesLegacyRootHooksPreservingUserHooks() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    // Old flat-root schema: a Supacode-managed hook sits at root SessionStart next to a user hook.
+    let legacyManaged: JSONValue = .object(["command": .string("/legacy/agent.sh # supacode-managed-hook")])
+    let userRootHook: JSONValue = .object(["command": .string("/usr/local/bin/user-root.sh")])
+    let initial: [String: JSONValue] = ["SessionStart": .array([legacyManaged, userRootHook])]
+    try encode(initial, to: settingsURL)
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+
+    let root = try decodeObject(at: settingsURL)
+    let rootSessionStart = try #require(root["SessionStart"]?.arrayValue)
+    #expect(rootSessionStart.contains(userRootHook))
+    #expect(!rootSessionStart.contains(legacyManaged))
+    let managedRemainsAtRoot = rootSessionStart.contains { hookValue in
+      hookValue.objectValue?["command"]?.stringValue?.contains("supacode-managed-hook") == true
+    }
+    #expect(!managedRemainsAtRoot)
+
+    // Canonical hooks now live under supacode-hooks and the migrated config reads as installed.
+    #expect(root["supacode-hooks"]?.objectValue?["SessionStart"] != nil)
+    #expect(installer.installState() == .installed)
+  }
+
+  // MARK: - Malformed shape rejection
+
+  @Test func installRejectsNonObjectSupacodeHooksNamespace() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encode(["supacode-hooks": .string("nope")], to: settingsURL)
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(throws: AntigravitySettingsInstallerError.invalidHooksObject) {
+      try installer.installAllHooks()
+    }
+
+    // The user's value is rejected, not silently overwritten.
+    let root = try decodeObject(at: settingsURL)
+    #expect(root["supacode-hooks"]?.stringValue == "nope")
+  }
+
+  @Test func installRejectsScalarEventEntryUnderSupacodeHooks() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encode(["supacode-hooks": .object(["PreToolUse": .int(42)])], to: settingsURL)
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(throws: AntigravitySettingsInstallerError.invalidEventHooks("PreToolUse")) {
+      try installer.installAllHooks()
+    }
+
+    // The malformed value is rejected, not rewritten.
+    let root = try decodeObject(at: settingsURL)
+    #expect(root["supacode-hooks"]?.objectValue?["PreToolUse"] == .int(42))
+  }
+
+  @Test func uninstallRejectsScalarEventEntryUnderSupacodeHooks() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    // Uninstall applies the same shape validation as install (symmetric with the sibling
+    // installers): a malformed namespace is surfaced rather than silently half-processed.
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    try fileManager.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encode(["supacode-hooks": .object(["PreToolUse": .int(42)])], to: settingsURL)
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    #expect(throws: AntigravitySettingsInstallerError.invalidEventHooks("PreToolUse")) {
+      try installer.uninstallAllHooks()
+    }
+  }
+
+  @Test func uninstallDoesNotThrowOnCorruptMainSettings() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+
+    let mainSettingsURL = AntigravitySettingsInstaller.mainSettingsURL(homeDirectoryURL: homeURL)
+    try Data("{ corrupt".utf8).write(to: mainSettingsURL)
+
+    // Uninstall removes the hooks and must not blow up on a bad settings.json.
+    try installer.uninstallAllHooks()
+
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    #expect(!fileManager.fileExists(atPath: settingsURL.path))
+    // The corrupt main settings are left untouched rather than deleted or rewritten.
+    #expect(fileManager.fileExists(atPath: mainSettingsURL.path))
+    let raw = String(data: try Data(contentsOf: mainSettingsURL), encoding: .utf8)
+    #expect(raw == "{ corrupt")
+  }
+
+  // MARK: - Helpers
+
+  private func decodeObject(at url: URL) throws -> [String: JSONValue] {
+    let data = try Data(contentsOf: url)
+    return (try JSONDecoder().decode(JSONValue.self, from: data)).objectValue ?? [:]
+  }
+
+  private func encode(_ object: [String: JSONValue], to url: URL) throws {
+    let data = try JSONEncoder().encode(JSONValue.object(object))
+    try data.write(to: url)
+  }
 }
