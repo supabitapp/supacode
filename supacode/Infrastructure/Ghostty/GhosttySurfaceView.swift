@@ -92,6 +92,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var lastPerformKeyEvent: TimeInterval?
   private var currentCursor: NSCursor = .iBeam
   private var focused = false
+  // True between a left press this view forwarded to the terminal and its release. mouseUp only
+  // reports a release when it is set, so a consumed focus-transfer press (which never sets it,
+  // whether released here or dragged in from another split) can't orphan a release. Cleared at
+  // the top of localEventLeftMouseDown so an interrupted gesture can't leave it stale.
+  private var leftMousePressed = false
   private var markedText = NSMutableAttributedString()
   private var keyboardLayoutChangeKeyUpSuppression: KeyboardLayoutChangeKeyUpSuppression?
   // Agent presence pushed from app state; gates Cmd+V image-paste routing.
@@ -764,12 +769,18 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func mouseDown(with event: NSEvent) {
+    leftMousePressed = true
     sendMouseButton(event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
   }
 
   override func mouseUp(with event: NSEvent) {
+    let didSendPress = leftMousePressed
+    leftMousePressed = false
     prevPressureStage = 0
-    sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
+    // Only release for a press we actually sent (see leftMousePressed).
+    if didSendPress {
+      sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
+    }
     if let surface {
       ghostty_surface_mouse_pressure(surface, 0, 0)
     }
@@ -897,11 +908,20 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   private func localEventLeftMouseDown(_ event: NSEvent) -> NSEvent? {
+    // Clear stale press state up front so an interrupted gesture can't orphan a later release.
+    leftMousePressed = false
     guard let window, event.window != nil, window == event.window else { return event }
-    let location = convert(event.locationInWindow, from: nil)
-    guard hitTest(location) == self else { return event }
-    guard !NSApp.isActive || !window.isKeyWindow else { return event }
-    guard !focused else { return event }
+    // Hit-test in content-view space: the surface's frame origin tracks the scroll
+    // offset, so a self-space hit test double-applies it and misfires in scrollback.
+    guard window.contentView?.hitTest(event.locationInWindow) == self else { return event }
+    guard window.firstResponder !== self else { return event }
+    // App and window already active: this click only transfers split focus, so consume it
+    // instead of forwarding a press the terminal would later pair with an orphaned release.
+    if NSApp.isActive, window.isKeyWindow {
+      // Only consume when focus actually transfers; otherwise forward so the click isn't lost.
+      guard window.makeFirstResponder(self) else { return event }
+      return nil
+    }
     window.makeFirstResponder(self)
     return event
   }
