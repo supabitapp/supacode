@@ -1,0 +1,30 @@
+diff --git a/src/Surface.zig b/src/Surface.zig
+index c8055cfee..9d4aac5ef 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -3433,11 +3433,12 @@ pub fn scrollCallback(
+         // We scroll by the number of rows in the offset and save the remainder
+         const amount = poff / cell_size;
+         assert(@abs(amount) >= 1);
+-        self.mouse.pending_scroll_y = poff - (amount * cell_size);
+ 
+-        // Round towards zero.
++        // Round towards zero, then carry the sub-row remainder so slow
++        // precision scrolls keep their fractional motion across events.
+         const delta: isize = @intFromFloat(@trunc(amount));
+         assert(@abs(delta) >= 1);
++        self.mouse.pending_scroll_y = poff - (@as(f64, @floatFromInt(delta)) * cell_size);
+ 
+         break :y .{ .delta = delta };
+     };
+@@ -3458,9 +3459,9 @@ pub fn scrollCallback(
+ 
+         const amount = poff / cell_size;
+         assert(@abs(amount) >= 1);
+-        self.mouse.pending_scroll_x = poff - (amount * cell_size);
+         const delta: isize = @intFromFloat(@trunc(amount));
+         assert(@abs(delta) >= 1);
++        self.mouse.pending_scroll_x = poff - (@as(f64, @floatFromInt(delta)) * cell_size);
+         break :x .{ .delta = delta };
+     };
+ 
