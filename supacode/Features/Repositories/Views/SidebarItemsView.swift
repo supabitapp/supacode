@@ -588,7 +588,8 @@ private struct SidebarItemContextMenu: View {
   private var rowIsFolder: Bool { row.isFolder }
 
   /// A terminating row, or one whose repository is being removed, has nothing
-  /// left to act on beyond copying its path.
+  /// left to act on beyond copying its path; `body`'s reduced branch adds the
+  /// pin toggle back for still-creating rows.
   private var isActionable: Bool { row.lifecycle == .idle && !isRepositoryRemoving }
 
   /// Resolved off the main actor by `.resolveOpenActions`: the repository-settings
@@ -610,7 +611,20 @@ private struct SidebarItemContextMenu: View {
     let contextRows = slice.contextRows(rightClicked: row)
     let isBulkSelection = contextRows.count > 1
     if !isActionable {
+      // Mirror the actionable path's mixed-selection suppression.
+      if row.lifecycle.isPending, !isRepositoryRemoving, !(isBulkSelection && slice.hasMixedKindSelection) {
+        pinActions(contextRows: contextRows, isBulkSelection: isBulkSelection)
+      }
       SidebarCopyPathnameButton(path: row.workingDirectoryPath)
+      // Materialized rows running their setup script share the `.pending`
+      // lifecycle but are past cancelling; gate on the throwaway id.
+      if !isBulkSelection, rowID.isPending, !isRepositoryRemoving {
+        Divider()
+        Button("Cancel Creation", systemImage: "xmark.circle", role: .destructive) {
+          store.send(.cancelPendingWorktree(rowID))
+        }
+        .help("Stop creating this worktree and clean up its files and branch")
+      }
     } else if isBulkSelection, slice.hasMixedKindSelection {
       // Folder and worktree actions don't compose, so the selection has none in
       // common; say so instead of putting up an empty menu.
@@ -765,9 +779,10 @@ private struct SidebarItemContextMenu: View {
   @ViewBuilder
   private func pinActions(contextRows: [SidebarContextRow], isBulkSelection: Bool) -> some View {
     // Folder synthetic rows pass `isMainWorktree` by geometry but are pinnable; git "main" still
-    // aren't. Pending rows can't pin (reducer would no-op on the unresolved ID).
+    // aren't. Pending rows pin too: the reducer parks the intent on the
+    // `PendingWorktree` and lands it when the worktree materializes.
     let pinnableRows = contextRows.filter {
-      (!$0.isMainWorktree || $0.isFolder) && !$0.lifecycle.isPending
+      !$0.isMainWorktree || $0.isFolder
     }
     if !pinnableRows.isEmpty {
       let allPinned = pinnableRows.allSatisfy(\.isPinned)

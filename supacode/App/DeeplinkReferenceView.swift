@@ -117,8 +117,8 @@ struct DeeplinkReferenceView: View {
     .init(url: "supacode://repo/open?path=<absolute-path>", description: "Open a repository."),
     .init(
       url: "supacode://repo/<repo_id>/worktree/new",
-      description: "Create a worktree.",
-      params: "?branch=<name>&base=<ref>&fetch=true&name=<folder>&location=<dir>"
+      description: "Create a worktree. pin=true applies to local repositories only.",
+      params: "?branch=<name>&base=<ref>&fetch=true&name=<folder>&location=<dir>&pin=true"
     ),
   ]
 

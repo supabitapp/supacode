@@ -45,6 +45,94 @@ struct AppFeatureMenuBarNotificationsTests {
     #expect(surfaced.value == 1)
   }
 
+  @Test(.dependencies) func menuBarWorktreeSelectedSelectsPendingWorktree() async {
+    // A pinned still-creating row lists in the menu bar's Pinned section; a
+    // click must select it like a sidebar row, not fall into the stale path.
+    let worktree = makeWorktree()
+    let pendingID = Worktree.ID("pending:pinned")
+    var repositoriesState = RepositoriesFeature.State()
+    let repository = Repository(
+      id: "/tmp/repo",
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      name: "repo",
+      worktrees: [worktree],
+    )
+    repositoriesState.repositories = [repository]
+    repositoriesState.isInitialLoadComplete = true
+    repositoriesState.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: repository.id,
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter"),
+        pinned: true
+      )
+    ]
+    repositoriesState.reconcileSidebarForTesting()
+    let surfaced = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.appLifecycleClient.surfaceMainWindow = {
+        surfaced.withValue { $0 += 1 }
+        return true
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.menuBarWorktreeSelected(worktreeID: pendingID))
+    await store.receive(\.repositories.selectWorktree)
+    await store.finish()
+
+    #expect(store.state.repositories.selectedWorktreeID == pendingID)
+    #expect(surfaced.value == 1)
+  }
+
+  @Test(.dependencies) func menuBarWorktreeSelectedRetargetsMaterializedPendingID() async {
+    // A menu snapshot can hold a pending id whose creation landed before the
+    // click; the resolution map routes it to the real worktree.
+    let worktree = makeWorktree()
+    let pendingID = Worktree.ID("pending:materialized")
+    var repositoriesState = RepositoriesFeature.State()
+    let repository = Repository(
+      id: "/tmp/repo",
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      name: "repo",
+      worktrees: [worktree],
+    )
+    repositoriesState.repositories = [repository]
+    repositoriesState.isInitialLoadComplete = true
+    repositoriesState.resolvedPendingWorktrees = [
+      pendingID: .init(worktreeID: worktree.id, repositoryID: repository.id)
+    ]
+    let surfaced = LockIsolated(0)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.appLifecycleClient.surfaceMainWindow = {
+        surfaced.withValue { $0 += 1 }
+        return true
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.menuBarWorktreeSelected(worktreeID: pendingID))
+    await store.receive(\.repositories.selectWorktree)
+    await store.finish()
+
+    #expect(store.state.repositories.selectedWorktreeID == worktree.id)
+    #expect(surfaced.value == 1)
+  }
+
   @Test(.dependencies) func markAllNotificationsReadForwardsToTerminalClient() async {
     let worktree = makeWorktree()
     let calls = LockIsolated(0)

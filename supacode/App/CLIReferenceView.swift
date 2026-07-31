@@ -127,7 +127,7 @@ struct CLIReferenceView: View {
     .init(
       command:
         "supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--fetch] "
-        + "[--name <folder>] [--location <dir>]",
+        + "[--name <folder>] [--location <dir>] [--pin]",
       description: "Create a worktree. Prints the new worktree ID to stdout."
     ),
   ]

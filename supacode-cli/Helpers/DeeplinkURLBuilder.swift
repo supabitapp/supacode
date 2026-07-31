@@ -106,6 +106,7 @@ nonisolated enum DeeplinkURLBuilder {
     var fetch: Bool
     var name: String?
     var location: String?
+    var pin = false
   }
 
   static func repoWorktreeNew(repoID: String, options: WorktreeNewOptions) -> String {
@@ -116,6 +117,7 @@ nonisolated enum DeeplinkURLBuilder {
     if options.fetch { params.append("fetch=true") }
     if let name = options.name { params.append("name=\(percentEncodeQueryValue(name))") }
     if let location = options.location { params.append("location=\(percentEncodeQueryValue(location))") }
+    if options.pin { params.append("pin=true") }
     if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
     return url
   }

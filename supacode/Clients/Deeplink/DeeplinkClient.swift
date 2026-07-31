@@ -51,7 +51,7 @@ private nonisolated enum DeeplinkParser {
           queryItems: queryItems,
         )
       else { return nil }
-      return .worktree(id: id, action: action, background: parseBackground(from: queryItems))
+      return .worktree(id: id, action: action, background: parseBoolFlag("background", from: queryItems))
     case "repo":
       return parseRepo(pathSegments: pathSegments, queryItems: queryItems)
     case "help":
@@ -91,13 +91,14 @@ private nonisolated enum DeeplinkParser {
     }
   }
 
-  /// Only an explicit `background=true` suppresses focus, so a malformed or absent
-  /// value keeps the pre-existing focus-follow.
-  private static func parseBackground(from queryItems: [URLQueryItem]) -> Bool {
-    guard let item = queryItems.first(where: { $0.name == "background" }) else { return false }
+  /// Parse an explicit-opt-in bool flag: only `<name>=true` returns true, so a
+  /// malformed or absent value keeps the safe default. Unrecognized values are
+  /// logged and ignored.
+  private static func parseBoolFlag(_ name: String, from queryItems: [URLQueryItem]) -> Bool {
+    guard let item = queryItems.first(where: { $0.name == name }) else { return false }
     if item.value == "true" { return true }
     if item.value != "false" {
-      logger.warning("Ignoring unrecognized background value: \(item.value ?? "nil")")
+      logger.warning("Ignoring unrecognized \(name) value: \(item.value ?? "nil")")
     }
     return false
   }
@@ -341,7 +342,8 @@ private nonisolated enum DeeplinkParser {
       fetchOrigin: fetchOrigin,
       worktreeName: worktreeName,
       worktreePath: worktreePath,
-      background: parseBackground(from: queryItems),
+      background: parseBoolFlag("background", from: queryItems),
+      pin: parseBoolFlag("pin", from: queryItems),
     )
   }
 }

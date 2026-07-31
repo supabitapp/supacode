@@ -85,36 +85,14 @@ extension RepositoriesFeature {
         rebuilt.append(item)
       }
       for pending in state.pendingWorktrees where pending.repositoryID == repository.id {
-        let id = pending.id
-        let existing = previousByID[id: id]
-        let pendingName = pending.progress.worktreeName ?? "Creating…"
-        var item =
-          existing
-          ?? SidebarItemFeature.State(
-            id: id,
-            repositoryID: repository.id,
-            kind: .gitWorktree,
-            name: pendingName,
-            branchName: pendingName,
-            subtitle: nil,
-            workingDirectory: repository.rootURL,
-            repositoryAccent: nil,
-            isMainWorktree: false,
-            isPinned: false,
-            hasMergedBadge: false,
-            host: repository.host
+        rebuilt.append(
+          pendingSidebarItem(
+            for: pending,
+            repository: repository,
+            existing: previousByID[id: pending.id],
+            isDeleting: state.removingRepositoryIDs[pending.repositoryID] != nil
           )
-        item.name = pendingName
-        item.branchName = pendingName
-        // The worktree doesn't exist yet, so the repo root stands in for its path.
-        item.workingDirectoryPath = repository.rootURL.path(percentEncoded: false)
-        item.customTitle = pending.customization?.title
-        item.customTint = pending.customization?.color
-        item.lifecycle =
-          state.removingRepositoryIDs[pending.repositoryID] != nil
-          ? .deleting
-          : .pending
-        rebuilt.append(item)
+        )
       }
     }
     // Carry forward in-flight rows whose worktree dropped out of the roster
@@ -135,6 +113,41 @@ extension RepositoriesFeature {
     if !seededSurfaces.isEmpty {
       state.pendingAgentRehydrateSurfaces.formUnion(seededSurfaces)
     }
+  }
+
+  /// Materialize (or refresh) the sidebar row for a still-creating worktree.
+  private static func pendingSidebarItem(
+    for pending: PendingWorktree,
+    repository: Repository,
+    existing: SidebarItemFeature.State?,
+    isDeleting: Bool
+  ) -> SidebarItemFeature.State {
+    let pendingName = pending.progress.worktreeName ?? "Creating…"
+    var item =
+      existing
+      ?? SidebarItemFeature.State(
+        id: pending.id,
+        repositoryID: repository.id,
+        kind: .gitWorktree,
+        name: pendingName,
+        branchName: pendingName,
+        subtitle: nil,
+        workingDirectory: repository.rootURL,
+        repositoryAccent: nil,
+        isMainWorktree: false,
+        isPinned: pending.pinned,
+        hasMergedBadge: false,
+        host: repository.host
+      )
+    item.name = pendingName
+    item.branchName = pendingName
+    item.isPinned = pending.pinned
+    // The worktree doesn't exist yet, so the repo root stands in for its path.
+    item.workingDirectoryPath = repository.rootURL.path(percentEncoded: false)
+    item.customTitle = pending.customization?.title
+    item.customTint = pending.customization?.color
+    item.lifecycle = isDeleting ? .deleting : .pending
+    return item
   }
 
   /// User-set title / color for `worktreeID`, read through whichever bucket

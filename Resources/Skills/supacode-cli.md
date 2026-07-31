@@ -131,7 +131,7 @@ supacode surface close [-w <id>] [-t <id>] [-s <id>] [--background]             
 ```
 supacode repo list                                                     # List repository IDs.
 supacode repo open <path>                                              # Open repository.
-supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--fetch] [--name <folder>] [--location <dir>] [--background]  # Create worktree (prints the new worktree ID to stdout).
+supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--fetch] [--name <folder>] [--location <dir>] [--pin] [--background]  # Create worktree (prints the new worktree ID to stdout; --pin pins it as soon as creation starts, local repositories only).
 ```
 
 ### Settings

@@ -141,6 +141,96 @@ struct AppFeatureDeeplinkTests {
     await store.receive(\.repositories.pinWorktree)
   }
 
+  @Test(.dependencies) func pinWorktreeDeeplinkFlipsPendingPinWhileCreating() async {
+    // A pin deeplink targeting a still-creating row parks the transient intent
+    // instead of alerting "Worktree not found".
+    let worktree = makeWorktree()
+    var repositories = makeRepositoriesState(worktree: worktree)
+    let pendingID = Worktree.ID("pending:new")
+    repositories.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: "/tmp/repo",
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter")
+      )
+    ]
+    repositories.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: pendingID, action: .pin)))
+    await store.receive(\.repositories.pinWorktree)
+    await store.finish()
+
+    #expect(store.state.repositories.pendingWorktrees.first?.pinned == true)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func unpinWorktreeDeeplinkFlipsPendingPinWhileCreating() async {
+    // Mirror of the pin case: the not-found guard admits the unpin arm too.
+    let worktree = makeWorktree()
+    var repositories = makeRepositoriesState(worktree: worktree)
+    let pendingID = Worktree.ID("pending:new")
+    repositories.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: "/tmp/repo",
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter"),
+        pinned: true
+      )
+    ]
+    repositories.reconcileSidebarForTesting()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: pendingID, action: .unpin)))
+    await store.receive(\.repositories.unpinWorktree)
+    await store.finish()
+
+    #expect(store.state.repositories.pendingWorktrees.first?.pinned == false)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func selectWorktreeDeeplinkRetargetsMaterializedPendingID() async {
+    // The shared deeplink id resolver consults the pending → real map, so a
+    // stale pending id clears the not-found guard for non-pin actions too.
+    let worktree = makeWorktree()
+    var repositories = makeRepositoriesState(worktree: worktree)
+    repositories.selection = nil
+    let pendingID = Worktree.ID("pending:materialized")
+    repositories.resolvedPendingWorktrees = [pendingID: .init(worktreeID: worktree.id, repositoryID: "/tmp/repo")]
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: pendingID, action: .select)))
+    await store.receive(\.repositories.selectWorktree)
+    await store.finish()
+
+    #expect(store.state.repositories.selectedWorktreeID == worktree.id)
+    #expect(store.state.alert == nil)
+  }
+
   @Test(.dependencies) func unpinWorktreeDeeplink() async {
     let worktree = makeWorktree()
     var repositories = makeRepositoriesState(worktree: worktree)
@@ -2425,6 +2515,57 @@ struct AppFeatureDeeplinkTests {
     #expect(
       observedDirectoryOverride.value
         == URL(filePath: "/tmp/elsewhere/feature_foo", directoryHint: .isDirectory).standardizedFileURL)
+  }
+
+  @Test(.dependencies) func repoWorktreeNewWithPinLandsWorktreePinned() async {
+    // End-to-end deeplink chain: `pin=true` pre-pins the pending row and the
+    // created worktree ends in the persisted `.pinned` bucket.
+    let worktree = makeWorktree()
+    let createdWorktree = makeWorktree(id: "/tmp/repo/feature-x", name: "feature-x")
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil,
+          pin: true
+        )
+      )
+    )
+    await store.receive(\.repositories.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    let section = store.state.repositories.sidebar.sections["/tmp/repo"]
+    #expect(section?.buckets[.pinned]?.items[createdWorktree.id] != nil)
+    #expect(store.state.repositories.sidebarItems[id: createdWorktree.id]?.isPinned == true)
   }
 
   @Test(.dependencies) func repoWorktreeNewWithUnknownRepoShowsAlert() async {

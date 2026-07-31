@@ -392,6 +392,25 @@ struct DeeplinkClientTests {
     )
   }
 
+  @Test func repoWorktreeNewWithPin() {
+    let repoEncoded = "%2Ftmp%2Frepo"
+    let url = URL(
+      string: "supacode://repo/\(repoEncoded)/worktree/new?branch=feature-x&pin=true"
+    )!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil,
+          pin: true
+        )
+    )
+  }
+
   @Test func repoWorktreeNewWithoutBranch() {
     let repoEncoded = "%2Ftmp%2Frepo"
     let url = URL(string: "supacode://repo/\(repoEncoded)/worktree/new")!

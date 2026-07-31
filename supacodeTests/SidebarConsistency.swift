@@ -138,7 +138,7 @@ private struct SidebarConsistencyDrift: Equatable, CustomDumpReflectable {
 /// Compares `state.sidebarGrouping` per-repo bucket orders against the canonical
 /// `state.$sidebar.withLock` snapshot, accounting for the projection adjustments
 /// `rebuildSidebarGrouping` applies: the repo's main worktree leads `.pinned`
-/// (when not archived), and pending worktrees tail `.unpinned`.
+/// (when not archived), and pending worktrees lead `.unpinned`.
 @MainActor
 private func sidebarBucketOrderMismatches(_ state: RepositoriesFeature.State) -> [String] {
   var mismatches: [String] = []
@@ -159,10 +159,12 @@ private func sidebarBucketOrderMismatches(_ state: RepositoriesFeature.State) ->
       )
     }
 
-    var expectedUnpinned = state.orderedUnpinnedWorktreeIDs(in: repository)
+    // Mirror `rebuildSidebarGrouping`: pending rows lead the unpinned bucket.
+    var expectedUnpinned: [SidebarItemID] = []
     for pending in state.pendingWorktrees where pending.repositoryID == repositoryID {
       expectedUnpinned.append(pending.id)
     }
+    expectedUnpinned.append(contentsOf: state.orderedUnpinnedWorktreeIDs(in: repository))
     if grouping.items[.unpinned] != expectedUnpinned {
       mismatches.append(
         "[\(repositoryID)/.unpinned] expected \(expectedUnpinned) got \(grouping.items[.unpinned] ?? [])"

@@ -69,6 +69,9 @@ extension RepoCommand {
     @Option(help: "Parent directory the worktree folder is created in.")
     var location: String?
 
+    @Flag(help: "Pin the worktree as soon as creation starts (local repositories).")
+    var pin = false
+
     @OptionGroup var backgroundOption: BackgroundOption
 
     @OptionGroup var timeoutOption: TimeoutOption
@@ -79,7 +82,7 @@ extension RepoCommand {
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.repoWorktreeNew(
             repoID: rID,
-            options: .init(branch: branch, base: base, fetch: fetch, name: name, location: location)
+            options: .init(branch: branch, base: base, fetch: fetch, name: name, location: location, pin: pin)
           )),
         timeoutSeconds: timeoutOption.timeout
       )

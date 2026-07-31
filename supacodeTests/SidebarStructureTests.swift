@@ -117,6 +117,47 @@ struct SidebarStructureTests {
     #expect(!structure.hoistedRowIDs.contains(main.id))
   }
 
+  @Test func pinnedPendingWorktreeHoistsIntoPinnedHighlight() {
+    // A still-creating row with transient pin intent hoists into the Pinned
+    // section (its id is never in the persisted `.pinned` bucket); with the
+    // grouping off it stays in the move-disabled `.pending` slot.
+    let repoRoot = URL(fileURLWithPath: "/tmp/repo")
+    let main = makeMainWorktree(repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot.path(percentEncoded: false)),
+      rootURL: repoRoot,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [main])
+    )
+    var state = makeState(repositories: [repository])
+    let pendingID = WorktreeID("pending:pin")
+    state.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: repository.id,
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "swift-otter"),
+        pinned: true
+      )
+    ]
+    state.reconcileSidebarForTesting()
+
+    let grouped = state.computeSidebarStructure(groupPinned: true, groupActive: false)
+    let pinnedIDs = grouped.sections.compactMap { section -> [Worktree.ID]? in
+      if case .highlight(.pinned, let ids) = section { return ids }
+      return nil
+    }.flatMap { $0 }
+    #expect(pinnedIDs == [pendingID])
+    #expect(grouped.hoistedRowIDs.contains(pendingID))
+
+    let ungrouped = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+    #expect(ungrouped.hoistedRowIDs.isEmpty)
+    let slots = ungrouped.sections.compactMap { section -> [SidebarItemGroup]? in
+      if case .repository(repositoryID: repository.id, groups: let groups) = section { return groups }
+      return nil
+    }.flatMap { $0 }
+    #expect(slots.first(where: { $0.rowIDs.contains(pendingID) })?.slot == .pending)
+  }
+
   // MARK: - Hotkey order dedupes hoisted rows.
 
   @Test func hotkeyOrderDoesNotIncludeHoistedRowsTwice() {

@@ -924,11 +924,17 @@ struct AppFeature {
           }
         )
 
-      case .menuBarWorktreeSelected(let worktreeID):
-        // The menu snapshots its rows when it opens, so the worktree can be
-        // archived or deleted before the click lands. Surface the app anyway:
-        // in menu bar mode a dead click is indistinguishable from a hang.
-        guard state.repositories.worktree(for: worktreeID) != nil else {
+      case .menuBarWorktreeSelected(let rawWorktreeID):
+        // The menu snapshots its rows when it opens, so a pending id can have
+        // materialized under its real id before the click lands.
+        let worktreeID = state.repositories.resolvedWorktreeID(for: rawWorktreeID)
+        // The worktree can also be archived or deleted outright. Surface the
+        // app anyway: in menu bar mode a dead click is indistinguishable from
+        // a hang. Pinned still-creating rows select like sidebar rows.
+        guard
+          state.repositories.worktree(for: worktreeID) != nil
+            || state.repositories.pendingWorktree(for: worktreeID) != nil
+        else {
           jumpLogger.warning(
             "menuBarWorktreeSelected: worktree \(worktreeID) vanished between menu render and click."
           )
@@ -1995,13 +2001,14 @@ struct AppFeature {
       let fetchOrigin,
       let worktreeName,
       let worktreePath,
-      let background
+      let background,
+      let pin
     ):
       return handleRepoWorktreeNewDeeplink(
         repositoryID: repositoryID, branch: branch, baseRef: baseRef, fetchOrigin: fetchOrigin,
         worktreeName: worktreeName, worktreePath: worktreePath,
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state,
-        background: background)
+        background: background, pin: pin)
     case .settings(let section):
       return handleSettingsDeeplink(section: section)
     case .settingsRepo(let repositoryID):
@@ -2037,7 +2044,8 @@ struct AppFeature {
     responseFD: Int32? = nil,
     timeoutSeconds: Int = defaultCommandTimeoutSeconds,
     state: inout State,
-    background: Bool = false
+    background: Bool = false,
+    pin: Bool = false
   ) -> Effect<Action> {
     guard let repository = state.repositories.repositories[id: repositoryID] else {
       deeplinkLogger.warning("Repository not found: \(repositoryID)")
@@ -2092,7 +2100,7 @@ struct AppFeature {
         .send(
           .repositories(
             .createRandomWorktreeInRepository(
-              repositoryID, pendingID: pendingID, background: background
+              repositoryID, pendingID: pendingID, background: background, pin: pin
             )
           )
         ),
@@ -2114,6 +2122,7 @@ struct AppFeature {
             placement: placement,
             pendingID: pendingID,
             background: background,
+            pin: pin,
           )
         )
       ),
@@ -2134,7 +2143,12 @@ struct AppFeature {
     background: Bool = false
   ) -> Effect<Action> {
     let worktreeID = resolveWorktreeID(rawWorktreeID, state: state)
-    guard state.repositories.worktree(for: worktreeID) != nil else {
+    // A still-creating row supports the pin toggle; every other action needs
+    // the real worktree.
+    let isPendingPinToggle =
+      (action == .pin || action == .unpin)
+      && state.repositories.pendingWorktree(for: worktreeID) != nil
+    guard state.repositories.worktree(for: worktreeID) != nil || isPendingPinToggle else {
       deeplinkLogger.warning("Worktree not found: \(rawWorktreeID)")
       state.alert = worktreeNotFoundAlert()
       return .none
@@ -3316,15 +3330,17 @@ struct AppFeature {
   }
 
   /// Resolves a worktree ID, trying the raw value first then appending a trailing
-  /// slash since stored IDs derived from `standardizedFileURL` for directories include one.
+  /// slash since stored IDs derived from `standardizedFileURL` for directories
+  /// include one, then the pending → real map so an id captured during creation
+  /// keeps working after the swap.
   private func resolveWorktreeID(
     _ rawID: Worktree.ID,
     state: State
   ) -> Worktree.ID {
     guard state.repositories.worktree(for: rawID) == nil else { return rawID }
     let alternate = WorktreeID(rawID.rawValue + "/")
-    guard state.repositories.worktree(for: alternate) != nil else { return rawID }
-    return alternate
+    if state.repositories.worktree(for: alternate) != nil { return alternate }
+    return state.repositories.resolvedWorktreeID(for: rawID)
   }
 
   // MARK: Settings deeplink.

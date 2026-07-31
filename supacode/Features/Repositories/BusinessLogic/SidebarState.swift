@@ -386,6 +386,35 @@ nonisolated extension SidebarState {
     sections[repositoryID] = section
   }
 
+  /// Pin `worktreeID`: collapse any pre-existing bucket placement into a single
+  /// `.pinned` entry at the top, carrying the Item forward so user-set
+  /// `title` / `color` survive, and clearing `archivedAt`. See `removeAnywhere`
+  /// for the double-bucket recovery rules.
+  mutating func pin(worktree worktreeID: Worktree.ID, in repositoryID: Repository.ID) {
+    var carried =
+      removeAnywhere(
+        worktree: worktreeID,
+        in: repositoryID,
+        preferring: [.unpinned, .pinned, .archived]
+      ) ?? .init()
+    carried.archivedAt = nil
+    insert(worktree: worktreeID, in: repositoryID, bucket: .pinned, item: carried, position: 0)
+  }
+
+  /// Unpin `worktreeID`: the mirror of `pin`, collapsing into a single
+  /// `.unpinned` entry at the top. Prefers `.pinned` so a corrupted
+  /// double-bucket pre-state surfaces the live pinned row's payload.
+  mutating func unpin(worktree worktreeID: Worktree.ID, in repositoryID: Repository.ID) {
+    var carried =
+      removeAnywhere(
+        worktree: worktreeID,
+        in: repositoryID,
+        preferring: [.pinned, .unpinned, .archived]
+      ) ?? .init()
+    carried.archivedAt = nil
+    insert(worktree: worktreeID, in: repositoryID, bucket: .unpinned, item: carried, position: 0)
+  }
+
   /// Overwrite a row's user-supplied title / color, falling back to `.unpinned` when the row
   /// hasn't been seeded yet. Unlike `mergeCustomization`, the incoming values always win, since
   /// this represents an explicit user save intent that must not be silently absorbed.

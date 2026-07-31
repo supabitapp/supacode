@@ -10,12 +10,18 @@ struct PendingWorktree: Identifiable, Hashable {
   struct Customization: Hashable {
     let title: String?
     let color: RepositoryColor?
+
+    /// Whether the user set a title or color worth carrying forward.
+    var hasContent: Bool { title != nil || color != nil }
   }
 
   let id: Worktree.ID
   let repositoryID: Repository.ID
   var progress: WorktreeCreationProgress
   var customization: Customization?
+  /// Transient pin intent. Pending ids are throwaway, so the pin never enters
+  /// the persisted buckets; on success it lands on the real worktree id.
+  var pinned: Bool
   /// Carried across the pending → real swap so a backgrounded creation skips both
   /// the selection and the terminal focus once the worktree materializes.
   var background: Bool
@@ -25,12 +31,14 @@ struct PendingWorktree: Identifiable, Hashable {
     repositoryID: Repository.ID,
     progress: WorktreeCreationProgress,
     customization: Customization? = nil,
-    background: Bool = false
+    background: Bool = false,
+    pinned: Bool = false
   ) {
     self.id = id
     self.repositoryID = repositoryID
     self.progress = progress
     self.customization = customization
     self.background = background
+    self.pinned = pinned
   }
 }

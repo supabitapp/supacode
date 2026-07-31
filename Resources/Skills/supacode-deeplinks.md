@@ -76,7 +76,7 @@ supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>/destroy     
 
 ```
 supacode://repo/open?path=<absolute-path>     # Open a repository.
-supacode://repo/<repo_id>/worktree/new?branch=<name>&base=<ref>&fetch=true&name=<folder>&location=<dir>   # Create a worktree.
+supacode://repo/<repo_id>/worktree/new?branch=<name>&base=<ref>&fetch=true&name=<folder>&location=<dir>&pin=true   # Create a worktree (pin=true pins it as soon as creation starts, local repositories only).
 ```
 
 ## Settings
