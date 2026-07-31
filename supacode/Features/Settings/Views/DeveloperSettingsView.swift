@@ -9,10 +9,12 @@ struct DeveloperSettingsView: View {
   var body: some View {
     Form {
       Section {
-        DeeplinkRow()
         CLIInstallRow(store: store)
+        DeeplinkRow()
       } footer: {
-        Text("Symlinks `supacode` to `/usr/local/bin`. This is not required to run `supacode` in the app terminals.")
+        Text(
+          "Installing the CLI symlinks `supacode` to `/usr/local/bin`. "
+            + "This is not required to run `supacode` in the app terminals.")
       }
       CodingAgentsSections(store: store)
       Section {
@@ -154,11 +156,17 @@ private struct DeeplinkRow: View {
     LabeledContent {
     } label: {
       Text("Deeplinks")
-      Text("Deeplink Reference \u{2197}")
-        .foregroundStyle(.tint)
-        .contentShape(.rect)
-        .accessibilityAddTraits(.isButton)
-        .onTapGesture { openWindow(id: WindowID.deeplinkReference) }
+      HStack(spacing: 6) {
+        ReferenceLink(title: "Deeplink Reference", help: "Open the deeplink reference window.") {
+          openWindow(id: WindowID.deeplinkReference)
+        }
+        if let url = CLISkillContent.deeplinksSkillFileURL {
+          Divider()
+          ReferenceLink(title: "Skill", help: "Open the bundled supacode-deeplinks skill file.") {
+            NSWorkspace.shared.open(url)
+          }
+        }
+      }
     }
   }
 }
@@ -188,15 +196,39 @@ private struct CLIInstallRow: View {
       }
     } label: {
       Text("Command Line Tool")
-      Text("CLI Reference \u{2197}")
-        .foregroundStyle(.tint)
-        .contentShape(.rect)
-        .accessibilityAddTraits(.isButton)
-        .onTapGesture { openWindow(id: WindowID.cliReference) }
+      HStack(spacing: 6) {
+        ReferenceLink(title: "CLI Reference", help: "Open the CLI reference window.") {
+          openWindow(id: WindowID.cliReference)
+        }
+        if let url = CLISkillContent.cliSkillFileURL {
+          Divider()
+          ReferenceLink(title: "Skill", help: "Open the bundled supacode-cli skill file.") {
+            NSWorkspace.shared.open(url)
+          }
+        }
+      }
       if let message = store.cliInstallState.errorMessage {
         Text(message).foregroundStyle(.red)
       }
     }
+  }
+}
+
+// MARK: - Reference links.
+
+private struct ReferenceLink: View {
+  let title: String
+  let help: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Text("\(title) \u{2197}")
+        .foregroundStyle(.tint)
+        .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .help(help)
   }
 }
 
