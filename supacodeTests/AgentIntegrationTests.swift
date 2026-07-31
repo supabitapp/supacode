@@ -8,8 +8,8 @@ struct AgentIntegrationTests {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
-        component(kind: .unifiedHooks, installed: true),
-        component(kind: .cliSkill, installed: true),
+        component(kind: .hooks, installed: true),
+        component(kind: .skills, installed: true),
       ]
     )
     #expect(integration.state() == .installed)
@@ -19,8 +19,8 @@ struct AgentIntegrationTests {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
-        component(kind: .unifiedHooks, installed: false),
-        component(kind: .cliSkill, installed: false),
+        component(kind: .hooks, installed: false),
+        component(kind: .skills, installed: false),
       ]
     )
     #expect(integration.state() == .notInstalled)
@@ -30,8 +30,8 @@ struct AgentIntegrationTests {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
-        component(kind: .unifiedHooks, state: .installed),
-        component(kind: .cliSkill, state: .notInstalled),
+        component(kind: .hooks, state: .installed),
+        component(kind: .skills, state: .notInstalled),
       ]
     )
     #expect(integration.state() == .outdated)
@@ -41,8 +41,8 @@ struct AgentIntegrationTests {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
-        component(kind: .unifiedHooks, state: .outdated),
-        component(kind: .cliSkill, state: .installed),
+        component(kind: .hooks, state: .outdated),
+        component(kind: .skills, state: .installed),
       ]
     )
     #expect(integration.state() == .outdated)
@@ -84,7 +84,7 @@ struct AgentIntegrationTests {
         recordingComponent(label: "first", recorder: order),
         recordingComponent(label: "second", recorder: order),
         AgentIntegration.Component(
-          kind: .cliSkill,
+          kind: .skills,
           state: { .notInstalled },
           install: { throw TestError.boom },
           // Should never run during rollback — the throwing component
@@ -110,7 +110,7 @@ struct AgentIntegrationTests {
       components: [
         recordingComponent(label: "first", recorder: order),
         AgentIntegration.Component(
-          kind: .cliSkill,
+          kind: .skills,
           state: { .notInstalled },
           install: {},
           uninstall: { throw TestError.boom }
@@ -205,7 +205,7 @@ struct AgentIntegrationTests {
     label: String, recorder: OrderRecorder
   ) -> AgentIntegration.Component {
     AgentIntegration.Component(
-      kind: .unifiedHooks,
+      kind: .hooks,
       state: { .notInstalled },
       install: { await recorder.recordInstall(label) },
       uninstall: { recorder.recordUninstallSync(label) }

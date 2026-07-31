@@ -42,15 +42,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = AntigravitySettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillComponent(agent: .antigravity, installer: skill),
+      skillsComponent(agent: .antigravity, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -59,15 +58,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = ClaudeSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillComponent(agent: .claude, installer: skill),
+      skillsComponent(agent: .claude, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -76,15 +74,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = CodexSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try await installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillComponent(agent: .codex, installer: skill),
+      skillsComponent(agent: .codex, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -93,15 +90,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = GrokSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillComponent(agent: .grok, installer: skill),
+      skillsComponent(agent: .grok, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -110,15 +106,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = KimiSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillComponent(agent: .kimi, installer: skill),
+      skillsComponent(agent: .kimi, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -127,15 +122,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = HermesPluginInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillComponent(agent: .hermes, installer: skill),
+      skillsComponent(agent: .hermes, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -144,15 +138,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = KiroSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try await installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillComponent(agent: .kiro, installer: skill),
+      skillsComponent(agent: .kiro, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -161,15 +154,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = OmpSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillComponent(agent: .omp, installer: skill),
+      skillsComponent(agent: .omp, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -178,15 +170,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = PiSettingsInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillComponent(agent: .pi, installer: skill),
+      skillsComponent(agent: .pi, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -195,15 +186,14 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = OpenCodePluginInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillComponent(agent: .opencode, installer: skill),
+      skillsComponent(agent: .opencode, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
@@ -212,23 +202,23 @@ nonisolated enum AgentIntegrationFactory {
   {
     let installer = CopilotHooksInstaller(
       homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-    let skill = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return [
       AgentIntegration.Component(
-        kind: .unifiedHooks,
+        kind: .hooks,
         state: { installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillComponent(agent: .copilot, installer: skill),
+      skillsComponent(agent: .copilot, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 
-  private static func skillComponent(
-    agent: SkillAgent, installer: CLISkillInstaller
+  private static func skillsComponent(
+    agent: SkillAgent, homeDirectoryURL: URL
   ) -> AgentIntegration.Component {
-    AgentIntegration.Component(
-      kind: .cliSkill,
+    let installer = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
+    return AgentIntegration.Component(
+      kind: .skills,
       state: { installer.installState(agent) },
       install: { try installer.install(agent) },
       uninstall: { try installer.uninstall(agent) }

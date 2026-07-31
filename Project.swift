@@ -223,6 +223,9 @@ let project = Project(
       bundleId: "app.supabit.supacode.settings-shared",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
+      resources: [
+        .folderReference(path: "Resources/Skills"),
+      ],
       buildableFolders: [
         "SupacodeSettingsShared",
       ],

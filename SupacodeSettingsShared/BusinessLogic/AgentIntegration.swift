@@ -60,8 +60,9 @@ nonisolated struct AgentIntegration: @unchecked Sendable {
 
     enum Kind: String, Sendable, Equatable, CaseIterable {
       /// All hooks (progress + notification) installed in one shot.
-      case unifiedHooks
-      case cliSkill
+      case hooks
+      /// Both generated skills (`supacode-cli` and `supacode-deeplinks`) as one unit.
+      case skills
     }
   }
 }
@@ -69,7 +70,8 @@ nonisolated struct AgentIntegration: @unchecked Sendable {
 /// State of a single integration component on disk. Hook components can be
 /// `.outdated` (some expected commands present but not all) — the user has
 /// an older Supacode version's hooks installed and needs to upgrade. Skill
-/// components only ever report `.notInstalled` or `.installed`.
+/// components report `.outdated` when only some of the skill files exist, or
+/// their content no longer matches the bundled markdown.
 public nonisolated enum ComponentInstallState: Equatable, Sendable {
   case notInstalled
   case installed
@@ -149,6 +151,9 @@ nonisolated extension AgentIntegration {
       do {
         try component.uninstall()
       } catch {
+        // Every failure is logged; only the first rethrows.
+        agentIntegrationLogger.error(
+          "Uninstalling \(agent.rawValue) \(component.kind.rawValue) failed: \(error)")
         if firstError == nil { firstError = error }
       }
     }
