@@ -147,7 +147,7 @@ struct SidebarBottomCardView: View {
 
     static func resolve(cards: CardModes) -> Slot {
       switch cards.agent {
-      case .updatesAvailable, .promptInstall: return .agent(cards.agent)
+      case .promptInstall: return .agent(cards.agent)
       case .hidden: break
       }
       // Newest card wins. `menuBarOnboarding` is the most recent and pre-empts
@@ -168,8 +168,6 @@ struct SidebarBottomCardView: View {
       switch self {
       case .none: "none"
       case .gitEnvironmentError(let error): "gitEnvironmentError:" + String(describing: error)
-      case .agent(.updatesAvailable(let agents)):
-        "agent:updates:" + agents.map { String(describing: $0) }.sorted().joined(separator: ",")
       case .agent(.promptInstall): "agent:promptInstall"
       case .agent(.hidden): "agent:hidden"
       case .menuBarOnboarding: "menuBarOnboarding:visible"

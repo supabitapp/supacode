@@ -14,6 +14,7 @@ struct DeveloperSettingsView: View {
       } footer: {
         Text("Symlinks `supacode` to `/usr/local/bin`. This is not required to run `supacode` in the app terminals.")
       }
+      CodingAgentsSections(store: store)
       Section {
         Toggle(isOn: $store.richAgentNotificationsEnabled) {
           Text("Rich notifications")
@@ -23,27 +24,8 @@ struct DeveloperSettingsView: View {
           Text("Agent badges")
           Text("Show an icon in the sidebar and tab while a coding agent is running in that surface.")
         }
-      } header: {
-        Text("Coding Agents")
       } footer: {
-        Text("These features require the per-agent enhancements installed below.")
-      }
-      Section {
-        ForEach(SkillAgent.allCases, id: \.self) { agent in
-          AgentIntegrationRow(
-            agent: agent,
-            state: store.agentIntegrationStates[agent] ?? .checking,
-            installAction: { store.send(.agentIntegrationInstallTapped(agent)) },
-            uninstallAction: { store.send(.agentIntegrationUninstallTapped(agent)) }
-          )
-        }
-      }
-      Section {
-        Toggle(isOn: $store.autoUpdateAgentIntegrationsEnabled) {
-          Text("Automatically update agent integrations")
-          Text(
-            "Re-installs hooks for any agent reporting an outdated integration when Supacode comes to the foreground.")
-        }
+        Text("These features require an installed agent integration.")
       }
       Section("Advanced") {
         Picker(selection: $store.automatedActionPolicy.sending(\.setAutomatedActionPolicy)) {
@@ -64,6 +46,102 @@ struct DeveloperSettingsView: View {
     .padding(.leading, -8)
     .padding(.trailing, -6)
     .navigationTitle("Developer")
+    .sheet(isPresented: $store.agentInstallSheetPresented.sending(\.setAgentInstallSheetPresented)) {
+      AgentInstallSheetView(store: store)
+    }
+  }
+}
+
+// MARK: - Coding agents sections.
+
+/// Not-installed agents collapse into one prompt row; the rest render as rows.
+private struct CodingAgentsSections: View {
+  let store: StoreOf<SettingsFeature>
+
+  var body: some View {
+    let mainRows = store.mainListAgentRows
+    let uninstalled = store.uninstalledAgents
+    Group {
+      if !mainRows.isEmpty {
+        Section {
+          ForEach(mainRows, id: \.self) { agent in
+            AgentIntegrationRow(
+              agent: agent,
+              state: store.agentIntegrationStates[agent] ?? .checking,
+              installAction: { store.send(.agentIntegrationInstallTapped(agent)) },
+              uninstallAction: { store.send(.agentIntegrationUninstallTapped(agent)) }
+            )
+          }
+        }
+      }
+      if !uninstalled.isEmpty {
+        Section {
+          AgentInstallPromptRow(agents: uninstalled) { store.send(.agentInstallSheetOpenTapped) }
+        }
+      }
+    }
+  }
+}
+
+/// Single collapsed row standing in for every not-yet-installed agent: their
+/// avatar lineup, a count, and a button that opens the install modal.
+private struct AgentInstallPromptRow: View {
+  let agents: [SkillAgent]
+  let installAction: () -> Void
+
+  var body: some View {
+    HStack(spacing: 10) {
+      VStack(alignment: .leading, spacing: 6) {
+        AgentAvatarGroupView(agents: agents, size: 22, maxVisible: .max)
+          .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Agent integrations")
+          Text(subtitle)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+      }
+      Spacer()
+      Button("Install\u{2026}", action: installAction)
+    }
+  }
+
+  private var subtitle: String {
+    agents.count == 1 ? "1 available." : "\(agents.count) available."
+  }
+}
+
+// MARK: - Install modal.
+
+/// Modal listing every not-yet-installed agent (plus mid-install, transiently
+/// errored, or outdated ones so rows don't flicker out). Driven entirely by
+/// `SettingsFeature` state; the reducer auto-dismisses it once the last agent
+/// settles.
+private struct AgentInstallSheetView: View {
+  let store: StoreOf<SettingsFeature>
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("Add Agent Integration") {
+          ForEach(store.agentInstallSheetAgents, id: \.self) { agent in
+            AgentIntegrationRow(
+              agent: agent,
+              state: store.agentIntegrationStates[agent] ?? .checking,
+              installAction: { store.send(.agentIntegrationInstallTapped(agent)) },
+              uninstallAction: { store.send(.agentIntegrationUninstallTapped(agent)) }
+            )
+          }
+        }
+      }
+      .formStyle(.grouped)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { store.send(.setAgentInstallSheetPresented(false)) }
+        }
+      }
+    }
+    .frame(minWidth: 460, minHeight: 380)
   }
 }
 
@@ -169,7 +247,7 @@ private struct AgentIntegrationRow: View {
         Button("Update", action: installAction)
         Button("Uninstall", role: .destructive, action: uninstallAction)
       }
-    case .ready(.notInstalled), .failed:
+    case .ready(.notInstalled), .failed, .failedTransient:
       Button("Install", action: installAction)
     case .installing:
       Button("Installing\u{2026}") {}

@@ -1,5 +1,7 @@
 import Foundation
 
+private nonisolated let agentIntegrationLogger = SupaLogger("Settings")
+
 /// A per-agent integration composed of one or more independently-checked
 /// components (hook groups, skill files, …). Composes the existing per-agent
 /// installers — the source of truth stays the on-disk files those installers
@@ -16,6 +18,27 @@ nonisolated struct AgentIntegration: @unchecked Sendable {
   /// `uninstall()` reverses the order so any inter-component setup (e.g.
   /// Codex's `enable hooks` flag) unwinds last.
   let components: [Component]
+
+  /// The agent's own config directory, which must already exist for `install()`
+  /// to run: a proxy for "the CLI is installed" so Supacode never bootstraps a
+  /// harness the user hasn't set up. Supacode's subdirectories under it (hooks,
+  /// skills, …) are still created. Nil disables the gate (unit tests).
+  let requiredDirectory: URL?
+
+  /// File manager the install gate probes with; matches the installers'.
+  let fileManager: FileManager
+
+  init(
+    agent: SkillAgent,
+    components: [Component],
+    requiredDirectory: URL? = nil,
+    fileManager: FileManager = .default
+  ) {
+    self.agent = agent
+    self.components = components
+    self.requiredDirectory = requiredDirectory
+    self.fileManager = fileManager
+  }
 
   struct Component {
     let kind: Kind
@@ -62,6 +85,19 @@ public nonisolated enum AgentIntegrationState: Equatable, Sendable {
   case outdated
 }
 
+/// Raised when an integration can't be installed because the agent itself
+/// isn't set up: its config directory is absent.
+public nonisolated enum AgentIntegrationError: Error, LocalizedError, Equatable {
+  case notInstalled(SkillAgent)
+
+  public var errorDescription: String? {
+    switch self {
+    case .notInstalled(let agent):
+      "\(agent.displayName) isn't installed yet. Install \(agent.displayName), then add its Supacode integration."
+    }
+  }
+}
+
 nonisolated extension AgentIntegration {
   func state() -> AgentIntegrationState {
     let states = components.map { $0.state() }
@@ -74,6 +110,14 @@ nonisolated extension AgentIntegration {
   /// that succeeded are rolled back so the user is never left in a state
   /// where some hooks are present and others aren't.
   func install() async throws {
+    if let requiredDirectory {
+      var isDirectory: ObjCBool = false
+      let exists = fileManager.fileExists(
+        atPath: requiredDirectory.path(percentEncoded: false), isDirectory: &isDirectory)
+      guard exists, isDirectory.boolValue else {
+        throw AgentIntegrationError.notInstalled(agent)
+      }
+    }
     var rollback: [Component] = []
     do {
       for component in components {
@@ -82,7 +126,14 @@ nonisolated extension AgentIntegration {
       }
     } catch {
       for component in rollback.reversed() {
-        try? component.uninstall()
+        do {
+          try component.uninstall()
+        } catch let rollbackError {
+          // Keep sweeping so the rest unwinds, but a failed rollback step is
+          // exactly the "some hooks present, others not" state worth recording.
+          agentIntegrationLogger.error(
+            "Rolling back \(agent.rawValue) integration failed: \(rollbackError)")
+        }
       }
       throw error
     }

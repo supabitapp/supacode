@@ -9,9 +9,18 @@ struct SkillAgentTests {
     #expect(raws == raws.sorted())
   }
 
+  @Test func allCasesByDisplayNameOrdersBySettingsLabel() {
+    #expect(
+      SkillAgent.allCasesByDisplayName.map(\.displayName) == [
+        "Claude Code", "Codex", "Copilot CLI", "Google Antigravity", "Grok Code", "Hermes",
+        "Kimi Code", "Kiro CLI", "Oh My Pi", "OpenCode", "Pi",
+      ]
+    )
+  }
+
   @Test func antigravityIdentityUsesExpectedDisplayAndAssetNames() {
     #expect(SkillAgent.antigravity.rawValue == "antigravity")
-    #expect(SkillAgent.antigravity.displayName == "Antigravity")
+    #expect(SkillAgent.antigravity.displayName == "Google Antigravity")
     #expect(SkillAgent.antigravity.assetName == "antigravity-mark")
     #expect(SkillAgent.antigravity.configDirectoryName == ".gemini/antigravity-cli")
   }
@@ -34,6 +43,8 @@ struct SkillAgentTests {
     #expect(SkillAgent.claude.assetName == "claude-code-mark")
     #expect(SkillAgent.opencode.configDirectoryName == ".config/opencode")
     #expect(SkillAgent.pi.displayName == "Pi")
+    #expect(SkillAgent.grok.displayName == "Grok Code")
+    #expect(SkillAgent.kiro.displayName == "Kiro CLI")
   }
 
   @Test func integrationFactoryReturnsHermesIntegration() async throws {
@@ -45,6 +56,9 @@ struct SkillAgentTests {
 
     #expect(integration.agent == .hermes)
     #expect(integration.state() == .notInstalled)
+    // The install gate requires the agent's own config directory to exist.
+    try FileManager.default.createDirectory(
+      at: home.appending(path: SkillAgent.hermes.configDirectoryName), withIntermediateDirectories: true)
     try await integration.install()
     #expect(integration.state() == .installed)
     #expect(
@@ -64,6 +78,19 @@ struct SkillAgentTests {
     )
   }
 
+  @Test func factoryBuiltIntegrationRefusesInstallWhenConfigDirAbsent() async {
+    let home = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appending(path: "supacode-nogate-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    // The factory must wire `requiredDirectory` to the agent's config dir, so a
+    // genuinely not-installed agent refuses install end-to-end.
+    let integration = AgentIntegrationFactory.make(for: .hermes, homeDirectoryURL: home)
+    await #expect(throws: AgentIntegrationError.notInstalled(.hermes)) {
+      try await integration.install()
+    }
+  }
+
   @Test func integrationFactoryReturnsAntigravityIntegration() async throws {
     let home = URL(fileURLWithPath: NSTemporaryDirectory())
       .appending(path: "supacode-antigravity-agent-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -73,6 +100,9 @@ struct SkillAgentTests {
 
     #expect(integration.agent == .antigravity)
     #expect(integration.state() == .notInstalled)
+    // The install gate requires the agent's own config directory to exist.
+    try FileManager.default.createDirectory(
+      at: home.appending(path: SkillAgent.antigravity.configDirectoryName), withIntermediateDirectories: true)
     try await integration.install()
     #expect(integration.state() == .installed)
     #expect(

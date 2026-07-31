@@ -127,6 +127,61 @@ struct AgentIntegrationTests {
     }
   }
 
+  @Test func installRefusesWhenRequiredDirectoryMissingAndSkipsComponents() async {
+    let order = OrderRecorder()
+    let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appending(path: "supacode-missing-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let integration = AgentIntegration(
+      agent: .grok,
+      components: [recordingComponent(label: "hooks", recorder: order)],
+      requiredDirectory: missing
+    )
+
+    await #expect(throws: AgentIntegrationError.notInstalled(.grok)) {
+      try await integration.install()
+    }
+    // The gate short-circuits before any component runs, so nothing is written.
+    #expect(await order.installs == [])
+  }
+
+  @Test func installRefusesWhenRequiredPathIsFileNotDirectory() async throws {
+    let file = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appending(path: "supacode-file-\(UUID().uuidString)")
+    try Data().write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+
+    let order = OrderRecorder()
+    // A regular file at the config path is not a valid harness dir: the gate
+    // must reject it, not treat it as "installed".
+    let integration = AgentIntegration(
+      agent: .grok,
+      components: [recordingComponent(label: "hooks", recorder: order)],
+      requiredDirectory: file
+    )
+
+    await #expect(throws: AgentIntegrationError.notInstalled(.grok)) {
+      try await integration.install()
+    }
+    #expect(await order.installs == [])
+  }
+
+  @Test func installProceedsWhenRequiredDirectoryExists() async throws {
+    let order = OrderRecorder()
+    let present = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appending(path: "supacode-present-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: present, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: present) }
+
+    let integration = AgentIntegration(
+      agent: .grok,
+      components: [recordingComponent(label: "hooks", recorder: order)],
+      requiredDirectory: present
+    )
+
+    try await integration.install()
+    #expect(await order.installs == ["hooks"])
+  }
+
   // MARK: - Helpers.
 
   private func component(

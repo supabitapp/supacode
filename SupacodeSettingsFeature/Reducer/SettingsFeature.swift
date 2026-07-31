@@ -3,6 +3,8 @@ import Foundation
 import Sharing
 import SupacodeSettingsShared
 
+private nonisolated let settingsFeatureLogger = SupaLogger("Settings")
+
 @Reducer
 public struct SettingsFeature {
   /// Lifecycle of the bundled `supacode` CLI install. Lives on the
@@ -74,7 +76,6 @@ public struct SettingsFeature {
     public var globalScripts: [ScriptDefinition]
     public var richAgentNotificationsEnabled: Bool
     public var agentPresenceBadgesEnabled: Bool
-    public var autoUpdateAgentIntegrationsEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
     public var confirmCloseSurface: Bool
     public var terminateSessionsOnQuit: Bool
@@ -86,6 +87,10 @@ public struct SettingsFeature {
     public var installedOpenActions: [OpenWorktreeAction]
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
+    /// True while the install-more-agents modal is presented. Opening is gated
+    /// in the reducer (`agentInstallSheetOpenTapped`) so the sheet is never
+    /// reachable empty.
+    public var agentInstallSheetPresented = false
     /// `nil` when the settings window is closed; non-nil selects the visible section.
     public var selection: SettingsSection?
     public var repositorySummaries: [SettingsRepositorySummary] = []
@@ -96,6 +101,24 @@ public struct SettingsFeature {
     /// the fallback sound) can fire, so surface-mute has something to mute.
     public var hasActiveNotificationChannel: Bool {
       systemNotificationsEnabled || notificationSound != .never
+    }
+
+    /// Rows for the main "Coding Agents" list
+    /// (see `AgentIntegrationRowState.isMainListRow`). Unprobed agents count as
+    /// still-checking so they render while their state resolves.
+    public var mainListAgentRows: [SkillAgent] {
+      SkillAgent.allCasesByDisplayName.filter { (agentIntegrationStates[$0] ?? .checking).isMainListRow }
+    }
+
+    /// Agents that resolved to "not installed": the collapsed install prompt's
+    /// avatar lineup.
+    public var uninstalledAgents: [SkillAgent] {
+      SkillAgent.allCasesByDisplayName.filter { (agentIntegrationStates[$0] ?? .checking).isNotInstalled }
+    }
+
+    /// Rows for the install modal (see `AgentIntegrationRowState.isInstallSheetCandidate`).
+    public var agentInstallSheetAgents: [SkillAgent] {
+      SkillAgent.allCasesByDisplayName.filter { (agentIntegrationStates[$0] ?? .checking).isInstallSheetCandidate }
     }
 
     public init(settings: GlobalSettings = .default) {
@@ -129,7 +152,6 @@ public struct SettingsFeature {
       globalScripts = settings.globalScripts
       richAgentNotificationsEnabled = settings.richAgentNotificationsEnabled
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
-      autoUpdateAgentIntegrationsEnabled = settings.autoUpdateAgentIntegrationsEnabled
       confirmQuitMode = settings.confirmQuitMode
       confirmCloseSurface = settings.confirmCloseSurface
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
@@ -173,7 +195,6 @@ public struct SettingsFeature {
         globalScripts: globalScripts,
         richAgentNotificationsEnabled: richAgentNotificationsEnabled,
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
-        autoUpdateAgentIntegrationsEnabled: autoUpdateAgentIntegrationsEnabled,
         confirmQuitMode: confirmQuitMode,
         confirmCloseSurface: confirmCloseSurface,
         terminateSessionsOnQuit: terminateSessionsOnQuit,
@@ -206,7 +227,9 @@ public struct SettingsFeature {
     case agentIntegrationChecked(SkillAgent, AgentIntegrationState)
     case agentIntegrationInstallTapped(SkillAgent)
     case agentIntegrationUninstallTapped(SkillAgent)
-    case agentIntegrationCompleted(SkillAgent, Result<AgentIntegrationState, Error>)
+    case agentIntegrationCompleted(SkillAgent, Result<AgentIntegrationState, Error>, failureIsTransient: Bool)
+    case agentInstallSheetOpenTapped
+    case setAgentInstallSheetPresented(Bool)
     case repositorySettings(RepositorySettingsFeature.Action)
     case addGlobalScript
     case removeGlobalScript(ScriptDefinition.ID)
@@ -311,7 +334,6 @@ public struct SettingsFeature {
         state.globalScripts = normalizedSettings.globalScripts
         state.richAgentNotificationsEnabled = normalizedSettings.richAgentNotificationsEnabled
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
-        state.autoUpdateAgentIntegrationsEnabled = normalizedSettings.autoUpdateAgentIntegrationsEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
         state.confirmCloseSurface = normalizedSettings.confirmCloseSurface
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
@@ -426,27 +448,43 @@ public struct SettingsFeature {
         // Don't clobber in-flight or failed states. `.installing` /
         // `.uninstalling` settle via `.agentIntegrationCompleted`;
         // overwriting them races the shared `AgentIntegrationCancelID`
-        // (the auto-update branch below would otherwise cancel a
-        // manual uninstall). `.failed` must survive so the error stays
-        // visible and auto-update can't loop on a persistent failure.
-        switch state.agentIntegrationStates[agent] {
-        case .installing, .uninstalling, .failed: return .none
+        // (the re-install below would otherwise cancel a manual uninstall).
+        // `.failed`/`.failedTransient` must survive so the error stays visible
+        // and the re-install can't loop on a persistent failure.
+        let previous = state.agentIntegrationStates[agent]
+        switch previous {
+        case .installing, .uninstalling, .failed, .failedTransient: return .none
         default: break
         }
         state.agentIntegrationStates[agent] = .ready(integrationState)
-        guard state.autoUpdateAgentIntegrationsEnabled, integrationState == .outdated
-        else { return .none }
+        // A refresh (not just a completed install) can be what finally empties
+        // the modal, e.g. an agent installed externally between activations.
+        dismissInstallSheetIfSettled(&state)
+        // Re-install an outdated integration, but only once per session: our
+        // hooks are matched by signal, so `.outdated` means our own components
+        // drifted. If a prior re-install already left it outdated, don't re-arm
+        // on every activation, which would be a silent, unbounded hook rewrite.
+        guard integrationState == .outdated, previous != .ready(.outdated) else { return .none }
         return .send(.agentIntegrationInstallTapped(agent))
 
       case .agentIntegrationInstallTapped(let agent):
+        // A fresh install of a not-yet-present agent surfaces failures
+        // transiently in the modal; retrying a persistent error or updating an
+        // already-present integration keeps them as a main-list row.
+        let failureIsTransient: Bool
+        switch state.agentIntegrationStates[agent] {
+        case .ready(.installed), .ready(.outdated), .failed: failureIsTransient = false
+        case nil, .checking, .installing, .uninstalling, .ready(.notInstalled), .failedTransient:
+          failureIsTransient = true
+        }
         state.agentIntegrationStates[agent] = .installing
         return .run { [agentIntegrationClient] send in
           do {
             try await agentIntegrationClient.install(agent)
             let next = await agentIntegrationClient.state(agent)
-            await send(.agentIntegrationCompleted(agent, .success(next)))
+            await send(.agentIntegrationCompleted(agent, .success(next), failureIsTransient: failureIsTransient))
           } catch {
-            await send(.agentIntegrationCompleted(agent, .failure(error)))
+            await send(.agentIntegrationCompleted(agent, .failure(error), failureIsTransient: failureIsTransient))
           }
         }
         // Cancel an in-flight install for the same agent if Settings
@@ -460,20 +498,58 @@ public struct SettingsFeature {
           do {
             try await agentIntegrationClient.uninstall(agent)
             let next = await agentIntegrationClient.state(agent)
-            await send(.agentIntegrationCompleted(agent, .success(next)))
+            await send(.agentIntegrationCompleted(agent, .success(next), failureIsTransient: false))
           } catch {
-            await send(.agentIntegrationCompleted(agent, .failure(error)))
+            // An uninstall failure is a persistent main-list error, not a modal one.
+            await send(.agentIntegrationCompleted(agent, .failure(error), failureIsTransient: false))
           }
         }
         .cancellable(id: AgentIntegrationCancelID(agent: agent), cancelInFlight: true)
 
-      case .agentIntegrationCompleted(let agent, .success(let integrationState)):
+      case .agentIntegrationCompleted(let agent, .success(let integrationState), _):
         state.agentIntegrationStates[agent] = .ready(integrationState)
+        dismissInstallSheetIfSettled(&state)
         return .none
 
-      case .agentIntegrationCompleted(let agent, .failure(let error)):
-        state.agentIntegrationStates[agent] = .failed(error.localizedDescription)
+      case .agentIntegrationCompleted(let agent, .failure(let error), let failureIsTransient):
+        if error is AgentIntegrationError {
+          settingsFeatureLogger.warning("\(agent.rawValue) integration install skipped: \(error.localizedDescription)")
+        } else {
+          settingsFeatureLogger.error("\(agent.rawValue) integration operation failed: \(error)")
+        }
+        // A transient error has no home once its modal is gone: re-resolve the
+        // real state instead of stranding an invisible row.
+        if failureIsTransient, !state.agentInstallSheetPresented {
+          state.agentIntegrationStates[agent] = .checking
+          return .send(.refreshAgentIntegrationStates)
+        }
+        let message = error.localizedDescription
+        state.agentIntegrationStates[agent] = failureIsTransient ? .failedTransient(message) : .failed(message)
+        // A persistent failure can be the last modal candidate settling, which
+        // would otherwise leave the sheet presented over an empty form.
+        dismissInstallSheetIfSettled(&state)
         return .none
+
+      case .agentInstallSheetOpenTapped:
+        // Never present the modal empty. The prompt row that sends this is
+        // itself hidden when nothing is installable, so this is belt-and-braces.
+        guard !state.uninstalledAgents.isEmpty else { return .none }
+        state.agentInstallSheetPresented = true
+        return .none
+
+      case .setAgentInstallSheetPresented(let presented):
+        state.agentInstallSheetPresented = presented
+        guard !presented else { return .none }
+        // Dismissing the modal clears its transient install errors: drop those
+        // rows and re-probe so they revert to real on-disk state. Persistent
+        // `.failed` rows (uninstall / update errors) are left untouched.
+        var clearedFailure = false
+        for agent in SkillAgent.allCases {
+          guard case .failedTransient = state.agentIntegrationStates[agent] else { continue }
+          state.agentIntegrationStates[agent] = .checking
+          clearedFailure = true
+        }
+        return clearedFailure ? .send(.refreshAgentIntegrationStates) : .none
 
       case .updateShortcut(let id, let override):
         if let override {
@@ -645,6 +721,13 @@ public struct SettingsFeature {
       $0.global = settings
     }
     return settings
+  }
+
+  /// Close the install modal once nothing installable remains, so it never
+  /// lingers empty after the last install settles or a refresh resolves it.
+  private func dismissInstallSheetIfSettled(_ state: inout State) {
+    guard state.agentInstallSheetPresented, state.agentInstallSheetAgents.isEmpty else { return }
+    state.agentInstallSheetPresented = false
   }
 
   private func synchronizeRepositorySelection(for state: inout State) {

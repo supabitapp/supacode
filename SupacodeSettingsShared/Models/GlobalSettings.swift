@@ -88,11 +88,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var globalScripts: [ScriptDefinition]
   public var richAgentNotificationsEnabled: Bool
   public var agentPresenceBadgesEnabled: Bool
-  /// When true, an agent integration that reports `.outdated` at launch /
-  /// scene activation is silently re-installed so a Supacode update never
-  /// strands stale hooks (e.g. legacy `Notification` / `PostToolUseFailure`
-  /// entries from earlier wire-protocol revisions).
-  public var autoUpdateAgentIntegrationsEnabled: Bool
   public var confirmQuitMode: ConfirmQuitMode
   /// When true, user-initiated closes ask for confirmation when a terminal
   /// surface has foreground work that Ghostty considers unsafe to interrupt.
@@ -140,7 +135,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     globalScripts: [],
     richAgentNotificationsEnabled: true,
     agentPresenceBadgesEnabled: true,
-    autoUpdateAgentIntegrationsEnabled: true,
     confirmQuitMode: .auto,
     confirmCloseSurface: true,
     terminateSessionsOnQuit: false,
@@ -178,7 +172,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     globalScripts: [ScriptDefinition] = [],
     richAgentNotificationsEnabled: Bool = true,
     agentPresenceBadgesEnabled: Bool = true,
-    autoUpdateAgentIntegrationsEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
     confirmCloseSurface: Bool = true,
     terminateSessionsOnQuit: Bool = false,
@@ -215,7 +208,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.globalScripts = globalScripts
     self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
-    self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
     self.confirmQuitMode = confirmQuitMode
     self.confirmCloseSurface = confirmCloseSurface
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
@@ -362,9 +354,6 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .agentPresenceBadgesEnabled)
       ?? Self.default.agentPresenceBadgesEnabled
-    autoUpdateAgentIntegrationsEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .autoUpdateAgentIntegrationsEnabled)
-      ?? Self.default.autoUpdateAgentIntegrationsEnabled
     // Reject unrecognized values from corrupted or hand-edited settings files.
     // Legacy `confirmBeforeQuit: false` users explicitly opted out of the
     // dialog; `.auto` would silently re-enable it. Map `false` to `.never`

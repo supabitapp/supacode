@@ -4,13 +4,9 @@ import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Pinned bottom-of-sidebar card. Three states (mutually exclusive):
-/// - Any agent integration `.outdated` → "Updates available" with avatars
-///   of just the outdated agents and a Review-in-Settings link.
-/// - Otherwise, if no agent is installed and the user has never dismissed
-///   the prompt → "More functionality" with avatars of every supported
-///   agent, the same Review link, plus a dismiss button.
-/// - Otherwise → nothing.
+/// Pinned bottom-of-sidebar card. Shows the install prompt (avatars of every
+/// supported agent, a Review-in-Settings link, and a dismiss button) when no
+/// agent is installed and the user hasn't dismissed it; otherwise nothing.
 ///
 /// Rendering goes through `SidebarCard` so the visual chrome stays in sync
 /// with every other pinned sidebar card.
@@ -33,21 +29,12 @@ struct CodingAgentsSidebarCardView: View {
   static func resolveMode(for store: StoreOf<AppFeature>, dismissedAt: Date) -> Mode {
     Self.mode(
       for: store.settings.agentIntegrationStates,
-      dismissed: Self.isDismissed(at: dismissedAt),
-      autoUpdateEnabled: store.settings.autoUpdateAgentIntegrationsEnabled
+      dismissed: Self.isDismissed(at: dismissedAt)
     )
   }
 
   var body: some View {
     switch mode {
-    case .updatesAvailable(let agents):
-      CodingAgentsCardBody(
-        store: store,
-        agents: agents,
-        title: "Update agent integration",
-        description: "Re-install to pick up the latest hooks for these agents.",
-        showsDismiss: false
-      )
     case .promptInstall:
       CodingAgentsCardBody(
         store: store,
@@ -67,30 +54,20 @@ struct CodingAgentsSidebarCardView: View {
     /// No card to show. Named `.hidden` (not `.none`) so an `Optional<Mode>`
     /// caller can't silently match the wrong branch.
     case hidden
-    case updatesAvailable([SkillAgent])
     case promptInstall
   }
 
-  /// Pure resolver: chooses which card (if any) to show given the current
-  /// integration states and dismissal flag. Tested separately so the view
-  /// stays a thin renderer. Always waits for every agent to resolve before
-  /// committing to a card (avoids the avatar group regrowing mid-launch as
-  /// per-agent probes return staggered). When `autoUpdateEnabled` is true,
-  /// `.updatesAvailable` is suppressed because auto-update has already (or
-  /// is about to) handle it.
+  /// Pure resolver: chooses whether to show the install prompt given the
+  /// current integration states and dismissal flag. Tested separately so the
+  /// view stays a thin renderer. Always waits for every agent to resolve
+  /// before committing to a card (avoids the avatar group regrowing mid-launch
+  /// as per-agent probes return staggered).
   static func mode(
     for states: [SkillAgent: AgentIntegrationRowState],
-    dismissed: Bool,
-    autoUpdateEnabled: Bool
+    dismissed: Bool
   ) -> Mode {
     let stillChecking = SkillAgent.allCases.contains { states[$0]?.isResolved != true }
     if stillChecking { return .hidden }
-    if !autoUpdateEnabled {
-      let outdated = SkillAgent.allCases.filter {
-        states[$0]?.integrationState == .outdated
-      }
-      if !outdated.isEmpty { return .updatesAvailable(outdated) }
-    }
     let anyInstalled = SkillAgent.allCases.contains {
       states[$0]?.integrationState == .installed
     }
@@ -137,7 +114,7 @@ extension AgentIntegrationRowState {
 
   fileprivate var isResolved: Bool {
     switch self {
-    case .ready, .failed: true
+    case .ready, .failed, .failedTransient: true
     case .checking, .installing, .uninstalling: false
     }
   }

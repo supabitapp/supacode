@@ -8,7 +8,7 @@ import Testing
 struct SidebarBottomCardTests {
   @Test func gitEnvironmentErrorWinsOverEverything() {
     // Even the highest-priority card loses to a blocked-git error.
-    let cards = SidebarBottomCardView.Slot.agent(.updatesAvailable([.claude]))
+    let cards = SidebarBottomCardView.Slot.agent(.promptInstall)
     #expect(
       SidebarBottomCardView.Slot.resolve(gitEnvironmentError: .xcodeLicenseNotAccepted, cards: cards)
         == .gitEnvironmentError(.xcodeLicenseNotAccepted)
@@ -27,20 +27,6 @@ struct SidebarBottomCardTests {
       SidebarBottomCardView.Slot.gitEnvironmentError(.xcodeLicenseNotAccepted).transitionToken
         == "gitEnvironmentError:xcodeLicenseNotAccepted"
     )
-  }
-
-  @Test func agentUpdatesWinOverEverything() {
-    let resolved = SidebarBottomCardView.Slot.resolve(
-      cards: .init(
-        agent: .updatesAvailable([.claude]),
-        menuBarOnboarding: .visible,
-        remoteRepositoriesBeta: .visible,
-        terminalPersistence: .visible,
-        highlight: .visible,
-        nestedOnboarding: .visible
-      )
-    )
-    #expect(resolved == .agent(.updatesAvailable([.claude])))
   }
 
   @Test func agentPromptWinsOverEverything() {
@@ -183,12 +169,6 @@ struct SidebarBottomCardTests {
     #expect(
       MenuBarOnboardingCardView.resolveMode(showsMenuBarIcon: true, dismissedAt: atBoundary) == .hidden
     )
-  }
-
-  @Test func agentVariantStableAcrossSkillAgentOrder() {
-    let lhs = SidebarBottomCardView.Slot.agent(.updatesAvailable([.claude, .codex])).transitionToken
-    let rhs = SidebarBottomCardView.Slot.agent(.updatesAvailable([.codex, .claude])).transitionToken
-    #expect(lhs == rhs)
   }
 
   @Test func onboardingTransitionTokenUsesNestedWorktreesPrefix() {

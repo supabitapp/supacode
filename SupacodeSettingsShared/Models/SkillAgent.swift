@@ -1,3 +1,5 @@
+import Foundation
+
 public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, Codable {
   case antigravity
   case claude
@@ -34,14 +36,14 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   /// User-facing name (e.g. "Claude Code", "Codex").
   public var displayName: String {
     switch self {
-    case .antigravity: "Antigravity"
+    case .antigravity: "Google Antigravity"
     case .claude: "Claude Code"
     case .codex: "Codex"
     case .copilot: "Copilot CLI"
-    case .grok: "Grok"
+    case .grok: "Grok Code"
     case .hermes: "Hermes"
     case .kimi: "Kimi Code"
-    case .kiro: "Kiro"
+    case .kiro: "Kiro CLI"
     case .omp: "Oh My Pi"
     case .opencode: "OpenCode"
     case .pi: "Pi"
@@ -64,4 +66,9 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .pi: "pi-mark"
     }
   }
+
+  /// All agents ordered by their user-facing `displayName`, for settings lists.
+  /// Computed once: the inputs are static, so re-sorting per access is waste.
+  public static let allCasesByDisplayName: [SkillAgent] =
+    allCases.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
 }
