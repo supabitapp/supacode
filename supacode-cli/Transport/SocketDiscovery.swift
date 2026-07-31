@@ -13,10 +13,8 @@ nonisolated enum SocketDiscovery {
   /// (i.e. the owning PID is still running).
   static func isAlive(_ path: String) -> Bool {
     let filename = URL(fileURLWithPath: path).lastPathComponent
-    guard filename.hasPrefix("pid-"),
-      let pid = Int32(filename.dropFirst(4))
-    else { return false }
-    return kill(pid, 0) == 0
+    guard let pid = ProcessLiveness.pid(fromSocketFilename: filename) else { return false }
+    return ProcessLiveness.isRunning(pid)
   }
 
   /// Lists all live Supacode sockets in `/tmp/supacode-<uid>/`.
@@ -33,9 +31,8 @@ nonisolated enum SocketDiscovery {
       return []
     }
     return entries.compactMap { entry in
-      guard entry.hasPrefix("pid-"),
-        let pid = Int32(entry.dropFirst(4)),
-        kill(pid, 0) == 0
+      guard let pid = ProcessLiveness.pid(fromSocketFilename: entry),
+        ProcessLiveness.isRunning(pid)
       else { return nil }
       return "\(directory)/\(entry)"
     }

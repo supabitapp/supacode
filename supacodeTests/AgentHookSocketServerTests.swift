@@ -293,4 +293,23 @@ struct AgentHookSocketServerTests {
       }
     }
   }
+
+  // MARK: - Stale socket pruning.
+
+  @Test func pruneRemovesDeadEntriesButKeepsUnsignalableAndMalformedOnes() throws {
+    let directory = NSTemporaryDirectory() + "supacode-prune-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    // pid-1 is launchd: alive but only reachable as EPERM. pid-999999999 is
+    // above the pid ceiling, so ESRCH. pid-abc is not a pid file.
+    for name in ["pid-1", "pid-999999999", "pid-abc"] {
+      #expect(FileManager.default.createFile(atPath: "\(directory)/\(name)", contents: nil))
+    }
+
+    AgentHookSocketServer.pruneStaleSocketFiles(in: directory)
+
+    #expect(FileManager.default.fileExists(atPath: "\(directory)/pid-1"))
+    #expect(!FileManager.default.fileExists(atPath: "\(directory)/pid-999999999"))
+    #expect(FileManager.default.fileExists(atPath: "\(directory)/pid-abc"))
+  }
 }

@@ -62,7 +62,7 @@ final class AgentHookSocketServer {
   }
 
   /// Removes socket files left behind by processes that are no longer running.
-  private nonisolated static func pruneStaleSocketFiles(in directory: String) {
+  nonisolated static func pruneStaleSocketFiles(in directory: String) {
     guard
       let entries = try? FileManager.default.contentsOfDirectory(atPath: directory)
     else { return }
@@ -70,10 +70,17 @@ final class AgentHookSocketServer {
       guard entry.hasPrefix("pid-"),
         let pid = Int32(entry.dropFirst(4))
       else { continue }
-      // kill(pid, 0) returns 0 if the process exists.
-      guard kill(pid, 0) != 0 else { continue }
+      // Only ESRCH proves the process is gone; EPERM means it exists but
+      // cannot be signaled (e.g. a sandboxed or differently-owned process).
+      // Mirrors `ProcessLiveness.isRunning` in the CLI; keep in sync.
+      let probeResult = kill(pid, 0)
+      let probeErrno = errno
+      guard probeResult != 0, probeErrno == ESRCH else { continue }
       let stalePath = "\(directory)/\(entry)"
-      unlink(stalePath)
+      guard unlink(stalePath) == 0 else {
+        socketLogger.error("Failed to prune stale socket \(entry): errno \(errno)")
+        continue
+      }
       socketLogger.info("Pruned stale socket: \(entry)")
     }
   }

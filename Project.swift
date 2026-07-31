@@ -92,6 +92,7 @@ let gitTestSources: [Path] = [
   "supacodeTests/Git*.swift",
   "supacodeTests/RemoteSSHCommandTests.swift",
   "supacodeTests/ShellClient*.swift",
+  "supacodeTests/SocketLivenessCLITests.swift",
   "supacodeTests/WorktreeEnvironmentTests.swift",
   "supacodeTests/WorktreeStatusCLITests.swift",
 ]
