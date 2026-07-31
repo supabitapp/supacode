@@ -66,6 +66,13 @@ Make archiving or deleting your own worktree your FINAL operation. Finish all
 edits, checks, commits, integration, and reporting first, and do not chain or
 schedule follow-up commands after it.
 
+## Sandboxed Harnesses
+
+`supacode` talks to the app over a Unix domain socket. Sandboxes that deny
+socket connections fail every command with "Operation not permitted"; that is
+the sandbox, not Supacode. Re-run the command with escalated permissions
+(approve the elevation prompt) or from an unsandboxed shell.
+
 ## Environment
 
 Inside Supacode terminals, these environment variables are set automatically:

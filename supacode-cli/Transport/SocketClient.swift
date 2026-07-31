@@ -12,6 +12,10 @@ nonisolated enum SocketClient {
 
     var errorDescription: String? {
       switch self {
+      case .connectionFailed(let path, let code) where code == EPERM || code == EACCES:
+        "Failed to connect to socket at \(path): \(String(cString: strerror(code))). "
+          + "A sandbox likely blocked the connection; re-run this command with "
+          + "escalated permissions or from an unsandboxed shell."
       case .connectionFailed(let path, let code):
         "Failed to connect to socket at \(path): \(String(cString: strerror(code)))"
       case .socketConfigFailed(let code):
