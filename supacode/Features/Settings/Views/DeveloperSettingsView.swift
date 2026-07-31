@@ -13,8 +13,11 @@ struct DeveloperSettingsView: View {
         DeeplinkRow()
       } footer: {
         Text(
-          "Installing the CLI symlinks `supacode` to `/usr/local/bin`. "
-            + "This is not required to run `supacode` in the app terminals.")
+          """
+          Installing the CLI symlinks `supacode` to `/usr/local/bin`. \
+          This is not required to run `supacode` in the app terminals.
+          """
+        )
       }
       CodingAgentsSections(store: store)
       Section {
