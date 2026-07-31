@@ -93,6 +93,118 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.map(\.id) == [third, first, second])
   }
 
+  @Test func moveTabForwardShiftsRight() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    #expect(manager.moveTab(first, by: 1))
+    #expect(manager.tabs.map(\.id) == [second, first, third])
+  }
+
+  @Test func moveTabBackwardShiftsLeft() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    #expect(manager.moveTab(third, by: -1))
+    #expect(manager.tabs.map(\.id) == [first, third, second])
+  }
+
+  @Test func moveTabForwardWrapsPastEnd() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    #expect(manager.moveTab(third, by: 1))
+    #expect(manager.tabs.map(\.id) == [third, first, second])
+  }
+
+  @Test func moveTabBackwardWrapsPastStart() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    #expect(manager.moveTab(first, by: -1))
+    #expect(manager.tabs.map(\.id) == [second, third, first])
+  }
+
+  @Test func moveTabHandlesMultiStepAmounts() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    let fourth = manager.createTab(title: "four", icon: nil)
+    #expect(manager.moveTab(first, by: 2))
+    #expect(manager.tabs.map(\.id) == [second, third, first, fourth])
+  }
+
+  @Test func moveTabWrapsAmountsLargerThanCount() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    // +4 in a 3-tab list is equivalent to +1.
+    #expect(manager.moveTab(first, by: 4))
+    #expect(manager.tabs.map(\.id) == [second, first, third])
+  }
+
+  // A configured move_tab binding can carry an arbitrary ssize_t; reducing the
+  // amount first must not trap on overflow. Int.max % 3 == 1.
+  @Test func moveTabHandlesExtremeAmountsWithoutOverflow() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    #expect(manager.moveTab(first, by: Int.max))
+    #expect(manager.tabs.map(\.id) == [second, first, third])
+  }
+
+  @Test func moveTabByFullCycleIsNoOp() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    #expect(manager.moveTab(first, by: 3) == false)
+    #expect(manager.tabs.map(\.id) == [first, second, third])
+  }
+
+  @Test func moveTabZeroAmountIsNoOp() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    #expect(manager.moveTab(first, by: 1) == true)
+    #expect(manager.moveTab(second, by: 0) == false)
+    #expect(manager.tabs.map(\.id) == [second, first])
+  }
+
+  @Test func moveTabSingleTabIsNoOp() {
+    let manager = TerminalTabManager()
+    let only = manager.createTab(title: "one", icon: nil)
+    #expect(manager.moveTab(only, by: 1) == false)
+    #expect(manager.tabs.map(\.id) == [only])
+  }
+
+  @Test func moveTabUnknownIdIsNoOp() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    #expect(manager.moveTab(TerminalTabID(), by: 1) == false)
+    #expect(manager.tabs.map(\.id) == [first, second])
+  }
+
+  @Test func moveTabPreservesSelection() {
+    let manager = TerminalTabManager()
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    let third = manager.createTab(title: "three", icon: nil)
+    manager.selectTab(first)
+    // Moving a tab other than the selected one leaves the selection put.
+    #expect(manager.moveTab(third, by: -1))
+    #expect(manager.tabs.map(\.id) == [first, third, second])
+    #expect(manager.selectedTabId == first)
+  }
+
   @Test func createTabWithTintColorSetsColor() {
     let manager = TerminalTabManager()
     let tabId = manager.createTab(title: "script", icon: "play.fill", tintColor: .green)

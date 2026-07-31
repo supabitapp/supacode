@@ -1568,6 +1568,38 @@ struct WorktreeTerminalManagerTests {
     #expect(!state.hasTab(first))
   }
 
+  @Test(.dependencies) func ghosttyMoveTabReordersSelectedTab() {
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree()
+    )
+    guard let first = state.createTab(activation: .focused),
+      let second = state.createTab(activation: .focused),
+      let third = state.createTab(activation: .focused),
+      let firstSurface = state.splitTree(for: first).root?.leftmostLeaf()
+    else {
+      Issue.record("Expected three tabs")
+      return
+    }
+
+    // The invoking surface's tab is not the selected one (the last-created tab
+    // is), so the move is ignored rather than reordering a tab off-screen.
+    #expect(state.tabManager.selectedTabId == third)
+    #expect(firstSurface.bridge.onMoveTab?(ghostty_action_move_tab_s(amount: 1)) == false)
+    #expect(state.tabManager.tabs.map(\.id) == [first, second, third])
+
+    // Once its tab is selected, the keybind reorders it and keeps it selected.
+    state.selectTab(first)
+    #expect(firstSurface.bridge.onMoveTab?(ghostty_action_move_tab_s(amount: 1)) == true)
+    #expect(state.tabManager.tabs.map(\.id) == [second, first, third])
+    #expect(state.tabManager.selectedTabId == first)
+
+    // A full-cycle amount lands the tab where it started: still a handled
+    // keybind (true), so it doesn't fall through and beep, and order holds.
+    #expect(firstSurface.bridge.onMoveTab?(ghostty_action_move_tab_s(amount: 3)) == true)
+    #expect(state.tabManager.tabs.map(\.id) == [second, first, third])
+  }
+
   @Test(.dependencies) func closingTabIndependentlyNarrowsPendingTabPayload() {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseSurface = true }

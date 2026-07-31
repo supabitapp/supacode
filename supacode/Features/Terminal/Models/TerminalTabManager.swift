@@ -148,6 +148,26 @@ final class TerminalTabManager {
     tabs = orderedIds.compactMap { map[$0] }
   }
 
+  /// Moves the tab by `amount`, wrapping cyclically at the ends per Ghostty's
+  /// `move_tab` contract. Leaves the selection untouched. Returns whether the
+  /// order actually changed.
+  @discardableResult
+  func moveTab(_ id: TerminalTabID, by amount: Int) -> Bool {
+    guard amount != 0, tabs.count > 1,
+      let current = tabs.firstIndex(where: { $0.id == id })
+    else { return false }
+    let count = tabs.count
+    // Reduce first: `amount` is Ghostty's unrestricted `ssize_t`, so adding a
+    // near-`Int.max` offset straight to `current` would overflow and trap.
+    let destination = (current + amount % count + count) % count
+    guard destination != current else { return false }
+    var moved = tabs
+    let item = moved.remove(at: current)
+    moved.insert(item, at: destination)
+    tabs = moved
+    return true
+  }
+
   func closeTab(_ id: TerminalTabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     tabs.remove(at: index)

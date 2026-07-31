@@ -2085,6 +2085,10 @@ final class WorktreeTerminalState {
       guard let self, let view, self.isLiveSurface(view) else { return false }
       return self.handleGotoTabRequest(target)
     }
+    view.bridge.onMoveTab = { [weak self, weak view] move in
+      guard let self, let view, self.isLiveSurface(view) else { return false }
+      return self.handleMoveTabRequest(tabId, amount: move.amount)
+    }
     view.bridge.onCommandPaletteToggle = { [weak self, weak view] in
       guard let self, let view, self.isLiveSurface(view) else { return false }
       self.onCommandPaletteToggle?()
@@ -3289,6 +3293,17 @@ final class WorktreeTerminalState {
       targetIndex = min(raw - 1, tabs.count - 1)
     }
     selectTab(tabs[targetIndex].id)
+    return true
+  }
+
+  // Moves the invoking tab left or right, wrapping at the ends per Ghostty's
+  // `move_tab` contract. Reorders only when the invoking tab is the selected
+  // one, so a keybind from a background tab can't shuffle tabs off-screen.
+  private func handleMoveTabRequest(_ tabId: TerminalTabID, amount: Int) -> Bool {
+    guard tabId == tabManager.selectedTabId, tabManager.tabs.count > 1 else { return false }
+    // A same-position wrap (or amount 0) is still a handled keybind: swallow it
+    // rather than let it fall through and beep.
+    tabManager.moveTab(tabId, by: amount)
     return true
   }
 
