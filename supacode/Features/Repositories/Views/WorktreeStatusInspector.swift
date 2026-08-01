@@ -122,13 +122,14 @@ private struct GitInspectorContent: View {
           .font(.headline)
         Spacer()
         if let url {
-          Button("Open on GitHub", systemImage: "arrow.up.right.square") {
+          Button {
             analyticsClient.capture("github_pr_opened", nil)
             openURL(url)
+          } label: {
+            Text("Open in Browser \u{2197}")
+              .contentShape(.rect)
           }
-          .labelStyle(.iconOnly)
-          .buttonStyle(.borderless)
-          .help("Open pull request on GitHub.")
+          .buttonStyle(.plain)
         }
       }
       .padding(.horizontal)
