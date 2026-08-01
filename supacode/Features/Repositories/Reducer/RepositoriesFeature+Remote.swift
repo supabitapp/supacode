@@ -413,6 +413,7 @@ extension RepositoriesFeature {
     )
   }
 
+  // swiftlint:disable function_parameter_count
   /// Remote worktree creation: pick a name (excluding remote branches), run
   /// `git worktree add` over ssh, then reload to re-list. Bypasses the local
   /// pending/stream flow but honors the prompt's name + base-ref choices. The
@@ -424,9 +425,11 @@ extension RepositoriesFeature {
     repository: Repository,
     nameSource: WorktreeCreationNameSource,
     baseRefSource: WorktreeCreationBaseRefSource,
+    upstream: WorktreeUpstreamPreference,
     fetchOrigin: Bool,
     placement: WorktreePlacementOverride?
   ) -> Effect<Action> {
+    // swiftlint:enable function_parameter_count
     guard let host = repository.host else { return .none }
     let repoRoot = repository.rootURL
     @Shared(.repositorySettings(repoRoot, host: host)) var remoteRepositorySettings
@@ -476,8 +479,42 @@ extension RepositoriesFeature {
         baseRefSource: baseRefSource, selectedBaseRef: selectedBaseRef, client: client, repoRoot: repoRoot)
       await Self.fetchRemoteForBaseRefIfNeeded(
         fetchOrigin: fetchOrigin, baseRef: baseRef, client: client, repoRoot: repoRoot)
+      // A dead upstream fails here, before `git worktree add` creates anything;
+      // an unverifiable one (transport or repo errors) aborts with its own error.
+      if case .branch(let upstreamRef) = upstream {
+        do {
+          guard try await client.upstreamBranchExists(upstreamRef, for: repoRoot) else {
+            await send(
+              .presentAlert(
+                title: "Upstream branch not found",
+                message: "'\(upstreamRef)' isn't a local or remote-tracking branch in this repository."
+              )
+            )
+            return
+          }
+        } catch {
+          await send(
+            .presentAlert(title: "Unable to create worktree", message: error.localizedDescription))
+          return
+        }
+      }
       do {
         try await client.createGitWorktree(in: repoRoot, name: name, baseRef: baseRef, worktreePath: worktreePath)
+        // The worktree exists either way; a failed tracking update surfaces as
+        // an alert instead of failing the creation.
+        do {
+          switch upstream {
+          case .automatic:
+            break
+          case .unset:
+            try await client.unsetUpstreamBranch(name, for: repoRoot)
+          case .branch(let upstreamRef):
+            try await client.setUpstreamBranch(name, to: upstreamRef, for: repoRoot)
+          }
+        } catch {
+          await send(
+            .presentAlert(title: "Worktree created, upstream not updated", message: error.localizedDescription))
+        }
         await send(.loadPersistedRepositories)
       } catch {
         await send(.presentAlert(title: "Unable to create worktree", message: error.localizedDescription))

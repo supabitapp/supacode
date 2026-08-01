@@ -31,6 +31,15 @@ struct BaseRefBranchMenu: Equatable {
     self.hoistedLocalBranch = inventory.localBranches.contains { $0 == hoistedLocalBranch } ? hoistedLocalBranch : nil
   }
 
+  /// A copy without the local branches, for pickers that only offer
+  /// remote-tracking refs (the upstream selector).
+  func remotesOnly() -> BaseRefBranchMenu {
+    var copy = self
+    copy.localBranches = []
+    copy.hoistedLocalBranch = nil
+    return copy
+  }
+
   /// Every selectable ref across the hoisted default, local, and remote branches,
   /// flattened in sorted tree order. Backs the searchable base-ref picker (#387).
   func allRefs() -> [String] {

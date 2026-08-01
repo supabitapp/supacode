@@ -72,6 +72,78 @@ struct WorktreeCreationPromptFeatureTests {
     )
   }
 
+  @Test func upstreamSelectedUpdatesSelectionAndClearsValidation() async {
+    var state = makeState()
+    state.validationMessage = "stale"
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.upstreamSelected(.branch("origin/feature"))) {
+      $0.selectedUpstream = .branch("origin/feature")
+      $0.validationMessage = nil
+    }
+    await store.send(.upstreamSelected(.unset)) {
+      $0.selectedUpstream = .unset
+    }
+    await store.send(.upstreamSelected(.automatic)) {
+      $0.selectedUpstream = .automatic
+    }
+  }
+
+  @Test func upstreamMenuLabelDescribesSelection() {
+    var state = makeState()
+    #expect(state.upstreamMenuLabel == "Auto")
+    state.selectedUpstream = .unset
+    #expect(state.upstreamMenuLabel == "None")
+    state.selectedUpstream = .branch("origin/feature")
+    #expect(state.upstreamMenuLabel == "origin/feature")
+  }
+
+  @Test func upstreamBranchMenuOnlyOffersRemoteTrackingBranches() {
+    let menu = BaseRefBranchMenu(
+      inventory: GitBranchInventory(
+        localBranches: ["main", "feature/local"],
+        remotes: [GitRemoteBranchGroup(name: "origin", branches: ["dev", "main"])]
+      ),
+      hoistedLocalBranch: "main"
+    )
+    let state = makeState(branchMenu: menu)
+
+    #expect(state.upstreamBranchMenu?.refs(matching: "") == ["origin/dev", "origin/main"])
+    #expect(state.upstreamBranchMenu?.localBranches.isEmpty == true)
+    #expect(state.upstreamBranchMenu?.hoistedLocalBranch == nil)
+    // The base-ref menu keeps offering everything.
+    #expect(state.branchMenu?.refs(matching: "") == ["main", "feature/local", "origin/dev", "origin/main"])
+  }
+
+  @Test func createButtonTappedThreadsSelectedUpstream() async {
+    var state = makeState(selectedBaseRef: "origin/dev")
+    state.selectedUpstream = .branch("origin/feature")
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.set(\.branchName, "feature/new")) {
+      $0.branchName = "feature/new"
+    }
+    await store.send(.createButtonTapped)
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/new",
+          baseRef: "origin/dev",
+          upstream: .branch("origin/feature"),
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: nil,
+          color: nil
+        )
+      )
+    )
+  }
+
   @Test func createButtonTappedThreadsSelectedBaseRef() async {
     let store = TestStore(initialState: makeState(selectedBaseRef: "origin/dev")) {
       WorktreeCreationPromptFeature()
@@ -87,6 +159,7 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/new",
           baseRef: "origin/dev",
+          upstream: .automatic,
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: nil,
@@ -113,6 +186,7 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/new",
           baseRef: "main",
+          upstream: .automatic,
           fetchOrigin: false,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: nil,
@@ -143,6 +217,7 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/new",
           baseRef: "origin/dev",
+          upstream: .automatic,
           fetchOrigin: true,
           placement: WorktreePlacementOverride(
             name: "feature_new",
@@ -249,6 +324,7 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/x",
           baseRef: nil,
+          upstream: .automatic,
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: "Spicy",
@@ -272,6 +348,7 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/x",
           baseRef: nil,
+          upstream: .automatic,
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: "feature/x",
@@ -295,6 +372,7 @@ struct WorktreeCreationPromptFeatureTests {
           repositoryID: "/tmp/repo/",
           branchName: "feature/x",
           baseRef: nil,
+          upstream: .automatic,
           fetchOrigin: true,
           placement: WorktreePlacementOverride(name: nil, path: nil),
           title: nil,

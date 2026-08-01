@@ -138,14 +138,23 @@ struct RepositoriesFeature {
       let pendingID: Worktree.ID?
       let background: Bool
       let pin: Bool
+      /// Explicit upstream from a CLI / deeplink caller; seeds the prompt so
+      /// the flag survives the interactive path.
+      let upstream: WorktreeUpstreamPreference
 
       /// Nil when no field carries anything worth parking, so assigning the
       /// result clears the slot instead of storing an inert record.
-      init?(pendingID: Worktree.ID?, background: Bool, pin: Bool = false) {
-        guard pendingID != nil || background || pin else { return nil }
+      init?(
+        pendingID: Worktree.ID?,
+        background: Bool,
+        pin: Bool = false,
+        upstream: WorktreeUpstreamPreference = .automatic
+      ) {
+        guard pendingID != nil || background || pin || upstream != .automatic else { return nil }
         self.pendingID = pendingID
         self.background = background
         self.pin = pin
+        self.upstream = upstream
       }
     }
     /// Parked worktree-new requests keyed by repository. Consumed when the prompt
@@ -386,6 +395,7 @@ struct RepositoriesFeature {
     case createRandomWorktree
     case createRandomWorktreeInRepository(
       Repository.ID,
+      upstream: WorktreeUpstreamPreference = .automatic,
       pendingID: Worktree.ID? = nil,
       background: Bool = false,
       pin: Bool = false
@@ -399,6 +409,7 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       nameSource: WorktreeCreationNameSource,
       baseRefSource: WorktreeCreationBaseRefSource,
+      upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride? = nil,
       pendingID: Worktree.ID? = nil,
@@ -420,6 +431,7 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       branchName: String,
       baseRef: String?,
+      upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride
     )
@@ -427,6 +439,7 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       branchName: String,
       baseRef: String?,
+      upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride,
       duplicateMessage: String?
@@ -1806,6 +1819,7 @@ struct RepositoriesFeature {
         let repositoryID,
         let nameSource,
         let baseRefSource,
+        let upstream,
         let fetchOrigin,
         let placement,
         let providedPendingID,
@@ -1843,10 +1857,16 @@ struct RepositoriesFeature {
         // (so `pin` has no pending row to ride on and is ignored), but honors
         // the same name + base-ref choices from the prompt.
         if repository.host != nil {
+          // Remote creations have no pending row to carry a customization, so
+          // drain the parked entry instead of leaking it.
+          if let rejectedBranchName {
+            state.dropPendingCustomization(repositoryID: repository.id, branchName: rejectedBranchName)
+          }
           return remoteCreateWorktree(
             repository: repository,
             nameSource: nameSource,
             baseRefSource: baseRefSource,
+            upstream: upstream,
             fetchOrigin: fetchOrigin,
             placement: placement
           )
@@ -2119,6 +2139,35 @@ struct RepositoriesFeature {
                 )
               }
             }
+            // A dead or unverifiable upstream fails here, before `git worktree
+            // add` creates anything; `name: nil` skips the created-worktree cleanup.
+            if case .branch(let upstreamRef) = upstream {
+              func failCreation(title: String, message: String) async {
+                await send(
+                  .createRandomWorktreeFailed(
+                    title: title,
+                    message: message,
+                    pendingID: pendingID,
+                    previousSelection: previousSelection,
+                    repositoryID: repository.id,
+                    name: nil,
+                    baseDirectory: worktreeBaseDirectory
+                  )
+                )
+              }
+              do {
+                guard try await gitClient.upstreamBranchExists(upstreamRef, repository.rootURL) else {
+                  await failCreation(
+                    title: "Upstream branch not found",
+                    message: "'\(upstreamRef)' isn't a local or remote-tracking branch in this repository."
+                  )
+                  return
+                }
+              } catch {
+                await failCreation(title: "Unable to create worktree", message: error.localizedDescription)
+                return
+              }
+            }
             progress.copyIgnored = copyIgnored
             progress.copyUntracked = copyUntracked
             progress.ignoredFilesToCopyCount =
@@ -2131,6 +2180,7 @@ struct RepositoriesFeature {
               name: name,
               copyFiles: (ignored: copyIgnored, untracked: copyUntracked),
               baseRef: resolvedBaseRef,
+              upstream: upstream,
               directoryOverride: worktreeDirectoryURL
             )
             await send(
@@ -2165,6 +2215,21 @@ struct RepositoriesFeature {
                   )
                 }
               case .finished(let newWorktree):
+                // The worktree exists either way; a failed tracking update
+                // surfaces as an alert instead of failing the creation.
+                var upstreamFailureMessage: String?
+                do {
+                  switch upstream {
+                  case .automatic:
+                    break
+                  case .unset:
+                    try await gitClient.unsetUpstreamBranch(name, repository.rootURL)
+                  case .branch(let upstreamRef):
+                    try await gitClient.setUpstreamBranch(name, upstreamRef, repository.rootURL)
+                  }
+                } catch {
+                  upstreamFailureMessage = error.localizedDescription
+                }
                 if progressUpdateThrottle.flush() {
                   await send(
                     .pendingWorktreeProgressUpdated(
@@ -2180,6 +2245,14 @@ struct RepositoriesFeature {
                     pendingID: pendingID
                   )
                 )
+                if let upstreamFailureMessage {
+                  await send(
+                    .presentAlert(
+                      title: "Worktree created, upstream not updated",
+                      message: upstreamFailureMessage
+                    )
+                  )
+                }
                 return
               }
             }
@@ -3602,7 +3675,8 @@ struct RepositoriesFeature {
         }
         return .send(.createRandomWorktreeInRepository(repository.id))
 
-      case .createRandomWorktreeInRepository(let repositoryID, let pendingID, let background, let pin):
+      case .createRandomWorktreeInRepository(
+        let repositoryID, let upstream, let pendingID, let background, let pin):
         // Drain a parked CLI ack when a guard rejects, so it can't only time out.
         let cancelAck: Effect<Action> =
           pendingID.map { .send(.cliWorktreeAckCancelled(pendingID: $0)) } ?? .none
@@ -3641,6 +3715,7 @@ struct RepositoriesFeature {
                 repositoryID: repository.id,
                 nameSource: .random,
                 baseRefSource: .repositorySetting,
+                upstream: upstream,
                 fetchOrigin: settingsFile.global.fetchOriginBeforeWorktreeCreation,
                 pendingID: pendingID,
                 background: background,
@@ -3661,7 +3736,12 @@ struct RepositoriesFeature {
         // Parked even without an ack id, so a URL-scheme caller's opt-out still
         // reaches the create the prompt eventually dispatches.
         state.parkedWorktreeRequests[repository.id] = .init(
-          pendingID: pendingID, background: background, pin: pin)
+          pendingID: pendingID, background: background, pin: pin, upstream: upstream)
+        // Seed an already-open prompt so its own create picks the flag up; only
+        // an explicit choice seeds, so a default request can't clobber a pick.
+        if upstream != .automatic, state.worktreeCreationPrompt?.repositoryID == repository.id {
+          state.worktreeCreationPrompt?.selectedUpstream = upstream
+        }
         @Shared(.repositorySettings(repository.rootURL, host: repository.host)) var repositorySettings
         let selectedBaseRef = repositorySettings.worktreeBaseRef
         // Remote repos load the prompt's branch lists over ssh (host-aware
@@ -3738,6 +3818,8 @@ struct RepositoriesFeature {
           branchMenu: nil,
           branchName: "",
           selectedBaseRef: selectedBaseRef,
+          // Seed a parked CLI / deeplink upstream so the flag survives the prompt.
+          selectedUpstream: state.parkedWorktreeRequests[repository.id]?.upstream ?? .automatic,
           fetchOrigin: promptSettingsFile.global.fetchOriginBeforeWorktreeCreation,
           defaultWorktreeBaseDirectory: defaultWorktreeBaseDirectory,
           validationMessage: nil
@@ -3772,6 +3854,15 @@ struct RepositoriesFeature {
         {
           prompt.selectedBaseRef = nil
         }
+        // Same reconciliation for a seeded upstream, so a typo'd CLI --upstream
+        // falls back to Auto in the picker instead of dead-ending the submit.
+        // Qualified refs are skipped: the inventory only carries short names.
+        if case .branch(let upstreamRef) = prompt.selectedUpstream, !inventory.isEmpty,
+          !upstreamRef.hasPrefix("refs/"),
+          !inventory.contains(ref: upstreamRef)
+        {
+          prompt.selectedUpstream = .automatic
+        }
         state.worktreeCreationPrompt = prompt
         return .none
 
@@ -3794,6 +3885,7 @@ struct RepositoriesFeature {
               let repositoryID,
               let branchName,
               let baseRef,
+              let upstream,
               let fetchOrigin,
               let placement,
               let title,
@@ -3816,6 +3908,7 @@ struct RepositoriesFeature {
             repositoryID: repositoryID,
             branchName: branchName,
             baseRef: baseRef,
+            upstream: upstream,
             fetchOrigin: fetchOrigin,
             placement: placement
           )
@@ -3825,6 +3918,7 @@ struct RepositoriesFeature {
         let repositoryID,
         let branchName,
         let baseRef,
+        let upstream,
         let fetchOrigin,
         let placement
       ):
@@ -3863,6 +3957,7 @@ struct RepositoriesFeature {
               repositoryID: repositoryID,
               branchName: branchName,
               baseRef: baseRef,
+              upstream: upstream,
               fetchOrigin: fetchOrigin,
               placement: placement,
               duplicateMessage: duplicateMessage
@@ -3875,6 +3970,9 @@ struct RepositoriesFeature {
         let repositoryID,
         let branchName,
         let baseRef,
+        // The submitted snapshot is authoritative; a prompt mutation racing the
+        // duplicate check must not replace what the user submitted.
+        let upstream,
         let fetchOrigin,
         let placement,
         let duplicateMessage
@@ -3898,6 +3996,7 @@ struct RepositoriesFeature {
             repositoryID: repositoryID,
             nameSource: .explicit(branchName),
             baseRefSource: .explicit(baseRef),
+            upstream: upstream,
             fetchOrigin: fetchOrigin,
             placement: placement,
             pendingID: parked?.pendingID,
@@ -5817,11 +5916,13 @@ private nonisolated func blockingScriptExitMessage(_ exitCode: Int) -> String {
   }
 }
 
+// swiftlint:disable:next function_parameter_count
 private nonisolated func worktreeCreateCommand(
   baseDirectoryURL: URL,
   name: String,
   copyFiles: (ignored: Bool, untracked: Bool),
   baseRef: String,
+  upstream: WorktreeUpstreamPreference,
   directoryOverride: URL?
 ) -> String {
   let baseDir = baseDirectoryURL.path(percentEncoded: false)
@@ -5844,6 +5945,14 @@ private nonisolated func worktreeCreateCommand(
     parts.append("--verbose")
   }
   parts.append(name)
+  switch upstream {
+  case .automatic:
+    break
+  case .unset:
+    parts.append(contentsOf: ["&&", "git", "branch", "--unset-upstream", name])
+  case .branch(let ref):
+    parts.append(contentsOf: ["&&", "git", "branch", "--set-upstream-to", ref, name])
+  }
   return parts.map(shellQuote).joined(separator: " ")
 }
 

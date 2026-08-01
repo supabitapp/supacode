@@ -100,6 +100,7 @@ struct WorktreeCreationPromptParentTests {
               repositoryID: repoID,
               branchName: "feature/x",
               baseRef: nil,
+              upstream: .automatic,
               fetchOrigin: false,
               placement: WorktreePlacementOverride(name: nil, path: nil),
               title: nil,
@@ -109,6 +110,191 @@ struct WorktreeCreationPromptParentTests {
     ) {
       $0.pendingCreationCustomizations.removeValue(forKey: self.repoID)
     }
+  }
+
+  @Test func submitThreadsUpstreamThroughToTheCreatedWorktree() async {
+    struct SetUpstreamInvocation: Equatable {
+      let branch: String
+      let upstream: String
+      let root: URL
+    }
+    let observedSetUpstream = LockIsolated<SetUpstreamInvocation?>(nil)
+    let createdWorktree = Worktree(
+      id: WorktreeID("\(repoID)/feature-x"),
+      name: "feature/x",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "\(repoID)/feature-x"),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
+    )
+    var state = makeStateWithPrompt()
+    // The real UI builds the submit payload from prompt state; keep them in sync.
+    state.worktreeCreationPrompt?.selectedUpstream = .branch("origin/feature-x")
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { branch, upstream, root in
+        observedSetUpstream.setValue(SetUpstreamInvocation(branch: branch, upstream: upstream, root: root))
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeCreationPrompt(
+        .presented(
+          .delegate(
+            .submit(
+              repositoryID: repoID,
+              branchName: "feature/x",
+              baseRef: "origin/feature-x",
+              upstream: .branch("origin/feature-x"),
+              fetchOrigin: false,
+              placement: WorktreePlacementOverride(name: nil, path: nil),
+              title: nil,
+              color: nil,
+            )
+          )))
+    )
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(
+      observedSetUpstream.value
+        == SetUpstreamInvocation(
+          branch: "feature/x",
+          upstream: "origin/feature-x",
+          root: URL(fileURLWithPath: repoID.rawValue)
+        )
+    )
+  }
+
+  @Test func failedUpstreamUpdateKeepsTheWorktreeAndAlerts() async {
+    let createdWorktree = Worktree(
+      id: WorktreeID("\(repoID)/feature-x"),
+      name: "feature/x",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "\(repoID)/feature-x"),
+      repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
+    )
+    var state = makeStateWithPrompt()
+    // The real UI builds the submit payload from prompt state; keep them in sync.
+    state.worktreeCreationPrompt?.selectedUpstream = .branch("origin/feature-x")
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { _, _, _ in
+        throw GitClientError.commandFailed(command: "git branch --set-upstream-to", message: "boom")
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeCreationPrompt(
+        .presented(
+          .delegate(
+            .submit(
+              repositoryID: repoID,
+              branchName: "feature/x",
+              baseRef: "origin/feature-x",
+              upstream: .branch("origin/feature-x"),
+              fetchOrigin: false,
+              placement: WorktreePlacementOverride(name: nil, path: nil),
+              title: nil,
+              color: nil,
+            )
+          )))
+    )
+    // The worktree still lands; the tracking failure only raises an alert.
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    #expect(store.state.alert != nil)
+  }
+
+  @Test func failedUpstreamCheckAbortsWithoutCreatingOrCleaningUp() async {
+    let streamStarted = LockIsolated(false)
+    let removeWorktreeCalled = LockIsolated(false)
+    var state = makeStateWithPrompt()
+    // The real UI builds the submit payload from prompt state; keep them in sync.
+    state.worktreeCreationPrompt?.selectedUpstream = .branch("origin/feature-x")
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.upstreamBranchExists = { _, _ in
+        throw GitClientError.commandFailed(command: "git show-ref", message: "ssh: connect refused")
+      }
+      $0.gitClient.removeWorktree = { worktree, _ in
+        removeWorktreeCalled.setValue(true)
+        return worktree.workingDirectory
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        streamStarted.setValue(true)
+        return AsyncThrowingStream { $0.finish() }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeCreationPrompt(
+        .presented(
+          .delegate(
+            .submit(
+              repositoryID: repoID,
+              branchName: "feature/x",
+              baseRef: nil,
+              upstream: .branch("origin/feature-x"),
+              fetchOrigin: false,
+              placement: WorktreePlacementOverride(name: nil, path: nil),
+              title: nil,
+              color: nil,
+            )
+          )))
+    )
+    // An unverifiable upstream aborts before creation and must not trigger the
+    // created-worktree cleanup.
+    await store.receive(\.createRandomWorktreeFailed)
+    await store.finish()
+
+    #expect(!streamStarted.value)
+    #expect(!removeWorktreeCalled.value)
+    #expect(store.state.pendingWorktrees.isEmpty)
   }
 
   @Test func duplicateValidationFailureDropsPendingCustomization() async {
@@ -411,6 +597,7 @@ struct WorktreeCreationPromptParentTests {
               repositoryID: repoID,
               branchName: "feature/x",
               baseRef: nil,
+              upstream: .automatic,
               fetchOrigin: false,
               placement: WorktreePlacementOverride(name: nil, path: nil),
               title: "Fresh",
