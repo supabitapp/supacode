@@ -411,6 +411,172 @@ struct GitClientCreateWorktreeStreamTests {
   }
 }
 
+struct GitClientUpstreamTests {
+  /// Accumulates every `shell.run` argv, unlike the single-slot `GitShellInvocationRecorder`.
+  private nonisolated final class InvocationLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var invocationsValue: [[String]] = []
+
+    func append(_ arguments: [String]) {
+      lock.lock()
+      invocationsValue.append(arguments)
+      lock.unlock()
+    }
+
+    var invocations: [[String]] {
+      lock.lock()
+      defer { lock.unlock() }
+      return invocationsValue
+    }
+  }
+
+  private static func shell(
+    log: InvocationLog,
+    run: @escaping @Sendable ([String]) throws -> ShellOutput
+  ) -> ShellClient {
+    ShellClient(
+      run: { _, arguments, _ in
+        log.append(arguments)
+        return try run(arguments)
+      },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) }
+    )
+  }
+
+  @Test func setUpstreamBranchTargetsTheExplicitBranchFromTheRepoRoot() async throws {
+    let log = InvocationLog()
+    let client = GitClient(shell: Self.shell(log: log) { _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) })
+
+    try await client.setUpstreamBranch(
+      "feature", to: "origin/feature", for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(
+      log.invocations == [
+        ["git", "-C", "/tmp/repo", "branch", "--set-upstream-to", "origin/feature", "feature"]
+      ]
+    )
+  }
+
+  @Test func unsetUpstreamBranchSwallowsMissingUpstreamFailures() async throws {
+    let log = InvocationLog()
+    let client = GitClient(
+      shell: Self.shell(log: log) { _ in
+        throw ShellClientError(
+          command: "git branch --unset-upstream feature",
+          stdout: "",
+          stderr: "fatal: branch 'feature' has no upstream information",
+          exitCode: 128
+        )
+      }
+    )
+
+    try await client.unsetUpstreamBranch("feature", for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(
+      log.invocations == [
+        ["LC_ALL=C", "LANG=C", "git", "-C", "/tmp/repo", "branch", "--unset-upstream", "feature"]
+      ]
+    )
+  }
+
+  @Test func unsetUpstreamBranchRethrowsOtherFailures() async throws {
+    let client = GitClient(
+      shell: Self.shell(log: InvocationLog()) { _ in
+        throw ShellClientError(
+          command: "git branch --unset-upstream feature",
+          stdout: "",
+          stderr: "fatal: not a git repository",
+          exitCode: 128
+        )
+      }
+    )
+
+    await #expect(throws: GitClientError.self) {
+      try await client.unsetUpstreamBranch("feature", for: URL(fileURLWithPath: "/tmp/repo"))
+    }
+  }
+
+  @Test func upstreamBranchExistsChecksLocalThenRemoteTrackingRefs() async throws {
+    let log = InvocationLog()
+    let client = GitClient(
+      shell: Self.shell(log: log) { arguments in
+        guard arguments.contains("refs/remotes/origin/feature") else {
+          throw ShellClientError(command: "git show-ref", stdout: "", stderr: "", exitCode: 1)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      }
+    )
+
+    let exists = try await client.upstreamBranchExists("origin/feature", for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(exists)
+    #expect(
+      log.invocations == [
+        ["git", "-C", "/tmp/repo", "show-ref", "--verify", "--quiet", "refs/heads/origin/feature"],
+        ["git", "-C", "/tmp/repo", "show-ref", "--verify", "--quiet", "refs/remotes/origin/feature"],
+      ]
+    )
+  }
+
+  @Test func upstreamBranchExistsIsFalseWhenNeitherRefResolves() async throws {
+    let client = GitClient(
+      shell: Self.shell(log: InvocationLog()) { _ in
+        throw ShellClientError(command: "git show-ref", stdout: "", stderr: "", exitCode: 1)
+      }
+    )
+
+    let exists = try await client.upstreamBranchExists("origin/gone", for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(!exists)
+  }
+
+  @Test func upstreamBranchExistsShortCircuitsOnALocalBranch() async throws {
+    let log = InvocationLog()
+    let client = GitClient(shell: Self.shell(log: log) { _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) })
+
+    let exists = try await client.upstreamBranchExists("main", for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(exists)
+    #expect(
+      log.invocations == [
+        ["git", "-C", "/tmp/repo", "show-ref", "--verify", "--quiet", "refs/heads/main"]
+      ]
+    )
+  }
+
+  @Test func upstreamBranchExistsChecksAFullyQualifiedRefAsIs() async throws {
+    let log = InvocationLog()
+    let client = GitClient(shell: Self.shell(log: log) { _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) })
+
+    let exists = try await client.upstreamBranchExists(
+      "refs/remotes/origin/feature", for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(exists)
+    #expect(
+      log.invocations == [
+        ["git", "-C", "/tmp/repo", "show-ref", "--verify", "--quiet", "refs/remotes/origin/feature"]
+      ]
+    )
+  }
+
+  @Test func upstreamBranchExistsThrowsWhenTheCheckItselfFails() async {
+    let client = GitClient(
+      shell: Self.shell(log: InvocationLog()) { _ in
+        throw ShellClientError(
+          command: "git show-ref",
+          stdout: "",
+          stderr: "fatal: not a git repository",
+          exitCode: 128
+        )
+      }
+    )
+
+    await #expect(throws: GitClientError.self) {
+      _ = try await client.upstreamBranchExists("origin/feature", for: URL(fileURLWithPath: "/tmp/repo"))
+    }
+  }
+}
+
 struct GitClientPathAugmentationTests {
   @Test func filterHelperDirectoriesAreTheFixedToolLocations() {
     #expect(

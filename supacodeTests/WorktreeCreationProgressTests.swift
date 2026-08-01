@@ -115,3 +115,15 @@ struct WorktreeCreationProgressTests {
     #expect(progress.detailText == "[5/5] copy output.bin")
   }
 }
+
+struct WorktreeUpstreamPreferenceTests {
+  @Test func deeplinkValueRoundTripsAllCases() {
+    #expect(WorktreeUpstreamPreference(deeplinkValue: nil) == .automatic)
+    #expect(WorktreeUpstreamPreference(deeplinkValue: "") == .unset)
+    #expect(WorktreeUpstreamPreference(deeplinkValue: "origin/feature") == .branch("origin/feature"))
+
+    #expect(WorktreeUpstreamPreference.automatic.deeplinkValue == nil)
+    #expect(WorktreeUpstreamPreference.unset.deeplinkValue == "")
+    #expect(WorktreeUpstreamPreference.branch("origin/feature").deeplinkValue == "origin/feature")
+  }
+}

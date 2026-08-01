@@ -27,6 +27,9 @@ enum GitOperation: String {
   case remoteList = "remote_list"
   case fetchOrigin = "fetch_origin"
   case clone = "clone"
+  case setUpstream = "set_upstream"
+  case unsetUpstream = "unset_upstream"
+  case upstreamRefCheck = "upstream_ref_check"
 }
 
 enum GitClientError: LocalizedError {
@@ -555,6 +558,61 @@ struct GitClient {
 
   nonisolated func automaticWorktreeBaseRef(for repoRoot: URL) async -> String? {
     await referenceQueries.automaticWorktreeBaseRef(for: repoRoot)
+  }
+
+  /// Sets `branch`'s upstream so pulls and ahead/behind status compare against `upstream`.
+  nonisolated func setUpstreamBranch(_ branch: String, to upstream: String, for repoRoot: URL) async throws {
+    let path = repoRoot.path(percentEncoded: false)
+    _ = try await runGit(
+      operation: .setUpstream,
+      arguments: ["-C", path, "branch", "--set-upstream-to", upstream, branch]
+    )
+  }
+
+  /// Clears `branch`'s upstream. Git reports both "never had tracking" and
+  /// "no such branch" as missing upstream information; either already satisfies
+  /// the intent, so that failure is swallowed.
+  nonisolated func unsetUpstreamBranch(_ branch: String, for repoRoot: URL) async throws {
+    let path = repoRoot.path(percentEncoded: false)
+    do {
+      _ = try await runGit(
+        operation: .unsetUpstream,
+        arguments: ["-C", path, "branch", "--unset-upstream", branch],
+        localePinned: true
+      )
+    } catch let error as GitClientError {
+      guard case .commandFailed(_, let message) = error, message.contains("has no upstream") else {
+        throw error
+      }
+    }
+  }
+
+  /// Whether `ref` names a local or remote-tracking branch, the only refs
+  /// `git branch --set-upstream-to` accepts; branch-qualified refs are checked
+  /// as is. Throws when the check itself fails, so a missing branch is never
+  /// conflated with an unverifiable one.
+  nonisolated func upstreamBranchExists(_ ref: String, for repoRoot: URL) async throws -> Bool {
+    let path = repoRoot.path(percentEncoded: false)
+    let isQualifiedBranchRef = ref.hasPrefix("refs/heads/") || ref.hasPrefix("refs/remotes/")
+    let candidates = isQualifiedBranchRef ? [ref] : ["refs/heads/\(ref)", "refs/remotes/\(ref)"]
+    let env = URL(fileURLWithPath: "/usr/bin/env")
+    for candidate in candidates {
+      let invocation = ["git", "-C", path, "show-ref", "--verify", "--quiet", candidate]
+      do {
+        _ = try await shell.run(env, invocation, nil)
+        return true
+      } catch let error as ShellClientError where error.exitCode == 1 {
+        // `show-ref --verify --quiet` exits 1 for a missing ref; keep probing.
+        continue
+      } catch {
+        throw wrapShellError(
+          error,
+          operation: .upstreamRefCheck,
+          command: ([env.path(percentEncoded: false)] + invocation).joined(separator: " ")
+        )
+      }
+    }
+    return false
   }
 
   nonisolated func ignoredFileCount(for repoRoot: URL) async throws -> Int {

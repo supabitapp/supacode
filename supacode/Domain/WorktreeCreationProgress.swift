@@ -121,6 +121,33 @@ nonisolated struct WorktreeCreationProgress: Hashable, Sendable {
   }
 }
 
+/// Upstream tracking choice for a newly created worktree branch.
+nonisolated enum WorktreeUpstreamPreference: Hashable, Sendable {
+  /// Leave tracking to Git (a remote base ref is tracked by default).
+  case automatic
+  /// Explicitly clear any tracking Git sets up at creation.
+  case unset
+  /// Track the given local or remote branch.
+  case branch(String)
+
+  /// Raw `upstream` query value: omitted is automatic, empty is unset.
+  init(deeplinkValue: String?) {
+    switch deeplinkValue {
+    case nil: self = .automatic
+    case "": self = .unset
+    case let ref?: self = .branch(ref)
+    }
+  }
+
+  var deeplinkValue: String? {
+    switch self {
+    case .automatic: nil
+    case .unset: ""
+    case .branch(let ref): ref
+    }
+  }
+}
+
 nonisolated enum WorktreeCreationStage: Hashable, Sendable {
   case loadingLocalBranches
   case choosingWorktreeName
