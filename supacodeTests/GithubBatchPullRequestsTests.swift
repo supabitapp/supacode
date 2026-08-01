@@ -482,7 +482,6 @@ struct GithubBatchPullRequestsTests {
     )
     let entry = try #require(prs["feature-a"]?.mergeQueueEntry)
     #expect(entry.position == 1)
-    #expect(entry.displayPosition == 2)
     #expect(entry.estimatedTimeToMerge == 300)
     #expect(entry.state == "AWAITING_CHECKS")
   }

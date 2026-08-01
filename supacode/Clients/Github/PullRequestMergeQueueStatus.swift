@@ -32,7 +32,7 @@ nonisolated struct PullRequestMergeQueueStatus: Equatable, Hashable {
       !pullRequest.isDraft,
       let entry = pullRequest.mergeQueueEntry
     else { return nil }
-    self.position = entry.displayPosition
+    self.position = entry.position
     self.estimatedTimeToMerge = entry.estimatedTimeToMerge
     self.state = State(rawValue: entry.state)
   }
