@@ -126,6 +126,24 @@ public nonisolated enum SSHCommand {
     return "env \(assignments) "
   }
 
+  /// Ghostty advertises `xterm-ghostty`, but a fresh remote account usually
+  /// does not have that terminfo entry. Supacode launches SSH directly rather
+  /// than through Ghostty's shell-integration wrapper, so mirror Ghostty's
+  /// fallback before the login shell reads its profile. Hosts that know
+  /// `xterm-ghostty` keep the richer capabilities; missing `infocmp` counts as
+  /// an unavailable entry and falls back to the portable `xterm-256color`.
+  static let terminalCompatibilityPrelude =
+    #"if [ "${TERM:-}" = xterm-ghostty ] && ! infocmp "$TERM" >/dev/null 2>&1; then "#
+    + "export TERM=xterm-256color; fi; "
+
+  /// The remote user's configured shell only has to parse `exec /bin/sh -c`;
+  /// the compatibility check itself stays portable even for fish/csh login
+  /// shells. The resolved TERM is exported before the real login shell starts,
+  /// so its profile and every descendant see a valid terminal definition.
+  static func terminalCompatibleLoginShellCommand(_ loginShellCommand: String) -> String {
+    "exec /bin/sh -c " + shellQuote(terminalCompatibilityPrelude + loginShellCommand)
+  }
+
   /// Full local `ssh` argv for `Process` / `ShellClient`. The remote command is
   /// a single argument; ssh hands it to the remote login shell verbatim.
   public static func invocation(
@@ -162,16 +180,12 @@ public nonisolated enum SSHCommand {
     allocateTTY: Bool = true,
     controlPath: String = defaultControlPath
   ) -> String {
-    var tokens = [sshExecutablePath]
-    tokens += controlOptions(controlPath: controlPath)
-    tokens += interactiveOptions
-    if allocateTTY {
-      tokens.append("-tt")
-    }
-    tokens += host.sshOptionArguments
-    tokens.append(host.sshDestination)
-    tokens.append(shellQuote(loginShellWrapped(remoteCommand)))
-    return tokens.joined(separator: " ")
+    commandLine(
+      host: host,
+      loginShellCommand: loginShellWrapped(remoteCommand),
+      allocateTTY: allocateTTY,
+      controlPath: controlPath
+    )
   }
 
   /// `commandLine` variant that forwards positional arguments to the remote
@@ -185,6 +199,26 @@ public nonisolated enum SSHCommand {
     allocateTTY: Bool = true,
     controlPath: String = defaultControlPath
   ) -> String {
+    commandLine(
+      host: host,
+      loginShellCommand: loginShellWrapped(
+        remoteScript,
+        positionalArguments: positionalArguments,
+        environment: environment
+      ),
+      allocateTTY: allocateTTY,
+      controlPath: controlPath
+    )
+  }
+
+  /// Shared interactive SSH builder. Both public command shapes resolve their
+  /// login-shell invocation first, then cross this single compatibility seam.
+  private static func commandLine(
+    host: RemoteHost,
+    loginShellCommand: String,
+    allocateTTY: Bool,
+    controlPath: String
+  ) -> String {
     var tokens = [sshExecutablePath]
     tokens += controlOptions(controlPath: controlPath)
     tokens += interactiveOptions
@@ -193,9 +227,7 @@ public nonisolated enum SSHCommand {
     }
     tokens += host.sshOptionArguments
     tokens.append(host.sshDestination)
-    tokens.append(
-      shellQuote(
-        loginShellWrapped(remoteScript, positionalArguments: positionalArguments, environment: environment)))
+    tokens.append(shellQuote(terminalCompatibleLoginShellCommand(loginShellCommand)))
     return tokens.joined(separator: " ")
   }
 }
