@@ -2517,6 +2517,215 @@ struct AppFeatureDeeplinkTests {
         == URL(filePath: "/tmp/elsewhere/feature_foo", directoryHint: .isDirectory).standardizedFileURL)
   }
 
+  @Test(.dependencies) func repoWorktreeNewSetsUpstreamAfterCreation() async {
+    let worktree = makeWorktree()
+    let createdWorktree = makeWorktree()
+    struct SetUpstreamInvocation {
+      let branch: String
+      let upstream: String
+      let root: URL
+    }
+    let observedSetUpstream = LockIsolated<SetUpstreamInvocation?>(nil)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { branch, upstream, root in
+        observedSetUpstream.withValue { $0 = SetUpstreamInvocation(branch: branch, upstream: upstream, root: root) }
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: "origin/feature-x",
+          upstream: "origin/feature-x",
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
+        )
+      )
+    )
+    await store.receive(\.repositories.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(observedSetUpstream.value?.branch == "feature-x")
+    #expect(observedSetUpstream.value?.upstream == "origin/feature-x")
+    #expect(observedSetUpstream.value?.root == URL(fileURLWithPath: "/tmp/repo"))
+  }
+
+  @Test(.dependencies) func repoWorktreeNewWithDeadUpstreamFailsBeforeCreation() async {
+    let worktree = makeWorktree()
+    let streamStarted = LockIsolated(false)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.upstreamBranchExists = { _, _ in false }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        streamStarted.setValue(true)
+        return AsyncThrowingStream { $0.finish() }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          upstream: "origin/gone",
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
+        )
+      )
+    )
+    await store.receive(\.repositories.createRandomWorktreeFailed)
+    await store.finish()
+
+    #expect(!streamStarted.value)
+  }
+
+  @Test(.dependencies) func repoWorktreeNewWithoutBranchStillSetsUpstream() async {
+    let worktree = makeWorktree()
+    let createdWorktree = makeWorktree()
+    let observedUpstream = LockIsolated<String?>(nil)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.promptForWorktreeCreation = false }
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { _, upstream, _ in
+        observedUpstream.setValue(upstream)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: nil,
+          baseRef: nil,
+          upstream: "origin/feature-x",
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
+        )
+      )
+    )
+    await store.receive(\.repositories.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(observedUpstream.value == "origin/feature-x")
+  }
+
+  @Test(.dependencies) func repoWorktreeNewWithEmptyUpstreamUnsetsTracking() async {
+    let worktree = makeWorktree()
+    let createdWorktree = makeWorktree()
+    let observedUnset = LockIsolated<String?>(nil)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 0 }
+      $0.gitClient.unsetUpstreamBranch = { branch, _ in
+        observedUnset.setValue(branch)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          upstream: "",
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
+        )
+      )
+    )
+    await store.receive(\.repositories.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(observedUnset.value == "feature-x")
+  }
+
   @Test(.dependencies) func repoWorktreeNewWithPinLandsWorktreePinned() async {
     // End-to-end deeplink chain: `pin=true` pre-pins the pending row and the
     // created worktree ends in the persisted `.pinned` bucket.

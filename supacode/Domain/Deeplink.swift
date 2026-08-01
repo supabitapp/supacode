@@ -10,6 +10,9 @@ enum Deeplink: Equatable, Sendable {
     repositoryID: Repository.ID,
     branch: String?,
     baseRef: String?,
+    /// Raw `upstream` query value (omitted / empty / ref); parsed at execution
+    /// so the parser stays dumb.
+    upstream: String? = nil,
     fetchOrigin: Bool,
     worktreeName: String?,
     worktreePath: String?,

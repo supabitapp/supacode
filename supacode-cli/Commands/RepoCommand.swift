@@ -60,6 +60,12 @@ extension RepoCommand {
     @Option(help: "Base ref for the new worktree.")
     var base: String?
 
+    @Option(help: "Upstream branch the new branch tracks. Defaults to Git's automatic tracking.")
+    var upstream: String?
+
+    @Flag(help: "Create the new branch with no upstream, overriding Git's automatic tracking.")
+    var noUpstream = false
+
     @Flag(help: "Fetch origin before creating the worktree.")
     var fetch = false
 
@@ -76,13 +82,27 @@ extension RepoCommand {
 
     @OptionGroup var timeoutOption: TimeoutOption
 
+    func validate() throws {
+      if upstream != nil, noUpstream {
+        throw ValidationError("--upstream and --no-upstream are mutually exclusive.")
+      }
+      // Keep the empty-value wire encoding of "no upstream" out of the CLI surface.
+      if let upstream, upstream.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        throw ValidationError("--upstream requires a branch name; use --no-upstream to clear tracking.")
+      }
+    }
+
     func run() throws {
       let rID = try resolveRepoID(repo)
+      // An empty `upstream` query value means "no upstream"; omitted means automatic.
+      let resolvedUpstream = noUpstream ? "" : upstream
       let id = try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.repoWorktreeNew(
             repoID: rID,
-            options: .init(branch: branch, base: base, fetch: fetch, name: name, location: location, pin: pin)
+            options: .init(
+              branch: branch, base: base, upstream: resolvedUpstream, fetch: fetch, name: name,
+              location: location, pin: pin)
           )),
         timeoutSeconds: timeoutOption.timeout
       )

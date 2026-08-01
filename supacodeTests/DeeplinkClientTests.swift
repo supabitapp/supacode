@@ -411,6 +411,44 @@ struct DeeplinkClientTests {
     )
   }
 
+  @Test func repoWorktreeNewWithUpstream() {
+    let repoEncoded = "%2Ftmp%2Frepo"
+    let url = URL(
+      string: "supacode://repo/\(repoEncoded)/worktree/new?branch=feature-x&upstream=origin%2Ffeature-x"
+    )!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          upstream: "origin/feature-x",
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
+        )
+    )
+  }
+
+  @Test func repoWorktreeNewKeepsEmptyUpstreamDistinctFromOmitted() {
+    let repoEncoded = "%2Ftmp%2Frepo"
+    let url = URL(
+      string: "supacode://repo/\(repoEncoded)/worktree/new?branch=feature-x&upstream="
+    )!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          upstream: "",
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil
+        )
+    )
+  }
+
   @Test func repoWorktreeNewWithoutBranch() {
     let repoEncoded = "%2Ftmp%2Frepo"
     let url = URL(string: "supacode://repo/\(repoEncoded)/worktree/new")!

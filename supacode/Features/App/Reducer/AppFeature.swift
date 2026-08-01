@@ -1998,6 +1998,7 @@ struct AppFeature {
       let repositoryID,
       let branch,
       let baseRef,
+      let upstream,
       let fetchOrigin,
       let worktreeName,
       let worktreePath,
@@ -2005,7 +2006,8 @@ struct AppFeature {
       let pin
     ):
       return handleRepoWorktreeNewDeeplink(
-        repositoryID: repositoryID, branch: branch, baseRef: baseRef, fetchOrigin: fetchOrigin,
+        repositoryID: repositoryID, branch: branch, baseRef: baseRef,
+        upstream: WorktreeUpstreamPreference(deeplinkValue: upstream), fetchOrigin: fetchOrigin,
         worktreeName: worktreeName, worktreePath: worktreePath,
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state,
         background: background, pin: pin)
@@ -2038,6 +2040,7 @@ struct AppFeature {
     repositoryID: Repository.ID,
     branch: String? = nil,
     baseRef: String? = nil,
+    upstream: WorktreeUpstreamPreference = .automatic,
     fetchOrigin: Bool = false,
     worktreeName: String? = nil,
     worktreePath: String? = nil,
@@ -2100,7 +2103,7 @@ struct AppFeature {
         .send(
           .repositories(
             .createRandomWorktreeInRepository(
-              repositoryID, pendingID: pendingID, background: background, pin: pin
+              repositoryID, upstream: upstream, pendingID: pendingID, background: background, pin: pin
             )
           )
         ),
@@ -2118,6 +2121,7 @@ struct AppFeature {
             repositoryID: repositoryID,
             nameSource: .explicit(branch),
             baseRefSource: baseRef.map { .explicit($0) } ?? .repositorySetting,
+            upstream: upstream,
             fetchOrigin: fetchOrigin,
             placement: placement,
             pendingID: pendingID,

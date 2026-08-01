@@ -332,6 +332,9 @@ private nonisolated enum DeeplinkParser {
     }
     let branch = queryItems.first(where: { $0.name == "branch" })?.value
     let baseRef = queryItems.first(where: { $0.name == "base" })?.value
+    // `upstream=` (empty) is meaningful ("no upstream"), so keep the raw value;
+    // a bare `upstream` key with no `=` has a nil value and counts as omitted.
+    let upstream = queryItems.first(where: { $0.name == "upstream" })?.value
     let fetchOrigin = queryItems.first(where: { $0.name == "fetch" })?.value == "true"
     let worktreeName = queryItems.first(where: { $0.name == "name" })?.value
     let worktreePath = queryItems.first(where: { $0.name == "location" })?.value
@@ -339,6 +342,7 @@ private nonisolated enum DeeplinkParser {
       repositoryID: repositoryID,
       branch: branch,
       baseRef: baseRef,
+      upstream: upstream,
       fetchOrigin: fetchOrigin,
       worktreeName: worktreeName,
       worktreePath: worktreePath,
