@@ -126,20 +126,19 @@ public nonisolated enum SSHCommand {
     return "env \(assignments) "
   }
 
-  /// Ghostty advertises `xterm-ghostty`, but a fresh remote account usually
-  /// does not have that terminfo entry. Supacode launches SSH directly rather
-  /// than through Ghostty's shell-integration wrapper, so mirror Ghostty's
-  /// fallback before the login shell reads its profile. Hosts that know
-  /// `xterm-ghostty` keep the richer capabilities; missing `infocmp` counts as
-  /// an unavailable entry and falls back to the portable `xterm-256color`.
+  /// Mirror Ghostty's terminfo fallback: a fresh remote account rarely has the
+  /// `xterm-ghostty` entry, so downgrade to `xterm-256color` before the login
+  /// shell reads its profile (missing `infocmp` counts as an absent entry). The
+  /// probe augments `PATH` in a subshell so a profile-only `infocmp` resolves
+  /// without leaking that `PATH` into the session.
   static let terminalCompatibilityPrelude =
-    #"if [ "${TERM:-}" = xterm-ghostty ] && ! infocmp "$TERM" >/dev/null 2>&1; then "#
+    #"if [ "${TERM:-}" = xterm-ghostty ] && ! ( "#
+    + WellKnownToolDirectories.pathExportPrefix
+    + #"infocmp "$TERM" >/dev/null 2>&1 ); then "#
     + "export TERM=xterm-256color; fi; "
 
-  /// The remote user's configured shell only has to parse `exec /bin/sh -c`;
-  /// the compatibility check itself stays portable even for fish/csh login
-  /// shells. The resolved TERM is exported before the real login shell starts,
-  /// so its profile and every descendant see a valid terminal definition.
+  /// Wrap in `/bin/sh` so fish/csh login shells only parse `exec`, and export
+  /// the resolved TERM before the real login shell sources its profile.
   static func terminalCompatibleLoginShellCommand(_ loginShellCommand: String) -> String {
     "exec /bin/sh -c " + shellQuote(terminalCompatibilityPrelude + loginShellCommand)
   }
@@ -211,8 +210,7 @@ public nonisolated enum SSHCommand {
     )
   }
 
-  /// Shared interactive SSH builder. Both public command shapes resolve their
-  /// login-shell invocation first, then cross this single compatibility seam.
+  /// Assemble the interactive ssh argv, applying the terminal-compatibility wrap.
   private static func commandLine(
     host: RemoteHost,
     loginShellCommand: String,
