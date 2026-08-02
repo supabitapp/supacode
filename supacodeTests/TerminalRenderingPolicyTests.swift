@@ -9,6 +9,7 @@ struct TerminalRenderingPolicyTests {
     let focusedID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
+      isWorktreeSelected: true,
       isSelectedTab: true,
       windowIsVisible: true,
       windowIsKey: true,
@@ -22,6 +23,7 @@ struct TerminalRenderingPolicyTests {
   @Test func surfaceActivityForSelectedVisibleUnfocusedSurfaceIsNotFocused() {
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
+      isWorktreeSelected: true,
       isSelectedTab: true,
       windowIsVisible: true,
       windowIsKey: true,
@@ -36,6 +38,7 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
+      isWorktreeSelected: true,
       isSelectedTab: true,
       windowIsVisible: true,
       windowIsKey: false,
@@ -50,8 +53,39 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
+      isWorktreeSelected: true,
       isSelectedTab: true,
       windowIsVisible: false,
+      windowIsKey: true,
+      focusedSurfaceID: surfaceID,
+      surfaceID: surfaceID
+    )
+    #expect(!activity.isVisible)
+    #expect(!activity.isFocused)
+  }
+
+  @Test func surfaceActivityForUnknownWindowVisibilityFailsOpen() {
+    let surfaceID = UUID()
+    let activity = WorktreeTerminalState.surfaceActivity(
+      isSurfaceVisibleInTree: true,
+      isWorktreeSelected: true,
+      isSelectedTab: true,
+      windowIsVisible: nil,
+      windowIsKey: false,
+      focusedSurfaceID: surfaceID,
+      surfaceID: surfaceID
+    )
+    #expect(activity.isVisible)
+    #expect(!activity.isFocused)
+  }
+
+  @Test func surfaceActivityForUnselectedWorktreeIsHiddenAndUnfocused() {
+    let surfaceID = UUID()
+    let activity = WorktreeTerminalState.surfaceActivity(
+      isSurfaceVisibleInTree: true,
+      isWorktreeSelected: false,
+      isSelectedTab: true,
+      windowIsVisible: true,
       windowIsKey: true,
       focusedSurfaceID: surfaceID,
       surfaceID: surfaceID
@@ -64,6 +98,7 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: true,
+      isWorktreeSelected: true,
       isSelectedTab: false,
       windowIsVisible: true,
       windowIsKey: true,
@@ -78,6 +113,7 @@ struct TerminalRenderingPolicyTests {
     let surfaceID = UUID()
     let activity = WorktreeTerminalState.surfaceActivity(
       isSurfaceVisibleInTree: false,
+      isWorktreeSelected: true,
       isSelectedTab: true,
       windowIsVisible: true,
       windowIsKey: true,

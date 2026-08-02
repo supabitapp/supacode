@@ -318,6 +318,37 @@ struct DormantTerminalTests {
     #expect((captured.value[tab] ?? nil) == nil)
   }
 
+  @Test func selectingDormantTabWakesItFromStateLayer() {
+    let state = makeState()
+    state.setWorktreeSelected(true)
+    let live = state.createTab(activation: .selected)!
+    let dormant = state.createTab(activation: .selected)!
+    state.selectTab(live)
+    state.hibernateTabForTesting(dormant)
+    #expect(state.dormantTabLayouts[dormant] != nil)
+
+    // The selection commit alone must wake; no render-driven `splitTree` runs.
+    state.tabManager.selectTab(dormant)
+    #expect(state.dormantTabLayouts[dormant] == nil)
+  }
+
+  @Test func selectingDormantTabInUnselectedWorktreeStaysAsleep() {
+    let state = makeState()
+    let live = state.createTab(activation: .selected)!
+    let dormant = state.createTab(activation: .selected)!
+    state.selectTab(live)
+    state.hibernateTabForTesting(dormant)
+
+    // A hidden worktree's tabs cannot render; waking would only rebuild
+    // surfaces and zmx sessions for nothing.
+    state.tabManager.selectTab(dormant)
+    #expect(state.dormantTabLayouts[dormant] != nil)
+
+    // Selecting the worktree wakes the dormant selection from state.
+    state.setWorktreeSelected(true)
+    #expect(state.dormantTabLayouts[dormant] == nil)
+  }
+
   @Test func wakeReDerivesFirstTabContextAfterEarlierTabCloses() {
     let killed = LockIsolated<[String]>([])
     let state = makeZmxState(killed: killed)

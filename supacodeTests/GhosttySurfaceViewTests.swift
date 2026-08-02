@@ -49,6 +49,37 @@ struct GhosttySurfaceViewTests {
     )
   }
 
+  @Test func shouldHealOcclusionOnlyFiresForLatchedSurfaceAtKeyWindow() {
+    // Not latched (nil or visible): never heal.
+    #expect(
+      !GhosttySurfaceView.shouldHealOcclusion(
+        lastOcclusion: nil, windowIsKey: true, windowIsVisible: true, requiresVisibleWindow: false
+      ))
+    #expect(
+      !GhosttySurfaceView.shouldHealOcclusion(
+        lastOcclusion: true, windowIsKey: true, windowIsVisible: true, requiresVisibleWindow: false
+      ))
+    // Latched but window not key: never heal.
+    #expect(
+      !GhosttySurfaceView.shouldHealOcclusion(
+        lastOcclusion: false, windowIsKey: false, windowIsVisible: true, requiresVisibleWindow: false
+      ))
+    // Typing at a key window heals even when the window server reports covered.
+    #expect(
+      GhosttySurfaceView.shouldHealOcclusion(
+        lastOcclusion: false, windowIsKey: true, windowIsVisible: false, requiresVisibleWindow: false
+      ))
+    // Pointer events additionally require a visible report.
+    #expect(
+      !GhosttySurfaceView.shouldHealOcclusion(
+        lastOcclusion: false, windowIsKey: true, windowIsVisible: false, requiresVisibleWindow: true
+      ))
+    #expect(
+      GhosttySurfaceView.shouldHealOcclusion(
+        lastOcclusion: false, windowIsKey: true, windowIsVisible: true, requiresVisibleWindow: true
+      ))
+  }
+
   @Test func keyboardLayoutChangeKeyUpSuppressionSuppressesMatchingKeyUp() {
     let suppression = GhosttySurfaceView.KeyboardLayoutChangeKeyUpSuppression(
       keyCode: 49,

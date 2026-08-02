@@ -14,6 +14,7 @@ struct WorktreeTerminalTabsView: View {
   let forceAutoFocus: Bool
   let createTab: () -> Void
   @State private var windowActivity = WindowActivityState.inactive
+  @State private var windowActivityReader = WindowActivityReader()
   // Reading `\.colorScheme` invalidates this body when the window appearance
   // flips (terminal-driven Light/Dark), so the unfocused-split overlay retints.
   @Environment(\.colorScheme) private var colorScheme
@@ -90,7 +91,7 @@ struct WorktreeTerminalTabsView: View {
       message: { pending in Text(pending.message) }
     )
     .background(
-      WindowFocusObserverView { activity in
+      WindowFocusObserverView(reader: windowActivityReader) { activity in
         windowActivity = activity
         state.syncFocus(windowIsKey: activity.isKeyWindow, windowIsVisible: activity.isVisible)
       }
@@ -120,13 +121,9 @@ struct WorktreeTerminalTabsView: View {
   }
 
   private var resolvedWindowActivity: WindowActivityState {
-    if let keyWindow = NSApp.keyWindow {
-      return WindowActivityState(
-        isKeyWindow: keyWindow.isKeyWindow,
-        isVisible: keyWindow.occlusionState.contains(.visible)
-      )
-    }
-    return windowActivity
+    // The observed window is authoritative; `NSApp.keyWindow` can be another
+    // window entirely (e.g. the command palette panel).
+    windowActivityReader.current ?? windowActivity
   }
 }
 

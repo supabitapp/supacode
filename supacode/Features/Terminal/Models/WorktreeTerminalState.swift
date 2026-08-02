@@ -359,8 +359,8 @@ final class WorktreeTerminalState {
       wrappedValue: RepositorySettings.default,
       .repositorySettings(worktree.repositoryRootURL, host: worktree.host)
     )
-    // Route every selection write through the single visibility choke point.
-    tabManager.onSelectedTabChanged = { [weak self] in self?.refreshTabVisibility() }
+    // Route every selection write through the single selection choke point.
+    tabManager.onSelectedTabChanged = { [weak self] in self?.reconcileSelection() }
     // Route dormant-session OSC signals into the notification / presence handlers.
     dormantSessionWatchers.onOSCSequence = { [weak self] surfaceID, sequence in
       self?.handleDormantOSCSequence(surfaceID: surfaceID, sequence: sequence)
@@ -841,6 +841,11 @@ final class WorktreeTerminalState {
   }
 
   func syncFocus(windowIsKey: Bool, windowIsVisible: Bool) {
+    if lastWindowIsKey != windowIsKey || lastWindowIsVisible != windowIsVisible {
+      terminalStateLogger.debug(
+        "syncFocus(\(worktree.id)): key=\(windowIsKey) visible=\(windowIsVisible)"
+      )
+    }
     lastWindowIsKey = windowIsKey
     lastWindowIsVisible = windowIsVisible
     applySurfaceActivity()
@@ -856,8 +861,9 @@ final class WorktreeTerminalState {
       for surface in tree.leaves() {
         let activity = Self.surfaceActivity(
           isSurfaceVisibleInTree: visibleSurfaceIDs.contains(surface.id),
+          isWorktreeSelected: isWorktreeSelected,
           isSelectedTab: isSelectedTab,
-          windowIsVisible: lastWindowIsVisible == true,
+          windowIsVisible: lastWindowIsVisible,
           windowIsKey: lastWindowIsKey == true,
           focusedSurfaceID: focusedId,
           surfaceID: surface.id
@@ -874,15 +880,20 @@ final class WorktreeTerminalState {
     }
   }
 
+  // swiftlint:disable:next function_parameter_count
   static func surfaceActivity(
-    isSurfaceVisibleInTree: Bool = true,
+    isSurfaceVisibleInTree: Bool,
+    isWorktreeSelected: Bool,
     isSelectedTab: Bool,
-    windowIsVisible: Bool,
+    windowIsVisible: Bool?,
     windowIsKey: Bool,
     focusedSurfaceID: UUID?,
     surfaceID: UUID
   ) -> SurfaceActivity {
-    let isVisible = isSurfaceVisibleInTree && isSelectedTab && windowIsVisible
+    // Unknown window visibility fails open: occluding a visible surface
+    // freezes it (#757), rendering a briefly occluded one only costs frames.
+    let isVisible =
+      isSurfaceVisibleInTree && isWorktreeSelected && isSelectedTab && windowIsVisible != false
     let isFocused = isVisible && windowIsKey && focusedSurfaceID == surfaceID
     return SurfaceActivity(isVisible: isVisible, isFocused: isFocused)
   }
@@ -1273,7 +1284,7 @@ final class WorktreeTerminalState {
         updateTree(tree, for: tabId)
       }
       focusSurface(nextSurface, in: tabId)
-      syncFocusIfNeeded()
+      reassertSurfaceActivity()
       return true
 
     case .resizeSplit(let direction, let amount):
@@ -2133,6 +2144,22 @@ final class WorktreeTerminalState {
       self.recordActiveSurface(view, in: tabId)
       self.emitTaskStatusIfChanged()
     }
+    view.onOcclusionHeal = { [weak self, weak view] windowIsKey, windowIsVisible in
+      guard let self, let view, self.isLiveSurface(view) else {
+        terminalStateLogger.warning("Occlusion heal dropped: stale surface view.")
+        return
+      }
+      // Stamp only what the window reports; input alone must not mark covered
+      // notifications viewed or keep a covered surface rendering.
+      self.syncFocus(windowIsKey: windowIsKey, windowIsVisible: windowIsVisible)
+      if view.lastOcclusion == false {
+        terminalStateLogger.warning(
+          "Occlusion heal left surface \(view.id) occluded; the window disagrees with the input."
+        )
+      } else {
+        terminalStateLogger.info("Occlusion healed for surface \(view.id) from user input.")
+      }
+    }
     view.bridge.onColorChanged = { [weak self, weak view] in
       guard let self, let view, self.isLiveSurface(view) else { return }
       // Only the focused surface drives the window tint.
@@ -2866,14 +2893,15 @@ final class WorktreeTerminalState {
     onNotificationIndicatorChanged?()
   }
 
-  private func syncFocusIfNeeded() {
-    guard lastWindowIsKey != nil, lastWindowIsVisible != nil else { return }
+  // Runs on cold caches too: `surfaceActivity` fails open on unknown
+  // visibility, so a forced occlusion never outlives a re-selection (#757).
+  private func reassertSurfaceActivity() {
     applySurfaceActivity()
   }
 
   private func updateTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
     setTree(tree, for: tabId)
-    syncFocusIfNeeded()
+    reassertSurfaceActivity()
   }
 
   /// Single mutation point for `trees[tabId]`. Recomputes and emits the per-tab
@@ -3339,11 +3367,30 @@ final class WorktreeTerminalState {
   /// Grace window a tab must stay hidden before it hibernates.
   private static let hibernationGraceWindow: Duration = .seconds(5 * 60)
 
-  /// Marks whether this state's worktree is selected and re-diffs visibility.
+  /// Deselection occludes via the manager's `setAllSurfacesOccluded()`; the
+  /// activity re-derivation here is what un-occludes on re-selection, since
+  /// no view-layer sync fires without a remount (#757).
   func setWorktreeSelected(_ selected: Bool) {
     guard isWorktreeSelected != selected else { return }
     isWorktreeSelected = selected
+    reconcileSelection()
+  }
+
+  /// Selection choke point: re-diffs hibernation timers, wakes a dormant
+  /// selection, and re-derives activity, so input works without a view-body run.
+  private func reconcileSelection() {
     refreshTabVisibility()
+    wakeSelectedTabIfDormant()
+    reassertSurfaceActivity()
+  }
+
+  /// Waking waits for the worktree itself: a hidden worktree's dormant tabs
+  /// cannot render, so waking them would only rebuild surfaces and zmx sessions.
+  private func wakeSelectedTabIfDormant() {
+    guard isWorktreeSelected, let selectedTabId = tabManager.selectedTabId,
+      dormantTabLayouts[selectedTabId] != nil
+    else { return }
+    wakeTab(selectedTabId)
   }
 
   /// A tab is hidden unless it is the selected tab of the selected worktree.

@@ -3447,6 +3447,141 @@ struct WorktreeTerminalManagerTests {
     #expect(statuses == [.running])
   }
 
+  // MARK: - Selection occlusion re-assert (#757)
+
+  @Test func reselectingWorktreeReassertsSurfaceOcclusionAndFocus() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    let tab = state.createTab(activation: .selected)!
+    let surface = state.splitTree(for: tab).root!.leftmostLeaf()
+    state.syncFocus(windowIsKey: true, windowIsVisible: true)
+    #expect(surface.lastOcclusion == true)
+    #expect(surface.isFocusedForTesting)
+
+    // A transient selection flap must not leave the re-selected worktree's
+    // surfaces occluded and unfocused; no view-layer syncFocus fires when the
+    // detail view never remounts.
+    manager.handleCommand(.setSelectedWorktreeID(nil))
+    #expect(surface.lastOcclusion == false)
+    #expect(!surface.isFocusedForTesting)
+
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    #expect(surface.lastOcclusion == true)
+    #expect(surface.isFocusedForTesting)
+  }
+
+  @Test func coldCacheSelectionFlapStillUnoccludesOnReselection() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    let tab = state.createTab(activation: .selected)!
+    let surface = state.splitTree(for: tab).root!.leftmostLeaf()
+
+    // No syncFocus ever ran: the window caches are still unseeded. A flap must
+    // not latch; unknown visibility fails open on re-selection.
+    manager.handleCommand(.setSelectedWorktreeID(nil))
+    #expect(surface.lastOcclusion == false)
+
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    #expect(surface.lastOcclusion == true)
+  }
+
+  @Test func occlusionHealCallbackRestoresActivityAndFocus() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    let tab = state.createTab(activation: .selected)!
+    let surface = state.splitTree(for: tab).root!.leftmostLeaf()
+    state.syncFocus(windowIsKey: false, windowIsVisible: false)
+    #expect(surface.lastOcclusion == false)
+
+    // The user-input heal must restore occlusion AND focus, not just repaint.
+    surface.onOcclusionHeal?(true, true)
+    #expect(surface.lastOcclusion == true)
+    #expect(surface.isFocusedForTesting)
+  }
+
+  @Test func occlusionHealDoesNotInventVisibilityForCoveredWindow() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    let tab = state.createTab(activation: .selected)!
+    let surface = state.splitTree(for: tab).root!.leftmostLeaf()
+    state.syncFocus(windowIsKey: true, windowIsVisible: false)
+    #expect(surface.lastOcclusion == false)
+
+    // Input on a window the server reports covered must not stamp visibility:
+    // that would mark notifications viewed and render a covered surface.
+    surface.onOcclusionHeal?(true, false)
+    #expect(surface.lastOcclusion == false)
+  }
+
+  @Test func staleSurfaceHealClosureIsInert() {
+    HibernationTestSupport.enableHibernation()
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    let liveTab = state.createTab(activation: .selected)!
+    let liveSurface = state.splitTree(for: liveTab).root!.leftmostLeaf()
+    let staleTab = state.createTab(activation: .selected)!
+    let staleSurface = state.splitTree(for: staleTab).root!.leftmostLeaf()
+    let staleHeal = staleSurface.onOcclusionHeal
+    state.selectTab(liveTab)
+    state.hibernateTabForTesting(staleTab)
+    state.syncFocus(windowIsKey: false, windowIsVisible: false)
+    #expect(liveSurface.lastOcclusion == false)
+
+    // A hibernated surface's captured heal closure must not stamp visibility
+    // into the state (the zombie-surface class from PR #648).
+    staleHeal?(true, true)
+    #expect(liveSurface.lastOcclusion == false)
+  }
+
+  @Test func worktreeReselectionHealsForcedOcclusion() {
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      splitPreserveZoomOnNavigation: { false }
+    )
+    state.setWorktreeSelected(true)
+    let tab = state.createTab(activation: .selected)!
+    let surface = state.splitTree(for: tab).root!.leftmostLeaf()
+    state.syncFocus(windowIsKey: true, windowIsVisible: true)
+    #expect(surface.lastOcclusion == true)
+
+    state.setAllSurfacesOccluded()
+    state.setWorktreeSelected(false)
+    #expect(surface.lastOcclusion == false)
+
+    state.setWorktreeSelected(true)
+    #expect(surface.lastOcclusion == true)
+  }
+
+  @Test func reselectionDoesNotOverrideCachedWindowInvisibility() {
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: makeWorktree(),
+      splitPreserveZoomOnNavigation: { false }
+    )
+    state.setWorktreeSelected(true)
+    let tab = state.createTab(activation: .selected)!
+    let surface = state.splitTree(for: tab).root!.leftmostLeaf()
+    state.syncFocus(windowIsKey: true, windowIsVisible: false)
+    #expect(surface.lastOcclusion == false)
+
+    // Re-selection re-derives activity from the cached window state; it must
+    // not invent visibility the window never reported.
+    state.setWorktreeSelected(false)
+    state.setWorktreeSelected(true)
+    #expect(surface.lastOcclusion == false)
+  }
+
   private func makeWorktree(id: String = "/tmp/repo/wt-1") -> Worktree {
     let name = URL(fileURLWithPath: id).lastPathComponent
     return Worktree(
