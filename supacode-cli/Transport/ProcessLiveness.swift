@@ -15,7 +15,8 @@ nonisolated enum ProcessLiveness {
 
   /// Returns true when the process exists, even if it cannot be signaled.
   /// Sandboxes deny signaling the app with EPERM; only ESRCH proves the PID is
-  /// gone. Mirrored in `AgentHookSocketServer.pruneStaleSocketFiles`; keep in sync.
+  /// gone. Mirrored in `AgentHookSocketServer.pruneStaleSocketFiles` and
+  /// `AgentPresenceFeature.isAlive`; keep in sync.
   static func isRunning(_ pid: pid_t) -> Bool {
     let probeSucceeded = kill(pid, 0) == 0
     // Capture errno immediately so a future edit cannot clobber it first.

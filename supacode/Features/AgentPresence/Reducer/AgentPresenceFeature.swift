@@ -315,8 +315,7 @@ struct AgentPresenceFeature {
   nonisolated static func liveness(forSnapshot snapshot: [PresenceKey: Set<pid_t>]) -> [PresenceKey: Set<pid_t>] {
     var result: [PresenceKey: Set<pid_t>] = [:]
     for (key, pids) in snapshot {
-      // `kill(0, 0)` / `kill(-N, 0)` succeed against the caller's process group; reject non-positive pids.
-      let alive = pids.filter { $0 > 0 && kill($0, 0) == 0 }
+      let alive = pids.filter { isAlive($0) }
       if alive != pids {
         result[key] = alive
       }
@@ -380,9 +379,14 @@ struct AgentPresenceFeature {
   }
 
   /// Rejects non-positive pids; `kill(0, ...)` targets process groups, not
-  /// individual processes.
+  /// individual processes. Treats EPERM as alive (sandboxes deny signaling
+  /// live processes) and anything else as dead. Mirrors `ProcessLiveness.isRunning`.
   nonisolated static func isAlive(_ pid: pid_t) -> Bool {
-    pid > 0 && kill(pid, 0) == 0
+    guard pid > 0 else { return false }
+    let probeSucceeded = kill(pid, 0) == 0
+    // Capture errno immediately so a future edit cannot clobber it first.
+    let probeErrno = errno
+    return probeSucceeded || probeErrno == EPERM
   }
 
   /// A hook event that raced ahead of the restore takes precedence.

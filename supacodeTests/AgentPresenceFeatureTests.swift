@@ -1100,12 +1100,25 @@ struct AgentPresenceFeatureTests {
     return event
   }
 
-  /// A pid that does not exist on this machine. Walks up from a high value
-  /// until `kill(pid, 0)` reports no such process, so the test is independent
-  /// of which test runners happen to be live in the host's process table.
+  @Test func isAliveTreatsSignalDeniedProcessAsAlive() {
+    // launchd (pid 1) always exists and denies signals from an unprivileged
+    // process, so the probe errors with EPERM rather than ESRCH.
+    #expect(AgentPresenceFeature.isAlive(1))
+  }
+
+  @Test func isAliveRejectsNonPositiveAndDeadPids() {
+    #expect(AgentPresenceFeature.isAlive(getpid()))
+    #expect(!AgentPresenceFeature.isAlive(0))
+    #expect(!AgentPresenceFeature.isAlive(-1))
+    #expect(!AgentPresenceFeature.isAlive(makeDeadPid()))
+  }
+
+  /// A pid that does not exist on this machine. Walks down from a high value
+  /// until `kill(pid, 0)` reports ESRCH, so the test is independent of which
+  /// processes happen to be live (or signal-denied) in the host's table.
   private func makeDeadPid() -> pid_t {
     var candidate: pid_t = 99_999
-    while kill(candidate, 0) == 0 {
+    while kill(candidate, 0) == 0 || errno == EPERM {
       candidate -= 1
       if candidate <= 1 {
         preconditionFailure("Could not find a dead pid for the test")

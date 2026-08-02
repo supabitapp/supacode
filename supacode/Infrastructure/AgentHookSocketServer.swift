@@ -72,7 +72,8 @@ final class AgentHookSocketServer {
       else { continue }
       // Only ESRCH proves the process is gone; EPERM means it exists but
       // cannot be signaled (e.g. a sandboxed or differently-owned process).
-      // Mirrors `ProcessLiveness.isRunning` in the CLI; keep in sync.
+      // Mirrors `ProcessLiveness.isRunning` in the CLI and
+      // `AgentPresenceFeature.isAlive`; keep in sync.
       let probeResult = kill(pid, 0)
       let probeErrno = errno
       guard probeResult != 0, probeErrno == ESRCH else { continue }
