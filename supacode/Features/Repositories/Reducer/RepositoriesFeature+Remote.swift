@@ -53,7 +53,7 @@ extension RepositoriesFeature {
   /// Host-keyed git worktree id `<user@host:port><remotePath>` so worktrees at
   /// the same path on different hosts (or matching a local path) never collide.
   nonisolated static func remoteWorktreeID(host: RemoteHost, worktreePath: String) -> Worktree.ID {
-    WorktreeID(host.authority + worktreePath)
+    WorktreeID(host.authority + RepositoryLocation.normalizedRemotePath(worktreePath))
   }
 
   /// The persisted remote-repository ids. Read through `@Shared` so every load
@@ -188,7 +188,7 @@ extension RepositoriesFeature {
     // and an unreachable host renders as a placeholder rather than a fake repo.
     switch await classifyRemotePath(remotePath, shell: shell) {
     case .folder:
-      return (remoteFolderRepository(host: host, remotePath: remotePath, repoID: repoID), nil)
+      return (remoteFolderRepository(host: host, remotePath: remotePath), nil)
     case .git where listingThrew:
       // It's a git repo, but the worktree listing threw: collapsing to a single
       // synthetic main would silently hide the repo's other worktrees. Surface a
@@ -361,9 +361,11 @@ extension RepositoriesFeature {
   /// worktrees), so a remote `~` never collides with a local `~` folder.
   nonisolated static func remoteFolderRepository(
     host: RemoteHost,
-    remotePath: String,
-    repoID: Repository.ID
+    remotePath: String
   ) -> Repository {
+    // Normalize like every other remote-id funnel so callers can't bake a
+    // trailing slash into the stored location.
+    let remotePath = RepositoryLocation.normalizedRemotePath(remotePath)
     let folder = Worktree(
       location: .remote(
         host, workingDirectory: remotePath, repositoryRoot: remotePath),

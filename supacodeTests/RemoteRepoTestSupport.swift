@@ -29,8 +29,8 @@ extension RepositoriesFeature {
     remoteMainWorktree(host: config.host, remotePath: config.remotePath)
   }
 
-  static func remoteFolderRepository(config: TestRemoteRepo, repoID: Repository.ID) -> Repository {
-    remoteFolderRepository(host: config.host, remotePath: config.remotePath, repoID: repoID)
+  static func remoteFolderRepository(config: TestRemoteRepo) -> Repository {
+    remoteFolderRepository(host: config.host, remotePath: config.remotePath)
   }
 
   static func remotePlaceholderRepository(config: TestRemoteRepo, repoID: Repository.ID) -> Repository {

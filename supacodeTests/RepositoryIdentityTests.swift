@@ -1,4 +1,5 @@
 import Foundation
+import IdentifiedCollections
 import Testing
 
 @testable import SupacodeSettingsShared
@@ -175,6 +176,89 @@ struct RepositoryIdentityTests {
     #expect(!git.isFolder)
     // Same location yields the same id regardless of kind.
     #expect(folder.id == git.id)
+  }
+
+  // MARK: - Syscall-free synthetic URLs (gh-764)
+
+  @Test func remoteSyntheticURLsPreserveThePath() {
+    let host = RemoteHost(alias: "box")
+    let location = WorktreeLocation.remote(host, workingDirectory: "/srv/repo/wt", repositoryRoot: "/srv/repo")
+    #expect(location.workingDirectory.path(percentEncoded: false) == "/srv/repo/wt")
+    #expect(location.repositoryRootURL.path(percentEncoded: false) == "/srv/repo")
+    #expect(RepositoryLocation.remote(host, path: "/srv/repo").displayURL.path(percentEncoded: false) == "/srv/repo")
+  }
+
+  @Test func remoteSyntheticURLsIgnoreLocalDiskState() {
+    // "/Users" exists locally as a directory; the synthetic remote URL must not
+    // grow a trailing slash from a local stat.
+    let host = RemoteHost(alias: "box")
+    let location = WorktreeLocation.remote(host, workingDirectory: "/Users", repositoryRoot: "/Users")
+    #expect(location.workingDirectory.absoluteString == "file:///Users")
+    #expect(location.repositoryRootURL.absoluteString == "file:///Users")
+    #expect(RepositoryLocation.remote(host, path: "/Users").displayURL.absoluteString == "file:///Users")
+  }
+
+  // MARK: - Main-worktree geometry
+
+  @Test func remoteMainWorktreeGeometryComparesStoredStrings() {
+    let host = RemoteHost(alias: "box")
+    #expect(WorktreeLocation.remote(host, workingDirectory: "/srv/repo", repositoryRoot: "/srv/repo").isMainWorktree)
+    #expect(
+      !WorktreeLocation.remote(host, workingDirectory: "/srv/repo/wt", repositoryRoot: "/srv/repo").isMainWorktree)
+  }
+
+  @Test func localMainWorktreeGeometryStandardizesBeforeComparing() {
+    let main = WorktreeLocation.local(
+      workingDirectory: URL(fileURLWithPath: "/repo", isDirectory: true),
+      repositoryRoot: URL(fileURLWithPath: "/repo", isDirectory: true)
+    )
+    #expect(main.isMainWorktree)
+    let linked = WorktreeLocation.local(
+      workingDirectory: URL(fileURLWithPath: "/repo/wt", isDirectory: true),
+      repositoryRoot: URL(fileURLWithPath: "/repo", isDirectory: true)
+    )
+    #expect(!linked.isMainWorktree)
+  }
+
+  @Test func worktreeBakesMainGeometryAtInit() {
+    let host = RemoteHost(alias: "box")
+    let main = Worktree(
+      location: .remote(host, workingDirectory: "/srv/repo", repositoryRoot: "/srv/repo"),
+      kind: .git, name: "repo", detail: "")
+    #expect(main.isMainWorktree)
+    let linked = Worktree(
+      location: .remote(host, workingDirectory: "/srv/repo-wt", repositoryRoot: "/srv/repo"),
+      kind: .git, name: "wt", detail: "")
+    #expect(!linked.isMainWorktree)
+  }
+
+  // MARK: - Remote path normalization at the back-compat funnels
+
+  @Test func backCompatWorktreeInitTrimsRemoteTrailingSlashes() {
+    let host = RemoteHost(alias: "box")
+    let worktree = Worktree(
+      id: "box/srv/repo",
+      kind: .git,
+      name: "repo",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/srv/repo/", isDirectory: true),
+      repositoryRootURL: URL(fileURLWithPath: "/srv/repo/", isDirectory: true),
+      host: host
+    )
+    #expect(worktree.location == .remote(host, workingDirectory: "/srv/repo", repositoryRoot: "/srv/repo"))
+    #expect(worktree.isMainWorktree)
+  }
+
+  @Test func backCompatRepositoryInitTrimsRemoteTrailingSlash() {
+    let host = RemoteHost(alias: "box")
+    let repository = Repository(
+      id: "box/srv/repo",
+      rootURL: URL(fileURLWithPath: "/srv/repo/", isDirectory: true),
+      name: "repo",
+      worktrees: [],
+      host: host
+    )
+    #expect(repository.location == .remote(host, path: "/srv/repo"))
   }
 
   @Test func worktreeLocationExposesOwningRepositoryLocation() {

@@ -259,14 +259,28 @@ enum SidebarDisplayName {
   ) -> String? {
     guard !isMainWorktree else { return nil }
     if id.rawValue.contains("/") {
-      let pathName = URL(fileURLWithPath: id.rawValue).lastPathComponent
+      let pathName = lastPathComponent(of: id.rawValue)
       if !pathName.isEmpty { return pathName }
     }
     if let subtitle, !subtitle.isEmpty, subtitle != "." {
-      let detailName = URL(fileURLWithPath: subtitle).lastPathComponent
+      let detailName = lastPathComponent(of: subtitle)
       if !detailName.isEmpty, detailName != "." { return detailName }
     }
     return branchName
+  }
+
+  /// Lexical `lastPathComponent`: no URL synthesis, since remote row ids are
+  /// relative strings that `fileURLWithPath` would resolve against the cwd and
+  /// stat on every per-tick recompute (gh-764).
+  private static func lastPathComponent(of path: String) -> String {
+    var trimmed = Substring(path)
+    while trimmed.count > 1, trimmed.hasSuffix("/") {
+      trimmed = trimmed.dropLast()
+    }
+    guard let slash = trimmed.lastIndex(of: "/"), trimmed.index(after: slash) < trimmed.endIndex else {
+      return String(trimmed)
+    }
+    return String(trimmed[trimmed.index(after: slash)...])
   }
 
   /// Returns `custom` when set (after trim), otherwise `fallback`. Shared so

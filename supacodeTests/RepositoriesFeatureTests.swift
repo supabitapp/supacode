@@ -7965,6 +7965,16 @@ struct RepositoriesFeatureTests {
     #expect(row.sidebarDisplayName == "wt-folder")
   }
 
+  @Test func sidebarDisplayNameUsesLeafOfRemoteHostKeyedId() {
+    let row = makeSidebarItem(id: "me@box:2222/srv/repo/wt", name: "feature/branch")
+    #expect(row.sidebarDisplayName == "wt")
+  }
+
+  @Test func sidebarDisplayNameIgnoresTrailingSlashInId() {
+    let row = makeSidebarItem(id: "/tmp/repo/wt/", name: "feature/branch")
+    #expect(row.sidebarDisplayName == "wt")
+  }
+
   @Test func sidebarDisplayNameFallsBackToBranchNameWhenIdAndSubtitleEmpty() {
     let row = makeSidebarItem(id: "row-no-slash", name: "feature/branch", detail: "")
     #expect(row.sidebarDisplayName == "feature/branch")

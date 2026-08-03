@@ -56,7 +56,10 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
     host: RemoteHost? = nil
   ) {
     if let host {
-      self.location = .remote(host, path: rootURL.path(percentEncoded: false))
+      // Normalize so a remote path that happens to exist locally as a directory
+      // can't bake a disk-state-dependent trailing slash into the stored path.
+      self.location = .remote(
+        host, path: RepositoryLocation.normalizedRemotePath(rootURL.path(percentEncoded: false)))
     } else {
       self.location = .local(rootURL)
     }

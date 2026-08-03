@@ -86,7 +86,9 @@ nonisolated enum RepositoryLocation: Hashable, Sendable {
   var displayURL: URL {
     switch self {
     case .local(let url): url
-    case .remote(_, let path): URL(fileURLWithPath: path)
+    // `.inferFromPath` skips `fileURLWithPath`'s stat; the path is remote, so
+    // local disk state must not shape the URL (gh-764: main-actor lstat storms).
+    case .remote(_, let path): URL(filePath: path, directoryHint: .inferFromPath)
     }
   }
 
@@ -109,8 +111,8 @@ nonisolated enum RepositoryLocation: Hashable, Sendable {
     }
   }
 
-  /// Trailing-slash-trimmed remote path, kept stable so a cosmetic edit doesn't
-  /// churn the derived id.
+  /// Whitespace- and trailing-slash-trimmed remote path, so neither a cosmetic
+  /// edit nor a disk-state-dependent slash churns the derived id.
   static func normalizedRemotePath(_ path: String) -> String {
     var trimmed = Substring(path.trimmingCharacters(in: .whitespaces))
     while trimmed.count > 1, trimmed.hasSuffix("/") {
@@ -163,14 +165,28 @@ nonisolated enum WorktreeLocation: Hashable, Sendable {
   var workingDirectory: URL {
     switch self {
     case .local(let workingDirectory, _): workingDirectory
-    case .remote(_, let workingDirectory, _): URL(fileURLWithPath: workingDirectory)
+    // `.inferFromPath` skips `fileURLWithPath`'s stat; the path is remote, so
+    // local disk state must not shape the URL (gh-764: main-actor lstat storms).
+    case .remote(_, let workingDirectory, _): URL(filePath: workingDirectory, directoryHint: .inferFromPath)
     }
   }
 
   var repositoryRootURL: URL {
     switch self {
     case .local(_, let repositoryRoot): repositoryRoot
-    case .remote(_, _, let repositoryRoot): URL(fileURLWithPath: repositoryRoot)
+    case .remote(_, _, let repositoryRoot): URL(filePath: repositoryRoot, directoryHint: .inferFromPath)
+    }
+  }
+
+  /// The git-main / folder-synthetic geometry: the working directory IS the
+  /// repository root. Remote arms compare stored strings so roster-wide scans
+  /// never synthesize URLs (gh-764).
+  var isMainWorktree: Bool {
+    switch self {
+    case .local(let workingDirectory, let repositoryRoot):
+      workingDirectory.standardizedFileURL == repositoryRoot.standardizedFileURL
+    case .remote(_, let workingDirectory, let repositoryRoot):
+      workingDirectory == repositoryRoot
     }
   }
 

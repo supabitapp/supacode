@@ -28,6 +28,13 @@ struct RemoteRepositoryHelpersTests {
     #expect(id == "devbox/tmp/repo/wt")
   }
 
+  @Test func remoteWorktreeIDTrimsTrailingSlash() {
+    // A path that exists locally as a directory picks up a trailing slash on
+    // the URL round-trip; the id must stay slash-free regardless of disk state.
+    let id = RepositoriesFeature.remoteWorktreeID(host: RemoteHost(alias: "devbox"), worktreePath: "/tmp/repo/wt/")
+    #expect(id == "devbox/tmp/repo/wt")
+  }
+
   @Test func remoteWorktreeInjectsHostAndHostKeyedID() {
     let host = RemoteHost(alias: "devbox", username: "alice")
     let base = Worktree(
@@ -225,7 +232,7 @@ struct RemoteSidebarMergedListTests {
       displayName: "docs"
     )
     let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
-    let folderRepo = RepositoriesFeature.remoteFolderRepository(config: config, repoID: repoID)
+    let folderRepo = RepositoriesFeature.remoteFolderRepository(config: config)
     let state = makeState(repositories: [folderRepo])
 
     let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
@@ -750,6 +757,7 @@ struct SaveRemoteConnectionTests {
       #expect(store.state.sidebar.sections[targetID] == nil)
     }
   }
+
 }
 
 struct RemotePathClassificationTests {
@@ -951,7 +959,7 @@ struct RemotePathClassificationTests {
       displayName: ""
     )
     let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
-    let repo = RepositoriesFeature.remoteFolderRepository(config: config, repoID: repoID)
+    let repo = RepositoriesFeature.remoteFolderRepository(config: config)
 
     #expect(repo.isGitRepository == false)
     #expect(repo.host?.sshDestination == "devbox")
