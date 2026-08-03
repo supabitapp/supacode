@@ -261,6 +261,30 @@ struct RepositoryIdentityTests {
     #expect(repository.location == .remote(host, path: "/srv/repo"))
   }
 
+  // MARK: - Folder row id resolution
+
+  @Test func folderRowIDResolvesLocalPathAndRemoteHostKeyedIDs() {
+    let localRoot = URL(fileURLWithPath: "/Users/me/notes", isDirectory: true)
+    let local = Repository(
+      location: .local(localRoot), kind: .folder, name: "notes", worktrees: [])
+    #expect(local.folderRowID == Repository.folderWorktreeID(for: localRoot))
+
+    let host = RemoteHost(alias: "box")
+    let folder = Worktree(
+      location: .remote(host, workingDirectory: "/home/me/notes", repositoryRoot: "/home/me/notes"),
+      kind: .folder, name: "notes", detail: "")
+    let remote = Repository(
+      location: .remote(host, path: "/home/me/notes"), kind: .folder, name: "notes",
+      worktrees: [folder])
+    #expect(remote.folderRowID == folder.id)
+    #expect(remote.folderRowID == WorktreeID("box/home/me/notes"))
+
+    let emptyRemote = Repository(
+      location: .remote(host, path: "/home/me/notes"), kind: .folder, name: "notes",
+      worktrees: [])
+    #expect(emptyRemote.folderRowID == nil)
+  }
+
   @Test func worktreeLocationExposesOwningRepositoryLocation() {
     let host = RemoteHost(alias: "box")
     let remote = WorktreeLocation.remote(host, workingDirectory: "/repo/wt", repositoryRoot: "/repo")

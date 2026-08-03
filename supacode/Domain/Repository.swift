@@ -128,6 +128,22 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
     WorktreeID(RepositoryLocation.local(rootURL.standardizedFileURL).id.rawValue)
   }
 
+  /// Sidebar row id of a folder repository's synthetic worktree. A remote
+  /// folder keys its row off the host-scoped worktree id, not the local path
+  /// id, so it can't collide with a local folder at the same path.
+  var folderRowID: Worktree.ID? {
+    host != nil ? worktrees.first?.id : Self.folderWorktreeID(for: rootURL)
+  }
+
+  /// Fallback folder row id for cleanup after the repository left the roster.
+  /// A remote folder's synthetic row id equals its repo id; a local path
+  /// re-derives it.
+  nonisolated static func orphanFolderRowID(for repositoryID: Repository.ID) -> Worktree.ID {
+    repositoryID.rawValue.hasPrefix("/")
+      ? folderWorktreeID(for: URL(fileURLWithPath: repositoryID.rawValue))
+      : WorktreeID(repositoryID.rawValue)
+  }
+
   /// Shared trim + fallback for the sidebar header and the highlight-row tag.
   /// Trims `custom`; falls back to `fallback` when the trimmed value is empty.
   static func sidebarDisplayName(custom: String?, fallback: String) -> String {

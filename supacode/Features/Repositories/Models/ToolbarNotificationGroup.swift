@@ -96,7 +96,7 @@ extension RepositoriesFeature.State {
         let isFolder = !repository.isGitRepository
         // A folder's title / tint live on its synthetic row, not the repo
         // section; resolve there so a customized folder header matches the sidebar.
-        let folderRow = isFolder ? sidebarItems[id: Repository.folderWorktreeID(for: repository.rootURL)] : nil
+        let folderRow = isFolder ? repository.folderRowID.flatMap { sidebarItems[id: $0] } : nil
         let section = sidebar.sections[repositoryID]
         groups.append(
           ToolbarNotificationRepositoryGroup(

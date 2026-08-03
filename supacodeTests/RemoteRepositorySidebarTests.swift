@@ -758,6 +758,26 @@ struct SaveRemoteConnectionTests {
     }
   }
 
+  @Test(.dependencies) func repositoriesRemovedPrunesRemoteConfig() async {
+    // The folder-delete pipeline's batch terminal must drop the remote config,
+    // or the `.repositoriesLoaded` roster merge resurrects the removed repo.
+    await withRemoteStore { store in
+      let target = TestRemoteRepo(
+        host: RemoteHost(alias: "devbox"),
+        remotePath: "/home/me/notes",
+        displayName: ""
+      )
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [target.id.rawValue] }
+      let repo = RepositoriesFeature.remoteFolderRepository(config: target)
+
+      await store.send(.repositoriesRemoved([repo.id], selectionWasRemoved: false))
+      await store.finish()
+
+      #expect(remoteRepositories().isEmpty)
+      #expect(store.state.repositories[id: repo.id] == nil)
+    }
+  }
 }
 
 struct RemotePathClassificationTests {

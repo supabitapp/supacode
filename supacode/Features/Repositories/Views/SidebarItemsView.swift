@@ -757,8 +757,7 @@ private struct SidebarItemContextMenu: View {
     }
     if !isBulkSelection, rowIsFolder, row.host != nil {
       // A remote folder is the remote repository; its row has no section header,
-      // so removal lives here and must drop the config (the local delete
-      // pipeline only prunes local roots and would leave the config to reappear).
+      // so surface the dedicated remote-removal flow (and its clearer copy) here.
       Button("Remove Remote Repository…", systemImage: "trash", role: .destructive) {
         store.send(.requestDeleteRepository(repositoryID))
       }
