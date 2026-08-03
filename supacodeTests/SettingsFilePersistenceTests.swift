@@ -288,6 +288,63 @@ struct SettingsFilePersistenceTests {
     #expect(reloaded.global.notificationSound == .submarine)
   }
 
+  @Test(.dependencies) func roundTripsCustomNotificationSound() throws {
+    let storage = SettingsTestStorage()
+    let custom = CustomNotificationSound(
+      displayName: "My Bell",
+      fileName: "supacode-custom-notification-bell.wav"
+    )
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock {
+        $0.global.notificationSound = .custom
+        $0.global.customNotificationSound = custom
+      }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(reloaded.global.notificationSound == .custom)
+    #expect(reloaded.global.customNotificationSound == custom)
+  }
+
+  @Test(.dependencies) func customSelectionWithoutMetadataFallsBackToDefault() throws {
+    var global = GlobalSettings.default
+    global.systemNotificationsEnabled = true
+    let encoded = try JSONEncoder().encode(global)
+    var globalDict = try #require(
+      try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    )
+    globalDict["notificationSound"] = "custom"
+    globalDict["customNotificationSound"] = [
+      "displayName": 42,
+      "fileName": ["invalid"],
+    ]
+    let data = try JSONSerialization.data(
+      withJSONObject: ["global": globalDict, "repositories": [:]]
+    )
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.notificationSound == GlobalSettings.default.notificationSound)
+    #expect(settings.global.customNotificationSound == nil)
+    #expect(settings.global.systemNotificationsEnabled)
+  }
+
   @Test(.dependencies) func migratesLegacyNotificationSoundEnabledFalseToNever() throws {
     // A pre-picker file with the sound explicitly muted must stay muted, not
     // resurface as the default sound on upgrade.

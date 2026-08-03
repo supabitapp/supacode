@@ -9,6 +9,40 @@ private nonisolated let deeplinkUserInfoKey = "supacode.deeplink"
 
 private nonisolated let systemNotificationLogger = SupaLogger("SystemNotifications")
 
+enum SystemNotificationSound: Equatable, Sendable {
+  case none
+  case `default`
+  case named(String)
+}
+
+nonisolated enum SystemNotificationSoundResolver {
+  static func resolve(
+    _ configuration: NotificationSoundConfiguration,
+    soundsDirectory: URL = ManagedNotificationSoundStorage.defaultSoundsDirectory,
+    fileManager: FileManager = .default
+  ) -> SystemNotificationSound {
+    switch configuration.sound {
+    case .never:
+      return .none
+    case .custom:
+      guard let customSound = configuration.customSound,
+        let url = ManagedNotificationSoundStorage.fileURL(
+          for: customSound,
+          soundsDirectory: soundsDirectory
+        ),
+        fileManager.fileExists(atPath: url.path)
+      else {
+        return .default
+      }
+      return .named(customSound.fileName)
+    default:
+      return configuration.sound.usesSelectedSoundForSystemNotifications
+        ? .named("notification.wav")
+        : .default
+    }
+  }
+}
+
 @MainActor
 private final class ForegroundSystemNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
   var onDeeplinkTap: ((URL) -> Void)?
@@ -79,13 +113,25 @@ public nonisolated struct SystemNotificationClient: Sendable {
 
   public var authorizationStatus: @MainActor @Sendable () async -> AuthorizationStatus
   public var requestAuthorization: @MainActor @Sendable () async -> AuthorizationRequestResult
-  public var send: @MainActor @Sendable (_ title: String, _ body: String, _ deeplinkURL: URL?) async -> Void
+  public var send:
+    @MainActor @Sendable (
+      _ title: String,
+      _ body: String,
+      _ deeplinkURL: URL?,
+      _ sound: NotificationSoundConfiguration
+    ) async -> Void
   public var openSettings: @MainActor @Sendable () async -> Void
 
   public init(
     authorizationStatus: @escaping @MainActor @Sendable () async -> AuthorizationStatus,
     requestAuthorization: @escaping @MainActor @Sendable () async -> AuthorizationRequestResult,
-    send: @escaping @MainActor @Sendable (_ title: String, _ body: String, _ deeplinkURL: URL?) async -> Void,
+    send:
+      @escaping @MainActor @Sendable (
+        _ title: String,
+        _ body: String,
+        _ deeplinkURL: URL?,
+        _ sound: NotificationSoundConfiguration
+      ) async -> Void,
     openSettings: @escaping @MainActor @Sendable () async -> Void
   ) {
     self.authorizationStatus = authorizationStatus
@@ -95,8 +141,8 @@ public nonisolated struct SystemNotificationClient: Sendable {
   }
 }
 
-extension SystemNotificationClient: DependencyKey {
-  public static let liveValue = SystemNotificationClient(
+extension SystemNotificationClient {
+  public static let live = SystemNotificationClient(
     authorizationStatus: {
       let center = configuredNotificationCenter()
       let settings = await center.notificationSettings()
@@ -125,12 +171,22 @@ extension SystemNotificationClient: DependencyKey {
         )
       }
     },
-    send: { title, body, deeplinkURL in
+    send: { title, body, deeplinkURL, soundConfiguration in
       let center = configuredNotificationCenter()
       let content = UNMutableNotificationContent()
       content.title = title
       content.body = body
-      content.sound = .default
+      switch SystemNotificationSoundResolver.resolve(soundConfiguration) {
+      case .none:
+        content.sound = nil
+      case .default:
+        content.sound = .default
+      case .named(let fileName):
+        content.sound = UNNotificationSound(
+          named: UNNotificationSoundName(rawValue: fileName)
+        )
+      }
+
       if let deeplinkURL {
         content.userInfo = [deeplinkUserInfoKey: deeplinkURL.absoluteString]
       }
@@ -139,7 +195,13 @@ extension SystemNotificationClient: DependencyKey {
         content: content,
         trigger: nil
       )
-      try? await center.add(request)
+      do {
+        try await center.add(request)
+      } catch {
+        systemNotificationLogger.error(
+          "Failed to deliver system notification: \(error.localizedDescription)"
+        )
+      }
     },
     openSettings: {
       guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") else {
@@ -148,11 +210,15 @@ extension SystemNotificationClient: DependencyKey {
       _ = NSWorkspace.shared.open(url)
     }
   )
+}
+
+extension SystemNotificationClient: DependencyKey {
+  public static let liveValue = live
 
   public static let testValue = SystemNotificationClient(
     authorizationStatus: { .notDetermined },
     requestAuthorization: { AuthorizationRequestResult(granted: false, errorMessage: nil) },
-    send: { _, _, _ in },
+    send: { _, _, _, _ in },
     openSettings: {}
   )
 }

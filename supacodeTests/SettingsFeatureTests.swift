@@ -205,12 +205,12 @@ struct SettingsFeatureTests {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = .default }
 
-    let played = LockIsolated<[NotificationSound]>([])
+    let played = LockIsolated<[NotificationSoundConfiguration]>([])
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
     } withDependencies: {
-      $0[NotificationSoundClient.self].play = { sound in
-        played.withValue { $0.append(sound) }
+      $0[NotificationSoundClient.self].play = { configuration in
+        played.withValue { $0.append(configuration) }
       }
     }
 
@@ -220,21 +220,25 @@ struct SettingsFeatureTests {
     await store.receive(\.delegate.settingsChanged)
 
     // Picking a sound auditions it through the in-app player.
-    #expect(played.value == [.glass])
+    #expect(
+      played.value == [
+        NotificationSoundConfiguration(sound: .glass, customSound: nil)
+      ]
+    )
   }
 
-  @Test(.dependencies) func doesNotPreviewWhenSystemNotificationsEnabled() async {
+  @Test(.dependencies) func doesNotPreviewSystemSoundWhenSystemNotificationsEnabled() async {
     var settings = GlobalSettings.default
     settings.systemNotificationsEnabled = true
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = settings }
 
-    let played = LockIsolated<[NotificationSound]>([])
+    let played = LockIsolated<[NotificationSoundConfiguration]>([])
     let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
       SettingsFeature()
     } withDependencies: {
-      $0[NotificationSoundClient.self].play = { sound in
-        played.withValue { $0.append(sound) }
+      $0[NotificationSoundClient.self].play = { configuration in
+        played.withValue { $0.append(configuration) }
       }
     }
 
@@ -243,7 +247,6 @@ struct SettingsFeatureTests {
     }
     await store.receive(\.delegate.settingsChanged)
 
-    // With system notifications on the in-app path is unused, so no preview.
     #expect(played.value.isEmpty)
   }
 
@@ -251,7 +254,7 @@ struct SettingsFeatureTests {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = .default }
 
-    let played = LockIsolated<[NotificationSound]>([])
+    let played = LockIsolated<[NotificationSoundConfiguration]>([])
     let store = TestStore(initialState: SettingsFeature.State()) {
       SettingsFeature()
     } withDependencies: {
@@ -267,6 +270,304 @@ struct SettingsFeatureTests {
 
     // "Never" has nothing to audition.
     #expect(played.value.isEmpty)
+  }
+
+  @Test(.dependencies) func importingCustomSoundPersistsSelectsAndPreviewsIt() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+    let imported = CustomNotificationSound(
+      displayName: "My Bell",
+      fileName: "supacode-custom-notification-bell.wav"
+    )
+    let played = LockIsolated<[NotificationSoundConfiguration]>([])
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.importSound = { _ in imported }
+      $0.notificationSoundClient.play = { configuration in
+        played.withValue { $0.append(configuration) }
+      }
+    }
+
+    await store.send(
+      .customNotificationSoundSelected(URL(filePath: "/tmp/My Bell.wav"))
+    ) {
+      $0.isManagingCustomNotificationSound = true
+    }
+    await store.receive(\.customNotificationSoundImported) {
+      $0.isManagingCustomNotificationSound = false
+      $0.customNotificationSound = imported
+      $0.notificationSound = .custom
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.notificationSound == .custom)
+    #expect(settingsFile.global.customNotificationSound == imported)
+    #expect(
+      played.value == [
+        NotificationSoundConfiguration(sound: .custom, customSound: imported)
+      ]
+    )
+  }
+
+  @Test(.dependencies) func replacingCustomSoundPersistsBeforeRemovingPreviousFile() async {
+    let previous = CustomNotificationSound(
+      displayName: "Previous",
+      fileName: "supacode-custom-notification-previous.wav"
+    )
+    let imported = CustomNotificationSound(
+      displayName: "Replacement",
+      fileName: "supacode-custom-notification-replacement.wav"
+    )
+    var settings = GlobalSettings.default
+    settings.notificationSound = .custom
+    settings.customNotificationSound = previous
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+    let removed = LockIsolated<[CustomNotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.importSound = { _ in imported }
+      $0.customNotificationSoundClient.removeSound = { sound in
+        @Shared(.settingsFile) var persistedSettings
+        #expect(persistedSettings.global.customNotificationSound == imported)
+        removed.withValue { $0.append(sound) }
+      }
+      $0.notificationSoundClient.play = { _ in }
+    }
+
+    await store.send(
+      .customNotificationSoundSelected(URL(filePath: "/tmp/Replacement.wav"))
+    ) {
+      $0.isManagingCustomNotificationSound = true
+    }
+    await store.receive(\.customNotificationSoundImported) {
+      $0.isManagingCustomNotificationSound = false
+      $0.customNotificationSound = imported
+    }
+    await store.receive(\.delegate.settingsChanged)
+    await store.finish()
+
+    #expect(removed.value == [previous])
+    #expect(settingsFile.global.customNotificationSound == imported)
+  }
+
+  @Test(.dependencies) func replacementKeepsNewSoundWhenPreviousFileCleanupFails() async {
+    let previous = CustomNotificationSound(
+      displayName: "Previous",
+      fileName: "supacode-custom-notification-previous.wav"
+    )
+    let imported = CustomNotificationSound(
+      displayName: "Replacement",
+      fileName: "supacode-custom-notification-replacement.wav"
+    )
+    var settings = GlobalSettings.default
+    settings.notificationSound = .custom
+    settings.customNotificationSound = previous
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.importSound = { _ in imported }
+      $0.customNotificationSoundClient.removeSound = { _ in
+        throw CocoaError(.fileWriteNoPermission)
+      }
+      $0.notificationSoundClient.play = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .customNotificationSoundSelected(URL(filePath: "/tmp/Replacement.wav"))
+    )
+    await store.receive(\.customNotificationSoundImported)
+    await store.finish()
+
+    #expect(store.state.customNotificationSound == imported)
+    #expect(settingsFile.global.customNotificationSound == imported)
+  }
+
+  @Test(.dependencies) func removingSelectedCustomSoundDeletesItAndRestoresDefault() async {
+    let custom = CustomNotificationSound(
+      displayName: "My Bell",
+      fileName: "supacode-custom-notification-bell.wav"
+    )
+    var settings = GlobalSettings.default
+    settings.notificationSound = .custom
+    settings.customNotificationSound = custom
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+    let removed = LockIsolated<[CustomNotificationSound]>([])
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.removeSound = { sound in
+        @Shared(.settingsFile) var persistedSettings
+        #expect(persistedSettings.global.customNotificationSound == nil)
+        #expect(
+          persistedSettings.global.notificationSound
+            == GlobalSettings.default.notificationSound
+        )
+        removed.withValue { $0.append(sound) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.removeCustomNotificationSoundTapped)
+    await store.send(.alert(.presented(.confirmRemoveCustomNotificationSound))) {
+      $0.isManagingCustomNotificationSound = true
+    }
+    await store.receive(\.customNotificationSoundRemoved) {
+      $0.isManagingCustomNotificationSound = false
+      $0.customNotificationSound = nil
+      $0.notificationSound = GlobalSettings.default.notificationSound
+    }
+    await store.finish()
+
+    #expect(removed.value == [custom])
+    #expect(settingsFile.global.customNotificationSound == nil)
+    #expect(
+      settingsFile.global.notificationSound
+        == GlobalSettings.default.notificationSound
+    )
+  }
+
+  @Test(.dependencies) func failedCustomSoundImportPreservesCurrentSelection() async {
+    let current = CustomNotificationSound(
+      displayName: "Current",
+      fileName: "supacode-custom-notification-current.wav"
+    )
+    var settings = GlobalSettings.default
+    settings.notificationSound = .custom
+    settings.customNotificationSound = current
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.importSound = { _ in
+        throw CustomNotificationSoundImportError.unsupportedEncoding
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .customNotificationSoundSelected(URL(filePath: "/tmp/Unsupported.caf"))
+    )
+    await store.receive(\.customNotificationSoundImported)
+    await store.receive(\.customNotificationSoundImportFailed)
+    await store.finish()
+
+    #expect(store.state.notificationSound == .custom)
+    #expect(store.state.customNotificationSound == current)
+    #expect(!store.state.isManagingCustomNotificationSound)
+    #expect(store.state.alert != nil)
+    #expect(settingsFile.global.customNotificationSound == current)
+  }
+
+  @Test(.dependencies) func ignoresCustomSoundSelectionWhileImportIsRunning() async {
+    var state = SettingsFeature.State()
+    state.isManagingCustomNotificationSound = true
+    let imports = LockIsolated(0)
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.importSound = { _ in
+        imports.withValue { $0 += 1 }
+        throw CustomNotificationSoundImportError.unreadable
+      }
+    }
+
+    await store.send(
+      .customNotificationSoundSelected(URL(filePath: "/tmp/Second.wav"))
+    )
+    await store.send(.removeCustomNotificationSoundTapped)
+
+    #expect(imports.value == 0)
+    #expect(store.state.isManagingCustomNotificationSound)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func failedCustomSoundRemovalPreservesFileMetadata() async {
+    let custom = CustomNotificationSound(
+      displayName: "Current",
+      fileName: "supacode-custom-notification-current.wav"
+    )
+    var settings = GlobalSettings.default
+    settings.notificationSound = .custom
+    settings.customNotificationSound = custom
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.removeSound = { _ in
+        @Shared(.settingsFile) var persistedSettings
+        #expect(persistedSettings.global.customNotificationSound == nil)
+        throw CocoaError(.fileWriteNoPermission)
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.removeCustomNotificationSoundTapped)
+    await store.send(.alert(.presented(.confirmRemoveCustomNotificationSound))) {
+      $0.isManagingCustomNotificationSound = true
+    }
+    await store.receive(\.customNotificationSoundRemoved) {
+      $0.isManagingCustomNotificationSound = false
+    }
+    await store.finish()
+
+    #expect(store.state.notificationSound == .custom)
+    #expect(store.state.customNotificationSound == custom)
+    #expect(store.state.alert != nil)
+    #expect(settingsFile.global.customNotificationSound == custom)
+  }
+
+  @Test(.dependencies) func successfulRemovalClearsMetadataAfterInterveningSettingsWrite() async {
+    let custom = CustomNotificationSound(
+      displayName: "My Bell",
+      fileName: "supacode-custom-notification-bell.wav"
+    )
+    var settings = GlobalSettings.default
+    settings.notificationSound = .custom
+    settings.customNotificationSound = custom
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = settings }
+    let (removalStarted, removalStartedContinuation) = AsyncStream<Void>.makeStream()
+    let (removalGate, removalGateContinuation) = AsyncStream<Void>.makeStream()
+    let store = TestStore(initialState: SettingsFeature.State(settings: settings)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.customNotificationSoundClient.removeSound = { _ in
+        removalStartedContinuation.yield()
+        for await _ in removalGate {
+          break
+        }
+      }
+    }
+    store.exhaustivity = .off
+    var removalStartedIterator = removalStarted.makeAsyncIterator()
+
+    await store.send(.removeCustomNotificationSoundTapped)
+    await store.send(.alert(.presented(.confirmRemoveCustomNotificationSound))) {
+      $0.isManagingCustomNotificationSound = true
+    }
+    _ = await removalStartedIterator.next()
+    await store.send(.binding(.set(\.muteNotificationsForActiveSurface, true))) {
+      $0.muteNotificationsForActiveSurface = true
+    }
+    removalGateContinuation.yield()
+    await store.receive(\.customNotificationSoundRemoved) {
+      $0.isManagingCustomNotificationSound = false
+      $0.customNotificationSound = nil
+      $0.notificationSound = GlobalSettings.default.notificationSound
+    }
+    await store.finish()
+
+    #expect(settingsFile.global.customNotificationSound == nil)
+    #expect(settingsFile.global.muteNotificationsForActiveSurface)
   }
 
   @Test(.dependencies) func enablingDisabledByDefaultShortcutBindsItsDefault() async {

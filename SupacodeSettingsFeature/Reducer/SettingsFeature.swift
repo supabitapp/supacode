@@ -54,6 +54,7 @@ public struct SettingsFeature {
     public var updatesAutomaticallyDownloadUpdates: Bool
     public var inAppNotificationsEnabled: Bool
     public var notificationSound: NotificationSound
+    public var customNotificationSound: CustomNotificationSound?
     public var systemNotificationsEnabled: Bool
     public var muteNotificationsForActiveSurface: Bool
     public var moveNotifiedWorktreeToTop: Bool
@@ -82,6 +83,7 @@ public struct SettingsFeature {
     public var remoteSessionPersistenceEnabled: Bool
     public var appVisibility: AppVisibility
     public var terminalHibernationEnabled: Bool
+    public var isManagingCustomNotificationSound = false
     public var cliInstallState = CLIInstallState.checking
     /// Installed editors in menu order, resolved once off the picker's body.
     public var installedOpenActions: [OpenWorktreeAction]
@@ -121,6 +123,13 @@ public struct SettingsFeature {
       SkillAgent.allCasesByDisplayName.filter { (agentIntegrationStates[$0] ?? .checking).isInstallSheetCandidate }
     }
 
+    public var notificationSoundConfiguration: NotificationSoundConfiguration {
+      NotificationSoundConfiguration(
+        sound: notificationSound,
+        customSound: customNotificationSound
+      )
+    }
+
     public init(settings: GlobalSettings = .default) {
       @Dependency(\.openActionAvailability) var openActionAvailability
       installedOpenActions = openActionAvailability.installedActions()
@@ -131,6 +140,7 @@ public struct SettingsFeature {
       updatesAutomaticallyDownloadUpdates = settings.updatesAutomaticallyDownloadUpdates
       inAppNotificationsEnabled = settings.inAppNotificationsEnabled
       notificationSound = settings.notificationSound
+      customNotificationSound = settings.customNotificationSound
       systemNotificationsEnabled = settings.systemNotificationsEnabled
       muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
@@ -171,6 +181,7 @@ public struct SettingsFeature {
         updatesAutomaticallyDownloadUpdates: updatesAutomaticallyDownloadUpdates,
         inAppNotificationsEnabled: inAppNotificationsEnabled,
         notificationSound: notificationSound,
+        customNotificationSound: customNotificationSound,
         systemNotificationsEnabled: systemNotificationsEnabled,
         muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
@@ -211,6 +222,11 @@ public struct SettingsFeature {
     case repositoriesChanged([SettingsRepositorySummary])
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
+    case customNotificationSoundSelected(URL)
+    case customNotificationSoundImportFailed(String)
+    case customNotificationSoundImported(Result<CustomNotificationSound, Error>)
+    case removeCustomNotificationSoundTapped
+    case customNotificationSoundRemoved(Result<Void, Error>)
     case setAppVisibility(AppVisibility)
     case setAutomatedActionPolicy(AutomatedActionPolicy)
     case showNotificationPermissionAlert(errorMessage: String?)
@@ -241,6 +257,7 @@ public struct SettingsFeature {
   public enum Alert: Equatable {
     case dismiss
     case openSystemNotificationSettings
+    case confirmRemoveCustomNotificationSound
     case confirmAutoDeleteDaysChange(AutoDeletePeriod)
     case confirmRemoveGlobalScript(ScriptDefinition.ID)
   }
@@ -262,6 +279,7 @@ public struct SettingsFeature {
 
   public var body: some Reducer<State, Action> {
     BindingReducer()
+    Self.customNotificationSoundReducer
     Reduce { state, action in
       switch action {
       case .task:
@@ -304,7 +322,7 @@ public struct SettingsFeature {
         } else {
           var updatedSettings = settings
           updatedSettings.defaultWorktreeBaseDirectoryPath = normalizedWorktreeBaseDirPath
-          normalizedSettings = persistGlobalSettings(updatedSettings)
+          normalizedSettings = Self.persistGlobalSettings(updatedSettings)
         }
         state.appearanceMode = normalizedSettings.appearanceMode
         state.defaultEditorID = normalizedSettings.defaultEditorID
@@ -313,6 +331,7 @@ public struct SettingsFeature {
         state.updatesAutomaticallyDownloadUpdates = normalizedSettings.updatesAutomaticallyDownloadUpdates
         state.inAppNotificationsEnabled = normalizedSettings.inAppNotificationsEnabled
         state.notificationSound = normalizedSettings.notificationSound
+        state.customNotificationSound = normalizedSettings.customNotificationSound
         state.systemNotificationsEnabled = normalizedSettings.systemNotificationsEnabled
         state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
@@ -346,15 +365,17 @@ public struct SettingsFeature {
         return .send(.delegate(.settingsChanged(normalizedSettings)))
 
       case .binding(\.notificationSound):
-        let sound = state.notificationSound
-        // Preview the chosen sound, but only on the in-app path: with system
-        // notifications on, the banner plays the macOS default instead. `.never`
-        // has nothing to audition.
-        let shouldPreview = !state.systemNotificationsEnabled && sound != .never
+        let configuration = state.notificationSoundConfiguration
+        let shouldPreview =
+          state.notificationSound != .never
+          && (!state.systemNotificationsEnabled
+            || state.notificationSound.usesSelectedSoundForSystemNotifications)
         state.syncGlobalDefaults(from: state.globalSettings)
         return .merge(
           persist(state),
-          shouldPreview ? .run { _ in await notificationSoundClient.play(sound) } : .none
+          shouldPreview
+            ? .run { _ in await notificationSoundClient.play(configuration) }
+            : .none
         )
 
       case .binding:
@@ -697,6 +718,13 @@ public struct SettingsFeature {
       case .repositorySettings:
         return .none
 
+      case .customNotificationSoundSelected,
+        .customNotificationSoundImportFailed,
+        .customNotificationSoundImported,
+        .removeCustomNotificationSoundTapped,
+        .customNotificationSoundRemoved:
+        return .none
+
       case .delegate:
         return .none
       }
@@ -707,7 +735,14 @@ public struct SettingsFeature {
   }
 
   private func persist(_ state: State) -> Effect<Action> {
-    let settings = persistGlobalSettings(state.globalSettings)
+    Self.persist(state.globalSettings, analyticsClient: analyticsClient)
+  }
+
+  static func persist(
+    _ settings: GlobalSettings,
+    analyticsClient: AnalyticsClient
+  ) -> Effect<Action> {
+    let settings = persistGlobalSettings(settings)
     if settings.analyticsEnabled {
       analyticsClient.capture("settings_changed", nil)
     }
@@ -715,7 +750,7 @@ public struct SettingsFeature {
   }
 
   @discardableResult
-  private func persistGlobalSettings(_ settings: GlobalSettings) -> GlobalSettings {
+  private static func persistGlobalSettings(_ settings: GlobalSettings) -> GlobalSettings {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock {
       $0.global = settings

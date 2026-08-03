@@ -65,6 +65,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var updatesAutomaticallyDownloadUpdates: Bool
   public var inAppNotificationsEnabled: Bool
   public var notificationSound: NotificationSound
+  public var customNotificationSound: CustomNotificationSound?
   public var systemNotificationsEnabled: Bool
   public var muteNotificationsForActiveSurface: Bool
   public var moveNotifiedWorktreeToTop: Bool
@@ -113,6 +114,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyDownloadUpdates: false,
     inAppNotificationsEnabled: true,
     notificationSound: .hero,
+    customNotificationSound: nil,
     systemNotificationsEnabled: false,
     muteNotificationsForActiveSurface: true,
     moveNotifiedWorktreeToTop: false,
@@ -150,6 +152,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     updatesAutomaticallyDownloadUpdates: Bool,
     inAppNotificationsEnabled: Bool,
     notificationSound: NotificationSound = .hero,
+    customNotificationSound: CustomNotificationSound? = nil,
     systemNotificationsEnabled: Bool = false,
     muteNotificationsForActiveSurface: Bool = true,
     moveNotifiedWorktreeToTop: Bool,
@@ -186,6 +189,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.updatesAutomaticallyDownloadUpdates = updatesAutomaticallyDownloadUpdates
     self.inAppNotificationsEnabled = inAppNotificationsEnabled
     self.notificationSound = notificationSound
+    self.customNotificationSound = customNotificationSound
     self.systemNotificationsEnabled = systemNotificationsEnabled
     self.muteNotificationsForActiveSurface = muteNotificationsForActiveSurface
     self.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
@@ -251,6 +255,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     {
       notificationSound = soundEnabled ? Self.default.notificationSound : .never
     } else {
+      notificationSound = Self.default.notificationSound
+    }
+    customNotificationSound =
+      (try? container.decodeIfPresent(CustomNotificationSound.self, forKey: .customNotificationSound))
+      ?? nil
+    if notificationSound == .custom && customNotificationSound == nil {
       notificationSound = Self.default.notificationSound
     }
     systemNotificationsEnabled =

@@ -1529,19 +1529,22 @@ struct AppFeature {
         .notificationReceived(let worktreeID, let surfaceID, let title, let body, let isViewed)):
         var effects: [Effect<Action>] = []
         let isMuted = isViewed && state.settings.muteNotificationsForActiveSurface
+        let soundConfiguration = state.settings.notificationSoundConfiguration
         if state.settings.systemNotificationsEnabled && !isMuted {
           let deeplinkURL = surfaceDeeplinkURL(worktreeID: worktreeID, surfaceID: surfaceID)
           effects.append(
             .run { _ in
-              await systemNotificationClient.send(title, body, deeplinkURL)
+              await systemNotificationClient.send(title, body, deeplinkURL, soundConfiguration)
             }
           )
         }
-        if state.settings.notificationSound != .never && !state.settings.systemNotificationsEnabled && !isMuted {
-          let sound = state.settings.notificationSound
+        if state.settings.notificationSound != .never,
+          !state.settings.systemNotificationsEnabled,
+          !isMuted
+        {
           effects.append(
             .run { _ in
-              await notificationSoundClient.play(sound)
+              await notificationSoundClient.play(soundConfiguration)
             }
           )
         }

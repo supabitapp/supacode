@@ -1,9 +1,18 @@
 import ComposableArchitecture
+import Foundation
 import SupacodeSettingsShared
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct NotificationsSettingsView: View {
+  private static let supportedSoundTypes: [UTType] = [
+    .aiff,
+    .wav,
+    UTType(filenameExtension: "caf"),
+  ].compactMap { $0 }
+
   @Bindable var store: StoreOf<SettingsFeature>
+  @State private var isChoosingCustomSound = false
 
   public init(store: StoreOf<SettingsFeature>) {
     self.store = store
@@ -25,19 +34,45 @@ public struct NotificationsSettingsView: View {
           }
           Divider()
           Text(NotificationSound.supacodeClassic.displayName).tag(NotificationSound.supacodeClassic)
+          if let customSound = store.customNotificationSound {
+            Divider()
+            Text(customSound.displayName).tag(NotificationSound.custom)
+          }
         } label: {
           Text("Play notification sound")
           Text(
-            "Ignored when system notifications are enabled, as they play sounds"
-              + " according to your settings."
+            "For system notifications, macOS sounds use the default banner sound. "
+              + "Custom and Supacode Classic apply directly when System Settings allows sounds."
           )
         }
-        .disabled(store.systemNotificationsEnabled)
+        VStack(alignment: .leading) {
+          HStack {
+            Button(
+              store.isManagingCustomNotificationSound ? "Working..." : "Choose Custom Sound..."
+            ) {
+              isChoosingCustomSound = true
+            }
+            .disabled(store.isManagingCustomNotificationSound)
+            .help("Import an AIFF, WAV, or CAF notification sound")
+            if store.customNotificationSound != nil {
+              Button("Remove Custom Sound", role: .destructive) {
+                store.send(.removeCustomNotificationSoundTapped)
+              }
+              .disabled(store.isManagingCustomNotificationSound)
+              .help("Delete Supacode's managed copy of the custom notification sound")
+            }
+          }
+          Text("AIFF, WAV, or CAF under 30 seconds (Linear PCM, IMA4, µLaw, or aLaw).")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
         Toggle(
           isOn: $store.muteNotificationsForActiveSurface
         ) {
           Text("Mute notifications for active surface")
-          Text("Skip the notification and sound when the terminal that sent it is focused and visible.")
+          Text(
+            "Skip the notification and sound when the terminal that sent it is focused and visible."
+          )
         }
         .disabled(!store.hasActiveNotificationChannel)
       }
@@ -72,6 +107,19 @@ public struct NotificationsSettingsView: View {
     .padding(.leading, -8)
     .padding(.trailing, -6)
     .navigationTitle("Notifications")
+    .fileImporter(
+      isPresented: $isChoosingCustomSound,
+      allowedContentTypes: Self.supportedSoundTypes
+    ) { result in
+      switch result {
+      case .success(let url):
+        store.send(.customNotificationSoundSelected(url))
+      case .failure(let error) where (error as? CocoaError)?.code == .userCancelled:
+        break
+      case .failure(let error):
+        store.send(.customNotificationSoundImportFailed(error.localizedDescription))
+      }
+    }
   }
 }
 

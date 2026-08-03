@@ -1,10 +1,21 @@
 import Foundation
 
-/// User-selectable in-app notification sound; only drives the in-app `NSSound`
-/// path (system notifications play the macOS banner's own sound). The String
-/// raw value is the persisted contract, so renaming a case orphans selections.
-public enum NotificationSound: String, CaseIterable, Identifiable, Codable, Sendable {
-  /// No sound plays in-app.
+public nonisolated struct CustomNotificationSound: Codable, Equatable, Hashable, Sendable {
+  public let displayName: String
+  public let fileName: String
+
+  public init(displayName: String, fileName: String) {
+    self.displayName = displayName
+    self.fileName = fileName
+  }
+}
+
+/// User-selectable notification sound. The String raw value is the persisted
+/// contract, so renaming a case orphans selections.
+public nonisolated enum NotificationSound: String, CaseIterable, Identifiable, Codable, Hashable,
+  Sendable
+{
+  /// No sound plays.
   case never
   // `/System/Library/Sounds`.
   case basso
@@ -23,57 +34,38 @@ public enum NotificationSound: String, CaseIterable, Identifiable, Codable, Send
   case tink
   /// The bundled Supacode chime.
   case supacodeClassic
+  /// A user-provided sound copied into `Library/Sounds`.
+  case custom
 
-  /// How a choice resolves to an in-app sound, or `nil` when nothing plays.
-  /// Exactly one kind per case, so invalid combinations are unrepresentable.
-  /// `NotificationSoundClient` turns it into an `NSSound`, keeping this model
-  /// free of AppKit.
   enum Source: Equatable, Sendable {
     case system(name: String)
     case bundled(resource: String, withExtension: String)
+    case custom(fileName: String)
   }
 
-  var source: Source? {
+  func source(customSound: CustomNotificationSound?) -> Source? {
     switch self {
     case .never:
       return nil
-    case .basso:
-      return .system(name: "Basso")
-    case .blow:
-      return .system(name: "Blow")
-    case .bottle:
-      return .system(name: "Bottle")
-    case .frog:
-      return .system(name: "Frog")
-    case .funk:
-      return .system(name: "Funk")
-    case .glass:
-      return .system(name: "Glass")
-    case .hero:
-      return .system(name: "Hero")
-    case .morse:
-      return .system(name: "Morse")
-    case .ping:
-      return .system(name: "Ping")
-    case .pop:
-      return .system(name: "Pop")
-    case .purr:
-      return .system(name: "Purr")
-    case .sosumi:
-      return .system(name: "Sosumi")
-    case .submarine:
-      return .system(name: "Submarine")
-    case .tink:
-      return .system(name: "Tink")
     case .supacodeClassic:
       return .bundled(resource: "notification", withExtension: "wav")
+    case .custom:
+      guard let customSound else { return nil }
+      return .custom(fileName: customSound.fileName)
+    default:
+      return .system(name: rawValue.capitalized)
     }
   }
 
-  /// The `/System/Library/Sounds` cases (every case whose source is `.system`).
-  public static let systemCases: [NotificationSound] = allCases.filter {
-    if case .system? = $0.source { return true }
+  public static let systemCases = allCases.filter {
+    if case .system = $0.source(customSound: nil) {
+      return true
+    }
     return false
+  }
+
+  public var usesSelectedSoundForSystemNotifications: Bool {
+    self == .supacodeClassic || self == .custom
   }
 
   public var id: String {
@@ -86,9 +78,24 @@ public enum NotificationSound: String, CaseIterable, Identifiable, Codable, Send
       return "Never"
     case .supacodeClassic:
       return "Supacode Classic"
+    case .custom:
+      return "Custom"
     default:
-      if case .system(let name)? = source { return name }
       return rawValue.capitalized
     }
+  }
+}
+
+public nonisolated struct NotificationSoundConfiguration: Equatable, Hashable, Sendable {
+  public let sound: NotificationSound
+  public let customSound: CustomNotificationSound?
+
+  public init(sound: NotificationSound, customSound: CustomNotificationSound?) {
+    self.sound = sound
+    self.customSound = customSound
+  }
+
+  var source: NotificationSound.Source? {
+    sound.source(customSound: customSound)
   }
 }
