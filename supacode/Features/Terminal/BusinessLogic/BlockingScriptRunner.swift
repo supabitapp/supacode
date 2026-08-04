@@ -136,26 +136,22 @@ enum BlockingScriptRunner {
   }
 
   /// The POSIX script `/bin/sh` runs after the remote login shell initializes
-  /// the host environment. Mirrors `runnerScript` (OSC 133 begin/end framing,
-  /// read-only `tail -f /dev/null` on completion) but runs on the host: it
-  /// `cd`s into the remote worktree, prints the remote beta banner, and runs
-  /// the user script (`$1`) as a login-shell child so a `exit` in the script
-  /// can't skip the completion emit.
-  ///
-  /// Blocking-script marker env vars are applied by the caller via the
-  /// `SSHCommand` `env` prefix so the login shell inherits them before sourcing
-  /// its profile, not exported here (which would run after the profile loads).
+  /// the host environment: OSC 133 framing around a `cd` into the remote
+  /// worktree and the user script (`$1`), run as a login-shell child so an
+  /// `exit` in it can't skip the completion emit.
   static func remoteRunnerScript(remoteWorktreePath: String) -> String {
     let trimmedPath = remoteWorktreePath.trimmingCharacters(in: .whitespacesAndNewlines)
     // Abort on a failed `cd` so a blocking script (user / delete / archive)
     // never runs in the login shell's `$HOME` when the worktree directory was
-    // removed or renamed on the host after it was loaded.
+    // removed or renamed on the host after it was loaded. Pin the tab open like
+    // every other exit path, or the notice scrolls away with the torn-down ssh.
     let cdLine =
       (trimmedPath.isEmpty || trimmedPath == "/")
       ? ""
       : "if ! cd -- \(shellSingleQuoted(trimmedPath)) 2>/dev/null; then "
+        + "trap - EXIT; printf '\\033]133;D;1\\007'; "
         + "printf '\\r\\n\\033[2m── Could not enter the worktree directory; script not run. ──\\033[0m\\r\\n'; "
-        + "SUPACODE_EXIT=1; exit 1; fi\n"
+        + "if [ -t 0 ]; then exec tail -f /dev/null; fi; exit 1; fi\n"
     return """
       set -u
       SUPACODE_EXIT=127

@@ -74,6 +74,7 @@ let testDependencies: [TargetDependency] = [
 let sharedTestSupportSources: [Path] = [
   "supacodeTests/AgentPresence+TestHelpers.swift",
   "supacodeTests/BrandedIDTestSupport.swift",
+  "supacodeTests/LoginShellTestSupport.swift",
   "supacodeTests/ProcessTestSupport.swift",
   "supacodeTests/RemoteRepoTestSupport.swift",
   "supacodeTests/RepositoriesSidebarTestHelpers.swift",

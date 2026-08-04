@@ -192,80 +192,93 @@ struct WorktreeEnvironmentTests {
     #expect(line?.contains("supacode-blocking-script-") == false)
   }
 
-  @Test func remoteBlockingScriptRunsThroughFishLoginShell() async throws {
-    let fishURL = try #require(
-      ["/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish"]
-        .map { URL(fileURLWithPath: $0) }
-        .first { FileManager.default.isExecutableFile(atPath: $0.path) },
-      "Fish is required for the remote-shell quoting regression test"
-    )
-    let configRoot = FileManager.default.temporaryDirectory
-      .appending(path: "supacode-fish-blocking-script-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(
-      at: configRoot.appending(path: "fish"),
-      withIntermediateDirectories: true
-    )
-    defer { try? FileManager.default.removeItem(at: configRoot) }
-
-    let marker = "remote-blocking-script-ran"
-    let commandLine = try #require(
-      BlockingScriptRunner.remoteCommand(
-        host: RemoteHost(alias: "devbox"),
-        script: "printf '\(marker)\\n'",
-        remoteWorktreePath: "/"
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func remoteBlockingScriptRunsThroughLoginShell(_ shell: String) async throws {
+    try await LoginShellProbe.withTemporaryDirectory("blocking-script-\(shell)") { root in
+      // A worktree path and a script payload that both carry the bytes the
+      // login shell would rewrite; `/` would skip the `cd` branch entirely.
+      let worktree = root.appending(path: #"worktree:it's\literal"#)
+      try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+      let marker = #"ran:it's\literal"#
+      let commandLine = try #require(
+        BlockingScriptRunner.remoteCommand(
+          host: RemoteHost(alias: "devbox"),
+          script: #"printf '%s\n' "$(pwd -P)"; printf '%s\n' 'ran:it'"'"'s\literal'"#,
+          remoteWorktreePath: worktree.path
+        )
       )
-    )
-    let parser = Process()
-    parser.executableURL = URL(fileURLWithPath: "/bin/sh")
-    parser.arguments = [
-      "-c",
-      """
-      set -- \(commandLine)
-      for remote_command
-      do
-        :
-      done
-      printf '%s' "$remote_command"
-      """,
-    ]
-    let parsedCommand = Pipe()
-    parser.standardOutput = parsedCommand
-    parser.standardError = Pipe()
-
-    try await parser.runToExit()
-
-    #expect(parser.terminationStatus == 0)
-    let remoteCommand = try #require(
-      String(
-        bytes: parsedCommand.fileHandleForReading.readDataToEndOfFile(),
-        encoding: .utf8
+      // Mirror ssh's argv hand-off: the local `/bin/sh` tokenizes the line and
+      // the remote login shell receives the last word as its command.
+      let tokenizer = try await LoginShellProbe.run(
+        "sh",
+        command: """
+          set -- \(commandLine)
+          for remote_command
+          do
+            :
+          done
+          printf '%s' "$remote_command"
+          """,
+        configRoot: root
       )
-    )
-    let process = Process()
-    process.executableURL = fishURL
-    process.arguments = ["--no-config", "-c", remoteCommand]
-    var environment = ProcessInfo.processInfo.environment
-    environment["HOME"] = configRoot.path
-    environment["XDG_CONFIG_HOME"] = configRoot.path
-    environment["SHELL"] = fishURL.path
-    process.environment = environment
-    let stdout = Pipe()
-    let stderr = Pipe()
-    process.standardInput = Pipe()
-    process.standardOutput = stdout
-    process.standardError = stderr
+      #expect(
+        tokenizer.status == 0,
+        "Could not tokenize the ssh command line: \(tokenizer.stderr)"
+      )
 
-    try await process.runToExit()
+      let result = try await LoginShellProbe.run(
+        shell,
+        command: tokenizer.stdout,
+        configRoot: root
+      )
 
-    let output = try #require(
-      String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
-    )
-    let error = try #require(
-      String(bytes: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
-    )
-    #expect(process.terminationStatus == 0, "Fish rejected the remote blocking script: \(error)")
-    #expect(output.contains(marker), "The remote blocking script did not run: \(output)")
-    #expect(error.isEmpty)
+      #expect(result.status == 0, "\(shell) rejected the remote blocking script: \(result.stderr)")
+      #expect(
+        result.stdout.contains("\n\(marker)\n"),
+        "The remote blocking script did not run: \(result.stdout.debugDescription)"
+      )
+      #expect(
+        result.stdout.contains(LoginShellProbe.physicalPath(of: worktree)),
+        "The blocking script did not run in the worktree: \(result.stdout.debugDescription)"
+      )
+      #expect(result.stdout.components(separatedBy: "\u{1b}]133;D;").count == 2)
+    }
+  }
+
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func remoteBlockingScriptAbortsAndFramesAMissingWorktree(_ shell: String) async throws {
+    try await LoginShellProbe.withTemporaryDirectory("blocking-abort-\(shell)") { root in
+      let marker = "must-not-run"
+      let commandLine = try #require(
+        BlockingScriptRunner.remoteCommand(
+          host: RemoteHost(alias: "devbox"),
+          script: "printf '%s\\n' '\(marker)'",
+          remoteWorktreePath: root.appending(path: "removed-on-the-host").path
+        )
+      )
+      let tokenizer = try await LoginShellProbe.run(
+        "sh",
+        command: """
+          set -- \(commandLine)
+          for remote_command
+          do
+            :
+          done
+          printf '%s' "$remote_command"
+          """,
+        configRoot: root
+      )
+      #expect(tokenizer.status == 0, "Could not tokenize: \(tokenizer.stderr)")
+
+      let result = try await LoginShellProbe.run(shell, command: tokenizer.stdout, configRoot: root)
+
+      // The abort still has to frame the command for Ghostty, exactly once, or
+      // the surface hangs waiting for a completion that never arrives.
+      #expect(result.stdout.components(separatedBy: "\u{1b}]133;D;").count == 2)
+      #expect(result.stdout.contains("\u{1b}]133;D;1\u{7}"))
+      #expect(!result.stdout.contains(marker), "The script ran outside its worktree")
+      #expect(result.status == 1, "\(shell) lost the abort exit code: \(result.stderr)")
+    }
   }
 
   @Test func remoteCommandReturnsNilForEmptyScript() {

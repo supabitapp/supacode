@@ -2443,7 +2443,7 @@ final class WorktreeTerminalState {
   /// the remote project dir, then exec a login shell. The `cd` failure is
   /// swallowed so a stale path still drops the user into a usable shell. Nil
   /// for an empty/root path falls back to a bare login shell. The path is
-  /// quoted for the Fish or POSIX login shell that re-parses the command.
+  /// quoted for whichever login shell re-parses the session command.
   static func remoteDefaultShellCommand(remotePath: String) -> String? {
     let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, trimmed != "/" else { return nil }
