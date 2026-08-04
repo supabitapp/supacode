@@ -123,7 +123,7 @@ extension AppFeature.Action {
       .refreshInstalledOpenActions, .installedOpenActionsResolved,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .requestQuit,
-      .requestTerminateAllTerminalSessions, .newTerminal,
+      .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,

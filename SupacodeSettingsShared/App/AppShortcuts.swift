@@ -16,7 +16,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectWorktree(Int)
   case selectTab(Int)
   case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
-  case runScript, stopRunScript
+  case runScript, stopRunScript, renameTab
   case jumpToLatestUnread
   case togglePullRequestInspector, toggleNotificationsInspector
 
@@ -69,6 +69,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "copyPath"
     case .runScript: "runScript"
     case .stopRunScript: "stopRunScript"
+    case .renameTab: "renameTab"
     case .jumpToLatestUnread: "jumpToLatestUnread"
     case .togglePullRequestInspector: "togglePullRequestInspector"
     case .toggleNotificationsInspector: "toggleNotificationsInspector"
@@ -105,6 +106,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "copyPath": .copyPath,
     "runScript": .runScript,
     "stopRunScript": .stopRunScript,
+    "renameTab": .renameTab,
     "jumpToLatestUnread": .jumpToLatestUnread,
     "togglePullRequestInspector": .togglePullRequestInspector,
     "toggleNotificationsInspector": .toggleNotificationsInspector,
@@ -160,6 +162,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
     case .stopRunScript: "Stop Run Script"
+    case .renameTab: "Rename Tab"
     case .jumpToLatestUnread: "Jump to Latest Unread"
     case .togglePullRequestInspector: "Toggle Pull Request Inspector"
     case .toggleNotificationsInspector: "Toggle Notifications Inspector"
@@ -441,6 +444,7 @@ public enum AppShortcuts {
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
   public static let stopRunScript = AppShortcut(id: .stopRunScript, key: ".", modifiers: .command)
+  public static let renameTab = AppShortcut(id: .renameTab, key: "r", modifiers: [.control, .shift])
   public static let jumpToLatestUnread = AppShortcut(
     id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
   )
@@ -512,7 +516,7 @@ public enum AppShortcuts {
       category: .actions,
       shortcuts: [
         openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
-        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread,
+        openPullRequest, copyPath, runScript, stopRunScript, renameTab, jumpToLatestUnread,
         togglePullRequestInspector, toggleNotificationsInspector,
       ]
     ),

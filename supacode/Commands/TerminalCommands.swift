@@ -5,7 +5,9 @@ import SwiftUI
 
 struct TerminalCommands: Commands {
   let ghosttyShortcuts: GhosttyShortcutManager
+  @Shared(.settingsFile) private var settingsFile
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
+  @FocusedValue(\.renameTabAction) private var renameTabAction
   @FocusedValue(\.splitTerminalAction) private var splitTerminalAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
@@ -14,6 +16,7 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.endSearchAction) private var endSearchAction
 
   var body: some Commands {
+    let renameTab = AppShortcuts.renameTab.effective(from: settingsFile.global.shortcutOverrides)
     CommandGroup(after: .newItem) {
       Divider()
       Button("New Terminal Tab", systemImage: "macwindow") {
@@ -21,6 +24,13 @@ struct TerminalCommands: Commands {
       }
       .ghosttyKeyboardShortcut("new_tab", in: ghosttyShortcuts)
       .disabled(newTerminalAction?.isEnabled != true)
+
+      Button("Rename Tab") {
+        renameTabAction?()
+      }
+      .appKeyboardShortcut(renameTab)
+      .disabled(renameTabAction?.isEnabled != true)
+      .help("Rename Tab (\(renameTab?.display ?? "none"))")
 
       Divider()
 
@@ -110,6 +120,17 @@ extension FocusedValues {
   var newTerminalAction: FocusedAction<Void>? {
     get { self[NewTerminalActionKey.self] }
     set { self[NewTerminalActionKey.self] = newValue }
+  }
+}
+
+private struct RenameTabActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
+extension FocusedValues {
+  var renameTabAction: FocusedAction<Void>? {
+    get { self[RenameTabActionKey.self] }
+    set { self[RenameTabActionKey.self] = newValue }
   }
 }
 

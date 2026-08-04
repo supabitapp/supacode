@@ -247,6 +247,22 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.selectWorktree1.displayName == "Select Worktree 1")
     #expect(AppShortcuts.selectWorktree9.displayName == "Select Worktree 9")
     #expect(AppShortcutID.selectWorktree(0).displayName == "Select Worktree 10")
+    #expect(AppShortcuts.renameTab.displayName == "Rename Tab")
+  }
+
+  @Test func renameTabKeyRoundTrips() {
+    let decoded = AppShortcutID(codingKey: PlainCodingKey("renameTab"))
+    #expect(decoded == .renameTab)
+    #expect(decoded?.codingKey.stringValue == "renameTab")
+  }
+
+  @Test func renameTabShortcutHasNoDefaultConflict() {
+    #expect(AppShortcuts.conflictWarnings(from: [:])[.renameTab] == nil)
+  }
+
+  @Test func renameTabShortcutUnbindsInGhostty() {
+    #expect(AppShortcuts.renameTab.ghosttyUnbindArgument == "--keybind=ctrl+shift+r=unbind")
+    #expect(AppShortcuts.ghosttyCLIKeybindArguments.contains(AppShortcuts.renameTab.ghosttyUnbindArgument))
   }
 
   // MARK: - Effective shortcut resolution.
