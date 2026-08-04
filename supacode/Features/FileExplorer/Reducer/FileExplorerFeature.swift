@@ -81,6 +81,9 @@ struct FileExplorerFeature {
     /// Uncommitted git state for the whole worktree, from one status call.
     /// Empty until the first probe lands, and for folder-kind worktrees.
     var gitStatus: GitStatusSnapshot = .empty
+    /// A freshly created entry awaiting its inline rename, cleared once the view
+    /// starts editing it (Finder-style new-folder naming).
+    var pendingRename: String?
   }
 
   nonisolated struct DirectoryNode: Equatable, Sendable {
@@ -177,16 +180,24 @@ struct FileExplorerFeature {
     case gitStatusLoaded(worktreeID: Worktree.ID, root: URL, GitStatusSnapshot)
     case stageToggled(path: String)
     case discardRequested(path: String)
+    /// Move any file or folder to the system Trash, regardless of git state.
+    case trashRequested(path: String)
     case gitOperationCompleted(worktreeID: Worktree.ID, Result<Void, GitOperationError>)
     /// A drag-drop move (`.move`) or a paste (`.copy`) of files into a directory.
     case filesTransferRequested(sources: [URL], destinationDirectory: String, operation: FileTransferOperation)
     case transferConflictChecked(FileTransferPlan, collisions: [String], mergeable: Bool)
     case renameRequested(path: String, newName: String)
+    /// Create an empty file or folder in the directory, then start its rename.
+    case createItemRequested(directory: String, isDirectory: Bool)
+    case itemCreated(worktreeID: Worktree.ID, directory: String, Result<String, FileMutationError>)
+    /// The view began the inline rename, so the one-shot request can clear.
+    case pendingRenameConsumed
     case fileMutationCompleted(worktreeID: Worktree.ID, refresh: [String], Result<Void, FileMutationError>)
     case alert(PresentationAction<Alert>)
 
     enum Alert: Equatable {
       case confirmDiscard(worktreeID: Worktree.ID, path: String, tracked: Bool)
+      case confirmTrash(worktreeID: Worktree.ID, path: String)
       /// Resolve a name collision with the chosen conflict policy.
       case resolveTransfer(FileTransferPlan, policy: FileConflictPolicy)
     }
@@ -272,11 +283,17 @@ struct FileExplorerFeature {
           node.status = .loaded(listing)
           // A selection whose entry vanished from its parent listing would
           // otherwise haunt the tree and re-select on reappearance.
-          if let selected = tree.selectedPath,
-            Self.parentDirectory(of: selected) == directory,
-            !listing.entries.contains(where: { Self.childPath(of: directory, name: $0.name) == selected })
-          {
+          func isMissing(_ path: String) -> Bool {
+            Self.parentDirectory(of: path) == directory
+              && !listing.entries.contains { Self.childPath(of: directory, name: $0.name) == path }
+          }
+          if let selected = tree.selectedPath, isMissing(selected) {
             tree.selectedPath = nil
+          }
+          // A create whose new row fell beyond a truncated listing must not keep
+          // its pending rename, or it would fire unprompted after a later reload.
+          if let pending = tree.pendingRename, isMissing(pending) {
+            tree.pendingRename = nil
           }
         case .failure(let error):
           node.status = .failed(error)
@@ -313,6 +330,9 @@ struct FileExplorerFeature {
       case .discardRequested(let path):
         return handleDiscardRequested(&state, path: path)
 
+      case .trashRequested(let path):
+        return handleTrashRequested(&state, path: path)
+
       case .filesTransferRequested(let sources, let destinationDirectory, let operation):
         return handleTransferRequested(
           &state, sources: sources, destinationDirectory: destinationDirectory, operation: operation
@@ -324,11 +344,24 @@ struct FileExplorerFeature {
       case .renameRequested(let path, let newName):
         return handleRenameRequested(&state, path: path, newName: newName)
 
+      case .createItemRequested(let directory, let isDirectory):
+        return handleCreateItemRequested(&state, directory: directory, isDirectory: isDirectory)
+
+      case .itemCreated(let worktreeID, let directory, let result):
+        return handleItemCreated(&state, worktreeID: worktreeID, directory: directory, result: result)
+
+      case .pendingRenameConsumed:
+        if let id = state.activeWorktreeID { state.trees[id]?.pendingRename = nil }
+        return .none
+
       case .fileMutationCompleted(let worktreeID, let refresh, let result):
         return handleFileMutationCompleted(&state, worktreeID: worktreeID, refresh: refresh, result: result)
 
       case .alert(.presented(.confirmDiscard(let worktreeID, let path, let tracked))):
         return handleDiscardConfirmed(&state, worktreeID: worktreeID, path: path, tracked: tracked)
+
+      case .alert(.presented(.confirmTrash(let worktreeID, let path))):
+        return handleTrashConfirmed(&state, worktreeID: worktreeID, path: path)
 
       case .alert(.presented(.resolveTransfer(let plan, let policy))):
         state.alert = nil
@@ -554,6 +587,35 @@ struct FileExplorerFeature {
     }
   }
 
+  private func handleTrashRequested(_ state: inout State, path: String) -> Effect<Action> {
+    guard let id = state.activeWorktreeID else { return .none }
+    state.alert = Self.trashAlert(worktreeID: id, path: path)
+    return .none
+  }
+
+  private func handleTrashConfirmed(
+    _ state: inout State,
+    worktreeID: Worktree.ID,
+    path: String
+  ) -> Effect<Action> {
+    state.alert = nil
+    // Bind to the originating worktree so a mid-alert switch can't trash a path
+    // in a different tree.
+    guard worktreeID == state.activeWorktreeID, let root = state.trees[worktreeID]?.root else { return .none }
+    let url = Self.url(for: path, root: root)
+    let parent = Self.parentDirectory(of: path)
+    return .run { send in
+      let result: Result<Void, FileMutationError>
+      do {
+        try await fileExplorerClient.moveToTrash(url)
+        result = .success(())
+      } catch {
+        result = .failure(Self.mutationError(error, action: "trash"))
+      }
+      await send(.fileMutationCompleted(worktreeID: worktreeID, refresh: [parent], result))
+    }
+  }
+
   private func handleGitOperationCompleted(
     _ state: inout State,
     worktreeID: Worktree.ID,
@@ -688,6 +750,59 @@ struct FileExplorerFeature {
     }
   }
 
+  private func handleCreateItemRequested(
+    _ state: inout State,
+    directory: String,
+    isDirectory: Bool
+  ) -> Effect<Action> {
+    guard let id = state.activeWorktreeID, let root = state.trees[id]?.root else { return .none }
+    // Expand the target folder so the new row is visible for its rename.
+    if directory != TreeState.rootPath { state.trees[id]?.expanded.insert(directory) }
+    let parent = Self.url(for: directory, root: root)
+    let name = isDirectory ? "Untitled Folder" : "Untitled"
+    return .run { send in
+      let result: Result<String, FileMutationError>
+      do {
+        result = .success(try await fileExplorerClient.createItem(parent, name, isDirectory))
+      } catch {
+        result = .failure(Self.mutationError(error, action: "create"))
+      }
+      await send(.itemCreated(worktreeID: id, directory: directory, result))
+    }
+  }
+
+  private func handleItemCreated(
+    _ state: inout State,
+    worktreeID: Worktree.ID,
+    directory: String,
+    result: Result<String, FileMutationError>
+  ) -> Effect<Action> {
+    guard worktreeID == state.activeWorktreeID, var tree = state.trees[worktreeID] else { return .none }
+    switch result {
+    case .success(let name):
+      let path = Self.childPath(of: directory, name: name)
+      tree.selectedPath = path
+      // Picked up by the view once the fresh listing brings the new row in.
+      tree.pendingRename = path
+      // Force a listing of the target directory even if it was never opened, so
+      // the new row (and its rename) actually appears; `relist` skips a node
+      // that doesn't exist yet.
+      let limit = tree.directories[directory]?.requestedLimit ?? Self.initialListingLimit
+      tree.directories[directory] = DirectoryNode(
+        status: .loading(previous: tree.directories[directory]?.listing),
+        requestedLimit: limit
+      )
+      state.trees[worktreeID] = tree
+      return .merge(
+        listEffect(worktreeID: worktreeID, root: tree.root, directory: directory, limit: limit),
+        gitStatusEffect(state)
+      )
+    case .failure(let error):
+      state.alert = Self.mutationFailureAlert(error)
+      return .none
+    }
+  }
+
   private func handleFileMutationCompleted(
     _ state: inout State,
     worktreeID: Worktree.ID,
@@ -761,16 +876,32 @@ struct FileExplorerFeature {
     return AlertState {
       TextState(tracked ? "Discard changes to \"\(name)\"?" : "Move \"\(name)\" to the Trash?")
     } actions: {
-      ButtonState(role: .cancel) { TextState("Cancel") }
+      // Destructive button first so Return confirms it, matching the app's other
+      // alerts; Cancel stays on Escape.
       ButtonState(role: .destructive, action: .confirmDiscard(worktreeID: worktreeID, path: path, tracked: tracked)) {
         TextState(tracked ? "Discard" : "Move to Trash")
       }
+      ButtonState(role: .cancel) { TextState("Cancel") }
     } message: {
       TextState(
         tracked
           ? "This will permanently discard your uncommitted changes. This action cannot be undone."
           : "This file has no committed version, so it will be moved to the Trash."
       )
+    }
+  }
+
+  private static func trashAlert(worktreeID: Worktree.ID, path: String) -> AlertState<Action.Alert> {
+    let name = (path as NSString).lastPathComponent
+    return AlertState {
+      TextState("Move \"\(name)\" to the Trash?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmTrash(worktreeID: worktreeID, path: path)) {
+        TextState("Move to Trash")
+      }
+      ButtonState(role: .cancel) { TextState("Cancel") }
+    } message: {
+      TextState("You can restore it from the Trash later.")
     }
   }
 

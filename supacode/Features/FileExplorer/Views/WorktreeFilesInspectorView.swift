@@ -138,37 +138,42 @@ private struct FileExplorerTreeContent: View {
   var body: some View {
     Group {
       if let tree = store.activeTree, let rootListing = store.rootListing {
+        FileExplorerOutlineView(
+          tree: tree,
+          fileOpenActions: fileOpenActions,
+          resolvedOpenAction: resolvedOpenAction,
+          menuIcon: menuIcon(for:),
+          actions: FileExplorerOutlineActions(
+            toggleDirectory: { store.send(.directoryToggled($0)) },
+            select: { store.send(.rowSelected($0)) },
+            openFile: onOpenFile,
+            showMore: { store.send(.showMoreTapped(directory: $0)) },
+            quickLook: { quickLookURL = $0 },
+            stageToggle: { store.send(.stageToggled(path: $0)) },
+            discard: { store.send(.discardRequested(path: $0)) },
+            trash: { store.send(.trashRequested(path: $0)) },
+            transferFiles: { store.send(.filesTransferRequested(sources: $0, destinationDirectory: $1, operation: $2)) },
+            rename: { store.send(.renameRequested(path: $0, newName: $1)) },
+            createItem: { store.send(.createItemRequested(directory: $0, isDirectory: $1)) },
+            consumePendingRename: { store.send(.pendingRenameConsumed) }
+          ),
+          bottomBarInset: bottomBarInset
+        )
+        // The outline draws under the toolbar (top) and breadcrumb bar (bottom).
+        .ignoresSafeArea(.container, edges: .vertical)
+        .quickLookPreview($quickLookURL)
+        .onDisappear { quickLookURL = nil }
         // Deletions live in the status snapshot, not the listing, so a folder
         // whose files were all deleted still mounts the outline for tombstones.
-        if rootListing.entries.isEmpty, !rootListing.isTruncated, tree.gitStatus.statuses.isEmpty {
-          FileExplorerUnavailableView(
-            title: "Empty Folder",
-            description: "This worktree has no files."
-          )
-        } else {
-          FileExplorerOutlineView(
-            tree: tree,
-            fileOpenActions: fileOpenActions,
-            resolvedOpenAction: resolvedOpenAction,
-            menuIcon: menuIcon(for:),
-            actions: FileExplorerOutlineActions(
-              toggleDirectory: { store.send(.directoryToggled($0)) },
-              select: { store.send(.rowSelected($0)) },
-              openFile: onOpenFile,
-              showMore: { store.send(.showMoreTapped(directory: $0)) },
-              quickLook: { quickLookURL = $0 },
-              stageToggle: { store.send(.stageToggled(path: $0)) },
-              discard: { store.send(.discardRequested(path: $0)) },
-              transferFiles: { store.send(.filesTransferRequested(sources: $0, destinationDirectory: $1, operation: $2)) },
-              rename: { store.send(.renameRequested(path: $0, newName: $1)) }
-            ),
-            bottomBarInset: bottomBarInset
-          )
-          // Only the outline draws under the toolbar (top) and breadcrumb bar
-          // (bottom); the empty states stay inset so they center like the others.
-          .ignoresSafeArea(.container, edges: .vertical)
-          .quickLookPreview($quickLookURL)
-          .onDisappear { quickLookURL = nil }
+        // The empty hint sits behind the transparent outline, which keeps its
+        // right-click menu and drops working over the empty area.
+        .background {
+          if rootListing.entries.isEmpty, !rootListing.isTruncated, tree.gitStatus.statuses.isEmpty {
+            FileExplorerUnavailableView(
+              title: "Empty Folder",
+              description: "This worktree has no files."
+            )
+          }
         }
       } else if let failure = store.rootFailure {
         FileExplorerRootFailureView(

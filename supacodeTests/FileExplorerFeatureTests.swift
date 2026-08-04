@@ -1800,6 +1800,272 @@ struct FileExplorerFeatureTests {
     #expect(!manager.fileExists(atPath: inner.appending(path: "src").path(percentEncoded: false)))
   }
 
+  @Test func trashingAFileConfirmsThenMovesItToTrash() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let trashed = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.moveToTrash = { url in trashed.withValue { $0.append(url.lastPathComponent) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.trashRequested(path: "a.txt"))
+    #expect(store.state.alert?.title == TextState("Move \"a.txt\" to the Trash?"))
+
+    await store.send(.alert(.presented(.confirmTrash(worktreeID: worktree.id, path: "a.txt"))))
+    await store.skipReceivedActions()
+    #expect(trashed.value == ["a.txt"])
+    #expect(store.state.alert == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func creatingAFolderRefreshesAndMarksItForRename() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let created = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      // The relist after creation sees the new folder, mirroring the real disk.
+      $0.fileExplorerClient.list = { _, _ in
+        created.value.isEmpty ? Self.listing([]) : Self.listing([("Untitled Folder", isDirectory: true)])
+      }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.createItem = { _, name, isDirectory in
+        created.withValue { $0.append("\(name):\(isDirectory)") }
+        return name
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.createItemRequested(directory: "", isDirectory: true))
+    await store.skipReceivedActions()
+    #expect(created.value == ["Untitled Folder:true"])
+    // The new entry is selected and flagged for an inline rename.
+    #expect(store.state.trees[worktree.id]?.selectedPath == "Untitled Folder")
+    #expect(store.state.trees[worktree.id]?.pendingRename == "Untitled Folder")
+
+    await store.send(.pendingRenameConsumed)
+    #expect(store.state.trees[worktree.id]?.pendingRename == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func createItemMakesUniqueDefaultNames() async throws {
+    let manager = FileManager.default
+    let directory = manager.temporaryDirectory.appending(path: "supacode-create-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? manager.removeItem(at: directory) }
+    let client = FileExplorerClient.liveValue
+
+    let first = try await client.createItem(directory, "Untitled", false)
+    let second = try await client.createItem(directory, "Untitled", false)
+    #expect(first == "Untitled")
+    #expect(second == "Untitled copy")
+    #expect(manager.fileExists(atPath: directory.appending(path: "Untitled").path(percentEncoded: false)))
+    #expect(manager.fileExists(atPath: directory.appending(path: "Untitled copy").path(percentEncoded: false)))
+  }
+
+  @Test func creatingAFileNamesItUntitledAndMarksItForRename() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let created = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in
+        created.value.isEmpty ? Self.listing([]) : Self.listing([("Untitled", isDirectory: false)])
+      }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.createItem = { _, name, isDirectory in
+        created.withValue { $0.append("\(name):\(isDirectory)") }
+        return name
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.createItemRequested(directory: "", isDirectory: false))
+    await store.skipReceivedActions()
+    #expect(created.value == ["Untitled:false"])
+    #expect(store.state.trees[worktree.id]?.pendingRename == "Untitled")
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func creatingInsideACollapsedFolderLoadsItSoTheNewRowAppears() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let created = LockIsolated(false)
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { url, _ in
+        switch url.lastPathComponent {
+        case "src": return created.value ? Self.listing([("Untitled Folder", isDirectory: true)]) : Self.listing([])
+        default: return Self.listing([("src", isDirectory: true)])
+        }
+      }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.createItem = { _, name, _ in
+        created.setValue(true)
+        return name
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+    // "src" is never expanded, so it has no directory node yet.
+    #expect(store.state.trees[worktree.id]?.directories["src"] == nil)
+
+    await store.send(.createItemRequested(directory: "src", isDirectory: true))
+    await store.skipReceivedActions()
+    // The create forces a load of the collapsed folder, so the new row lands.
+    #expect(store.state.trees[worktree.id]?.expanded.contains("src") == true)
+    #expect(store.state.trees[worktree.id]?.directories["src"]?.listing != nil)
+    #expect(store.state.trees[worktree.id]?.pendingRename == "src/Untitled Folder")
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func pendingRenameClearsWhenTheCreatedRowIsMissingFromTheListing() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      // The relist never contains the created item (as if it fell beyond a cap).
+      $0.fileExplorerClient.list = { _, _ in Self.listing([("other.txt", isDirectory: false)]) }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.createItem = { _, name, _ in name }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.createItemRequested(directory: "", isDirectory: true))
+    await store.skipReceivedActions()
+    // The new row never appears, so its pending rename must not linger.
+    #expect(store.state.trees[worktree.id]?.pendingRename == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func creatingAnItemFailureAlertsAndLeavesNoPendingRename() async {
+    struct CreateError: Error {}
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.createItem = { _, _, _ in throw CreateError() }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.createItemRequested(directory: "", isDirectory: true))
+    await store.skipReceivedActions()
+    #expect(store.state.alert?.title == TextState("The operation couldn't be completed"))
+    #expect(store.state.trees[worktree.id]?.pendingRename == nil)
+    #expect(store.state.trees[worktree.id]?.selectedPath == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func itemCreatedForInactiveWorktreeIsIgnored() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let other = Self.worktree(path: "/tmp/wt-b")
+    let listing = Self.listing([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: other), isVisible: true))
+    await store.skipReceivedActions()
+
+    // A create result for the now-inactive wt-a must not touch either tree.
+    await store.send(.itemCreated(worktreeID: worktree.id, directory: "", .success("Untitled Folder")))
+    #expect(store.state.trees[worktree.id]?.pendingRename == nil)
+    #expect(store.state.trees[other.id]?.pendingRename == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func switchingWorktreeAbortsAPendingTrash() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let other = Self.worktree(path: "/tmp/wt-b")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let trashRan = LockIsolated(false)
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.moveToTrash = { _ in trashRan.setValue(true) }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+    await store.send(.trashRequested(path: "a.txt"))
+    #expect(store.state.alert != nil)
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: other), isVisible: true))
+    await store.skipReceivedActions()
+
+    // The stale confirmation bound to wt-a must not trash into wt-b.
+    await store.send(.alert(.presented(.confirmTrash(worktreeID: worktree.id, path: "a.txt"))))
+    #expect(trashRan.value == false)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func performTransferRefusesACopyThroughASymlinkedPrefix() throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appending(path: "supacode-symlink-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? manager.removeItem(at: root) }
+    let source = root.appending(path: "src", directoryHint: .isDirectory)
+    let inner = source.appending(path: "inner", directoryHint: .isDirectory)
+    try manager.createDirectory(at: inner, withIntermediateDirectories: true)
+    // A symlink to src: pasting src into link/inner resolves to src's own subtree.
+    let link = root.appending(path: "link")
+    try manager.createSymbolicLink(at: link, withDestinationURL: source)
+
+    try FileExplorerClient.performTransfer(
+      source: source, directory: link.appending(path: "inner", directoryHint: .isDirectory),
+      name: "src", operation: .copy, policy: .abort
+    )
+    #expect(!manager.fileExists(atPath: inner.appending(path: "src").path(percentEncoded: false)))
+  }
+
   @Test func gitStatusLoadedWithStaleRootIsDropped() async {
     let worktree = Self.worktree(path: "/tmp/wt-a")
     let listing = Self.listing([("a.txt", isDirectory: false)])

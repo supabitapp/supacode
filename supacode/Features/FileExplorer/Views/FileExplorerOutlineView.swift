@@ -13,10 +13,16 @@ struct FileExplorerOutlineActions {
   /// Stage or unstage the path, resolved from its current git state.
   var stageToggle: (String) -> Void
   var discard: (String) -> Void
+  /// Move the file or folder to the system Trash, regardless of git state.
+  var trash: (String) -> Void
   /// Move (drag) or paste file URLs into a destination directory (root-relative).
   var transferFiles: ([URL], String, FileTransferOperation) -> Void
   /// Rename the entry at the path to a new leaf name.
   var rename: (String, String) -> Void
+  /// Create a new folder (`true`) or empty file (`false`) in the directory.
+  var createItem: (String, Bool) -> Void
+  /// The inline rename of a freshly created entry has started.
+  var consumePendingRename: () -> Void
 }
 
 /// NSOutlineView-backed tree. AppKit owns selection, disclosure, keyboard,
@@ -222,6 +228,20 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       }
       applySelection(tree, outlineView: outlineView)
       restoreFirstResponderIfStolen(from: priorResponder, outlineView: outlineView)
+      // After focus is settled, a just-created entry claims it for its rename.
+      startPendingRenameIfNeeded(tree, outlineView: outlineView)
+    }
+
+    /// Begins the inline rename of a freshly created entry once its row exists,
+    /// then clears the one-shot request so a later refresh can't re-trigger it.
+    private func startPendingRenameIfNeeded(_ tree: FileExplorerFeature.TreeState, outlineView: NSOutlineView) {
+      guard
+        let path = tree.pendingRename,
+        let item = entryItems[path],
+        outlineView.row(forItem: item) >= 0
+      else { return }
+      actions?.consumePendingRename()
+      beginRename(item: item)
     }
 
     /// Reclaims first responder for `prior` if applying state pulled it into the
@@ -378,7 +398,17 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         changedPaths.insert(key)
       }
       for path in changedPaths {
-        guard let item = entryItems[path], outlineView.row(forItem: item) >= 0 else { continue }
+        guard let item = entryItems[path] else { continue }
+        let row = outlineView.row(forItem: item)
+        guard row >= 0 else { continue }
+        // Reloading recycles the cell, which would tear down an active inline
+        // rename (a brand-new file flips untracked right after creation), so
+        // leave a row that is currently being edited alone.
+        if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? FileExplorerEntryCellView,
+          cell.isRenaming
+        {
+          continue
+        }
         outlineView.reloadItem(item, reloadChildren: false)
       }
     }
@@ -510,8 +540,9 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       case ("c", _, [.command, .option]):  // Opt+Cmd+C: copy the absolute pathname.
         if let url = url(for: item.path) { copyToPasteboard(url.path(percentEncoded: false)) }
         return true
-      case (_, 51, [.command]):  // Cmd+Delete: move a removable file to the Trash.
-        return discardSelected(item, matching: .trash)
+      case (_, 51, [.command]):  // Cmd+Delete: move the file or folder to the Trash.
+        if isTombstone(item.path) { NSSound.beep() } else { actions?.trash(item.path) }
+        return true
       case (_, 51, [.command, .shift]):  // Shift+Cmd+Delete: discard a tracked change.
         return discardSelected(item, matching: .restore)
       default:
@@ -568,6 +599,21 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     @objc private func contextMenuDiscard(_ sender: NSMenuItem) {
       guard let path = sender.representedObject as? String else { return }
       actions?.discard(path)
+    }
+
+    @objc private func contextMenuTrash(_ sender: NSMenuItem) {
+      guard let path = sender.representedObject as? String else { return }
+      actions?.trash(path)
+    }
+
+    @objc private func contextMenuNewFolder(_ sender: NSMenuItem) {
+      guard let directory = sender.representedObject as? String else { return }
+      actions?.createItem(directory, true)
+    }
+
+    @objc private func contextMenuNewFile(_ sender: NSMenuItem) {
+      guard let directory = sender.representedObject as? String else { return }
+      actions?.createItem(directory, false)
     }
 
     @objc private func contextMenuRevealInFinder(_ sender: NSMenuItem) {
@@ -818,12 +864,16 @@ extension FileExplorerOutlineView.Coordinator: NSOutlineViewDelegate {
 extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
   func menuNeedsUpdate(_ menu: NSMenu) {
     menu.removeAllItems()
+    guard let outlineView else { return }
     guard
-      let outlineView,
       outlineView.clickedRow >= 0,
       let item = outlineView.item(atRow: outlineView.clickedRow) as? FileExplorerOutlineView.OutlineItem,
       item.entry != nil
-    else { return }
+    else {
+      // A click off any row targets the root: create, paste, or reveal there.
+      addEmptyAreaMenuItems(to: menu)
+      return
+    }
     let path = item.path
 
     addGitMenuItems(to: menu, path: path)
@@ -909,6 +959,64 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
         representing: pasteDestination, keyEquivalent: "v", modifiers: .command
       )
     )
+    // A tombstone's file is already gone, so trashing it can only error.
+    if !isTombstone(path) {
+      menu.addItem(.separator())
+      menu.addItem(
+        makeItem(
+          "Move to Trash…", action: #selector(contextMenuTrash(_:)), symbolName: "trash",
+          representing: path, keyEquivalent: "\u{8}", modifiers: .command
+        )
+      )
+    }
+    // New Folder / New File at the tail, targeting the same directory as Paste,
+    // so creating is one click away from any row without duplicating Paste.
+    menu.addItem(.separator())
+    addCreationMenuItems(to: menu, directory: pasteDestination)
+  }
+
+  /// The off-row menu: create, paste, or reveal in the worktree root.
+  private func addEmptyAreaMenuItems(to menu: NSMenu) {
+    let root = FileExplorerFeature.TreeState.rootPath
+    addCreationMenuItems(to: menu, directory: root)
+    menu.addItem(.separator())
+    menu.addItem(
+      makeItem(
+        "Paste", action: #selector(contextMenuPaste(_:)), symbolName: "clipboard",
+        representing: root, keyEquivalent: "v", modifiers: .command
+      )
+    )
+    menu.addItem(.separator())
+    menu.addItem(
+      makeItem(
+        "Reveal in Finder", action: #selector(contextMenuRevealInFinder(_:)), symbolName: "folder",
+        representing: root, keyEquivalent: "r", modifiers: [.command, .option]
+      )
+    )
+  }
+
+  /// A git-deleted path whose working copy is gone from the listing, shown only
+  /// as a tombstone row; there is no file to trash.
+  private func isTombstone(_ path: String) -> Bool {
+    guard
+      let status = tree?.gitStatus.statuses[path],
+      status.index == .deleted || status.worktree == .deleted
+    else { return false }
+    let parent = FileExplorerFeature.parentDirectory(of: path)
+    let name = (path as NSString).lastPathComponent
+    let listed = tree?.directories[parent]?.listing?.entries.contains { $0.name == name } ?? false
+    return !listed
+  }
+
+  /// New Folder and New File, both creating in `directory` and starting an
+  /// inline rename on the result.
+  private func addCreationMenuItems(to menu: NSMenu, directory: String) {
+    menu.addItem(
+      makeItem("New Folder", action: #selector(contextMenuNewFolder(_:)), symbolName: "folder.badge.plus", representing: directory)
+    )
+    menu.addItem(
+      makeItem("New File", action: #selector(contextMenuNewFile(_:)), symbolName: "doc.badge.plus", representing: directory)
+    )
   }
 
   @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -917,8 +1025,8 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
   }
 
   /// Git actions for the clicked entry, above the rest of the menu. Nothing for
-  /// a clean, conflicted, or non-git row. Discard on an untracked file is a
-  /// Trash move, worded to match; both destructive items confirm.
+  /// a clean, conflicted, or non-git row. Discard reverts a tracked change; a
+  /// brand-new file has nothing to revert, so it is deleted via Move to Trash.
   private func addGitMenuItems(to menu: NSMenu, path: String) {
     guard let status = tree?.gitStatus.statuses[path], !status.isConflicted else { return }
     if status.hasUnstagedChange {
@@ -934,23 +1042,13 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
         )
       )
     }
-    switch status.discardKind {
-    case .trash:
-      menu.addItem(
-        makeItem(
-          "Move to Trash…", action: #selector(contextMenuDiscard(_:)), symbolName: "trash", representing: path,
-          keyEquivalent: "\u{8}", modifiers: .command
-        )
-      )
-    case .restore:
+    if status.discardKind == .restore {
       menu.addItem(
         makeItem(
           "Discard Changes…", action: #selector(contextMenuDiscard(_:)), symbolName: "arrow.uturn.backward",
           representing: path, keyEquivalent: "\u{8}", modifiers: [.command, .shift]
         )
       )
-    case nil:
-      break
     }
     menu.addItem(.separator())
   }
@@ -1087,7 +1185,8 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   /// Inline-rename callbacks and state, live only while the label is editable.
   private var renameCommit: ((String) -> Void)?
   private var renameCancelled = false
-  private var isRenaming = false
+  /// Read by the coordinator so a git-status reload skips a row mid-rename.
+  private(set) var isRenaming = false
 
   /// A focused, selected row draws its text over the accent fill; the fixed git
   /// tints (yellow/green/red) would clash, so defer to the selected-text color.
@@ -1095,7 +1194,9 @@ private final class FileExplorerEntryCellView: NSTableCellView {
 
   override var backgroundStyle: NSView.BackgroundStyle {
     didSet {
-      guard backgroundStyle != oldValue else { return }
+      // While renaming, the label draws editable text on a white field, so the
+      // emphasized selected-text color would be white-on-white; leave it be.
+      guard backgroundStyle != oldValue, !isRenaming else { return }
       applyLabel(name: renderedName, decoration: renderedDecoration)
       applyBadge(renderedDecoration)
     }

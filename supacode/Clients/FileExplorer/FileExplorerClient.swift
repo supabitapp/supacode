@@ -27,6 +27,11 @@ struct FileExplorerClient: Sendable {
     ) async throws -> Void
   /// Renames `source` to `newName` in place, throwing on a collision.
   var rename: @Sendable (_ source: URL, _ newName: String) async throws -> Void
+  /// Moves `url` to the system Trash, recoverable by the user.
+  var moveToTrash: @Sendable (_ url: URL) async throws -> Void
+  /// Creates an empty file or folder in `directory` under a free name derived
+  /// from `name`, returning the name it landed on.
+  var createItem: @Sendable (_ directory: URL, _ name: String, _ isDirectory: Bool) async throws -> String
 }
 
 /// Whether a file transfer relocates the source or duplicates it.
@@ -99,6 +104,28 @@ extension FileExplorerClient: DependencyKey {
     },
     rename: { source, newName in
       try await Task.detached(priority: .userInitiated) { try renameItem(at: source, to: newName) }.value
+    },
+    moveToTrash: { url in
+      try await Task.detached(priority: .userInitiated) {
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+      }.value
+    },
+    createItem: { directory, name, isDirectory in
+      try await Task.detached(priority: .userInitiated) {
+        let manager = FileManager.default
+        let finalName = uniqueName(for: name) {
+          manager.fileExists(atPath: directory.appending(path: $0).path(percentEncoded: false))
+        }
+        let path = directory.appending(path: finalName, directoryHint: isDirectory ? .isDirectory : .notDirectory)
+        if isDirectory {
+          try manager.createDirectory(at: path, withIntermediateDirectories: false)
+        } else {
+          // Exclusive atomic create so a racing second create throws instead of
+          // truncating the file that just appeared.
+          try Data().write(to: path, options: .withoutOverwriting)
+        }
+        return finalName
+      }.value
     }
   )
 
@@ -110,7 +137,9 @@ extension FileExplorerClient: DependencyKey {
     existingNames: { _, _ in [] },
     mergeableNames: { _, _ in [] },
     transfer: { _, _, _, _, _ in },
-    rename: { _, _ in }
+    rename: { _, _ in },
+    moveToTrash: { _ in },
+    createItem: { _, name, _ in name }
   )
 }
 
@@ -214,10 +243,10 @@ extension FileExplorerClient {
   ) throws {
     let manager = FileManager.default
     let destination = directory.appending(path: name)
-    // Landing inside the source's own subtree copies a folder into itself. The
-    // reducer pre-filters this, but resolve symlinks here so a worktree under a
-    // symlinked prefix can't slip a recursive copy past.
-    guard !isSubpath(directory, of: source) else { return }
+    // Only a real directory landing inside its own subtree recurses; a symlink
+    // just copies the link. The reducer pre-filters this, but resolve symlinks
+    // here so a worktree under a symlinked prefix can't slip a recursive copy past.
+    guard !(isDirectory(at: source) && isSubpath(directory, of: source)) else { return }
     func exists(_ candidate: String) -> Bool {
       manager.fileExists(atPath: directory.appending(path: candidate).path(percentEncoded: false))
     }
