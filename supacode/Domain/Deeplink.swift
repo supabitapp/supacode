@@ -17,7 +17,10 @@ enum Deeplink: Equatable, Sendable {
     worktreeName: String?,
     worktreePath: String?,
     background: Bool = false,
-    pin: Bool = false
+    pin: Bool = false,
+    /// Opt-in to checking out an existing, unused local branch rather than
+    /// refusing the name. Never allows a branch checked out elsewhere.
+    reuseExistingBranch: Bool = false
   )
   case settings(section: DeeplinkSettingsSection?)
   case settingsRepo(repositoryID: Repository.ID)

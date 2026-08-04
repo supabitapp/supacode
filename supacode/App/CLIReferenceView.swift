@@ -127,8 +127,11 @@ struct CLIReferenceView: View {
     .init(
       command:
         "supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] "
-        + "[--upstream <ref> | --no-upstream] [--fetch] [--name <folder>] [--location <dir>] [--pin]",
-      description: "Create a worktree. Prints the new worktree ID to stdout."
+        + "[--upstream <ref> | --no-upstream] [--fetch] [--name <folder>] [--location <dir>] [--pin] "
+        + "[--reuse-existing-branch]",
+      description:
+        "Create a worktree. Prints the new worktree ID to stdout. "
+        + "--reuse-existing-branch checks out an existing unused branch instead of creating one."
     ),
   ]
 

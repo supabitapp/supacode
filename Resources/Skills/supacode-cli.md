@@ -138,7 +138,7 @@ supacode surface close [-w <id>] [-t <id>] [-s <id>] [--background]             
 ```
 supacode repo list                                                     # List repository IDs.
 supacode repo open <path>                                              # Open repository.
-supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--upstream <ref> | --no-upstream] [--fetch] [--name <folder>] [--location <dir>] [--pin] [--background]  # Create worktree (prints the new worktree ID to stdout; --upstream sets the new branch's tracking branch, --no-upstream clears it; --pin pins it as soon as creation starts, local repositories only).
+supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--upstream <ref> | --no-upstream] [--fetch] [--name <folder>] [--location <dir>] [--pin] [--reuse-existing-branch] [--background]  # Create worktree (prints the new worktree ID to stdout; --upstream sets the new branch's tracking branch, --no-upstream clears it; --pin pins it as soon as creation starts, local repositories only; --reuse-existing-branch checks out an existing unused branch instead of creating one, and requires --branch).
 ```
 
 ### Settings
@@ -201,5 +201,6 @@ every action that would otherwise focus its target (`tab new`, `surface split`,
 | `--direction` | `-d` | `horizontal` | Split direction (`horizontal`/`h` or `vertical`/`v`). |
 | `--id` | `-n` | random | UUID for new tab/surface. |
 | `--focused` | `-f` | - | Print only the focused item in `list` commands. |
+| `--reuse-existing-branch` | - | - | For `repo worktree-new`: check out `--branch` if it already exists instead of refusing the name. A branch already checked out in another worktree is still refused. |
 | `--background` | - | - | Do not move the selection or focus; see Background Mode. |
 | `--timeout` | - | app default | Seconds to wait for the app's response; `0` waits indefinitely. |

@@ -1345,7 +1345,7 @@ struct RepositoriesFeatureTests {
     #expect(fetchedRemote.value == "origin")
   }
 
-  @Test func startPromptedWorktreeCreationWithDuplicateLocalBranchShowsValidation() async {
+  @Test func startPromptedWorktreeCreationWithReusableLocalBranchOffersReuse() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
@@ -1368,7 +1368,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
-      $0.gitClient.localBranchNames = { _ in ["feature/existing"] }
+      $0.gitClient.branchAvailability = { _, _ in .reusable(stalePrunePath: nil) }
     }
 
     await store.send(
@@ -1381,10 +1381,14 @@ struct RepositoriesFeatureTests {
       )
     ) {
       $0.worktreeCreationPrompt?.validationMessage = nil
+      $0.worktreeCreationPrompt?.branchReuseOffer = nil
       $0.worktreeCreationPrompt?.isValidating = true
     }
+    // An unused existing branch is now an offer, not a dead end.
     await store.receive(\.promptedWorktreeCreationChecked) {
-      $0.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
+      $0.worktreeCreationPrompt?.validationMessage =
+        "'feature/existing' already exists. Reuse it, or choose a different branch name."
+      $0.worktreeCreationPrompt?.branchReuseOffer = "feature/existing"
       $0.worktreeCreationPrompt?.isValidating = false
     }
   }

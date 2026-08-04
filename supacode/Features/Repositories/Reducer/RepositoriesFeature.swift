@@ -412,6 +412,10 @@ struct RepositoriesFeature {
       upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride? = nil,
+      /// Opt-in to checking out an existing, unused local branch instead of
+      /// creating a new one. Defaults to `false` so an unqualified creation
+      /// still refuses a name that's already taken.
+      reuseExistingBranch: Bool = false,
       pendingID: Worktree.ID? = nil,
       background: Bool = false,
       pin: Bool = false
@@ -433,7 +437,8 @@ struct RepositoriesFeature {
       baseRef: String?,
       upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
-      placement: WorktreePlacementOverride
+      placement: WorktreePlacementOverride,
+      reuseExistingBranch: Bool = false
     )
     case promptedWorktreeCreationChecked(
       repositoryID: Repository.ID,
@@ -442,7 +447,10 @@ struct RepositoriesFeature {
       upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride,
-      duplicateMessage: String?
+      /// How the branch name classified against the repository, resolved off the
+      /// main actor. Drives reuse vs. refusal in the prompt.
+      availability: GitBranchAvailability,
+      reuseExistingBranch: Bool
     )
     case pendingWorktreeProgressUpdated(id: Worktree.ID, progress: WorktreeCreationProgress)
     case createRandomWorktreeSucceeded(
@@ -1849,6 +1857,7 @@ struct RepositoriesFeature {
         let upstream,
         let fetchOrigin,
         let placement,
+        let reuseExistingBranch,
         let providedPendingID,
         let background,
         let pin
@@ -1977,6 +1986,10 @@ struct RepositoriesFeature {
             let branchNames = try await gitClient.localBranchNames(repository.rootURL)
             let existing = existingNames.union(branchNames)
             let name: String
+            // Set only when an existing branch is actually being adopted, so the
+            // `-b` / no-`-b` decision follows what git reported rather than what
+            // the caller merely allowed.
+            var isReusingExistingBranch = false
             switch nameSource {
             case .random:
               progress.stage = .choosingWorktreeName
@@ -2051,11 +2064,27 @@ struct RepositoriesFeature {
                 )
                 return
               }
-              guard !existing.contains(trimmed.lowercased()) else {
+              // Classify the name rather than rejecting every collision: an
+              // existing branch nobody has checked out can be adopted, but one
+              // that's live in another worktree still has to be refused (git
+              // forbids the second checkout, and `wt sw` would quietly hand back
+              // the other worktree instead of failing).
+              let availability: GitBranchAvailability
+              do {
+                availability = try await gitClient.branchAvailability(trimmed, repository.rootURL)
+              } catch {
+                // Fall back to the name list so an unreadable ref store still
+                // rejects a duplicate instead of letting git fail mid-checkout.
+                availability = existing.contains(trimmed.lowercased()) ? .reusable(stalePrunePath: nil) : .absent
+              }
+              switch availability {
+              case .absent:
+                break
+              case .checkedOut(let worktreePath):
                 await send(
                   .createRandomWorktreeFailed(
-                    title: "Branch name already exists",
-                    message: "Choose a different branch name and try again.",
+                    title: "Branch already checked out",
+                    message: GitBranchAvailability.checkedOutMessage(branch: trimmed, worktreePath: worktreePath),
                     pendingID: pendingID,
                     previousSelection: previousSelection,
                     repositoryID: repository.id,
@@ -2064,6 +2093,29 @@ struct RepositoriesFeature {
                   )
                 )
                 return
+              case .reusable(let stalePrunePath):
+                guard reuseExistingBranch else {
+                  await send(
+                    .createRandomWorktreeFailed(
+                      title: "Branch name already exists",
+                      message:
+                        "'\(trimmed)' already exists. Reuse the existing branch, "
+                        + "or choose a different branch name and try again.",
+                      pendingID: pendingID,
+                      previousSelection: previousSelection,
+                      repositoryID: repository.id,
+                      name: nil,
+                      baseDirectory: worktreeBaseDirectory
+                    )
+                  )
+                  return
+                }
+                // Git still counts a worktree whose directory is gone as holding
+                // the branch, so clear the stale admin entry before checking out.
+                if stalePrunePath != nil {
+                  try? await gitClient.pruneWorktrees(repository.rootURL)
+                }
+                isReusingExistingBranch = true
               }
               name = trimmed
             }
@@ -2111,6 +2163,10 @@ struct RepositoriesFeature {
             )
             let resolvedBaseRef: String
             switch baseRefSource {
+            // Reusing a branch checks out its existing tip; a base ref would be
+            // silently ignored, so resolve to none and keep the progress UI honest.
+            case _ where isReusingExistingBranch:
+              resolvedBaseRef = ""
             case .repositorySetting:
               if (selectedBaseRef ?? "").isEmpty {
                 resolvedBaseRef = await gitClient.automaticWorktreeBaseRef(repository.rootURL) ?? ""
@@ -3916,7 +3972,8 @@ struct RepositoriesFeature {
               let fetchOrigin,
               let placement,
               let title,
-              let color
+              let color,
+              let reuseExistingBranch
             )
           )
         )
@@ -3937,7 +3994,8 @@ struct RepositoriesFeature {
             baseRef: baseRef,
             upstream: upstream,
             fetchOrigin: fetchOrigin,
-            placement: placement
+            placement: placement,
+            reuseExistingBranch: reuseExistingBranch
           )
         )
 
@@ -3947,7 +4005,8 @@ struct RepositoriesFeature {
         let baseRef,
         let upstream,
         let fetchOrigin,
-        let placement
+        let placement,
+        let reuseExistingBranch
       ):
         guard let repository = state.repositories[id: repositoryID] else {
           state.worktreeCreationPrompt = nil
@@ -3961,11 +4020,18 @@ struct RepositoriesFeature {
           return Self.drainParkedRequest(repositoryID, state: &state)
         }
         state.worktreeCreationPrompt?.validationMessage = nil
+        state.worktreeCreationPrompt?.branchReuseOffer = nil
         state.worktreeCreationPrompt?.isValidating = true
         let normalizedBranchName = branchName.lowercased()
-        if repository.worktrees.contains(where: { $0.name.lowercased() == normalizedBranchName }) {
+        // A worktree Supacode already tracks under this name means the branch is
+        // live somewhere; that's the one collision reuse can't resolve, so reject
+        // it synchronously rather than paying for the git round-trip.
+        if let existing = repository.worktrees.first(where: { $0.name.lowercased() == normalizedBranchName }) {
           state.worktreeCreationPrompt?.isValidating = false
-          state.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
+          state.worktreeCreationPrompt?.validationMessage = GitBranchAvailability.checkedOutMessage(
+            branch: branchName,
+            worktreePath: existing.workingDirectory.path(percentEncoded: false)
+          )
           // Synchronous duplicate rejection. Drop the stashed customization so it can't be
           // re-applied if the user retries with a different branch name.
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
@@ -3974,11 +4040,10 @@ struct RepositoriesFeature {
         let gitClient = gitClient(for: repository)
         let rootURL = repository.rootURL
         return .run { send in
-          let localBranchNames = (try? await gitClient.localBranchNames(rootURL)) ?? []
-          let duplicateMessage =
-            localBranchNames.contains(normalizedBranchName)
-            ? "Branch name already exists."
-            : nil
+          // A failed probe classifies as `.absent` so the creation proceeds and
+          // git gets the final say, matching the previous best-effort behavior.
+          let availability =
+            (try? await gitClient.branchAvailability(branchName, rootURL)) ?? .absent
           await send(
             .promptedWorktreeCreationChecked(
               repositoryID: repositoryID,
@@ -3987,7 +4052,8 @@ struct RepositoriesFeature {
               upstream: upstream,
               fetchOrigin: fetchOrigin,
               placement: placement,
-              duplicateMessage: duplicateMessage
+              availability: availability,
+              reuseExistingBranch: reuseExistingBranch
             )
           )
         }
@@ -4002,17 +4068,36 @@ struct RepositoriesFeature {
         let upstream,
         let fetchOrigin,
         let placement,
-        let duplicateMessage
+        let availability,
+        let reuseExistingBranch
       ):
         guard let prompt = state.worktreeCreationPrompt, prompt.repositoryID == repositoryID else {
           return .none
         }
         state.worktreeCreationPrompt?.isValidating = false
-        if let duplicateMessage {
-          state.worktreeCreationPrompt?.validationMessage = duplicateMessage
-          // Async-validation duplicate rejection. Same drop reasoning as the sync path.
+        switch availability {
+        case .absent:
+          break
+        case .checkedOut(let worktreePath):
+          // Not offerable: git allows the branch in one worktree only.
+          state.worktreeCreationPrompt?.validationMessage = GitBranchAvailability.checkedOutMessage(
+            branch: branchName,
+            worktreePath: worktreePath
+          )
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
           return .none
+        case .reusable:
+          // Surface the branch as reusable and stop. Creation only continues once
+          // the user comes back through with `reuseExistingBranch` set, which is
+          // what makes reuse an explicit choice rather than a silent fallback.
+          guard reuseExistingBranch else {
+            state.worktreeCreationPrompt?.validationMessage =
+              "'\(branchName)' already exists. Reuse it, or choose a different branch name."
+            state.worktreeCreationPrompt?.branchReuseOffer = branchName
+            // Keep the stashed customization: the reuse retry submits the same
+            // (repo, branch) pair and still needs its title / color.
+            return .none
+          }
         }
         state.worktreeCreationPrompt = nil
         // Consume the parked CLI ack id so it threads into this creation and the
@@ -4026,6 +4111,7 @@ struct RepositoriesFeature {
             upstream: upstream,
             fetchOrigin: fetchOrigin,
             placement: placement,
+            reuseExistingBranch: reuseExistingBranch,
             pendingID: parked?.pendingID,
             background: parked?.background ?? false,
             pin: parked?.pin ?? false

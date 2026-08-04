@@ -36,6 +36,10 @@ struct WorktreeCreationPromptFeature {
     /// Disclosure state for the title / color appearance section. Collapsed by default.
     var showAppearanceOptions: Bool = false
     var validationMessage: String?
+    /// Set to the branch name when validation found an existing local branch
+    /// that no worktree holds. Non-nil is what surfaces the "Reuse existing
+    /// branch" affordance; reuse never happens without the user taking it.
+    var branchReuseOffer: String?
     var isValidating = false
     /// Optional sidebar customization captured by the new Title / Color
     /// section; transferred to `PendingWorktree.customization` on submit.
@@ -116,6 +120,9 @@ struct WorktreeCreationPromptFeature {
     case upstreamSelected(WorktreeUpstreamPreference)
     case cancelButtonTapped
     case createButtonTapped
+    /// Explicit opt-in to checking out the existing branch surfaced by
+    /// `branchReuseOffer`, rather than creating a new one.
+    case reuseExistingBranchButtonTapped
     case setValidationMessage(String?)
     case setValidating(Bool)
     case delegate(Delegate)
@@ -132,7 +139,10 @@ struct WorktreeCreationPromptFeature {
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride,
       title: String?,
-      color: RepositoryColor?
+      color: RepositoryColor?,
+      /// Carries the user's explicit "reuse the existing branch" choice through
+      /// to the parent, which re-verifies against git before acting on it.
+      reuseExistingBranch: Bool = false
     )
   }
 
@@ -142,6 +152,9 @@ struct WorktreeCreationPromptFeature {
       switch action {
       case .binding:
         state.validationMessage = nil
+        // Any edit invalidates the offer: it was made for the branch name that
+        // was submitted, not whatever the field now holds.
+        state.branchReuseOffer = nil
         return .none
 
       case .baseRefSelected(let ref):
@@ -158,46 +171,13 @@ struct WorktreeCreationPromptFeature {
         return .send(.delegate(.cancel))
 
       case .createButtonTapped:
-        let trimmed = state.branchName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-          state.validationMessage = "Branch name required."
-          return .none
-        }
-        guard !trimmed.contains(where: \.isWhitespace) else {
-          state.validationMessage = "Branch names can't contain spaces."
-          return .none
-        }
-        let nameOverride = state.worktreeNameOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let nameError = WorktreePlacementOverride.nameValidationError(nameOverride) {
-          state.validationMessage = nameError
-          return .none
-        }
-        state.validationMessage = nil
-        let pathOverride = state.worktreePathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Preserve the user's typed title verbatim, even when it equals the
-        // branch name. The render is identical (no override → fall back to
-        // branch name) but the round-trip into the Customize sheet relies
-        // on the value surviving.
-        let trimmedTitle = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedTitle = trimmedTitle.isEmpty ? nil : trimmedTitle
-        return .send(
-          .delegate(
-            .submit(
-              repositoryID: state.repositoryID,
-              branchName: trimmed,
-              baseRef: state.selectedBaseRef,
-              upstream: state.selectedUpstream,
-              // Match the disabled toggle: a local base ref has nothing to fetch.
-              fetchOrigin: state.isSelectedBaseRefLocal ? false : state.fetchOrigin,
-              placement: WorktreePlacementOverride(
-                name: nameOverride.isEmpty ? nil : nameOverride,
-                path: pathOverride.isEmpty ? nil : pathOverride
-              ),
-              title: resolvedTitle,
-              color: state.color
-            )
-          )
-        )
+        return Self.submit(state: &state, reuseExistingBranch: false)
+
+      case .reuseExistingBranchButtonTapped:
+        // Only meaningful against a live offer; a stale tap is a no-op rather
+        // than a silent reuse of whatever is in the field now.
+        guard state.branchReuseOffer != nil else { return .none }
+        return Self.submit(state: &state, reuseExistingBranch: true)
 
       case .setValidationMessage(let message):
         state.validationMessage = message
@@ -211,5 +191,55 @@ struct WorktreeCreationPromptFeature {
         return .none
       }
     }
+  }
+
+  /// Validate the form and emit the submit delegate. Shared by the Create and
+  /// Reuse buttons so the two paths can't drift on validation or on which
+  /// fields make it into the request.
+  private static func submit(
+    state: inout State,
+    reuseExistingBranch: Bool
+  ) -> Effect<Action> {
+    let trimmed = state.branchName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      state.validationMessage = "Branch name required."
+      return .none
+    }
+    guard !trimmed.contains(where: \.isWhitespace) else {
+      state.validationMessage = "Branch names can't contain spaces."
+      return .none
+    }
+    let nameOverride = state.worktreeNameOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let nameError = WorktreePlacementOverride.nameValidationError(nameOverride) {
+      state.validationMessage = nameError
+      return .none
+    }
+    state.validationMessage = nil
+    let pathOverride = state.worktreePathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Preserve the user's typed title verbatim, even when it equals the
+    // branch name. The render is identical (no override → fall back to
+    // branch name) but the round-trip into the Customize sheet relies
+    // on the value surviving.
+    let trimmedTitle = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedTitle = trimmedTitle.isEmpty ? nil : trimmedTitle
+    return .send(
+      .delegate(
+        .submit(
+          repositoryID: state.repositoryID,
+          branchName: trimmed,
+          baseRef: state.selectedBaseRef,
+          upstream: state.selectedUpstream,
+          // Match the disabled toggle: a local base ref has nothing to fetch.
+          fetchOrigin: state.isSelectedBaseRefLocal ? false : state.fetchOrigin,
+          placement: WorktreePlacementOverride(
+            name: nameOverride.isEmpty ? nil : nameOverride,
+            path: pathOverride.isEmpty ? nil : pathOverride
+          ),
+          title: resolvedTitle,
+          color: state.color,
+          reuseExistingBranch: reuseExistingBranch
+        )
+      )
+    )
   }
 }

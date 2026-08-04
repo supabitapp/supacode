@@ -38,10 +38,13 @@ extension RepoCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      try Dispatcher.dispatch(
+      // Prints the adopted repository or worktree id. A path that adopts nothing
+      // now reports an error from the app and exits non-zero.
+      let id = try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.repoOpen(path: path),
         timeoutSeconds: timeoutOption.timeout
       )
+      if let id { print(id) }
     }
   }
 
@@ -69,6 +72,16 @@ extension RepoCommand {
     @Flag(help: "Fetch origin before creating the worktree.")
     var fetch = false
 
+    @Flag(
+      name: .customLong("reuse-existing-branch"),
+      help: """
+        Check out --branch if it already exists instead of creating it. Without \
+        this flag an existing branch name is refused. A branch already checked \
+        out in another worktree is refused either way.
+        """
+    )
+    var reuseExistingBranch = false
+
     @Option(help: "Folder name for the worktree. Defaults to the branch name.")
     var name: String?
 
@@ -90,6 +103,11 @@ extension RepoCommand {
       if let upstream, upstream.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         throw ValidationError("--upstream requires a branch name; use --no-upstream to clear tracking.")
       }
+      // Without --branch the name is generated from unused names, so there is
+      // never an existing branch to reuse.
+      if reuseExistingBranch, branch == nil {
+        throw ValidationError("--reuse-existing-branch requires --branch.")
+      }
     }
 
     func run() throws {
@@ -102,7 +120,7 @@ extension RepoCommand {
             repoID: rID,
             options: .init(
               branch: branch, base: base, upstream: resolvedUpstream, fetch: fetch, name: name,
-              location: location, pin: pin)
+              location: location, pin: pin, reuseExistingBranch: reuseExistingBranch)
           )),
         timeoutSeconds: timeoutOption.timeout
       )

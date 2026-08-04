@@ -297,11 +297,61 @@ struct WorktreeCreationPromptParentTests {
     #expect(store.state.pendingWorktrees.isEmpty)
   }
 
-  @Test func duplicateValidationFailureDropsPendingCustomization() async {
+  @Test func checkedOutBranchValidationFailureDropsPendingCustomization() async {
     let store = makeStore(
       initialState: makeStateWithPrompt(
         pendingFor: ["feature/x": .init(title: "Old", color: .blue)]
       ))
+
+    // A branch live in another worktree can't be reused, so this is a terminal
+    // rejection and the parked customization has to be drained.
+    await store.send(
+      .promptedWorktreeCreationChecked(
+        repositoryID: repoID,
+        branchName: "feature/x",
+        baseRef: nil,
+        fetchOrigin: false,
+        placement: WorktreePlacementOverride(name: nil, path: nil),
+        availability: .checkedOut(worktreePath: "/tmp/other/feature-x"),
+        reuseExistingBranch: false,
+      )
+    ) {
+      $0.worktreeCreationPrompt?.isValidating = false
+      $0.worktreeCreationPrompt?.validationMessage =
+        "'feature/x' is already checked out at /tmp/other/feature-x. "
+        + "Open that worktree, or choose a different branch name."
+      $0.pendingCreationCustomizations.removeValue(forKey: self.repoID)
+    }
+  }
+
+  @Test func reusableBranchOfferKeepsPendingCustomization() async {
+    let store = makeStore(
+      initialState: makeStateWithPrompt(
+        pendingFor: ["feature/x": .init(title: "Old", color: .blue)]
+      ))
+
+    // The offer is not a rejection: the user can still take it, and the retry
+    // submits the same (repo, branch) pair, so the title / color must survive.
+    await store.send(
+      .promptedWorktreeCreationChecked(
+        repositoryID: repoID,
+        branchName: "feature/x",
+        baseRef: nil,
+        fetchOrigin: false,
+        placement: WorktreePlacementOverride(name: nil, path: nil),
+        availability: .reusable(stalePrunePath: nil),
+        reuseExistingBranch: false,
+      )
+    ) {
+      $0.worktreeCreationPrompt?.isValidating = false
+      $0.worktreeCreationPrompt?.validationMessage =
+        "'feature/x' already exists. Reuse it, or choose a different branch name."
+      $0.worktreeCreationPrompt?.branchReuseOffer = "feature/x"
+    }
+  }
+
+  @Test func reuseAcceptedProceedsToCreationCarryingTheFlag() async {
+    let store = makeStore(initialState: makeStateWithPrompt(pendingFor: [:]))
 
     await store.send(
       .promptedWorktreeCreationChecked(
@@ -310,18 +360,20 @@ struct WorktreeCreationPromptParentTests {
         baseRef: nil,
         fetchOrigin: false,
         placement: WorktreePlacementOverride(name: nil, path: nil),
-        duplicateMessage: "Branch name already exists.",
+        availability: .reusable(stalePrunePath: nil),
+        reuseExistingBranch: true,
       )
     ) {
       $0.worktreeCreationPrompt?.isValidating = false
-      $0.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
-      $0.pendingCreationCustomizations.removeValue(forKey: self.repoID)
+      $0.worktreeCreationPrompt = nil
     }
+    await store.receive(\.createWorktreeInRepository)
   }
 
-  @Test func immediateDuplicateInStartPromptedClearsPendingCustomization() async {
-    // First-pass duplicate check (runs before the async branch-list fetch) is a normal
-    // prompt-flow rejection. The pending entry must be cleared.
+  @Test func immediateCheckedOutBranchInStartPromptedClearsPendingCustomization() async {
+    // A worktree Supacode already tracks under this name means the branch is live,
+    // so the synchronous check (before the async git probe) rejects outright and
+    // the pending entry must be cleared.
     var state = makeStateWithPrompt(
       pendingFor: ["feature/x": .init(title: "Stale", color: .blue)]
     )
@@ -355,7 +407,9 @@ struct WorktreeCreationPromptParentTests {
       )
     ) {
       $0.worktreeCreationPrompt?.isValidating = false
-      $0.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
+      $0.worktreeCreationPrompt?.validationMessage =
+        "'feature/x' is already checked out at \(self.repoID)/feature-x. "
+        + "Open that worktree, or choose a different branch name."
       $0.pendingCreationCustomizations.removeValue(forKey: self.repoID)
     }
   }

@@ -105,6 +105,15 @@ private struct WorktreeCreationFooter: View {
     if let message = store.validationMessage ?? store.worktreeNameValidationError, !message.isEmpty {
       Text(message)
         .foregroundStyle(.red)
+      // Only rendered when validation found an existing branch no worktree
+      // holds; a branch checked out elsewhere sets the message without an offer.
+      if let branch = store.branchReuseOffer {
+        Button("Reuse existing branch") {
+          store.send(.reuseExistingBranchButtonTapped)
+        }
+        .help("Check out the existing '\(branch)' branch in the new worktree instead of creating a new branch.")
+        .disabled(store.isValidating)
+      }
     } else {
       Text(store.resolvedWorktreeLocationPreview)
         .monospaced()

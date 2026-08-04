@@ -391,4 +391,93 @@ struct WorktreeCreationPromptFeatureTests {
       $0.validationMessage = "Branch name required."
     }
   }
+
+  // MARK: - Existing-branch reuse.
+
+  /// Create never opts into reuse on its own; that's what makes the reuse path
+  /// an explicit choice.
+  @Test func createButtonTappedDoesNotRequestReuse() async {
+    let store = TestStore(initialState: makeState()) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.set(\.branchName, "feature/new")) {
+      $0.branchName = "feature/new"
+    }
+    await store.send(.createButtonTapped)
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/new",
+          baseRef: nil,
+          upstream: .automatic,
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: nil,
+          color: nil,
+          reuseExistingBranch: false
+        )
+      )
+    )
+  }
+
+  @Test func reuseButtonResubmitsWithTheReuseFlag() async {
+    var state = makeState()
+    state.branchName = "feature/existing"
+    state.branchReuseOffer = "feature/existing"
+    state.validationMessage = "'feature/existing' already exists. Reuse it, or choose a different branch name."
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.reuseExistingBranchButtonTapped) {
+      $0.validationMessage = nil
+    }
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/existing",
+          baseRef: nil,
+          upstream: .automatic,
+          fetchOrigin: true,
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: nil,
+          color: nil,
+          reuseExistingBranch: true
+        )
+      )
+    )
+  }
+
+  /// Without a live offer the button can't smuggle reuse through — the offer is
+  /// the record that git actually classified this name as reusable.
+  @Test func reuseButtonWithoutAnOfferDoesNothing() async {
+    var state = makeState()
+    state.branchName = "feature/new"
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.reuseExistingBranchButtonTapped)
+  }
+
+  /// Editing the form invalidates the offer: it was made for the name that was
+  /// submitted, not whatever the field holds now.
+  @Test func editingTheBranchNameClearsTheReuseOffer() async {
+    var state = makeState()
+    state.branchName = "feature/existing"
+    state.branchReuseOffer = "feature/existing"
+    state.validationMessage = "'feature/existing' already exists. Reuse it, or choose a different branch name."
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.set(\.branchName, "feature/other")) {
+      $0.branchName = "feature/other"
+      $0.validationMessage = nil
+      $0.branchReuseOffer = nil
+    }
+  }
 }

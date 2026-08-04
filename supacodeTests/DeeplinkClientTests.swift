@@ -590,6 +590,45 @@ struct DeeplinkClientTests {
     #expect(parse(url) == nil)
   }
 
+  // MARK: - Worktree new: existing-branch reuse.
+
+  @Test func repoWorktreeNewParsesReuseExistingBranchFlag() {
+    let url = URL(
+      string: "supacode://repo/%2Ftmp%2Frepo/worktree/new?branch=feature%2Fx&reuse-existing-branch=true"
+    )!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature/x",
+          baseRef: nil,
+          upstream: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil,
+          reuseExistingBranch: true
+        )
+    )
+  }
+
+  /// Omitting the flag must keep the refusing behavior, so it can't default on.
+  @Test func repoWorktreeNewDefaultsReuseExistingBranchToFalse() {
+    let url = URL(string: "supacode://repo/%2Ftmp%2Frepo/worktree/new?branch=feature%2Fx")!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature/x",
+          baseRef: nil,
+          upstream: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil,
+          reuseExistingBranch: false
+        )
+    )
+  }
+
   // MARK: - Worktree stop.
 
   @Test func worktreeStop() {

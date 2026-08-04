@@ -2003,14 +2003,15 @@ struct AppFeature {
       let worktreeName,
       let worktreePath,
       let background,
-      let pin
+      let pin,
+      let reuseExistingBranch
     ):
       return handleRepoWorktreeNewDeeplink(
         repositoryID: repositoryID, branch: branch, baseRef: baseRef,
         upstream: WorktreeUpstreamPreference(deeplinkValue: upstream), fetchOrigin: fetchOrigin,
         worktreeName: worktreeName, worktreePath: worktreePath,
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state,
-        background: background, pin: pin)
+        background: background, pin: pin, reuseExistingBranch: reuseExistingBranch)
     case .settings(let section):
       return handleSettingsDeeplink(section: section)
     case .settingsRepo(let repositoryID):
@@ -2048,7 +2049,8 @@ struct AppFeature {
     timeoutSeconds: Int = defaultCommandTimeoutSeconds,
     state: inout State,
     background: Bool = false,
-    pin: Bool = false
+    pin: Bool = false,
+    reuseExistingBranch: Bool = false
   ) -> Effect<Action> {
     guard let repository = state.repositories.repositories[id: repositoryID] else {
       deeplinkLogger.warning("Repository not found: \(repositoryID)")
@@ -2124,6 +2126,7 @@ struct AppFeature {
             upstream: upstream,
             fetchOrigin: fetchOrigin,
             placement: placement,
+            reuseExistingBranch: reuseExistingBranch,
             pendingID: pendingID,
             background: background,
             pin: pin,
