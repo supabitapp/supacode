@@ -159,8 +159,11 @@ extension FileExplorerClient {
     let modificationDate = contentModificationDates(of: [directory])[directory]
     let contents: [URL]
     do {
+      // `contentsOfDirectory(at:)` throws ENOTDIR on a symlinked directory: it
+      // does not follow the final link. Resolve it so a linked folder lists its
+      // target; entries stay name-keyed under the original path downstream.
       contents = try FileManager.default.contentsOfDirectory(
-        at: directory,
+        at: directory.resolvingSymlinksInPath(),
         includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
         options: []
       )
@@ -173,6 +176,11 @@ extension FileExplorerClient {
       let name = url.lastPathComponent
       guard name != ".git" else { continue }
       let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+      // A stat failure for a just-enumerated entry is rare; it degrades to a
+      // plain, non-expandable row, so log rather than hide it.
+      if values == nil {
+        logger.warning("Unreadable resource values for \(name); rendering it as a plain file.")
+      }
       let isSymbolicLink = values?.isSymbolicLink ?? false
       entries.append(
         FileExplorerEntry(
@@ -199,12 +207,15 @@ extension FileExplorerClient {
     var dates: [URL: Date] = [:]
     dates.reserveCapacity(directories.count)
     for url in directories {
-      // URLs memoize resource values per instance; drop the cache so repeated
-      // sweeps over a held URL observe fresh mtimes.
-      var uncached = url
-      uncached.removeCachedResourceValue(forKey: .contentModificationDateKey)
+      // Stat the symlink target (its mtime moves on a content edit, the link's
+      // own does not), keyed by the original url so the sweep and the listing
+      // compare the same mtime. Tradeoff: re-pointing a link to a same-mtime
+      // target is missed until a manual re-expand. URLs memoize resource values
+      // per instance; drop the cache so repeated sweeps see fresh mtimes.
+      var resolved = url.resolvingSymlinksInPath()
+      resolved.removeCachedResourceValue(forKey: .contentModificationDateKey)
       guard
-        let values = try? uncached.resourceValues(forKeys: [.contentModificationDateKey]),
+        let values = try? resolved.resourceValues(forKeys: [.contentModificationDateKey]),
         let date = values.contentModificationDate
       else { continue }
       dates[url] = date
@@ -254,7 +265,8 @@ extension FileExplorerClient {
     case .abort:
       try placeItem(from: source, at: destination, operation: operation)
     case .keepBoth:
-      try placeItem(from: source, at: directory.appending(path: uniqueName(for: name, isTaken: exists)), operation: operation)
+      let unique = directory.appending(path: uniqueName(for: name, isTaken: exists))
+      try placeItem(from: source, at: unique, operation: operation)
     case .overwrite:
       try replaceItem(from: source, at: destination, operation: operation)
     case .merge:
@@ -316,7 +328,8 @@ extension FileExplorerClient {
     from source: URL, into destination: URL, operation: FileTransferOperation
   ) throws {
     let manager = FileManager.default
-    let entries = try manager.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [])
+    let entries = try manager.contentsOfDirectory(
+      at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [])
     for entry in entries {
       let target = destination.appending(path: entry.lastPathComponent)
       if isDirectory(at: entry), isDirectory(at: target) {

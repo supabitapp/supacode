@@ -152,7 +152,9 @@ private struct FileExplorerTreeContent: View {
             stageToggle: { store.send(.stageToggled(path: $0)) },
             discard: { store.send(.discardRequested(path: $0)) },
             trash: { store.send(.trashRequested(path: $0)) },
-            transferFiles: { store.send(.filesTransferRequested(sources: $0, destinationDirectory: $1, operation: $2)) },
+            transferFiles: {
+              store.send(.filesTransferRequested(sources: $0, destinationDirectory: $1, operation: $2))
+            },
             rename: { store.send(.renameRequested(path: $0, newName: $1)) },
             createItem: { store.send(.createItemRequested(directory: $0, isDirectory: $1)) },
             consumePendingRename: { store.send(.pendingRenameConsumed) }

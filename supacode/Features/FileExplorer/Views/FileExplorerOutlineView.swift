@@ -1012,10 +1012,14 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
   /// inline rename on the result.
   private func addCreationMenuItems(to menu: NSMenu, directory: String) {
     menu.addItem(
-      makeItem("New Folder", action: #selector(contextMenuNewFolder(_:)), symbolName: "folder.badge.plus", representing: directory)
+      makeItem(
+        "New Folder", action: #selector(contextMenuNewFolder(_:)),
+        symbolName: "folder.badge.plus", representing: directory)
     )
     menu.addItem(
-      makeItem("New File", action: #selector(contextMenuNewFile(_:)), symbolName: "doc.badge.plus", representing: directory)
+      makeItem(
+        "New File", action: #selector(contextMenuNewFile(_:)),
+        symbolName: "doc.badge.plus", representing: directory)
     )
   }
 
@@ -1176,12 +1180,15 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   private let badge = NSTextField(labelWithString: "")
   private let spinner = NSProgressIndicator()
   private let warningView = NSImageView()
+  /// Trailing alias arrow, shown left of the git badge for a symbolic link.
+  private let aliasView = NSImageView()
   /// Sweeps the label while its directory loads for the first time.
   private var shimmerLayer: CAGradientLayer?
   /// Last rendered row, replayed when the selection emphasis flips so the git
   /// tint can yield to the selected-text color.
   private var renderedName = ""
   private var renderedDecoration: GitRowDecoration?
+  private var renderedIsSymbolicLink = false
   /// Inline-rename callbacks and state, live only while the label is editable.
   private var renameCommit: ((String) -> Void)?
   private var renameCancelled = false
@@ -1199,6 +1206,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
       guard backgroundStyle != oldValue, !isRenaming else { return }
       applyLabel(name: renderedName, decoration: renderedDecoration)
       applyBadge(renderedDecoration)
+      applyAlias()
     }
   }
 
@@ -1234,6 +1242,13 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     warningView.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .caption1)
     warningView.contentTintColor = .secondaryLabelColor
 
+    aliasView.image = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: "Alias")
+    aliasView.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .caption1)
+    aliasView.toolTip = "Alias"
+    aliasView.setContentHuggingPriority(.required, for: .horizontal)
+    aliasView.setContentCompressionResistancePriority(.required, for: .horizontal)
+    aliasView.isHidden = true
+
     let stack = NSStackView()
     stack.orientation = .horizontal
     stack.spacing = 6
@@ -1246,6 +1261,9 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     stack.addView(label, in: .leading)
     stack.addView(spinner, in: .leading)
     stack.addView(warningView, in: .trailing)
+    // The alias arrow sits left of the git badge, so a symlink reads as an alias
+    // even when it also carries a change.
+    stack.addView(aliasView, in: .trailing)
     stack.addView(badge, in: .trailing)
     addSubview(stack)
     NSLayoutConstraint.activate([
@@ -1276,14 +1294,17 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     let effective = failure == nil ? decoration : nil
     renderedName = entry.name
     renderedDecoration = effective
+    renderedIsSymbolicLink = entry.isSymbolicLink
     applyLabel(name: entry.name, decoration: effective)
     applyBadge(effective)
+    applyAlias()
     // Gitignored and deleted rows fade the whole row; the deletion is already
     // called out by the strikethrough, so no distinct color is needed.
     let opacity: CGFloat = Self.isDimmed(effective) ? 0.6 : 1
     iconView.alphaValue = opacity
     label.alphaValue = opacity
     badge.alphaValue = opacity
+    aliasView.alphaValue = opacity
     if isLoading {
       spinner.startAnimation(nil)
     } else {
@@ -1383,6 +1404,14 @@ private final class FileExplorerEntryCellView: NSTableCellView {
       badge.toolTip = nil
       badge.setAccessibilityLabel(nil)
     }
+  }
+
+  /// The alias arrow for a symbolic link; like the badge it yields to the
+  /// selected-text color on an emphasized row so it reads over the accent fill.
+  private func applyAlias() {
+    aliasView.isHidden = !renderedIsSymbolicLink
+    aliasView.contentTintColor = isEmphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor
+    aliasView.setAccessibilityLabel(renderedIsSymbolicLink ? "Alias" : nil)
   }
 
   private func labelColor(for decoration: GitRowDecoration?) -> NSColor {

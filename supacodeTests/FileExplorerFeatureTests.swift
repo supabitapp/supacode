@@ -1292,7 +1292,9 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
     await store.skipReceivedActions()
 
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/new.txt")], destinationDirectory: "", operation: .move))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/new.txt")], destinationDirectory: "", operation: .move))
     await store.skipReceivedActions()
     // No collision, so it transfers straight through with the abort backstop.
     #expect(transfers.value == ["new.txt:move:abort"])
@@ -1321,7 +1323,9 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
     await store.skipReceivedActions()
 
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
     await store.skipReceivedActions()
     // The collision surfaces a prompt rather than transferring.
     #expect(store.state.alert?.title == TextState("\"a.txt\" already exists"))
@@ -1359,7 +1363,9 @@ struct FileExplorerFeatureTests {
     await store.skipReceivedActions()
 
     // Present the collision prompt, then replace.
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
     await store.skipReceivedActions()
     #expect(store.state.alert != nil)
 
@@ -1394,7 +1400,9 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
     await store.skipReceivedActions()
     // Raise the collision prompt on wt-a, then switch worktrees under it.
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
     await store.skipReceivedActions()
     #expect(store.state.alert != nil)
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: other), isVisible: true))
@@ -1480,7 +1488,8 @@ struct FileExplorerFeatureTests {
     #expect(FileExplorerFeature.relativePath(of: root, under: root) == "")
     #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/wt-a/src/a.txt"), under: root) == "src/a.txt")
     // A directory URL (trailing slash) resolves to the same slash-free key.
-    #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/wt-a/src", directoryHint: .isDirectory), under: root) == "src")
+    let srcDir = URL(filePath: "/tmp/wt-a/src", directoryHint: .isDirectory)
+    #expect(FileExplorerFeature.relativePath(of: srcDir, under: root) == "src")
     #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/other/x.txt"), under: root) == nil)
     // A sibling sharing a name prefix is not under the root.
     #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/wt-a-backup/x"), under: root) == nil)
@@ -1535,7 +1544,9 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
     await store.skipReceivedActions()
 
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/x.txt")], destinationDirectory: "", operation: .copy))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/x.txt")], destinationDirectory: "", operation: .copy))
     await store.skipReceivedActions()
     #expect(operations.value == [.copy])
 
@@ -1605,7 +1616,9 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
     await store.skipReceivedActions()
 
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/new.txt")], destinationDirectory: "", operation: .move))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/new.txt")], destinationDirectory: "", operation: .move))
     await store.skipReceivedActions()
     #expect(store.state.alert?.title == TextState("The operation couldn't be completed"))
 
@@ -1655,7 +1668,9 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
     await store.skipReceivedActions()
 
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/src")], destinationDirectory: "", operation: .copy))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/src")], destinationDirectory: "", operation: .copy))
     await store.skipReceivedActions()
     // A directory-onto-directory collision offers Merge.
     #expect(store.state.alert?.buttons.contains { $0.label == TextState("Merge") } == true)
@@ -1687,7 +1702,9 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
     await store.skipReceivedActions()
 
-    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .copy))
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .copy))
     await store.skipReceivedActions()
     #expect(store.state.alert?.buttons.contains { $0.label == TextState("Merge") } == false)
 
@@ -1757,7 +1774,8 @@ struct FileExplorerFeatureTests {
 
   @Test func mergeFoldsDirectoriesKeepingExistingOnlyEntries() throws {
     let manager = FileManager.default
-    let root = manager.temporaryDirectory.appending(path: "supacode-merge-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let root = manager.temporaryDirectory.appending(
+      path: "supacode-merge-\(UUID().uuidString)", directoryHint: .isDirectory)
     defer { try? manager.removeItem(at: root) }
     let source = root.appending(path: "src", directoryHint: .isDirectory)
     let destination = root.appending(path: "dst", directoryHint: .isDirectory)
@@ -1787,7 +1805,8 @@ struct FileExplorerFeatureTests {
 
   @Test func performTransferRefusesCopyingADirectoryIntoItsOwnSubtree() throws {
     let manager = FileManager.default
-    let root = manager.temporaryDirectory.appending(path: "supacode-subtree-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let root = manager.temporaryDirectory.appending(
+      path: "supacode-subtree-\(UUID().uuidString)", directoryHint: .isDirectory)
     defer { try? manager.removeItem(at: root) }
     let source = root.appending(path: "src", directoryHint: .isDirectory)
     let inner = source.appending(path: "inner", directoryHint: .isDirectory)
@@ -1865,7 +1884,8 @@ struct FileExplorerFeatureTests {
 
   @Test func createItemMakesUniqueDefaultNames() async throws {
     let manager = FileManager.default
-    let directory = manager.temporaryDirectory.appending(path: "supacode-create-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let directory = manager.temporaryDirectory.appending(
+      path: "supacode-create-\(UUID().uuidString)", directoryHint: .isDirectory)
     try manager.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? manager.removeItem(at: directory) }
     let client = FileExplorerClient.liveValue
@@ -2050,7 +2070,8 @@ struct FileExplorerFeatureTests {
 
   @Test func performTransferRefusesACopyThroughASymlinkedPrefix() throws {
     let manager = FileManager.default
-    let root = manager.temporaryDirectory.appending(path: "supacode-symlink-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let root = manager.temporaryDirectory.appending(
+      path: "supacode-symlink-\(UUID().uuidString)", directoryHint: .isDirectory)
     defer { try? manager.removeItem(at: root) }
     let source = root.appending(path: "src", directoryHint: .isDirectory)
     let inner = source.appending(path: "inner", directoryHint: .isDirectory)
@@ -2064,6 +2085,42 @@ struct FileExplorerFeatureTests {
       name: "src", operation: .copy, policy: .abort
     )
     #expect(!manager.fileExists(atPath: inner.appending(path: "src").path(percentEncoded: false)))
+  }
+
+  @Test func listDirectoryFollowsASymlinkedDirectory() throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appending(
+      path: "supacode-linklist-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? manager.removeItem(at: root) }
+    let target = root.appending(path: "target", directoryHint: .isDirectory)
+    try manager.createDirectory(at: target, withIntermediateDirectories: true)
+    try Data().write(to: target.appending(path: "a.txt"))
+    // `contentsOfDirectory(at:)` throws ENOTDIR on the link itself, so a linked
+    // folder must resolve to its target to list rather than fail as unreadable.
+    let link = root.appending(path: "link", directoryHint: .isDirectory)
+    try manager.createSymbolicLink(at: link, withDestinationURL: target)
+
+    let listing = try FileExplorerClient.listDirectory(at: link, limit: 100)
+    #expect(listing.entries.map(\.name) == ["a.txt"])
+  }
+
+  @Test func listDirectoryFlagsSymlinkEntries() throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appending(
+      path: "supacode-linkflag-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? manager.removeItem(at: root) }
+    let target = root.appending(path: "target", directoryHint: .isDirectory)
+    try manager.createDirectory(at: target, withIntermediateDirectories: true)
+    try Data().write(to: root.appending(path: "plain.txt"))
+    // A link to a directory reads as an expandable, alias-flagged row.
+    try manager.createSymbolicLink(
+      at: root.appending(path: "dirlink"), withDestinationURL: target)
+
+    let entries = try FileExplorerClient.listDirectory(at: root, limit: 100).entries
+    let byName = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0) })
+    #expect(byName["dirlink"]?.isSymbolicLink == true)
+    #expect(byName["dirlink"]?.isDirectory == true)
+    #expect(byName["plain.txt"]?.isSymbolicLink == false)
   }
 
   @Test func gitStatusLoadedWithStaleRootIsDropped() async {
