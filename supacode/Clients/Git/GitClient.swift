@@ -13,6 +13,7 @@ enum GitOperation: String {
   case gitCommonDir = "git_common_dir"
   case repoIsBare = "repo_is_bare"
   case branchNames = "branch_names"
+  case branchAvailability = "branch_availability"
   case branchNameValidation = "branch_name_validation"
   case branchRefs = "branch_refs"
   case defaultRemoteBranchRef = "default_remote_branch_ref"
@@ -43,6 +44,36 @@ enum GitClientError: LocalizedError {
       }
       return "Git command failed: \(command)\n\(message)"
     }
+  }
+}
+
+/// How a requested branch name relates to the repository's existing local
+/// branches, which decides the shape of the `git worktree add` that follows.
+///
+/// The distinction matters because the bundled `wt sw` can't make it safely on
+/// its own: when a branch is already checked out somewhere it exits 0 and prints
+/// *that* worktree's path, which the creation stream would happily report as a
+/// freshly created worktree. Classifying up front keeps that silent no-op out of
+/// the product.
+enum GitBranchAvailability: Equatable, Sendable {
+  /// No local branch by this name — `git worktree add -b <branch> <path> <base>`.
+  case absent
+  /// The branch exists and no live worktree holds it — `git worktree add <path> <branch>`.
+  /// A non-nil `stalePrunePath` means git still carries admin metadata for a
+  /// worktree whose directory is gone; it has to be pruned before the add, or
+  /// git (and `wt`) will still consider the branch occupied.
+  case reusable(stalePrunePath: String?)
+  /// The branch is checked out in a live worktree. Git refuses a second
+  /// checkout, so creation must refuse too rather than hand back that worktree.
+  case checkedOut(worktreePath: String)
+
+  /// Shared wording for the one collision reuse can't resolve: git allows a
+  /// branch in exactly one worktree, so the user has to open that worktree or
+  /// pick another name. Kept in one place so the creation alert and the prompt's
+  /// validation message can't drift.
+  static func checkedOutMessage(branch: String, worktreePath: String) -> String {
+    "'\(branch)' is already checked out at \(worktreePath). "
+      + "Open that worktree, or choose a different branch name."
   }
 }
 
@@ -488,6 +519,67 @@ struct GitClient {
       .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
       .filter { !$0.isEmpty }
     return Set(names)
+  }
+
+  /// Classify `branch` against the repository's local branches in one shell-out.
+  /// `%(worktreepath)` is empty unless the branch is checked out somewhere, so a
+  /// single `for-each-ref` answers both "does it exist" and "is it in use".
+  nonisolated func branchAvailability(
+    _ branch: String,
+    for repoRoot: URL
+  ) async throws -> GitBranchAvailability {
+    let path = repoRoot.path(percentEncoded: false)
+    let output = try await runGit(
+      operation: .branchAvailability,
+      arguments: [
+        "-C",
+        path,
+        "for-each-ref",
+        "--format=%(refname:short)\t%(worktreepath)",
+        "refs/heads",
+      ]
+    )
+    return Self.parseBranchAvailability(output, branch: branch)
+  }
+
+  /// Pure parser for `branchAvailability`, split out so the classification can be
+  /// tested without a repository on disk. `directoryExists` decides whether a
+  /// reported worktree path is live or stale metadata.
+  nonisolated static func parseBranchAvailability(
+    _ output: String,
+    branch: String,
+    directoryExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+  ) -> GitBranchAvailability {
+    // Branch names are compared case-insensitively to match `localBranchNames`,
+    // which the duplicate checks have always used.
+    let target = branch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !target.isEmpty else { return .absent }
+    for line in output.split(whereSeparator: \.isNewline) {
+      // Split on the first tab only: a worktree path may legitimately contain one.
+      guard let separator = line.firstIndex(of: "\t") else { continue }
+      let name = String(line[line.startIndex..<separator]).lowercased()
+      guard name == target else { continue }
+      let worktreePath = String(line[line.index(after: separator)...])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      if worktreePath.isEmpty {
+        return .reusable(stalePrunePath: nil)
+      }
+      // Metadata pointing at a directory that no longer exists is prunable, not
+      // a real checkout, so the branch is still reusable once git is told so.
+      return directoryExists(worktreePath)
+        ? .checkedOut(worktreePath: worktreePath)
+        : .reusable(stalePrunePath: worktreePath)
+    }
+    return .absent
+  }
+
+  /// Drop admin entries for worktrees whose directories are gone. Needed before
+  /// reusing a branch whose previous worktree was deleted outside Supacode.
+  nonisolated func pruneWorktrees(for repoRoot: URL) async throws {
+    _ = try await runGit(
+      operation: .worktreePrune,
+      arguments: ["-C", repoRoot.path(percentEncoded: false), "worktree", "prune"]
+    )
   }
 
   // Failures (collision, invalid ref, missing source) surface as

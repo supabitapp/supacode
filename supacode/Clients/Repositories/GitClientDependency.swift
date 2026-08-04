@@ -20,6 +20,10 @@ struct GitClientDependency: Sendable {
   var worktrees: @Sendable (URL) async throws -> [Worktree]
   var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
+  /// Classifies a branch name as absent / reusable / checked-out so worktree
+  /// creation can pick between `worktree add -b` and `worktree add <branch>`.
+  var branchAvailability: @Sendable (_ branch: String, _ repoRoot: URL) async throws -> GitBranchAvailability
+  var pruneWorktrees: @Sendable (_ repoRoot: URL) async throws -> Void
   var renameBranch: @Sendable (_ oldName: String, _ newName: String, _ repoRoot: URL) async throws -> Void
   var isValidBranchName: @Sendable (String, URL) async -> Bool
   var branchInventory: @Sendable (URL, [String]) async throws -> GitBranchInventory
@@ -95,6 +99,10 @@ extension GitClientDependency: DependencyKey {
       worktrees: { try await GitClient(shell: shell).worktrees(for: $0) },
       reconcileSupacodeLocks: { await GitClient(shell: shell).reconcileSupacodeLocks(for: $0) },
       localBranchNames: { try await GitClient(shell: shell).localBranchNames(for: $0) },
+      branchAvailability: { branch, repoRoot in
+        try await GitClient(shell: shell).branchAvailability(branch, for: repoRoot)
+      },
+      pruneWorktrees: { try await GitClient(shell: shell).pruneWorktrees(for: $0) },
       renameBranch: { oldName, newName, repoRoot in
         try await GitClient(shell: shell).renameBranch(from: oldName, to: newName, for: repoRoot)
       },
@@ -169,6 +177,11 @@ extension GitClientDependency: DependencyKey {
     // `git --version`; the license-gate tests override this explicitly.
     value.checkGitEnvironment = { nil }
     value.reconcileSupacodeLocks = { _ in }
+    // Default to "no such branch" (the plain new-branch path) so fixtures with
+    // fake `/tmp/...` roots don't shell out to real git. Tests covering reuse or
+    // the already-checked-out refusal override this explicitly.
+    value.branchAvailability = { _, _ in .absent }
+    value.pruneWorktrees = { _ in }
     // `liveValue` shells out to real `git clone`; a no-op default keeps an
     // unstubbed test from cloning over the network. Clone tests override this.
     value.cloneStream = { _, _, _, _ in
