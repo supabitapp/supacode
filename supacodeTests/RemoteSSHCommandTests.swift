@@ -431,6 +431,71 @@ struct SSHCommandTests {
     #expect(resolved == "it's here")
   }
 
+  @Test func fishLoginShellExecutesTerminalCompatibleCommandWithoutChangingTokens() async throws {
+    // The remote login shell parses the terminal-compatibility wrap itself, so
+    // its quoting must survive fish: backslash-bearing tokens quoted by
+    // `loginShellQuote` embed backslashes the POSIX-only `shellQuote` would let
+    // fish rewrite inside single quotes.
+    let fishURL = try #require(
+      ["/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish"]
+        .map { URL(fileURLWithPath: $0) }
+        .first { FileManager.default.isExecutableFile(atPath: $0.path) },
+      "Fish is required for the remote-shell quoting regression test"
+    )
+    let temporaryRoot = FileManager.default.temporaryDirectory
+      .appending(path: "supacode-fish-term-\(UUID().uuidString)")
+    let configRoot = temporaryRoot.appending(path: "config")
+    let workingDirectory = temporaryRoot.appending(path: #"working:it's\\literal"#)
+    try FileManager.default.createDirectory(
+      at: configRoot.appending(path: "fish"),
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+      at: workingDirectory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+    let argument = #"argument:it's\\literal"#
+    let remoteCommand = SSHCommand.remoteCommand(
+      executable: "/bin/sh",
+      arguments: [
+        "-c",
+        #"printf '%s\n' "$PWD" "$1""#,
+        "supacode-test",
+        argument,
+      ],
+      workingDirectory: workingDirectory
+    )
+    let command = SSHCommand.terminalCompatibleLoginShellCommand(
+      SSHCommand.loginShellWrapped(remoteCommand)
+    )
+    let process = Process()
+    process.executableURL = fishURL
+    process.arguments = ["--no-config", "-c", command]
+    var environment = ProcessInfo.processInfo.environment
+    environment["HOME"] = configRoot.path
+    environment["XDG_CONFIG_HOME"] = configRoot.path
+    environment["SHELL"] = fishURL.path
+    process.environment = environment
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    try await process.runToExit()
+
+    let output = try #require(
+      String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
+    let error = try #require(
+      String(bytes: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    )
+    #expect(process.terminationStatus == 0, "Fish rejected the wrapped command: \(error)")
+    #expect(output == "\(workingDirectory.path)\n\(argument)\n")
+    #expect(error.isEmpty)
+  }
+
   @Test func commandLineWrapsRemoteCommandInLoginShellQuotedForLocalShell() {
     let line = SSHCommand.commandLine(
       host: RemoteHost(alias: "devbox"),

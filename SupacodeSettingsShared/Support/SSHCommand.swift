@@ -174,9 +174,12 @@ public nonisolated enum SSHCommand {
     + "export TERM=xterm-256color; fi; "
 
   /// Wrap in `/bin/sh` so fish/csh login shells only parse `exec`, and export
-  /// the resolved TERM before the real login shell sources its profile.
+  /// the resolved TERM before the real login shell sources its profile. The
+  /// remote login shell parses this string, so the payload is login-shell
+  /// quoted: `loginShellQuote` output embeds backslashes for backslash-bearing
+  /// tokens, and fish rewrites backslashes inside POSIX single quotes.
   static func terminalCompatibleLoginShellCommand(_ loginShellCommand: String) -> String {
-    "exec /bin/sh -c " + shellQuote(terminalCompatibilityPrelude + loginShellCommand)
+    "exec /bin/sh -c " + loginShellQuote(terminalCompatibilityPrelude + loginShellCommand)
   }
 
   /// Full local `ssh` argv for `Process` / `ShellClient`. The remote command is
