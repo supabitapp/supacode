@@ -137,7 +137,7 @@ supacode surface close [-w <id>] [-t <id>] [-s <id>] [--background]             
 
 ```
 supacode repo list                                                     # List repository IDs.
-supacode repo open <path>                                              # Open repository.
+supacode repo open <path>                                              # Open repository, or adopt an existing worktree (prints the adopted repository or worktree ID; exits non-zero if the path adopts nothing).
 supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--upstream <ref> | --no-upstream] [--fetch] [--name <folder>] [--location <dir>] [--pin] [--reuse-existing-branch] [--background]  # Create worktree (prints the new worktree ID to stdout; --upstream sets the new branch's tracking branch, --no-upstream clears it; --pin pins it as soon as creation starts, local repositories only; --reuse-existing-branch checks out an existing unused branch instead of creating one, and requires --branch).
 ```
 

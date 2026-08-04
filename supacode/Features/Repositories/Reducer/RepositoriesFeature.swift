@@ -381,7 +381,10 @@ struct RepositoriesFeature {
       [Repository],
       failures: [LoadFailure],
       invalidRoots: [String],
-      roots: [URL]
+      roots: [URL],
+      /// The URLs the open was asked for, carried through so the handler can say
+      /// what actually happened to each one instead of reporting blanket success.
+      requested: [URL] = []
     )
     case selectWorktree(Worktree.ID?, focusTerminal: Bool = false)
     case selectWorktreeAtHotkeySlot(Int)
@@ -628,6 +631,9 @@ struct RepositoriesFeature {
       focusing: Bool = true
     )
     case selectTerminalTab(Worktree.ID, tabId: TerminalTabID)
+    /// Per-path result of an `openRepositories` request, so a CLI caller waiting
+    /// on `repo open` learns whether anything was actually adopted.
+    case repositoriesOpened([RepositoryOpenOutcome])
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -3530,15 +3536,19 @@ struct RepositoriesFeature {
               loadResult.repositories,
               failures: loadResult.failures,
               invalidRoots: invalidRoots,
-              roots: mergedRoots
+              roots: mergedRoots,
+              requested: urls
             )
           )
         }
         .cancellable(id: CancelID.load, cancelInFlight: true)
 
-      case .openRepositoriesFinished(let repositories, let failures, let invalidRoots, let roots):
+      case .openRepositoriesFinished(
+        let repositories, let failures, let invalidRoots, let roots, let requested
+      ):
         state.isRefreshingWorktrees = false
         let previousSelection = state.selectedWorktreeID
+        let knownRepositoryIDsBeforeOpen = Set(state.repositories.ids)
         let previousSelectedWorktree = state.worktree(for: previousSelection)
         let mergedRemote = Self.mergePersistedRemoteRepositories(into: repositories, existingState: state)
         _ = applyRepositories(
@@ -3558,6 +3568,14 @@ struct RepositoriesFeature {
           uniqueKeysWithValues: failures.map { ($0.rootID, $0.message) }
         )
         state.dropStaleFailedRepositorySelection()
+        // Resolve what each requested path became *before* reading the selection
+        // below, so adopting a worktree is reflected in the change notification.
+        let openOutcomes = resolveOpenOutcomes(
+          requested: requested,
+          invalidRoots: invalidRoots,
+          knownRepositoryIDsBeforeOpen: knownRepositoryIDsBeforeOpen,
+          state: &state
+        )
         if !invalidRoots.isEmpty {
           let message = invalidRoots.map { "Supacode couldn't read \($0)." }.joined(separator: "\n")
           state.alert = messageAlert(
@@ -3577,6 +3595,9 @@ struct RepositoriesFeature {
         ]
         if selectionChanged {
           allEffects.append(.send(.delegate(.selectedWorktreeChanged(selectedWorktree))))
+        }
+        if !openOutcomes.isEmpty {
+          allEffects.append(.send(.delegate(.repositoriesOpened(openOutcomes))))
         }
         // See `.repositoriesLoaded` above for why no per-slice save
         // effects run here; sidebar mutations already flushed.
@@ -4959,6 +4980,109 @@ struct RepositoriesFeature {
         ? .send(.delegate(.selectedWorktreeChanged(selectedWorktree)))
         : .none
     )
+  }
+
+  /// Decide what each requested open path actually became, and adopt a path that
+  /// names an existing worktree by selecting it.
+  ///
+  /// Resolution is exact-match first (a worktree, then a repository root) so the
+  /// common case is unambiguous, then falls back to the innermost containing
+  /// worktree / repository — which is what keeps `repo open <some/subdir>`
+  /// working. Anything that matches nothing is a failure, not a silent success.
+  private func resolveOpenOutcomes(
+    requested: [URL],
+    invalidRoots: [String],
+    knownRepositoryIDsBeforeOpen: Set<Repository.ID>,
+    state: inout State
+  ) -> [RepositoryOpenOutcome] {
+    guard !requested.isEmpty else { return [] }
+    let invalid = Set(invalidRoots)
+    var outcomes: [RepositoryOpenOutcome] = []
+    for url in requested {
+      let path = url.standardizedFileURL.path(percentEncoded: false)
+      if invalid.contains(url.path(percentEncoded: false)) || invalid.contains(path) {
+        outcomes.append(
+          RepositoryOpenOutcome(
+            requestedURL: url,
+            result: .failed(message: "Supacode couldn't read \(path).")
+          )
+        )
+        continue
+      }
+      if let match = Self.openMatch(for: path, repositories: state.repositories) {
+        switch match {
+        case .worktree(let worktreeID, let repositoryID):
+          // The adoption itself: surface the worktree the caller named.
+          state.setSingleWorktreeSelection(worktreeID)
+          outcomes.append(
+            RepositoryOpenOutcome(
+              requestedURL: url,
+              result: .worktree(id: worktreeID, repositoryID: repositoryID)
+            )
+          )
+        case .repository(let repositoryID):
+          outcomes.append(
+            RepositoryOpenOutcome(
+              requestedURL: url,
+              result: .repository(
+                id: repositoryID,
+                isNew: !knownRepositoryIDsBeforeOpen.contains(repositoryID)
+              )
+            )
+          )
+        }
+        continue
+      }
+      outcomes.append(
+        RepositoryOpenOutcome(
+          requestedURL: url,
+          result: .failed(
+            message:
+              "\(path) didn't resolve to a repository or worktree Supacode could open."
+          )
+        )
+      )
+    }
+    return outcomes
+  }
+
+  /// What a requested path names, once the roster has loaded.
+  private enum OpenMatch {
+    case worktree(Worktree.ID, repositoryID: Repository.ID)
+    case repository(Repository.ID)
+  }
+
+  private static func openMatch(
+    for path: String,
+    repositories: IdentifiedArrayOf<Repository>
+  ) -> OpenMatch? {
+    // Compare with a trailing separator so `/a/foo-bar` can't be read as living
+    // inside `/a/foo`.
+    func contains(_ container: String, _ candidate: String) -> Bool {
+      candidate == container || candidate.hasPrefix(container.hasSuffix("/") ? container : container + "/")
+    }
+    // Containers nest (a worktree can live under its repository root, and the
+    // main worktree *is* that root), so the best fallback is the longest
+    // matching prefix — the innermost thing that holds the path.
+    var best: (length: Int, match: OpenMatch)?
+    func consider(_ containerPath: String, _ match: OpenMatch) {
+      guard contains(containerPath, path) else { return }
+      if let current = best, current.length >= containerPath.count { return }
+      best = (containerPath.count, match)
+    }
+    for repository in repositories {
+      let rootPath = repository.rootURL.standardizedFileURL.path(percentEncoded: false)
+      if rootPath == path { return .repository(repository.id) }
+      for worktree in repository.worktrees {
+        let worktreePath = worktree.workingDirectory.standardizedFileURL.path(percentEncoded: false)
+        if worktreePath == path {
+          return .worktree(worktree.id, repositoryID: repository.id)
+        }
+        consider(worktreePath, .worktree(worktree.id, repositoryID: repository.id))
+      }
+      consider(rootPath, .repository(repository.id))
+    }
+    return best?.match
   }
 
   /// Pin / customization transfer record produced by `prunedPendingWorktrees`

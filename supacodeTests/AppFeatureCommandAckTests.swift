@@ -370,6 +370,134 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
   }
 
+  // MARK: - repo open.
+
+  /// `repo open` used to answer `ok: true` the moment the action was dispatched,
+  /// so it exited 0 no matter what happened afterwards. It now holds the fd until
+  /// the load reports what the path became.
+  @Test(.dependencies) func repoOpenSocketDeeplinkDefersItsAck() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree, tabExists: true)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .repoOpen(path: worktree.workingDirectory),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    #expect(readPipeJSON(readFD) == nil)
+  }
+
+  @Test(.dependencies) func repoOpenSocketDeeplinkResolvesWithTheAdoptedWorktreeID() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree, tabExists: true)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .repoOpen(path: worktree.workingDirectory),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.send(
+      .repositories(
+        .delegate(
+          .repositoriesOpened([
+            RepositoryOpenOutcome(
+              requestedURL: worktree.workingDirectory,
+              result: .worktree(id: worktree.id, repositoryID: "/tmp/repo")
+            )
+          ])
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == true)
+    // The CLI prints this, so `repo open <worktree>` names what it adopted.
+    #expect(response?["id"] as? String != nil)
+  }
+
+  /// The other half of the fix: adopting nothing must exit non-zero, which means
+  /// the app has to answer `ok: false` with a reason.
+  @Test(.dependencies) func repoOpenSocketDeeplinkFailsWhenNothingIsAdopted() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree, tabExists: true)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+    let stranger = URL(fileURLWithPath: "/tmp/not-a-repo")
+
+    await store.send(
+      .deeplink(
+        .repoOpen(path: stranger),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.send(
+      .repositories(
+        .delegate(
+          .repositoriesOpened([
+            RepositoryOpenOutcome(
+              requestedURL: stranger,
+              result: .failed(message: "Supacode couldn't read /tmp/not-a-repo.")
+            )
+          ])
+        )
+      )
+    )
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == false)
+    #expect(response?["error"] as? String == "Supacode couldn't read /tmp/not-a-repo.")
+  }
+
+  /// An outcome for a different path must not drain this command's ack.
+  @Test(.dependencies) func repoOpenAckIgnoresOutcomesForOtherPaths() async {
+    let worktree = makeWorktree()
+    let store = makeStore(worktree: worktree, tabExists: true)
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .repoOpen(path: URL(fileURLWithPath: "/tmp/wanted")),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    await store.send(
+      .repositories(
+        .delegate(
+          .repositoriesOpened([
+            RepositoryOpenOutcome(
+              requestedURL: URL(fileURLWithPath: "/tmp/unrelated"),
+              result: .repository(id: "/tmp/unrelated", isNew: true)
+            )
+          ])
+        )
+      )
+    )
+
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+    #expect(readPipeJSON(readFD) == nil)
+  }
+
   // MARK: - immediate ack.
 
   @Test(.dependencies) func synchronousCommandAcksImmediately() async {

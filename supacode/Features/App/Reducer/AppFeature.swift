@@ -274,6 +274,9 @@ struct AppFeature {
     case worktreeArchived(worktreeID: Worktree.ID)
     /// folder-repository delete (the folder is removed from Supacode / disk).
     case folderRemoved(repositoryID: Repository.ID)
+    /// repo open: resolves when the load reports what the requested path became.
+    /// Matched on the path because no id exists until the repository is open.
+    case repoOpened(path: URL)
   }
 
   enum Action {
@@ -1257,6 +1260,26 @@ struct AppFeature {
       case .deeplinkInputConfirmation:
         return .none
 
+      case .repositories(.delegate(.repositoriesOpened(let outcomes))):
+        // One effect per outcome: each requested path answers its own waiting
+        // command, with the id it adopted or the reason it adopted nothing.
+        var openAckEffects: [Effect<Action>] = []
+        for outcome in outcomes {
+          let matchPath = outcome.requestedURL.standardizedFileURL
+          openAckEffects.append(
+            resolveCommandAcks(
+              ok: outcome.failureMessage == nil,
+              error: outcome.failureMessage,
+              resourceID: outcome.resourceID.map { Self.percentEncodedID($0) },
+              state: &state
+            ) { match in
+              if case .repoOpened(let ackPath) = match { return ackPath == matchPath }
+              return false
+            }
+          )
+        }
+        return .merge(openAckEffects)
+
       case .repositories(.createRandomWorktreeSucceeded(let worktree, _, let pendingID)):
         // Bind this creation's ack (matched by its pending id) to the real
         // worktree id so its first tab resolves it.
@@ -1993,7 +2016,12 @@ struct AppFeature {
         timeoutSeconds: timeoutSeconds, state: &state, background: background
       )
     case .repoOpen(let path):
-      return .send(.repositories(.openRepositories([path])))
+      // Defer the ack until the load reports what `path` resolved to. Answering
+      // here would report success before any of the work had run.
+      return awaitingCompletion(
+        .send(.repositories(.openRepositories([path]))),
+        match: .repoOpened(path: path.standardizedFileURL),
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .repoWorktreeNew(
       let repositoryID,
       let branch,

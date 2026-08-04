@@ -123,7 +123,12 @@ struct CLIReferenceView: View {
 
   private static let repoRows: [CLIEntry] = [
     .init(command: "supacode repo list", description: "List repository IDs."),
-    .init(command: "supacode repo open <path>", description: "Open a repository."),
+    .init(
+      command: "supacode repo open <path>",
+      description:
+        "Open a repository, or adopt an existing worktree. Prints the adopted ID; "
+        + "exits non-zero if the path adopts nothing."
+    ),
     .init(
       command:
         "supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] "
