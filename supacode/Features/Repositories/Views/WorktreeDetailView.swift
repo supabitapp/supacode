@@ -1104,7 +1104,7 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
         // Mirror the trailing inspector toggles (files + git status + notifications).
         Button {
         } label: {
-          Image(systemName: "folder")
+          Image(systemName: "list.bullet")
         }
         .redacted(reason: .placeholder)
         .shimmer(isActive: true)

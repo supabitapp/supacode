@@ -112,7 +112,7 @@ struct SidebarCommands: Commands {
         .appKeyboardShortcut(togglePullRequestInspector)
         .help("Toggle Pull Request Inspector (\(togglePullRequestInspector?.display ?? "none"))")
         .disabled(toggleInspectorPaneAction?.isEnabled != true)
-        Button("Toggle Files Inspector", systemImage: "folder") {
+        Button("Toggle Files Inspector", systemImage: "list.bullet") {
           toggleInspectorPaneAction?(.files)
         }
         .appKeyboardShortcut(toggleFilesInspector)

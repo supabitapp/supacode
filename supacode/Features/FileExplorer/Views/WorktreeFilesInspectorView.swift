@@ -1,3 +1,4 @@
+import AppKit
 import ComposableArchitecture
 import QuickLook
 import SupacodeSettingsShared
@@ -12,39 +13,78 @@ struct WorktreeFilesInspectorView: View {
   /// The toolbar's resolved editor, naming the default Open action.
   let resolvedOpenAction: OpenWorktreeAction?
   let onOpenFile: (URL, OpenWorktreeAction?) -> Void
+  @State private var bottomBarInset: CGFloat = 0
 
   var body: some View {
-    VStack(spacing: 0) {
-      FileExplorerPaneHeader(rootPath: store.context?.root?.path(percentEncoded: false))
-      Divider()
-      FileExplorerPaneContent(
-        store: store,
-        fileOpenActions: fileOpenActions,
-        resolvedOpenAction: resolvedOpenAction,
-        onOpenFile: onOpenFile
-      )
+    FileExplorerPaneContent(
+      store: store,
+      fileOpenActions: fileOpenActions,
+      resolvedOpenAction: resolvedOpenAction,
+      onOpenFile: onOpenFile,
+      bottomBarInset: bottomBarInset
+    )
+    .safeAreaBar(edge: .bottom) {
+      FileExplorerPaneFooter(root: store.context?.root)
+        .onGeometryChange(for: CGFloat.self) {
+          $0.size.height
+        } action: {
+          bottomBarInset = $0
+        }
     }
   }
 }
 
-private struct FileExplorerPaneHeader: View {
-  let rootPath: String?
+private struct FileExplorerPaneFooter: View {
+  let root: URL?
 
   var body: some View {
-    HStack {
-      Text("Files")
-        .font(.headline)
-        .help(tooltip)
-      Spacer(minLength: 0)
+    // Only the breadcrumb, and only when there's a root: no root means the pane
+    // is showing an unavailable state, which gets no footer bar.
+    if let root {
+      HStack {
+        FileExplorerRootPathControl(url: root)
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal)
+      // No top padding: the blur fade above provides the breathing room.
+      .padding(.bottom)
     }
-    .padding(.horizontal)
-    .padding(.vertical, 10)
+  }
+}
+
+/// Footer breadcrumb: the worktree root as a native macOS path control. It
+/// carries folder icons, elides when the pane is narrow, and reveals a clicked
+/// component in Finder.
+private struct FileExplorerRootPathControl: NSViewRepresentable {
+  let url: URL
+
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
+  func makeNSView(context: Context) -> NSPathControl {
+    let control = NSPathControl()
+    control.pathStyle = .standard
+    control.isEditable = false
+    control.focusRingType = .none
+    control.backgroundColor = .clear
+    control.font = .preferredFont(forTextStyle: .callout)
+    control.target = context.coordinator
+    control.action = #selector(Coordinator.reveal(_:))
+    // Let the breadcrumb elide rather than force the pane wider.
+    control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return control
   }
 
-  /// The pane title stays short; the root's full path lives in the tooltip.
-  private var tooltip: String {
-    guard let rootPath else { return "Files" }
-    return (rootPath as NSString).abbreviatingWithTildeInPath
+  func updateNSView(_ control: NSPathControl, context: Context) {
+    control.url = url
+    control.toolTip = (url.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+  }
+
+  final class Coordinator: NSObject {
+    @objc func reveal(_ sender: NSPathControl) {
+      guard let clicked = sender.clickedPathItem?.url else { return }
+      NSWorkspace.shared.activateFileViewerSelecting([clicked])
+    }
   }
 }
 
@@ -53,6 +93,7 @@ private struct FileExplorerPaneContent: View {
   let fileOpenActions: [OpenWorktreeAction]
   let resolvedOpenAction: OpenWorktreeAction?
   let onOpenFile: (URL, OpenWorktreeAction?) -> Void
+  let bottomBarInset: CGFloat
 
   var body: some View {
     if let context = store.context {
@@ -72,7 +113,8 @@ private struct FileExplorerPaneContent: View {
           store: store,
           fileOpenActions: fileOpenActions,
           resolvedOpenAction: resolvedOpenAction,
-          onOpenFile: onOpenFile
+          onOpenFile: onOpenFile,
+          bottomBarInset: bottomBarInset
         )
       }
     } else {
@@ -89,6 +131,7 @@ private struct FileExplorerTreeContent: View {
   let fileOpenActions: [OpenWorktreeAction]
   let resolvedOpenAction: OpenWorktreeAction?
   let onOpenFile: (URL, OpenWorktreeAction?) -> Void
+  let bottomBarInset: CGFloat
   @State private var quickLookURL: URL?
   @Environment(OpenActionIconStore.self) private var iconStore: OpenActionIconStore?
 
@@ -112,8 +155,12 @@ private struct FileExplorerTreeContent: View {
               openFile: onOpenFile,
               showMore: { store.send(.showMoreTapped(directory: $0)) },
               quickLook: { quickLookURL = $0 }
-            )
+            ),
+            bottomBarInset: bottomBarInset
           )
+          // Only the outline draws under the toolbar (top) and breadcrumb bar
+          // (bottom); the empty states stay inset so they center like the others.
+          .ignoresSafeArea(.container, edges: .vertical)
           .quickLookPreview($quickLookURL)
           .onDisappear { quickLookURL = nil }
         }

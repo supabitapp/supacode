@@ -99,7 +99,7 @@ struct WorktreePullRequestIconBadge: View {
   }
 }
 
-/// Trailing toolbar folder that toggles the files inspector pane.
+/// Trailing toolbar button that toggles the files inspector pane.
 struct WorktreeFilesToolbarButton: View {
   let isSelected: Bool
   // Selection highlight color, derived from the terminal background luminance
@@ -118,12 +118,12 @@ struct WorktreeFilesToolbarButton: View {
     )
     Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
       if isSelected {
-        Label("Files", systemImage: "folder")
+        Label("Files", systemImage: "list.bullet")
           .foregroundStyle(foreground)
       } else {
-        // No foreground so the resting folder matches the other toolbar buttons
+        // No foreground so the resting glyph matches the other toolbar buttons
         // exactly, including the fade when the window isn't key.
-        Label("Files", systemImage: "folder")
+        Label("Files", systemImage: "list.bullet")
       }
     }
     .tint(tint)

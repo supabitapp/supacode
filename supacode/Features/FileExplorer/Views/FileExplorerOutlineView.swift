@@ -1,6 +1,7 @@
 import AppKit
 import SupacodeSettingsShared
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Callbacks the outline bridge fires back into SwiftUI / the reducer.
 struct FileExplorerOutlineActions {
@@ -21,12 +22,19 @@ struct FileExplorerOutlineView: NSViewRepresentable {
   /// Menu icon per open action: a baked app icon or an SF Symbol.
   let menuIcon: (OpenWorktreeAction) -> NSImage?
   let actions: FileExplorerOutlineActions
+  /// Height of the SwiftUI breadcrumb bar the outline draws under, so its rows
+  /// still clear the bar. SwiftUI zeroes the ignored safe area for this opaque
+  /// view, so we feed the inset in explicitly.
+  let bottomBarInset: CGFloat
+
+  /// Extra distance above the breadcrumb bar over which the blur fades out.
+  private static let blurFadeHeight: CGFloat = 20
 
   func makeCoordinator() -> Coordinator {
     Coordinator()
   }
 
-  func makeNSView(context: Context) -> NSScrollView {
+  func makeNSView(context: Context) -> NSView {
     let outlineView = FileExplorerNSOutlineView()
     outlineView.coordinator = context.coordinator
     outlineView.headerView = nil
@@ -38,6 +46,9 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     outlineView.intercellSpacing = NSSize(width: 0, height: 2)
     outlineView.indentationPerLevel = 14
     outlineView.autoresizesOutlineColumn = false
+    // Keep the single column pinned to the visible width so long names
+    // truncate in place instead of running under the pane edge.
+    outlineView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
     outlineView.autosaveExpandedItems = false
     outlineView.allowsMultipleSelection = false
     outlineView.allowsEmptySelection = true
@@ -64,12 +75,37 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     let scrollView = NSScrollView()
     scrollView.documentView = outlineView
     scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.horizontalScrollElasticity = .none
     scrollView.drawsBackground = false
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
     context.coordinator.outlineView = outlineView
-    return scrollView
+    context.coordinator.scrollView = scrollView
+
+    // Progressive bottom fade: a within-window blur overlay masked by a vertical
+    // gradient, approximating the toolbar's scroll-edge effect over the outline.
+    let blur = ProgressiveBlurView()
+    blur.translatesAutoresizingMaskIntoConstraints = false
+
+    let container = NSView()
+    container.addSubview(scrollView)
+    container.addSubview(blur)
+    let blurHeight = blur.heightAnchor.constraint(equalToConstant: bottomBarInset + Self.blurFadeHeight)
+    context.coordinator.blurHeightConstraint = blurHeight
+    NSLayoutConstraint.activate([
+      scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+      blur.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      blur.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      blur.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+      blurHeight,
+    ])
+    return container
   }
 
-  func updateNSView(_ scrollView: NSScrollView, context: Context) {
+  func updateNSView(_ nsView: NSView, context: Context) {
     context.coordinator.apply(
       tree: tree,
       fileOpenActions: fileOpenActions,
@@ -77,6 +113,14 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       menuIcon: menuIcon,
       actions: actions
     )
+    // Inset the rows past the breadcrumb bar the outline now draws under. Added
+    // to the safe area so it composes with the automatic titlebar inset up top.
+    if let scrollView = context.coordinator.scrollView,
+      scrollView.additionalSafeAreaInsets.bottom != bottomBarInset
+    {
+      scrollView.additionalSafeAreaInsets.bottom = bottomBarInset
+    }
+    context.coordinator.blurHeightConstraint?.constant = bottomBarInset + Self.blurFadeHeight
   }
 
   /// One outline item. Reference type because NSOutlineView tracks items by
@@ -105,8 +149,11 @@ struct FileExplorerOutlineView: NSViewRepresentable {
   @MainActor
   final class Coordinator: NSObject {
     static let columnIdentifier = NSUserInterfaceItemIdentifier("fileExplorerColumn")
+    private static let logger = SupaLogger("FileExplorer")
 
     weak var outlineView: NSOutlineView?
+    weak var scrollView: NSScrollView?
+    var blurHeightConstraint: NSLayoutConstraint?
     private(set) var tree: FileExplorerFeature.TreeState?
     private var fileOpenActions: [OpenWorktreeAction] = []
     private var resolvedOpenAction: OpenWorktreeAction?
@@ -139,6 +186,10 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         previous?.root != tree.root
         || previous?.directories != tree.directories
         || previous?.expanded != tree.expanded
+      // A background re-list (the 5s sweep) reloads/expands/selects rows; those
+      // must never yank first responder away from wherever the user is working,
+      // e.g. a terminal surface.
+      let priorResponder = outlineView.window?.firstResponder
       if structureChanged {
         isApplyingState = true
         refreshItems(for: tree)
@@ -147,6 +198,24 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         isApplyingState = false
       }
       applySelection(tree, outlineView: outlineView)
+      restoreFirstResponderIfStolen(from: priorResponder, outlineView: outlineView)
+    }
+
+    /// Reclaims first responder for `prior` if applying state pulled it into the
+    /// outline unprompted. A genuine click on a row routes through the outline's
+    /// own event handling, not here, so this never fights real user focus.
+    private func restoreFirstResponderIfStolen(from prior: NSResponder?, outlineView: NSOutlineView) {
+      guard let window = outlineView.window else { return }
+      let current = window.firstResponder
+      guard current !== prior else { return }
+      func belongsToOutline(_ responder: NSResponder?) -> Bool {
+        guard let view = responder as? NSView else { return false }
+        return view === outlineView || view.isDescendant(of: outlineView)
+      }
+      guard belongsToOutline(current), !belongsToOutline(prior) else { return }
+      if !window.makeFirstResponder(prior) {
+        Self.logger.debug("Couldn't hand first responder back after applying the file tree.")
+      }
     }
 
     /// Rebuild item kinds in place so cached identities survive reloads.
@@ -235,14 +304,21 @@ struct FileExplorerOutlineView: NSViewRepresentable {
 
     // MARK: Activation.
 
-    /// Double-click and Return: directories toggle, files open in the editor.
+    /// Double-click and Return: directories toggle, files open in the system's
+    /// default app (Finder behavior). Configured editors live in the menu.
     func activate(item: OutlineItem) {
       guard let entry = item.entry else { return }
       if entry.isDirectory {
         actions?.toggleDirectory(item.path)
       } else if let url = url(for: item.path) {
-        actions?.openFile(url, nil)
+        openInDefaultApp(url)
       }
+    }
+
+    /// Opens the file with the system's default app, logging when nothing can.
+    private func openInDefaultApp(_ url: URL) {
+      guard !NSWorkspace.shared.open(url) else { return }
+      Self.logger.warning("No system-default app opened \(url.lastPathComponent).")
     }
 
     @discardableResult
@@ -270,7 +346,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
 
     @objc private func contextMenuOpen(_ sender: NSMenuItem) {
       guard let path = sender.representedObject as? String, let url = url(for: path) else { return }
-      actions?.openFile(url, nil)
+      openInDefaultApp(url)
     }
 
     @objc private func contextMenuOpenWith(_ sender: NSMenuItem) {
@@ -358,7 +434,18 @@ extension FileExplorerOutlineView.Coordinator: NSOutlineViewDelegate {
           withIdentifier: FileExplorerEntryCellView.identifier, owner: nil
         ) as? FileExplorerEntryCellView ?? FileExplorerEntryCellView()
       let childNode = entry.isDirectory ? tree?.directories[item.path] : nil
-      cell.configure(with: entry, isLoading: childNode?.isLoading ?? false, failure: childNode?.failure)
+      let isLoading = childNode?.isLoading ?? false
+      let hasListing = childNode?.listing != nil
+      // First-time expansion shimmers the row's own label; a refresh (with a
+      // previous listing) keeps the spinner. Reduce Motion falls back to it too.
+      let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+      let isFirstTimeLoading = isLoading && !hasListing
+      cell.configure(
+        with: entry,
+        isLoading: isLoading && (hasListing || reduceMotion),
+        isShimmering: isFirstTimeLoading && !reduceMotion,
+        failure: childNode?.failure
+      )
       return cell
     case .showMore(let remaining, let isLoading):
       let cell =
@@ -411,22 +498,27 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
     else { return }
     let path = item.path
 
-    // Mirror the sidebar's open section: a primary "Open with X" entry for
-    // the resolved (or first) file-capable editor, then the full submenu.
+    // Open with the system default app, matching a double-click.
+    menu.addItem(
+      makeItem(
+        "Open", action: #selector(contextMenuOpen(_:)), symbolName: "arrow.up.right.square", representing: path
+      )
+    )
+
+    // Configured editors live on the right-click menu only: the resolved (or
+    // first) file-capable editor, then the full submenu below.
     let primary =
       (resolvedOpenAction?.canOpenFiles == true ? resolvedOpenAction : nil) ?? fileOpenActions.first
     if let primary {
-      let open = makeItem(
-        "Open with \(primary.labelTitle)",
+      // No icon: only the system "Open" above carries the arrow glyph.
+      let openWith = NSMenuItem(
+        title: "Open with \(primary.labelTitle)",
         action: #selector(contextMenuOpenWith(_:)),
-        symbolName: "arrow.up.right.square"
+        keyEquivalent: ""
       )
-      open.representedObject = OpenWithPayload(path: path, action: primary)
-      menu.addItem(open)
-    } else {
-      let open = makeItem("Open", action: #selector(contextMenuOpen(_:)), symbolName: "arrow.up.right.square")
-      open.representedObject = path
-      menu.addItem(open)
+      openWith.target = self
+      openWith.representedObject = OpenWithPayload(path: path, action: primary)
+      menu.addItem(openWith)
     }
 
     if !fileOpenActions.isEmpty {
@@ -445,32 +537,38 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
       menu.addItem(openWith)
     }
 
-    let quickLook = makeItem("Quick Look", action: #selector(contextMenuQuickLook(_:)), symbolName: "eye")
-    quickLook.representedObject = path
-    menu.addItem(quickLook)
+    menu.addItem(
+      makeItem("Quick Look", action: #selector(contextMenuQuickLook(_:)), symbolName: "eye", representing: path)
+    )
     menu.addItem(.separator())
-    let reveal = makeItem(
-      "Reveal in Finder", action: #selector(contextMenuRevealInFinder(_:)), symbolName: "folder"
+    menu.addItem(
+      makeItem(
+        "Reveal in Finder", action: #selector(contextMenuRevealInFinder(_:)), symbolName: "folder",
+        representing: path
+      )
     )
-    reveal.representedObject = path
-    menu.addItem(reveal)
     menu.addItem(.separator())
-    let copyPathname = makeItem(
-      "Copy as Pathname", action: #selector(contextMenuCopyPathname(_:)), symbolName: "doc.on.doc"
+    menu.addItem(
+      makeItem(
+        "Copy as Pathname", action: #selector(contextMenuCopyPathname(_:)), symbolName: "doc.on.doc",
+        representing: path
+      )
     )
-    copyPathname.representedObject = path
-    menu.addItem(copyPathname)
-    let copyRelative = makeItem(
-      "Copy Relative Path", action: #selector(contextMenuCopyRelativePath(_:)), symbolName: "doc.on.doc"
+    menu.addItem(
+      makeItem(
+        "Copy Relative Path", action: #selector(contextMenuCopyRelativePath(_:)), symbolName: "doc.on.doc",
+        representing: path
+      )
     )
-    copyRelative.representedObject = path
-    menu.addItem(copyRelative)
   }
 
-  private func makeItem(_ title: String, action: Selector, symbolName: String) -> NSMenuItem {
+  private func makeItem(_ title: String, action: Selector, symbolName: String, representing path: String)
+    -> NSMenuItem
+  {
     let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
     item.target = self
     item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+    item.representedObject = path
     return item
   }
 }
@@ -499,8 +597,69 @@ private final class FileExplorerNSOutlineView: NSOutlineView {
   }
 }
 
-/// Entry cell matching the sidebar's visual language: semibold SF symbol at
-/// 0.6 opacity, body-sized label with middle truncation.
+/// A within-window blur overlay masked by a vertical gradient, so the effect
+/// fades from full blur at the bottom to clear going up: an approximation of
+/// the system scroll-edge effect for the AppKit outline behind it.
+private final class ProgressiveBlurView: NSVisualEffectView {
+  private var maskedSize: NSSize = .zero
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    blendingMode = .withinWindow
+    material = .headerView
+    state = .active
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { nil }
+
+  // Decorative only: let clicks, drags, and scroll reach the outline rows behind
+  // the fade instead of landing on the overlay.
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func layout() {
+    super.layout()
+    // Regenerate only on a real size change; redrawing the gradient every layout
+    // pass would burn CPU while the outline scrolls. The gradient is opaque (full
+    // blur) at the bottom edge and clears toward the top.
+    guard bounds.size != maskedSize else { return }
+    maskedSize = bounds.size
+    maskImage = Self.gradientMask(size: bounds.size)
+  }
+
+  private static func gradientMask(size: NSSize) -> NSImage? {
+    guard size.width > 0, size.height > 0 else { return nil }
+    return NSImage(size: size, flipped: false) { rect in
+      guard let gradient = NSGradient(colors: [.black, .clear]) else { return false }
+      // 90°: the first color (opaque) sits at the bottom, fading up to clear.
+      gradient.draw(in: rect, angle: 90)
+      return true
+    }
+  }
+}
+
+/// Finder's own document icons, resolved by content type and memoized per file
+/// extension so the tree reads as native macOS with nothing to bundle.
+@MainActor
+enum FileExplorerFileIcon {
+  private static let folderIcon = NSWorkspace.shared.icon(for: .folder)
+  private static var fileIcons: [String: NSImage] = [:]
+
+  static func folder() -> NSImage { folderIcon }
+
+  static func file(named name: String) -> NSImage {
+    let ext = (name as NSString).pathExtension.lowercased()
+    if let cached = fileIcons[ext] { return cached }
+    // No extension or an unknown one falls back to the generic document icon.
+    let type = ext.isEmpty ? nil : UTType(filenameExtension: ext)
+    let icon = NSWorkspace.shared.icon(for: type ?? .data)
+    fileIcons[ext] = icon
+    return icon
+  }
+}
+
+/// Entry cell: the file's native Finder icon beside a body-sized label with
+/// middle truncation.
 private final class FileExplorerEntryCellView: NSTableCellView {
   static let identifier = NSUserInterfaceItemIdentifier("fileExplorerEntryCell")
 
@@ -508,21 +667,24 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   private let label = NSTextField(labelWithString: "")
   private let spinner = NSProgressIndicator()
   private let warningView = NSImageView()
+  /// Sweeps the label while its directory loads for the first time.
+  private var shimmerLayer: CAGradientLayer?
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     identifier = Self.identifier
     let bodyFont = NSFont.preferredFont(forTextStyle: .body)
 
-    iconView.symbolConfiguration = NSImage.SymbolConfiguration(
-      pointSize: bodyFont.pointSize, weight: .semibold
-    )
-    iconView.contentTintColor = .secondaryLabelColor
-    iconView.alphaValue = 0.6
+    // Full-color Finder icons, scaled down to the row's icon slot.
+    iconView.imageScaling = .scaleProportionallyDown
 
     label.font = bodyFont
     label.lineBreakMode = .byTruncatingMiddle
     label.maximumNumberOfLines = 1
+    // Layer-backed so a gradient mask can drive the loading shimmer.
+    label.wantsLayer = true
+    // Truncation must win over widening the cell past the visible column.
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     spinner.style = .spinning
     spinner.controlSize = .small
@@ -546,6 +708,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
       stack.topAnchor.constraint(equalTo: topAnchor, constant: 5),
       stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
       iconView.widthAnchor.constraint(equalToConstant: 16),
+      iconView.heightAnchor.constraint(equalToConstant: 16),
     ])
     textField = label
     imageView = iconView
@@ -554,27 +717,60 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
 
-  func configure(with entry: FileExplorerEntry, isLoading: Bool, failure: FileExplorerListingError?) {
-    iconView.image = NSImage(
-      systemSymbolName: entry.isDirectory ? "folder" : "doc",
-      accessibilityDescription: entry.isDirectory ? "Folder" : "File"
-    )
+  func configure(
+    with entry: FileExplorerEntry,
+    isLoading: Bool,
+    isShimmering: Bool,
+    failure: FileExplorerListingError?
+  ) {
+    iconView.image = entry.isDirectory ? FileExplorerFileIcon.folder() : FileExplorerFileIcon.file(named: entry.name)
+    iconView.setAccessibilityLabel(entry.isDirectory ? "Folder" : "File")
     label.stringValue = entry.name
     if isLoading {
       spinner.startAnimation(nil)
     } else {
       spinner.stopAnimation(nil)
     }
+    setShimmering(isShimmering)
     warningView.isHidden = failure == nil
     warningView.toolTip = failure.map(Self.failureHelp)
     warningView.setAccessibilityLabel(failure.map(Self.failureHelp))
   }
 
-  override var backgroundStyle: NSView.BackgroundStyle {
-    didSet {
-      // Full-strength icon only while the row is emphasized, like the sidebar.
-      iconView.alphaValue = backgroundStyle == .emphasized ? 1 : 0.6
+  override func layout() {
+    super.layout()
+    shimmerLayer?.frame = label.bounds
+  }
+
+  /// Matches `ShimmerModifier`'s look (0.6 dim floor, full-strength band); here
+  /// the band sweeps by animating the gradient mask's locations.
+  private func setShimmering(_ active: Bool) {
+    guard active else {
+      label.layer?.mask = nil
+      shimmerLayer = nil
+      return
     }
+    // Cache only once the mask is actually installed: writing shimmerLayer when
+    // label.layer is nil would wedge the guard and never shimmer this cell again.
+    guard shimmerLayer == nil, let layer = label.layer else { return }
+    let gradient = CAGradientLayer()
+    gradient.startPoint = CGPoint(x: 0, y: 0.5)
+    gradient.endPoint = CGPoint(x: 1, y: 0.5)
+    gradient.colors = [
+      NSColor.black.withAlphaComponent(0.6).cgColor,
+      NSColor.black.cgColor,
+      NSColor.black.withAlphaComponent(0.6).cgColor,
+    ]
+    gradient.locations = [0, 0.5, 1]
+    gradient.frame = label.bounds
+    let sweep = CABasicAnimation(keyPath: "locations")
+    sweep.fromValue = [-1.0, -0.5, 0.0]
+    sweep.toValue = [1.0, 1.5, 2.0]
+    sweep.duration = 1.5
+    sweep.repeatCount = .infinity
+    gradient.add(sweep, forKey: "shimmer")
+    layer.mask = gradient
+    shimmerLayer = gradient
   }
 
   private static func failureHelp(_ failure: FileExplorerListingError) -> String {
