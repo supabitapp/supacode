@@ -25,7 +25,7 @@ struct TerminalCommands: Commands {
       .ghosttyKeyboardShortcut("new_tab", in: ghosttyShortcuts)
       .disabled(newTerminalAction?.isEnabled != true)
 
-      Button("Rename Tab") {
+      Button("Rename Tab", systemImage: "pencil") {
         renameTabAction?()
       }
       .appKeyboardShortcut(renameTab)

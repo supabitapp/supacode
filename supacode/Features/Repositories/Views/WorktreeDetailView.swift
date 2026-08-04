@@ -323,8 +323,7 @@ struct WorktreeDetailView: View {
       .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
         store.send(.newTerminal)
       }
-      // The terminal model remains the source of truth for locked tabs and
-      // safely rejects rename requests that are not currently valid.
+      // Lock and validity are enforced by the terminal model, so this only gates on an active worktree.
       .focusedSceneAction(\.renameTabAction, enabled: hasActiveWorktree) {
         store.send(.renameSelectedTerminalTab)
       }

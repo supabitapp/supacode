@@ -1479,6 +1479,8 @@ struct AppFeature {
         // Ghostty void actions emit bare tag names; no colon.
         let command: TerminalClient.Command
         if action == "prompt_surface_title" || action == "prompt_tab_title" {
+          // Skip missing worktrees so the palette matches the rename shortcut's guard.
+          guard !worktree.isMissing else { return .none }
           // Capture the focused tab synchronously so a fast tab switch between dispatch
           // and effect execution can't redirect the rename to the wrong tab.
           let tabID = terminalClient.selectedTabID(worktree.id)
