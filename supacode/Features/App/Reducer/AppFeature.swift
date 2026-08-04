@@ -816,9 +816,8 @@ struct AppFeature {
             installed: state.installedOpenActions
           )
         return .run { @MainActor send in
-          workspaceClient.openFile(fileURL, action) { error in
-            send(.openWorktreeFailed(error))
-          }
+          guard let error = await workspaceClient.openFile(fileURL, action) else { return }
+          send(.openWorktreeFailed(error))
         }
 
       case .openWorktreeFailed(let error):

@@ -55,10 +55,17 @@ struct FileExplorerFeature {
     /// Keyed by root-relative path, `Self.rootPath` for the root itself.
     var directories: [String: DirectoryNode] = [:]
     var expanded: Set<String> = []
-    var selectedRowID: FileExplorerRowID?
+    /// Root-relative path of the selected entry.
+    var selectedPath: String?
   }
 
   nonisolated struct DirectoryNode: Equatable, Sendable {
+    /// A brand-new directory awaiting its first read.
+    static let initialLoading = DirectoryNode(
+      status: .loading(previous: nil),
+      requestedLimit: FileExplorerFeature.initialListingLimit
+    )
+
     var status: Status
     /// Cap requested from the client; grows by `listingLimitStep` on demand.
     var requestedLimit: Int
@@ -100,9 +107,6 @@ struct FileExplorerFeature {
     var trees: [Worktree.ID: TreeState] = [:]
     /// MRU order for `trees` eviction; last element is the current worktree.
     var recentWorktreeIDs: [Worktree.ID] = []
-    /// Flattened rows the view renders; rebuilt in the post-reduce hook so no
-    /// arm can forget it, and never derived in a view body.
-    var rows: [FileExplorerRow] = []
 
     var activeTree: TreeState? {
       guard let id = activeWorktreeID else { return nil }
@@ -111,9 +115,8 @@ struct FileExplorerFeature {
 
     var activeWorktreeID: Worktree.ID? { context?.worktree.id }
 
-    var selectedRowID: FileExplorerRowID? {
-      guard let id = activeWorktreeID else { return nil }
-      return trees[id]?.selectedRowID
+    var selectedPath: String? {
+      activeTree?.selectedPath
     }
 
     /// Root listing failure, driving the pane-level unavailable state.
@@ -121,17 +124,9 @@ struct FileExplorerFeature {
       activeTree?.directories[TreeState.rootPath]?.failure
     }
 
-    var isLoadingRoot: Bool {
-      activeTree?.directories[TreeState.rootPath]?.isLoading ?? false
-    }
-
-    /// The rendered entry at `path`, if currently visible.
-    func entry(at path: String) -> FileExplorerRow.Entry? {
-      guard
-        let row = rows.first(where: { $0.id == .entry(path: path) }),
-        case .entry(let entry) = row.kind
-      else { return nil }
-      return entry
+    /// The renderable root listing, current or held over during a re-list.
+    var rootListing: FileExplorerListing? {
+      activeTree?.directories[TreeState.rootPath]?.listing
     }
   }
 
@@ -140,10 +135,8 @@ struct FileExplorerFeature {
     case contextChanged(Context?, isVisible: Bool)
     case directoryToggled(String)
     case showMoreTapped(directory: String)
-    case refreshButtonTapped
-    case rowSelected(FileExplorerRowID?)
-    case expandSelectedDirectory
-    case collapseSelectedDirectory
+    case refreshRequested
+    case rowSelected(String?)
     case applicationBecameActive
     case listingLoaded(
       worktreeID: Worktree.ID,
@@ -158,6 +151,10 @@ struct FileExplorerFeature {
 
   private enum CancelID {
     static let sweep = "fileExplorer.sweep"
+
+    static func listings(_ worktreeID: Worktree.ID) -> String {
+      "fileExplorer.listings.\(worktreeID.rawValue)"
+    }
   }
 
   /// One expanded directory's mtime reference for the staleness sweep.
@@ -194,56 +191,24 @@ struct FileExplorerFeature {
         state.trees[id] = tree
         return listEffect(worktreeID: id, root: tree.root, directory: directory, limit: node.requestedLimit)
 
-      case .refreshButtonTapped:
-        // Manual refresh re-reads unconditionally; the sweep's mtime gate is
-        // for background freshness, not for a user asking to reload.
+      case .refreshRequested:
+        // Reload re-reads unconditionally; the sweep's mtime gate is for
+        // background freshness, not for an explicit retry.
         guard
           let id = state.activeWorktreeID,
-          var tree = state.trees[id]
+          let tree = state.trees[id]
         else { return .none }
-        var effects: [Effect<Action>] = []
-        for (path, node) in tree.directories {
-          guard !node.isLoading else { continue }
-          guard path == TreeState.rootPath || tree.expanded.contains(path) else { continue }
-          var updated = node
-          updated.status = .loading(previous: node.listing)
-          tree.directories[path] = updated
-          effects.append(
-            listEffect(worktreeID: id, root: tree.root, directory: path, limit: node.requestedLimit)
-          )
+        let eligible = tree.directories.keys.filter {
+          $0 == TreeState.rootPath || tree.expanded.contains($0)
         }
-        guard !effects.isEmpty else { return .none }
-        state.trees[id] = tree
-        return .merge(effects)
+        return relist(&state, worktreeID: id, directories: eligible)
 
       case .applicationBecameActive:
         return sweepEffect(state)
 
-      case .rowSelected(let rowID):
+      case .rowSelected(let path):
         guard let id = state.activeWorktreeID else { return .none }
-        state.trees[id]?.selectedRowID = rowID
-        return .none
-
-      case .expandSelectedDirectory:
-        guard
-          let path = state.selectedRowID?.entryPath,
-          let entry = state.entry(at: path),
-          entry.isDirectory,
-          !entry.isExpanded
-        else { return .none }
-        return handleDirectoryToggled(&state, path: path)
-
-      case .collapseSelectedDirectory:
-        guard let path = state.selectedRowID?.entryPath else { return .none }
-        if let entry = state.entry(at: path), entry.isDirectory, entry.isExpanded {
-          return handleDirectoryToggled(&state, path: path)
-        }
-        // Collapsed row or plain file: hop to the parent directory, Finder-style.
-        guard
-          let id = state.activeWorktreeID,
-          let separatorIndex = path.lastIndex(of: "/")
-        else { return .none }
-        state.trees[id]?.selectedRowID = .entry(path: String(path[..<separatorIndex]))
+        state.trees[id]?.selectedPath = path
         return .none
 
       case .listingLoaded(let worktreeID, let root, let directory, let limit, let result):
@@ -256,8 +221,19 @@ struct FileExplorerFeature {
         switch result {
         case .success(let listing):
           node.status = .loaded(listing)
+          // A selection whose entry vanished from its parent listing would
+          // otherwise haunt the tree and re-select on reappearance.
+          if let selected = tree.selectedPath,
+            Self.parentDirectory(of: selected) == directory,
+            !listing.entries.contains(where: { Self.childPath(of: directory, name: $0.name) == selected })
+          {
+            tree.selectedPath = nil
+          }
         case .failure(let error):
           node.status = .failed(error)
+          // Auto-collapse so the warning row's "expand again to retry"
+          // affordance is one gesture, not collapse-then-expand.
+          tree.expanded.remove(directory)
         }
         tree.directories[directory] = node
         state.trees[worktreeID] = tree
@@ -267,29 +243,11 @@ struct FileExplorerFeature {
         return sweepEffect(state)
 
       case .sweepCompleted(let worktreeID, let changedDirectories):
-        guard
-          worktreeID == state.activeWorktreeID,
-          var tree = state.trees[worktreeID]
-        else { return .none }
-        var effects: [Effect<Action>] = []
-        for directory in changedDirectories {
-          guard var node = tree.directories[directory], !node.isLoading else { continue }
-          node.status = .loading(previous: node.listing)
-          tree.directories[directory] = node
-          effects.append(
-            listEffect(worktreeID: worktreeID, root: tree.root, directory: directory, limit: node.requestedLimit)
-          )
-        }
-        guard !effects.isEmpty else { return .none }
-        state.trees[worktreeID] = tree
-        return .merge(effects)
+        // The visibility check drops a stat pass that was in flight when the
+        // pane hid; the timer is cancelled but its last tick may still land.
+        guard state.isVisible, worktreeID == state.activeWorktreeID else { return .none }
+        return relist(&state, worktreeID: worktreeID, directories: changedDirectories)
       }
-    }
-    // Post-reduce rebuild so the rows cache can never drift from the trees;
-    // the equality guard inside keeps no-op rebuilds from invalidating SwiftUI.
-    Reduce { state, _ in
-      rebuildRows(&state)
-      return .none
     }
   }
 
@@ -312,10 +270,7 @@ struct FileExplorerFeature {
     if state.trees[worktreeID]?.root != root {
       // New tree, or the worktree moved on disk: start from a fresh root.
       var tree = TreeState(root: root)
-      tree.directories[TreeState.rootPath] = DirectoryNode(
-        status: .loading(previous: nil),
-        requestedLimit: Self.initialListingLimit
-      )
+      tree.directories[TreeState.rootPath] = .initialLoading
       state.trees[worktreeID] = tree
       effects.append(
         listEffect(worktreeID: worktreeID, root: root, directory: TreeState.rootPath, limit: Self.initialListingLimit)
@@ -324,7 +279,7 @@ struct FileExplorerFeature {
       // Cached tree re-activated: freshen it instead of trusting stale listings.
       effects.append(sweepEffect(state))
     }
-    touchRecentWorktree(&state, worktreeID: worktreeID)
+    effects.append(touchRecentWorktree(&state, worktreeID: worktreeID))
     effects.append(sweepTimerEffect())
     return .merge(effects)
   }
@@ -346,23 +301,47 @@ struct FileExplorerFeature {
       break
     case .failed, .none:
       // First expansion, or an explicit retry of a failed read.
-      tree.directories[path] = DirectoryNode(
-        status: .loading(previous: nil),
-        requestedLimit: Self.initialListingLimit
-      )
+      tree.directories[path] = .initialLoading
       effect = listEffect(worktreeID: id, root: tree.root, directory: path, limit: Self.initialListingLimit)
     }
     state.trees[id] = tree
     return effect
   }
 
-  private func touchRecentWorktree(_ state: inout State, worktreeID: Worktree.ID) {
+  /// Flips each not-already-loading directory to `.loading(previous:)` and
+  /// issues its re-list effect.
+  private func relist(
+    _ state: inout State,
+    worktreeID: Worktree.ID,
+    directories: some Sequence<String>
+  ) -> Effect<Action> {
+    guard var tree = state.trees[worktreeID] else { return .none }
+    var effects: [Effect<Action>] = []
+    for directory in directories {
+      guard var node = tree.directories[directory], !node.isLoading else { continue }
+      node.status = .loading(previous: node.listing)
+      tree.directories[directory] = node
+      effects.append(
+        listEffect(worktreeID: worktreeID, root: tree.root, directory: directory, limit: node.requestedLimit)
+      )
+    }
+    guard !effects.isEmpty else { return .none }
+    state.trees[worktreeID] = tree
+    return .merge(effects)
+  }
+
+  private func touchRecentWorktree(_ state: inout State, worktreeID: Worktree.ID) -> Effect<Action> {
     state.recentWorktreeIDs.removeAll { $0 == worktreeID }
     state.recentWorktreeIDs.append(worktreeID)
+    var cancellations: [Effect<Action>] = []
     while state.recentWorktreeIDs.count > Self.cachedTreeLimit {
       let evicted = state.recentWorktreeIDs.removeFirst()
       state.trees[evicted] = nil
+      // In-flight listings die with the tree; a late response would otherwise
+      // repopulate a recreated tree with stale entries through matching echoes.
+      cancellations.append(.cancel(id: CancelID.listings(evicted)))
     }
+    return .merge(cancellations)
   }
 
   private func listEffect(
@@ -384,6 +363,7 @@ struct FileExplorerFeature {
         .listingLoaded(worktreeID: worktreeID, root: root, directory: directory, limit: limit, result: result)
       )
     }
+    .cancellable(id: CancelID.listings(worktreeID))
   }
 
   /// Stats the root and expanded directories, then re-lists the changed or
@@ -434,58 +414,12 @@ struct FileExplorerFeature {
     return root.appending(path: directory, directoryHint: .isDirectory)
   }
 
-  /// Flattens the active tree into the row array the view renders.
-  private func rebuildRows(_ state: inout State) {
-    var rows: [FileExplorerRow] = []
-    if let tree = state.activeTree {
-      appendRows(into: &rows, tree: tree, directory: TreeState.rootPath, depth: 0)
-    }
-    guard rows != state.rows else { return }
-    state.rows = rows
+  nonisolated static func parentDirectory(of path: String) -> String {
+    guard let separatorIndex = path.lastIndex(of: "/") else { return TreeState.rootPath }
+    return String(path[..<separatorIndex])
   }
 
-  private func appendRows(
-    into rows: inout [FileExplorerRow],
-    tree: TreeState,
-    directory: String,
-    depth: Int
-  ) {
-    guard let listing = tree.directories[directory]?.listing else { return }
-    for entry in listing.entries {
-      let path = directory == TreeState.rootPath ? entry.name : directory + "/" + entry.name
-      let childNode = entry.isDirectory ? tree.directories[path] : nil
-      let isExpanded = entry.isDirectory && tree.expanded.contains(path)
-      rows.append(
-        FileExplorerRow(
-          path: path,
-          depth: depth,
-          kind: .entry(
-            FileExplorerRow.Entry(
-              name: entry.name,
-              isDirectory: entry.isDirectory,
-              isSymbolicLink: entry.isSymbolicLink,
-              isExpanded: isExpanded,
-              isLoading: childNode?.isLoading ?? false,
-              failure: childNode?.failure
-            )
-          )
-        )
-      )
-      if isExpanded {
-        appendRows(into: &rows, tree: tree, directory: path, depth: depth + 1)
-      }
-    }
-    if listing.isTruncated {
-      rows.append(
-        FileExplorerRow(
-          path: directory,
-          depth: depth,
-          kind: .showMore(
-            remaining: listing.totalCount - listing.entries.count,
-            isLoading: tree.directories[directory]?.isLoading ?? false
-          )
-        )
-      )
-    }
+  nonisolated static func childPath(of directory: String, name: String) -> String {
+    directory == TreeState.rootPath ? name : directory + "/" + name
   }
 }

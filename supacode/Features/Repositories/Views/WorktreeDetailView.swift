@@ -776,18 +776,18 @@ struct WorktreeDetailView: View {
         // full-opacity tint reads as a stark solid pill against the glass.
         let chromeForeground = terminalManager.chromeOverlayTint()
         let chromeTint = chromeForeground.opacity(0.2)
+        WorktreeFilesToolbarButton(
+          isSelected: inspectorPresented && inspectorPane == .files,
+          tint: chromeTint,
+          foreground: chromeForeground,
+          onActivate: { onActivateInspector(.files) }
+        )
         WorktreeGitStatusButton(
           pullRequest: pullRequest,
           isSelected: inspectorPresented && inspectorPane == .git,
           tint: chromeTint,
           foreground: chromeForeground,
           onActivate: { onActivateInspector(.git) }
-        )
-        WorktreeFilesToolbarButton(
-          isSelected: inspectorPresented && inspectorPane == .files,
-          tint: chromeTint,
-          foreground: chromeForeground,
-          onActivate: { onActivateInspector(.files) }
         )
         ToolbarNotificationsButtonHost(
           repositoriesStore: repositoriesStore,
@@ -1101,16 +1101,16 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
 
     if includesStatusSkeleton {
       ToolbarItemGroup {
-        // Mirror the trailing inspector toggles (git status + files + notifications).
+        // Mirror the trailing inspector toggles (files + git status + notifications).
         Button {
         } label: {
-          Image(systemName: "arrow.trianglehead.branch")
+          Image(systemName: "folder")
         }
         .redacted(reason: .placeholder)
         .shimmer(isActive: true)
         Button {
         } label: {
-          Image(systemName: "folder")
+          Image(systemName: "arrow.trianglehead.branch")
         }
         .redacted(reason: .placeholder)
         .shimmer(isActive: true)
