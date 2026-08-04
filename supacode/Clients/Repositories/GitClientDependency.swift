@@ -155,10 +155,15 @@ extension GitClientDependency: DependencyKey {
       unstageFile: { path, root in try await GitClient(shell: shell).unstageFile(path, in: root) },
       discardFile: { path, root, tracked in
         guard tracked else {
-          // Untracked files aren't in git, so "discard" means removing them; the
-          // Trash keeps that recoverable, unlike `git clean` or an unlink.
+          // Removable (untracked, or a staged addition with no HEAD to restore):
+          // drop any staged entry, then move the working file to the Trash,
+          // which stays recoverable unlike `git clean` or an unlink.
+          try await GitClient(shell: shell).unstageFile(path, in: root)
           let url = root.appending(path: path)
           try await Task.detached(priority: .userInitiated) {
+            // A staged addition can already be gone from the worktree (`AD`);
+            // unstaging alone then cleans it, so only trash a file still present.
+            guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return }
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
           }.value
           return

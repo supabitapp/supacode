@@ -10,6 +10,9 @@ struct FileExplorerOutlineActions {
   var openFile: (URL, OpenWorktreeAction?) -> Void
   var showMore: (String) -> Void
   var quickLook: (URL) -> Void
+  /// Stage or unstage the path, resolved from its current git state.
+  var stageToggle: (String) -> Void
+  var discard: (String) -> Void
 }
 
 /// NSOutlineView-backed tree. AppKit owns selection, disclosure, keyboard,
@@ -105,6 +108,10 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     return container
   }
 
+  static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+    coordinator.removeKeyMonitor()
+  }
+
   func updateNSView(_ nsView: NSView, context: Context) {
     context.coordinator.apply(
       tree: tree,
@@ -154,6 +161,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     weak var outlineView: NSOutlineView?
     weak var scrollView: NSScrollView?
     var blurHeightConstraint: NSLayoutConstraint?
+    private var keyMonitor: Any?
     private(set) var tree: FileExplorerFeature.TreeState?
     private var fileOpenActions: [OpenWorktreeAction] = []
     private var resolvedOpenAction: OpenWorktreeAction?
@@ -186,6 +194,9 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         previous?.root != tree.root
         || previous?.directories != tree.directories
         || previous?.expanded != tree.expanded
+        // Deletions add/remove tombstone rows, which only `refreshItems` builds,
+        // so a status-only tick that changes them still needs a structural pass.
+        || Self.deletedPaths(previous?.gitStatus) != Self.deletedPaths(tree.gitStatus)
       // A background re-list (the 5s sweep) reloads/expands/selects rows; those
       // must never yank first responder away from wherever the user is working,
       // e.g. a terminal surface.
@@ -251,6 +262,24 @@ struct FileExplorerOutlineView: NSViewRepresentable {
           }
         }
       }
+      // Deletions that are gone from disk have no filesystem entry, so surface a
+      // tombstone row under each loaded parent. A deletion whose working copy is
+      // still present (e.g. `git rm --cached`) is already listed, so it's skipped.
+      var tombstonesByParent: [String: [OutlineItem]] = [:]
+      for (path, status) in tree.gitStatus.statuses
+      where (status.index == .deleted || status.worktree == .deleted) && !alivePaths.contains(path) {
+        let parent = FileExplorerFeature.parentDirectory(of: path)
+        guard tree.directories[parent]?.listing != nil else { continue }
+        alivePaths.insert(path)
+        let entry = FileExplorerEntry(
+          name: (path as NSString).lastPathComponent, isDirectory: false, isSymbolicLink: false
+        )
+        let item = entryItems[path] ?? OutlineItem(path: path, kind: .entry(entry))
+        item.kind = .entry(entry)
+        entryItems[path] = item
+        tombstonesByParent[parent, default: []].append(item)
+      }
+
       entryItems = entryItems.filter { alivePaths.contains($0.key) }
       showMoreItems = showMoreItems.filter { aliveShowMore.contains($0.key) }
       childrenCache = tree.directories.reduce(into: [:]) { cache, element in
@@ -263,6 +292,16 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         }
         cache[element.key] = items
       }
+      // Splice tombstones in ahead of any trailing show-more row.
+      for (parent, tombstones) in tombstonesByParent {
+        var items = childrenCache[parent] ?? []
+        let insertionIndex = showMoreItems[parent] != nil && !items.isEmpty ? items.count - 1 : items.count
+        items.insert(
+          contentsOf: tombstones.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending },
+          at: insertionIndex
+        )
+        childrenCache[parent] = items
+      }
     }
 
     private func applyExpansion(_ tree: FileExplorerFeature.TreeState, outlineView: NSOutlineView) {
@@ -273,6 +312,12 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       for path in ordered {
         guard let item = entryItems[path] else { continue }
         outlineView.expandItem(item)
+      }
+      // Contract anything the reducer no longer marks expanded; `expandItem`
+      // alone never contracts a row.
+      for (path, item) in entryItems where !tree.expanded.contains(path) {
+        guard outlineView.isItemExpanded(item) else { continue }
+        outlineView.collapseItem(item)
       }
     }
 
@@ -291,6 +336,13 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         outlineView.deselectAll(nil)
       }
       isApplyingState = false
+    }
+
+    /// Paths whose file is gone from disk (a staged or worktree deletion), which
+    /// drive tombstone rows.
+    private static func deletedPaths(_ snapshot: GitStatusSnapshot?) -> Set<String> {
+      guard let snapshot else { return [] }
+      return Set(snapshot.statuses.filter { $0.value.index == .deleted || $0.value.worktree == .deleted }.keys)
     }
 
     /// Redraws only the rows whose git decoration could differ between two
@@ -363,6 +415,66 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       return true
     }
 
+    // MARK: Row keyboard shortcuts.
+
+    /// Lets a selected row's shortcuts beat the worktree menu commands that
+    /// share these chords, but only while the outline is focused with a row
+    /// selected, so those commands pass through untouched elsewhere.
+    func installKeyMonitor() {
+      guard keyMonitor == nil else { return }
+      keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        guard let self, self.handleRowShortcut(event) else { return event }
+        return nil
+      }
+    }
+
+    func removeKeyMonitor() {
+      guard let keyMonitor else { return }
+      NSEvent.removeMonitor(keyMonitor)
+      self.keyMonitor = nil
+    }
+
+    private func handleRowShortcut(_ event: NSEvent) -> Bool {
+      guard
+        let outlineView,
+        let window = outlineView.window, window.isKeyWindow,
+        let responder = window.firstResponder as? NSView,
+        responder === outlineView || responder.isDescendant(of: outlineView),
+        outlineView.selectedRow >= 0,
+        let item = outlineView.item(atRow: outlineView.selectedRow) as? OutlineItem,
+        item.entry != nil
+      else { return false }
+      // Match letters by produced character so the chords track the keyboard
+      // layout (and the menu's key equivalents); the Delete key is positional.
+      let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+      switch (event.charactersIgnoringModifiers?.lowercased(), event.keyCode, mods) {
+      case ("o", _, [.command]):  // Cmd+O: open in the system default app.
+        if let url = url(for: item.path) { openInDefaultApp(url) }
+        return true
+      case ("r", _, [.command, .option]):  // Opt+Cmd+R: reveal in Finder.
+        if let url = url(for: item.path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        return true
+      case (_, 51, [.command]):  // Cmd+Delete: move a removable file to the Trash.
+        return discardSelected(item, matching: .trash)
+      case (_, 51, [.command, .shift]):  // Shift+Cmd+Delete: discard a tracked change.
+        return discardSelected(item, matching: .restore)
+      default:
+        return false
+      }
+    }
+
+    /// Discards the row when its state matches the requested kind, beeping
+    /// otherwise. Always swallows the event so a delete chord never falls
+    /// through to Delete Worktree while the user is browsing files.
+    private func discardSelected(_ item: OutlineItem, matching kind: GitDiscardKind) -> Bool {
+      if tree?.gitStatus.statuses[item.path]?.discardKind == kind {
+        actions?.discard(item.path)
+      } else {
+        NSSound.beep()
+      }
+      return true
+    }
+
     @objc func outlineViewDoubleClicked(_ sender: Any?) {
       guard
         let outlineView,
@@ -390,6 +502,16 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     @objc private func contextMenuQuickLook(_ sender: NSMenuItem) {
       guard let path = sender.representedObject as? String, let url = url(for: path) else { return }
       actions?.quickLook(url)
+    }
+
+    @objc private func contextMenuStage(_ sender: NSMenuItem) {
+      guard let path = sender.representedObject as? String else { return }
+      actions?.stageToggle(path)
+    }
+
+    @objc private func contextMenuDiscard(_ sender: NSMenuItem) {
+      guard let path = sender.representedObject as? String else { return }
+      actions?.discard(path)
     }
 
     @objc private func contextMenuRevealInFinder(_ sender: NSMenuItem) {
@@ -534,10 +656,13 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
     else { return }
     let path = item.path
 
+    addGitMenuItems(to: menu, path: path)
+
     // Open with the system default app, matching a double-click.
     menu.addItem(
       makeItem(
-        "Open", action: #selector(contextMenuOpen(_:)), symbolName: "arrow.up.right.square", representing: path
+        "Open", action: #selector(contextMenuOpen(_:)), symbolName: "arrow.up.right.square", representing: path,
+        keyEquivalent: "o", modifiers: .command
       )
     )
 
@@ -580,7 +705,7 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
     menu.addItem(
       makeItem(
         "Reveal in Finder", action: #selector(contextMenuRevealInFinder(_:)), symbolName: "folder",
-        representing: path
+        representing: path, keyEquivalent: "r", modifiers: [.command, .option]
       )
     )
     menu.addItem(.separator())
@@ -598,10 +723,55 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
     )
   }
 
-  private func makeItem(_ title: String, action: Selector, symbolName: String, representing path: String)
-    -> NSMenuItem
-  {
-    let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+  /// Git actions for the clicked entry, above the rest of the menu. Nothing for
+  /// a clean, conflicted, or non-git row. Discard on an untracked file is a
+  /// Trash move, worded to match; both destructive items confirm.
+  private func addGitMenuItems(to menu: NSMenu, path: String) {
+    guard let status = tree?.gitStatus.statuses[path], !status.isConflicted else { return }
+    if status.hasUnstagedChange {
+      menu.addItem(
+        makeItem(
+          "Stage Changes", action: #selector(contextMenuStage(_:)), symbolName: "plus.circle", representing: path
+        )
+      )
+    } else if status.hasStagedChange {
+      menu.addItem(
+        makeItem(
+          "Unstage Changes", action: #selector(contextMenuStage(_:)), symbolName: "minus.circle", representing: path
+        )
+      )
+    }
+    switch status.discardKind {
+    case .trash:
+      menu.addItem(
+        makeItem(
+          "Move to Trash…", action: #selector(contextMenuDiscard(_:)), symbolName: "trash", representing: path,
+          keyEquivalent: "\u{8}", modifiers: .command
+        )
+      )
+    case .restore:
+      menu.addItem(
+        makeItem(
+          "Discard Changes…", action: #selector(contextMenuDiscard(_:)), symbolName: "arrow.uturn.backward",
+          representing: path, keyEquivalent: "\u{8}", modifiers: [.command, .shift]
+        )
+      )
+    case nil:
+      break
+    }
+    menu.addItem(.separator())
+  }
+
+  private func makeItem(
+    _ title: String,
+    action: Selector,
+    symbolName: String,
+    representing path: String,
+    keyEquivalent: String = "",
+    modifiers: NSEvent.ModifierFlags = []
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+    item.keyEquivalentModifierMask = modifiers
     item.target = self
     item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
     item.representedObject = path
@@ -612,6 +782,17 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
 /// Outline subclass adding Return-to-activate and Space-to-Quick-Look.
 private final class FileExplorerNSOutlineView: NSOutlineView {
   weak var coordinator: FileExplorerOutlineView.Coordinator?
+
+  // Tie the app-global key monitor to window membership so it can't outlive the
+  // view (which `dismantleNSView` alone doesn't guarantee) and accumulate.
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window == nil {
+      coordinator?.removeKeyMonitor()
+    } else {
+      coordinator?.installKeyMonitor()
+    }
+  }
 
   override func keyDown(with event: NSEvent) {
     switch event.keyCode {
@@ -720,10 +901,8 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     label.maximumNumberOfLines = 1
     // Layer-backed so a gradient mask can drive the loading shimmer.
     label.wantsLayer = true
-    // Truncation must win over widening the cell past the visible column, and
-    // the label expands so the git badge is pushed to the row's trailing edge.
+    // Truncation must win over widening the cell past the visible column.
     label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
     // Trailing git status glyph; font (and weight) are set per row in `configure`.
     badge.alignment = .center
@@ -741,15 +920,23 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     warningView.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .caption1)
     warningView.contentTintColor = .secondaryLabelColor
 
-    let stack = NSStackView(views: [iconView, label, badge, spinner, warningView])
+    let stack = NSStackView()
     stack.orientation = .horizontal
     stack.spacing = 6
     stack.alignment = .centerY
     stack.translatesAutoresizingMaskIntoConstraints = false
+    // Icon, name, and any load spinner pack at the leading edge; the trailing
+    // gravity holds the git badge and the read-failure warning (mutually
+    // exclusive), so whichever shows pins to the row's trailing edge.
+    stack.addView(iconView, in: .leading)
+    stack.addView(label, in: .leading)
+    stack.addView(spinner, in: .leading)
+    stack.addView(warningView, in: .trailing)
+    stack.addView(badge, in: .trailing)
     addSubview(stack)
     NSLayoutConstraint.activate([
       stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-      stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
+      stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
       stack.topAnchor.constraint(equalTo: topAnchor, constant: 5),
       stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
       iconView.widthAnchor.constraint(equalToConstant: 16),
@@ -771,9 +958,16 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   ) {
     iconView.image = entry.isDirectory ? FileExplorerFileIcon.folder() : FileExplorerFileIcon.file(named: entry.name)
     iconView.setAccessibilityLabel(entry.isDirectory ? "Folder" : "File")
-    applyLabel(name: entry.name, decoration: decoration)
     // A read failure owns the trailing slot, so its warning wins over a badge.
-    applyBadge(failure == nil ? decoration : nil)
+    let effective = failure == nil ? decoration : nil
+    applyLabel(name: entry.name, decoration: effective)
+    applyBadge(effective)
+    // Gitignored and deleted rows fade the whole row; the deletion is already
+    // called out by the strikethrough, so no distinct color is needed.
+    let opacity: CGFloat = Self.isDimmed(effective) ? 0.6 : 1
+    iconView.alphaValue = opacity
+    label.alphaValue = opacity
+    badge.alphaValue = opacity
     if isLoading {
       spinner.startAnimation(nil)
     } else {
@@ -785,16 +979,16 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     warningView.setAccessibilityLabel(failure.map(Self.failureHelp))
   }
 
-  /// Tints the name by git state: green add, yellow modify, red conflict,
-  /// dimmed (tertiary) ignored, and a struck-through secondary tombstone for a
-  /// deletion. The tint and the trailing letter share one source of truth.
+  /// Tints the name by git state (green add, yellow modify, red conflict) and
+  /// strikes through a deletion; ignored and deleted rows also fade via alpha.
+  /// The tint and the trailing letter share one source of truth.
   private func applyLabel(name: String, decoration: GitRowDecoration?) {
     if case .file(.deleted, _)? = decoration {
       label.attributedStringValue = NSAttributedString(
         string: name,
         attributes: [
           .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-          .foregroundColor: NSColor.secondaryLabelColor,
+          .foregroundColor: NSColor.labelColor,
           .font: label.font ?? NSFont.preferredFont(forTextStyle: .body),
         ]
       )
@@ -802,6 +996,13 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     }
     label.stringValue = name
     label.textColor = Self.labelColor(for: decoration)
+  }
+
+  private static func isDimmed(_ decoration: GitRowDecoration?) -> Bool {
+    switch decoration {
+    case .ignored, .file(.deleted, _): true
+    default: false
+    }
   }
 
   /// The trailing glyph: a state letter for a file (heavier weight when staged),
@@ -820,13 +1021,6 @@ private final class FileExplorerEntryCellView: NSTableCellView {
       let help = Self.badgeHelp(state: state, isStaged: isStaged)
       badge.toolTip = help
       badge.setAccessibilityLabel(help)
-    case .directoryDot:
-      badge.isHidden = false
-      badge.stringValue = "●"
-      badge.textColor = .secondaryLabelColor
-      badge.font = .preferredFont(forTextStyle: .caption2)
-      badge.toolTip = "Contains changes."
-      badge.setAccessibilityLabel("Contains changes")
     case .ignored, nil:
       badge.isHidden = true
       badge.toolTip = nil
@@ -836,9 +1030,8 @@ private final class FileExplorerEntryCellView: NSTableCellView {
 
   private static func labelColor(for decoration: GitRowDecoration?) -> NSColor {
     switch decoration {
-    case .ignored: .tertiaryLabelColor
     case .file(let state, _): tint(for: state)
-    case .directoryDot, nil: .labelColor
+    case .ignored, nil: .labelColor
     }
   }
 
@@ -855,7 +1048,8 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     switch state {
     case .added: .systemGreen
     case .modified: .systemYellow
-    case .deleted: .secondaryLabelColor
+    // Deletion reads through the strikethrough and row fade, not a color.
+    case .deleted: .labelColor
     case .conflicted: .systemRed
     }
   }

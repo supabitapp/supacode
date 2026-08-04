@@ -7,7 +7,6 @@ nonisolated struct GitFileStatus: Equatable, Sendable {
   var index: GitChangeKind?
   var worktree: GitChangeKind?
   var isUntracked = false
-  var isIgnored = false
   var isConflicted = false
 
   /// A change worth decorating a row for (drives colors, letters, and the
@@ -15,11 +14,48 @@ nonisolated struct GitFileStatus: Equatable, Sendable {
   var hasVisibleChange: Bool {
     isConflicted || isUntracked || index != nil || worktree != nil
   }
+
+  /// A worktree-side change to fold into the index (drives Stage vs Unstage).
+  var hasUnstagedChange: Bool { isUntracked || worktree != nil }
+  /// An index-side change to unstage.
+  var hasStagedChange: Bool { index != nil }
+
+  /// How a discard should treat this path, or `nil` when there's nothing to
+  /// discard (clean or conflicted). Single source of truth for the reducer,
+  /// context menu, and keyboard shortcuts.
+  var discardKind: GitDiscardKind? {
+    guard !isConflicted else { return nil }
+    // Only a brand-new file with no committed version is removed to the Trash.
+    // A path that still has an index/worktree change exists in HEAD even when
+    // its working copy reads as untracked (e.g. after `git rm --cached`), so it
+    // is restored, not trashed.
+    if index == .added || (isUntracked && index == nil && worktree == nil) { return .trash }
+    guard index != nil || worktree != nil else { return nil }
+    return .restore
+  }
+}
+
+/// What "discard" does to a path: remove a new file to the Trash, or restore a
+/// tracked change to its committed version.
+nonisolated enum GitDiscardKind: Equatable, Sendable {
+  case trash
+  case restore
+}
+
+/// Why a stage/unstage/discard failed, narrowed to what the alert distinguishes.
+/// Carries the path so the alert can name the file.
+nonisolated struct GitOperationError: Error, Equatable, Sendable {
+  enum Kind: Equatable, Sendable {
+    /// Another git process holds `.git/index.lock`.
+    case locked
+    case failed
+  }
+
+  let path: String
+  let kind: Kind
 }
 
 /// The kind of change on one axis, narrowed to what the tree renders.
-/// Type-changes map to `.modified`; renames/copies are disabled in v1 and
-/// surface as add + delete, so they never reach here as a distinct kind.
 nonisolated enum GitChangeKind: Equatable, Sendable {
   case added
   case modified
@@ -27,28 +63,36 @@ nonisolated enum GitChangeKind: Equatable, Sendable {
 }
 
 /// The whole worktree's uncommitted picture from one `git status` call, plus
-/// the two prefix indices a per-row lookup needs so resolving a row stays
-/// O(1)/O(ignored roots) instead of scanning the change set.
+/// prefix sets so a per-row lookup avoids scanning the change set.
 nonisolated struct GitStatusSnapshot: Equatable, Sendable {
   /// Keyed by root-relative path (matching the tree's directory keys), files
   /// only. Directories are decorated by rollup/prefix, never by lookup here.
-  var statuses: [String: GitFileStatus] = [:]
-  /// Directories that (transitively) contain a change, for the collapsed dot.
-  var changedAncestors: Set<String> = []
+  let statuses: [String: GitFileStatus]
+  /// Directories that (transitively) contain a change, derived from `statuses`.
+  let changedAncestors: Set<String>
   /// Reported ignored roots (trailing slash stripped), for prefix-dimming a
   /// whole ignored subtree without enumerating it.
-  var ignoredPrefixes: Set<String> = []
+  let ignoredPrefixes: Set<String>
 
   static let empty = GitStatusSnapshot()
+
+  /// `changedAncestors` is always derived here, never passed in, so the rollup
+  /// index can't drift from `statuses`.
+  init(statuses: [String: GitFileStatus] = [:], ignoredPrefixes: Set<String> = []) {
+    self.statuses = statuses
+    self.ignoredPrefixes = ignoredPrefixes
+    self.changedAncestors = Self.changedAncestors(of: statuses)
+  }
 
   /// Row decoration for `path`, or `nil` when the row carries no git signal.
   func decoration(for path: String, isDirectory: Bool, isExpanded: Bool) -> GitRowDecoration? {
     guard isDirectory else { return fileDecoration(for: path) }
     if isIgnored(path) { return .ignored }
-    // An expanded folder's children carry their own glyphs, so the rollup dot
+    // An expanded folder's children carry their own glyphs, so a rollup on it
     // would just be redundant noise.
     guard !isExpanded, changedAncestors.contains(path) else { return nil }
-    return .directoryDot
+    // A collapsed folder holding changes reads as modified, like any change.
+    return .file(state: .modified, isStaged: false)
   }
 
   private func fileDecoration(for path: String) -> GitRowDecoration? {
@@ -57,7 +101,6 @@ nonisolated struct GitStatusSnapshot: Equatable, Sendable {
     }
     if status.isConflicted { return .file(state: .conflicted, isStaged: false) }
     if status.isUntracked { return .file(state: .added, isStaged: false) }
-    if status.isIgnored { return .ignored }
     // Staged content is the primary signal (a both-staged-and-edited file reads
     // as staged and folds its remaining worktree delta in on "Stage").
     let isStaged = status.index != nil
@@ -79,10 +122,8 @@ nonisolated struct GitStatusSnapshot: Equatable, Sendable {
 /// letter, tint, and strikethrough; the model stays free of AppKit colors.
 nonisolated enum GitRowDecoration: Equatable, Sendable {
   case file(state: FileState, isStaged: Bool)
-  /// Gitignored: the label dims to tertiary, no letter.
+  /// Gitignored: the row dims, no letter.
   case ignored
-  /// A collapsed directory containing changes: a neutral rollup dot.
-  case directoryDot
 
   nonisolated enum FileState: Equatable, Sendable {
     case added
@@ -103,12 +144,9 @@ extension GitChangeKind {
 }
 
 extension GitStatusSnapshot {
-  /// Parses `git status --porcelain=v2 -z` output into a snapshot. The `-z`
-  /// stream is NUL-delimited and record-type-aware: the first byte selects the
-  /// format, and a `2` (rename/copy) record spans a second NUL token for its
-  /// original path, so a flat split would desync the whole stream after one
-  /// rename. Renames are disabled in v1, but the parser handles them so
-  /// re-enabling `-M` is a one-line flag flip.
+  /// Parses `git status --porcelain=v2 -z` output into a snapshot. A `2`
+  /// (rename) record spans a second NUL token for its original path, so the
+  /// loop advances past it rather than treating it as a fresh record.
   nonisolated static func parse(porcelainV2 output: String) -> GitStatusSnapshot {
     var statuses: [String: GitFileStatus] = [:]
     var ignoredPrefixes: Set<String> = []
@@ -136,11 +174,7 @@ extension GitStatusSnapshot {
         break
       }
     }
-    return GitStatusSnapshot(
-      statuses: statuses,
-      changedAncestors: changedAncestors(of: statuses),
-      ignoredPrefixes: ignoredPrefixes
-    )
+    return GitStatusSnapshot(statuses: statuses, ignoredPrefixes: ignoredPrefixes)
   }
 
   private nonisolated static func parseOrdinary(_ record: Substring, into statuses: inout [String: GitFileStatus]) {
@@ -148,11 +182,11 @@ extension GitStatusSnapshot {
     // path, which may itself contain spaces, so cap the split.
     let fields = record.split(separator: " ", maxSplits: 8, omittingEmptySubsequences: false)
     guard fields.count == 9, fields[1].count == 2 else { return }
-    let xy = fields[1]
+    let codes = fields[1]
     let path = normalizedPath(fields[8])
     var status = statuses[path] ?? GitFileStatus()
-    status.index = changeKind(xy.first)
-    status.worktree = changeKind(xy.dropFirst().first)
+    status.index = changeKind(codes.first)
+    status.worktree = changeKind(codes.dropFirst().first)
     statuses[path] = status
   }
 
@@ -162,11 +196,11 @@ extension GitStatusSnapshot {
     // the caller). A rename is a staged move, so the new path carries X.
     let fields = record.split(separator: " ", maxSplits: 9, omittingEmptySubsequences: false)
     guard fields.count == 10, fields[1].count == 2 else { return }
-    let xy = fields[1]
+    let codes = fields[1]
     let path = normalizedPath(fields[9])
     var status = statuses[path] ?? GitFileStatus()
-    status.index = changeKind(xy.first) ?? .added
-    status.worktree = changeKind(xy.dropFirst().first)
+    status.index = changeKind(codes.first) ?? .added
+    status.worktree = changeKind(codes.dropFirst().first)
     statuses[path] = status
   }
 

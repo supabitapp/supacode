@@ -50,6 +50,26 @@ struct FileExplorerFeatureTests {
     "1 .M N... 100644 100644 100644 1111111 2222222 \(path)"
   }
 
+  /// A staged (index-side) modification of `path`.
+  private nonisolated static func stagedModified(_ path: String) -> String {
+    "1 M. N... 100644 100644 100644 1111111 2222222 \(path)"
+  }
+
+  /// A staged addition of `path` (new file, no HEAD version).
+  private nonisolated static func stagedAdded(_ path: String) -> String {
+    "1 A. N... 100644 100644 100644 1111111 2222222 \(path)"
+  }
+
+  private nonisolated static func conflicted(_ path: String) -> String {
+    "u UU N... 100644 100644 100644 100644 1111111 2222222 3333333 \(path)"
+  }
+
+  private nonisolated static func stagedDeleted(_ path: String) -> String {
+    "1 D. N... 100644 000000 000000 1111111 0000000 \(path)"
+  }
+
+  private nonisolated static func untracked(_ path: String) -> String { "? \(path)" }
+
   private nonisolated static func gitSnapshot(_ records: [String]) -> GitStatusSnapshot {
     GitStatusSnapshot.parse(porcelainV2: records.map { $0 + "\0" }.joined())
   }
@@ -927,5 +947,356 @@ struct FileExplorerFeatureTests {
       $0.isVisible = false
       $0.context = nil
     }
+  }
+
+  // MARK: - Git mutations
+
+  @Test func stagingAModifiedFileRunsStageThenRefreshes() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let unstaged = Self.gitSnapshot([Self.modified("a.txt")])
+    let staged = Self.gitSnapshot([Self.stagedModified("a.txt")])
+    let current = LockIsolated(unstaged)
+    let stageCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in current.value }
+      $0.gitClient.stageFile = { path, _ in
+        stageCalls.withValue { $0.append(path) }
+        current.setValue(staged)
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+    #expect(store.state.trees[worktree.id]?.gitStatus == unstaged)
+
+    await store.send(.stageToggled(path: "a.txt"))
+    await store.skipReceivedActions()
+    #expect(stageCalls.value == ["a.txt"])
+    // The post-mutation re-status reflects the now-staged file.
+    #expect(store.state.trees[worktree.id]?.gitStatus == staged)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func stageToggleUnstagesAnAlreadyStagedFile() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let staged = Self.gitSnapshot([Self.stagedModified("a.txt")])
+    let unstageCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in staged }
+      $0.gitClient.unstageFile = { path, _ in unstageCalls.withValue { $0.append(path) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.stageToggled(path: "a.txt"))
+    await store.skipReceivedActions()
+    #expect(unstageCalls.value == ["a.txt"])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func discardingATrackedFileConfirmsThenRestores() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let discardCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.modified("a.txt")]) }
+      $0.gitClient.discardFile = { path, _, tracked in
+        discardCalls.withValue { $0.append("\(path):\(tracked)") }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.discardRequested(path: "a.txt"))
+    #expect(store.state.alert?.title == TextState("Discard changes to \"a.txt\"?"))
+
+    await store.send(.alert(.presented(.confirmDiscard(worktreeID: worktree.id, path: "a.txt", tracked: true))))
+    await store.skipReceivedActions()
+    #expect(discardCalls.value == ["a.txt:true"])
+    #expect(store.state.alert == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func discardingAnUntrackedFileOffersMoveToTrash() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let discardCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.untracked("a.txt")]) }
+      $0.gitClient.discardFile = { path, _, tracked in
+        discardCalls.withValue { $0.append("\(path):\(tracked)") }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.discardRequested(path: "a.txt"))
+    // Untracked discard is a Trash move, and the confirm routes tracked: false.
+    #expect(store.state.alert?.title == TextState("Move \"a.txt\" to the Trash?"))
+
+    await store.send(.alert(.presented(.confirmDiscard(worktreeID: worktree.id, path: "a.txt", tracked: false))))
+    await store.skipReceivedActions()
+    #expect(discardCalls.value == ["a.txt:false"])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func discardingAGitRmCachedFileRestoresRatherThanTrashing() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("f.txt", isDirectory: false)])
+    let discardCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      // `git rm --cached f.txt`: staged deletion plus an untracked working copy.
+      $0.gitClient.fileStatus = { _ in
+        Self.gitSnapshot([Self.stagedDeleted("f.txt"), Self.untracked("f.txt")])
+      }
+      $0.gitClient.discardFile = { path, _, tracked in
+        discardCalls.withValue { $0.append("\(path):\(tracked)") }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    // It still has a committed version, so discard restores it rather than
+    // trashing the working copy.
+    await store.send(.discardRequested(path: "f.txt"))
+    #expect(store.state.alert?.title == TextState("Discard changes to \"f.txt\"?"))
+
+    await store.send(.alert(.presented(.confirmDiscard(worktreeID: worktree.id, path: "f.txt", tracked: true))))
+    await store.skipReceivedActions()
+    #expect(discardCalls.value == ["f.txt:true"])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func cancellingDiscardRunsNothing() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let discardCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.modified("a.txt")]) }
+      $0.gitClient.discardFile = { path, _, tracked in
+        discardCalls.withValue { $0.append("\(path):\(tracked)") }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.discardRequested(path: "a.txt"))
+    #expect(store.state.alert != nil)
+    await store.send(.alert(.dismiss))
+    #expect(store.state.alert == nil)
+    #expect(discardCalls.value.isEmpty)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func aLockedMutationSurfacesAnAlert() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.modified("a.txt")]) }
+      $0.gitClient.stageFile = { _, _ in
+        throw GitClientError.commandFailed(
+          command: "git add",
+          message: "fatal: Unable to create '.git/index.lock': File exists"
+        )
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.stageToggled(path: "a.txt"))
+    await store.skipReceivedActions()
+    #expect(store.state.alert?.title == TextState("Couldn't update \"a.txt\""))
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func nonLockFailureSurfacesTheGenericAlert() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.modified("a.txt")]) }
+      $0.gitClient.stageFile = { _, _ in
+        throw GitClientError.commandFailed(command: "git add", message: "fatal: pathspec did not match")
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.stageToggled(path: "a.txt"))
+    await store.skipReceivedActions()
+    #expect(store.state.alert?.title == TextState("Couldn't update \"a.txt\""))
+    #expect(store.state.alert?.message == TextState("The operation couldn't be completed."))
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func conflictedFileBlocksStageAndDiscard() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let mutations = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.conflicted("a.txt")]) }
+      $0.gitClient.stageFile = { path, _ in mutations.withValue { $0.append("stage:\(path)") } }
+      $0.gitClient.unstageFile = { path, _ in mutations.withValue { $0.append("unstage:\(path)") } }
+      $0.gitClient.discardFile = { path, _, _ in mutations.withValue { $0.append("discard:\(path)") } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    // A conflicted file must not stage (which would silently bake in the
+    // conflict markers) or discard: both guard out with no effect.
+    await store.send(.stageToggled(path: "a.txt"))
+    await store.send(.discardRequested(path: "a.txt"))
+    #expect(mutations.value.isEmpty)
+    #expect(store.state.alert == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func stagingAnUntrackedFileStagesRatherThanUnstages() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let stageCalls = LockIsolated<[String]>([])
+    let unstageCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.untracked("a.txt")]) }
+      $0.gitClient.stageFile = { path, _ in stageCalls.withValue { $0.append(path) } }
+      $0.gitClient.unstageFile = { path, _ in unstageCalls.withValue { $0.append(path) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.stageToggled(path: "a.txt"))
+    await store.skipReceivedActions()
+    #expect(stageCalls.value == ["a.txt"])
+    #expect(unstageCalls.value.isEmpty)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func discardingAStagedAdditionOffersMoveToTrash() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let discardCalls = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.stagedAdded("a.txt")]) }
+      $0.gitClient.discardFile = { path, _, tracked in
+        discardCalls.withValue { $0.append("\(path):\(tracked)") }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    // A staged addition has no HEAD version, so discarding it is a Trash move,
+    // not a restore.
+    await store.send(.discardRequested(path: "a.txt"))
+    #expect(store.state.alert?.title == TextState("Move \"a.txt\" to the Trash?"))
+
+    await store.send(.alert(.presented(.confirmDiscard(worktreeID: worktree.id, path: "a.txt", tracked: false))))
+    await store.skipReceivedActions()
+    #expect(discardCalls.value == ["a.txt:false"])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func gitStatusLoadedWithStaleRootIsDropped() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let fresh = Self.gitSnapshot([Self.modified("a.txt")])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in fresh }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+    #expect(store.state.trees[worktree.id]?.gitStatus == fresh)
+
+    // A probe that lands for a different root (a re-rooted or switched tree) is
+    // dropped rather than overwriting the current snapshot.
+    let stale = Self.gitSnapshot([Self.modified("z.txt")])
+    await store.send(
+      .gitStatusLoaded(worktreeID: worktree.id, root: URL(filePath: "/tmp/other"), stale)
+    )
+    #expect(store.state.trees[worktree.id]?.gitStatus == fresh)
+
+    await store.send(.contextChanged(nil, isVisible: false))
   }
 }

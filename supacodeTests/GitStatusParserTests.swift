@@ -8,18 +8,18 @@ struct GitStatusParserTests {
   // MARK: - Porcelain v2 record builders
 
   /// An ordinary (`1`) record: 8 fixed fields then the path.
-  private static func ordinary(_ xy: String, _ path: String) -> String {
-    "1 \(xy) N... 100644 100644 100644 1111111 2222222 \(path)"
+  private static func ordinary(_ codes: String, _ path: String) -> String {
+    "1 \(codes) N... 100644 100644 100644 1111111 2222222 \(path)"
   }
 
   /// A rename/copy (`2`) record; the original path is a separate token.
-  private static func renamed(_ xy: String, from origin: String, to path: String) -> String {
-    "2 \(xy) N... 100644 100644 100644 1111111 2222222 R100 \(path)\0\(origin)"
+  private static func renamed(_ codes: String, from origin: String, to path: String) -> String {
+    "2 \(codes) N... 100644 100644 100644 1111111 2222222 R100 \(path)\0\(origin)"
   }
 
   /// An unmerged (`u`) record: 10 fixed fields then the path.
-  private static func unmerged(_ xy: String, _ path: String) -> String {
-    "u \(xy) N... 100644 100644 100644 100644 1111111 2222222 3333333 \(path)"
+  private static func unmerged(_ codes: String, _ path: String) -> String {
+    "u \(codes) N... 100644 100644 100644 100644 1111111 2222222 3333333 \(path)"
   }
 
   /// Joins records into the NUL-delimited, NUL-terminated stream git emits.
@@ -130,6 +130,18 @@ struct GitStatusParserTests {
     )
   }
 
+  @Test func bothAxesDecorateFromTheStagedSide() {
+    // Staged-modified then worktree-deleted: the staged index change wins the
+    // letter, and the row reads as staged.
+    let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream([Self.ordinary("MD", "a.txt")]))
+    #expect(snapshot.statuses["a.txt"]?.index == .modified)
+    #expect(snapshot.statuses["a.txt"]?.worktree == .deleted)
+    #expect(
+      snapshot.decoration(for: "a.txt", isDirectory: false, isExpanded: false)
+        == .file(state: .modified, isStaged: true)
+    )
+  }
+
   @Test func untrackedFileDecoratesAsUnstagedAdd() {
     let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream(["? fresh.txt"]))
     #expect(
@@ -146,9 +158,12 @@ struct GitStatusParserTests {
     )
   }
 
-  @Test func collapsedDirectoryWithChangesGetsDotButExpandedDoesNot() {
+  @Test func collapsedDirectoryWithChangesReadsAsModifiedButExpandedDoesNot() {
     let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream([Self.ordinary(".M", "a/b/c.txt")]))
-    #expect(snapshot.decoration(for: "a", isDirectory: true, isExpanded: false) == .directoryDot)
+    #expect(
+      snapshot.decoration(for: "a", isDirectory: true, isExpanded: false)
+        == .file(state: .modified, isStaged: false)
+    )
     #expect(snapshot.decoration(for: "a", isDirectory: true, isExpanded: true) == nil)
   }
 
@@ -158,6 +173,23 @@ struct GitStatusParserTests {
     #expect(snapshot.decoration(for: "node_modules/lib/x.js", isDirectory: false, isExpanded: false) == .ignored)
     // A sibling that merely shares a name prefix is not dimmed.
     #expect(snapshot.decoration(for: "node_modules_backup", isDirectory: true, isExpanded: false) == nil)
+  }
+
+  // MARK: - Discard classification
+
+  private static func discardKind(_ records: [String]) -> GitDiscardKind? {
+    GitStatusSnapshot.parse(porcelainV2: Self.stream(records)).statuses.values.first?.discardKind
+  }
+
+  @Test func discardKindRoutesEachState() {
+    #expect(Self.discardKind(["? new.txt"]) == .trash)
+    #expect(Self.discardKind([Self.ordinary("A.", "staged-new.txt")]) == .trash)
+    #expect(Self.discardKind([Self.ordinary(".M", "mod.txt")]) == .restore)
+    #expect(Self.discardKind([Self.ordinary("MM", "both.txt")]) == .restore)
+    #expect(Self.discardKind([Self.unmerged("UU", "clash.txt")]) == nil)
+    // `git rm --cached` reports a staged deletion AND an untracked working copy
+    // for one path; it has a committed version, so discard restores, not trashes.
+    #expect(Self.discardKind([Self.ordinary("D.", "rm-cached.txt"), "? rm-cached.txt"]) == .restore)
   }
 
   @Test func cleanPathHasNoDecoration() {

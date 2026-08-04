@@ -127,7 +127,7 @@ private struct FileExplorerPaneContent: View {
 }
 
 private struct FileExplorerTreeContent: View {
-  let store: StoreOf<FileExplorerFeature>
+  @Bindable var store: StoreOf<FileExplorerFeature>
   let fileOpenActions: [OpenWorktreeAction]
   let resolvedOpenAction: OpenWorktreeAction?
   let onOpenFile: (URL, OpenWorktreeAction?) -> Void
@@ -138,7 +138,9 @@ private struct FileExplorerTreeContent: View {
   var body: some View {
     Group {
       if let tree = store.activeTree, let rootListing = store.rootListing {
-        if rootListing.entries.isEmpty, !rootListing.isTruncated {
+        // Deletions live in the status snapshot, not the listing, so a folder
+        // whose files were all deleted still mounts the outline for tombstones.
+        if rootListing.entries.isEmpty, !rootListing.isTruncated, tree.gitStatus.statuses.isEmpty {
           FileExplorerUnavailableView(
             title: "Empty Folder",
             description: "This worktree has no files."
@@ -154,7 +156,9 @@ private struct FileExplorerTreeContent: View {
               select: { store.send(.rowSelected($0)) },
               openFile: onOpenFile,
               showMore: { store.send(.showMoreTapped(directory: $0)) },
-              quickLook: { quickLookURL = $0 }
+              quickLook: { quickLookURL = $0 },
+              stageToggle: { store.send(.stageToggled(path: $0)) },
+              discard: { store.send(.discardRequested(path: $0)) }
             ),
             bottomBarInset: bottomBarInset
           )
@@ -189,6 +193,7 @@ private struct FileExplorerTreeContent: View {
       }
       quickLookURL = root.appending(path: newPath)
     }
+    .alert($store.scope(state: \.alert, action: \.alert))
   }
 
   /// Mirrors `OpenWorktreeActionIcon`: an SF Symbol when the action defines

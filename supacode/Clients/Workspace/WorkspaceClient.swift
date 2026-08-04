@@ -341,7 +341,7 @@ enum WorktreeOpener {
   }
 }
 
-extension OpenActionError {
+nonisolated extension OpenActionError {
   static func appNotFound(_ action: OpenWorktreeAction) -> OpenActionError {
     OpenActionError(
       title: "\(action.title) not found",

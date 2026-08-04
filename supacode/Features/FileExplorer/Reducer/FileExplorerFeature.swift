@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 
 /// Files inspector pane: a lazy, per-directory file tree of the selected
 /// worktree. Listings are cached per worktree so switching back is instant;
@@ -11,6 +12,8 @@ struct FileExplorerFeature {
   nonisolated static let sweepInterval: Duration = .seconds(5)
   /// Most-recently-used worktree trees kept in memory.
   nonisolated static let cachedTreeLimit = 8
+
+  private nonisolated static let logger = SupaLogger("FileExplorer")
 
   /// What the explorer is pointed at, derived by the parent after every action.
   nonisolated struct Context: Equatable, Sendable {
@@ -110,6 +113,9 @@ struct FileExplorerFeature {
     var trees: [Worktree.ID: TreeState] = [:]
     /// MRU order for `trees` eviction; last element is the current worktree.
     var recentWorktreeIDs: [Worktree.ID] = []
+    /// Destructive-discard confirmation and git-operation failures. Singular and
+    /// app-modal, so it lives on `State`, not per-tree.
+    @Presents var alert: AlertState<Action.Alert>?
 
     var activeTree: TreeState? {
       guard let id = activeWorktreeID else { return nil }
@@ -151,6 +157,14 @@ struct FileExplorerFeature {
     case sweepTicked
     case sweepCompleted(worktreeID: Worktree.ID, changedDirectories: [String])
     case gitStatusLoaded(worktreeID: Worktree.ID, root: URL, GitStatusSnapshot)
+    case stageToggled(path: String)
+    case discardRequested(path: String)
+    case gitOperationCompleted(worktreeID: Worktree.ID, Result<Void, GitOperationError>)
+    case alert(PresentationAction<Alert>)
+
+    enum Alert: Equatable {
+      case confirmDiscard(worktreeID: Worktree.ID, path: String, tracked: Bool)
+    }
   }
 
   private enum CancelID {
@@ -267,8 +281,24 @@ struct FileExplorerFeature {
         tree.gitStatus = snapshot
         state.trees[worktreeID] = tree
         return .none
+
+      case .stageToggled(let path):
+        return handleStageToggled(&state, path: path)
+
+      case .discardRequested(let path):
+        return handleDiscardRequested(&state, path: path)
+
+      case .alert(.presented(.confirmDiscard(let worktreeID, let path, let tracked))):
+        return handleDiscardConfirmed(&state, worktreeID: worktreeID, path: path, tracked: tracked)
+
+      case .alert:
+        return .none
+
+      case .gitOperationCompleted(let worktreeID, let result):
+        return handleGitOperationCompleted(&state, worktreeID: worktreeID, result: result)
       }
     }
+    .ifLet(\.$alert, action: \.alert)
   }
 
   private func handleContextChanged(
@@ -418,6 +448,127 @@ struct FileExplorerFeature {
       let changed = capturedBaselines.filter { dates[$0.url] != $0.date }
       guard !changed.isEmpty else { return }
       await send(.sweepCompleted(worktreeID: worktreeID, changedDirectories: changed.map(\.directory)))
+    }
+  }
+
+  private func handleStageToggled(_ state: inout State, path: String) -> Effect<Action> {
+    guard
+      let id = state.activeWorktreeID,
+      let status = state.trees[id]?.gitStatus.statuses[path],
+      let root = state.trees[id]?.root,
+      !status.isConflicted
+    else { return .none }
+    // Stage when there's an unstaged change to fold in, otherwise unstage.
+    let shouldStage = status.hasUnstagedChange
+    return .run { send in
+      let result: Result<Void, GitOperationError>
+      do {
+        if shouldStage {
+          try await gitClient.stageFile(path, root)
+        } else {
+          try await gitClient.unstageFile(path, root)
+        }
+        result = .success(())
+      } catch {
+        result = .failure(Self.operationError(error, path: path))
+      }
+      await send(.gitOperationCompleted(worktreeID: id, result))
+    }
+  }
+
+  private func handleDiscardRequested(_ state: inout State, path: String) -> Effect<Action> {
+    guard
+      let id = state.activeWorktreeID,
+      let status = state.trees[id]?.gitStatus.statuses[path],
+      let kind = status.discardKind
+    else { return .none }
+    state.alert = Self.discardAlert(worktreeID: id, path: path, tracked: kind == .restore)
+    return .none
+  }
+
+  private func handleDiscardConfirmed(
+    _ state: inout State,
+    worktreeID: Worktree.ID,
+    path: String,
+    tracked: Bool
+  ) -> Effect<Action> {
+    // Nil it explicitly: `.ifLet` only clears on `.dismiss`, and this is a
+    // presented-button action.
+    state.alert = nil
+    // Bind the discard to the worktree its confirmation was raised for: if the
+    // user switched worktrees while the alert was up, abort rather than discard
+    // the same path in a different worktree.
+    guard worktreeID == state.activeWorktreeID, let root = state.trees[worktreeID]?.root else { return .none }
+    return .run { send in
+      let result: Result<Void, GitOperationError>
+      do {
+        try await gitClient.discardFile(path, root, tracked)
+        result = .success(())
+      } catch {
+        result = .failure(Self.operationError(error, path: path))
+      }
+      await send(.gitOperationCompleted(worktreeID: worktreeID, result))
+    }
+  }
+
+  private func handleGitOperationCompleted(
+    _ state: inout State,
+    worktreeID: Worktree.ID,
+    result: Result<Void, GitOperationError>
+  ) -> Effect<Action> {
+    switch result {
+    case .success:
+      // Re-read the mutated worktree's state, chained on completion so it can't
+      // race the 5s sweep. Skip when the user already moved on; that tree
+      // refreshes on its next visit.
+      guard worktreeID == state.activeWorktreeID else { return .none }
+      return gitStatusEffect(state)
+    case .failure(let error):
+      state.alert = Self.operationFailureAlert(error)
+      return .none
+    }
+  }
+
+  private nonisolated static func operationError(_ error: Error, path: String) -> GitOperationError {
+    // Log the full reason (git stderr survives on `GitClientError`) since the
+    // user-facing alert only conveys the category.
+    let text = (error as? GitClientError)?.errorDescription ?? error.localizedDescription
+    logger.error("Git file operation failed for \(path): \(text)")
+    let lowered = text.lowercased()
+    let locked = lowered.contains("index.lock") || lowered.contains("another git process")
+    return GitOperationError(path: path, kind: locked ? .locked : .failed)
+  }
+
+  private static func discardAlert(worktreeID: Worktree.ID, path: String, tracked: Bool) -> AlertState<Action.Alert> {
+    let name = (path as NSString).lastPathComponent
+    return AlertState {
+      TextState(tracked ? "Discard changes to \"\(name)\"?" : "Move \"\(name)\" to the Trash?")
+    } actions: {
+      ButtonState(role: .cancel) { TextState("Cancel") }
+      ButtonState(role: .destructive, action: .confirmDiscard(worktreeID: worktreeID, path: path, tracked: tracked)) {
+        TextState(tracked ? "Discard" : "Move to Trash")
+      }
+    } message: {
+      TextState(
+        tracked
+          ? "This will permanently discard your uncommitted changes. This action cannot be undone."
+          : "This file has no committed version, so it will be moved to the Trash."
+      )
+    }
+  }
+
+  private static func operationFailureAlert(_ error: GitOperationError) -> AlertState<Action.Alert> {
+    let name = (error.path as NSString).lastPathComponent
+    return AlertState {
+      TextState("Couldn't update \"\(name)\"")
+    } actions: {
+      ButtonState(role: .cancel) { TextState("OK") }
+    } message: {
+      TextState(
+        error.kind == .locked
+          ? "Another git process is running. Try again in a moment."
+          : "The operation couldn't be completed."
+      )
     }
   }
 
