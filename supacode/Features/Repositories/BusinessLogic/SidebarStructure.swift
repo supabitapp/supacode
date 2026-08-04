@@ -599,6 +599,7 @@ extension RepositoriesFeature.Action {
       .pullRequestAction,
       .showToast, .dismissToast,
       .toggleInspectorPane, .setInspectorPresented,
+      .fileExplorer,
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
       .requestCustomizeWorktree,

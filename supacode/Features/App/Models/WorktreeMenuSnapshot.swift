@@ -122,7 +122,7 @@ extension AppFeature.Action {
       .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
       .refreshInstalledOpenActions, .installedOpenActionsResolved,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
-      .openWorktree, .openWorktreeFailed, .requestQuit,
+      .openWorktree, .openWorktreeFailed, .openFile, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,

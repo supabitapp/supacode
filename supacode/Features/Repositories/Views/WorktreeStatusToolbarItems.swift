@@ -99,6 +99,39 @@ struct WorktreePullRequestIconBadge: View {
   }
 }
 
+/// Trailing toolbar folder that toggles the files inspector pane.
+struct WorktreeFilesToolbarButton: View {
+  let isSelected: Bool
+  // Selection highlight color, derived from the terminal background luminance
+  // so the lit state tracks the chrome instead of the system accent.
+  let tint: Color
+  // Concrete chrome foreground (white on dark, black on light) so the glyph
+  // doesn't change color when the toggle is selected.
+  let foreground: Color
+  let onActivate: () -> Void
+  @Shared(.settingsFile) private var settingsFile
+
+  var body: some View {
+    let shortcut = WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.toggleFilesInspector,
+      overrides: settingsFile.global.shortcutOverrides
+    )
+    Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
+      if isSelected {
+        Label("Files", systemImage: "folder")
+          .foregroundStyle(foreground)
+      } else {
+        // No foreground so the resting folder matches the other toolbar buttons
+        // exactly, including the fade when the window isn't key.
+        Label("Files", systemImage: "folder")
+      }
+    }
+    .tint(tint)
+    .help("Toggle Files Inspector (\(shortcut))")
+    .accessibilityLabel("Files")
+  }
+}
+
 /// Trailing toolbar bell that toggles the notifications inspector pane. Switches
 /// to `bell.badge` with an orange dot when there are unread notifications.
 struct WorktreeNotificationsToolbarButton: View {

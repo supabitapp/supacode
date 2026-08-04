@@ -11,9 +11,12 @@ struct WorktreeStatusInspectorContainer: View {
   let pullRequest: GithubPullRequest?
   let repositoriesStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  let fileOpenActions: [OpenWorktreeAction]
+  let resolvedOpenAction: OpenWorktreeAction?
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
   let onSelectSurface: (Worktree.ID, UUID) -> Void
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
+  let onOpenFile: (URL, OpenWorktreeAction?) -> Void
 
   var body: some View {
     Group {
@@ -24,6 +27,13 @@ struct WorktreeStatusInspectorContainer: View {
           isFolder: isFolder,
           isCheckingPullRequest: isCheckingPullRequest,
           onPullRequestAction: onPullRequestAction
+        )
+      case .files:
+        WorktreeFilesInspectorView(
+          store: repositoriesStore.scope(state: \.fileExplorer, action: \.fileExplorer),
+          fileOpenActions: fileOpenActions,
+          resolvedOpenAction: resolvedOpenAction,
+          onOpenFile: onOpenFile
         )
       case .notifications:
         WorktreeNotificationsInspectorView(

@@ -82,6 +82,7 @@ nonisolated struct WorktreeCreationProgressUpdateThrottle {
 /// Which status pane the detail inspector shows when presented; presentation is tracked by `inspectorPresented`.
 enum WorktreeInspectorPane: Hashable, Sendable {
   case git
+  case files
   case notifications
 }
 
@@ -193,6 +194,7 @@ struct RepositoriesFeature {
     // leave the column empty when dragged back open.
     var inspectorPresented = false
     var inspectorPane: WorktreeInspectorPane = .git
+    var fileExplorer = FileExplorerFeature.State()
     var githubIntegrationAvailability: GithubIntegrationAvailability = .unknown
     var pendingPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
     var inFlightPullRequestRefreshRepositoryIDs: Set<Repository.ID> = []
@@ -547,6 +549,7 @@ struct RepositoriesFeature {
     case dismissToast
     case toggleInspectorPane(WorktreeInspectorPane)
     case setInspectorPresented(Bool)
+    case fileExplorer(FileExplorerFeature.Action)
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
@@ -3200,6 +3203,9 @@ struct RepositoriesFeature {
   }
 
   var body: some Reducer<State, Action> {
+    Scope(state: \.fileExplorer, action: \.fileExplorer) {
+      FileExplorerFeature()
+    }
     Reduce { state, action in
       switch action {
       case .task:
@@ -4374,6 +4380,9 @@ struct RepositoriesFeature {
 
       case .sidebarItems:
         return .none
+
+      case .fileExplorer:
+        return .none
       }
     }
     // These presentation `ifLet`s hang off the main `Reduce` so each child runs before the
@@ -4431,6 +4440,22 @@ struct RepositoriesFeature {
       guard invalidations.contains(.openActionResolution) else { return .none }
       state.seedUnresolvedOpenActions()
       return Self.resolveOpenActionsEffect(state: state)
+    }
+    // Post-reduce reconcile: derive the file explorer's context (selected
+    // worktree + pane visibility) after every action and forward it only on
+    // change, so the child never reads parent state and no parent arm has to
+    // remember to notify it.
+    Reduce { state, _ in
+      let isVisible = state.inspectorPresented && state.inspectorPane == .files
+      guard isVisible || state.fileExplorer.isVisible else { return .none }
+      let context =
+        isVisible
+        ? state.worktree(for: state.selectedWorktreeID).map { FileExplorerFeature.Context(worktree: $0) }
+        : state.fileExplorer.context
+      guard state.fileExplorer.isVisible != isVisible || state.fileExplorer.context != context else {
+        return .none
+      }
+      return .send(.fileExplorer(.contextChanged(context, isVisible: isVisible)))
     }
   }
 

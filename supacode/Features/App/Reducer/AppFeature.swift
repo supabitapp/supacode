@@ -304,6 +304,7 @@ struct AppFeature {
     case revealInFinder
     case openWorktree(OpenWorktreeAction)
     case openWorktreeFailed(OpenActionError)
+    case openFile(URL, with: OpenWorktreeAction?)
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
@@ -432,6 +433,9 @@ struct AppFeature {
         case .active:
           return .merge(
             .send(.repositories(.refreshWorktrees)),
+            // Freshen the files inspector after external edits made while
+            // the app was inactive (Finder, editors).
+            .send(.repositories(.fileExplorer(.applicationBecameActive))),
             // Re-probe agent integrations on activation so the sidebar
             // card reflects external installs (e.g. `claude install`)
             // for users who keep the app open across days.
@@ -800,6 +804,22 @@ struct AppFeature {
           return .none
         }
         return openWorktreeEffect(worktree: worktree, action: action, source: .toolbar, state: state)
+
+      case .openFile(let fileURL, let explicitAction):
+        // An explicit pick comes from the Open With submenu; the default open
+        // resolves like the toolbar does, so the menu label and the launched
+        // app can't disagree when the stored editor isn't installed.
+        let action =
+          explicitAction
+          ?? OpenWorktreeAction.availableSelection(
+            state.openActionSelection,
+            installed: state.installedOpenActions
+          )
+        return .run { @MainActor send in
+          workspaceClient.openFile(fileURL, action) { error in
+            send(.openWorktreeFailed(error))
+          }
+        }
 
       case .openWorktreeFailed(let error):
         state.alert = AlertState {

@@ -449,7 +449,7 @@ struct AppShortcutsTests {
   // MARK: - Inspector pane shortcuts.
 
   @Test func inspectorShortcutKeysRoundTrip() {
-    for id in [AppShortcutID.togglePullRequestInspector, .toggleNotificationsInspector] {
+    for id in [AppShortcutID.togglePullRequestInspector, .toggleFilesInspector, .toggleNotificationsInspector] {
       let decoded = AppShortcutID(codingKey: PlainCodingKey(id.codingKey.stringValue))
       #expect(decoded == id)
     }
@@ -458,14 +458,17 @@ struct AppShortcutsTests {
   @Test func inspectorShortcutsHaveNoDefaultConflict() {
     let warnings = AppShortcuts.conflictWarnings(from: [:])
     #expect(warnings[.togglePullRequestInspector] == nil)
+    #expect(warnings[.toggleFilesInspector] == nil)
     #expect(warnings[.toggleNotificationsInspector] == nil)
   }
 
   @Test func inspectorShortcutsUnbindInGhostty() {
     #expect(AppShortcuts.togglePullRequestInspector.ghosttyUnbindArgument == "--keybind=alt+super+g=unbind")
+    #expect(AppShortcuts.toggleFilesInspector.ghosttyUnbindArgument == "--keybind=alt+super+f=unbind")
     #expect(AppShortcuts.toggleNotificationsInspector.ghosttyUnbindArgument == "--keybind=alt+super+n=unbind")
     let arguments = AppShortcuts.ghosttyCLIKeybindArguments
     #expect(arguments.contains("--keybind=alt+super+g=unbind"))
+    #expect(arguments.contains("--keybind=alt+super+f=unbind"))
     #expect(arguments.contains("--keybind=alt+super+n=unbind"))
   }
 }
