@@ -158,7 +158,9 @@ private struct FileExplorerTreeContent: View {
               showMore: { store.send(.showMoreTapped(directory: $0)) },
               quickLook: { quickLookURL = $0 },
               stageToggle: { store.send(.stageToggled(path: $0)) },
-              discard: { store.send(.discardRequested(path: $0)) }
+              discard: { store.send(.discardRequested(path: $0)) },
+              transferFiles: { store.send(.filesTransferRequested(sources: $0, destinationDirectory: $1, operation: $2)) },
+              rename: { store.send(.renameRequested(path: $0, newName: $1)) }
             ),
             bottomBarInset: bottomBarInset
           )

@@ -50,6 +50,24 @@ struct FileExplorerFeature {
     case missing
   }
 
+  /// A pending move or paste of one or more files into a directory, carried on
+  /// the conflict alert so a resolution can complete it. Bound to its worktree
+  /// so switching worktrees mid-alert aborts rather than writing elsewhere.
+  /// `sources` are absolute (they may come from the Finder); `destinationDirectory`
+  /// is root-relative and re-resolved against the live root under `worktreeID`.
+  nonisolated struct FileTransferPlan: Equatable, Sendable {
+    var worktreeID: Worktree.ID
+    var sources: [URL]
+    var destinationDirectory: String
+    var operation: FileTransferOperation
+  }
+
+  /// Why a filesystem move, paste, or rename failed. Carries only the message
+  /// the alert shows; the full error is logged.
+  nonisolated struct FileMutationError: Error, Equatable, Sendable {
+    let message: String
+  }
+
   nonisolated struct TreeState: Equatable, Sendable {
     /// Key of the root directory in `directories`.
     nonisolated static let rootPath = ""
@@ -160,10 +178,17 @@ struct FileExplorerFeature {
     case stageToggled(path: String)
     case discardRequested(path: String)
     case gitOperationCompleted(worktreeID: Worktree.ID, Result<Void, GitOperationError>)
+    /// A drag-drop move (`.move`) or a paste (`.copy`) of files into a directory.
+    case filesTransferRequested(sources: [URL], destinationDirectory: String, operation: FileTransferOperation)
+    case transferConflictChecked(FileTransferPlan, collisions: [String], mergeable: Bool)
+    case renameRequested(path: String, newName: String)
+    case fileMutationCompleted(worktreeID: Worktree.ID, refresh: [String], Result<Void, FileMutationError>)
     case alert(PresentationAction<Alert>)
 
     enum Alert: Equatable {
       case confirmDiscard(worktreeID: Worktree.ID, path: String, tracked: Bool)
+      /// Resolve a name collision with the chosen conflict policy.
+      case resolveTransfer(FileTransferPlan, policy: FileConflictPolicy)
     }
   }
 
@@ -288,8 +313,26 @@ struct FileExplorerFeature {
       case .discardRequested(let path):
         return handleDiscardRequested(&state, path: path)
 
+      case .filesTransferRequested(let sources, let destinationDirectory, let operation):
+        return handleTransferRequested(
+          &state, sources: sources, destinationDirectory: destinationDirectory, operation: operation
+        )
+
+      case .transferConflictChecked(let plan, let collisions, let mergeable):
+        return handleTransferConflictChecked(&state, plan: plan, collisions: collisions, mergeable: mergeable)
+
+      case .renameRequested(let path, let newName):
+        return handleRenameRequested(&state, path: path, newName: newName)
+
+      case .fileMutationCompleted(let worktreeID, let refresh, let result):
+        return handleFileMutationCompleted(&state, worktreeID: worktreeID, refresh: refresh, result: result)
+
       case .alert(.presented(.confirmDiscard(let worktreeID, let path, let tracked))):
         return handleDiscardConfirmed(&state, worktreeID: worktreeID, path: path, tracked: tracked)
+
+      case .alert(.presented(.resolveTransfer(let plan, let policy))):
+        state.alert = nil
+        return performTransfer(&state, plan: plan, policy: policy)
 
       case .alert:
         return .none
@@ -529,6 +572,180 @@ struct FileExplorerFeature {
     }
   }
 
+  /// Checks the destination for name collisions off the main actor, then routes
+  /// to a direct transfer or a conflict prompt.
+  private func handleTransferRequested(
+    _ state: inout State,
+    sources: [URL],
+    destinationDirectory: String,
+    operation: FileTransferOperation
+  ) -> Effect<Action> {
+    guard
+      let id = state.activeWorktreeID,
+      let root = state.trees[id]?.root
+    else { return .none }
+    let destination = Self.url(for: destinationDirectory, root: root)
+    // Drop any source that contains the destination: paste has no drag-time
+    // ancestry check, so copying a folder into itself would recurse forever.
+    let sources = sources.filter { !Self.directory(destination, isAtOrUnder: $0) }
+    guard !sources.isEmpty else { return .none }
+    let plan = FileTransferPlan(
+      worktreeID: id, sources: sources, destinationDirectory: destinationDirectory, operation: operation
+    )
+    let names = sources.map(\.lastPathComponent)
+    // Two sources sharing a name collide with each other even when the
+    // destination is clear, so a duplicate within the batch also needs the
+    // prompt. Compare case-insensitively to match the default macOS volume.
+    var seen: Set<String> = []
+    let duplicates = Set(names.filter { !seen.insert($0.lowercased()).inserted })
+    return .run { send in
+      async let existingTask = fileExplorerClient.existingNames(destination, names)
+      async let mergeableTask = fileExplorerClient.mergeableNames(destination, sources)
+      let mergeableSet = await mergeableTask
+      let collisions = await existingTask.union(duplicates)
+      // Offer Merge only when every colliding item is a directory folding into a
+      // same-named one, so choosing Merge can't silently replace a file too.
+      let mergeable = !collisions.isEmpty && collisions.isSubset(of: mergeableSet)
+      await send(.transferConflictChecked(plan, collisions: Array(collisions), mergeable: mergeable))
+    }
+  }
+
+  private func handleTransferConflictChecked(
+    _ state: inout State,
+    plan: FileTransferPlan,
+    collisions: [String],
+    mergeable: Bool
+  ) -> Effect<Action> {
+    guard plan.worktreeID == state.activeWorktreeID else { return .none }
+    guard collisions.isEmpty else {
+      state.alert = Self.transferConflictAlert(plan: plan, collisions: collisions, mergeable: mergeable)
+      return .none
+    }
+    return performTransfer(&state, plan: plan, policy: .abort)
+  }
+
+  /// Runs the pending transfer for every source under one policy (a non-colliding
+  /// source is unaffected by keep-both or overwrite), then refreshes the touched
+  /// directories. Bound to the plan's worktree so a mid-alert switch aborts.
+  private func performTransfer(
+    _ state: inout State,
+    plan: FileTransferPlan,
+    policy: FileConflictPolicy
+  ) -> Effect<Action> {
+    guard plan.worktreeID == state.activeWorktreeID, let root = state.trees[plan.worktreeID]?.root else { return .none }
+    let destination = Self.url(for: plan.destinationDirectory, root: root)
+    // A move empties each source's parent too; a copy only fills the destination.
+    var refresh: Set<String> = [plan.destinationDirectory]
+    if plan.operation == .move {
+      for source in plan.sources {
+        if let parent = Self.relativePath(of: source.deletingLastPathComponent(), under: root) {
+          refresh.insert(parent)
+        }
+      }
+    }
+    let worktreeID = plan.worktreeID
+    let sources = plan.sources
+    let operation = plan.operation
+    let refreshDirectories = Array(refresh)
+    return .run { send in
+      // Keep going after a failure: earlier sources may have already moved, so
+      // aborting the batch would leave the tree stale on their old rows.
+      var firstError: Error?
+      for source in sources {
+        do {
+          try await fileExplorerClient.transfer(source, destination, source.lastPathComponent, operation, policy)
+        } catch {
+          if firstError == nil { firstError = error }
+        }
+      }
+      let result: Result<Void, FileMutationError> =
+        firstError.map { .failure(Self.mutationError($0, action: operation == .move ? "move" : "paste")) }
+        ?? .success(())
+      await send(.fileMutationCompleted(worktreeID: worktreeID, refresh: refreshDirectories, result))
+    }
+  }
+
+  private func handleRenameRequested(_ state: inout State, path: String, newName: String) -> Effect<Action> {
+    let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+      let id = state.activeWorktreeID,
+      let root = state.trees[id]?.root,
+      !trimmed.isEmpty,
+      !trimmed.contains("/"),
+      trimmed != (path as NSString).lastPathComponent
+    else { return .none }
+    let source = Self.url(for: path, root: root)
+    let parent = Self.parentDirectory(of: path)
+    return .run { send in
+      let result: Result<Void, FileMutationError>
+      do {
+        try await fileExplorerClient.rename(source, trimmed)
+        result = .success(())
+      } catch {
+        result = .failure(Self.mutationError(error, action: "rename"))
+      }
+      await send(.fileMutationCompleted(worktreeID: id, refresh: [parent], result))
+    }
+  }
+
+  private func handleFileMutationCompleted(
+    _ state: inout State,
+    worktreeID: Worktree.ID,
+    refresh: [String],
+    result: Result<Void, FileMutationError>
+  ) -> Effect<Action> {
+    // Ignore a completion for a worktree the user already left: it must not
+    // raise an alert or relist over the now-active one.
+    guard worktreeID == state.activeWorktreeID else { return .none }
+    // A failure alert still refreshes: a partial batch may have moved some files
+    // before it threw, so the touched directories must re-list either way.
+    if case .failure(let error) = result {
+      state.alert = Self.mutationFailureAlert(error)
+    }
+    return .merge(relist(&state, worktreeID: worktreeID, directories: refresh), gitStatusEffect(state))
+  }
+
+  private nonisolated static func mutationError(_ error: Error, action: String) -> FileMutationError {
+    logger.error("File \(action) failed: \(error.localizedDescription)")
+    return FileMutationError(message: error.localizedDescription)
+  }
+
+  private static func transferConflictAlert(
+    plan: FileTransferPlan,
+    collisions: [String],
+    mergeable: Bool
+  ) -> AlertState<Action.Alert> {
+    AlertState {
+      TextState(
+        collisions.count == 1 ? "\"\(collisions[0])\" already exists" : "\(collisions.count) items already exist"
+      )
+    } actions: {
+      ButtonState(action: .resolveTransfer(plan, policy: .keepBoth)) { TextState("Keep Both") }
+      // Merge only makes sense for a directory folded into a same-named one.
+      if mergeable {
+        ButtonState(action: .resolveTransfer(plan, policy: .merge)) { TextState("Merge") }
+      }
+      ButtonState(role: .destructive, action: .resolveTransfer(plan, policy: .overwrite)) { TextState("Replace") }
+      ButtonState(role: .cancel) { TextState("Cancel") }
+    } message: {
+      TextState(
+        mergeable
+          ? "An item with the same name already exists. Merge combines the folders; Replace overwrites."
+          : "An item with the same name already exists in this location."
+      )
+    }
+  }
+
+  private static func mutationFailureAlert(_ error: FileMutationError) -> AlertState<Action.Alert> {
+    AlertState {
+      TextState("The operation couldn't be completed")
+    } actions: {
+      ButtonState(role: .cancel) { TextState("OK") }
+    } message: {
+      TextState(error.message)
+    }
+  }
+
   private nonisolated static func operationError(_ error: Error, path: String) -> GitOperationError {
     // Log the full reason (git stderr survives on `GitClientError`) since the
     // user-facing alert only conveys the category.
@@ -614,5 +831,31 @@ struct FileExplorerFeature {
 
   nonisolated static func childPath(of directory: String, name: String) -> String {
     directory == TreeState.rootPath ? name : directory + "/" + name
+  }
+
+  /// The root-relative path of `url`, or `nil` when it sits outside `root`.
+  /// Used to refresh a moved file's origin only when it lives in the tree.
+  nonisolated static func relativePath(of url: URL, under root: URL) -> String? {
+    let rootPath = Self.slashFreePath(root)
+    let target = Self.slashFreePath(url)
+    if target == rootPath { return TreeState.rootPath }
+    guard target.hasPrefix(rootPath + "/") else { return nil }
+    return String(target.dropFirst(rootPath.count + 1))
+  }
+
+  /// Whether `directory` is `ancestor` itself or nested inside it, so a copy
+  /// into its own subtree can be refused.
+  nonisolated static func directory(_ directory: URL, isAtOrUnder ancestor: URL) -> Bool {
+    let ancestorPath = Self.slashFreePath(ancestor)
+    let target = Self.slashFreePath(directory)
+    return target == ancestorPath || target.hasPrefix(ancestorPath + "/")
+  }
+
+  /// A standardized path with any trailing slash dropped, so a directory URL
+  /// matches the tree's slash-free keys.
+  private nonisolated static func slashFreePath(_ url: URL) -> String {
+    var path = url.standardizedFileURL.path(percentEncoded: false)
+    if path.count > 1, path.hasSuffix("/") { path.removeLast() }
+    return path
   }
 }

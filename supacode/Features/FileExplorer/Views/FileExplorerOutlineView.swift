@@ -13,6 +13,10 @@ struct FileExplorerOutlineActions {
   /// Stage or unstage the path, resolved from its current git state.
   var stageToggle: (String) -> Void
   var discard: (String) -> Void
+  /// Move (drag) or paste file URLs into a destination directory (root-relative).
+  var transferFiles: ([URL], String, FileTransferOperation) -> Void
+  /// Rename the entry at the path to a new leaf name.
+  var rename: (String, String) -> Void
 }
 
 /// NSOutlineView-backed tree. AppKit owns selection, disclosure, keyboard,
@@ -57,9 +61,12 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     outlineView.allowsEmptySelection = true
     outlineView.backgroundColor = .clear
     outlineView.focusRingType = .none
-    // Both masks: the terminal drop target is in-process (a local drag).
-    outlineView.setDraggingSourceOperationMask(.copy, forLocal: true)
+    // Local drags (terminal drop target, internal moves) allow move+copy; the
+    // external mask stays copy so a dragged-out file escapes to the shell.
+    outlineView.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
     outlineView.setDraggingSourceOperationMask(.copy, forLocal: false)
+    // Accept file drops (from the Finder or another row) to move them in.
+    outlineView.registerForDraggedTypes([.fileURL])
     outlineView.target = context.coordinator
     outlineView.doubleAction = #selector(Coordinator.outlineViewDoubleClicked(_:))
 
@@ -392,8 +399,8 @@ struct FileExplorerOutlineView: NSViewRepresentable {
 
     // MARK: Activation.
 
-    /// Double-click and Return: directories toggle, files open in the system's
-    /// default app (Finder behavior). Configured editors live in the menu.
+    /// Double-click: directories toggle, files open in the system's default app
+    /// (Finder behavior). Configured editors live in the menu; Return renames.
     func activate(item: OutlineItem) {
       guard let entry = item.entry else { return }
       if entry.isDirectory {
@@ -401,6 +408,32 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       } else if let url = url(for: item.path) {
         openInDefaultApp(url)
       }
+    }
+
+    /// Starts an inline rename of the row, like pressing Return in the Finder.
+    func beginRename(item: OutlineItem) {
+      guard
+        let outlineView, item.entry != nil,
+        case let row = outlineView.row(forItem: item), row >= 0,
+        let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileExplorerEntryCellView
+      else { return }
+      let path = item.path
+      cell.beginRename { [weak self] newName in self?.commitRename(path: path, newName: newName) }
+    }
+
+    /// Validates the typed name and forwards it, blocking a collision with an
+    /// existing sibling (never silently overwriting) and any empty or slashed name.
+    private func commitRename(path: String, newName: String) {
+      let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+      let oldName = (path as NSString).lastPathComponent
+      guard !trimmed.isEmpty, trimmed != oldName, !trimmed.contains("/") else { return }
+      let parent = FileExplorerFeature.parentDirectory(of: path)
+      let siblings = Set((listing(for: parent)?.entries ?? []).map(\.name))
+      guard !siblings.contains(trimmed) else {
+        NSSound.beep()
+        return
+      }
+      actions?.rename(path, trimmed)
     }
 
     /// Opens the file with the system's default app, logging when nothing can.
@@ -446,13 +479,24 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         let window = outlineView.window, window.isKeyWindow,
         let responder = window.firstResponder as? NSView,
         responder === outlineView || responder.isDescendant(of: outlineView),
+        // The field editor is a descendant during an inline rename; leave its
+        // own editing shortcuts (Cmd+C, Cmd+V, etc.) alone.
+        !(responder is NSText)
+      else { return false }
+      let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+      // Handle paste before the row-entry guard: it resolves its own destination
+      // (the selected folder or a selected file's parent) and no-ops with no
+      // selection, so it must not require a selected row here.
+      if event.charactersIgnoringModifiers?.lowercased() == "v", mods == [.command] {
+        return pasteFromClipboard()
+      }
+      guard
         outlineView.selectedRow >= 0,
         let item = outlineView.item(atRow: outlineView.selectedRow) as? OutlineItem,
         item.entry != nil
       else { return false }
       // Match letters by produced character so the chords track the keyboard
       // layout (and the menu's key equivalents); the Delete key is positional.
-      let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
       switch (event.charactersIgnoringModifiers?.lowercased(), event.keyCode, mods) {
       case ("o", _, [.command]):  // Cmd+O: open in the system default app.
         if let url = url(for: item.path) { openInDefaultApp(url) }
@@ -531,6 +575,11 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    @objc private func contextMenuRename(_ sender: NSMenuItem) {
+      guard let path = sender.representedObject as? String, let item = entryItems[path] else { return }
+      beginRename(item: item)
+    }
+
     @objc private func contextMenuCopyFile(_ sender: NSMenuItem) {
       guard let path = sender.representedObject as? String, let url = url(for: path) else { return }
       copyFileToPasteboard(url)
@@ -556,6 +605,40 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     private func copyFileToPasteboard(_ url: URL) {
       NSPasteboard.general.clearContents()
       NSPasteboard.general.writeObjects([url as NSURL])
+    }
+
+    @objc private func contextMenuPaste(_ sender: NSMenuItem) {
+      _ = pasteFromClipboard(into: sender.representedObject as? String)
+    }
+
+    /// Copies any file URLs on the pasteboard into `directory` (from a right-click),
+    /// or the selected row's folder for a keyboard paste. A keyboard paste with no
+    /// selection, or an empty pasteboard, is a no-op.
+    @discardableResult
+    private func pasteFromClipboard(into directory: String? = nil) -> Bool {
+      guard let destination = directory ?? selectedDropDirectory() else { return false }
+      let urls =
+        NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+        as? [URL] ?? []
+      guard !urls.isEmpty else { return false }
+      actions?.transferFiles(urls, destination, .copy)
+      return true
+    }
+
+    /// The directory a keyboard paste lands in: the selected folder or a selected
+    /// file's parent, or `nil` when nothing is selected (paste stays a no-op).
+    private func selectedDropDirectory() -> String? {
+      guard
+        let outlineView, outlineView.selectedRow >= 0,
+        let item = outlineView.item(atRow: outlineView.selectedRow) as? OutlineItem, item.entry != nil
+      else { return nil }
+      if item.entry?.isDirectory == true { return item.path }
+      return FileExplorerFeature.parentDirectory(of: item.path)
+    }
+
+    /// Whether the pasteboard currently holds at least one file, gating Paste.
+    private var pasteboardHasFiles: Bool {
+      NSPasteboard.general.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
     }
 
     private final class OpenWithPayload: NSObject {
@@ -597,6 +680,69 @@ extension FileExplorerOutlineView.Coordinator: NSOutlineViewDataSource {
     // Plain file URLs: the terminal's existing drop handler owns the shell
     // escaping, keeping a single escaping site.
     return url as NSURL
+  }
+
+  func outlineView(
+    _ outlineView: NSOutlineView,
+    validateDrop info: NSDraggingInfo,
+    proposedItem item: Any?,
+    proposedChildIndex index: Int
+  ) -> NSDragOperation {
+    guard let destination = dropDestination(for: item) else { return [] }
+    // An internal move whose sources would land in their own parent, or a folder
+    // onto itself/a descendant, is a no-op or illegal, so refuse it.
+    let localSources = draggedTreePaths(info, outlineView: outlineView)
+    guard Self.isLegalMove(sources: localSources, into: destination.path) else { return [] }
+    // Retarget onto the resolved folder (or root) so a drop between rows or on a
+    // file lands in the containing directory, and the folder highlights whole.
+    outlineView.setDropItem(destination.item, dropChildIndex: NSOutlineViewDropOnItemIndex)
+    return .move
+  }
+
+  func outlineView(
+    _ outlineView: NSOutlineView,
+    acceptDrop info: NSDraggingInfo,
+    item: Any?,
+    childIndex index: Int
+  ) -> Bool {
+    guard let destination = dropDestination(for: item) else { return false }
+    let urls =
+      info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+      as? [URL] ?? []
+    guard !urls.isEmpty else { return false }
+    actions?.transferFiles(urls, destination.path, .move)
+    return true
+  }
+
+  /// The directory a drop lands in: a folder row itself, a file's parent, or the
+  /// root for a drop on empty space. `item` is the OutlineItem or `nil` (root).
+  private func dropDestination(for item: Any?) -> (item: FileExplorerOutlineView.OutlineItem?, path: String)? {
+    guard let outlineItem = item as? FileExplorerOutlineView.OutlineItem, outlineItem.entry != nil else {
+      return (nil, FileExplorerFeature.TreeState.rootPath)
+    }
+    if outlineItem.entry?.isDirectory == true { return (outlineItem, outlineItem.path) }
+    let parent = FileExplorerFeature.parentDirectory(of: outlineItem.path)
+    return (entryItems[parent], parent)
+  }
+
+  /// Root-relative paths of the rows being dragged, empty for an external drag.
+  private func draggedTreePaths(_ info: NSDraggingInfo, outlineView: NSOutlineView) -> [String] {
+    guard (info.draggingSource as? NSOutlineView) === outlineView else { return [] }
+    return
+      (outlineView.selectedRowIndexes.compactMap {
+        (outlineView.item(atRow: $0) as? FileExplorerOutlineView.OutlineItem)?.path
+      })
+  }
+
+  /// Rejects an internal move into a source's own parent (a no-op) or of a
+  /// directory into itself or a descendant. External drags (no local sources)
+  /// are always allowed.
+  private static func isLegalMove(sources: [String], into destination: String) -> Bool {
+    for source in sources {
+      if FileExplorerFeature.parentDirectory(of: source) == destination { return false }
+      if destination == source || destination.hasPrefix(source + "/") { return false }
+    }
+    return true
   }
 }
 
@@ -732,6 +878,9 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
         representing: path, keyEquivalent: "r", modifiers: [.command, .option]
       )
     )
+    menu.addItem(
+      makeItem("Rename", action: #selector(contextMenuRename(_:)), symbolName: "pencil", representing: path)
+    )
     menu.addItem(.separator())
     menu.addItem(
       makeItem(
@@ -751,6 +900,20 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
         representing: path
       )
     )
+    // Paste lands in the clicked folder, or a clicked file's parent. Disabled by
+    // `validateMenuItem` when the pasteboard holds no file.
+    let pasteDestination = item.entry?.isDirectory == true ? path : FileExplorerFeature.parentDirectory(of: path)
+    menu.addItem(
+      makeItem(
+        "Paste", action: #selector(contextMenuPaste(_:)), symbolName: "clipboard",
+        representing: pasteDestination, keyEquivalent: "v", modifiers: .command
+      )
+    )
+  }
+
+  @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    guard menuItem.action == #selector(contextMenuPaste(_:)) else { return true }
+    return pasteboardHasFiles
   }
 
   /// Git actions for the clicked entry, above the rest of the menu. Nothing for
@@ -809,7 +972,7 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
   }
 }
 
-/// Outline subclass adding Return-to-activate and Space-to-Quick-Look.
+/// Outline subclass adding Return-to-rename and Space-to-Quick-Look.
 private final class FileExplorerNSOutlineView: NSOutlineView {
   weak var coordinator: FileExplorerOutlineView.Coordinator?
 
@@ -826,13 +989,13 @@ private final class FileExplorerNSOutlineView: NSOutlineView {
 
   override func keyDown(with event: NSEvent) {
     switch event.keyCode {
-    case 36, 76:
+    case 36, 76:  // Return: rename the selected row, like the Finder.
       guard
         let coordinator,
         selectedRow >= 0,
         let item = item(atRow: selectedRow) as? FileExplorerOutlineView.OutlineItem
       else { break }
-      coordinator.activate(item: item)
+      coordinator.beginRename(item: item)
       return
     case 49:
       guard coordinator?.quickLookSelection() == true else { break }
@@ -921,6 +1084,10 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   /// tint can yield to the selected-text color.
   private var renderedName = ""
   private var renderedDecoration: GitRowDecoration?
+  /// Inline-rename callbacks and state, live only while the label is editable.
+  private var renameCommit: ((String) -> Void)?
+  private var renameCancelled = false
+  private var isRenaming = false
 
   /// A focused, selected row draws its text over the accent fill; the fixed git
   /// tints (yellow/green/red) would clash, so defer to the selected-text color.
@@ -1046,6 +1213,47 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     label.textColor = labelColor(for: decoration)
   }
 
+  /// Turns the name label into an inline editor and focuses it. `commit` fires
+  /// with the typed name on Return or focus loss; Escape reverts silently.
+  func beginRename(commit: @escaping (String) -> Void) {
+    guard !isRenaming, window != nil else { return }
+    isRenaming = true
+    renameCancelled = false
+    renameCommit = commit
+    // Stay borderless so the row keeps its height and the text doesn't shift; a
+    // white fill plus focus ring signal editing over the selection.
+    label.isEditable = true
+    label.isSelectable = true
+    label.drawsBackground = true
+    label.backgroundColor = .textBackgroundColor
+    label.focusRingType = .default
+    label.textColor = .labelColor
+    label.delegate = self
+    window?.makeFirstResponder(label)
+    label.currentEditor()?.selectAll(nil)
+  }
+
+  // Close an in-flight rename if the outline recycles the row mid-edit, so the
+  // typed text and rename state can't ride along on the reused cell.
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    guard isRenaming else { return }
+    renameCancelled = true
+    endRename()
+  }
+
+  private func endRename() {
+    isRenaming = false
+    renameCommit = nil
+    label.isEditable = false
+    label.isSelectable = false
+    label.drawsBackground = false
+    label.focusRingType = .none
+    label.delegate = nil
+    // Restore the rendered name and tint (a cancel keeps the edited text otherwise).
+    applyLabel(name: renderedName, decoration: renderedDecoration)
+  }
+
   private static func isDimmed(_ decoration: GitRowDecoration?) -> Bool {
     switch decoration {
     case .ignored, .file(.deleted, _): true
@@ -1155,6 +1363,26 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     case .permissionDenied: "Supacode doesn't have permission to read this folder. Expand it again to retry."
     case .unreadable: "Can't read this folder. Expand it again to retry."
     }
+  }
+}
+
+extension FileExplorerEntryCellView: NSTextFieldDelegate {
+  // Escape aborts the rename; every other end (Return, focus loss) commits.
+  func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+    guard commandSelector == #selector(cancelOperation(_:)) else { return false }
+    renameCancelled = true
+    window?.makeFirstResponder(nil)
+    return true
+  }
+
+  func controlTextDidEndEditing(_ obj: Notification) {
+    guard isRenaming else { return }
+    let cancelled = renameCancelled
+    let newName = label.stringValue
+    let commit = renameCommit
+    endRename()
+    guard !cancelled else { return }
+    commit?(newName)
   }
 }
 

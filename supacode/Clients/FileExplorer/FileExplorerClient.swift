@@ -12,6 +12,42 @@ struct FileExplorerClient: Sendable {
   /// to stat. Directory mtime moves on entry create/delete/rename, which is
   /// all the tree renders, so this drives the staleness sweep.
   var modificationDates: @Sendable (_ directories: [URL]) async -> [URL: Date]
+  /// The subset of `names` that already exist in `directory`, so a move or
+  /// paste can ask the user before overwriting.
+  var existingNames: @Sendable (_ directory: URL, _ names: [String]) async -> Set<String>
+  /// The names among `sources` that are directories colliding with a same-named
+  /// directory in `directory`, so the prompt can offer Merge.
+  var mergeableNames: @Sendable (_ directory: URL, _ sources: [URL]) async -> Set<String>
+  /// Moves or copies `source` into `directory` under `name`, resolving a name
+  /// collision per `policy`.
+  var transfer:
+    @Sendable (
+      _ source: URL, _ directory: URL, _ name: String,
+      _ operation: FileTransferOperation, _ policy: FileConflictPolicy
+    ) async throws -> Void
+  /// Renames `source` to `newName` in place, throwing on a collision.
+  var rename: @Sendable (_ source: URL, _ newName: String) async throws -> Void
+}
+
+/// Whether a file transfer relocates the source or duplicates it.
+nonisolated enum FileTransferOperation: Equatable, Sendable {
+  case move
+  case copy
+}
+
+/// How a transfer resolves an existing item at the destination name.
+nonisolated enum FileConflictPolicy: Equatable, Sendable {
+  /// Throw if the name is already taken. The caller passes this only after a
+  /// collision check, so it also backstops a name that appeared since.
+  case abort
+  /// Replace the existing item.
+  case overwrite
+  /// Land under a Finder-style " copy" name instead.
+  case keepBoth
+  /// Recursively fold a directory into a same-named one: new entries win,
+  /// existing-only entries stay, subfolders recurse. Degrades to overwrite
+  /// when either side is not a directory.
+  case merge
 }
 
 extension FileExplorerClient: DependencyKey {
@@ -33,6 +69,36 @@ extension FileExplorerClient: DependencyKey {
       await Task.detached(priority: .utility) {
         contentModificationDates(of: directories)
       }.value
+    },
+    existingNames: { directory, names in
+      // A stat failure reads as "absent" here; the transfer's own throw is the
+      // real overwrite guard, so a false negative only skips the prompt.
+      await Task.detached(priority: .userInitiated) {
+        var present: Set<String> = []
+        for name in names
+        where FileManager.default.fileExists(atPath: directory.appending(path: name).path(percentEncoded: false)) {
+          present.insert(name)
+        }
+        return present
+      }.value
+    },
+    mergeableNames: { directory, sources in
+      await Task.detached(priority: .userInitiated) {
+        var names: Set<String> = []
+        for source in sources
+        where isDirectory(at: source) && isDirectory(at: directory.appending(path: source.lastPathComponent)) {
+          names.insert(source.lastPathComponent)
+        }
+        return names
+      }.value
+    },
+    transfer: { source, directory, name, operation, policy in
+      try await Task.detached(priority: .userInitiated) {
+        try performTransfer(source: source, directory: directory, name: name, operation: operation, policy: policy)
+      }.value
+    },
+    rename: { source, newName in
+      try await Task.detached(priority: .userInitiated) { try renameItem(at: source, to: newName) }.value
     }
   )
 
@@ -40,7 +106,11 @@ extension FileExplorerClient: DependencyKey {
   /// exercise listing override explicitly.
   static let testValue = FileExplorerClient(
     list: { _, _ in FileExplorerListing(entries: [], totalCount: 0, modificationDate: nil) },
-    modificationDates: { _ in [:] }
+    modificationDates: { _ in [:] },
+    existingNames: { _, _ in [] },
+    mergeableNames: { _, _ in [] },
+    transfer: { _, _, _, _, _ in },
+    rename: { _, _ in }
   )
 }
 
@@ -129,6 +199,164 @@ extension FileExplorerClient {
       return false
     }
     return resolvedIsDirectory.boolValue
+  }
+
+  /// Resolves the destination name against `policy`, then moves or copies.
+  /// Keep-both scans for a free " copy" name; overwrite stages the new item
+  /// under a temp sibling and swaps it in, so a failed transfer never leaves
+  /// the destination deleted with no replacement.
+  nonisolated static func performTransfer(
+    source: URL,
+    directory: URL,
+    name: String,
+    operation: FileTransferOperation,
+    policy: FileConflictPolicy
+  ) throws {
+    let manager = FileManager.default
+    let destination = directory.appending(path: name)
+    // Landing inside the source's own subtree copies a folder into itself. The
+    // reducer pre-filters this, but resolve symlinks here so a worktree under a
+    // symlinked prefix can't slip a recursive copy past.
+    guard !isSubpath(directory, of: source) else { return }
+    func exists(_ candidate: String) -> Bool {
+      manager.fileExists(atPath: directory.appending(path: candidate).path(percentEncoded: false))
+    }
+    switch policy {
+    case .abort:
+      try placeItem(from: source, at: destination, operation: operation)
+    case .keepBoth:
+      try placeItem(from: source, at: directory.appending(path: uniqueName(for: name, isTaken: exists)), operation: operation)
+    case .overwrite:
+      try replaceItem(from: source, at: destination, operation: operation)
+    case .merge:
+      // Only a directory folded into a same-named directory merges; anything
+      // else replaces, matching the alert that offered Merge for dir-on-dir.
+      guard isDirectory(at: source), exists(name), isDirectory(at: destination) else {
+        try replaceItem(from: source, at: destination, operation: operation)
+        return
+      }
+      guard source.standardizedFileURL != destination.standardizedFileURL else { return }
+      try mergeDirectory(from: source, into: destination, operation: operation)
+      // A moved source is now emptied of its merged contents; drop the shell.
+      if operation == .move { try? manager.removeItem(at: source) }
+    }
+  }
+
+  /// Moves or copies `source` to `destination`, throwing if it exists.
+  private nonisolated static func placeItem(
+    from source: URL, at destination: URL, operation: FileTransferOperation
+  ) throws {
+    switch operation {
+    case .move: try FileManager.default.moveItem(at: source, to: destination)
+    case .copy: try FileManager.default.copyItem(at: source, to: destination)
+    }
+  }
+
+  /// Replaces `destination` with `source`, staging under a temp sibling then
+  /// swapping atomically so a failed transfer never leaves the destination
+  /// deleted with no replacement. Replacing an item with itself is a no-op.
+  private nonisolated static func replaceItem(
+    from source: URL, at destination: URL, operation: FileTransferOperation
+  ) throws {
+    let manager = FileManager.default
+    guard source.standardizedFileURL != destination.standardizedFileURL else { return }
+    guard manager.fileExists(atPath: destination.path(percentEncoded: false)) else {
+      try placeItem(from: source, at: destination, operation: operation)
+      return
+    }
+    let staged = destination.deletingLastPathComponent().appending(path: ".supacode-replace-\(UUID().uuidString)")
+    try placeItem(from: source, at: staged, operation: operation)
+    do {
+      // Atomic swap: the old destination survives until the staged item is in
+      // place, so a failure here never destroys it.
+      _ = try manager.replaceItemAt(destination, withItemAt: staged)
+    } catch {
+      // A move already consumed the source, so restore the staged item rather
+      // than stranding the only copy; a copy can safely drop the duplicate.
+      switch operation {
+      case .move: try? manager.moveItem(at: staged, to: source)
+      case .copy: try? manager.removeItem(at: staged)
+      }
+      throw error
+    }
+  }
+
+  /// Folds `source`'s entries into `destination`: a same-named subdirectory
+  /// recurses, everything else replaces (existing-only entries are untouched).
+  private nonisolated static func mergeDirectory(
+    from source: URL, into destination: URL, operation: FileTransferOperation
+  ) throws {
+    let manager = FileManager.default
+    let entries = try manager.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [])
+    for entry in entries {
+      let target = destination.appending(path: entry.lastPathComponent)
+      if isDirectory(at: entry), isDirectory(at: target) {
+        try mergeDirectory(from: entry, into: target, operation: operation)
+      } else {
+        try replaceItem(from: entry, at: target, operation: operation)
+      }
+    }
+  }
+
+  /// A real directory, not a symlink to one: `fileExists(isDirectory:)` follows
+  /// links, which would make a merge recurse into (and a move drain) whatever
+  /// the link points at, so resolve the flags without traversing.
+  private nonisolated static func isDirectory(at url: URL) -> Bool {
+    let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+    return (values?.isDirectory ?? false) && !(values?.isSymbolicLink ?? false)
+  }
+
+  /// Whether `url` is `ancestor` itself or nested inside it, comparing
+  /// symlink-resolved paths so a symlinked prefix can't hide the containment.
+  private nonisolated static func isSubpath(_ url: URL, of ancestor: URL) -> Bool {
+    func resolvedPath(_ url: URL) -> String {
+      var path = url.resolvingSymlinksInPath().path(percentEncoded: false)
+      if path.count > 1, path.hasSuffix("/") { path.removeLast() }
+      return path
+    }
+    let ancestorPath = resolvedPath(ancestor)
+    let target = resolvedPath(url)
+    return target == ancestorPath || target.hasPrefix(ancestorPath + "/")
+  }
+
+  /// Renames `source` to `newName` in its own directory. A case-only change on
+  /// a case-insensitive volume goes through a temp name, since moving straight
+  /// to the new case reads as "already exists".
+  nonisolated static func renameItem(at source: URL, to newName: String) throws {
+    let manager = FileManager.default
+    let directory = source.deletingLastPathComponent()
+    let destination = directory.appending(path: newName)
+    let current = source.lastPathComponent
+    guard current != newName, current.lowercased() == newName.lowercased() else {
+      try manager.moveItem(at: source, to: destination)
+      return
+    }
+    let staged = directory.appending(path: ".supacode-rename-\(UUID().uuidString)")
+    try manager.moveItem(at: source, to: staged)
+    do {
+      try manager.moveItem(at: staged, to: destination)
+    } catch {
+      // The source is already at the temp name, so put it back rather than
+      // stranding it there if the second move fails.
+      try? manager.moveItem(at: staged, to: source)
+      throw error
+    }
+  }
+
+  /// A Finder-style non-colliding name: "foo.txt" -> "foo copy.txt" -> "foo
+  /// copy 2.txt". The suffix lands before the final extension.
+  nonisolated static func uniqueName(for name: String, isTaken: (String) -> Bool) -> String {
+    guard isTaken(name) else { return name }
+    let ext = (name as NSString).pathExtension
+    let base = (name as NSString).deletingPathExtension
+    let compose: (String) -> String = { stem in ext.isEmpty ? stem : stem + "." + ext }
+    var candidate = compose("\(base) copy")
+    var counter = 2
+    while isTaken(candidate) {
+      candidate = compose("\(base) copy \(counter)")
+      counter += 1
+    }
+    return candidate
   }
 
   private nonisolated static func listingError(from error: Error) -> FileExplorerListingError {

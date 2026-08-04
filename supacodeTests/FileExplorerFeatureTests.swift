@@ -1272,6 +1272,534 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(nil, isVisible: false))
   }
 
+  @Test func movingFilesWithoutCollisionTransfersThenRefreshes() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let transfers = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in [] }
+      $0.fileExplorerClient.transfer = { _, _, name, operation, policy in
+        transfers.withValue { $0.append("\(name):\(operation):\(policy)") }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/new.txt")], destinationDirectory: "", operation: .move))
+    await store.skipReceivedActions()
+    // No collision, so it transfers straight through with the abort backstop.
+    #expect(transfers.value == ["new.txt:move:abort"])
+    #expect(store.state.alert == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func movingOntoACollisionPromptsThenKeepBoth() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let policies = LockIsolated<[FileConflictPolicy]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in ["a.txt"] }
+      $0.fileExplorerClient.transfer = { _, _, _, _, policy in
+        policies.withValue { $0.append(policy) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
+    await store.skipReceivedActions()
+    // The collision surfaces a prompt rather than transferring.
+    #expect(store.state.alert?.title == TextState("\"a.txt\" already exists"))
+    #expect(policies.value.isEmpty)
+
+    let plan = FileExplorerFeature.FileTransferPlan(
+      worktreeID: worktree.id, sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move
+    )
+    await store.send(.alert(.presented(.resolveTransfer(plan, policy: .keepBoth))))
+    await store.skipReceivedActions()
+    #expect(policies.value == [.keepBoth])
+    #expect(store.state.alert == nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func replacingOnCollisionOverwrites() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let policies = LockIsolated<[FileConflictPolicy]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in ["a.txt"] }
+      $0.fileExplorerClient.transfer = { _, _, _, _, policy in
+        policies.withValue { $0.append(policy) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    // Present the collision prompt, then replace.
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
+    await store.skipReceivedActions()
+    #expect(store.state.alert != nil)
+
+    let plan = FileExplorerFeature.FileTransferPlan(
+      worktreeID: worktree.id, sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move
+    )
+    await store.send(.alert(.presented(.resolveTransfer(plan, policy: .overwrite))))
+    await store.skipReceivedActions()
+    #expect(policies.value == [.overwrite])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func switchingWorktreeAbortsAPendingTransferResolution() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let other = Self.worktree(path: "/tmp/wt-b")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let transferRan = LockIsolated(false)
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in ["a.txt"] }
+      $0.fileExplorerClient.transfer = { _, _, _, _, _ in
+        transferRan.setValue(true)
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+    // Raise the collision prompt on wt-a, then switch worktrees under it.
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move))
+    await store.skipReceivedActions()
+    #expect(store.state.alert != nil)
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: other), isVisible: true))
+    await store.skipReceivedActions()
+
+    // Resolving the stale plan bound to wt-a must not write into the new worktree.
+    let stalePlan = FileExplorerFeature.FileTransferPlan(
+      worktreeID: worktree.id, sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .move
+    )
+    // The guard aborts with no effect, so nothing is received to skip.
+    await store.send(.alert(.presented(.resolveTransfer(stalePlan, policy: .overwrite))))
+    #expect(transferRan.value == false)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func renamingAFileMovesItThenRefreshes() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let renames = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.rename = { source, newName in
+        renames.withValue { $0.append("\(source.lastPathComponent)->\(newName)") }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.renameRequested(path: "a.txt", newName: "  b.txt  "))
+    await store.skipReceivedActions()
+    // The new name is trimmed before the rename lands.
+    #expect(renames.value == ["a.txt->b.txt"])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func renamingToTheSameOrEmptyNameRunsNothing() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let renames = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.rename = { _, newName in renames.withValue { $0.append(newName) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    // Each is a no-op that issues no effect, so there is nothing to skip.
+    await store.send(.renameRequested(path: "a.txt", newName: "a.txt"))
+    await store.send(.renameRequested(path: "a.txt", newName: "   "))
+    await store.send(.renameRequested(path: "a.txt", newName: "bad/name.txt"))
+    #expect(renames.value.isEmpty)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func uniqueNameAppendsCopyThenCounts() {
+    var taken: Set<String> = ["a.txt"]
+    #expect(FileExplorerClient.uniqueName(for: "a.txt", isTaken: { taken.contains($0) }) == "a copy.txt")
+    taken.insert("a copy.txt")
+    #expect(FileExplorerClient.uniqueName(for: "a.txt", isTaken: { taken.contains($0) }) == "a copy 2.txt")
+    #expect(FileExplorerClient.uniqueName(for: "fresh.txt", isTaken: { taken.contains($0) }) == "fresh.txt")
+    // An extension-less name (folder or dotfile) keeps the suffix at the end.
+    #expect(FileExplorerClient.uniqueName(for: "folder", isTaken: { $0 == "folder" }) == "folder copy")
+    #expect(FileExplorerClient.uniqueName(for: ".env", isTaken: { $0 == ".env" }) == ".env copy")
+  }
+
+  @Test func relativePathResolvesUnderRootAndNilsOutside() {
+    let root = URL(filePath: "/tmp/wt-a", directoryHint: .isDirectory)
+    #expect(FileExplorerFeature.relativePath(of: root, under: root) == "")
+    #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/wt-a/src/a.txt"), under: root) == "src/a.txt")
+    // A directory URL (trailing slash) resolves to the same slash-free key.
+    #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/wt-a/src", directoryHint: .isDirectory), under: root) == "src")
+    #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/other/x.txt"), under: root) == nil)
+    // A sibling sharing a name prefix is not under the root.
+    #expect(FileExplorerFeature.relativePath(of: URL(filePath: "/tmp/wt-a-backup/x"), under: root) == nil)
+  }
+
+  @Test func duplicateNamesWithinABatchPromptForConflict() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      // The destination is clear; the clash is between the two sources.
+      $0.fileExplorerClient.existingNames = { _, _ in [] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/x/a.txt"), URL(filePath: "/tmp/y/a.txt")],
+        destinationDirectory: "", operation: .copy
+      )
+    )
+    await store.skipReceivedActions()
+    #expect(store.state.alert?.title == TextState("\"a.txt\" already exists"))
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func pastingThreadsCopyThroughTheTransfer() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([])
+    let operations = LockIsolated<[FileTransferOperation]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in [] }
+      $0.fileExplorerClient.transfer = { _, _, _, operation, _ in
+        operations.withValue { $0.append(operation) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/x.txt")], destinationDirectory: "", operation: .copy))
+    await store.skipReceivedActions()
+    #expect(operations.value == [.copy])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func movingAnInternalFileRefreshesBothDestinationAndOldParent() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let root = Self.listing([("src", isDirectory: true), ("docs", isDirectory: true)])
+    let src = Self.listing([("a.txt", isDirectory: false)])
+    let docs = Self.listing([])
+    let relisted = LockIsolated<[String]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { url, _ in
+        relisted.withValue { $0.append(url.lastPathComponent) }
+        switch url.lastPathComponent {
+        case "src": return src
+        case "docs": return docs
+        default: return root
+        }
+      }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in [] }
+      $0.fileExplorerClient.transfer = { _, _, _, _, _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+    await store.send(.directoryToggled("src"))
+    await store.skipReceivedActions()
+    await store.send(.directoryToggled("docs"))
+    await store.skipReceivedActions()
+    relisted.setValue([])
+
+    // Moving an internal file empties its origin and fills the destination, so
+    // both directories must re-list.
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/wt-a/src/a.txt")], destinationDirectory: "docs", operation: .move
+      )
+    )
+    await store.skipReceivedActions()
+    #expect(Set(relisted.value) == ["src", "docs"])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func aFailedFileTransferSurfacesTheFailureAlert() async {
+    struct TransferError: Error {}
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in [] }
+      $0.fileExplorerClient.transfer = { _, _, _, _, _ in throw TransferError() }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/new.txt")], destinationDirectory: "", operation: .move))
+    await store.skipReceivedActions()
+    #expect(store.state.alert?.title == TextState("The operation couldn't be completed"))
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func aFailedRenameSurfacesTheFailureAlert() async {
+    struct RenameError: Error {}
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.rename = { _, _ in throw RenameError() }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.renameRequested(path: "a.txt", newName: "b.txt"))
+    await store.skipReceivedActions()
+    #expect(store.state.alert?.title == TextState("The operation couldn't be completed"))
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func directoryCollisionOffersMergeAndThreadsItThrough() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("src", isDirectory: true)])
+    let policies = LockIsolated<[FileConflictPolicy]>([])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in ["src"] }
+      $0.fileExplorerClient.mergeableNames = { _, _ in ["src"] }
+      $0.fileExplorerClient.transfer = { _, _, _, _, policy in policies.withValue { $0.append(policy) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/src")], destinationDirectory: "", operation: .copy))
+    await store.skipReceivedActions()
+    // A directory-onto-directory collision offers Merge.
+    #expect(store.state.alert?.buttons.contains { $0.label == TextState("Merge") } == true)
+
+    let plan = FileExplorerFeature.FileTransferPlan(
+      worktreeID: worktree.id, sources: [URL(filePath: "/tmp/drop/src")], destinationDirectory: "", operation: .copy
+    )
+    await store.send(.alert(.presented(.resolveTransfer(plan, policy: .merge))))
+    await store.skipReceivedActions()
+    #expect(policies.value == [.merge])
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func fileCollisionDoesNotOfferMerge() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("a.txt", isDirectory: false)])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in ["a.txt"] }
+      $0.fileExplorerClient.mergeableNames = { _, _ in [] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(.filesTransferRequested(sources: [URL(filePath: "/tmp/drop/a.txt")], destinationDirectory: "", operation: .copy))
+    await store.skipReceivedActions()
+    #expect(store.state.alert?.buttons.contains { $0.label == TextState("Merge") } == false)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func mixedDirectoryAndFileCollisionDoesNotOfferMerge() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing([("src", isDirectory: true), ("a.txt", isDirectory: false)])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.existingNames = { _, _ in ["src", "a.txt"] }
+      // Only the directory is mergeable; the file is not.
+      $0.fileExplorerClient.mergeableNames = { _, _ in ["src"] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/drop/src"), URL(filePath: "/tmp/drop/a.txt")],
+        destinationDirectory: "", operation: .copy
+      )
+    )
+    await store.skipReceivedActions()
+    // Merge would silently replace the file collision, so it is not offered.
+    #expect(store.state.alert?.buttons.contains { $0.label == TextState("Merge") } == false)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func pastingADirectoryIntoItsOwnSubtreeIsRejected() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let root = Self.listing([("src", isDirectory: true)])
+    let transferRan = LockIsolated(false)
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in root }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+      $0.fileExplorerClient.transfer = { _, _, _, _, _ in transferRan.setValue(true) }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true))
+    await store.skipReceivedActions()
+
+    // Pasting /tmp/wt-a/src into src itself would copy a folder inside itself,
+    // so it is dropped with no effect (nothing to skip).
+    await store.send(
+      .filesTransferRequested(
+        sources: [URL(filePath: "/tmp/wt-a/src", directoryHint: .isDirectory)],
+        destinationDirectory: "src", operation: .copy
+      )
+    )
+    #expect(transferRan.value == false)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func mergeFoldsDirectoriesKeepingExistingOnlyEntries() throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appending(path: "supacode-merge-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? manager.removeItem(at: root) }
+    let source = root.appending(path: "src", directoryHint: .isDirectory)
+    let destination = root.appending(path: "dst", directoryHint: .isDirectory)
+    let merged = destination.appending(path: "src", directoryHint: .isDirectory)
+
+    try manager.createDirectory(at: source.appending(path: "sub"), withIntermediateDirectories: true)
+    try "new".write(to: source.appending(path: "shared.txt"), atomically: true, encoding: .utf8)
+    try "n".write(to: source.appending(path: "only-new.txt"), atomically: true, encoding: .utf8)
+    try "d".write(to: source.appending(path: "sub/deep.txt"), atomically: true, encoding: .utf8)
+
+    try manager.createDirectory(at: merged.appending(path: "sub"), withIntermediateDirectories: true)
+    try "old".write(to: merged.appending(path: "shared.txt"), atomically: true, encoding: .utf8)
+    try "o".write(to: merged.appending(path: "only-old.txt"), atomically: true, encoding: .utf8)
+    try "k".write(to: merged.appending(path: "sub/kept.txt"), atomically: true, encoding: .utf8)
+
+    try FileExplorerClient.performTransfer(
+      source: source, directory: destination, name: "src", operation: .copy, policy: .merge
+    )
+
+    // Same-named files take the new content; existing-only entries survive; subfolders recurse.
+    #expect(try String(contentsOf: merged.appending(path: "shared.txt"), encoding: .utf8) == "new")
+    #expect(manager.fileExists(atPath: merged.appending(path: "only-new.txt").path(percentEncoded: false)))
+    #expect(manager.fileExists(atPath: merged.appending(path: "only-old.txt").path(percentEncoded: false)))
+    #expect(manager.fileExists(atPath: merged.appending(path: "sub/kept.txt").path(percentEncoded: false)))
+    #expect(manager.fileExists(atPath: merged.appending(path: "sub/deep.txt").path(percentEncoded: false)))
+  }
+
+  @Test func performTransferRefusesCopyingADirectoryIntoItsOwnSubtree() throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appending(path: "supacode-subtree-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? manager.removeItem(at: root) }
+    let source = root.appending(path: "src", directoryHint: .isDirectory)
+    let inner = source.appending(path: "inner", directoryHint: .isDirectory)
+    try manager.createDirectory(at: inner, withIntermediateDirectories: true)
+
+    // Copying src into its own descendant src/inner is refused, not recursed.
+    try FileExplorerClient.performTransfer(
+      source: source, directory: inner, name: "src", operation: .copy, policy: .abort
+    )
+    #expect(!manager.fileExists(atPath: inner.appending(path: "src").path(percentEncoded: false)))
+  }
+
   @Test func gitStatusLoadedWithStaleRootIsDropped() async {
     let worktree = Self.worktree(path: "/tmp/wt-a")
     let listing = Self.listing([("a.txt", isDirectory: false)])
