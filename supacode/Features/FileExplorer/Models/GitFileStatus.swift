@@ -20,6 +20,18 @@ nonisolated struct GitFileStatus: Equatable, Sendable {
   /// An index-side change to unstage.
   var hasStagedChange: Bool { index != nil }
 
+  /// The change state a row renders, or `nil` when clean. Single source of
+  /// truth for the file row and the folder rollup, so they can't disagree. A
+  /// path carrying an index/worktree change reads by that change even when it
+  /// also has an untracked working copy (e.g. `git rm --cached` leaves a staged
+  /// deletion plus an untracked copy); only a change-free untracked path is a
+  /// pure addition.
+  var displayState: GitRowDecoration.FileState? {
+    if isConflicted { return .conflicted }
+    if let kind = index ?? worktree { return kind.fileState }
+    return isUntracked ? .added : nil
+  }
+
   /// How a discard should treat this path, or `nil` when there's nothing to
   /// discard (clean or conflicted). Single source of truth for the reducer,
   /// context menu, and keyboard shortcuts.
@@ -62,14 +74,30 @@ nonisolated enum GitChangeKind: Equatable, Sendable {
   case deleted
 }
 
+/// How a collapsed folder's descendant changes roll up. `.modified` dominates
+/// when a folder mixes an addition with anything else, so only an all-additions
+/// folder reads as added.
+nonisolated enum FolderChange: Equatable, Sendable {
+  case added
+  case modified
+
+  var fileState: GitRowDecoration.FileState {
+    switch self {
+    case .added: .added
+    case .modified: .modified
+    }
+  }
+}
+
 /// The whole worktree's uncommitted picture from one `git status` call, plus
 /// prefix sets so a per-row lookup avoids scanning the change set.
 nonisolated struct GitStatusSnapshot: Equatable, Sendable {
   /// Keyed by root-relative path (matching the tree's directory keys), files
   /// only. Directories are decorated by rollup/prefix, never by lookup here.
   let statuses: [String: GitFileStatus]
-  /// Directories that (transitively) contain a change, derived from `statuses`.
-  let changedAncestors: Set<String>
+  /// Directories that (transitively) contain a change, keyed to how they roll
+  /// up. Absent means no change; presence carries the exact state.
+  let changedAncestors: [String: FolderChange]
   /// Reported ignored roots (trailing slash stripped), for prefix-dimming a
   /// whole ignored subtree without enumerating it.
   let ignoredPrefixes: Set<String>
@@ -90,24 +118,17 @@ nonisolated struct GitStatusSnapshot: Equatable, Sendable {
     if isIgnored(path) { return .ignored }
     // An expanded folder's children carry their own glyphs, so a rollup on it
     // would just be redundant noise.
-    guard !isExpanded, changedAncestors.contains(path) else { return nil }
-    // A collapsed folder holding changes reads as modified, like any change.
-    return .file(state: .modified, isStaged: false)
+    guard !isExpanded, let rollup = changedAncestors[path] else { return nil }
+    return .file(state: rollup.fileState, isStaged: false)
   }
 
   private func fileDecoration(for path: String) -> GitRowDecoration? {
-    guard let status = statuses[path] else {
+    guard let status = statuses[path], let state = status.displayState else {
       return isIgnored(path) ? .ignored : nil
     }
-    if status.isConflicted { return .file(state: .conflicted, isStaged: false) }
-    if status.isUntracked { return .file(state: .added, isStaged: false) }
     // Staged content is the primary signal (a both-staged-and-edited file reads
     // as staged and folds its remaining worktree delta in on "Stage").
-    let isStaged = status.index != nil
-    guard let kind = status.index ?? status.worktree else {
-      return isIgnored(path) ? .ignored : nil
-    }
-    return .file(state: kind.fileState, isStaged: isStaged)
+    return .file(state: state, isStaged: status.hasStagedChange)
   }
 
   /// Whether `path` sits at or under a reported ignored root.
@@ -221,21 +242,33 @@ extension GitStatusSnapshot {
     }
   }
 
-  /// Every directory that transitively contains a change, so a collapsed folder
-  /// can show a rollup dot without scanning the change set per row.
-  private nonisolated static func changedAncestors(of statuses: [String: GitFileStatus]) -> Set<String> {
-    var ancestors: Set<String> = []
+  /// Every directory that transitively contains a change, keyed to whether it
+  /// rolls up as an addition or a modification, so a collapsed folder can show
+  /// its rollup letter without scanning the change set per row.
+  private nonisolated static func changedAncestors(
+    of statuses: [String: GitFileStatus]
+  ) -> [String: FolderChange] {
+    var rollup: [String: FolderChange] = [:]
     for (path, status) in statuses where status.hasVisibleChange {
       var components = path.split(separator: "/")
       guard components.count > 1 else { continue }
       components.removeLast()
+      // Mirror the file row exactly: a folder is an addition only when its file
+      // renders as added, so folder and child never disagree.
+      let isAddition = status.displayState == .added
       var prefix = ""
       for component in components {
         prefix = prefix.isEmpty ? String(component) : prefix + "/" + component
-        ancestors.insert(prefix)
+        // A non-addition anywhere folds the folder to modified; an addition
+        // only sets the initial state so a sibling change can't be downgraded.
+        if isAddition {
+          if rollup[prefix] == nil { rollup[prefix] = .added }
+        } else {
+          rollup[prefix] = .modified
+        }
       }
     }
-    return ancestors
+    return rollup
   }
 
   /// Git reports wholly-ignored (and empty untracked) directories with a

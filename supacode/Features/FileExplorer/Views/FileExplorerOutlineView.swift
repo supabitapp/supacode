@@ -346,9 +346,9 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     }
 
     /// Redraws only the rows whose git decoration could differ between two
-    /// snapshots: files with a changed status and directories whose rollup dot
-    /// flipped. An ignored-set change affects whole subtrees by prefix and is
-    /// rare, so that case falls back to a full reload.
+    /// snapshots: files with a changed status and directories whose rollup
+    /// letter flipped. An ignored-set change affects whole subtrees by prefix
+    /// and is rare, so that case falls back to a full reload.
     private func reloadChangedGitRows(
       previous: GitStatusSnapshot?,
       next: GitStatusSnapshot,
@@ -359,7 +359,13 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         outlineView.reloadData()
         return
       }
-      var changedPaths = previous.changedAncestors.symmetricDifference(next.changedAncestors)
+      var changedPaths: Set<String> = []
+      // A directory row changes when its rollup appears, disappears, or flips
+      // between added and modified, so compare the mapped state, not just keys.
+      for key in Set(previous.changedAncestors.keys).union(next.changedAncestors.keys)
+      where previous.changedAncestors[key] != next.changedAncestors[key] {
+        changedPaths.insert(key)
+      }
       for key in Set(previous.statuses.keys).union(next.statuses.keys)
       where previous.statuses[key] != next.statuses[key] {
         changedPaths.insert(key)
@@ -454,6 +460,12 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       case ("r", _, [.command, .option]):  // Opt+Cmd+R: reveal in Finder.
         if let url = url(for: item.path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         return true
+      case ("c", _, [.command]):  // Cmd+C: copy the file, like the Finder.
+        if let url = url(for: item.path) { copyFileToPasteboard(url) }
+        return true
+      case ("c", _, [.command, .option]):  // Opt+Cmd+C: copy the absolute pathname.
+        if let url = url(for: item.path) { copyToPasteboard(url.path(percentEncoded: false)) }
+        return true
       case (_, 51, [.command]):  // Cmd+Delete: move a removable file to the Trash.
         return discardSelected(item, matching: .trash)
       case (_, 51, [.command, .shift]):  // Shift+Cmd+Delete: discard a tracked change.
@@ -519,6 +531,11 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    @objc private func contextMenuCopyFile(_ sender: NSMenuItem) {
+      guard let path = sender.representedObject as? String, let url = url(for: path) else { return }
+      copyFileToPasteboard(url)
+    }
+
     @objc private func contextMenuCopyPathname(_ sender: NSMenuItem) {
       guard let path = sender.representedObject as? String, let url = url(for: path) else { return }
       copyToPasteboard(url.path(percentEncoded: false))
@@ -532,6 +549,13 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     private func copyToPasteboard(_ value: String) {
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(value, forType: .string)
+    }
+
+    /// Writes the file URL so Finder (and any file-aware app) can paste the file
+    /// itself, matching Cmd+C in the Finder.
+    private func copyFileToPasteboard(_ url: URL) {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.writeObjects([url as NSURL])
     }
 
     private final class OpenWithPayload: NSObject {
@@ -711,13 +735,19 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
     menu.addItem(.separator())
     menu.addItem(
       makeItem(
-        "Copy as Pathname", action: #selector(contextMenuCopyPathname(_:)), symbolName: "doc.on.doc",
-        representing: path
+        "Copy", action: #selector(contextMenuCopyFile(_:)), symbolName: "document.on.document.fill",
+        representing: path, keyEquivalent: "c", modifiers: .command
       )
     )
     menu.addItem(
       makeItem(
-        "Copy Relative Path", action: #selector(contextMenuCopyRelativePath(_:)), symbolName: "doc.on.doc",
+        "Copy as Pathname", action: #selector(contextMenuCopyPathname(_:)), symbolName: "doc.on.doc",
+        representing: path, keyEquivalent: "c", modifiers: [.command, .option]
+      )
+    )
+    menu.addItem(
+      makeItem(
+        "Copy Relative Path", action: #selector(contextMenuCopyRelativePath(_:)), symbolName: nil,
         representing: path
       )
     )
@@ -765,7 +795,7 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
   private func makeItem(
     _ title: String,
     action: Selector,
-    symbolName: String,
+    symbolName: String?,
     representing path: String,
     keyEquivalent: String = "",
     modifiers: NSEvent.ModifierFlags = []
@@ -773,7 +803,7 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
     let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
     item.keyEquivalentModifierMask = modifiers
     item.target = self
-    item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+    item.image = symbolName.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
     item.representedObject = path
     return item
   }
@@ -887,6 +917,22 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   private let warningView = NSImageView()
   /// Sweeps the label while its directory loads for the first time.
   private var shimmerLayer: CAGradientLayer?
+  /// Last rendered row, replayed when the selection emphasis flips so the git
+  /// tint can yield to the selected-text color.
+  private var renderedName = ""
+  private var renderedDecoration: GitRowDecoration?
+
+  /// A focused, selected row draws its text over the accent fill; the fixed git
+  /// tints (yellow/green/red) would clash, so defer to the selected-text color.
+  private var isEmphasized: Bool { backgroundStyle == .emphasized }
+
+  override var backgroundStyle: NSView.BackgroundStyle {
+    didSet {
+      guard backgroundStyle != oldValue else { return }
+      applyLabel(name: renderedName, decoration: renderedDecoration)
+      applyBadge(renderedDecoration)
+    }
+  }
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -960,6 +1006,8 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     iconView.setAccessibilityLabel(entry.isDirectory ? "Folder" : "File")
     // A read failure owns the trailing slot, so its warning wins over a badge.
     let effective = failure == nil ? decoration : nil
+    renderedName = entry.name
+    renderedDecoration = effective
     applyLabel(name: entry.name, decoration: effective)
     applyBadge(effective)
     // Gitignored and deleted rows fade the whole row; the deletion is already
@@ -988,14 +1036,14 @@ private final class FileExplorerEntryCellView: NSTableCellView {
         string: name,
         attributes: [
           .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-          .foregroundColor: NSColor.labelColor,
+          .foregroundColor: isEmphasized ? NSColor.alternateSelectedControlTextColor : .labelColor,
           .font: label.font ?? NSFont.preferredFont(forTextStyle: .body),
         ]
       )
       return
     }
     label.stringValue = name
-    label.textColor = Self.labelColor(for: decoration)
+    label.textColor = labelColor(for: decoration)
   }
 
   private static func isDimmed(_ decoration: GitRowDecoration?) -> Bool {
@@ -1005,15 +1053,15 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     }
   }
 
-  /// The trailing glyph: a state letter for a file (heavier weight when staged),
-  /// a neutral rollup dot for a collapsed directory, hidden otherwise. The
-  /// tooltip spells out the state for hover and VoiceOver.
+  /// The trailing glyph: a state letter for a file (heavier weight when staged)
+  /// or a collapsed directory's rollup, hidden otherwise. The tooltip spells out
+  /// the state for hover and VoiceOver.
   private func applyBadge(_ decoration: GitRowDecoration?) {
     switch decoration {
     case .file(let state, let isStaged):
       badge.isHidden = false
       badge.stringValue = Self.letter(for: state)
-      badge.textColor = Self.tint(for: state)
+      badge.textColor = isEmphasized ? .alternateSelectedControlTextColor : Self.tint(for: state)
       badge.font = .monospacedSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize,
         weight: isStaged ? .semibold : .regular
@@ -1028,11 +1076,12 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     }
   }
 
-  private static func labelColor(for decoration: GitRowDecoration?) -> NSColor {
-    switch decoration {
-    case .file(let state, _): tint(for: state)
-    case .ignored, nil: .labelColor
-    }
+  private func labelColor(for decoration: GitRowDecoration?) -> NSColor {
+    // An emphasized row draws over the accent fill, so every row (even clean or
+    // ignored) yields to the selected-text color, not just the git-tinted ones.
+    if isEmphasized { return .alternateSelectedControlTextColor }
+    guard case .file(let state, _) = decoration else { return .labelColor }
+    return Self.tint(for: state)
   }
 
   private static func letter(for state: GitRowDecoration.FileState) -> String {

@@ -105,8 +105,11 @@ struct GitStatusParserTests {
 
   @Test func changedFileRollsUpToEachAncestorDirectory() {
     let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream([Self.ordinary(".M", "a/b/c.txt")]))
-    #expect(snapshot.changedAncestors == ["a", "a/b"])
-    #expect(!snapshot.changedAncestors.contains("a/b/c.txt"))
+    #expect(Set(snapshot.changedAncestors.keys) == ["a", "a/b"])
+    // Every ancestor level rolls up, and the file itself is not an ancestor.
+    #expect(snapshot.changedAncestors["a"] == .modified)
+    #expect(snapshot.changedAncestors["a/b"] == .modified)
+    #expect(snapshot.changedAncestors["a/b/c.txt"] == nil)
   }
 
   @Test func ignoredEntryDoesNotRollUp() {
@@ -150,6 +153,28 @@ struct GitStatusParserTests {
     )
   }
 
+  @Test func rmCachedFileDecoratesAsStagedDeletionNotAdded() {
+    // `git rm --cached` reports a staged deletion plus an untracked working copy
+    // for one path; the tracked deletion wins over the untracked side.
+    let snapshot = GitStatusSnapshot.parse(
+      porcelainV2: Self.stream([Self.ordinary("D.", "rm-cached.txt"), "? rm-cached.txt"])
+    )
+    #expect(
+      snapshot.decoration(for: "rm-cached.txt", isDirectory: false, isExpanded: false)
+        == .file(state: .deleted, isStaged: true)
+    )
+  }
+
+  @Test func rmCachedFolderRollsUpAsModifiedNotAdded() {
+    let snapshot = GitStatusSnapshot.parse(
+      porcelainV2: Self.stream([Self.ordinary("D.", "dir/rm-cached.txt"), "? dir/rm-cached.txt"])
+    )
+    #expect(
+      snapshot.decoration(for: "dir", isDirectory: true, isExpanded: false)
+        == .file(state: .modified, isStaged: false)
+    )
+  }
+
   @Test func conflictDecoratesAsConflicted() {
     let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream([Self.unmerged("UU", "clash.txt")]))
     #expect(
@@ -165,6 +190,79 @@ struct GitStatusParserTests {
         == .file(state: .modified, isStaged: false)
     )
     #expect(snapshot.decoration(for: "a", isDirectory: true, isExpanded: true) == nil)
+  }
+
+  @Test func collapsedDirectoryOfOnlyAdditionsReadsAsAdded() {
+    // Both an untracked file and a staged add roll up as an addition.
+    let snapshot = GitStatusSnapshot.parse(
+      porcelainV2: Self.stream(["? new/a.txt", Self.ordinary("A.", "new/b.txt")])
+    )
+    #expect(
+      snapshot.decoration(for: "new", isDirectory: true, isExpanded: false)
+        == .file(state: .added, isStaged: false)
+    )
+  }
+
+  @Test func collapsedDirectoryMixingAddsAndModificationsReadsAsModified() {
+    let snapshot = GitStatusSnapshot.parse(
+      porcelainV2: Self.stream(["? mix/new.txt", Self.ordinary(".M", "mix/edited.txt")])
+    )
+    #expect(
+      snapshot.decoration(for: "mix", isDirectory: true, isExpanded: false)
+        == .file(state: .modified, isStaged: false)
+    )
+  }
+
+  @Test func collapsedDirectoryOfIntentToAddReadsAsAdded() {
+    // `git add -N` reports a worktree-axis add (`.A`); the folder must agree
+    // with the file row, which renders it as added.
+    let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream([Self.ordinary(".A", "add/new.txt")]))
+    #expect(
+      snapshot.decoration(for: "add", isDirectory: true, isExpanded: false)
+        == .file(state: .added, isStaged: false)
+    )
+    #expect(
+      snapshot.decoration(for: "add/new.txt", isDirectory: false, isExpanded: false)
+        == .file(state: .added, isStaged: false)
+    )
+  }
+
+  @Test func additionRollsUpAsAddedToEveryAncestorLevel() {
+    let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream(["? a/b/c.txt"]))
+    #expect(snapshot.changedAncestors["a"] == .added)
+    #expect(snapshot.changedAncestors["a/b"] == .added)
+  }
+
+  @Test func siblingAdditionStaysAddedWhileParentModified() {
+    // A modification and a nested addition under the same root: the root reads
+    // modified, but the addition-only subfolder stays added.
+    let snapshot = GitStatusSnapshot.parse(
+      porcelainV2: Self.stream([Self.ordinary(".M", "a/mod.txt"), "? a/sub/new.txt"])
+    )
+    #expect(
+      snapshot.decoration(for: "a", isDirectory: true, isExpanded: false)
+        == .file(state: .modified, isStaged: false)
+    )
+    #expect(
+      snapshot.decoration(for: "a/sub", isDirectory: true, isExpanded: false)
+        == .file(state: .added, isStaged: false)
+    )
+  }
+
+  @Test func collapsedDirectoryOfOnlyDeletionsReadsAsModified() {
+    let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream([Self.ordinary("D.", "a/gone.txt")]))
+    #expect(
+      snapshot.decoration(for: "a", isDirectory: true, isExpanded: false)
+        == .file(state: .modified, isStaged: false)
+    )
+  }
+
+  @Test func collapsedDirectoryOfOnlyConflictsReadsAsModified() {
+    let snapshot = GitStatusSnapshot.parse(porcelainV2: Self.stream([Self.unmerged("UU", "a/clash.txt")]))
+    #expect(
+      snapshot.decoration(for: "a", isDirectory: true, isExpanded: false)
+        == .file(state: .modified, isStaged: false)
+    )
   }
 
   @Test func ignoredPrefixDimsTheWholeSubtree() {
