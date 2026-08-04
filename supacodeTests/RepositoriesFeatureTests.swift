@@ -9170,15 +9170,28 @@ struct RepositoriesFeatureTests {
       isGitRepository: false
     )
 
-    await store.send(.openRepositories([tempDir]))
+    await store.send(.openRepositories([tempDir])) {
+      // Parked so a cancelled load still leaves the open owed a verdict.
+      $0.pendingOpenRequests = [tempDir]
+    }
     await store.receive(\.gitEnvironmentChanged)
     await store.receive(\.openRepositoriesFinished) {
       $0.repositories = [folderRepo]
       $0.repositoryRoots = [standardizedURL]
       $0.isInitialLoadComplete = true
+      $0.pendingOpenRequests = []
       $0.reconcileSidebarForTesting()
     }
     await store.receive(\.delegate.repositoriesChanged)
+    await store.receive(
+      \.delegate.repositoriesOpened,
+      [
+        RepositoryOpenOutcome(
+          requestedURL: tempDir,
+          result: .repository(id: RepositoryID(rootID), isNew: true)
+        )
+      ]
+    )
     await store.receive(\.openActionsResolved) {
       $0.openActionByRepositoryID = [folderRepo.id: .finder]
     }

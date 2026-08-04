@@ -96,6 +96,15 @@ struct RepositoriesFeature {
   struct State: Equatable {
     var repositories: IdentifiedArrayOf<Repository> = []
     var repositoryRoots: [URL] = []
+    /// Paths from `openRepositories` still waiting for a verdict.
+    ///
+    /// Held in state rather than only on `openRepositoriesFinished` because every
+    /// load shares `CancelID.load` with `cancelInFlight`, so a periodic refresh —
+    /// or a second `repo open` — cancels an open's load and its completion action
+    /// never arrives. A CLI caller waiting on that ack would then block for the
+    /// full 180s timeout and report failure for an open that actually succeeded.
+    /// Whichever load finishes next drains this and answers them all.
+    var pendingOpenRequests: [URL] = []
     var loadFailuresByID: [Repository.ID: String] = [:]
     /// Set when git is environment-blocked (e.g. an unaccepted Xcode license):
     /// drives the banner and suppresses the false per-repo "broken" rows.
@@ -381,10 +390,7 @@ struct RepositoriesFeature {
       [Repository],
       failures: [LoadFailure],
       invalidRoots: [String],
-      roots: [URL],
-      /// The URLs the open was asked for, carried through so the handler can say
-      /// what actually happened to each one instead of reporting blanket success.
-      requested: [URL] = []
+      roots: [URL]
     )
     case selectWorktree(Worktree.ID?, focusTerminal: Bool = false)
     case selectWorktreeAtHotkeySlot(Int)
@@ -3377,6 +3383,7 @@ struct RepositoriesFeature {
       case .repositoriesLoaded(let repositories, let failures, let roots, let animated):
         state.isRefreshingWorktrees = false
         let previousSelection = state.selectedWorktreeID
+        let knownRepositoryIDsBeforeOpen = Set(state.repositories.ids)
         let previousSelectedWorktree = state.worktree(for: previousSelection)
         let mergedRemote = Self.mergePersistedRemoteRepositories(into: repositories, existingState: state)
         let mergedRepositories = mergedRemote.repositories
@@ -3402,6 +3409,15 @@ struct RepositoriesFeature {
           uniqueKeysWithValues: failures.map { ($0.rootID, $0.message) }
         )
         state.dropStaleFailedRepositorySelection()
+        // A refresh shares `CancelID.load` with `openRepositories`, so this load
+        // may be the one that cancelled a pending open. Answer it here rather
+        // than leaving the CLI caller to time out. Resolved before the selection
+        // is read so an adopted worktree lands in the change notification.
+        let openOutcomes = resolveOpenOutcomes(
+          invalidRoots: [],
+          knownRepositoryIDsBeforeOpen: knownRepositoryIDsBeforeOpen,
+          state: &state
+        )
         let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
         let selectionChanged = state.hasSelectionChanged(
           previousSelectionID: previousSelection,
@@ -3415,6 +3431,9 @@ struct RepositoriesFeature {
         }
         if selectionChanged {
           allEffects.append(.send(.delegate(.selectedWorktreeChanged(selectedWorktree))))
+        }
+        if !openOutcomes.isEmpty {
+          allEffects.append(.send(.delegate(.repositoriesOpened(openOutcomes))))
         }
         // The sidebar reconciler (`reconcileSidebarState`) already
         // flushed any sidebar mutations through `$sidebar.withLock`,
@@ -3495,6 +3514,11 @@ struct RepositoriesFeature {
       case .openRepositories(let urls):
         analyticsClient.capture("repository_added", ["count": urls.count])
         state.alert = nil
+        // Park the request before the load starts, so a cancelled load still
+        // leaves a verdict owed and the next completion pays it.
+        for url in urls where !state.pendingOpenRequests.contains(url) {
+          state.pendingOpenRequests.append(url)
+        }
         return .run { send in
           let loadedPaths = await repositoryPersistence.loadRoots()
           let existingRootPaths = RepositoryPathNormalizer.normalize(loadedPaths)
@@ -3536,15 +3560,14 @@ struct RepositoriesFeature {
               loadResult.repositories,
               failures: loadResult.failures,
               invalidRoots: invalidRoots,
-              roots: mergedRoots,
-              requested: urls
+              roots: mergedRoots
             )
           )
         }
         .cancellable(id: CancelID.load, cancelInFlight: true)
 
       case .openRepositoriesFinished(
-        let repositories, let failures, let invalidRoots, let roots, let requested
+        let repositories, let failures, let invalidRoots, let roots
       ):
         state.isRefreshingWorktrees = false
         let previousSelection = state.selectedWorktreeID
@@ -3571,7 +3594,6 @@ struct RepositoriesFeature {
         // Resolve what each requested path became *before* reading the selection
         // below, so adopting a worktree is reflected in the change notification.
         let openOutcomes = resolveOpenOutcomes(
-          requested: requested,
           invalidRoots: invalidRoots,
           knownRepositoryIDsBeforeOpen: knownRepositoryIDsBeforeOpen,
           state: &state
@@ -4989,13 +5011,18 @@ struct RepositoriesFeature {
   /// common case is unambiguous, then falls back to the innermost containing
   /// worktree / repository — which is what keeps `repo open <some/subdir>`
   /// working. Anything that matches nothing is a failure, not a silent success.
+  ///
+  /// Drains `state.pendingOpenRequests`, so it is safe to call from any load
+  /// completion: the load that finishes answers every open still owed a verdict,
+  /// including one whose own load was cancelled before it could report.
   private func resolveOpenOutcomes(
-    requested: [URL],
     invalidRoots: [String],
     knownRepositoryIDsBeforeOpen: Set<Repository.ID>,
     state: inout State
   ) -> [RepositoryOpenOutcome] {
+    let requested = state.pendingOpenRequests
     guard !requested.isEmpty else { return [] }
+    state.pendingOpenRequests = []
     let invalid = Set(invalidRoots)
     var outcomes: [RepositoryOpenOutcome] = []
     for url in requested {
