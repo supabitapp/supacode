@@ -30,9 +30,17 @@ extension RepoCommand {
   }
 
   struct Open: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Open a repository.")
+    static let configuration = CommandConfiguration(
+      abstract: "Open a repository, or adopt an existing worktree.",
+      discussion: """
+        Prints the id of whatever the path resolved to: a repository, or the \
+        worktree it named. A path inside a worktree resolves to that worktree. \
+        A path that resolves to nothing exits non-zero with an explanation \
+        rather than reporting success without opening anything.
+        """
+    )
 
-    @Argument(help: "Absolute path to the repository.")
+    @Argument(help: "Absolute path to a repository, a worktree, or a directory inside either.")
     var path: String
 
     @OptionGroup var timeoutOption: TimeoutOption
