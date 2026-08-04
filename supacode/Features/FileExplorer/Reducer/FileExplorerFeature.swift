@@ -57,6 +57,9 @@ struct FileExplorerFeature {
     var expanded: Set<String> = []
     /// Root-relative path of the selected entry.
     var selectedPath: String?
+    /// Uncommitted git state for the whole worktree, from one status call.
+    /// Empty until the first probe lands, and for folder-kind worktrees.
+    var gitStatus: GitStatusSnapshot = .empty
   }
 
   nonisolated struct DirectoryNode: Equatable, Sendable {
@@ -147,6 +150,7 @@ struct FileExplorerFeature {
     )
     case sweepTicked
     case sweepCompleted(worktreeID: Worktree.ID, changedDirectories: [String])
+    case gitStatusLoaded(worktreeID: Worktree.ID, root: URL, GitStatusSnapshot)
   }
 
   private enum CancelID {
@@ -154,6 +158,10 @@ struct FileExplorerFeature {
 
     static func listings(_ worktreeID: Worktree.ID) -> String {
       "fileExplorer.listings.\(worktreeID.rawValue)"
+    }
+
+    static func gitStatus(_ worktreeID: Worktree.ID) -> String {
+      "fileExplorer.gitStatus.\(worktreeID.rawValue)"
     }
   }
 
@@ -167,6 +175,8 @@ struct FileExplorerFeature {
   // Resolved by type rather than key path: the module defaults to MainActor
   // isolation, which makes `\.fileExplorerClient` a non-Sendable key path.
   @Dependency(FileExplorerClient.self) var fileExplorerClient
+  // Resolved by type for the same MainActor-isolation reason as the file client.
+  @Dependency(GitClientDependency.self) var gitClient
   @Dependency(\.continuousClock) var clock
 
   var body: some Reducer<State, Action> {
@@ -201,10 +211,10 @@ struct FileExplorerFeature {
         let eligible = tree.directories.keys.filter {
           $0 == TreeState.rootPath || tree.expanded.contains($0)
         }
-        return relist(&state, worktreeID: id, directories: eligible)
+        return .merge(relist(&state, worktreeID: id, directories: eligible), gitStatusEffect(state))
 
       case .applicationBecameActive:
-        return sweepEffect(state)
+        return .merge(sweepEffect(state), gitStatusEffect(state))
 
       case .rowSelected(let path):
         guard let id = state.activeWorktreeID else { return .none }
@@ -240,13 +250,23 @@ struct FileExplorerFeature {
         return .none
 
       case .sweepTicked:
-        return sweepEffect(state)
+        return .merge(sweepEffect(state), gitStatusEffect(state))
 
       case .sweepCompleted(let worktreeID, let changedDirectories):
         // The visibility check drops a stat pass that was in flight when the
         // pane hid; the timer is cancelled but its last tick may still land.
         guard state.isVisible, worktreeID == state.activeWorktreeID else { return .none }
         return relist(&state, worktreeID: worktreeID, directories: changedDirectories)
+
+      case .gitStatusLoaded(let worktreeID, let root, let snapshot):
+        // Root echo drops a probe that lands after the tree was re-rooted or
+        // switched, like `listingLoaded`. Diff-and-skip so an unchanged tick
+        // (the steady state) mutates nothing and invalidates no rows.
+        guard var tree = state.trees[worktreeID], tree.root == root, tree.gitStatus != snapshot
+        else { return .none }
+        tree.gitStatus = snapshot
+        state.trees[worktreeID] = tree
+        return .none
       }
     }
   }
@@ -280,6 +300,7 @@ struct FileExplorerFeature {
       effects.append(sweepEffect(state))
     }
     effects.append(touchRecentWorktree(&state, worktreeID: worktreeID))
+    effects.append(gitStatusEffect(state))
     effects.append(sweepTimerEffect())
     return .merge(effects)
   }
@@ -340,6 +361,7 @@ struct FileExplorerFeature {
       // In-flight listings die with the tree; a late response would otherwise
       // repopulate a recreated tree with stale entries through matching echoes.
       cancellations.append(.cancel(id: CancelID.listings(evicted)))
+      cancellations.append(.cancel(id: CancelID.gitStatus(evicted)))
     }
     return .merge(cancellations)
   }
@@ -397,6 +419,26 @@ struct FileExplorerFeature {
       guard !changed.isEmpty else { return }
       await send(.sweepCompleted(worktreeID: worktreeID, changedDirectories: changed.map(\.directory)))
     }
+  }
+
+  /// One `git status` probe of the active local git worktree, gated to the
+  /// visible pane. Sends nothing when the probe fails or the worktree can't
+  /// carry git status (folder-kind or remote), so a transient failure keeps the
+  /// last-good snapshot rather than flashing every decoration off.
+  private func gitStatusEffect(_ state: State) -> Effect<Action> {
+    guard
+      state.isVisible,
+      let context = state.context,
+      !context.worktree.isFolder,
+      let root = context.root,
+      state.trees[context.worktree.id]?.root == root
+    else { return .none }
+    let worktreeID = context.worktree.id
+    return .run { send in
+      guard let snapshot = await gitClient.fileStatus(root) else { return }
+      await send(.gitStatusLoaded(worktreeID: worktreeID, root: root, snapshot))
+    }
+    .cancellable(id: CancelID.gitStatus(worktreeID), cancelInFlight: true)
   }
 
   private func sweepTimerEffect() -> Effect<Action> {

@@ -58,6 +58,15 @@ struct GitClientDependency: Sendable {
   var isBareRepository: @Sendable (_ repoRoot: URL) async throws -> Bool
   var branchName: @Sendable (URL) async -> String?
   var lineChanges: @Sendable (URL) async -> (added: Int, removed: Int)?
+  /// Uncommitted status of a worktree for the files inspector. `nil` on a probe
+  /// failure (caller keeps its last-good snapshot); an empty snapshot is clean.
+  var fileStatus: @Sendable (URL) async -> GitStatusSnapshot?
+  var stageFile: @Sendable (_ path: String, _ root: URL) async throws -> Void
+  var unstageFile: @Sendable (_ path: String, _ root: URL) async throws -> Void
+  /// Discards a path's uncommitted changes: `git restore` for a tracked file,
+  /// or moving an untracked file to the Trash (recoverable, never a hard
+  /// delete). Only ever called for local worktrees, so the Trash path is safe.
+  var discardFile: @Sendable (_ path: String, _ root: URL, _ tracked: Bool) async throws -> Void
   var remoteNames: @Sendable (_ repoRoot: URL) async throws -> [String]
   var fetchRemote: @Sendable (_ remote: String, _ repoRoot: URL) async throws -> Void
   var remoteInfo: @Sendable (_ repositoryRoot: URL) async -> GithubRemoteInfo?
@@ -141,6 +150,21 @@ extension GitClientDependency: DependencyKey {
       },
       branchName: { await GitClient(shell: shell).symbolicHeadBranch(at: $0) },
       lineChanges: { await GitClient(shell: shell).lineChanges(at: $0) },
+      fileStatus: { await GitClient(shell: shell).fileStatus(at: $0) },
+      stageFile: { path, root in try await GitClient(shell: shell).stageFile(path, in: root) },
+      unstageFile: { path, root in try await GitClient(shell: shell).unstageFile(path, in: root) },
+      discardFile: { path, root, tracked in
+        guard tracked else {
+          // Untracked files aren't in git, so "discard" means removing them; the
+          // Trash keeps that recoverable, unlike `git clean` or an unlink.
+          let url = root.appending(path: path)
+          try await Task.detached(priority: .userInitiated) {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+          }.value
+          return
+        }
+        try await GitClient(shell: shell).discardTrackedFile(path, in: root)
+      },
       remoteNames: { try await GitClient(shell: shell).remoteNames(for: $0) },
       fetchRemote: { remote, repoRoot in try await GitClient(shell: shell).fetchRemote(remote, for: repoRoot) },
       remoteInfo: { repositoryRoot in
@@ -169,6 +193,9 @@ extension GitClientDependency: DependencyKey {
     // `git --version`; the license-gate tests override this explicitly.
     value.checkGitEnvironment = { nil }
     value.reconcileSupacodeLocks = { _ in }
+    // No git status probe by default: fixtures with fake `/tmp/...` paths get a
+    // no-op (nil) so the reducer never decorates. Status tests override this.
+    value.fileStatus = { _ in nil }
     // `liveValue` shells out to real `git clone`; a no-op default keeps an
     // unstubbed test from cloning over the network. Clone tests override this.
     value.cloneStream = { _, _, _, _ in

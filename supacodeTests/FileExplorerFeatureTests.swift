@@ -33,6 +33,27 @@ struct FileExplorerFeatureTests {
     )
   }
 
+  private nonisolated static func folderWorktree(path: String) -> Worktree {
+    Worktree(
+      location: .local(
+        workingDirectory: URL(filePath: path, directoryHint: .isDirectory),
+        repositoryRoot: URL(filePath: path, directoryHint: .isDirectory)
+      ),
+      kind: .folder,
+      name: (path as NSString).lastPathComponent,
+      detail: ""
+    )
+  }
+
+  /// A porcelain-v2 ordinary record for an unstaged modification of `path`.
+  private nonisolated static func modified(_ path: String) -> String {
+    "1 .M N... 100644 100644 100644 1111111 2222222 \(path)"
+  }
+
+  private nonisolated static func gitSnapshot(_ records: [String]) -> GitStatusSnapshot {
+    GitStatusSnapshot.parse(porcelainV2: records.map { $0 + "\0" }.joined())
+  }
+
   private nonisolated static func listing(
     _ names: [(String, isDirectory: Bool)],
     totalCount: Int? = nil,
@@ -700,5 +721,211 @@ struct FileExplorerFeatureTests {
     #expect(store.state.selectedPath == "a.txt")
 
     await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  // MARK: - Git status
+
+  @Test func gitStatusLoadsWhenOpeningAGitWorktree() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let rootListing = Self.listing([("a.txt", isDirectory: false)])
+    let snapshot = Self.gitSnapshot([Self.modified("a.txt")])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in rootListing }
+      $0.gitClient.fileStatus = { _ in snapshot }
+    }
+
+    await store.send(
+      .contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true)
+    ) {
+      $0.isVisible = true
+      $0.context = FileExplorerFeature.Context(worktree: worktree)
+      $0.trees[worktree.id] = FileExplorerFeature.TreeState(
+        root: worktree.localWorkingDirectory!,
+        directories: [
+          "": FileExplorerFeature.DirectoryNode(
+            status: .loading(previous: nil),
+            requestedLimit: FileExplorerFeature.initialListingLimit
+          )
+        ]
+      )
+      $0.recentWorktreeIDs = [worktree.id]
+    }
+    await store.receive(\.listingLoaded) {
+      $0.trees[worktree.id]?.directories[""]?.status = .loaded(rootListing)
+    }
+    await store.receive(\.gitStatusLoaded) {
+      $0.trees[worktree.id]?.gitStatus = snapshot
+    }
+
+    await store.send(.contextChanged(nil, isVisible: false)) {
+      $0.isVisible = false
+      $0.context = nil
+    }
+  }
+
+  @Test func gitStatusLoadedIsSkippedWhenUnchanged() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let rootListing = Self.listing([("a.txt", isDirectory: false)])
+    let snapshot = Self.gitSnapshot([Self.modified("a.txt")])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in rootListing }
+      $0.gitClient.fileStatus = { _ in snapshot }
+    }
+
+    await store.send(
+      .contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true)
+    ) {
+      $0.isVisible = true
+      $0.context = FileExplorerFeature.Context(worktree: worktree)
+      $0.trees[worktree.id] = FileExplorerFeature.TreeState(
+        root: worktree.localWorkingDirectory!,
+        directories: [
+          "": FileExplorerFeature.DirectoryNode(
+            status: .loading(previous: nil),
+            requestedLimit: FileExplorerFeature.initialListingLimit
+          )
+        ]
+      )
+      $0.recentWorktreeIDs = [worktree.id]
+    }
+    await store.receive(\.listingLoaded) {
+      $0.trees[worktree.id]?.directories[""]?.status = .loaded(rootListing)
+    }
+    await store.receive(\.gitStatusLoaded) {
+      $0.trees[worktree.id]?.gitStatus = snapshot
+    }
+
+    // Re-delivering the identical snapshot mutates nothing (diff-and-skip): the
+    // exhaustive store fails here if the assignment isn't guarded.
+    await store.send(
+      .gitStatusLoaded(worktreeID: worktree.id, root: worktree.localWorkingDirectory!, snapshot)
+    )
+
+    await store.send(.contextChanged(nil, isVisible: false)) {
+      $0.isVisible = false
+      $0.context = nil
+    }
+  }
+
+  @Test func gitStatusRefreshesOnSweepTick() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing(
+      [("a.txt", isDirectory: false), ("b.txt", isDirectory: false)],
+      modificationDate: Date(timeIntervalSince1970: 0)
+    )
+    let first = Self.gitSnapshot([Self.modified("a.txt")])
+    let second = Self.gitSnapshot([Self.modified("a.txt"), Self.modified("b.txt")])
+    let current = LockIsolated(first)
+    let clock = TestClock()
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.fileExplorerClient.list = { _, _ in listing }
+      // Stable mtime so the sweep re-list stays quiet and only status refreshes.
+      $0.fileExplorerClient.modificationDates = { urls in
+        Dictionary(uniqueKeysWithValues: urls.map { ($0, Date(timeIntervalSince1970: 0)) })
+      }
+      $0.gitClient.fileStatus = { _ in current.value }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true)
+    )
+    await store.skipReceivedActions()
+    #expect(store.state.trees[worktree.id]?.gitStatus == first)
+
+    current.setValue(second)
+    await clock.advance(by: .seconds(5))
+    await store.skipReceivedActions()
+    #expect(store.state.trees[worktree.id]?.gitStatus == second)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func gitStatusProbeFailureKeepsLastGoodSnapshot() async {
+    let worktree = Self.worktree(path: "/tmp/wt-a")
+    let listing = Self.listing(
+      [("a.txt", isDirectory: false)],
+      modificationDate: Date(timeIntervalSince1970: 0)
+    )
+    let good = Self.gitSnapshot([Self.modified("a.txt")])
+    let probe = LockIsolated<GitStatusSnapshot?>(good)
+    let clock = TestClock()
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.fileExplorerClient.list = { _, _ in listing }
+      $0.fileExplorerClient.modificationDates = { urls in
+        Dictionary(uniqueKeysWithValues: urls.map { ($0, Date(timeIntervalSince1970: 0)) })
+      }
+      $0.gitClient.fileStatus = { _ in probe.value }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true)
+    )
+    await store.skipReceivedActions()
+    #expect(store.state.trees[worktree.id]?.gitStatus == good)
+
+    // A failing probe returns nil, which sends no action, so the last-good
+    // snapshot survives rather than the tree flashing clean.
+    probe.setValue(nil)
+    await clock.advance(by: .seconds(5))
+    await store.skipReceivedActions()
+    #expect(store.state.trees[worktree.id]?.gitStatus == good)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
+  @Test func folderWorktreeGetsNoGitStatus() async {
+    let worktree = Self.folderWorktree(path: "/tmp/folder")
+    let rootListing = Self.listing([("a.txt", isDirectory: false)])
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in rootListing }
+      // Configured to decorate, so a missing gate (not the nil default) is what
+      // keeps a folder-kind worktree undecorated.
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([Self.modified("a.txt")]) }
+    }
+
+    await store.send(
+      .contextChanged(FileExplorerFeature.Context(worktree: worktree), isVisible: true)
+    ) {
+      $0.isVisible = true
+      $0.context = FileExplorerFeature.Context(worktree: worktree)
+      $0.trees[worktree.id] = FileExplorerFeature.TreeState(
+        root: worktree.localWorkingDirectory!,
+        directories: [
+          "": FileExplorerFeature.DirectoryNode(
+            status: .loading(previous: nil),
+            requestedLimit: FileExplorerFeature.initialListingLimit
+          )
+        ]
+      )
+      $0.recentWorktreeIDs = [worktree.id]
+    }
+    await store.receive(\.listingLoaded) {
+      $0.trees[worktree.id]?.directories[""]?.status = .loaded(rootListing)
+    }
+    // No `gitStatusLoaded` follows: the exhaustive store would fail teardown if
+    // the folder-kind gate hadn't skipped the probe.
+    #expect(store.state.trees[worktree.id]?.gitStatus == .empty)
+
+    await store.send(.contextChanged(nil, isVisible: false)) {
+      $0.isVisible = false
+      $0.context = nil
+    }
   }
 }

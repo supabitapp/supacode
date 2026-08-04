@@ -196,6 +196,11 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         outlineView.reloadData()
         applyExpansion(tree, outlineView: outlineView)
         isApplyingState = false
+      } else if previous?.gitStatus != tree.gitStatus {
+        // Status-only tick (the steady state under an active agent): redraw just
+        // the rows whose decoration changed, so scroll, selection, and any
+        // inline rename survive instead of a full reloadData every 5s.
+        reloadChangedGitRows(previous: previous?.gitStatus, next: tree.gitStatus, outlineView: outlineView)
       }
       applySelection(tree, outlineView: outlineView)
       restoreFirstResponderIfStolen(from: priorResponder, outlineView: outlineView)
@@ -286,6 +291,31 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         outlineView.deselectAll(nil)
       }
       isApplyingState = false
+    }
+
+    /// Redraws only the rows whose git decoration could differ between two
+    /// snapshots: files with a changed status and directories whose rollup dot
+    /// flipped. An ignored-set change affects whole subtrees by prefix and is
+    /// rare, so that case falls back to a full reload.
+    private func reloadChangedGitRows(
+      previous: GitStatusSnapshot?,
+      next: GitStatusSnapshot,
+      outlineView: NSOutlineView
+    ) {
+      let previous = previous ?? .empty
+      guard previous.ignoredPrefixes == next.ignoredPrefixes else {
+        outlineView.reloadData()
+        return
+      }
+      var changedPaths = previous.changedAncestors.symmetricDifference(next.changedAncestors)
+      for key in Set(previous.statuses.keys).union(next.statuses.keys)
+      where previous.statuses[key] != next.statuses[key] {
+        changedPaths.insert(key)
+      }
+      for path in changedPaths {
+        guard let item = entryItems[path], outlineView.row(forItem: item) >= 0 else { continue }
+        outlineView.reloadItem(item, reloadChildren: false)
+      }
     }
 
     private func listing(for directory: String) -> FileExplorerListing? {
@@ -440,11 +470,17 @@ extension FileExplorerOutlineView.Coordinator: NSOutlineViewDelegate {
       // previous listing) keeps the spinner. Reduce Motion falls back to it too.
       let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
       let isFirstTimeLoading = isLoading && !hasListing
+      let decoration = tree?.gitStatus.decoration(
+        for: item.path,
+        isDirectory: entry.isDirectory,
+        isExpanded: outlineView.isItemExpanded(item)
+      )
       cell.configure(
         with: entry,
         isLoading: isLoading && (hasListing || reduceMotion),
         isShimmering: isFirstTimeLoading && !reduceMotion,
-        failure: childNode?.failure
+        failure: childNode?.failure,
+        decoration: decoration
       )
       return cell
     case .showMore(let remaining, let isLoading):
@@ -665,6 +701,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
 
   private let iconView = NSImageView()
   private let label = NSTextField(labelWithString: "")
+  private let badge = NSTextField(labelWithString: "")
   private let spinner = NSProgressIndicator()
   private let warningView = NSImageView()
   /// Sweeps the label while its directory loads for the first time.
@@ -683,8 +720,16 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     label.maximumNumberOfLines = 1
     // Layer-backed so a gradient mask can drive the loading shimmer.
     label.wantsLayer = true
-    // Truncation must win over widening the cell past the visible column.
+    // Truncation must win over widening the cell past the visible column, and
+    // the label expands so the git badge is pushed to the row's trailing edge.
     label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    // Trailing git status glyph; font (and weight) are set per row in `configure`.
+    badge.alignment = .center
+    badge.setContentHuggingPriority(.required, for: .horizontal)
+    badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+    badge.isHidden = true
 
     spinner.style = .spinning
     spinner.controlSize = .small
@@ -696,7 +741,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     warningView.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .caption1)
     warningView.contentTintColor = .secondaryLabelColor
 
-    let stack = NSStackView(views: [iconView, label, spinner, warningView])
+    let stack = NSStackView(views: [iconView, label, badge, spinner, warningView])
     stack.orientation = .horizontal
     stack.spacing = 6
     stack.alignment = .centerY
@@ -721,11 +766,14 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     with entry: FileExplorerEntry,
     isLoading: Bool,
     isShimmering: Bool,
-    failure: FileExplorerListingError?
+    failure: FileExplorerListingError?,
+    decoration: GitRowDecoration?
   ) {
     iconView.image = entry.isDirectory ? FileExplorerFileIcon.folder() : FileExplorerFileIcon.file(named: entry.name)
     iconView.setAccessibilityLabel(entry.isDirectory ? "Folder" : "File")
-    label.stringValue = entry.name
+    applyLabel(name: entry.name, decoration: decoration)
+    // A read failure owns the trailing slot, so its warning wins over a badge.
+    applyBadge(failure == nil ? decoration : nil)
     if isLoading {
       spinner.startAnimation(nil)
     } else {
@@ -735,6 +783,91 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     warningView.isHidden = failure == nil
     warningView.toolTip = failure.map(Self.failureHelp)
     warningView.setAccessibilityLabel(failure.map(Self.failureHelp))
+  }
+
+  /// Tints the name by git state: green add, yellow modify, red conflict,
+  /// dimmed (tertiary) ignored, and a struck-through secondary tombstone for a
+  /// deletion. The tint and the trailing letter share one source of truth.
+  private func applyLabel(name: String, decoration: GitRowDecoration?) {
+    if case .file(.deleted, _)? = decoration {
+      label.attributedStringValue = NSAttributedString(
+        string: name,
+        attributes: [
+          .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+          .foregroundColor: NSColor.secondaryLabelColor,
+          .font: label.font ?? NSFont.preferredFont(forTextStyle: .body),
+        ]
+      )
+      return
+    }
+    label.stringValue = name
+    label.textColor = Self.labelColor(for: decoration)
+  }
+
+  /// The trailing glyph: a state letter for a file (heavier weight when staged),
+  /// a neutral rollup dot for a collapsed directory, hidden otherwise. The
+  /// tooltip spells out the state for hover and VoiceOver.
+  private func applyBadge(_ decoration: GitRowDecoration?) {
+    switch decoration {
+    case .file(let state, let isStaged):
+      badge.isHidden = false
+      badge.stringValue = Self.letter(for: state)
+      badge.textColor = Self.tint(for: state)
+      badge.font = .monospacedSystemFont(
+        ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize,
+        weight: isStaged ? .semibold : .regular
+      )
+      let help = Self.badgeHelp(state: state, isStaged: isStaged)
+      badge.toolTip = help
+      badge.setAccessibilityLabel(help)
+    case .directoryDot:
+      badge.isHidden = false
+      badge.stringValue = "●"
+      badge.textColor = .secondaryLabelColor
+      badge.font = .preferredFont(forTextStyle: .caption2)
+      badge.toolTip = "Contains changes."
+      badge.setAccessibilityLabel("Contains changes")
+    case .ignored, nil:
+      badge.isHidden = true
+      badge.toolTip = nil
+      badge.setAccessibilityLabel(nil)
+    }
+  }
+
+  private static func labelColor(for decoration: GitRowDecoration?) -> NSColor {
+    switch decoration {
+    case .ignored: .tertiaryLabelColor
+    case .file(let state, _): tint(for: state)
+    case .directoryDot, nil: .labelColor
+    }
+  }
+
+  private static func letter(for state: GitRowDecoration.FileState) -> String {
+    switch state {
+    case .added: "A"
+    case .modified: "M"
+    case .deleted: "D"
+    case .conflicted: "C"
+    }
+  }
+
+  private static func tint(for state: GitRowDecoration.FileState) -> NSColor {
+    switch state {
+    case .added: .systemGreen
+    case .modified: .systemYellow
+    case .deleted: .secondaryLabelColor
+    case .conflicted: .systemRed
+    }
+  }
+
+  private static func badgeHelp(state: GitRowDecoration.FileState, isStaged: Bool) -> String {
+    let staged = isStaged ? "staged" : "unstaged"
+    return switch state {
+    case .added: "Added, \(staged)."
+    case .modified: "Modified, \(staged)."
+    case .deleted: "Deleted, \(staged)."
+    case .conflicted: "Merge conflict."
+    }
   }
 
   override func layout() {
