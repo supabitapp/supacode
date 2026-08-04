@@ -7,12 +7,13 @@ import SwiftUI
 /// Mutually-exclusive host for the pinned sidebar bottom card. Priority order:
 /// 1. Coding-agent updates available / initial install prompt
 ///    (`CodingAgentsSidebarCardView`).
-/// 2. Menu bar visibility announcement (`MenuBarOnboardingCardView`).
-/// 3. Remote repositories Beta announcement (`RemoteRepositoriesBetaCardView`).
-/// 4. Terminal persistence onboarding prompt (`TerminalPersistenceOnboardingCardView`).
-/// 5. Highlight Relevant onboarding prompt (`HighlightRelevantOnboardingCardView`).
-/// 6. Nested-worktrees onboarding prompt (`NestedWorktreesOnboardingCardView`).
-/// 7. Nothing.
+/// 2. File explorer Beta announcement (`FileExplorerBetaCardView`).
+/// 3. Menu bar visibility announcement (`MenuBarOnboardingCardView`).
+/// 4. Remote repositories Beta announcement (`RemoteRepositoriesBetaCardView`).
+/// 5. Terminal persistence onboarding prompt (`TerminalPersistenceOnboardingCardView`).
+/// 6. Highlight Relevant onboarding prompt (`HighlightRelevantOnboardingCardView`).
+/// 7. Nested-worktrees onboarding prompt (`NestedWorktreesOnboardingCardView`).
+/// 8. Nothing.
 ///
 /// Owns the `@Shared(.appStorage)` reads as stored properties so SwiftUI
 /// observes them at this layer and re-renders when the user dismisses a
@@ -40,6 +41,8 @@ struct SidebarBottomCardView: View {
   private var remoteRepositoriesBetaDismissedAt: Date = .distantPast
   @Shared(.appStorage("menuBarOnboardingDismissedAt"))
   private var menuBarOnboardingDismissedAt: Date = .distantPast
+  @Shared(.appStorage("fileExplorerBetaOnboardingDismissedAt"))
+  private var fileExplorerBetaDismissedAt: Date = .distantPast
 
   var body: some View {
     let agentMode = CodingAgentsSidebarCardView.resolveMode(
@@ -55,6 +58,9 @@ struct SidebarBottomCardView: View {
     let remoteRepositoriesBetaMode = RemoteRepositoriesBetaCardView.resolveMode(
       dismissedAt: remoteRepositoriesBetaDismissedAt
     )
+    let fileExplorerBetaMode = FileExplorerBetaCardView.resolveMode(
+      dismissedAt: fileExplorerBetaDismissedAt
+    )
     let highlightMode = HighlightRelevantOnboardingCardView.resolveMode(
       groupPinnedRows: groupPinnedRows,
       groupActiveRows: groupActiveRows,
@@ -69,6 +75,7 @@ struct SidebarBottomCardView: View {
       cards: Slot.resolve(
         cards: Slot.CardModes(
           agent: agentMode,
+          fileExplorerBeta: fileExplorerBetaMode,
           menuBarOnboarding: menuBarOnboardingMode,
           remoteRepositoriesBeta: remoteRepositoriesBetaMode,
           terminalPersistence: terminalPersistenceMode,
@@ -86,6 +93,9 @@ struct SidebarBottomCardView: View {
           .transition(Slot.transition)
       case .agent(let mode):
         CodingAgentsSidebarCardView(store: store, mode: mode)
+          .transition(Slot.transition)
+      case .fileExplorerBeta:
+        FileExplorerBetaCardView()
           .transition(Slot.transition)
       case .menuBarOnboarding:
         MenuBarOnboardingCardView()
@@ -119,6 +129,7 @@ struct SidebarBottomCardView: View {
     case none
     case gitEnvironmentError(GitEnvironmentError)
     case agent(CodingAgentsSidebarCardView.Mode)
+    case fileExplorerBeta
     case menuBarOnboarding
     case remoteRepositoriesBeta
     case terminalPersistenceOnboarding
@@ -131,6 +142,7 @@ struct SidebarBottomCardView: View {
     /// resolver stays under the parameter-count limit as cards are added.
     struct CardModes: Equatable {
       var agent: CodingAgentsSidebarCardView.Mode
+      var fileExplorerBeta: FileExplorerBetaCardView.Mode
       var menuBarOnboarding: MenuBarOnboardingCardView.Mode
       var remoteRepositoriesBeta: RemoteRepositoriesBetaCardView.Mode
       var terminalPersistence: TerminalPersistenceOnboardingCardView.Mode
@@ -150,8 +162,9 @@ struct SidebarBottomCardView: View {
       case .promptInstall: return .agent(cards.agent)
       case .hidden: break
       }
-      // Newest card wins. `menuBarOnboarding` is the most recent and pre-empts
+      // Newest card wins. `fileExplorerBeta` is the most recent and pre-empts
       // the older prompts; insert future cards at the top here.
+      if cards.fileExplorerBeta == .visible { return .fileExplorerBeta }
       if cards.menuBarOnboarding == .visible { return .menuBarOnboarding }
       if cards.remoteRepositoriesBeta == .visible { return .remoteRepositoriesBeta }
       if cards.terminalPersistence == .visible { return .terminalPersistenceOnboarding }
@@ -170,6 +183,7 @@ struct SidebarBottomCardView: View {
       case .gitEnvironmentError(let error): "gitEnvironmentError:" + String(describing: error)
       case .agent(.promptInstall): "agent:promptInstall"
       case .agent(.hidden): "agent:hidden"
+      case .fileExplorerBeta: "fileExplorerBeta:visible"
       case .menuBarOnboarding: "menuBarOnboarding:visible"
       case .remoteRepositoriesBeta: "remoteRepositoriesBeta:visible"
       case .terminalPersistenceOnboarding: "terminalPersistence:visible"

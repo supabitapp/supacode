@@ -33,6 +33,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .promptInstall,
+        fileExplorerBeta: .visible,
         menuBarOnboarding: .visible,
         remoteRepositoriesBeta: .visible,
         terminalPersistence: .visible,
@@ -43,10 +44,47 @@ struct SidebarBottomCardTests {
     #expect(resolved == .agent(.promptInstall))
   }
 
+  @Test func fileExplorerBetaWinsOverOlderCards() {
+    // Newest card: it pre-empts every announcement below the agent prompt.
+    let resolved = SidebarBottomCardView.Slot.resolve(
+      cards: .init(
+        agent: .hidden,
+        fileExplorerBeta: .visible,
+        menuBarOnboarding: .visible,
+        remoteRepositoriesBeta: .visible,
+        terminalPersistence: .visible,
+        highlight: .visible,
+        nestedOnboarding: .visible
+      )
+    )
+    #expect(resolved == .fileExplorerBeta)
+  }
+
+  @Test func fileExplorerBetaTransitionTokenIsStable() {
+    #expect(SidebarBottomCardView.Slot.fileExplorerBeta.transitionToken == "fileExplorerBeta:visible")
+  }
+
+  @Test func fileExplorerBetaVisibleWhenNotDismissed() {
+    #expect(FileExplorerBetaCardView.resolveMode(dismissedAt: .distantPast) == .visible)
+  }
+
+  @Test func fileExplorerBetaHiddenWhenDismissedAfterRelevance() {
+    let afterRelevance = FileExplorerBetaCardView.cardRelevantSinceDate.addingTimeInterval(1)
+    #expect(FileExplorerBetaCardView.resolveMode(dismissedAt: afterRelevance) == .hidden)
+  }
+
+  @Test func fileExplorerBetaHiddenWhenDismissedAtRelevanceBoundary() {
+    // The relevance date must be on-or-before the ship date so a dismiss on
+    // release day stays sticky.
+    let atBoundary = FileExplorerBetaCardView.cardRelevantSinceDate
+    #expect(FileExplorerBetaCardView.resolveMode(dismissedAt: atBoundary) == .hidden)
+  }
+
   @Test func menuBarOnboardingWinsOverOlderCards() {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        fileExplorerBeta: .hidden,
         menuBarOnboarding: .visible,
         remoteRepositoriesBeta: .visible,
         terminalPersistence: .visible,
@@ -61,6 +99,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .visible,
         terminalPersistence: .visible,
@@ -75,6 +114,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
         terminalPersistence: .visible,
@@ -89,6 +129,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
         terminalPersistence: .hidden,
@@ -103,6 +144,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
         terminalPersistence: .hidden,
@@ -117,6 +159,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
         terminalPersistence: .hidden,
