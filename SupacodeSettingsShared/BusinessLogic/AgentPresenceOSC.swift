@@ -191,11 +191,17 @@ public nonisolated enum AgentPresenceOSC {
 
   /// Shell that resolves `$__ppid` (the hook's parent agent) and its `$__tty`, since
   /// hooks run with no controlling terminal and `ps` reports a bare tty name (`??`
-  /// falls back to `/dev/tty`). Parent pid comes from `ps`, not the shell special
-  /// `$PPID`, which Grok preflights as a required env var and then skips the hook.
+  /// falls back to `/dev/tty`). `set -f` is load-bearing: that `??` is a glob.
+  ///
+  /// Neither `ps -o ppid= -p $$` (Grok collapses `$$` to a bare `$` when it rewrites
+  /// the command) nor a bare `$PPID` (Grok preflights it as required env and skips
+  /// the hook, #704) works; only the `:-` form survives to the runtime shell.
+  /// A ppid of 0 or 1 is dropped: `kill(1, 0)`'s `EPERM` reads as alive to the
+  /// liveness sweep and would pin the badge until surface close.
   static let ttyResolveSnippet =
-    #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
-    + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
+    #"__ppid=${PPID:-}; "#
+    + #"set -f; set -- $(ps -o tty= -p "$__ppid" 2>/dev/null); __tty=${1:-}; set +f; "#
+    + #"case "$__ppid" in 0|1) __ppid="";; esac; "#
     + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac"#
 
   /// Shell `printf` that emits the OSC 3008 presence sequence for `event`. Written
@@ -205,8 +211,8 @@ public nonisolated enum AgentPresenceOSC {
   /// `ttyResolveSnippet` first.
   ///
   /// The pid suffix is gated on `SUPACODE_SOCKET_PATH` (set only on the local host)
-  /// and on `$__ppid` having resolved, so a remote hook or a failed `ps` leaves the
-  /// field off the wire instead of sending a dangling `pid=`. Both shapes parse to
+  /// and on `$__ppid` having resolved, so a remote hook or a reparented shell leaves
+  /// the field off the wire instead of sending a dangling `pid=`. Both shapes parse to
   /// `pid: nil` today, so this is wire hygiene, not a behavior fix: a local agent
   /// with no resolvable parent stays untracked by the liveness sweep either way. A
   /// forged positive pid at worst pins a live-looking badge until surface close. The
@@ -258,20 +264,33 @@ public nonisolated enum AgentPresenceOSC {
     + #"{d=d $0}END{n=split(keys,ks,",");v="";for(j=1;j<=n;j++){v=fv(d,ks[j]);if(v!="")break}"#
     + #"if(length(v)>budget+0)v=substr(v,1,budget+0);printf "%s",v}"#
 
+  /// Captures the hook's JSON payload from stdin into `$__in`. One `read` returns at
+  /// the newline terminating the single-line object every agent we target writes, so
+  /// a host holding the pipe open does not wedge the hook; a payload with no trailing
+  /// newline still blocks to the deadline, which no portable shell read avoids. A
+  /// line not ending in `}` (pretty-printed JSON) drains the rest, since a truncated
+  /// payload silently empties every extracted field.
+  static let readStdinSnippet =
+    #"IFS= read -r __in || true; case "$__in" in *"}") ;; *) __in=$__in$(cat) ;; esac"#
+
   /// Reads the hook JSON from stdin once, extracts a bounded title/body via a
   /// portable `awk` pass (no `jq`/`python`, so it works over SSH), base64s each,
   /// and emits the OSC 3008 notify. Sending only the display fields keeps the wire
   /// under libghostty's 2048-byte OSC ceiling. Locked to STANDARD base64.
-  /// `readsStdin: false` skips the `__in=$(cat)` capture when the caller already set `$__in`.
+  /// `readsStdin: false` skips the capture when the caller already set `$__in`.
+  ///
+  /// Emission is gated on a non-empty extraction: a content-free notify still
+  /// displays (the app falls back to the agent name for a missing title) and
+  /// supersedes the agent's own OSC 9, so it is worse than sending nothing.
   static func emitNotifyShell(agent: SkillAgent, readsStdin: Bool = true) -> String {
     let payload = #"\033]3008;start=\#(agent.rawValue);\#(notifyMetadata(title: "%s", body: "%s"))\033\\"#
     let bodyKeys = notifyBodyKeys.joined(separator: ",")
-    return (readsStdin ? #"__in=$(cat); "# : "")
+    return (readsStdin ? "\(readStdinSnippet); " : "")
       + #"__t=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(titleField)" "#
       + #"-v budget=\#(notifyTitleByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
       + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
       + #"-v budget=\#(notifyBodyByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
-      + #"printf '\#(payload)' "$__t" "$__b" > "$__tty""#
+      + #"[ -n "$__t$__b" ] && printf '\#(payload)' "$__t" "$__b" > "$__tty""#
   }
 
   // MARK: - Stop-hook API-error probe.
@@ -298,7 +317,7 @@ public nonisolated enum AgentPresenceOSC {
   /// set so a following `emitNotifyShell(readsStdin: false)` reuses the one stdin
   /// read. `awk` and `tail` only, so it works on a bare SSH host.
   static func stopApiErrorProbeShell() -> String {
-    #"__in=$(cat); "#
+    "\(readStdinSnippet); "
       + #"__tp=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="transcript_path" "#
       + #"-v budget=4096 '\#(notifyExtractAwk)'); "#
       + #"__sid=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="session_id" "#

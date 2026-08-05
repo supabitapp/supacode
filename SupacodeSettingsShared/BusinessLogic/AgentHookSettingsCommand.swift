@@ -17,6 +17,12 @@ nonisolated enum HookEvent: String, CaseIterable {
 }
 
 nonisolated enum AgentHookSettingsCommand {
+  /// Supacode hooks only emit a small OSC payload, so a longer deadline buys the
+  /// healthy path nothing and turns a wedged stdin or PTY into a visible agent stall.
+  static let timeoutSeconds = 2
+
+  static let timeoutMilliseconds = timeoutSeconds * 1_000
+
   /// Sentinel comment appended to every Supacode-installed hook command.
   /// `AgentHookCommandOwnership` uses this (and ONLY this) to identify
   /// managed commands. `SUPACODE_SOCKET_PATH` is documented public API

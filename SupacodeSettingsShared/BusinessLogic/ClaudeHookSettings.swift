@@ -47,33 +47,36 @@ private nonisolated struct ClaudeHooksPayload: Encodable {
 
   let hooks: [String: [AgentHookGroup]] = [
     "SessionStart": [
-      .init(hooks: [.init(command: Self.sessionStart, timeout: 5)])
+      .init(hooks: [.init(command: Self.sessionStart, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "UserPromptSubmit": [
-      .init(hooks: [.init(command: Self.busy, timeout: 10)])
+      .init(hooks: [.init(command: Self.busy, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "PreToolUse": [
-      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5)]),
+      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: AgentHookSettingsCommand.timeoutSeconds)]),
       // Array-order: matched-by-name fires AFTER matcher-"", so awaiting wins.
       .init(
         matcher: Self.awaitingInputToolMatcher,
-        hooks: [.init(command: Self.awaitingInput, timeout: 5)]
+        hooks: [.init(command: Self.awaitingInput, timeout: AgentHookSettingsCommand.timeoutSeconds)]
       ),
     ],
     "PostToolUse": [
-      .init(matcher: "", hooks: [.init(command: Self.idle, timeout: 5)])
+      .init(matcher: "", hooks: [.init(command: Self.idle, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "Notification": [
-      .init(matcher: "", hooks: [.init(command: Self.awaitingInputAndNotify, timeout: 10)])
+      .init(
+        matcher: "",
+        hooks: [.init(command: Self.awaitingInputAndNotify, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "PreCompact": [
-      .init(hooks: [.init(command: Self.compacting, timeout: 5)])
+      .init(hooks: [.init(command: Self.compacting, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "Stop": [
-      .init(hooks: [.init(command: Self.stop, timeout: 10)])
+      .init(hooks: [.init(command: Self.stop, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "SessionEnd": [
-      .init(matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: 5)])
+      .init(
+        matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
   ]
 }

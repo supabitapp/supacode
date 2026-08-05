@@ -14,10 +14,18 @@ enum ManagedHookCommandVariables {
   /// leading `[A-Za-z_]`, and `${__tty#/dev/}` captures just the name. Models the
   /// textual scan, not shell expansion, so it misses `${#NAME}`, `${!NAME}` and
   /// arithmetic `$((NAME))`; none of which belong in a hook command.
-  private static let pattern = #/\$\{?([A-Za-z_][A-Za-z0-9_]*)/#
+  ///
+  /// A parameter-expansion modifier exempts the reference, but only inside braces:
+  /// `${PPID:-}` runs while `$PPID-x` is still a bare name Grok demands. Verified
+  /// against grok 0.2.118, where `$PPID` is refused and `${PPID:-}` expands.
+  private static let pattern = #/\$(\{)?([A-Za-z_][A-Za-z0-9_]*)([:\-+=?#%\/])?/#
 
   static func names(in command: String) -> Set<String> {
-    Set(command.matches(of: pattern).map { String($0.1) })
+    Set(
+      command.matches(of: pattern)
+        .filter { $0.1 == nil || $0.3 == nil }
+        .map { String($0.2) }
+    )
   }
 
   /// Names outside the allowlist, i.e. the ones that would break the preflight.

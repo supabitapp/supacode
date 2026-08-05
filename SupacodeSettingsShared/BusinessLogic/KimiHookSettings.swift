@@ -42,6 +42,7 @@ nonisolated struct KimiHookEntry: Equatable, Sendable {
 // inert on Kimi today, since it exposes no such tools. Revisit if Kimi adds
 // matching tool names.
 private nonisolated struct KimiHooksPayload {
+  private static let timeout = AgentHookSettingsCommand.timeoutSeconds
   static let awaitingInputToolMatcher = "AskUserQuestion|ExitPlanMode"
 
   private static let busy = AgentHookSettingsCommand.compositeCommand(
@@ -60,15 +61,15 @@ private nonisolated struct KimiHooksPayload {
     events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .kimi, )
 
   let entries: [KimiHookEntry] = [
-    KimiHookEntry(event: "SessionStart", command: Self.sessionStart, timeout: 5),
-    KimiHookEntry(event: "UserPromptSubmit", command: Self.busy, timeout: 10),
-    KimiHookEntry(event: "PreToolUse", command: Self.busy, timeout: 5),
+    KimiHookEntry(event: "SessionStart", command: Self.sessionStart, timeout: Self.timeout),
+    KimiHookEntry(event: "UserPromptSubmit", command: Self.busy, timeout: Self.timeout),
+    KimiHookEntry(event: "PreToolUse", command: Self.busy, timeout: Self.timeout),
     KimiHookEntry(
       event: "PreToolUse", command: Self.awaitingInput,
-      matcher: Self.awaitingInputToolMatcher, timeout: 5, ),
-    KimiHookEntry(event: "PostToolUse", command: Self.idle, timeout: 5),
-    KimiHookEntry(event: "Notification", command: Self.awaitingInputAndNotify, timeout: 10),
-    KimiHookEntry(event: "Stop", command: Self.idleAndNotify, timeout: 10),
-    KimiHookEntry(event: "SessionEnd", command: Self.sessionEndAndIdle, timeout: 5),
+      matcher: Self.awaitingInputToolMatcher, timeout: Self.timeout, ),
+    KimiHookEntry(event: "PostToolUse", command: Self.idle, timeout: Self.timeout),
+    KimiHookEntry(event: "Notification", command: Self.awaitingInputAndNotify, timeout: Self.timeout),
+    KimiHookEntry(event: "Stop", command: Self.idleAndNotify, timeout: Self.timeout),
+    KimiHookEntry(event: "SessionEnd", command: Self.sessionEndAndIdle, timeout: Self.timeout),
   ]
 }
