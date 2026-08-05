@@ -24,6 +24,10 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
   /// branch-targeted actions so they don't reach a `git branch -m` call
   /// that has no real ref to operate on.
   let isAttached: Bool
+  /// Main-worktree geometry (working directory == repository root), computed
+  /// once here since `location` is immutable, so roster-wide scans read a
+  /// stored flag instead of re-deriving URLs per call (gh-764).
+  let isMainWorktree: Bool
 
   /// SSH host this worktree lives on, or `nil` for a local worktree.
   var host: RemoteHost? { location.host }
@@ -57,6 +61,7 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     self.createdAt = createdAt
     self.isMissing = isMissing
     self.isAttached = isAttached
+    self.isMainWorktree = location.isMainWorktree
     self.id = location.id
   }
 
@@ -76,10 +81,14 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     host: RemoteHost? = nil
   ) {
     if let host {
+      // Normalize so a remote path that happens to exist locally as a directory
+      // can't bake a disk-state-dependent trailing slash into the stored strings.
       self.location = .remote(
         host,
-        workingDirectory: workingDirectory.path(percentEncoded: false),
-        repositoryRoot: repositoryRootURL.path(percentEncoded: false)
+        workingDirectory: RepositoryLocation.normalizedRemotePath(
+          workingDirectory.path(percentEncoded: false)),
+        repositoryRoot: RepositoryLocation.normalizedRemotePath(
+          repositoryRootURL.path(percentEncoded: false))
       )
     } else {
       self.location = .local(workingDirectory: workingDirectory, repositoryRoot: repositoryRootURL)
@@ -90,6 +99,7 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     self.createdAt = createdAt
     self.isMissing = isMissing
     self.isAttached = isAttached
+    self.isMainWorktree = location.isMainWorktree
     self.id = id
   }
 

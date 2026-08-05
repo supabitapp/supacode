@@ -156,9 +156,102 @@ struct SSHCommandTests {
     #expect(command == "cd -- '/tmp/repo' && exec '/usr/bin/env' 'git' 'status'")
   }
 
+  /// The adversarial tokens the quoting contract has to survive. Every one is a
+  /// byte the remote login shell would otherwise rewrite, split, or expand.
+  static let quotingContractTokens = [
+    "plain",
+    "",
+    "it's",
+    #"a\b"#,
+    #"trailing\"#,
+    #"double\\backslash"#,
+    #"'"#,
+    #"\"#,
+    #"it's\literal"#,
+    "spaced out",
+    "$HOME",
+    "`id`",
+    "$(id)",
+    "*.txt",
+    "~root",
+    "a;rm -rf /",
+    "line1\nline2",
+    "tab\there",
+    "é中🐟",
+  ]
+
+  @Test func loginShellQuoteEmitsSpansEveryLoginShellDecodesIdentically() {
+    // Pinned literally: the fish round-trips below all pair a backslash with
+    // other characters, so they stay green if the escape arms degrade.
+    #expect(SSHCommand.loginShellQuote("") == "''")
+    #expect(SSHCommand.loginShellQuote("plain") == "'plain'")
+    #expect(SSHCommand.loginShellQuote("it's") == "'it'\"'\"'s'")
+    #expect(SSHCommand.loginShellQuote(#"a\b"#) == #"'a'\\'b'"#)
+    #expect(SSHCommand.loginShellQuote(#"trailing\"#) == #"'trailing'\\''"#)
+    #expect(SSHCommand.loginShellQuote(#"\"#) == #"''\\''"#)
+    #expect(SSHCommand.loginShellQuote("'") == "''\"'\"''")
+  }
+
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func loginShellQuoteRoundTripsEveryTokenUnder(_ shell: String) async throws {
+    // Nested twice: production re-quotes an already-quoted payload (the
+    // terminal-compatibility wrap around the login-shell wrap), which is where
+    // a backslash left bare inside a single-quoted span gets eaten.
+    try await LoginShellProbe.withTemporaryDirectory("login-shell-quote") { root in
+      for token in Self.quotingContractTokens {
+        // Delimited, so an empty token is distinguishable from a command that
+        // silently produced nothing while exiting 0.
+        let inner =
+          "/bin/echo -n '<'; /bin/echo -n " + SSHCommand.loginShellQuote(token)
+          + "; /bin/echo -n '>'"
+        let result = try await LoginShellProbe.run(
+          shell,
+          command: "eval " + SSHCommand.loginShellQuote(inner),
+          configRoot: root
+        )
+        #expect(result.status == 0, "\(shell) rejected \(token.debugDescription): \(result.stderr)")
+        #expect(result.stdout == "<\(token)>", "\(shell) changed \(token.debugDescription)")
+        #expect(result.shellDiagnostics.isEmpty, "\(shell): \(result.shellDiagnostics)")
+      }
+    }
+  }
+
+  @Test func fishLoginShellExecutesRemoteCommandWithoutChangingTokens() async throws {
+    try await LoginShellProbe.withTemporaryDirectory("fish-command") { temporaryRoot in
+      let workingDirectory = temporaryRoot.appending(path: #"working:it's\literal"#)
+      let executableURL = temporaryRoot.appending(path: #"shell:it's\literal"#)
+      try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+      try FileManager.default.createSymbolicLink(
+        at: executableURL,
+        withDestinationURL: URL(fileURLWithPath: "/bin/sh")
+      )
+
+      let argument = #"argument:it's\literal"#
+      let remoteCommand = SSHCommand.remoteCommand(
+        executable: executableURL.path,
+        arguments: [
+          "-c",
+          #"printf '%s\n' "$PWD" "$1""#,
+          "supacode-test",
+          argument,
+        ],
+        workingDirectory: workingDirectory
+      )
+      let result = try await LoginShellProbe.run(
+        "fish",
+        command: SSHCommand.loginShellWrapped(remoteCommand),
+        configRoot: temporaryRoot.appending(path: "config")
+      )
+
+      #expect(result.status == 0, "Fish rejected the remote command: \(result.stderr)")
+      #expect(result.shellDiagnostics.isEmpty, "\(result.shellDiagnostics)")
+      #expect(result.stdout == "\(workingDirectory.path)\n\(argument)\n")
+    }
+  }
+
   @Test func loginShellWrappedExecsLoginShellWithQuotedScript() {
     #expect(SSHCommand.loginShellWrapped("zmx attach s") == "exec \"$SHELL\" -l -c 'zmx attach s'")
-    #expect(SSHCommand.loginShellWrapped("echo 'hi'") == "exec \"$SHELL\" -l -c 'echo '\\''hi'\\'''")
+    #expect(SSHCommand.loginShellWrapped("echo 'hi'") == "exec \"$SHELL\" -l -c 'echo '\"'\"'hi'\"'\"''")
   }
 
   @Test func loginShellWrappedQuotesEachPositionalArgumentSeparately() {
@@ -166,7 +259,7 @@ struct SSHCommandTests {
     // never interpolated into the script text.
     #expect(
       SSHCommand.loginShellWrapped("$0 \"$@\"", positionalArguments: ["claude", "it's a test"])
-        == "exec \"$SHELL\" -l -c '$0 \"$@\"' 'claude' 'it'\\''s a test'"
+        == "exec \"$SHELL\" -l -c '$0 \"$@\"' 'claude' 'it'\"'\"'s a test'"
     )
   }
 
@@ -187,6 +280,68 @@ struct SSHCommandTests {
       SSHCommand.loginShellWrapped("$0", positionalArguments: ["x"], environment: [:])
         == "exec \"$SHELL\" -l -c '$0' 'x'"
     )
+  }
+
+  @Test func loginShellWrappedPosixScriptRunsTheScriptUnderSh() {
+    // Verified independently of the builder helpers: if this ever degraded back
+    // to a bare login-shell `-c`, the self-referential `commandLine` assertions
+    // below would not notice, but these literals break.
+    let wrapped = SSHCommand.loginShellWrappedPosixScript(
+      "$0 \"$@\"",
+      positionalArguments: ["claude"],
+      environment: ["SUPACODE_BLOCKING_SCRIPT": "1"]
+    )
+    // The `sh` layer, not the login shell, is what receives the positionals, so
+    // `claude` must sit outside the script's own quoted span.
+    #expect(
+      wrapped == "exec env SUPACODE_BLOCKING_SCRIPT='1' \"$SHELL\" -l -c "
+        + SSHCommand.loginShellQuote("exec /bin/sh -c '$0 \"$@\"' 'claude'")
+    )
+  }
+
+  @Test func fishLoginShellReceivesArgumentsAndEnvironmentByteForByte() async throws {
+    // `$argv`, not `$1`: fish has no numbered positionals and expands `$1` to an
+    // empty string, which is why a script reading `$1` goes through
+    // `loginShellWrappedPosixScript` instead.
+    try await LoginShellProbe.withTemporaryDirectory("fish-arguments") { root in
+      let argument = #"argument:it's\literal"#
+      let environmentValue = #"environment:it's\literal"#
+      let result = try await LoginShellProbe.run(
+        "fish",
+        command: SSHCommand.loginShellWrapped(
+          #"printf '%s\n' "$SUPACODE_TEST_VALUE" "$argv[1]" "$argv[2]""#,
+          positionalArguments: ["supacode-test", argument],
+          environment: ["SUPACODE_TEST_VALUE": environmentValue]
+        ),
+        configRoot: root
+      )
+
+      #expect(result.status == 0, "Fish rejected the login-shell wrapper: \(result.stderr)")
+      #expect(result.shellDiagnostics.isEmpty, "\(result.shellDiagnostics)")
+      #expect(result.stdout == "\(environmentValue)\nsupacode-test\n\(argument)\n")
+    }
+  }
+
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func loginShellWrappedPosixScriptBindsNumberedPositionalsUnder(_ shell: String) async throws {
+    // The blocking-script channel: the user script rides as `$1` through a
+    // login shell that may not have numbered positionals at all.
+    try await LoginShellProbe.withTemporaryDirectory("posix-script-\(shell)") { root in
+      let payload = #"payload:it's\literal"#
+      let result = try await LoginShellProbe.run(
+        shell,
+        command: SSHCommand.loginShellWrappedPosixScript(
+          #"printf '%s\n' "$0" "$1" "$SUPACODE_TEST_VALUE""#,
+          positionalArguments: ["supacode-blocking", payload],
+          environment: ["SUPACODE_TEST_VALUE": payload]
+        ),
+        configRoot: root
+      )
+
+      #expect(result.status == 0, "\(shell) rejected the POSIX-script wrapper: \(result.stderr)")
+      #expect(result.shellDiagnostics.isEmpty, "\(shell): \(result.shellDiagnostics)")
+      #expect(result.stdout == "supacode-blocking\n\(payload)\n\(payload)\n")
+    }
   }
 
   /// The fixed control-option argv every ssh invocation starts with. Keepalives
@@ -319,6 +474,43 @@ struct SSHCommandTests {
     #expect(resolved == "it's here")
   }
 
+  @Test func fishLoginShellExecutesTerminalCompatibleCommandWithoutChangingTokens() async throws {
+    // The remote login shell parses the terminal-compatibility wrap itself, so
+    // its quoting must survive fish: backslash-bearing tokens quoted by
+    // `loginShellQuote` embed backslashes the POSIX-only `shellQuote` would let
+    // fish rewrite inside single quotes.
+    try await LoginShellProbe.withTemporaryDirectory("fish-term") { temporaryRoot in
+      let workingDirectory = temporaryRoot.appending(path: #"working:it's\literal"#)
+      try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+
+      let argument = #"argument:it's\literal"#
+      let remoteCommand = SSHCommand.remoteCommand(
+        executable: "/bin/sh",
+        arguments: [
+          "-c",
+          #"printf '%s\n' "$PWD" "$1""#,
+          "supacode-test",
+          argument,
+        ],
+        workingDirectory: workingDirectory
+      )
+      // Pinned to the ghostty value so the `infocmp` half of the prelude runs
+      // here, not just the probe's default `TERM`.
+      let result = try await LoginShellProbe.run(
+        "fish",
+        command: SSHCommand.terminalCompatibleLoginShellCommand(
+          SSHCommand.loginShellWrapped(remoteCommand)
+        ),
+        configRoot: temporaryRoot.appending(path: "config"),
+        extraEnvironment: ["TERM": "xterm-ghostty"]
+      )
+
+      #expect(result.status == 0, "Fish rejected the wrapped command: \(result.stderr)")
+      #expect(result.shellDiagnostics.isEmpty, "\(result.shellDiagnostics)")
+      #expect(result.stdout == "\(workingDirectory.path)\n\(argument)\n")
+    }
+  }
+
   @Test func commandLineWrapsRemoteCommandInLoginShellQuotedForLocalShell() {
     let line = SSHCommand.commandLine(
       host: RemoteHost(alias: "devbox"),
@@ -342,7 +534,10 @@ struct SSHCommandTests {
     )
     let expectedTail = SSHCommand.shellQuote(
       SSHCommand.terminalCompatibleLoginShellCommand(
-        SSHCommand.loginShellWrapped("$0 \"$@\"", positionalArguments: ["claude", "it's a test"])
+        SSHCommand.loginShellWrappedPosixScript(
+          "$0 \"$@\"",
+          positionalArguments: ["claude", "it's a test"]
+        )
       )
     )
     #expect(line == Self.commandLinePrefix + expectedTail)
@@ -492,12 +687,30 @@ struct ZmxAttachRemoteTests {
   }
 
   @Test func posixShellWrappedKeepsLoginShellParseSurfaceTrivial() {
-    // The login shell (possibly fish/csh) only parses one portable line; the
+    // The login shell (possibly fish) only parses one portable line; the
     // POSIX if/fi script runs in /bin/sh.
     #expect(
-      ZmxAttach.posixShellWrapped("if true; then echo 'a'; fi")
-        == "exec /bin/sh -c 'if true; then echo '\\''a'\\''; fi'"
+      SSHCommand.posixShellWrapped("if true; then echo 'a'; fi")
+        == "exec /bin/sh -c 'if true; then echo '\"'\"'a'\"'\"'; fi'"
     )
+  }
+
+  @Test func fishLoginShellReceivesNestedPosixScriptByteForByte() async throws {
+    try await LoginShellProbe.withTemporaryDirectory("fish-nested") { root in
+      let script = #"""
+        printf '%s\n' "single:'"
+        printf '%s\n' 'osc:\033\\zmx'
+        """#
+      let result = try await LoginShellProbe.run(
+        "fish",
+        command: SSHCommand.loginShellWrapped(SSHCommand.posixShellWrapped(script)),
+        configRoot: root
+      )
+
+      #expect(result.status == 0, "Fish rejected the nested remote command: \(result.stderr)")
+      #expect(result.shellDiagnostics.isEmpty, "\(result.shellDiagnostics)")
+      #expect(result.stdout == "single:'\nosc:\\033\\\\zmx\n")
+    }
   }
 
   @Test func loginShellRunExecsLoginShellWithQuotedCommand() {
@@ -589,11 +802,11 @@ struct ZmxAttachRemoteTests {
     let launch = makeLaunch()
     let connectLine = SSHCommand.commandLine(
       host: launch.host,
-      remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
+      remoteCommand: SSHCommand.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
     )
     let reconnectLine = SSHCommand.commandLine(
       host: launch.host,
-      remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
+      remoteCommand: SSHCommand.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
     )
     let command = ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: localZmx)
     // Local zmx owns the session; its child process is the reconnect loop
@@ -620,11 +833,11 @@ struct ZmxAttachRemoteTests {
     let loop = SSHReconnectLoop.script(
       connect: SSHCommand.commandLine(
         host: launch.host,
-        remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
+        remoteCommand: SSHCommand.posixShellWrapped(ZmxAttach.remoteConnectScript(launch))
       ),
       reconnect: SSHCommand.commandLine(
         host: launch.host,
-        remoteCommand: ZmxAttach.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
+        remoteCommand: SSHCommand.posixShellWrapped(ZmxAttach.remoteReconnectScript(launch))
       )
     )
     // No local zmx: still a reconnect loop, just without quit persistence, but

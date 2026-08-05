@@ -82,6 +82,7 @@ nonisolated struct WorktreeCreationProgressUpdateThrottle {
 /// Which status pane the detail inspector shows when presented; presentation is tracked by `inspectorPresented`.
 enum WorktreeInspectorPane: Hashable, Sendable {
   case git
+  case files
   case notifications
 }
 
@@ -193,6 +194,7 @@ struct RepositoriesFeature {
     // leave the column empty when dragged back open.
     var inspectorPresented = false
     var inspectorPane: WorktreeInspectorPane = .git
+    var fileExplorer = FileExplorerFeature.State()
     var githubIntegrationAvailability: GithubIntegrationAvailability = .unknown
     var pendingPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
     var inFlightPullRequestRefreshRepositoryIDs: Set<Repository.ID> = []
@@ -547,6 +549,7 @@ struct RepositoriesFeature {
     case dismissToast
     case toggleInspectorPane(WorktreeInspectorPane)
     case setInspectorPresented(Bool)
+    case fileExplorer(FileExplorerFeature.Action)
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
@@ -1067,8 +1070,20 @@ struct RepositoriesFeature {
             count == 1
             ? "managing the folder (it stays on disk)"
             : "managing the folders (they stay on disk)"
-          let trashCopy =
-            count == 1 ? "move the folder to the Trash" : "move them to the Trash"
+          // The trash only ever touches local folders (`localRootURL`); remote
+          // ones downgrade to remove-only, so offer it whenever any target is
+          // local and spell out the split for mixed selections.
+          let localCount = folders.count(where: { $0.host == nil })
+          let trashCopy: String =
+            if count == 1 {
+              "move the folder to the Trash"
+            } else if localCount == count {
+              "move them to the Trash"
+            } else if localCount == 1 {
+              "move the local folder to the Trash (remote folders are only removed from Supacode)"
+            } else {
+              "move the local folders to the Trash (remote folders are only removed from Supacode)"
+            }
           state.alert = AlertState {
             TextState(title)
           } actions: {
@@ -1077,20 +1092,24 @@ struct RepositoriesFeature {
             ) {
               TextState("Remove from Supacode")
             }
-            ButtonState(
-              role: .destructive,
-              action: .confirmDeleteSidebarItems(validTargets, disposition: .folderTrash)
-            ) {
-              TextState("Delete from disk")
+            if localCount > 0 {
+              ButtonState(
+                role: .destructive,
+                action: .confirmDeleteSidebarItems(validTargets, disposition: .folderTrash)
+              ) {
+                TextState("Delete from disk")
+              }
             }
             ButtonState(role: .cancel) {
               TextState("Cancel")
             }
           } message: {
             TextState(
-              "Remove \(messageSubject)? Choose \"Remove from Supacode\" to stop "
-                + stayOnDiskCopy
-                + ", or \"Delete from disk\" to " + trashCopy + "."
+              localCount > 0
+                ? "Remove \(messageSubject)? Choose \"Remove from Supacode\" to stop "
+                  + stayOnDiskCopy
+                  + ", or \"Delete from disk\" to " + trashCopy + "."
+                : "Remove \(messageSubject)? This stops " + stayOnDiskCopy + "."
             )
           }
           return .none
@@ -1273,7 +1292,10 @@ struct RepositoriesFeature {
             // Empty script: finish the folder flow immediately,
             // trashing the directory first if the user asked for it.
             let selectionWasRemoved = state.selectedWorktreeID == worktreeID
-            let trashURL = folderIntent == .folderTrash ? repository.rootURL : nil
+            // `localRootURL` so a remote folder's synthetic path can never aim
+            // the local trash at a same-named local directory; remote targets
+            // downgrade to remove-only (the alert copy says so).
+            let trashURL = folderIntent == .folderTrash ? repository.localRootURL : nil
             return .merge(
               state.setRowLifecycleEffect(worktree.id, .deleting),
               folderRemovalEffect(
@@ -1335,7 +1357,10 @@ struct RepositoriesFeature {
               followupEffect = signalFolderRemovalFailure(worktreeID: worktreeID, state: &state)
             } else {
               let selectionWasRemoved = state.selectedWorktreeID == worktreeID
-              let trashURL = folderIntent == .folderTrash ? owningRepo.rootURL : nil
+              // `localRootURL` so a remote folder's synthetic path can never aim
+              // the local trash at a same-named local directory; remote targets
+              // downgrade to remove-only (the alert copy says so).
+              let trashURL = folderIntent == .folderTrash ? owningRepo.localRootURL : nil
               followupEffect = folderRemovalEffect(
                 repositoryID: owningRepo.id,
                 selectionWasRemoved: selectionWasRemoved,
@@ -1638,9 +1663,7 @@ struct RepositoriesFeature {
           state.removingRepositoryIDs[repositoryID] = nil
           // Narrow the cleanup to the folder-synthetic worktree id so a future
           // caller passing a git repo id here can't disturb sibling-worktree state.
-          let orphanFolderWorktreeID = Repository.folderWorktreeID(
-            for: URL(fileURLWithPath: repositoryID.rawValue)
-          )
+          let orphanFolderWorktreeID = state.resolvedFolderRowID(for: repositoryID)
           switch outcome {
           case .success:
             return .send(
@@ -1660,9 +1683,7 @@ struct RepositoriesFeature {
         // Failure cleanup is scoped to the folder-synthetic worktree id because only
         // folder dispositions reach a failure completion. Git repo unlink hardcodes success.
         let folderWorktreeIDForFailure: Worktree.ID? =
-          record.disposition.isFolder
-          ? Repository.folderWorktreeID(for: URL(fileURLWithPath: repositoryID.rawValue))
-          : nil
+          record.disposition.isFolder ? state.resolvedFolderRowID(for: repositoryID) : nil
         var rowEffects: [Effect<Action>] = []
         switch outcome {
         case .success:
@@ -1767,6 +1788,15 @@ struct RepositoriesFeature {
         state.$sidebar.withLock { sidebar in
           for id in repositoryIDs {
             sidebar.sections.removeValue(forKey: id)
+          }
+        }
+        // Remote configs live in `remoteRepositoryRoots`, which the local-root
+        // prune below can't touch; drop them here or the roster merge in
+        // `.repositoriesLoaded` resurrects the repo the user just removed.
+        @Shared(.remoteRepositoryRoots) var remoteRepositoryRoots
+        if remoteRepositoryRoots.contains(where: { idSet.contains(RepositoryID($0)) }) {
+          $remoteRepositoryRoots.withLock { roots in
+            roots.removeAll { idSet.contains(RepositoryID($0)) }
           }
         }
         let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
@@ -3173,6 +3203,9 @@ struct RepositoriesFeature {
   }
 
   var body: some Reducer<State, Action> {
+    Scope(state: \.fileExplorer, action: \.fileExplorer) {
+      FileExplorerFeature()
+    }
     Reduce { state, action in
       switch action {
       case .task:
@@ -4347,6 +4380,9 @@ struct RepositoriesFeature {
 
       case .sidebarItems:
         return .none
+
+      case .fileExplorer:
+        return .none
       }
     }
     // These presentation `ifLet`s hang off the main `Reduce` so each child runs before the
@@ -4404,6 +4440,22 @@ struct RepositoriesFeature {
       guard invalidations.contains(.openActionResolution) else { return .none }
       state.seedUnresolvedOpenActions()
       return Self.resolveOpenActionsEffect(state: state)
+    }
+    // Post-reduce reconcile: derive the file explorer's context (selected
+    // worktree + pane visibility) after every action and forward it only on
+    // change, so the child never reads parent state and no parent arm has to
+    // remember to notify it.
+    Reduce { state, _ in
+      let isVisible = state.inspectorPresented && state.inspectorPane == .files
+      guard isVisible || state.fileExplorer.isVisible else { return .none }
+      let context =
+        isVisible
+        ? state.worktree(for: state.selectedWorktreeID).map { FileExplorerFeature.Context(worktree: $0) }
+        : state.fileExplorer.context
+      guard state.fileExplorer.isVisible != isVisible || state.fileExplorer.context != context else {
+        return .none
+      }
+      return .send(.fileExplorer(.contextChanged(context, isVisible: isVisible)))
     }
   }
 
@@ -5514,7 +5566,7 @@ extension RepositoriesFeature.State {
   }
 
   func isMainWorktree(_ worktree: Worktree) -> Bool {
-    worktree.workingDirectory.standardizedFileURL == worktree.repositoryRootURL.standardizedFileURL
+    worktree.isMainWorktree
   }
 
   func isWorktreeMerged(_ worktree: Worktree) -> Bool {
@@ -5607,15 +5659,21 @@ extension RepositoriesFeature.State {
     return nil
   }
 
+  /// Folder row id for removal cleanup: the live repo's row when still in the
+  /// roster, else the id re-derived from the repository id.
+  func resolvedFolderRowID(for repositoryID: Repository.ID) -> Worktree.ID {
+    repositories[id: repositoryID]?.folderRowID ?? Repository.orphanFolderRowID(for: repositoryID)
+  }
+
   func isRemovingRepository(_ repository: Repository) -> Bool {
     guard removingRepositoryIDs[repository.id] != nil else { return false }
     // While a folder's delete script is running, don't treat the
     // repo as "removing" — the sidebar row must stay clickable so
     // the user can view the script terminal and, on failure, retry
     // or cancel.
-    let folderWorktreeID = Repository.folderWorktreeID(for: repository.rootURL)
     if !repository.isGitRepository,
-      sidebarItems[id: folderWorktreeID]?.lifecycle == .deletingScript
+      let folderRowID = repository.folderRowID,
+      sidebarItems[id: folderRowID]?.lifecycle == .deletingScript
     {
       return false
     }

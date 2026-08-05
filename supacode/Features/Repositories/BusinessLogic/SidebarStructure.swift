@@ -599,6 +599,7 @@ extension RepositoriesFeature.Action {
       .pullRequestAction,
       .showToast, .dismissToast,
       .toggleInspectorPane, .setInspectorPresented,
+      .fileExplorer,
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
       .requestCustomizeWorktree,
@@ -865,12 +866,7 @@ extension RepositoriesFeature.State {
       guard let repository else { continue }
 
       if !repository.isGitRepository {
-        // Local folder rows key off the path-derived synthetic id; a remote
-        // folder uses its synthetic worktree's own host-keyed id so it never
-        // collides with a local folder at the same path.
-        let folderRowID =
-          isRemote ? repository.worktrees.first?.id : Repository.folderWorktreeID(for: repository.rootURL)
-        guard let folderRowID, !hoisted.contains(folderRowID) else { continue }
+        guard let folderRowID = repository.folderRowID, !hoisted.contains(folderRowID) else { continue }
         sections.append(.folder(repositoryID: repositoryID, rowID: folderRowID))
         continue
       }

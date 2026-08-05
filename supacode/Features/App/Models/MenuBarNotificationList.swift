@@ -110,12 +110,7 @@ extension RepositoriesFeature.State {
     for repositoryID in orderedIDs {
       guard let repository = repositoriesByID[repositoryID] else { continue }
       guard repository.isGitRepository else {
-        // A remote folder keys its synthetic row off the host-scoped worktree id,
-        // not the local path id, so resolve it the same way the sidebar does.
-        let folderID =
-          repository.host != nil
-          ? repository.worktrees.first?.id
-          : Repository.folderWorktreeID(for: repository.rootURL)
+        let folderID = repository.folderRowID
         if let folderID, sidebarItems[id: folderID]?.hasUnseenNotifications == true {
           rowIDs.append(folderID)
         }

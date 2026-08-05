@@ -1,8 +1,6 @@
 import Foundation
 
 nonisolated enum KiroHookSettings {
-  fileprivate static let defaultTimeoutMs = 10_000
-
   /// Single canonical hook map for Kiro. See `ClaudeHookSettings` for the
   /// composite-command rationale (one Supacode-managed entry per slot →
   /// idempotent prune-and-replace).
@@ -59,13 +57,13 @@ private nonisolated struct KiroHooksPayload: Encodable {
 
   let hooks: [String: [KiroHookEntry]] = [
     "agentSpawn": [
-      KiroHookEntry(command: Self.sessionStart, timeoutMs: 5_000)
+      KiroHookEntry(command: Self.sessionStart, timeoutMs: AgentHookSettingsCommand.timeoutMilliseconds)
     ],
     "userPromptSubmit": [
-      KiroHookEntry(command: Self.busy, timeoutMs: KiroHookSettings.defaultTimeoutMs)
+      KiroHookEntry(command: Self.busy, timeoutMs: AgentHookSettingsCommand.timeoutMilliseconds)
     ],
     "stop": [
-      KiroHookEntry(command: Self.idleAndNotify, timeoutMs: KiroHookSettings.defaultTimeoutMs)
+      KiroHookEntry(command: Self.idleAndNotify, timeoutMs: AgentHookSettingsCommand.timeoutMilliseconds)
     ],
   ]
 }

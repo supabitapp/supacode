@@ -327,6 +327,39 @@ struct AppFeatureCommandPaletteTests {
     #expect(sent.value == [.beginTabRename(worktree, tabID: nil)])
   }
 
+  @Test(.dependencies) func promptTitleGhosttyCommandDoesNothingForMissingWorktree() async {
+    let worktree = Worktree(
+      id: WorktreeID("/tmp/repo-ghostty/missing"),
+      name: "wt-1",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo-ghostty/missing"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo-ghostty"),
+      isMissing: true
+    )
+    let repository = makeRepository(id: "/tmp/repo-ghostty", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktree.id)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_tab_title"))))
+    await store.finish()
+
+    #expect(sent.value.isEmpty)
+  }
+
   @Test(.dependencies) func nonPromptTitleGhosttyCommandFallsThroughToBindingAction() async {
     let worktree = makeWorktree(
       id: "/tmp/repo-ghostty/wt-1",

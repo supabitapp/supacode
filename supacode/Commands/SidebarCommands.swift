@@ -76,6 +76,7 @@ struct SidebarCommands: Commands {
     let expandAll = AppShortcuts.expandAllSidebarGroups.effective(from: overrides)
     let collapseAll = AppShortcuts.collapseAllSidebarGroups.effective(from: overrides)
     let togglePullRequestInspector = AppShortcuts.togglePullRequestInspector.effective(from: overrides)
+    let toggleFilesInspector = AppShortcuts.toggleFilesInspector.effective(from: overrides)
     let toggleNotificationsInspector = AppShortcuts.toggleNotificationsInspector.effective(from: overrides)
     CommandGroup(replacing: .sidebar) {
       Button("Toggle Left Sidebar", systemImage: "sidebar.leading") {
@@ -110,6 +111,12 @@ struct SidebarCommands: Commands {
         }
         .appKeyboardShortcut(togglePullRequestInspector)
         .help("Toggle Pull Request Inspector (\(togglePullRequestInspector?.display ?? "none"))")
+        .disabled(toggleInspectorPaneAction?.isEnabled != true)
+        Button("Toggle Files Inspector", systemImage: "list.bullet") {
+          toggleInspectorPaneAction?(.files)
+        }
+        .appKeyboardShortcut(toggleFilesInspector)
+        .help("Toggle Files Inspector (\(toggleFilesInspector?.display ?? "none"))")
         .disabled(toggleInspectorPaneAction?.isEnabled != true)
         Button("Toggle Notifications Inspector", systemImage: "bell") {
           toggleInspectorPaneAction?(.notifications)

@@ -1,5 +1,5 @@
 [tools]
-tuist = "4.180.0"
+tuist = "4.203.1"
 zig = "0.15.2"
 swiftlint = "0.64.0"
 xcbeautify = "3.2.1"

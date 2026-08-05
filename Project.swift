@@ -15,7 +15,7 @@ func shellScript(_ path: Path) -> String {
 }
 
 let ghosttyFingerprintInputScript = """
-"${SRCROOT}/\(ghosttyBuildScriptPath.pathString)" --print-fingerprint
+"./\(ghosttyBuildScriptPath.pathString)" --print-fingerprint
 """
 
 let appResources: ResourceFileElements = [
@@ -74,6 +74,7 @@ let testDependencies: [TargetDependency] = [
 let sharedTestSupportSources: [Path] = [
   "supacodeTests/AgentPresence+TestHelpers.swift",
   "supacodeTests/BrandedIDTestSupport.swift",
+  "supacodeTests/LoginShellTestSupport.swift",
   "supacodeTests/ProcessTestSupport.swift",
   "supacodeTests/RemoteRepoTestSupport.swift",
   "supacodeTests/RepositoriesSidebarTestHelpers.swift",

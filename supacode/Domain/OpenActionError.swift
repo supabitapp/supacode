@@ -1,6 +1,6 @@
 import Foundation
 
-struct OpenActionError: Hashable {
+nonisolated struct OpenActionError: Hashable {
   let title: String
   let message: String
 }

@@ -304,9 +304,11 @@ struct AppFeature {
     case revealInFinder
     case openWorktree(OpenWorktreeAction)
     case openWorktreeFailed(OpenActionError)
+    case openFile(URL, with: OpenWorktreeAction?)
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
+    case renameSelectedTerminalTab
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
@@ -431,6 +433,9 @@ struct AppFeature {
         case .active:
           return .merge(
             .send(.repositories(.refreshWorktrees)),
+            // Freshen the files inspector after external edits made while
+            // the app was inactive (Finder, editors).
+            .send(.repositories(.fileExplorer(.applicationBecameActive))),
             // Re-probe agent integrations on activation so the sidebar
             // card reflects external installs (e.g. `claude install`)
             // for users who keep the app open across days.
@@ -800,6 +805,21 @@ struct AppFeature {
         }
         return openWorktreeEffect(worktree: worktree, action: action, source: .toolbar, state: state)
 
+      case .openFile(let fileURL, let explicitAction):
+        // An explicit pick comes from the Open With submenu; the default open
+        // resolves like the toolbar does, so the menu label and the launched
+        // app can't disagree when the stored editor isn't installed.
+        let action =
+          explicitAction
+          ?? OpenWorktreeAction.availableSelection(
+            state.openActionSelection,
+            installed: state.installedOpenActions
+          )
+        return .run { @MainActor send in
+          guard let error = await workspaceClient.openFile(fileURL, action) else { return }
+          send(.openWorktreeFailed(error))
+        }
+
       case .openWorktreeFailed(let error):
         state.alert = AlertState {
           TextState(error.title)
@@ -874,6 +894,17 @@ struct AppFeature {
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+        }
+
+      case .renameSelectedTerminalTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing,
+          let tabID = terminalClient.selectedTabID(worktree.id)
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.beginTabRename(worktree, tabID: tabID))
         }
 
       case .selectTerminalTabAtIndex(let tabNumber):
@@ -1467,6 +1498,8 @@ struct AppFeature {
         // Ghostty void actions emit bare tag names; no colon.
         let command: TerminalClient.Command
         if action == "prompt_surface_title" || action == "prompt_tab_title" {
+          // Skip missing worktrees so the palette matches the rename shortcut's guard.
+          guard !worktree.isMissing else { return .none }
           // Capture the focused tab synchronously so a fast tab switch between dispatch
           // and effect execution can't redirect the rename to the wrong tab.
           let tabID = terminalClient.selectedTabID(worktree.id)

@@ -1,5 +1,5 @@
 {
-  "originHash" : "4c4917e8c9f9c9b3db390af9f4b4eef1a887566fbfb5117d2da2a47fe6c1da8b",
+  "originHash" : "6883d9541de15959cd4462bc431ca5dbf7b08f357381d8db313153aede9caeff",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -13,7 +13,7 @@
     {
       "identity" : "kingfisher",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/onevcat/Kingfisher.git",
+      "location" : "https://github.com/onevcat/Kingfisher",
       "state" : {
         "revision" : "c92b84898e34ab46ff0dad86c02a0acbe2d87008",
         "version" : "8.8.0"
@@ -22,7 +22,7 @@
     {
       "identity" : "posthog-ios",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/PostHog/posthog-ios.git",
+      "location" : "https://github.com/PostHog/posthog-ios",
       "state" : {
         "revision" : "76a3e1db35f3153f3388bdf077a717c7350e5f9e",
         "version" : "3.64.6"
@@ -31,7 +31,7 @@
     {
       "identity" : "sentry-cocoa",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/getsentry/sentry-cocoa/",
+      "location" : "https://github.com/getsentry/sentry-cocoa",
       "state" : {
         "revision" : "a24b98028b0b6e81bfd0526967468ba4ba60303c",
         "version" : "9.3.0"

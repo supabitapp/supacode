@@ -35,13 +35,13 @@ private nonisolated struct CodexHooksPayload: Encodable {
 
   let hooks: [String: [AgentHookGroup]] = [
     "SessionStart": [
-      .init(hooks: [.init(command: Self.sessionStart, timeout: 5)])
+      .init(hooks: [.init(command: Self.sessionStart, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "UserPromptSubmit": [
-      .init(hooks: [.init(command: Self.busy, timeout: 10)])
+      .init(hooks: [.init(command: Self.busy, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "Stop": [
-      .init(hooks: [.init(command: Self.idleAndNotify, timeout: 10)])
+      .init(hooks: [.init(command: Self.idleAndNotify, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
   ]
 }

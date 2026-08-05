@@ -28,6 +28,13 @@ struct RemoteRepositoryHelpersTests {
     #expect(id == "devbox/tmp/repo/wt")
   }
 
+  @Test func remoteWorktreeIDTrimsTrailingSlash() {
+    // A path that exists locally as a directory picks up a trailing slash on
+    // the URL round-trip; the id must stay slash-free regardless of disk state.
+    let id = RepositoriesFeature.remoteWorktreeID(host: RemoteHost(alias: "devbox"), worktreePath: "/tmp/repo/wt/")
+    #expect(id == "devbox/tmp/repo/wt")
+  }
+
   @Test func remoteWorktreeInjectsHostAndHostKeyedID() {
     let host = RemoteHost(alias: "devbox", username: "alice")
     let base = Worktree(
@@ -225,7 +232,7 @@ struct RemoteSidebarMergedListTests {
       displayName: "docs"
     )
     let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
-    let folderRepo = RepositoriesFeature.remoteFolderRepository(config: config, repoID: repoID)
+    let folderRepo = RepositoriesFeature.remoteFolderRepository(config: config)
     let state = makeState(repositories: [folderRepo])
 
     let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
@@ -405,8 +412,36 @@ struct RemoteDefaultShellCommandTests {
   @Test func escapesSingleQuotesInRemotePath() {
     #expect(
       WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/home/o'brien/proj")
-        == "cd '/home/o'\\''brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
+        == "cd '/home/o'\"'\"'brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
     )
+  }
+
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func changesToRemotePathWithoutChangingBytesUnder(_ shell: String) async throws {
+    try await LoginShellProbe.withTemporaryDirectory("default-shell-\(shell)") { temporaryRoot in
+      let remoteDirectory = temporaryRoot.appending(path: #"working:it's\literal"#)
+      try FileManager.default.createDirectory(at: remoteDirectory, withIntermediateDirectories: true)
+      // A relative `$SHELL` that only resolves from inside the worktree, so a
+      // swallowed `cd` failure cannot pass. It echoes its argv too, pinning the
+      // `-l` that makes the remote shell a login shell.
+      let probe = remoteDirectory.appending(path: "probe-shell")
+      try Data(#"#!/bin/sh\#nprintf '%s %s' "$(pwd -P)" "$1"\#n"#.utf8).write(to: probe)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: probe.path)
+
+      let command = try #require(
+        WorktreeTerminalState.remoteDefaultShellCommand(remotePath: remoteDirectory.path)
+      )
+      let result = try await LoginShellProbe.run(
+        shell,
+        command: command,
+        configRoot: temporaryRoot.appending(path: "config"),
+        shellPathOverride: "./probe-shell"
+      )
+
+      #expect(result.status == 0, "\(shell) rejected the remote worktree path: \(result.stderr)")
+      #expect(result.stdout == "\(LoginShellProbe.physicalPath(of: remoteDirectory)) -l")
+      #expect(result.shellDiagnostics.isEmpty, "\(shell): \(result.shellDiagnostics)")
+    }
   }
 
   @Test func nilForRootOrEmptyPath() {
@@ -750,6 +785,27 @@ struct SaveRemoteConnectionTests {
       #expect(store.state.sidebar.sections[targetID] == nil)
     }
   }
+
+  @Test(.dependencies) func repositoriesRemovedPrunesRemoteConfig() async {
+    // The folder-delete pipeline's batch terminal must drop the remote config,
+    // or the `.repositoriesLoaded` roster merge resurrects the removed repo.
+    await withRemoteStore { store in
+      let target = TestRemoteRepo(
+        host: RemoteHost(alias: "devbox"),
+        remotePath: "/home/me/notes",
+        displayName: ""
+      )
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.remoteRepositoryRoots = [target.id.rawValue] }
+      let repo = RepositoriesFeature.remoteFolderRepository(config: target)
+
+      await store.send(.repositoriesRemoved([repo.id], selectionWasRemoved: false))
+      await store.finish()
+
+      #expect(remoteRepositories().isEmpty)
+      #expect(store.state.repositories[id: repo.id] == nil)
+    }
+  }
 }
 
 struct RemotePathClassificationTests {
@@ -951,7 +1007,7 @@ struct RemotePathClassificationTests {
       displayName: ""
     )
     let repoID = RepositoriesFeature.remoteRepositoryID(for: config)
-    let repo = RepositoriesFeature.remoteFolderRepository(config: config, repoID: repoID)
+    let repo = RepositoriesFeature.remoteFolderRepository(config: config)
 
     #expect(repo.isGitRepository == false)
     #expect(repo.host?.sshDestination == "devbox")

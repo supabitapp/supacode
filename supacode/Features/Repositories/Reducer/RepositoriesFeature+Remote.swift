@@ -53,7 +53,7 @@ extension RepositoriesFeature {
   /// Host-keyed git worktree id `<user@host:port><remotePath>` so worktrees at
   /// the same path on different hosts (or matching a local path) never collide.
   nonisolated static func remoteWorktreeID(host: RemoteHost, worktreePath: String) -> Worktree.ID {
-    WorktreeID(host.authority + worktreePath)
+    WorktreeID(host.authority + RepositoryLocation.normalizedRemotePath(worktreePath))
   }
 
   /// The persisted remote-repository ids. Read through `@Shared` so every load
@@ -92,20 +92,26 @@ extension RepositoriesFeature {
   /// fails fast for an unreachable host, but a reachable host whose command
   /// stalls (a stale ControlMaster, a wedged remote shell) would otherwise hang;
   /// this hard timeout flips such a row to "can't reach".
-  static let remoteLoadTimeout: Duration = .seconds(10)
+  nonisolated static let remoteLoadTimeout: Duration = .seconds(10)
 
   /// Loads one remote config over SSH, bounded by `remoteLoadTimeout`. On a
   /// failure or timeout it returns a placeholder repository (kept so the entry
   /// is never pruned) paired with a `LoadFailure`, so the sidebar renders a
   /// "can't reach" row like a missing local folder. The timeout cancels the
   /// in-flight ssh (which terminates the process), so a stalled host can't keep
-  /// the row spinning forever.
+  /// the row spinning forever. A `nil` timeout awaits resolution directly with no
+  /// wall-clock bound (tests only, so a starved runner can't race a real sleep).
   nonisolated static func loadRemoteRepository(
     host: RemoteHost,
     remotePath: String,
     repoID: Repository.ID,
-    shell: ShellClient? = nil
+    shell: ShellClient? = nil,
+    timeout: Duration? = remoteLoadTimeout
   ) async -> (repository: Repository, failure: LoadFailure?) {
+    guard let timeout else {
+      let loaded = await resolveRemoteRepository(host: host, remotePath: remotePath, repoID: repoID, shell: shell)
+      return (loaded.repository, loaded.failure)
+    }
     enum Outcome: Sendable {
       case resolved(Repository, LoadFailure?)
       case timedOut
@@ -116,7 +122,7 @@ extension RepositoriesFeature {
         return .resolved(loaded.repository, loaded.failure)
       }
       group.addTask {
-        try? await Task.sleep(for: remoteLoadTimeout)
+        try? await Task.sleep(for: timeout)
         return .timedOut
       }
       let first = await group.next() ?? .timedOut
@@ -188,7 +194,7 @@ extension RepositoriesFeature {
     // and an unreachable host renders as a placeholder rather than a fake repo.
     switch await classifyRemotePath(remotePath, shell: shell) {
     case .folder:
-      return (remoteFolderRepository(host: host, remotePath: remotePath, repoID: repoID), nil)
+      return (remoteFolderRepository(host: host, remotePath: remotePath), nil)
     case .git where listingThrew:
       // It's a git repo, but the worktree listing threw: collapsing to a single
       // synthetic main would silently hide the repo's other worktrees. Surface a
@@ -361,9 +367,11 @@ extension RepositoriesFeature {
   /// worktrees), so a remote `~` never collides with a local `~` folder.
   nonisolated static func remoteFolderRepository(
     host: RemoteHost,
-    remotePath: String,
-    repoID: Repository.ID
+    remotePath: String
   ) -> Repository {
+    // Normalize like every other remote-id funnel so callers can't bake a
+    // trailing slash into the stored location.
+    let remotePath = RepositoryLocation.normalizedRemotePath(remotePath)
     let folder = Worktree(
       location: .remote(
         host, workingDirectory: remotePath, repositoryRoot: remotePath),

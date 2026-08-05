@@ -158,6 +158,67 @@ struct AgentHookCommandTests {
     #expect(command.contains("claude"))
   }
 
+  @Test func managedCommandsResolveTheTTYOnceAndReadStdinOnce() {
+    // Both stdin-reading shapes: the composite notify leg and the Stop probe that
+    // hands `$__in` to a `readsStdin: false` notify.
+    let commands = [
+      AgentHookSettingsCommand.compositeCommand(
+        events: [.idle], forwardStdinAsNotification: true, agent: .codex),
+      AgentHookSettingsCommand.claudeStopCommand(agent: .claude),
+    ]
+    for command in commands {
+      #expect(command.ranges(of: "ps -o").count == 1)
+      #expect(command.ranges(of: "IFS= read -r __in").count == 1)
+      #expect(!command.contains("| tr -d '[:space:]'"))
+      #expect(command.contains("__ppid=${PPID:-}"))
+      #expect(!command.contains("$$"))
+      #expect(command.contains("__tty=${1:-}; set +f"))
+    }
+  }
+
+  @Test func everyAgentHookUsesTheSharedFailureDeadline() throws {
+    let seconds = AgentHookSettingsCommand.timeoutSeconds
+    var checked = 0
+    for groups in [
+      try CodexHookSettings.hooksByEvent(), try ClaudeHookSettings.hooksByEvent(),
+      try GrokHookSettings.hooksByEvent(), try KiroHookSettings.hooksByEvent(),
+      AntigravityHookSettings.hooksByEvent(),
+    ] {
+      for eventGroups in groups.values {
+        for group in eventGroups {
+          guard let object = group.objectValue else { continue }
+          // Three encodings: Kiro states the deadline in milliseconds, Antigravity
+          // puts the hook flat in the group, everyone else nests it under `hooks`.
+          if let millis = object["timeout_ms"] {
+            #expect(millis == .int(AgentHookSettingsCommand.timeoutMilliseconds))
+            checked += 1
+          } else if let timeout = object["timeout"] {
+            #expect(timeout == .int(seconds))
+            checked += 1
+          }
+          for hook in object["hooks"]?.arrayValue ?? [] {
+            #expect(hook.objectValue?["timeout"] == .int(seconds))
+            checked += 1
+          }
+        }
+      }
+    }
+    // Kimi and Copilot carry their own entry types rather than a JSONValue tree.
+    for entry in KimiHookSettings.canonicalEntries() {
+      #expect(entry.timeout == seconds)
+      checked += 1
+    }
+    let copilot = try JSONDecoder().decode(JSONValue.self, from: Data(CopilotHookSettings.source().utf8))
+    for (_, hooks) in copilot.objectValue?["hooks"]?.objectValue ?? [:] {
+      for hook in hooks.arrayValue ?? [] {
+        #expect(hook.objectValue?["timeoutSec"] == .int(seconds))
+        checked += 1
+      }
+    }
+    // Without this the loops pass vacuously when an agent's encoded shape drifts.
+    #expect(checked >= 44)
+  }
+
   @Test func notifyDoesNotReferenceWorktreeOrTabIDs() {
     // The notify leg used to prefix a `worktree tab surface agent` header for
     // the socket text proto. The OSC notify carries only base64 title/body, so
@@ -286,7 +347,7 @@ struct AgentHookCommandTests {
     #expect(composite.contains("event=idle"))
     // Both presence emits live inside one guarded brace group that closes before
     // the error-suppression tail.
-    #expect(composite.contains("&& { __ppid="))
+    #expect(composite.contains("&& { __ppid=${PPID:-}"))
     #expect(composite.contains("; } >/dev/null 2>&1 || true"))
     // Order matters: the session_end presence is emitted before idle so the app
     // sees the lifecycle close-out before the activity reset.
@@ -380,8 +441,9 @@ struct AgentHookCommandTests {
     )
     let expected =
       #"[ -n "${SUPACODE_SURFACE_ID:-}" ] && { "#
-      + #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
-      + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
+      + #"__ppid=${PPID:-}; "#
+      + #"set -f; set -- $(ps -o tty= -p "$__ppid" 2>/dev/null); __tty=${1:-}; set +f; "#
+      + #"case "$__ppid" in 0|1) __ppid="";; esac; "#
       + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac; "#
       + #"__sp=""; [ -n "${SUPACODE_SOCKET_PATH:-}" ] && [ -n "$__ppid" ] "#
       + #"&& __sp=";pid=$__ppid"; "#
@@ -401,7 +463,7 @@ struct AgentHookCommandTests {
     #expect(command.contains(#"[ -n "${SUPACODE_SURFACE_ID:-}" ]"#))
     #expect(!command.contains("token="))
     #expect(command.contains(#"> "$__tty""#))
-    #expect(command.contains("ps -o tty="))
+    #expect(command.contains("ps -o tty= -p \"$__ppid\""))
     #expect(!command.contains(#"[ -z "${SUPACODE_SOCKET_PATH:-}" ]"#))
   }
 
@@ -481,6 +543,62 @@ struct AgentHookCommandTests {
     let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
     let signal = try #require(Self.parseNotify(fromTTY: tty))
     #expect(signal.body == "hi there")
+  }
+
+  @Test func notifyExtractsBodyFromPrettyPrintedStdin() async throws {
+    // A payload spanning several lines must survive the stdin capture: reading a
+    // single line would leave `$__in` as "{" and silently empty every field.
+    let json = "{\n  \"hook_event_name\": \"Stop\",\n  \"message\": \"hi there\"\n}\n"
+    let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body == "hi there")
+  }
+
+  @Test func notifyCompletesWhileTheHostHoldsStdinOpen() async throws {
+    // The property the capture exists for: a host that writes its newline-terminated
+    // payload and keeps the pipe open must not stall the hook to its deadline, which
+    // is what `$(cat)` did. Every other stdin test closes the pipe, so only this one
+    // exercises it.
+    let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(
+      command, env: base, stdin: "{\"message\":\"hi there\"}\n", closesStdin: false)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body == "hi there")
+  }
+
+  @Test func notifyStaysSilentWhenStdinCarriesNoDisplayFields() async throws {
+    // A content-free notify still renders (the app falls back to the agent name)
+    // and supersedes the agent's own OSC 9, so nothing must go on the wire.
+    let base: [String: String] = ["SUPACODE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(
+      command, env: base, stdin: #"{"hook_event_name":"Stop"}"#)
+    #expect(tty.isEmpty)
+  }
+
+  @Test func ttyResolveFallsBackToDevTTYInAGlobbableWorkingDirectory() async throws {
+    // `ps -o tty=` prints `??` for a parent with no controlling terminal, which is
+    // the documented fallback path. `??` is also a glob, so an unguarded split
+    // resolves it to a two-character worktree entry and aims the OSC at
+    // `/dev/<that name>`. Runs the resolve directly: the capture harness rewrites
+    // `> "$__tty"` away, so it cannot observe this.
+    let resolved = try await Self.runShellResolvingTTY(
+      stubbedPSOutput: "??", workingDirectoryEntries: ["v2", "k8", "ui"])
+    #expect(resolved == "/dev/tty")
+  }
+
+  @Test func ttyResolveGuardsAgainstAReparentedPPID() {
+    // `$PPID` latches at shell start, so it should never read 0 or 1. The guard stays
+    // as defense in depth because `kill(1, 0)`'s EPERM reads as alive to the liveness
+    // sweep and would pin the badge until surface close. Asserted on the command: no
+    // shell lets a test forge `$PPID`.
+    #expect(AgentPresenceOSC.ttyResolveSnippet.contains(#"case "$__ppid" in 0|1) __ppid="";; esac"#))
   }
 
   @Test func notifyAwkPreservesEscapedQuotesNewlinesAndUnicode() async throws {
@@ -756,11 +874,11 @@ struct AgentHookCommandTests {
     #expect(signal.pid == ProcessInfo.processInfo.processIdentifier)
   }
 
-  @Test func presenceOmitsPidWhenParentLookupFails() async throws {
-    // `ps` unreachable leaves `$__ppid` empty; the emit must then drop the pid field
-    // rather than send a dangling `pid=`. In production the same `ps` failure also
-    // empties `$__tty`, so this only lands when the hook has a usable controlling
-    // terminal; the harness rewrites the sink, which decouples the two here.
+  @Test func presenceStillCarriesPidWhenPSIsUnavailable() async throws {
+    // The parent pid comes from `${PPID:-}`, so an unreachable `ps` no longer costs
+    // the pid field. Resolving it through `ps -o ppid= -p $$` did: Grok rewrites the
+    // command before spawning it and collapses `$$` to a bare `$`, which left every
+    // Grok presence hook running but emitting nothing (#704 follow-up).
     let emptyPath = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("supacode-nops-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: emptyPath, withIntermediateDirectories: true)
@@ -775,17 +893,17 @@ struct AgentHookCommandTests {
         "PATH": emptyPath.path,
       ]
     )
-    #expect(!captured.contains("pid="))
     let signal = try #require(Self.parsePresence(fromTTY: captured))
     #expect(signal.eventRawValue == "busy")
-    #expect(signal.pid == nil)
+    #expect(signal.pid == ProcessInfo.processInfo.processIdentifier)
   }
 
   @Test func everyAgentCommandOnlyNamesForwardedOrLocalVariables() {
-    // Grok preflights `$VAR` / `${VAR}` in a hook command as required env and skips
-    // the hook when one is unset, which is how the shell special `$PPID` no-opped
-    // every managed presence hook. The command shape is shared, so hold every agent
-    // to the allowlist, not just Grok.
+    // Grok preflights a bare `$VAR` / `${VAR}` in a hook command as required env and
+    // skips the hook when one is unset, which is how `$PPID` no-opped every managed
+    // presence hook (#704). Forms carrying a parameter-expansion modifier are exempt,
+    // so `${PPID:-}` is fine. The command shape is shared, so hold every agent to the
+    // allowlist, not just Grok.
     var commands: [String] = SkillAgent.allCases.flatMap { agent in
       [
         AgentHookSettingsCommand.compositeCommand(
@@ -840,8 +958,9 @@ struct AgentHookCommandTests {
   // $__tty from the parent agent's terminal since the hook has none of its own.
   private static let guardAndTTY =
     #"[ -n "${SUPACODE_SURFACE_ID:-}" ] && { "#
-    + #"__ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]'); "#
-    + #"__tty=$(ps -o tty= -p "$__ppid" 2>/dev/null | tr -d '[:space:]'); "#
+    + #"__ppid=${PPID:-}; "#
+    + #"set -f; set -- $(ps -o tty= -p "$__ppid" 2>/dev/null); __tty=${1:-}; set +f; "#
+    + #"case "$__ppid" in 0|1) __ppid="";; esac; "#
     + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac; "#
   private static let suppressTail = #"} >/dev/null 2>&1 || true # supacode-managed-hook"#
 
@@ -854,11 +973,12 @@ struct AgentHookCommandTests {
   private static func notify(_ agent: String) -> String {
     let bodyKeys = AgentPresenceOSC.notifyBodyKeys.joined(separator: ",")
     let awk = AgentPresenceOSC.notifyExtractAwk
-    return #"__in=$(cat); "#
+    return #"\#(AgentPresenceOSC.readStdinSnippet); "#
       + #"__t=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(AgentPresenceOSC.titleField)" "#
       + #"-v budget=\#(AgentPresenceOSC.notifyTitleByteBudget) '\#(awk)' | base64 | tr -d '\n'); "#
       + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
       + #"-v budget=\#(AgentPresenceOSC.notifyBodyByteBudget) '\#(awk)' | base64 | tr -d '\n'); "#
+      + #"[ -n "$__t$__b" ] && "#
       + #"printf '\033]3008;start=\#(agent);kind=notify;title=%s;body=%s\033\\' "$__t" "$__b" > "$__tty"; "#
   }
 
@@ -883,10 +1003,54 @@ struct AgentHookCommandTests {
   static let snapshotOpencodeSessionEndAndIdle =
     guardAndTTY + presence("end", "opencode", "session_end") + presence("start", "opencode", "idle") + suppressTail
 
+  /// Runs `ttyResolveSnippet` against a `ps` stub that always prints
+  /// `stubbedPSOutput`, from a directory seeded with `workingDirectoryEntries`,
+  /// and returns the resolved `$__tty`.
+  private static func runShellResolvingTTY(
+    stubbedPSOutput: String, workingDirectoryEntries: [String]
+  ) async throws -> String {
+    try await runResolveSnippet(
+      echoing: "$__tty", stubbedPSOutput: stubbedPSOutput,
+      workingDirectoryEntries: workingDirectoryEntries)
+  }
+
+  private static func runResolveSnippet(
+    echoing variable: String, stubbedPSOutput: String, workingDirectoryEntries: [String]
+  ) async throws -> String {
+    let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-hook-resolve-\(UUID().uuidString)", isDirectory: true)
+    let binDir = workDir.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workDir) }
+    for entry in workingDirectoryEntries {
+      FileManager.default.createFile(
+        atPath: workDir.appendingPathComponent(entry).path, contents: nil)
+    }
+    let stub = binDir.appendingPathComponent("ps")
+    try "#!/bin/sh\nprintf '%s\\n' '\(stubbedPSOutput)'\n".write(
+      to: stub, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", "\(AgentPresenceOSC.ttyResolveSnippet); printf '%s' \"\(variable)\""]
+    process.currentDirectoryURL = workDir
+    process.environment = ["PATH": "\(binDir.path):/usr/bin:/bin"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    let (exited, exitContinuation) = AsyncStream<Void>.makeStream()
+    process.terminationHandler = { _ in exitContinuation.finish() }
+    try process.run()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    for await _ in exited {}
+    return String(bytes: data, encoding: .utf8) ?? ""
+  }
+
   /// Runs `command` with `/dev/tty` (the OSC sink) redirected to a capture file,
   /// optionally feeding `stdin`, and returns the text written to the fake tty.
   private func runHookCommandCapturingTTY(
-    _ command: String, env: [String: String], stdin: String = ""
+    _ command: String, env: [String: String], stdin: String = "",
+    closesStdin: Bool = true
   ) async throws -> String {
     let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("supacode-hook-tty-\(UUID().uuidString)", isDirectory: true)
@@ -900,10 +1064,11 @@ struct AgentHookCommandTests {
     let patched = command.replacing(#"> "$__tty""#, with: ">> \(captureFile.path)")
 
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    // `-f` skips the rc files, which commonly rewrite PATH and would undo a test's
-    // deliberately stripped environment.
-    process.arguments = ["-f", "-c", patched]
+    // `sh`, not `zsh`: agents spawn hooks with `sh -c`, and zsh neither word-splits
+    // nor globs an unquoted `$(...)`, so it cannot see either failure mode.
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", patched]
+    process.currentDirectoryURL = workDir
     var environment = ProcessInfo.processInfo.environment
     // The host may already export Supacode-surface vars (tests can run inside a
     // Supacode surface); clear them so every absent-variable assertion is genuine.
@@ -917,8 +1082,20 @@ struct AgentHookCommandTests {
     process.terminationHandler = { _ in exitContinuation.finish() }
     try process.run()
     stdinPipe.fileHandleForWriting.write(Data(stdin.utf8))
-    try? stdinPipe.fileHandleForWriting.close()
+    if closesStdin {
+      try? stdinPipe.fileHandleForWriting.close()
+    }
+    // A held-open pipe has no host deadline to kill the hook, so bound it here or a
+    // regression in the stdin capture hangs the suite instead of failing it.
+    let watchdog = Task {
+      try? await Task.sleep(for: .seconds(closesStdin ? 30 : 5))
+      if process.isRunning { process.terminate() }
+    }
     for await _ in exited {}
+    watchdog.cancel()
+    if !closesStdin {
+      try? stdinPipe.fileHandleForWriting.close()
+    }
     // Cancellation ends the iteration early; returning here would read an
     // empty capture file and let emptiness assertions pass vacuously.
     guard !Task.isCancelled else {

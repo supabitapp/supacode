@@ -250,6 +250,29 @@ struct ToolbarNotificationGroupingTests {
     #expect(group?.color == .purple)
   }
 
+  @Test func resolvesRemoteFolderHeaderFromHostKeyedSyntheticRow() throws {
+    // A remote folder keys its synthetic row off the host-scoped worktree id,
+    // so the header must resolve via `folderRowID`, not the local path id.
+    let host = RemoteHost(alias: "devbox")
+    let folderRepo = RepositoriesFeature.remoteFolderRepository(host: host, remotePath: "/home/me/notes")
+    let folderID = try #require(folderRepo.folderRowID)
+
+    var state = RepositoriesFeature.State(reconciledRepositories: [folderRepo])
+    state.sidebarItems[id: folderID]?.customTitle = "Remote Notes"
+    state.sidebarItems[id: folderID]?.customTint = .purple
+
+    setRowNotifications(
+      &state, id: folderID,
+      notifications: [
+        WorktreeTerminalNotification(surfaceID: UUID(), title: "T", body: "done", createdAt: .distantPast)
+      ])
+
+    let group = state.computeToolbarNotificationGroups().first
+    #expect(group?.isFolder == true)
+    #expect(group?.name == "Remote Notes")
+    #expect(group?.color == .purple)
+  }
+
   @Test func includesRemoteRepositoryNotifications() {
     // Remote repos are host-keyed and absent from `repositoryRoots` (which is
     // local-only), so `orderedRepositoryIDs()` doesn't list them. The toolbar

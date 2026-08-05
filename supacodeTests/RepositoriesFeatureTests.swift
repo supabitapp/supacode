@@ -7965,6 +7965,16 @@ struct RepositoriesFeatureTests {
     #expect(row.sidebarDisplayName == "wt-folder")
   }
 
+  @Test func sidebarDisplayNameUsesLeafOfRemoteHostKeyedId() {
+    let row = makeSidebarItem(id: "me@box:2222/srv/repo/wt", name: "feature/branch")
+    #expect(row.sidebarDisplayName == "wt")
+  }
+
+  @Test func sidebarDisplayNameIgnoresTrailingSlashInId() {
+    let row = makeSidebarItem(id: "/tmp/repo/wt/", name: "feature/branch")
+    #expect(row.sidebarDisplayName == "wt")
+  }
+
   @Test func sidebarDisplayNameFallsBackToBranchNameWhenIdAndSubtitleEmpty() {
     let row = makeSidebarItem(id: "row-no-slash", name: "feature/branch", detail: "")
     #expect(row.sidebarDisplayName == "feature/branch")
@@ -9202,6 +9212,110 @@ struct RepositoriesFeatureTests {
     #expect(state.worktreesForInfoWatcher() == [gitWorktree])
   }
 
+  @Test func mixedFolderDeleteAlertOffersTrashAndSpellsOutTheRemoteDowngrade() async throws {
+    // Mixed local + remote selection keeps "Delete from disk": the trash only
+    // ever touches local folders, and the copy states the remote downgrade.
+    let folderRoot = "/tmp/mixed-alert-local"
+    let folderURL = URL(fileURLWithPath: folderRoot)
+    let localWorktree = Worktree(
+      id: Repository.folderWorktreeID(for: folderURL),
+      kind: .folder,
+      name: Repository.name(for: folderURL),
+      detail: "",
+      workingDirectory: folderURL,
+      repositoryRootURL: folderURL
+    )
+    let localFolder = Repository(
+      id: RepositoryID(folderRoot),
+      rootURL: folderURL,
+      name: Repository.name(for: folderURL),
+      worktrees: IdentifiedArray(uniqueElements: [localWorktree]),
+      isGitRepository: false
+    )
+    let host = RemoteHost(alias: "devbox")
+    let remoteFolder = RepositoriesFeature.remoteFolderRepository(host: host, remotePath: "/home/me/notes")
+    let remoteRowID = try #require(remoteFolder.folderRowID)
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [localFolder, remoteFolder]
+    state.repositoryRoots = [folderURL]
+    state.isInitialLoadComplete = true
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    let targets = [
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: localWorktree.id, repositoryID: localFolder.id),
+      RepositoriesFeature.DeleteWorktreeTarget(worktreeID: remoteRowID, repositoryID: remoteFolder.id),
+    ]
+    await store.send(.requestDeleteSidebarItems(targets)) {
+      $0.alert = AlertState {
+        TextState("Remove 2 folders?")
+      } actions: {
+        ButtonState(
+          action: .confirmDeleteSidebarItems(targets, disposition: .folderUnlink)
+        ) {
+          TextState("Remove from Supacode")
+        }
+        ButtonState(
+          role: .destructive,
+          action: .confirmDeleteSidebarItems(targets, disposition: .folderTrash)
+        ) {
+          TextState("Delete from disk")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState(
+          "Remove mixed-alert-local, notes? Choose \"Remove from Supacode\" to stop "
+            + "managing the folders (they stay on disk)"
+            + ", or \"Delete from disk\" to move the local folder to the Trash "
+            + "(remote folders are only removed from Supacode)."
+        )
+      }
+    }
+  }
+
+  @Test func remoteOnlyFolderDeleteAlertOmitsTheTrashOption() async throws {
+    // An all-remote selection has nothing the local trash could touch, so the
+    // destructive option disappears entirely.
+    let host = RemoteHost(alias: "devbox")
+    let remoteFolder = RepositoriesFeature.remoteFolderRepository(host: host, remotePath: "/home/me/notes")
+    let remoteRowID = try #require(remoteFolder.folderRowID)
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [remoteFolder]
+    state.isInitialLoadComplete = true
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+    }
+
+    let target = RepositoriesFeature.DeleteWorktreeTarget(worktreeID: remoteRowID, repositoryID: remoteFolder.id)
+    await store.send(.requestDeleteSidebarItems([target])) {
+      $0.alert = AlertState {
+        TextState("Remove folder?")
+      } actions: {
+        ButtonState(
+          action: .confirmDeleteSidebarItems([target], disposition: .folderUnlink)
+        ) {
+          TextState("Remove from Supacode")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState("Remove notes? This stops managing the folder (it stays on disk).")
+      }
+    }
+  }
+
   @Test func requestDeleteSidebarItemForFolderSkipsMainWorktreeLockAndRoutesToRepositoryRemoved() async {
     // Folders pipe their "Delete Folder…" context-menu action
     // through `.requestDeleteSidebarItems` using the synthetic main
@@ -9451,6 +9565,23 @@ struct RepositoriesFeatureTests {
     let row = state.sidebarItems[id: folderWorktree.id]
     #expect(row?.lifecycle == .deletingScript)
     #expect(row?.kind == .folder)
+  }
+
+  @Test func remoteFolderDeleteScriptRunningKeepsRowClickable() throws {
+    // The remote folder row is host-keyed, so `isRemovingRepository` must
+    // resolve it via `folderRowID` for the deleting-script exception to apply.
+    let host = RemoteHost(alias: "devbox")
+    let folderRepo = RepositoriesFeature.remoteFolderRepository(host: host, remotePath: "/home/me/notes")
+    let folderRowID = try #require(folderRepo.folderRowID)
+
+    var state = RepositoriesFeature.State()
+    state.repositories = [folderRepo]
+    state.isInitialLoadComplete = true
+    state.seedRemovalBatch(pending: [folderRepo.id: .folderUnlink])
+    state.reconcileSidebarForTesting()
+    state.sidebarItems[id: folderRowID]?.lifecycle = .deletingScript
+
+    #expect(state.isRemovingRepository(folderRepo) == false)
   }
 
   @Test func deleteWorktreeScriptFailureForFolderClearsRemovingState() async {

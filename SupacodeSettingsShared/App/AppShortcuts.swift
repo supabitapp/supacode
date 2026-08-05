@@ -16,9 +16,9 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectWorktree(Int)
   case selectTab(Int)
   case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
-  case runScript, stopRunScript
+  case runScript, stopRunScript, renameTab
   case jumpToLatestUnread
-  case togglePullRequestInspector, toggleNotificationsInspector
+  case togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector
 
   // Stable string key for JSON dictionary persistence.
   public var codingKey: CodingKey {
@@ -69,8 +69,10 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "copyPath"
     case .runScript: "runScript"
     case .stopRunScript: "stopRunScript"
+    case .renameTab: "renameTab"
     case .jumpToLatestUnread: "jumpToLatestUnread"
     case .togglePullRequestInspector: "togglePullRequestInspector"
+    case .toggleFilesInspector: "toggleFilesInspector"
     case .toggleNotificationsInspector: "toggleNotificationsInspector"
     }
   }
@@ -105,8 +107,10 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "copyPath": .copyPath,
     "runScript": .runScript,
     "stopRunScript": .stopRunScript,
+    "renameTab": .renameTab,
     "jumpToLatestUnread": .jumpToLatestUnread,
     "togglePullRequestInspector": .togglePullRequestInspector,
+    "toggleFilesInspector": .toggleFilesInspector,
     "toggleNotificationsInspector": .toggleNotificationsInspector,
   ]
 
@@ -160,8 +164,10 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .copyPath: "Copy Path"
     case .runScript: "Run Script"
     case .stopRunScript: "Stop Run Script"
+    case .renameTab: "Rename Tab"
     case .jumpToLatestUnread: "Jump to Latest Unread"
     case .togglePullRequestInspector: "Toggle Pull Request Inspector"
+    case .toggleFilesInspector: "Toggle Files Inspector"
     case .toggleNotificationsInspector: "Toggle Notifications Inspector"
     }
   }
@@ -441,11 +447,15 @@ public enum AppShortcuts {
   public static let copyPath = AppShortcut(id: .copyPath, key: "c", modifiers: [.command, .shift])
   public static let runScript = AppShortcut(id: .runScript, key: "r", modifiers: .command)
   public static let stopRunScript = AppShortcut(id: .stopRunScript, key: ".", modifiers: .command)
+  public static let renameTab = AppShortcut(id: .renameTab, key: "r", modifiers: [.control, .shift])
   public static let jumpToLatestUnread = AppShortcut(
     id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
   )
   public static let togglePullRequestInspector = AppShortcut(
     id: .togglePullRequestInspector, key: "g", modifiers: [.command, .option]
+  )
+  public static let toggleFilesInspector = AppShortcut(
+    id: .toggleFilesInspector, key: "f", modifiers: [.command, .option]
   )
   public static let toggleNotificationsInspector = AppShortcut(
     id: .toggleNotificationsInspector, key: "n", modifiers: [.command, .option]
@@ -512,8 +522,8 @@ public enum AppShortcuts {
       category: .actions,
       shortcuts: [
         openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
-        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread,
-        togglePullRequestInspector, toggleNotificationsInspector,
+        openPullRequest, copyPath, runScript, stopRunScript, renameTab, jumpToLatestUnread,
+        togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector,
       ]
     ),
   ]

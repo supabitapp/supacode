@@ -609,47 +609,112 @@ enum SidebarPersistenceMigrator {
       }
     }
 
+    if runIDRekeyMigration(
+      fileExists: fileExists,
+      readFile: readFile,
+      gate: { $0 < remoteIdentitySchemaVersion },
+      stamping: remoteIdentitySchemaVersion,
+      using: stripLegacyIDPrefixes
+    ) {
+      logger.info("Migrated remote/folder ids to schema v\(remoteIdentitySchemaVersion).")
+    }
+  }
+
+  // MARK: - Remote-id slash normalization (schema v2 -> v3).
+
+  /// Target sidebar schema for the remote-id slash normalization.
+  private static let remoteSlashSchemaVersion = 3
+
+  /// One-shot normalization of persisted remote ids whose path picked up a
+  /// disk-state-dependent trailing slash from the retired `fileURLWithPath`
+  /// synthesis (gh-764): re-keys per-repo settings, pins, `layouts.json`, and
+  /// every sidebar id so they keep matching the now slash-free live ids.
+  @MainActor
+  static func migrateRemoteSlashIDsIfNeeded(
+    fileExists: (URL) -> Bool = { url in
+      FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    },
+    readFile: (URL) -> Data? = { url in
+      try? Data(contentsOf: url)
+    }
+  ) {
+    // Require a completed v2 pass: stamping v3 over a bailed v2 would gate the
+    // prefix migration out forever while its ids are still retired.
+    if runIDRekeyMigration(
+      fileExists: fileExists,
+      readFile: readFile,
+      gate: { $0 >= remoteIdentitySchemaVersion && $0 < remoteSlashSchemaVersion },
+      stamping: remoteSlashSchemaVersion,
+      using: normalizedPersistedRemoteID
+    ) {
+      logger.info("Normalized remote id slashes to schema v\(remoteSlashSchemaVersion).")
+    }
+  }
+
+  /// Shared skeleton of the id-rekey migrations: read + gate on the sidebar
+  /// schema, re-key per-repo settings and pins, then layouts and every sidebar
+  /// id, stamping `version` only after everything landed. Returns `true` when
+  /// the migration ran to completion.
+  @MainActor
+  private static func runIDRekeyMigration(
+    fileExists: (URL) -> Bool,
+    readFile: (URL) -> Data?,
+    gate: (Int) -> Bool,
+    stamping version: Int,
+    using transform: (String) -> String
+  ) -> Bool {
     let sidebarURL = SupacodePaths.sidebarURL
     let sidebarPresent = fileExists(sidebarURL)
     let sidebarData = sidebarPresent ? readFile(sidebarURL) : nil
     // Present but unreadable / undecodable: overwriting with empty would drop the
     // layout and stamp the schema so it never retries. Only a truly absent file proceeds.
-    if sidebarPresent, sidebarData == nil { return }
+    if sidebarPresent, sidebarData == nil { return false }
     let existing = sidebarData.flatMap { try? JSONDecoder().decode(SidebarState.self, from: $0) }
-    if sidebarData != nil, existing == nil { return }
-    guard (existing?.schemaVersion ?? 0) < remoteIdentitySchemaVersion else { return }
+    if sidebarData != nil, existing == nil { return false }
+    guard gate(existing?.schemaVersion ?? 0) else { return false }
 
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { settings in
-      // Re-key per-repo settings (color / custom name) and any leftover pins off
-      // the retired prefixes so they keep matching the live ids.
       var rekeyedRepositories: [String: RepositorySettings] = [:]
       for (key, value) in settings.repositories {
-        let migrated = stripLegacyIDPrefixes(key)
-        if rekeyedRepositories[migrated] == nil {
+        let migrated = transform(key)
+        // The already-normalized spelling is what live builds wrote; it wins a
+        // collision with a stale duplicate.
+        if migrated == key || rekeyedRepositories[migrated] == nil {
           rekeyedRepositories[migrated] = value
         }
       }
       settings.repositories = rekeyedRepositories
-      settings.pinnedWorktreeIDs = settings.pinnedWorktreeIDs.map(stripLegacyIDPrefixes)
+      settings.pinnedWorktreeIDs = settings.pinnedWorktreeIDs.map(transform)
     }
 
     // A present-but-unreadable layouts.json would orphan its keys; bail so the
     // whole pass retries next launch rather than stamping the schema past it.
-    guard rekeyLegacyLayouts(fileExists: fileExists, readFile: readFile) else { return }
+    guard rekeyLayouts(fileExists: fileExists, readFile: readFile, using: transform) else { return false }
 
     var state = existing ?? SidebarState()
-    rekeyToRemoteIdentitySchema(&state)
-    guard persist(state: state, to: sidebarURL) else { return }
-    logger.info("Migrated remote/folder ids to schema v\(remoteIdentitySchemaVersion).")
+    rekeySidebarIDs(&state, stamping: version, using: transform)
+    return persist(state: state, to: sidebarURL)
   }
 
-  /// Re-key `layouts.json` (terminal snapshots keyed by worktree id) off the retired
-  /// prefixes so remote/folder tabs still restore. Returns `false` when a present file
-  /// can't be read/written, so the caller bails and retries. Written directly because
-  /// `LayoutsKey.save` is a no-op.
+  /// Trim the trailing slash from a persisted remote id's path part. Local ids
+  /// (leading `/`) pass through untouched: a local repo / folder-synthetic id
+  /// legitimately ends with `/`.
+  static func normalizedPersistedRemoteID(_ id: String) -> String {
+    guard !id.hasPrefix("/"), let slash = id.firstIndex(of: "/") else { return id }
+    return String(id[..<slash]) + RepositoryLocation.normalizedRemotePath(String(id[slash...]))
+  }
+
+  /// Re-key `layouts.json` (terminal snapshots keyed by worktree id) through
+  /// `transform` so remote/folder tabs still restore. Returns `false` when a present
+  /// file can't be read/written, so the caller bails and retries. Written directly
+  /// because `LayoutsKey.save` is a no-op.
   @MainActor
-  private static func rekeyLegacyLayouts(fileExists: (URL) -> Bool, readFile: (URL) -> Data?) -> Bool {
+  private static func rekeyLayouts(
+    fileExists: (URL) -> Bool,
+    readFile: (URL) -> Data?,
+    using transform: (String) -> String
+  ) -> Bool {
     let layoutsURL = SupacodePaths.layoutsURL
     guard fileExists(layoutsURL) else { return true }
     guard let data = readFile(layoutsURL),
@@ -661,9 +726,11 @@ enum SidebarPersistenceMigrator {
     var rekeyed: [String: TerminalLayoutSnapshot] = [:]
     var changed = false
     for (key, value) in layouts {
-      let migrated = stripLegacyIDPrefixes(key)
+      let migrated = transform(key)
       if migrated != key { changed = true }
-      if rekeyed[migrated] == nil { rekeyed[migrated] = value }
+      // The already-normalized spelling is what live builds wrote; it wins a
+      // collision with a stale duplicate.
+      if migrated == key || rekeyed[migrated] == nil { rekeyed[migrated] = value }
     }
     guard changed else { return true }
     do {
@@ -691,12 +758,15 @@ enum SidebarPersistenceMigrator {
     return result
   }
 
-  /// Rewrite every persisted id in `state` off the retired prefixes and stamp
-  /// the remote-identity schema version. Section keys (repo ids) and item keys
-  /// (worktree ids) both pass through `stripLegacyIDPrefixes`; collisions keep
-  /// the first entry (a folder synthetic and a git worktree can't legitimately
-  /// share a bucket).
-  private static func rekeyToRemoteIdentitySchema(_ state: inout SidebarState) {
+  /// Rewrite every persisted id in `state` through `transform` and stamp
+  /// `version`. Section keys (repo ids) and item keys (worktree ids) both pass
+  /// through; on a collision the already-normalized spelling wins (it is what
+  /// live builds wrote), else the first entry is kept.
+  private static func rekeySidebarIDs(
+    _ state: inout SidebarState,
+    stamping version: Int,
+    using transform: (String) -> String
+  ) {
     var rekeyedSections: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
     for (repoID, section) in state.sections {
       var rekeyedSection = section
@@ -704,8 +774,8 @@ enum SidebarPersistenceMigrator {
       for (bucketID, bucket) in section.buckets {
         var rekeyedItems: OrderedDictionary<Worktree.ID, SidebarState.Item> = [:]
         for (worktreeID, item) in bucket.items {
-          let migrated = WorktreeID(stripLegacyIDPrefixes(worktreeID.rawValue))
-          if rekeyedItems[migrated] == nil {
+          let migrated = WorktreeID(transform(worktreeID.rawValue))
+          if migrated == worktreeID || rekeyedItems[migrated] == nil {
             rekeyedItems[migrated] = item
           }
         }
@@ -714,14 +784,14 @@ enum SidebarPersistenceMigrator {
         rekeyedBuckets[bucketID] = rekeyedBucket
       }
       rekeyedSection.buckets = rekeyedBuckets
-      let migratedRepoID = RepositoryID(stripLegacyIDPrefixes(repoID.rawValue))
-      if rekeyedSections[migratedRepoID] == nil {
+      let migratedRepoID = RepositoryID(transform(repoID.rawValue))
+      if migratedRepoID == repoID || rekeyedSections[migratedRepoID] == nil {
         rekeyedSections[migratedRepoID] = rekeyedSection
       }
     }
     state.sections = rekeyedSections
-    state.focusedWorktreeID = state.focusedWorktreeID.map { WorktreeID(stripLegacyIDPrefixes($0.rawValue)) }
-    state.schemaVersion = remoteIdentitySchemaVersion
+    state.focusedWorktreeID = state.focusedWorktreeID.map { WorktreeID(transform($0.rawValue)) }
+    state.schemaVersion = version
   }
 
   /// Pool of (candidate-prefix → owning-root) pairs used by the

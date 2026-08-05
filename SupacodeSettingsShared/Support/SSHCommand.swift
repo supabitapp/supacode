@@ -8,7 +8,8 @@ import Foundation
 ///     shell re-parses it (one quoting level, applied in `remoteCommand`).
 ///   - `commandLine(...)` returns a single string for a parent `/bin/sh -c`
 ///     (Ghostty's surface command), so the remote command must additionally be
-///     quoted for the *local* shell (two quoting levels).
+///     quoted for the *local* shell (two quoting levels, three when the payload
+///     rides through `posixShellWrapped`).
 ///
 /// Every invocation shares `controlOptions` so N git calls plus the terminal
 /// reuse one multiplexed SSH connection: one auth / FIDO touch, and no
@@ -58,9 +59,40 @@ public nonisolated enum SSHCommand {
     "-o", "ConnectTimeout=30",
   ]
 
-  /// POSIX single-quote a token so a parent shell passes it through literally.
+  /// POSIX single-quote a token for a `/bin/sh` parser. Use `loginShellQuote`
+  /// whenever the re-parser is the remote login shell, which may be fish.
   public static func shellQuote(_ value: String) -> String {
     "'" + value.replacing("'", with: "'\\''") + "'"
+  }
+
+  /// Quotes a token for whichever login shell ssh hands the remote command to.
+  /// Every shell accepts single-quoted spans, but fish rewrites `\'` and `\\`
+  /// inside them, so close the span and emit those two as escapes that decode
+  /// to the same byte in sh, bash, zsh and fish. csh survives the escapes but
+  /// not a token carrying `!` or a newline, so it stays out of the contract.
+  public static func loginShellQuote(_ value: String) -> String {
+    // Scalars, not characters: a backslash carrying a combining mark is one
+    // Character, and matching on it would leave the backslash unescaped.
+    var quoted = "'"
+    for scalar in value.unicodeScalars {
+      switch scalar {
+      case "'":
+        quoted += "'\"'\"'"
+      case "\\":
+        quoted += "'\\\\'"
+      default:
+        quoted.unicodeScalars.append(scalar)
+      }
+    }
+    quoted += "'"
+    return quoted
+  }
+
+  /// Hands `script` to `/bin/sh`, so the remote login shell only parses this
+  /// one fish/POSIX-portable line and the script itself runs under a guaranteed
+  /// POSIX shell with the login shell's exported PATH already in place.
+  public static func posixShellWrapped(_ script: String) -> String {
+    "exec /bin/sh -c " + loginShellQuote(script)
   }
 
   /// The command string the *remote* shell runs for a local
@@ -73,11 +105,11 @@ public nonisolated enum SSHCommand {
     arguments: [String],
     workingDirectory: URL?
   ) -> String {
-    let invocation = ([executable] + arguments).map(shellQuote).joined(separator: " ")
+    let invocation = ([executable] + arguments).map(loginShellQuote).joined(separator: " ")
     guard let workingDirectory else {
       return invocation
     }
-    let directory = shellQuote(workingDirectory.path(percentEncoded: false))
+    let directory = loginShellQuote(workingDirectory.path(percentEncoded: false))
     return "cd -- \(directory) && exec \(invocation)"
   }
 
@@ -90,13 +122,13 @@ public nonisolated enum SSHCommand {
   /// (`brew shellenv`), restoring the full PATH. `$SHELL` is expanded by ssh's
   /// own outer shell; `exec` replaces it so signals / exit status pass through.
   public static func loginShellWrapped(_ remoteScript: String) -> String {
-    "exec \"$SHELL\" -l -c " + shellQuote(remoteScript)
+    "exec \"$SHELL\" -l -c " + loginShellQuote(remoteScript)
   }
 
-  /// Login-shell-wrapped remote command that also forwards positional arguments
-  /// (`$0`, `$1`, …) to the `-c` script, so an arbitrary payload (e.g. a user
-  /// script) rides as `$1` instead of being concatenated into the script text.
-  /// `exec [env NAME=…] "$SHELL" -l -c '<script>' <arg0> <arg1> …`.
+  /// Login-shell-wrapped remote command with an optional `env` prefix.
+  /// Numbered positionals are POSIX-only: fish binds `$argv` and expands `$1`
+  /// to an empty string without erroring, so a script reading `$1` must go
+  /// through `loginShellWrappedPosixScript` instead.
   ///
   /// `environment` is applied via an `env` prefix so the login shell inherits
   /// the vars *before* it sources its profile (a plain `export` inside the `-c`
@@ -106,22 +138,37 @@ public nonisolated enum SSHCommand {
     positionalArguments: [String],
     environment: [String: String] = [:]
   ) -> String {
-    var line = "exec " + environmentPrefix(environment) + "\"$SHELL\" -l -c " + shellQuote(remoteScript)
+    var line = "exec " + environmentPrefix(environment) + "\"$SHELL\" -l -c " + loginShellQuote(remoteScript)
     for argument in positionalArguments {
-      line += " " + shellQuote(argument)
+      line += " " + loginShellQuote(argument)
     }
     return line
   }
 
-  /// An `env NAME='value' …` prefix (sorted, each value shell-quoted) or `""`
-  /// when there is nothing to set. Names are fixed identifiers so they stay
-  /// unquoted; values are quoted, so the prefix can't inject extra tokens.
+  /// Loads the remote login-shell environment, then execs `/bin/sh` to run a
+  /// POSIX script: the login shell may be fish, which has no `$1`, so numbered
+  /// positionals must be consumed by `sh` rather than by the login shell.
+  public static func loginShellWrappedPosixScript(
+    _ remoteScript: String,
+    positionalArguments: [String],
+    environment: [String: String] = [:]
+  ) -> String {
+    var invocation = posixShellWrapped(remoteScript)
+    for argument in positionalArguments {
+      invocation += " " + loginShellQuote(argument)
+    }
+    return loginShellWrapped(invocation, positionalArguments: [], environment: environment)
+  }
+
+  /// An `env NAME='value' …` prefix (sorted, each value login-shell-quoted) or
+  /// `""` when there is nothing to set. Names are fixed identifiers so they
+  /// stay unquoted; values are quoted, so the prefix can't inject extra tokens.
   private static func environmentPrefix(_ environment: [String: String]) -> String {
     guard !environment.isEmpty else { return "" }
     let assignments =
       environment
       .sorted { $0.key < $1.key }
-      .map { "\($0.key)=\(shellQuote($0.value))" }
+      .map { "\($0.key)=\(loginShellQuote($0.value))" }
       .joined(separator: " ")
     return "env \(assignments) "
   }
@@ -137,10 +184,11 @@ public nonisolated enum SSHCommand {
     + #"infocmp "$TERM" >/dev/null 2>&1 ); then "#
     + "export TERM=xterm-256color; fi; "
 
-  /// Wrap in `/bin/sh` so fish/csh login shells only parse `exec`, and export
-  /// the resolved TERM before the real login shell sources its profile.
+  /// Wrap in `/bin/sh` so a fish login shell only parses `exec`, and export the
+  /// resolved TERM before the real login shell sources its profile. The login
+  /// shell re-parses this line, so the payload needs `loginShellQuote`.
   static func terminalCompatibleLoginShellCommand(_ loginShellCommand: String) -> String {
-    "exec /bin/sh -c " + shellQuote(terminalCompatibilityPrelude + loginShellCommand)
+    posixShellWrapped(terminalCompatibilityPrelude + loginShellCommand)
   }
 
   /// Full local `ssh` argv for `Process` / `ShellClient`. The remote command is
@@ -187,9 +235,8 @@ public nonisolated enum SSHCommand {
     )
   }
 
-  /// `commandLine` variant that forwards positional arguments to the remote
-  /// login-shell `-c` script, for callers that pass an arbitrary payload as
-  /// `$1` (e.g. a blocking script's user command).
+  /// `commandLine` variant that loads the remote login-shell environment, then
+  /// runs a POSIX script under `/bin/sh` with forwarded positional arguments.
   public static func commandLine(
     host: RemoteHost,
     remoteScript: String,
@@ -200,7 +247,7 @@ public nonisolated enum SSHCommand {
   ) -> String {
     commandLine(
       host: host,
-      loginShellCommand: loginShellWrapped(
+      loginShellCommand: loginShellWrappedPosixScript(
         remoteScript,
         positionalArguments: positionalArguments,
         environment: environment
