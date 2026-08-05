@@ -125,6 +125,11 @@ private struct WorktreeBaseRefField: View {
       branchMenu: store.branchMenu,
       remoteNames: store.remoteNames,
       selectedRef: store.selectedBaseRef,
+      menuContentToken: .base(
+        automaticBaseRef: store.automaticBaseRef,
+        defaultBranch: store.defaultBranch,
+        selectedBaseRef: store.selectedBaseRef
+      ),
       onSelect: { store.send(.baseRefSelected($0)) },
       topRows: { WorktreeBaseRefTopRows(store: store) }
     )
@@ -142,6 +147,7 @@ private struct WorktreeUpstreamField: View {
       branchMenu: store.upstreamBranchMenu,
       remoteNames: store.remoteNames,
       selectedRef: store.selectedUpstreamBranch,
+      menuContentToken: .upstream(store.selectedUpstream),
       onSelect: { store.send(.upstreamSelected(.branch($0))) },
       topRows: { WorktreeUpstreamTopRows(store: store) }
     )
@@ -157,6 +163,7 @@ private struct WorktreeRefPickerField<TopRows: View>: View {
   let branchMenu: BaseRefBranchMenu?
   let remoteNames: [String]
   let selectedRef: String?
+  let menuContentToken: WorktreeRefMenuToken
   let onSelect: (String) -> Void
   @ViewBuilder let topRows: TopRows
 
@@ -201,30 +208,15 @@ private struct WorktreeRefPickerField<TopRows: View>: View {
           .onKeyPress(.upArrow) { moveHighlight(by: -1) }
           .onKeyPress(.return) { commitHighlighted() }
         // Browse: the hierarchical menu, kept for when you don't know the branch name up front.
-        Menu {
-          topRows
-
-          Divider()
-
-          if let branchMenu {
-            if !branchMenu.localBranches.isEmpty {
-              Menu("Local") {
-                ForEach(branchMenu.localBranches) { node in
-                  WorktreeBranchNodeMenu(node: node, selectedRef: selectedRef, onSelect: select)
-                }
-              }
-            }
-            ForEach(branchMenu.remotes) { remote in
-              WorktreeRemoteBranchMenu(remote: remote, selectedRef: selectedRef, onSelect: select)
-            }
-          } else {
-            Text("Loading branches…")
-          }
-        } label: {
-          Text(menuLabel)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
+        WorktreeRefBrowseMenu(
+          menuLabel: menuLabel,
+          branchMenu: branchMenu,
+          selectedRef: selectedRef,
+          menuContentToken: menuContentToken,
+          topRows: topRows,
+          onSelect: select
+        )
+        .equatable()
         // Cap and pin trailing so a long ref can't crowd the search field yet still grazes the right edge.
         .frame(maxWidth: 160, alignment: .trailing)
         .layoutPriority(1)
@@ -279,6 +271,60 @@ private struct WorktreeRefPickerField<TopRows: View>: View {
   private func select(_ ref: String) {
     onSelect(ref)
     query = ""
+  }
+}
+
+/// The values that can change the top rows or their selection marks. The menu
+/// action closures capture the stable prompt store, so this token is the only
+/// state the equatable menu needs in addition to its branch tree.
+private enum WorktreeRefMenuToken: Hashable {
+  case base(automaticBaseRef: String, defaultBranch: String?, selectedBaseRef: String?)
+  case upstream(WorktreeUpstreamPreference)
+}
+
+/// A value-backed boundary around the native nested Menu. Agent presence
+/// updates can re-evaluate the sheet's ancestors, but SwiftUI skips this view's
+/// body while the menu inputs remain equal, preserving AppKit's open submenu.
+private struct WorktreeRefBrowseMenu<TopRows: View>: View, Equatable {
+  let menuLabel: String
+  let branchMenu: BaseRefBranchMenu?
+  let selectedRef: String?
+  let menuContentToken: WorktreeRefMenuToken
+  let topRows: TopRows
+  let onSelect: (String) -> Void
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.menuLabel == rhs.menuLabel
+      && lhs.branchMenu == rhs.branchMenu
+      && lhs.selectedRef == rhs.selectedRef
+      && lhs.menuContentToken == rhs.menuContentToken
+  }
+
+  var body: some View {
+    Menu {
+      topRows
+
+      Divider()
+
+      if let branchMenu {
+        if !branchMenu.localBranches.isEmpty {
+          Menu("Local") {
+            ForEach(branchMenu.localBranches) { node in
+              WorktreeBranchNodeMenu(node: node, selectedRef: selectedRef, onSelect: onSelect)
+            }
+          }
+        }
+        ForEach(branchMenu.remotes) { remote in
+          WorktreeRemoteBranchMenu(remote: remote, selectedRef: selectedRef, onSelect: onSelect)
+        }
+      } else {
+        Text("Loading branches…")
+      }
+    } label: {
+      Text(menuLabel)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
   }
 }
 
