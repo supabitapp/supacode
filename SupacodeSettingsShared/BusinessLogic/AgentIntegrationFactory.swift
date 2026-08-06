@@ -45,7 +45,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
@@ -61,7 +61,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
@@ -77,7 +77,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try await installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
@@ -93,7 +93,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
@@ -109,7 +109,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
@@ -125,7 +125,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
@@ -141,7 +141,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try await installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
@@ -157,7 +157,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
@@ -173,7 +173,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
@@ -189,7 +189,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
@@ -205,7 +205,7 @@ nonisolated enum AgentIntegrationFactory {
     return [
       AgentIntegration.Component(
         kind: .hooks,
-        state: { installer.installState() },
+        state: { try installer.installState() },
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
@@ -219,7 +219,7 @@ nonisolated enum AgentIntegrationFactory {
     let installer = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
     return AgentIntegration.Component(
       kind: .skills,
-      state: { installer.installState(agent) },
+      state: { try installer.installState(agent) },
       install: { try installer.install(agent) },
       uninstall: { try installer.uninstall(agent) }
     )

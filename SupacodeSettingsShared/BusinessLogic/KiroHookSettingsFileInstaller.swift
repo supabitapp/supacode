@@ -27,10 +27,12 @@ nonisolated struct KiroHookSettingsFileInstaller {
 
   // MARK: - Check.
 
+  /// Throws when the file can't be read or parsed: an unreadable file is not
+  /// an uninstalled one.
   func installState(
     settingsURL: URL,
     hookEntriesByEvent: [String: [JSONValue]]
-  ) -> ComponentInstallState {
+  ) throws -> ComponentInstallState {
     do {
       let settingsObject = try loadSettingsObject(at: settingsURL)
       let expected = Self.commands(from: hookEntriesByEvent)
@@ -39,10 +41,8 @@ nonisolated struct KiroHookSettingsFileInstaller {
       if actual.isEmpty { return .notInstalled }
       return actual == expected ? .installed : .outdated
     } catch {
-      if !Self.isFileNotFound(error) {
-        logWarning("Failed to inspect Kiro hook settings at \(settingsURL.path): \(error)")
-      }
-      return .notInstalled
+      logWarning("Failed to inspect Kiro hook settings at \(settingsURL.path): \(error)")
+      throw error
     }
   }
 
@@ -156,9 +156,5 @@ nonisolated struct KiroHookSettingsFileInstaller {
 
   private func writeSettings(_ object: [String: JSONValue], to url: URL) throws {
     try file.write(object, to: url)
-  }
-
-  private static func isFileNotFound(_ error: Error) -> Bool {
-    JSONHookSettingsFile.isFileNotFound(error)
   }
 }

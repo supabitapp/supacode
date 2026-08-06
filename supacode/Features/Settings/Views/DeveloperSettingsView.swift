@@ -259,7 +259,11 @@ private struct AgentIntegrationRow: View {
           .font(.subheadline)
           .foregroundStyle(.secondary)
         if let message = state.errorMessage {
-          Text(message).font(.subheadline).foregroundStyle(.red)
+          // Must stay a plain `String`: the message embeds a filesystem path that
+          // `LocalizedStringKey` would parse as markdown and mangle.
+          Text(message)
+            .font(.subheadline)
+            .foregroundStyle(state.isUndetermined ? Color.orange : Color.red)
         }
       }
       Spacer()
@@ -272,17 +276,21 @@ private struct AgentIntegrationRow: View {
     switch state {
     case .checking:
       ProgressView()
-    case .ready(.installed):
+    case .ready(.installed), .undetermined(.installed, _):
       ControlGroup {
         Label("Installed", systemImage: "checkmark")
         Button("Uninstall", role: .destructive, action: uninstallAction)
       }
-    case .ready(.outdated):
+    case .ready(.outdated), .undetermined(.outdated, _):
       ControlGroup {
         Button("Update", action: installAction)
         Button("Uninstall", role: .destructive, action: uninstallAction)
       }
-    case .ready(.notInstalled), .failed, .failedTransient:
+    case .ready(.notInstalled), .failed, .failedTransient, .undetermined(.notInstalled, _),
+      .undetermined(nil, _):
+      // Nothing was read for this agent, but offering Install still beats a row
+      // with no action: the attempt surfaces the real error where the warning
+      // line only describes it.
       Button("Install", action: installAction)
     case .installing:
       Button("Installing\u{2026}") {}

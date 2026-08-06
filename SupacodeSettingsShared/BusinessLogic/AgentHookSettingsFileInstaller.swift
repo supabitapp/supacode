@@ -33,11 +33,14 @@ nonisolated struct AgentHookSettingsFileInstaller {
   /// `additionalOutdatedIfInstalled` runs only when the command set already
   /// matches, against the **same** parsed snapshot (no second disk read). Use
   /// it for non-command payload checks such as Grok's env passthrough map.
+  ///
+  /// Throws when the file can't be read or parsed: an unreadable file is not
+  /// an uninstalled one, and only the caller can decide what to do about it.
   func installState(
     settingsURL: URL,
     hookGroupsByEvent: [String: [JSONValue]],
     additionalOutdatedIfInstalled: (([String: JSONValue]) -> Bool)? = nil
-  ) -> ComponentInstallState {
+  ) throws -> ComponentInstallState {
     do {
       let settingsObject = try loadSettingsObject(at: settingsURL)
       let expected = Self.commands(from: hookGroupsByEvent)
@@ -50,10 +53,8 @@ nonisolated struct AgentHookSettingsFileInstaller {
       }
       return .installed
     } catch {
-      if !Self.isFileNotFound(error) {
-        logWarning("Failed to inspect hook settings at \(settingsURL.path): \(error)")
-      }
-      return .notInstalled
+      logWarning("Failed to inspect hook settings at \(settingsURL.path): \(error)")
+      throw error
     }
   }
 
@@ -172,10 +173,6 @@ nonisolated struct AgentHookSettingsFileInstaller {
 
   private func loadSettingsObject(at url: URL) throws -> [String: JSONValue] {
     try file.load(at: url)
-  }
-
-  private static func isFileNotFound(_ error: Error) -> Bool {
-    JSONHookSettingsFile.isFileNotFound(error)
   }
 
   /// Strip every Supacode-managed command from the group. User-authored

@@ -22,10 +22,12 @@ nonisolated struct KimiHookSettingsFileInstaller {
 
   // MARK: - Install state.
 
+  /// Throws when the file can't be read: an unreadable file is not an
+  /// uninstalled one.
   func installState(
     settingsURL: URL,
     canonicalEntries: [KimiHookEntry],
-  ) -> ComponentInstallState {
+  ) throws -> ComponentInstallState {
     let expected = Set(canonicalEntries.map(\.command))
     guard !expected.isEmpty else { return .notInstalled }
     do {
@@ -36,7 +38,7 @@ nonisolated struct KimiHookSettingsFileInstaller {
     } catch {
       logWarning(
         "Failed to inspect Kimi hook settings at \(settingsURL.path): \(error.localizedDescription)")
-      return .notInstalled
+      throw error
     }
   }
 
@@ -67,8 +69,7 @@ nonisolated struct KimiHookSettingsFileInstaller {
   // MARK: - Text I/O.
 
   private func readText(at url: URL) throws -> String {
-    guard fileManager.fileExists(atPath: url.path) else { return "" }
-    let data = try Data(contentsOf: url)
+    guard let data = try AgentFileProbe.data(at: url) else { return "" }
     guard let text = String(data: data, encoding: .utf8) else {
       throw KimiHookSettingsFileError.invalidUTF8
     }

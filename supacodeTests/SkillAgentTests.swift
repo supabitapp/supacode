@@ -55,12 +55,12 @@ struct SkillAgentTests {
     let integration = AgentIntegrationFactory.make(for: .hermes, homeDirectoryURL: home)
 
     #expect(integration.agent == .hermes)
-    #expect(integration.state() == .notInstalled)
+    #expect(try integration.state() == .notInstalled)
     // The install gate requires the agent's own config directory to exist.
     try FileManager.default.createDirectory(
       at: home.appending(path: SkillAgent.hermes.configDirectoryName), withIntermediateDirectories: true)
     try await integration.install()
-    #expect(integration.state() == .installed)
+    #expect(try integration.state() == .installed)
     #expect(
       FileManager.default.fileExists(
         atPath: home.appending(path: ".hermes/plugins/supacode-presence/plugin.yaml").path(percentEncoded: false)
@@ -78,7 +78,7 @@ struct SkillAgentTests {
     )
   }
 
-  @Test func factoryBuiltIntegrationRefusesInstallWhenConfigDirAbsent() async {
+  @Test func factoryBuiltIntegrationRefusesInstallWhenConfigDirAbsent() async throws {
     let home = URL(fileURLWithPath: NSTemporaryDirectory())
       .appending(path: "supacode-nogate-\(UUID().uuidString)", directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: home) }
@@ -99,12 +99,12 @@ struct SkillAgentTests {
     let integration = AgentIntegrationFactory.make(for: .antigravity, homeDirectoryURL: home)
 
     #expect(integration.agent == .antigravity)
-    #expect(integration.state() == .notInstalled)
+    #expect(try integration.state() == .notInstalled)
     // The install gate requires the agent's own config directory to exist.
     try FileManager.default.createDirectory(
       at: home.appending(path: SkillAgent.antigravity.configDirectoryName), withIntermediateDirectories: true)
     try await integration.install()
-    #expect(integration.state() == .installed)
+    #expect(try integration.state() == .installed)
     #expect(
       FileManager.default.fileExists(
         atPath: home.appending(path: ".gemini/config/hooks.json").path(percentEncoded: false)

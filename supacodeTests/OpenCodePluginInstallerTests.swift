@@ -37,10 +37,10 @@ struct OpenCodePluginInstallerTests {
     #expect(first == second)
   }
 
-  @Test func installStateNotInstalledBeforeInstall() {
+  @Test func installStateNotInstalledBeforeInstall() throws {
     let homeURL = makeTempHomeURL()
     let installer = OpenCodePluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func installStateInstalledAfterInstall() throws {
@@ -49,7 +49,7 @@ struct OpenCodePluginInstallerTests {
 
     let installer = OpenCodePluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.install()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func installStateOutdatedWhenContentDiffers() throws {
@@ -63,7 +63,7 @@ struct OpenCodePluginInstallerTests {
     try "// \(OpenCodePluginContent.ownershipMarker)\n// old shape"
       .write(to: installer.pluginFileURL, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateNotInstalledForUnownedFileWithSameName() throws {
@@ -78,7 +78,7 @@ struct OpenCodePluginInstallerTests {
     try "export const NotSupacode = async () => ({})\n"
       .write(to: installer.pluginFileURL, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func uninstallRemovesOwnedPlugin() throws {
@@ -90,7 +90,7 @@ struct OpenCodePluginInstallerTests {
     try installer.uninstall()
 
     #expect(!fileManager.fileExists(atPath: installer.pluginFileURL.path))
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func uninstallPreservesUnownedFileWithSameName() throws {
@@ -109,7 +109,7 @@ struct OpenCodePluginInstallerTests {
     #expect(after == userPlugin)
   }
 
-  @Test func uninstallIsNoOpWhenMissing() {
+  @Test func uninstallIsNoOpWhenMissing() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -167,5 +167,26 @@ struct OpenCodePluginInstallerTests {
     // OpenCode's session.idle event has no assistant text; the notify leg is
     // intentionally omitted, so no notify OSC should appear in the plugin.
     #expect(!OpenCodePluginContent.source().contains("kind=notify"))
+  }
+
+  @Test func unreadablePluginIsNeitherAbsentNorClobbered() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = OpenCodePluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.install()
+    try fileManager.setAttributes(
+      [.posixPermissions: 0o000], ofItemAtPath: installer.pluginFileURL.path)
+    defer {
+      try? fileManager.setAttributes(
+        [.posixPermissions: 0o644], ofItemAtPath: installer.pluginFileURL.path)
+    }
+
+    // An unreadable plugin is not an absent one, must not be overwritten
+    // unchecked, and must not report a removal that never happened.
+    #expect(throws: AgentFileUnreadableError.self) { try installer.installState() }
+    #expect(throws: AgentFileUnreadableError.self) { try installer.install() }
+    #expect(throws: AgentFileUnreadableError.self) { try installer.uninstall() }
+    #expect(fileManager.fileExists(atPath: installer.pluginFileURL.path))
   }
 }

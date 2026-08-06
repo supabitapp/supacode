@@ -87,6 +87,10 @@ public struct SettingsFeature {
     public var installedOpenActions: [OpenWorktreeAction]
     /// Aggregate per-agent install state for the unified integration row.
     public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
+    /// Agents Supacode has already auto-updated this session. Recorded directly
+    /// so no intermediate row state can make the once-per-session guard forget.
+    /// A manual Install tap never consults it.
+    public var autoInstalledAgents: Set<SkillAgent> = []
     /// True while the install-more-agents modal is presented. Opening is gated
     /// in the reducer (`agentInstallSheetOpenTapped`) so the sheet is never
     /// reachable empty.
@@ -224,10 +228,18 @@ public struct SettingsFeature {
     case cliUninstallTapped
     case cliInstallCompleted(Result<Bool, Error>)
     case refreshAgentIntegrationStates
-    case agentIntegrationChecked(SkillAgent, AgentIntegrationState)
+    case agentIntegrationChecked(SkillAgent, Result<AgentIntegrationState, Error>)
     case agentIntegrationInstallTapped(SkillAgent)
     case agentIntegrationUninstallTapped(SkillAgent)
-    case agentIntegrationCompleted(SkillAgent, Result<AgentIntegrationState, Error>, failureIsTransient: Bool)
+    case agentIntegrationCompleted(
+      SkillAgent,
+      Result<AgentIntegrationState, Error>,
+      failureIsTransient: Bool,
+      expected: AgentIntegrationState
+    )
+    /// The write succeeded but the follow-up read failed, so it can be neither
+    /// confirmed nor called a failure. Carries the verdict from before the write.
+    case agentIntegrationUnverified(SkillAgent, lastKnown: AgentIntegrationState?, reason: String)
     case agentInstallSheetOpenTapped
     case setAgentInstallSheetPresented(Bool)
     case repositorySettings(RepositorySettingsFeature.Action)
@@ -284,12 +296,18 @@ public struct SettingsFeature {
         // shares `AgentIntegrationCancelID` with the install effect and
         // would kill the first install mid-write.
         return .run { [agentIntegrationClient] send in
-          await withTaskGroup(of: (SkillAgent, AgentIntegrationState).self) { group in
+          await withTaskGroup(of: (SkillAgent, Result<AgentIntegrationState, Error>).self) { group in
             for agent in SkillAgent.allCases {
-              group.addTask { (agent, await agentIntegrationClient.state(agent)) }
+              group.addTask {
+                do {
+                  return (agent, .success(try await agentIntegrationClient.state(agent)))
+                } catch {
+                  return (agent, .failure(error))
+                }
+              }
             }
-            for await (agent, integrationState) in group {
-              await send(.agentIntegrationChecked(agent, integrationState))
+            for await (agent, probe) in group {
+              await send(.agentIntegrationChecked(agent, probe))
             }
           }
         }
@@ -444,7 +462,7 @@ public struct SettingsFeature {
         state.cliInstallState = .failed(error.localizedDescription)
         return .none
 
-      case .agentIntegrationChecked(let agent, let integrationState):
+      case .agentIntegrationChecked(let agent, let probe):
         // Don't clobber in-flight or failed states. `.installing` /
         // `.uninstalling` settle via `.agentIntegrationCompleted`;
         // overwriting them races the shared `AgentIntegrationCancelID`
@@ -454,17 +472,34 @@ public struct SettingsFeature {
         let previous = state.agentIntegrationStates[agent]
         switch previous {
         case .installing, .uninstalling, .failed, .failedTransient: return .none
-        default: break
+        case nil, .checking, .ready, .undetermined: break
         }
-        state.agentIntegrationStates[agent] = .ready(integrationState)
+        let resolved: AgentIntegrationState
+        switch probe {
+        case .success(let value):
+          resolved = value
+        case .failure(let error):
+          // Never `.failed`: that state is sticky for the session, and a probe
+          // fault clears as soon as the file becomes readable, which only a
+          // re-probe can observe. No auto-install against a file we can't read.
+          settingsFeatureLogger.warning("\(agent.rawValue) integration state unreadable: \(error)")
+          state.agentIntegrationStates[agent] = .undetermined(
+            lastKnown: previous?.lastKnownState,
+            reason: Self.probeFailureMessage(error)
+          )
+          dismissInstallSheetIfSettled(&state)
+          return .none
+        }
+        state.agentIntegrationStates[agent] = .ready(resolved)
         // A refresh (not just a completed install) can be what finally empties
         // the modal, e.g. an agent installed externally between activations.
         dismissInstallSheetIfSettled(&state)
         // Re-install an outdated integration, but only once per session: our
         // hooks are matched by signal, so `.outdated` means our own components
-        // drifted. If a prior re-install already left it outdated, don't re-arm
-        // on every activation, which would be a silent, unbounded hook rewrite.
-        guard integrationState == .outdated, previous != .ready(.outdated) else { return .none }
+        // drifted. Re-arming on every activation would be a silent, unbounded
+        // hook rewrite.
+        guard resolved == .outdated, !state.autoInstalledAgents.contains(agent) else { return .none }
+        state.autoInstalledAgents.insert(agent)
         return .send(.agentIntegrationInstallTapped(agent))
 
       case .agentIntegrationInstallTapped(let agent):
@@ -473,19 +508,31 @@ public struct SettingsFeature {
         // already-present integration keeps them as a main-list row.
         let failureIsTransient: Bool
         switch state.agentIntegrationStates[agent] {
-        case .ready(.installed), .ready(.outdated), .failed: failureIsTransient = false
+        case .ready(.installed), .ready(.outdated), .failed, .undetermined: failureIsTransient = false
         case nil, .checking, .installing, .uninstalling, .ready(.notInstalled), .failedTransient:
           failureIsTransient = true
         }
+        // Captured before the write: an unverifiable read afterwards must not
+        // erase what the auto-update guard already knew.
+        let lastKnown = state.agentIntegrationStates[agent]?.lastKnownState
         state.agentIntegrationStates[agent] = .installing
         return .run { [agentIntegrationClient] send in
           do {
             try await agentIntegrationClient.install(agent)
-            let next = await agentIntegrationClient.state(agent)
-            await send(.agentIntegrationCompleted(agent, .success(next), failureIsTransient: failureIsTransient))
           } catch {
-            await send(.agentIntegrationCompleted(agent, .failure(error), failureIsTransient: failureIsTransient))
+            await send(
+              .agentIntegrationCompleted(
+                agent, .failure(error), failureIsTransient: failureIsTransient, expected: .installed))
+            return
           }
+          await send(
+            Self.verificationAction(
+              agent: agent,
+              expected: .installed,
+              lastKnown: lastKnown,
+              failureIsTransient: failureIsTransient,
+              client: agentIntegrationClient
+            ))
         }
         // Cancel an in-flight install for the same agent if Settings
         // is closed/reopened mid-flight — otherwise two effects could
@@ -493,25 +540,51 @@ public struct SettingsFeature {
         .cancellable(id: AgentIntegrationCancelID(agent: agent), cancelInFlight: true)
 
       case .agentIntegrationUninstallTapped(let agent):
+        let lastKnown = state.agentIntegrationStates[agent]?.lastKnownState
         state.agentIntegrationStates[agent] = .uninstalling
         return .run { [agentIntegrationClient] send in
           do {
             try await agentIntegrationClient.uninstall(agent)
-            let next = await agentIntegrationClient.state(agent)
-            await send(.agentIntegrationCompleted(agent, .success(next), failureIsTransient: false))
           } catch {
             // An uninstall failure is a persistent main-list error, not a modal one.
-            await send(.agentIntegrationCompleted(agent, .failure(error), failureIsTransient: false))
+            await send(
+              .agentIntegrationCompleted(
+                agent, .failure(error), failureIsTransient: false, expected: .notInstalled))
+            return
           }
+          await send(
+            Self.verificationAction(
+              agent: agent,
+              expected: .notInstalled,
+              lastKnown: lastKnown,
+              failureIsTransient: false,
+              client: agentIntegrationClient
+            ))
         }
         .cancellable(id: AgentIntegrationCancelID(agent: agent), cancelInFlight: true)
 
-      case .agentIntegrationCompleted(let agent, .success(let integrationState), _):
+      case .agentIntegrationCompleted(let agent, .success(let integrationState), _, let expected):
+        // The operation reported success, so trust the disk, not the report: a
+        // write that did not land must not render as a healthy row.
+        guard integrationState == expected else {
+          state.agentIntegrationStates[agent] = .failed(
+            Self.unlandedWriteMessage(agent: agent, expected: expected, actual: integrationState))
+          dismissInstallSheetIfSettled(&state)
+          return .none
+        }
         state.agentIntegrationStates[agent] = .ready(integrationState)
         dismissInstallSheetIfSettled(&state)
         return .none
 
-      case .agentIntegrationCompleted(let agent, .failure(let error), let failureIsTransient):
+      case .agentIntegrationUnverified(let agent, let lastKnown, let reason):
+        // Only the confirming read failed, so claiming either outcome would be
+        // a guess.
+        settingsFeatureLogger.warning("\(agent.rawValue) integration could not be verified: \(reason)")
+        state.agentIntegrationStates[agent] = .undetermined(lastKnown: lastKnown, reason: reason)
+        dismissInstallSheetIfSettled(&state)
+        return .none
+
+      case .agentIntegrationCompleted(let agent, .failure(let error), let failureIsTransient, _):
         if error is AgentIntegrationError {
           settingsFeatureLogger.warning("\(agent.rawValue) integration install skipped: \(error.localizedDescription)")
         } else {
@@ -721,6 +794,72 @@ public struct SettingsFeature {
       $0.global = settings
     }
     return settings
+  }
+
+  /// Re-read the state after a successful write. An unreadable follow-up is
+  /// reported as unverified rather than as a failure we did not observe.
+  private static func verificationAction(
+    agent: SkillAgent,
+    expected: AgentIntegrationState,
+    lastKnown: AgentIntegrationState?,
+    failureIsTransient: Bool,
+    client: AgentIntegrationClient
+  ) async -> Action {
+    do {
+      let next = try await client.state(agent)
+      return .agentIntegrationCompleted(
+        agent, .success(next), failureIsTransient: failureIsTransient, expected: expected)
+    } catch {
+      let detail = Self.sentence(
+        "\(Self.writeVerb(for: expected)) the \(agent.displayName) integration, but couldn't "
+          + "read it back to confirm. \(error.localizedDescription)")
+      return .agentIntegrationUnverified(agent, lastKnown: lastKnown, reason: Self.withRetryNote(detail))
+    }
+  }
+
+  /// Says what the fault means for the row, since the error alone reads as a
+  /// bare filesystem complaint.
+  private static func probeFailureMessage(_ error: Error) -> String {
+    let detail =
+      error is AgentFileUnreadableError
+      ? error.localizedDescription
+      : "Couldn't determine whether the integration is installed. \(error.localizedDescription)"
+    return withRetryNote(sentence(detail))
+  }
+
+  /// Every undetermined row re-probes on the next activation, so every message
+  /// that produces one says so.
+  private static func withRetryNote(_ sentence: String) -> String {
+    "\(sentence) Supacode retries when you switch back to it."
+  }
+
+  /// Foundation error descriptions already end in a period; ours don't always.
+  private static func sentence(_ text: String) -> String {
+    text.hasSuffix(".") ? text : "\(text)."
+  }
+
+  /// Past-tense verb for the write we just attempted.
+  private static func writeVerb(for expected: AgentIntegrationState) -> String {
+    expected == .notInstalled ? "Removed" : "Installed"
+  }
+
+  /// States what the read-back found without asserting a cause: the write may
+  /// have landed and a different component be the laggard.
+  private static func unlandedWriteMessage(
+    agent: SkillAgent,
+    expected: AgentIntegrationState,
+    actual: AgentIntegrationState
+  ) -> String {
+    "\(Self.writeVerb(for: expected)) the \(agent.displayName) integration, but it still reads as "
+      + "\(Self.stateDescription(actual)) on disk."
+  }
+
+  private static func stateDescription(_ state: AgentIntegrationState) -> String {
+    switch state {
+    case .installed: "installed"
+    case .notInstalled: "not installed"
+    case .outdated: "out of date"
+    }
   }
 
   /// Close the install modal once nothing installable remains, so it never
