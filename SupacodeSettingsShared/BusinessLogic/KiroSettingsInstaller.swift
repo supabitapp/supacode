@@ -200,7 +200,7 @@ nonisolated struct KiroSettingsInstaller {
     let process = Process()
     // Source the user's rc so a version-manager kiro-cli on the interactive PATH is found (#504).
     let (shell, command) = ShellClient.loginShellCommandInvocation(
-      "kiro-cli --version", userShell: CodexSettingsInstaller.loginShellURL())
+      "kiro-cli --version", userShell: CodexSettingsInstaller.loginShellURL(), workingDirectory: nil)
     process.executableURL = shell
     process.arguments = ["-l", "-c", command]
     let outputPipe = Pipe()

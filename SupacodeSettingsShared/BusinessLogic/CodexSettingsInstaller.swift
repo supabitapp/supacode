@@ -235,7 +235,7 @@ nonisolated struct CodexSettingsInstaller {
     // Source the user's rc so a version-manager Codex on the interactive PATH is found (#504).
     // `codex_hooks` was renamed to `hooks` in newer Codex versions; the legacy name is deprecated.
     let (shell, command) = ShellClient.loginShellCommandInvocation(
-      "codex features enable hooks", userShell: loginShellURL())
+      "codex features enable hooks", userShell: loginShellURL(), workingDirectory: nil)
     process.executableURL = shell
     process.arguments = ["-l", "-c", command]
     let errorPipe = Pipe()

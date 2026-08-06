@@ -110,7 +110,10 @@ public nonisolated enum SSHCommand {
       return invocation
     }
     let directory = loginShellQuote(workingDirectory.path(percentEncoded: false))
-    return "cd -- \(directory) && exec \(invocation)"
+    // Redirect so a `cd` hook loaded by the remote profile can't print into the
+    // stdout callers parse (#776). No `builtin`: the remote shell is unknown and
+    // dash lacks it, so a redefined `cd` still wins here.
+    return "cd -- \(directory) >/dev/null && exec \(invocation)"
   }
 
   /// Wrap a remote command so it runs under a **login** shell. ssh's default
