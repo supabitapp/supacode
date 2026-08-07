@@ -124,6 +124,9 @@ final class WorktreeTerminalState {
     /// Indexes `layout.leafSurfaceIDs`; consumers must bounds-check.
     let focusedLeafIndex: Int?
     let zoomedSurfaceID: UUID?
+    /// Per-leaf grids frozen at teardown; wake re-attaches at these exact
+    /// grids so zmx replays without wrapping (#780).
+    let frozenGrids: [UUID: FrozenGrid]
   }
 
   let tabManager: TerminalTabManager
@@ -1710,7 +1713,8 @@ final class WorktreeTerminalState {
     tabId: TerminalTabID,
     layout: TerminalLayoutSnapshot.LayoutNode,
     focusedLeafIndex: Int,
-    context: ghostty_surface_context_e
+    context: ghostty_surface_context_e,
+    frozenGrids: [UUID: FrozenGrid] = [:]
   ) {
     let firstLeafPwd = layout.firstLeaf.workingDirectory
     let workingDir = firstLeafPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
@@ -1721,12 +1725,13 @@ final class WorktreeTerminalState {
       inheritingFromSurfaceId: nil,
       context: context,
       surfaceID: layout.firstLeaf.id,
+      restoredGrid: layout.firstLeaf.id.flatMap { frozenGrids[$0] },
     )
     let tree = SplitTree(view: surface)
     setTree(tree, for: tabId)
     setFocusedSurface(surface.id, for: tabId)
 
-    restoreLayoutNode(layout, anchor: surface, tabId: tabId)
+    restoreLayoutNode(layout, anchor: surface, tabId: tabId, frozenGrids: frozenGrids)
 
     let leaves = trees[tabId]?.root?.leaves() ?? []
     let expectedLeaves = layout.leafCount
@@ -1745,7 +1750,8 @@ final class WorktreeTerminalState {
   private func restoreLayoutNode(
     _ node: TerminalLayoutSnapshot.LayoutNode,
     anchor: GhosttySurfaceView,
-    tabId: TerminalTabID
+    tabId: TerminalTabID,
+    frozenGrids: [UUID: FrozenGrid] = [:]
   ) {
     guard case .split(let split) = node else { return }
 
@@ -1763,6 +1769,7 @@ final class WorktreeTerminalState {
         workingDirectory: rightWorkingDir,
         tabId: tabId,
         surfaceID: split.right.firstLeaf.id,
+        restoredGrid: split.right.firstLeaf.id.flatMap { frozenGrids[$0] },
       )
     else {
       layoutLogger.warning("Skipping subtree restoration for tab \(tabId.rawValue)")
@@ -1770,8 +1777,8 @@ final class WorktreeTerminalState {
     }
 
     // Recurse into left and right subtrees.
-    restoreLayoutNode(split.left, anchor: anchor, tabId: tabId)
-    restoreLayoutNode(split.right, anchor: newSurface, tabId: tabId)
+    restoreLayoutNode(split.left, anchor: anchor, tabId: tabId, frozenGrids: frozenGrids)
+    restoreLayoutNode(split.right, anchor: newSurface, tabId: tabId, frozenGrids: frozenGrids)
   }
 
   private func createRestorationSplit(
@@ -1780,7 +1787,8 @@ final class WorktreeTerminalState {
     ratio: Double,
     workingDirectory: URL?,
     tabId: TerminalTabID,
-    surfaceID: UUID? = nil
+    surfaceID: UUID? = nil,
+    restoredGrid: FrozenGrid? = nil
   ) -> GhosttySurfaceView? {
     guard var tree = trees[tabId] else { return nil }
     let newSurface = createSurface(
@@ -1790,6 +1798,7 @@ final class WorktreeTerminalState {
       inheritingFromSurfaceId: anchor.id,
       context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
       surfaceID: surfaceID,
+      restoredGrid: restoredGrid,
     )
     do {
       tree = try tree.inserting(view: newSurface, at: anchor, direction: direction, ratio: ratio)
@@ -1988,6 +1997,7 @@ final class WorktreeTerminalState {
     surfaceID: UUID? = nil,
     bypassZmx: Bool = false,
     replacingExistingSurfaceID: Bool = false,
+    restoredGrid: FrozenGrid? = nil,
   ) -> GhosttySurfaceView {
     let resolvedID: UUID
     if let requested = surfaceID {
@@ -2016,15 +2026,26 @@ final class WorktreeTerminalState {
       worktree.host == nil
       ? (workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory)
       : nil
-    // Prefer the anchor pane's mounted size, else any mounted sibling, so even
-    // never-rendered background spawns start at an honest grid (#780).
-    let geometry = ContentGeometry.resolve(anchors: [
-      inheritingFromSurfaceId.flatMap { surfaces[$0] },
-      surfaces.values.first { $0.window != nil },
-    ])
+    // A re-attach must land at the exact frozen grid so zmx replays without
+    // wrapping; otherwise prefer the anchor pane's mounted size, else any
+    // mounted sibling, so even never-rendered background spawns start at an
+    // honest grid (#780).
+    let geometry =
+      restoredGrid.flatMap { ContentGeometry.restored($0) }
+      ?? ContentGeometry.resolve(anchors: [
+        inheritingFromSurfaceId.flatMap { surfaces[$0] },
+        surfaces.values.first { $0.window != nil },
+      ])
+    let pixelSize = "\(Int(geometry.pixelSize.width))x\(Int(geometry.pixelSize.height))"
     terminalStateLogger.debug(
-      "createSurface geometry \(Int(geometry.pixelSize.width))x\(Int(geometry.pixelSize.height))@\(geometry.scale)"
+      "createSurface geometry \(pixelSize)@\(geometry.scale) restored=\(restoredGrid != nil)"
     )
+    // A woken surface keeps its frozen font: the frozen cell metrics only
+    // reproduce the grid when the font matches.
+    let resolvedFontSize: Float32? =
+      restoredGrid != nil
+      ? restoredGrid?.fontSize
+      : (inherited.fontSize ?? rememberedZoomFontSize)
     let view = GhosttySurfaceView(
       id: surfaceID,
       runtime: runtime,
@@ -2036,7 +2057,7 @@ final class WorktreeTerminalState {
       // Blocking-script runners (bypassZmx) emit their own OSC 133/7 and must
       // not get Ghostty's shell integration injected into the host shell.
       disableShellIntegration: bypassZmx,
-      fontSize: inherited.fontSize ?? rememberedZoomFontSize,
+      fontSize: resolvedFontSize,
       initialGeometry: geometry,
       context: context
     )
@@ -3576,11 +3597,16 @@ final class WorktreeTerminalState {
     let layout = captureLayoutNode(root, agentsBySurface: resolvedAgentsBySurface() ?? [:])
     let focusedId = focusedSurfaceIdByTab[tabId]
     let focusedLeafIndex = focusedId.flatMap { id in leaves.firstIndex(where: { $0.id == id }) }
+    var frozenGrids: [UUID: FrozenGrid] = [:]
+    for leaf in leaves {
+      frozenGrids[leaf.id] = leaf.captureFrozenGrid()
+    }
     // The assignment fires the didSet, starting the dormant-session watchers.
     dormantTabLayouts[tabId] = DormantTabLayout(
       layout: layout,
       focusedLeafIndex: focusedLeafIndex,
-      zoomedSurfaceID: tree.zoomed?.leftmostLeaf().id
+      zoomedSurfaceID: tree.zoomed?.leftmostLeaf().id,
+      frozenGrids: frozenGrids
     )
     // Teardown in one turn: the `surfaces[id] === view` guards in the close /
     // unexpected-close handlers make any late callback or in-flight probe inert.
@@ -3682,7 +3708,8 @@ final class WorktreeTerminalState {
       tabId: tabId,
       layout: dormant.layout,
       focusedLeafIndex: dormant.focusedLeafIndex ?? 0,
-      context: context
+      context: context,
+      frozenGrids: dormant.frozenGrids
     )
     guard let tree = trees[tabId] else { return SplitTree() }
     if let zoomedID = dormant.zoomedSurfaceID,

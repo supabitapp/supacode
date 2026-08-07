@@ -1007,6 +1007,17 @@ final class GhosttySurfaceView: NSView, Identifiable {
     cellSize
   }
 
+  /// The grid this surface last actually rendered at, for hibernation freeze;
+  /// nil while size or cell metrics are still unknown.
+  func captureFrozenGrid() -> FrozenGrid? {
+    FrozenGrid.from(
+      backingSize: lastAppliedBackingSize,
+      cellSize: cellSize,
+      scale: backingScaleFactor(),
+      fontSize: fontSize == 0 ? nil : fontSize
+    )
+  }
+
   func shouldShowScrollbar() -> Bool {
     runtime.shouldShowScrollbar()
   }
