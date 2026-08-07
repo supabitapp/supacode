@@ -1,11 +1,13 @@
+import Dependencies
 import Foundation
 import IdentifiedCollections
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
 
 struct LayoutsMigratorTests {
-  private static func tab(
+  nonisolated private static func tab(
     id: UUID?,
     title: String = "shell",
     customTitle: String? = nil,
@@ -23,7 +25,7 @@ struct LayoutsMigratorTests {
     )
   }
 
-  private static func leaf(_ id: UUID, workingDirectory: String? = nil)
+  nonisolated private static func leaf(_ id: UUID, workingDirectory: String? = nil)
     -> TerminalLayoutSnapshot.LayoutNode
   {
     .leaf(
@@ -289,5 +291,147 @@ struct LayoutsMigratorTests {
     let decoded = try JSONDecoder().decode(LayoutsFile.self, from: Data(json.utf8))
     #expect(decoded.worktrees.count == 1)
     #expect(decoded.worktrees["good"] != nil)
+  }
+
+  // MARK: - File migration runner.
+
+  nonisolated private static let layoutsURL = URL(
+    fileURLWithPath: "/tmp/layouts-migrator-tests/layouts.json"
+  )
+  nonisolated private static let backupURL = layoutsURL.appendingPathExtension("pre-tabs-per-split.bak")
+
+  /// Runs the migrator against an in-memory file system; returns save calls.
+  @discardableResult
+  nonisolated private static func runMigration(
+    files: LockIsolated<[URL: Data]>,
+    backupExists: Bool = false,
+    failingSaves: Set<URL> = []
+  ) -> LockIsolated<[URL]> {
+    let saves = LockIsolated<[URL]>([])
+    withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { target in
+          guard let data = files.value[target] else { throw CocoaError(.fileReadNoSuchFile) }
+          return data
+        },
+        save: { data, target in
+          saves.withValue { $0.append(target) }
+          guard !failingSaves.contains(target) else { throw CocoaError(.fileWriteUnknown) }
+          files.withValue { $0[target] = data }
+        }
+      )
+    } operation: {
+      LayoutsMigrator.migrateFileIfNeeded(url: layoutsURL, fileExists: { _ in backupExists })
+    }
+    return saves
+  }
+
+  nonisolated private static func v1Data() throws -> Data {
+    let surfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [tab(id: surfaceID, layout: leaf(surfaceID, workingDirectory: "/tmp/wt"))],
+      selectedTabIndex: 0
+    )
+    return try JSONEncoder().encode(["wt": snapshot])
+  }
+
+  @Test func v1FileMigratesInPlaceWithABackup() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files)
+    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
+    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+    #expect(migrated.worktrees["wt"]?.layout.isConsistent == true)
+    #expect(migrated.worktrees["wt"]?.origin != nil)
+    #expect(files.value[Self.backupURL] == original)
+  }
+
+  @Test func migrationRunsExactlyOnce() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files)
+    let after = files.value
+    // The stamp gates the second run before any write.
+    let saves = Self.runMigration(files: files, backupExists: true)
+    #expect(saves.value.isEmpty)
+    #expect(files.value == after)
+  }
+
+  @Test func newerSchemaIsLeftUntouched() {
+    let newer = Data(#"{"schemaVersion":3,"worktrees":{}}"#.utf8)
+    let files = LockIsolated([Self.layoutsURL: newer])
+    let saves = Self.runMigration(files: files)
+    #expect(saves.value.isEmpty)
+    #expect(files.value[Self.layoutsURL] == newer)
+  }
+
+  @Test func unreadableFileIsLeftUntouched() {
+    let garbage = Data("not json".utf8)
+    let files = LockIsolated([Self.layoutsURL: garbage])
+    let saves = Self.runMigration(files: files)
+    #expect(saves.value.isEmpty)
+    #expect(files.value[Self.layoutsURL] == garbage)
+  }
+
+  @Test func existingBackupIsNeverOverwritten() throws {
+    let priorBackup = Data("prior".utf8)
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original, Self.backupURL: priorBackup])
+    Self.runMigration(files: files, backupExists: true)
+    #expect(files.value[Self.backupURL] == priorBackup)
+    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
+    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+  }
+
+  @Test func failedBackupDefersTheMigration() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files, failingSaves: [Self.backupURL])
+    // The v1 file must survive so the next launch can retry.
+    #expect(files.value[Self.layoutsURL] == original)
+    #expect(files.value[Self.backupURL] == nil)
+  }
+
+  @Test func absentFileIsANoOp() {
+    let files = LockIsolated([URL: Data]())
+    let saves = Self.runMigration(files: files)
+    #expect(saves.value.isEmpty)
+    #expect(files.value.isEmpty)
+  }
+
+  @Test func failedFinalWriteLeavesV1InPlaceForRetry() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files, failingSaves: [Self.layoutsURL])
+    // The backup landed but the v1 bytes survive so the next launch retries.
+    #expect(files.value[Self.layoutsURL] == original)
+    #expect(files.value[Self.backupURL] == original)
+  }
+
+  @Test func emptyV1MigratesToAStampedEmptyFile() throws {
+    let files = LockIsolated([Self.layoutsURL: Data("{}".utf8)])
+    Self.runMigration(files: files)
+    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
+    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+    #expect(migrated.worktrees.isEmpty)
+  }
+
+  @Test func rottenV1EntryDropsThatEntryNotTheMigration() throws {
+    let surfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [Self.tab(id: surfaceID, layout: Self.leaf(surfaceID))],
+      selectedTabIndex: 0
+    )
+    var envelope = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(["good": snapshot])) as? [String: Any]
+    )
+    envelope["bad"] = ["title": "missing everything else"]
+    let data = try JSONSerialization.data(withJSONObject: envelope)
+    let files = LockIsolated([Self.layoutsURL: data])
+    Self.runMigration(files: files)
+    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
+    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+    #expect(migrated.worktrees.count == 1)
+    #expect(migrated.worktrees["good"]?.layout.isConsistent == true)
   }
 }

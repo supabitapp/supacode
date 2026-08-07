@@ -1,3 +1,4 @@
+import Dependencies
 import Foundation
 import IdentifiedCollections
 import SupacodeSettingsShared
@@ -247,6 +248,68 @@ nonisolated extension TerminalLayoutSnapshot.LayoutNode {
       return [surface]
     case .split(let split):
       return split.left.leaves + split.right.leaves
+    }
+  }
+}
+
+nonisolated extension LayoutsMigrator {
+  /// Presence of the stamp means v2 or newer; such files are never rewritten
+  /// here (newer schemas are read-only for this build).
+  private struct SchemaStamp: Decodable {
+    let schemaVersion: Int
+  }
+
+  /// Rewrites a v1 layouts.json into the v2 pane topology, exactly once,
+  /// before hydration. The v1 original is backed up create-if-absent first;
+  /// a failed backup defers the whole migration to the next launch.
+  static func migrateFileIfNeeded(
+    url: URL = SupacodePaths.layoutsURL,
+    fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+  ) {
+    @Dependency(\.settingsFileStorage) var storage
+    let data: Data
+    do {
+      data = try storage.load(url)
+    } catch {
+      // A fresh install has no file; anything else defers with a diagnostic.
+      if !LayoutsIncrementalWriter.isFileAbsent(error) {
+        migrationLogger.error("layouts.json unreadable, deferring migration: \(error)")
+      }
+      return
+    }
+    guard (try? JSONDecoder().decode(SchemaStamp.self, from: data)) == nil else { return }
+    guard
+      let raw = try? JSONDecoder().decode(
+        [String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data
+      )
+    else {
+      migrationLogger.error("layouts.json is neither stamped v2 nor readable v1; leaving it untouched.")
+      return
+    }
+    // Element-wise so one rotten entry cannot strand the whole file on v1;
+    // the dropped entry survives only in the backup.
+    let legacy = raw.compactMapValues(\.value)
+    let dropped = raw.keys.filter { legacy[$0] == nil }
+    if !dropped.isEmpty {
+      migrationLogger.error("Migration drops unreadable v1 entries: \(dropped.sorted())")
+    }
+    let backupURL = url.appendingPathExtension("pre-tabs-per-split.bak")
+    if !fileExists(backupURL) {
+      do {
+        try storage.save(data, backupURL)
+      } catch {
+        migrationLogger.error("Backing up v1 layouts failed, deferring migration: \(error)")
+        return
+      }
+    }
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      try storage.save(try encoder.encode(migrate(legacy)), url)
+      migrationLogger.info("Migrated layouts.json to schema v\(LayoutsFile.currentSchemaVersion).")
+    } catch {
+      // The v1 file is untouched; the next launch retries.
+      migrationLogger.error("Writing migrated layouts failed: \(error)")
     }
   }
 }

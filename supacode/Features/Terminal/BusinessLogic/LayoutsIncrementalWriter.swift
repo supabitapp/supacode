@@ -110,7 +110,7 @@ actor LayoutsIncrementalWriter {
   }
 
   /// True only when the read failed because the file does not exist.
-  private static func isFileAbsent(_ error: Error) -> Bool {
+  static func isFileAbsent(_ error: Error) -> Bool {
     if let cocoa = error as? CocoaError, cocoa.code == .fileReadNoSuchFile { return true }
     if let posix = error as? POSIXError, posix.code == .ENOENT { return true }
     return false
