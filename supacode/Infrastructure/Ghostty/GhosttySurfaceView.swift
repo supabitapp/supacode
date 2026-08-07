@@ -90,7 +90,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   // view joins a window.
   private let initialScale: CGFloat
   // The scale last pushed to the terminal core; the frozen grid must record
-  // this one, since the cell metrics were computed under it.
+  // this one, since the applied backing size was measured under it.
   private var appliedContentScale: CGFloat
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
@@ -956,6 +956,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   func updateSurfaceSize(contentSize: CGSize? = nil) {
     guard let surface else { return }
+    // Off-window backing conversion is 1x; re-measuring a detached view would
+    // halve the applied size and poison the hibernation freeze.
+    guard window != nil || !hasBeenInWindow else { return }
     let backingSize = convertToBacking(contentSize ?? bounds.size)
     let currentSize = ghostty_surface_size(surface)
     let decision = ResizePolicy.decision(

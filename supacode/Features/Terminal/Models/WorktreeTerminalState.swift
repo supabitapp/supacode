@@ -2040,8 +2040,8 @@ final class WorktreeTerminalState {
     terminalStateLogger.debug(
       "createSurface geometry \(pixelSize)@\(geometry.scale) restored=\(restoredGrid != nil)"
     )
-    // A woken surface keeps its frozen font: the frozen cell metrics only
-    // reproduce the grid when the font matches.
+    // A woken surface keeps its frozen font: the frozen backing size only
+    // reproduces the grid when the font, and so the cell size, matches.
     let resolvedFontSize: Float32? =
       restoredGrid != nil
       ? restoredGrid?.fontSize

@@ -5,7 +5,7 @@ import AppKit
 /// snapshot was serialized at.
 nonisolated struct FrozenGrid: Equatable, Codable, Sendable {
   /// Real grid reported by the terminal core at freeze time (padding-aware);
-  /// diagnostics and persistence, not reconstruction.
+  /// used for diagnostics and as a sanity gate, never to re-derive pixels.
   let columns: Int
   let rows: Int
   /// Exact backing pixels the grid was computed from. Wake hands these back
