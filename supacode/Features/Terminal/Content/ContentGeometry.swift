@@ -17,6 +17,16 @@ nonisolated struct FrozenGrid: Equatable, Codable, Sendable {
   /// Live font size at freeze time; nil means the config default.
   let fontSize: Float32?
 
+  // Persisted shape; a rename must not silently change the wire format.
+  private enum CodingKeys: String, CodingKey {
+    case columns
+    case rows
+    case backingWidth
+    case backingHeight
+    case scale
+    case fontSize
+  }
+
   /// Freezes a surface's applied backing size and core-reported grid; nil
   /// while either is still unknown.
   static func from(
@@ -110,13 +120,25 @@ extension ContentGeometry {
     return .fallback
   }
 
+  // Above this per-axis pixel extent a decoded grid is treated as corrupt
+  // rather than adopted as a view frame.
+  private static let maximumRestoredPixelExtent: Double = 32_768
+  // Scale reaches the terminal core unbounded; cap decoded values well above
+  // any real display.
+  private static let maximumRestoredScale: Double = 8
+
   /// Geometry reproducing a frozen grid exactly, so a zmx re-attach replays into
   /// the same columns and rows it was serialized at (#780).
   static func restored(_ grid: FrozenGrid) -> ContentGeometry? {
+    // Finiteness and cap guard decoded values: an absurd size would become the
+    // view frame and trap in integer conversion.
     guard
       grid.columns > 0, grid.rows > 0,
-      grid.backingWidth > 0, grid.backingHeight > 0,
-      grid.scale > 0
+      grid.backingWidth.isFinite, grid.backingHeight.isFinite, grid.scale.isFinite,
+      grid.backingWidth > 0, grid.backingHeight > 0, grid.scale > 0,
+      grid.backingWidth <= maximumRestoredPixelExtent,
+      grid.backingHeight <= maximumRestoredPixelExtent,
+      grid.scale <= maximumRestoredScale
     else { return nil }
     return ContentGeometry(
       pixelSize: CGSize(width: grid.backingWidth, height: grid.backingHeight),

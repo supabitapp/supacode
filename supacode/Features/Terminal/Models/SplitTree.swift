@@ -1,6 +1,6 @@
 import CoreGraphics
 
-struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
+nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
   let root: Node?
   let zoomed: Node?
 
@@ -326,7 +326,7 @@ struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
   }
 }
 
-extension SplitTree.Node {
+nonisolated extension SplitTree.Node {
   typealias Node = SplitTree.Node
   typealias NewDirection = SplitTree.NewDirection
   typealias SplitError = SplitTree.SplitError
@@ -711,7 +711,7 @@ extension SplitTree.Node {
   }
 }
 
-extension SplitTree.Spatial {
+nonisolated extension SplitTree.Spatial {
   func slots(
     in direction: SplitTree.SpatialDirection,
     from referenceNode: SplitTree.Node
@@ -759,14 +759,14 @@ extension SplitTree.Spatial {
 
 // MARK: - Wire format.
 
-extension SplitTree {
+nonisolated extension SplitTree {
   fileprivate enum CodingKeys: String, CodingKey {
     case root
     case zoomedPath
   }
 }
 
-extension SplitTree.Node {
+nonisolated extension SplitTree.Node {
   fileprivate enum CodingKeys: String, CodingKey {
     case kind
     case leaf
@@ -778,7 +778,7 @@ extension SplitTree.Node {
   }
 }
 
-extension SplitTree.Split {
+nonisolated extension SplitTree.Split {
   fileprivate enum CodingKeys: String, CodingKey {
     case direction
     case ratio
@@ -787,10 +787,10 @@ extension SplitTree.Split {
   }
 }
 
-extension SplitTree.Direction: Codable {}
-extension SplitTree.PathComponent: Codable {}
+nonisolated extension SplitTree.Direction: Codable {}
+nonisolated extension SplitTree.PathComponent: Codable {}
 
-extension SplitTree: Codable where Leaf: Codable {
+nonisolated extension SplitTree: Codable where Leaf: Codable {
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let root = try container.decodeIfPresent(Node.self, forKey: .root)
@@ -809,7 +809,7 @@ extension SplitTree: Codable where Leaf: Codable {
   }
 }
 
-extension SplitTree.Node: Codable where Leaf: Codable {
+nonisolated extension SplitTree.Node: Codable where Leaf: Codable {
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     switch try container.decode(Kind.self, forKey: .kind) {
@@ -833,7 +833,7 @@ extension SplitTree.Node: Codable where Leaf: Codable {
   }
 }
 
-extension SplitTree.Split: Codable where Leaf: Codable {
+nonisolated extension SplitTree.Split: Codable where Leaf: Codable {
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
@@ -855,11 +855,11 @@ extension SplitTree.Split: Codable where Leaf: Codable {
 
 // MARK: - Sendable.
 
-extension SplitTree: Sendable where Leaf: Sendable {}
-extension SplitTree.Node: Sendable where Leaf: Sendable {}
-extension SplitTree.Split: Sendable where Leaf: Sendable {}
+nonisolated extension SplitTree: Sendable where Leaf: Sendable {}
+nonisolated extension SplitTree.Node: Sendable where Leaf: Sendable {}
+nonisolated extension SplitTree.Split: Sendable where Leaf: Sendable {}
 
-extension BidirectionalCollection {
+nonisolated extension BidirectionalCollection {
   func indexWrapping(before index: Index) -> Index {
     let previousIndex = self.index(before: index)
     if previousIndex < startIndex {
