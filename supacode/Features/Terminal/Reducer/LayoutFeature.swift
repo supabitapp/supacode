@@ -34,14 +34,14 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
 /// Creates live content for a tab; the real surface-backed factory is wired
 /// by the integration layer.
 nonisolated struct LayoutContentFactory: Sendable {
-  var make: @MainActor @Sendable (ContentID, TerminalContentState) -> any TabContent
+  var make: @MainActor @Sendable (Worktree.ID, ContentID, TerminalContentState) -> any TabContent
 }
 
 extension LayoutContentFactory: DependencyKey {
   // `unimplemented(_:placeholder:)` cannot mint the id-bound placeholder, so
   // this hand-rolls the same report-and-return contract.
   static let liveValue = LayoutContentFactory(
-    make: { contentID, initialState in
+    make: { _, contentID, initialState in
       reportIssue("LayoutContentFactory.make is unimplemented")
       return UnimplementedTabContent(id: contentID, state: initialState)
     }
@@ -55,6 +55,24 @@ extension DependencyValues {
     get { self[LayoutContentFactory.self] }
     set { self[LayoutContentFactory.self] = newValue }
   }
+}
+
+/// Tears down the session behind a closed content (the zmx kill for
+/// terminals); the reducer confirms the tombstone when it returns.
+nonisolated struct ContentSessionKiller: Sendable {
+  var kill: @Sendable (_ content: ContentID, _ worktree: Worktree.ID) async -> Void
+}
+
+extension ContentSessionKiller: DependencyKey {
+  // The integration layer injects the zmx-backed kill; running unwired must be
+  // loud, or closed tabs would confirm tombstones without killing anything.
+  static let liveValue = ContentSessionKiller(
+    kill: { _, _ in
+      reportIssue("ContentSessionKiller.kill is unimplemented")
+    }
+  )
+
+  static let testValue = liveValue
 }
 
 /// Zoom behavior on focus changes; the integration layer injects the live
@@ -148,6 +166,7 @@ struct LayoutFeature {
   }
 
   @Dependency(ContentRuntime.self) private var contentRuntime
+  @Dependency(ContentSessionKiller.self) private var sessionKiller
   @Dependency(LayoutContentFactory.self) private var layoutContentFactory
   @Dependency(SplitZoomPolicy.self) private var splitZoomPolicy
   @Dependency(\.uuid) private var uuid
@@ -212,15 +231,16 @@ extension LayoutFeature {
       return .none
     }
     guard let identity = mintedIdentity(in: state.layout, for: spec, operation: "newTab") else { return .none }
-    guard provisionContent(id: identity.contentID, from: spec, operation: "newTab") else { return .none }
+    guard provisionContent(id: identity.contentID, from: spec, in: state.id, operation: "newTab") else {
+      return .none
+    }
     if bootstraps {
       state.layout.tree = SplitTree(view: paneID)
       state.layout.panes.append(Pane(id: paneID))
     }
     guard var pane = state.layout.panes[id: paneID] else {
       // Unreachable behind the guards above; reap the started session anyway.
-      contentRuntime.remove(identity.contentID, tombstone: true)
-      return .none
+      return reap(identity.contentID, worktree: state.id)
     }
     let tab = TabItem(
       id: identity.tabID,
@@ -252,19 +272,18 @@ extension LayoutFeature {
     guard var pane = state.layout.pane(containingTab: tabID), let index = pane.tabs.index(id: tabID) else {
       return .none
     }
-    // Tombstoned until the async zmx kill (wired at integration) confirms.
-    contentRuntime.remove(pane.tabs[index].content.id, tombstone: true)
+    let reaping = reap(pane.tabs[index].content.id, worktree: state.id)
     pane.tabs.remove(at: index)
     guard !pane.tabs.isEmpty else {
       collapse(&state, paneID: pane.id)
-      return .none
+      return reaping
     }
     if pane.selectedTabID == tabID {
       // Mirror TerminalTabManager.closeTab: previous tab, else the first.
       pane.selectedTabID = index > 0 ? pane.tabs[index - 1].id : pane.tabs.first?.id
     }
     state.layout.panes[id: pane.id] = pane
-    return .none
+    return reaping
   }
 
   private func reduceMoveTab(
@@ -351,7 +370,7 @@ extension LayoutFeature {
       Self.logger.warning("wakeTab has no terminal payload for \(snapshot.id.rawValue)")
       return .none
     }
-    let content = layoutContentFactory.make(snapshot.id, terminalState)
+    let content = layoutContentFactory.make(state.id, snapshot.id, terminalState)
     guard contentRuntime.provision(content, at: geometry) else {
       Self.logger.warning("wakeTab provision refused for \(snapshot.id.rawValue)")
       return .none
@@ -384,17 +403,18 @@ extension LayoutFeature {
       return .none
     }
     guard let identity = mintedIdentity(in: state.layout, for: spec, operation: "splitPane") else { return .none }
-    guard provisionContent(id: identity.contentID, from: spec, operation: "splitPane") else { return .none }
+    guard provisionContent(id: identity.contentID, from: spec, in: state.id, operation: "splitPane") else {
+      return .none
+    }
     let paneID = PaneID(rawValue: uuid())
     do {
       // `inserting` clears zoom by design: the new pane must be visible.
       state.layout.tree = try state.layout.tree.inserting(view: paneID, at: anchorID, direction: direction)
     } catch {
-      // Defense in depth behind the anchor pre-check; the tombstone routes the
+      // Defense in depth behind the anchor pre-check; reaping routes the
       // started session into the kill path instead of leaking it.
-      contentRuntime.remove(identity.contentID, tombstone: true)
       Self.logger.error("splitPane insert failed at \(anchorID.rawValue): \(error)")
-      return .none
+      return reap(identity.contentID, worktree: state.id)
     }
     let tab = TabItem(
       id: identity.tabID,
@@ -410,11 +430,10 @@ extension LayoutFeature {
 
   private func reduceClosePane(_ state: inout State, paneID: PaneID) -> Effect<Action> {
     guard let pane = state.layout.panes[id: paneID] else { return .none }
-    for tab in pane.tabs {
-      contentRuntime.remove(tab.content.id, tombstone: true)
-    }
+    // Merged: one hung kill must not queue the siblings behind it.
+    let reaping = Effect<Action>.merge(pane.tabs.map { reap($0.content.id, worktree: state.id) })
     collapse(&state, paneID: paneID)
-    return .none
+    return reaping
   }
 
   private func reduceResizePane(_ state: inout State, node: SplitTree<PaneID>.Node, ratio: Double) -> Effect<Action> {
@@ -540,15 +559,33 @@ extension LayoutFeature {
     return (tabID: tabID, contentID: contentID)
   }
 
+  /// Tombstones a content and returns the effect that kills its session and
+  /// confirms the tombstone. The kill runs unstructured so element teardown
+  /// cannot abandon a half-killed session; a cancelled effect confirms the
+  /// tombstone straight on the runtime instead of leaving it stale.
+  private func reap(_ contentID: ContentID, worktree worktreeID: Worktree.ID) -> Effect<Action> {
+    contentRuntime.remove(contentID, tombstone: true)
+    return .run { [contentRuntime, sessionKiller] send in
+      let kill = Task { await sessionKiller.kill(contentID, worktreeID) }
+      await kill.value
+      guard !Task.isCancelled else {
+        await contentRuntime.confirmKill(contentID)
+        return
+      }
+      await send(.runtime(.killConfirmed(id: contentID)))
+    }
+  }
+
   /// Creates and provisions content; false when the runtime refuses
   /// (tombstoned or already registered), dropping the freshly made content
   /// unprovisioned.
   private func provisionContent(
     id contentID: ContentID,
     from spec: NewTabSpec,
+    in worktreeID: Worktree.ID,
     operation: StaticString
   ) -> Bool {
-    let content = layoutContentFactory.make(contentID, spec.initialState)
+    let content = layoutContentFactory.make(worktreeID, contentID, spec.initialState)
     guard contentRuntime.provision(content, at: spec.geometry) else {
       Self.logger.warning("\(operation) provision refused for content \(contentID.rawValue)")
       return false

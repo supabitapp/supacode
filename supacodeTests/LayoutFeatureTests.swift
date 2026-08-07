@@ -53,11 +53,17 @@ struct LayoutFeatureTests {
   private final class ContentRecorder {
     private(set) var contents: [ContentID: MockTabContent] = [:]
     private(set) var madeStates: [TerminalContentState] = []
+    private(set) var madeWorktreeIDs: [Worktree.ID] = []
 
-    func make(_ contentID: ContentID, _ initialState: TerminalContentState) -> any TabContent {
+    func make(
+      _ worktreeID: Worktree.ID,
+      _ contentID: ContentID,
+      _ initialState: TerminalContentState
+    ) -> any TabContent {
       let content = MockTabContent(id: contentID, initialState: initialState)
       contents[contentID] = content
       madeStates.append(initialState)
+      madeWorktreeIDs.append(worktreeID)
       return content
     }
   }
@@ -109,7 +115,11 @@ struct LayoutFeatureTests {
     let recorder: ContentRecorder
   }
 
-  private func makeStore(layout: PaneLayout, preserveZoom: Bool = false) -> StoreBundle {
+  private func makeStore(
+    layout: PaneLayout,
+    preserveZoom: Bool = false,
+    killer: ContentSessionKiller? = nil
+  ) -> StoreBundle {
     let runtime = ContentRuntime()
     let recorder = ContentRecorder()
     let store = TestStore(
@@ -121,15 +131,22 @@ struct LayoutFeatureTests {
       $0.contentRuntime = runtime
       $0[SplitZoomPolicy.self] = SplitZoomPolicy(preservesZoomOnNavigation: { preserveZoom })
       $0.layoutContentFactory = LayoutContentFactory(
-        make: { contentID, initialState in recorder.make(contentID, initialState) }
+        make: { worktreeID, contentID, initialState in recorder.make(worktreeID, contentID, initialState) }
       )
+      // The registered testValue is loud on purpose; the harness always
+      // installs a real (if inert) killer so close paths stay exercisable.
+      $0[ContentSessionKiller.self] = killer ?? ContentSessionKiller(kill: { _, _ in })
     }
     return StoreBundle(store: store, runtime: runtime, recorder: recorder)
   }
 
   /// Builds a store whose layout holds one pane with one tab, created through
   /// `newTab` so the runtime and factory both saw the bootstrap.
-  private func makeHarness(paneID: PaneID = PaneID(), preserveZoom: Bool = false) async -> Harness {
+  private func makeHarness(
+    paneID: PaneID = PaneID(),
+    preserveZoom: Bool = false,
+    killer: ContentSessionKiller? = nil
+  ) async -> Harness {
     let tabID = TerminalTabID()
     let contentID = ContentID()
     let bundle = makeStore(
@@ -138,7 +155,8 @@ struct LayoutFeatureTests {
         panes: [Pane(id: paneID)],
         focusedPaneID: paneID
       ),
-      preserveZoom: preserveZoom
+      preserveZoom: preserveZoom,
+      killer: killer
     )
     await bundle.store.send(
       .newTab(inPane: paneID, spec: Self.spec(tabID: tabID, contentID: contentID, title: "One"))
@@ -395,7 +413,8 @@ struct LayoutFeatureTests {
     // Provisioned, then rolled back into the kill path.
     #expect(harness.recorder.contents[contentID] != nil)
     #expect(harness.runtime.content(for: contentID) == nil)
-    #expect(harness.runtime.pendingKill.contains(contentID))
+    await harness.store.receive(.runtime(.killConfirmed(id: contentID)))
+    #expect(harness.runtime.pendingKill.isEmpty)
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -431,8 +450,8 @@ struct LayoutFeatureTests {
       $0.layout.panes[id: paneID]?.tabs.remove(id: third.tabID)
       $0.layout.panes[id: paneID]?.selectedTabID = second.tabID
     }
-    #expect(harness.runtime.pendingKill.contains(third.contentID))
     #expect(harness.runtime.content(for: third.contentID) == nil)
+    await harness.store.receive(.runtime(.killConfirmed(id: third.contentID)))
     await harness.store.send(.selectTab(id: harness.tabID)) {
       $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
     }
@@ -441,6 +460,7 @@ struct LayoutFeatureTests {
       $0.layout.panes[id: paneID]?.tabs.remove(id: harness.tabID)
       $0.layout.panes[id: paneID]?.selectedTabID = second.tabID
     }
+    await harness.store.receive(.runtime(.killConfirmed(id: harness.contentID)))
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -452,7 +472,8 @@ struct LayoutFeatureTests {
       $0.layout.panes.remove(id: split.paneID)
       $0.layout.focusedPaneID = harness.paneID
     }
-    #expect(harness.runtime.pendingKill.contains(split.contentID))
+    await harness.store.receive(.runtime(.killConfirmed(id: split.contentID)))
+    #expect(harness.runtime.pendingKill.isEmpty)
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -468,6 +489,7 @@ struct LayoutFeatureTests {
       }
       $0.layout.panes.remove(id: first.paneID)
     }
+    await harness.store.receive(.runtime(.killConfirmed(id: first.contentID)))
     #expect(harness.store.state.layout.focusedPaneID == second.paneID)
     #expect(harness.store.state.layout.isConsistent)
   }
@@ -479,7 +501,8 @@ struct LayoutFeatureTests {
       $0.layout.panes = []
       $0.layout.focusedPaneID = nil
     }
-    #expect(harness.runtime.pendingKill.contains(harness.contentID))
+    await harness.store.receive(.runtime(.killConfirmed(id: harness.contentID)))
+    #expect(harness.runtime.pendingKill.isEmpty)
     // The empty layout is re-enterable: newTab materializes a fresh pane.
     let paneID = PaneID()
     let tabID = TerminalTabID()
@@ -511,15 +534,17 @@ struct LayoutFeatureTests {
       )
       $0.layout.panes[id: split.paneID]?.selectedTabID = extraTabID
     }
+    // Kills are merged, so confirmation order is not defined; assert outcomes.
+    harness.store.exhaustivity = .off
     await harness.store.send(.closePane(id: split.paneID)) {
       $0.layout.tree = SplitTree(view: harness.paneID)
       $0.layout.panes.remove(id: split.paneID)
       $0.layout.focusedPaneID = harness.paneID
     }
-    #expect(harness.runtime.pendingKill.contains(split.contentID))
-    #expect(harness.runtime.pendingKill.contains(extraContentID))
     #expect(harness.runtime.content(for: split.contentID) == nil)
     #expect(harness.runtime.content(for: extraContentID) == nil)
+    await harness.store.finish()
+    #expect(harness.runtime.pendingKill.isEmpty)
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -842,15 +867,27 @@ struct LayoutFeatureTests {
   // MARK: - Runtime events.
 
   @Test func killConfirmedClearsTombstoneForReuse() async {
-    let harness = await makeHarness()
+    // Gate the killer so the tombstone window stays observably open until
+    // the test releases it.
+    let gate = AsyncStream<Void>.makeStream()
+    let harness = await makeHarness(
+      killer: ContentSessionKiller(
+        kill: { _, _ in
+          var releases = gate.stream.makeAsyncIterator()
+          _ = await releases.next()
+        }
+      )
+    )
     let second = await addTab(harness, title: "Two")
     let paneID = harness.paneID
     await harness.store.send(.closeTab(id: second.tabID)) {
       $0.layout.panes[id: paneID]?.tabs.remove(id: second.tabID)
       $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
     }
+    // The kill is suspended: the tombstone must hold the identity hostage.
     #expect(harness.runtime.pendingKill.contains(second.contentID))
-    await harness.store.send(.runtime(.killConfirmed(id: second.contentID)))
+    gate.continuation.yield()
+    await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
     #expect(harness.runtime.pendingKill.isEmpty)
     // The identity is reusable again once the kill is confirmed.
     let reusedTabID = TerminalTabID()
@@ -878,6 +915,26 @@ struct LayoutFeatureTests {
     }
     #expect(harness.store.state.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.customTitle == "Custom")
     #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func closeTabKillsTheSessionOfItsWorktree() async {
+    let killed = LockIsolated<[(content: ContentID, worktree: Worktree.ID)]>([])
+    let harness = await makeHarness(
+      killer: ContentSessionKiller(
+        kill: { content, worktree in
+          killed.withValue { $0.append((content: content, worktree: worktree)) }
+        }
+      )
+    )
+    await harness.store.send(.closeTab(id: harness.tabID)) {
+      $0.layout.tree = SplitTree()
+      $0.layout.panes = []
+      $0.layout.focusedPaneID = nil
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: harness.contentID)))
+    #expect(killed.value.count == 1)
+    #expect(killed.value.first?.content == harness.contentID)
+    #expect(killed.value.first?.worktree == WorktreeID("/tmp/layout-feature"))
   }
 
   @Test func titleChangedWithTheSameTitleIsANoOp() async {
