@@ -108,6 +108,7 @@ let featureTestSources: [Path] = [
 // Ghostty runtime, terminal manager, and zmx suites.
 let terminalTestSources: [Path] = [
   "supacodeTests/Ghostty*.swift",
+  "supacodeTests/LayoutFeature*.swift",
   "supacodeTests/Layouts*.swift",
   "supacodeTests/SplitTree*.swift",
   "supacodeTests/WorktreeTerminalManager*.swift",

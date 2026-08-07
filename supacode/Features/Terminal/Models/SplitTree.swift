@@ -38,7 +38,7 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     let bounds: CGRect
   }
 
-  enum SpatialDirection {
+  enum SpatialDirection: Equatable {
     case left
     case right
     case top
@@ -54,14 +54,14 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     case duplicateLeaf
   }
 
-  enum NewDirection {
+  enum NewDirection: Equatable {
     case left
     case right
     case down
     case top
   }
 
-  enum FocusDirection {
+  enum FocusDirection: Equatable {
     case previous
     case next
     case spatial(SpatialDirection)
