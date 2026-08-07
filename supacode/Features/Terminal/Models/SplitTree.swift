@@ -87,6 +87,12 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     self.init(root: .leaf(view: view), zoomed: nil)
   }
 
+  /// Adopts a fully built structure with no zoom; the migrator mirrors legacy
+  /// topologies through this without replaying insertions.
+  init(root: Node?) {
+    self.init(root: root, zoomed: nil)
+  }
+
   func contains(_ view: Leaf) -> Bool {
     root?.node(view: view) != nil
   }
