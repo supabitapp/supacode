@@ -1927,36 +1927,15 @@ final class WorktreeTerminalState {
   }
 
   private func surfaceEnvironment(tabId: TerminalTabID, surfaceID: UUID) -> [String: String] {
-    var env = worktree.scriptEnvironment
-    let percentEncodingSet = CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/"))
-    let repoPath = worktree.repositoryRootURL.path(percentEncoded: false)
-    env["SUPACODE_REPO_ID"] = percentEncode(repoPath, allowedCharacters: percentEncodingSet, label: "SUPACODE_REPO_ID")
-    env["SUPACODE_WORKTREE_ID"] = percentEncode(
-      worktree.id.rawValue, allowedCharacters: percentEncodingSet, label: "SUPACODE_WORKTREE_ID")
-    env["SUPACODE_TAB_ID"] = tabId.rawValue.uuidString
-    env["SUPACODE_SURFACE_ID"] = surfaceID.uuidString
-    if let socketPath {
-      env["SUPACODE_SOCKET_PATH"] = socketPath
-    }
-    // Mark blocking-script surfaces so the user's shell profile can skip its
+    // Blocking-script markers let the user's shell profile skip its
     // interactive init (prompt, plugins, banners) for these transient tabs.
-    if let blockingScriptKind = blockingScripts[tabId] {
-      env.merge(blockingScriptEnvironment(for: blockingScriptKind)) { _, new in new }
-    }
-    // Lock ZMX_DIR to the value the app's probe used so the shell can't
-    // re-export a different value from .zshrc / .zprofile and silently
-    // overflow `sockaddr_un.sun_path` past the probe's check.
-    env["ZMX_DIR"] = ZmxSocketBudget.socketDir()
-    // Prepend the bundled CLI binary directory to PATH so that `supacode`
-    // resolves to the CLI tool, not the app binary added by Ghostty.
-    if let cliBinDir = Bundle.main.resourceURL?
-      .appending(path: "bin", directoryHint: .isDirectory)
-      .path(percentEncoded: false)
-    {
-      let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
-      env["PATH"] = currentPath.isEmpty ? cliBinDir : "\(cliBinDir):\(currentPath)"
-    }
-    return env
+    TerminalSurfaceRecipe.environment(
+      for: worktree,
+      tabID: tabId,
+      surfaceID: surfaceID,
+      socketPath: socketPath,
+      extraVariables: blockingScripts[tabId].map(blockingScriptEnvironment(for:)) ?? [:]
+    )
   }
 
   /// Blocking-script marker env vars for a kind, with scope resolved against
@@ -1976,15 +1955,6 @@ final class WorktreeTerminalState {
     @Shared(.settingsFile) var settingsFile
     if settingsFile.global.globalScripts.contains(where: { $0.id == id }) { return .global }
     return nil
-  }
-
-  private func percentEncode(_ value: String, allowedCharacters: CharacterSet, label: String) -> String {
-    guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowedCharacters) else {
-      terminalStateLogger.warning(
-        "Failed to percent-encode \(label): \(value). Downstream deeplinks using this value may be malformed.")
-      return value
-    }
-    return encoded
   }
 
   private func createSurface(
@@ -2405,12 +2375,7 @@ final class WorktreeTerminalState {
     return String(scalars).trimmingCharacters(in: .whitespaces)
   }
 
-  struct ResolvedLaunch {
-    var command: String?
-    var initialInput: String?
-    var commandWrapper: [String]
-    var usesZmx: Bool
-  }
+  typealias ResolvedLaunch = TerminalSurfaceRecipe.Launch
 
   /// Routes a surface through zmx so the underlying shell survives app quit.
   ///
@@ -2428,58 +2393,12 @@ final class WorktreeTerminalState {
     initialInput: String?,
     bypassZmx: Bool
   ) -> ResolvedLaunch {
-    if bypassZmx {
-      return ResolvedLaunch(command: command, initialInput: initialInput, commandWrapper: [], usesZmx: false)
-    }
-    let zmxExecutablePath = zmxClient.executableURL()?.path(percentEncoded: false)
-    // Remote worktree: a *local* zmx session wraps a reconnect loop around the
-    // SSH connection, and the remote reattaches its own zmx session when the
-    // host has zmx (host persistence). The surface command is always the
-    // reconnect-loop script (no command-wrapper, since Ghostty wraps the
-    // local argv, not the loop). When the caller has no explicit command,
-    // default to cd-into-the-remote-dir so a freshly created session lands in
-    // the project.
-    if let host = worktree.host {
-      @Shared(.settingsFile) var settingsFile
-      let hostPersistence = settingsFile.global.remoteSessionPersistenceEnabled
-      let launch = ZmxAttach.RemoteSurfaceLaunch(
-        host: host,
-        surfaceID: surfaceID,
-        userCommand: command,
-        defaultCommand: Self.remoteDefaultShellCommand(
-          remotePath: worktree.workingDirectory.path(percentEncoded: false)),
-        hostPersistenceEnabled: hostPersistence,
-      )
-      return ResolvedLaunch(
-        command: ZmxAttach.buildRemoteCommand(launch, localZmxExecutablePath: zmxExecutablePath),
-        initialInput: initialInput,
-        commandWrapper: [],
-        usesZmx: zmxExecutablePath != nil,
-      )
-    }
-    let resolved = ZmxAttach.resolveLaunch(
-      executablePath: zmxExecutablePath,
-      sessionID: ZmxSessionID.make(surfaceID: surfaceID),
-      command: command,
+    TerminalSurfaceRecipe.launch(
+      TerminalSurfaceRecipe.LaunchIntent(command: command, initialInput: initialInput, bypassZmx: bypassZmx),
+      for: worktree,
+      surfaceID: surfaceID,
+      zmxExecutablePath: zmxClient.executableURL()?.path(percentEncoded: false)
     )
-    return ResolvedLaunch(
-      command: resolved.command,
-      initialInput: initialInput,
-      commandWrapper: resolved.commandWrapper,
-      usesZmx: zmxExecutablePath != nil,
-    )
-  }
-
-  /// Connect default and reconnect fallback for a remote surface: `cd` into
-  /// the remote project dir, then exec a login shell. The `cd` failure is
-  /// swallowed so a stale path still drops the user into a usable shell. Nil
-  /// for an empty/root path falls back to a bare login shell. The path is
-  /// quoted for whichever login shell re-parses the session command.
-  static func remoteDefaultShellCommand(remotePath: String) -> String? {
-    let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty, trimmed != "/" else { return nil }
-    let quoted = SSHCommand.loginShellQuote(trimmed)
-    return "cd \(quoted) 2>/dev/null; exec \"$SHELL\" -l"
   }
 
   private struct InheritedSurfaceConfig: Equatable {

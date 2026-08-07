@@ -404,14 +404,14 @@ struct RemoteDisconnectCurationTests {
 struct RemoteDefaultShellCommandTests {
   @Test func buildsCdIntoRemotePathThenExecLoginShell() {
     #expect(
-      WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/home/me/proj")
+      TerminalSurfaceRecipe.remoteDefaultShellCommand(remotePath: "/home/me/proj")
         == "cd '/home/me/proj' 2>/dev/null; exec \"$SHELL\" -l"
     )
   }
 
   @Test func escapesSingleQuotesInRemotePath() {
     #expect(
-      WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/home/o'brien/proj")
+      TerminalSurfaceRecipe.remoteDefaultShellCommand(remotePath: "/home/o'brien/proj")
         == "cd '/home/o'\"'\"'brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
     )
   }
@@ -429,7 +429,7 @@ struct RemoteDefaultShellCommandTests {
       try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: probe.path)
 
       let command = try #require(
-        WorktreeTerminalState.remoteDefaultShellCommand(remotePath: remoteDirectory.path)
+        TerminalSurfaceRecipe.remoteDefaultShellCommand(remotePath: remoteDirectory.path)
       )
       let result = try await LoginShellProbe.run(
         shell,
@@ -445,8 +445,8 @@ struct RemoteDefaultShellCommandTests {
   }
 
   @Test func nilForRootOrEmptyPath() {
-    #expect(WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/") == nil)
-    #expect(WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "   ") == nil)
+    #expect(TerminalSurfaceRecipe.remoteDefaultShellCommand(remotePath: "/") == nil)
+    #expect(TerminalSurfaceRecipe.remoteDefaultShellCommand(remotePath: "   ") == nil)
   }
 }
 
