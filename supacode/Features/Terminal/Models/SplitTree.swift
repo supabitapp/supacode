@@ -1,6 +1,6 @@
-import AppKit
+import CoreGraphics
 
-struct SplitTree<ViewType: NSView & Identifiable> {
+struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
   let root: Node?
   let zoomed: Node?
 
@@ -12,16 +12,16 @@ struct SplitTree<ViewType: NSView & Identifiable> {
   }
 
   indirect enum Node: Equatable {
-    case leaf(view: ViewType)
+    case leaf(view: Leaf)
     case split(Split)
   }
 
-  enum Direction: Equatable {
+  enum Direction: String, Equatable {
     case horizontal
     case vertical
   }
 
-  enum PathComponent: Equatable {
+  enum PathComponent: String, Equatable {
     case left
     case right
   }
@@ -82,11 +82,11 @@ struct SplitTree<ViewType: NSView & Identifiable> {
     self.init(root: nil, zoomed: nil)
   }
 
-  init(view: ViewType) {
+  init(view: Leaf) {
     self.init(root: .leaf(view: view), zoomed: nil)
   }
 
-  func contains(_ view: ViewType) -> Bool {
+  func contains(_ view: Leaf) -> Bool {
     root?.node(view: view) != nil
   }
 
@@ -94,11 +94,11 @@ struct SplitTree<ViewType: NSView & Identifiable> {
     root?.path(to: node) != nil
   }
 
-  func find(id: ViewType.ID) -> Node? {
+  func find(id: Leaf.ID) -> Node? {
     root?.find(id: id)
   }
 
-  func inserting(view: ViewType, at anchor: ViewType, direction: NewDirection, ratio: Double = 0.5) throws -> Self {
+  func inserting(view: Leaf, at anchor: Leaf, direction: NewDirection, ratio: Double = 0.5) throws -> Self {
     guard let root else { throw SplitError.viewNotFound }
     return .init(
       root: try root.inserting(view: view, at: anchor, direction: direction, ratio: ratio),
@@ -124,14 +124,14 @@ struct SplitTree<ViewType: NSView & Identifiable> {
     return .init(root: newRoot, zoomed: newZoomed)
   }
 
-  func focusTarget(for direction: FocusDirection, from currentNode: Node) -> ViewType? {
+  func focusTarget(for direction: FocusDirection, from currentNode: Node) -> Leaf? {
     guard let root else { return nil }
 
     switch direction {
     case .previous:
       let allLeaves = root.leaves()
       let currentView = currentNode.leftmostLeaf()
-      guard let currentIndex = allLeaves.firstIndex(where: { $0 === currentView }) else {
+      guard let currentIndex = allLeaves.firstIndex(of: currentView) else {
         return nil
       }
       let index = allLeaves.indexWrapping(before: currentIndex)
@@ -140,7 +140,7 @@ struct SplitTree<ViewType: NSView & Identifiable> {
     case .next:
       let allLeaves = root.leaves()
       let currentView = currentNode.rightmostLeaf()
-      guard let currentIndex = allLeaves.firstIndex(where: { $0 === currentView }) else {
+      guard let currentIndex = allLeaves.firstIndex(of: currentView) else {
         return nil
       }
       let index = allLeaves.indexWrapping(after: currentIndex)
@@ -168,12 +168,12 @@ struct SplitTree<ViewType: NSView & Identifiable> {
     }
   }
 
-  func focusTargetAfterClosing(_ node: Node) -> ViewType? {
+  func focusTargetAfterClosing(_ node: Node) -> Leaf? {
     guard let root else { return nil }
 
     // Match Ghostty's macOS controller: closing the leftmost leaf moves to the next
     // surface, otherwise we move to the previous one.
-    if root.leftmostLeaf() === node.leftmostLeaf() {
+    if root.leftmostLeaf() == node.leftmostLeaf() {
       return focusTarget(for: .next, from: node)
     } else {
       return focusTarget(for: .previous, from: node)
@@ -263,15 +263,15 @@ struct SplitTree<ViewType: NSView & Identifiable> {
     return .init(root: newRoot, zoomed: nil)
   }
 
-  func viewBounds() -> CGSize {
-    root?.viewBounds() ?? .zero
+  func viewBounds(boundsOf: (Leaf) -> CGSize) -> CGSize {
+    root?.viewBounds(boundsOf: boundsOf) ?? .zero
   }
 
-  func leaves() -> [ViewType] {
+  func leaves() -> [Leaf] {
     root?.leaves() ?? []
   }
 
-  func visibleLeaves() -> [ViewType] {
+  func visibleLeaves() -> [Leaf] {
     visibleNode?.leaves() ?? []
   }
 
@@ -330,20 +330,7 @@ extension SplitTree.Node {
   typealias PathComponent = SplitTree.PathComponent
   typealias Split = SplitTree.Split
 
-  static func == (lhs: Self, rhs: Self) -> Bool {
-    switch (lhs, rhs) {
-    case (.leaf(let leftView), .leaf(let rightView)):
-      return leftView === rightView
-
-    case (.split(let split1), .split(let split2)):
-      return split1 == split2
-
-    default:
-      return false
-    }
-  }
-
-  func find(id: ViewType.ID) -> Node? {
+  func find(id: Leaf.ID) -> Node? {
     switch self {
     case .leaf(let view):
       return view.id == id ? self : nil
@@ -353,10 +340,10 @@ extension SplitTree.Node {
     }
   }
 
-  func node(view: ViewType) -> Node? {
+  func node(view: Leaf) -> Node? {
     switch self {
     case .leaf(let leafView):
-      return leafView === view ? self : nil
+      return leafView == view ? self : nil
     case .split(let split):
       if let result = split.left.node(view: view) { return result }
       if let result = split.right.node(view: view) { return result }
@@ -397,7 +384,7 @@ extension SplitTree.Node {
     }
   }
 
-  func inserting(view: ViewType, at anchor: ViewType, direction: NewDirection, ratio: Double = 0.5) throws -> Self {
+  func inserting(view: Leaf, at anchor: Leaf, direction: NewDirection, ratio: Double = 0.5) throws -> Self {
     guard let path = path(to: .leaf(view: anchor)) else {
       throw SplitError.viewNotFound
     }
@@ -504,7 +491,7 @@ extension SplitTree.Node {
     }
   }
 
-  func leftmostLeaf() -> ViewType {
+  func leftmostLeaf() -> Leaf {
     switch self {
     case .leaf(let view):
       return view
@@ -513,7 +500,7 @@ extension SplitTree.Node {
     }
   }
 
-  func rightmostLeaf() -> ViewType {
+  func rightmostLeaf() -> Leaf {
     switch self {
     case .leaf(let view):
       return view
@@ -522,7 +509,7 @@ extension SplitTree.Node {
     }
   }
 
-  func leaves() -> [ViewType] {
+  func leaves() -> [Leaf] {
     switch self {
     case .leaf(let view):
       return [view]
@@ -569,13 +556,13 @@ extension SplitTree.Node {
     }
   }
 
-  func viewBounds() -> CGSize {
+  func viewBounds(boundsOf: (Leaf) -> CGSize) -> CGSize {
     switch self {
     case .leaf(let view):
-      return view.bounds.size
+      return boundsOf(view)
     case .split(let split):
-      let leftBounds = split.left.viewBounds()
-      let rightBounds = split.right.viewBounds()
+      let leftBounds = split.left.viewBounds(boundsOf: boundsOf)
+      let rightBounds = split.right.viewBounds(boundsOf: boundsOf)
       switch split.direction {
       case .horizontal:
         return CGSize(
@@ -696,7 +683,7 @@ extension SplitTree.Node {
   fileprivate func isStructurallyEqual(to other: Node) -> Bool {
     switch (self, other) {
     case (.leaf(let view1), .leaf(let view2)):
-      return view1 === view2
+      return view1 == view2
     case (.split(let split1), .split(let split2)):
       return split1.direction == split2.direction
         && split1.left.isStructurallyEqual(to: split2.left)
@@ -710,7 +697,7 @@ extension SplitTree.Node {
     switch self {
     case .leaf(let view):
       hasher.combine(0)
-      hasher.combine(ObjectIdentifier(view))
+      hasher.combine(view)
     case .split(let split):
       hasher.combine(1)
       hasher.combine(split.direction)
@@ -765,6 +752,108 @@ extension SplitTree.Spatial {
     }
   }
 }
+
+// MARK: - Wire format.
+
+extension SplitTree {
+  fileprivate enum CodingKeys: String, CodingKey {
+    case root
+    case zoomedPath
+  }
+}
+
+extension SplitTree.Node {
+  fileprivate enum CodingKeys: String, CodingKey {
+    case kind
+    case leaf
+  }
+
+  fileprivate enum Kind: String, Codable {
+    case leaf
+    case split
+  }
+}
+
+extension SplitTree.Split {
+  fileprivate enum CodingKeys: String, CodingKey {
+    case direction
+    case ratio
+    case left
+    case right
+  }
+}
+
+extension SplitTree.Direction: Codable {}
+extension SplitTree.PathComponent: Codable {}
+
+extension SplitTree: Codable where Leaf: Codable {
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let root = try container.decodeIfPresent(Node.self, forKey: .root)
+    let zoomedPath = try container.decodeIfPresent([PathComponent].self, forKey: .zoomedPath)
+    // Drop the zoom silently when the stored path no longer resolves.
+    let zoomed = zoomedPath.flatMap { root?.node(at: Path(path: $0)) }
+    self.init(root: root, zoomed: zoomed)
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(root, forKey: .root)
+    // Zoom is a reference into `root`; persist it as the path from the root.
+    guard let zoomed, let zoomedPath = root?.path(to: zoomed) else { return }
+    try container.encode(zoomedPath.path, forKey: .zoomedPath)
+  }
+}
+
+extension SplitTree.Node: Codable where Leaf: Codable {
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    switch try container.decode(Kind.self, forKey: .kind) {
+    case .leaf:
+      self = .leaf(view: try container.decode(Leaf.self, forKey: .leaf))
+    case .split:
+      self = .split(try Split(from: decoder))
+    }
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    switch self {
+    case .leaf(let view):
+      try container.encode(Kind.leaf, forKey: .kind)
+      try container.encode(view, forKey: .leaf)
+    case .split(let split):
+      try container.encode(Kind.split, forKey: .kind)
+      try split.encode(to: encoder)
+    }
+  }
+}
+
+extension SplitTree.Split: Codable where Leaf: Codable {
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      direction: try container.decode(SplitTree.Direction.self, forKey: .direction),
+      ratio: try container.decode(Double.self, forKey: .ratio),
+      left: try container.decode(SplitTree.Node.self, forKey: .left),
+      right: try container.decode(SplitTree.Node.self, forKey: .right)
+    )
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(direction, forKey: .direction)
+    try container.encode(ratio, forKey: .ratio)
+    try container.encode(left, forKey: .left)
+    try container.encode(right, forKey: .right)
+  }
+}
+
+// MARK: - Sendable.
+
+extension SplitTree: Sendable where Leaf: Sendable {}
+extension SplitTree.Node: Sendable where Leaf: Sendable {}
+extension SplitTree.Split: Sendable where Leaf: Sendable {}
 
 extension BidirectionalCollection {
   func indexWrapping(before index: Index) -> Index {

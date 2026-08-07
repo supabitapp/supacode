@@ -1297,7 +1297,7 @@ final class WorktreeTerminalState {
           node: targetNode,
           by: amount,
           in: spatialDirection,
-          with: CGRect(origin: .zero, size: tree.viewBounds())
+          with: CGRect(origin: .zero, size: tree.viewBounds { $0.bounds.size })
         )
         updateTree(newTree, for: tabId)
         return true

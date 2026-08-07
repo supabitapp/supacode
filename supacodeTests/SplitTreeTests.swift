@@ -178,6 +178,66 @@ struct SplitTreeTests {
     #expect(emissions == [first.id, second.id])
   }
 
+  // MARK: - Codable.
+
+  @Test func codableRoundTripsLeafOnlyTree() throws {
+    let tree = SplitTree(view: IDLeaf(id: 1))
+
+    let data = try JSONEncoder().encode(tree)
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: data)
+
+    #expect(decoded == tree)
+  }
+
+  @Test func codableRoundTripsNestedSplitsWithRatios() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right, ratio: 0.25)
+      .inserting(view: IDLeaf(id: 3), at: IDLeaf(id: 2), direction: .down, ratio: 0.75)
+
+    let data = try JSONEncoder().encode(tree)
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: data)
+
+    #expect(decoded == tree)
+  }
+
+  @Test func codableRoundTripsZoomedNodePath() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)
+      .inserting(view: IDLeaf(id: 3), at: IDLeaf(id: 2), direction: .down)
+    let zoomedNode = try #require(tree.find(id: 3))
+    let zoomed = tree.settingZoomed(zoomedNode)
+
+    let data = try JSONEncoder().encode(zoomed)
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: data)
+
+    #expect(decoded == zoomed)
+    #expect(decoded.zoomed == zoomedNode)
+  }
+
+  @Test func codableDropsZoomedPathThatNoLongerResolves() throws {
+    let json = #"{"root":{"kind":"leaf","leaf":{"id":1}},"zoomedPath":["left","right"]}"#
+
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: Data(json.utf8))
+
+    #expect(decoded.zoomed == nil)
+    #expect(decoded.root == .leaf(view: IDLeaf(id: 1)))
+  }
+
+  @Test func codableWireFormatIsPinned() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right, ratio: 0.25)
+    let zoomed = tree.settingZoomed(try #require(tree.find(id: 1)))
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let json = try #require(String(bytes: encoder.encode(zoomed), encoding: .utf8))
+
+    let expected =
+      #"{"root":{"direction":"horizontal","kind":"split","left":{"kind":"leaf","leaf":{"id":1}},"#
+      + #""ratio":0.25,"right":{"kind":"leaf","leaf":{"id":2}}},"zoomedPath":["left"]}"#
+    #expect(json == expected)
+  }
+
   private func makeWorktreeFixture(preserveZoomOnNavigation: Bool) -> WorktreeFixture {
     let state = WorktreeTerminalState(
       runtime: GhosttyRuntime(),
@@ -216,4 +276,8 @@ private struct WorktreeFixture {
 
 private final class SplitTreeTestView: NSView, Identifiable {
   let id = UUID()
+}
+
+private struct IDLeaf: Identifiable, Hashable, Codable {
+  let id: Int
 }
