@@ -75,20 +75,9 @@ struct TerminalSplitTreeView: View {
           action: action
         )
       case .split(let split):
-        let splitViewDirection: SplitView<SubtreeView, SubtreeView>.Direction =
-          switch split.direction {
-          case .horizontal: .horizontal
-          case .vertical: .vertical
-          }
         SplitView(
-          splitViewDirection,
-          .init(
-            get: {
-              CGFloat(split.ratio)
-            },
-            set: {
-              action(.resize(node: node, ratio: Double($0)))
-            }),
+          split.direction,
+          ratio: split.ratio,
           dividerColor: dividerColor,
           resizeIncrements: .init(width: 1, height: 1),
           left: {
@@ -111,9 +100,8 @@ struct TerminalSplitTreeView: View {
               action: action
             )
           },
-          onEqualize: {
-            action(.equalize)
-          }
+          onResize: { action(.resize(node: node, ratio: $0)) },
+          onEqualize: { action(.equalize) }
         )
       }
     }

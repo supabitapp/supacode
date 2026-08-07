@@ -346,6 +346,7 @@ extension LayoutFeature {
     let geometry = Self.wakeGeometry(for: snapshot)
     if let content = contentRuntime.content(for: snapshot.id) {
       content.startSession(at: geometry)
+      landWokenSnapshot(&state, tabID: tabID, content: content)
       return .none
     }
     // Post-relaunch the runtime is empty; rebuild the content from stored state.
@@ -366,7 +367,15 @@ extension LayoutFeature {
       Self.logger.warning("wakeTab provision refused for \(snapshot.id.rawValue)")
       return .none
     }
+    landWokenSnapshot(&state, tabID: tabID, content: content)
     return .none
+  }
+
+  /// Refreshes the tab's stored snapshot from the now-live content so a wake
+  /// that reflowed the grid persists the fresher one, mirroring hibernate.
+  private func landWokenSnapshot(_ state: inout State, tabID: TerminalTabID, content: any TabContent) {
+    guard let paneID = state.layout.pane(containingTab: tabID)?.id else { return }
+    state.layout.panes[id: paneID]?.tabs[id: tabID]?.content = content.snapshot()
   }
 
   /// The geometry that reproduces the frozen grid, else the deliberate fallback.

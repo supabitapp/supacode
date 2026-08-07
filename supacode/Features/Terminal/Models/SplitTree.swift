@@ -16,10 +16,8 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     case split(Split)
   }
 
-  enum Direction: String, Equatable {
-    case horizontal
-    case vertical
-  }
+  // The canonical split axis; one definition shared with `SplitView`.
+  typealias Direction = SplitDirection
 
   enum PathComponent: String, Equatable {
     case left
@@ -793,7 +791,6 @@ nonisolated extension SplitTree.Split {
   }
 }
 
-nonisolated extension SplitTree.Direction: Codable {}
 nonisolated extension SplitTree.PathComponent: Codable {}
 
 nonisolated extension SplitTree: Codable where Leaf: Codable {
