@@ -23,6 +23,13 @@ actor LayoutsIncrementalWriter {
     case delete
   }
 
+  /// One per-worktree change to splice into the v2 file; same tombstone
+  /// semantics as `Change`.
+  enum RecordChange: Sendable {
+    case record(LayoutRecord)
+    case delete
+  }
+
   private static let logger = SupaLogger("Layouts")
   /// Dedicated executor so the sync disk I/O never runs on the cooperative
   /// pool, and never on main when the test main serial executor is active.
@@ -55,6 +62,83 @@ actor LayoutsIncrementalWriter {
   /// `storage.save` makes the off-actor write safe as the process's final flush.
   nonisolated func flushSync(_ changes: [String: Change]) {
     applyAndWrite(changes)
+  }
+
+  /// v2 counterpart of `flush(_:)`, splicing records into the versioned file.
+  func flush(records changes: [String: RecordChange]) {
+    applyAndWriteRecords(changes)
+  }
+
+  /// v2 counterpart of `flushSync(_:)` for the on-quit write.
+  nonisolated func flushSync(records changes: [String: RecordChange]) {
+    applyAndWriteRecords(changes)
+  }
+
+  private nonisolated func applyAndWriteRecords(_ changes: [String: RecordChange]) {
+    guard !changes.isEmpty else { return }
+    writeLock.lock()
+    defer { writeLock.unlock() }
+    guard var file = readFileFromDisk() else { return }
+    // A newer schema is read-only for this build; never write into it.
+    guard file.schemaVersion <= LayoutsFile.currentSchemaVersion else {
+      Self.logger.warning("Skipping layout flush into newer schema v\(file.schemaVersion).")
+      return
+    }
+    let original = file
+    for (key, change) in changes {
+      switch change {
+      case .record(let record):
+        // The migration origin is write-once; preserve it when the caller
+        // carries none.
+        file.worktrees[key] = LayoutRecord(
+          layout: record.layout,
+          origin: record.origin ?? file.worktrees[key]?.origin
+        )
+      case .delete:
+        file.worktrees.removeValue(forKey: key)
+      }
+    }
+    guard file != original else { return }
+    write(file)
+  }
+
+  /// Returns the on-disk v2 file; an empty stamped file when absent or after
+  /// corrupt bytes were rotated aside; `nil` on a present-but-unreadable file
+  /// or a still-v1 file, so the caller aborts rather than clobbers it.
+  private nonisolated func readFileFromDisk() -> LayoutsFile? {
+    let data: Data
+    do {
+      data = try storage.load(url)
+    } catch {
+      guard Self.isFileAbsent(error) else {
+        Self.logger.error("Failed to read layouts during v2 merge: \(error)")
+        return nil
+      }
+      return LayoutsFile(worktrees: [:])
+    }
+    if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+      return file
+    }
+    if (try? JSONDecoder().decode([String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data)) != nil {
+      // A deferred migration left v1 bytes in place; they must survive for the
+      // next launch's migrator, so this flush is dropped.
+      Self.logger.error("Aborting v2 layout flush: layouts.json is still v1.")
+      return nil
+    }
+    Self.logger.error("Failed to decode layouts during v2 merge; rotating aside.")
+    Self.renameCorruptFile(at: url)
+    return LayoutsFile(worktrees: [:])
+  }
+
+  private nonisolated func write(_ file: LayoutsFile) {
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(file)
+      try storage.save(data, url)
+    } catch {
+      Self.logger.warning("Failed to write incremental layouts: \(error)")
+    }
   }
 
   private nonisolated func applyAndWrite(_ changes: [String: Change]) {
