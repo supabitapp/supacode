@@ -86,6 +86,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   /// sequences and must not have Ghostty's integration injected.
   private let disableShellIntegration: Bool
   private let fontSize: Float32
+  // Display scale carried from creation-time geometry, authoritative until the
+  // view joins a window.
+  private let initialScale: CGFloat
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
   // Only ever holds sizes actually pushed to ghostty_surface_set_size; a rejected
@@ -222,12 +225,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
     commandWrapper: [String] = [],
     disableShellIntegration: Bool = false,
     fontSize: Float32? = nil,
+    initialGeometry: ContentGeometry,
     context: ghostty_surface_context_e
   ) {
     self.id = id
     self.runtime = runtime
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0
+    self.initialScale = initialGeometry.scale
     self.context = context
     self.environmentVariables = environmentVariables
     self.commandWrapper = commandWrapper
@@ -250,7 +255,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     } else {
       initialInputCString = nil
     }
-    super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    // Off-window backing conversion is 1x, so a point frame equal to the intended
+    // pixel size makes ghostty_surface_new spawn the PTY at an honest grid (#780).
+    super.init(frame: NSRect(origin: .zero, size: initialGeometry.pixelSize))
     wantsLayer = true
     bridge.surfaceView = self
     createSurface()
@@ -1093,6 +1100,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   private func updateContentScale() {
     guard let surface else { return }
+    // A detached-but-previously-mounted view has no better scale than the one
+    // already applied; re-pushing the creation scale would churn the renderer.
+    guard window != nil || !hasBeenInWindow else { return }
     let scale = backingScaleFactor()
     ghostty_surface_set_content_scale(surface, scale, scale)
   }
@@ -1101,10 +1111,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     if let window {
       return window.backingScaleFactor
     }
-    if let screen = NSScreen.main {
-      return screen.backingScaleFactor
-    }
-    return 2.0
+    return initialScale
   }
 
   func setOcclusion(_ visible: Bool) {

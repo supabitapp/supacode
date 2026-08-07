@@ -2016,6 +2016,15 @@ final class WorktreeTerminalState {
       worktree.host == nil
       ? (workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory)
       : nil
+    // Prefer the anchor pane's mounted size, else any mounted sibling, so even
+    // never-rendered background spawns start at an honest grid (#780).
+    let geometry = ContentGeometry.resolve(anchors: [
+      inheritingFromSurfaceId.flatMap { surfaces[$0] },
+      surfaces.values.first { $0.window != nil },
+    ])
+    terminalStateLogger.debug(
+      "createSurface geometry \(Int(geometry.pixelSize.width))x\(Int(geometry.pixelSize.height))@\(geometry.scale)"
+    )
     let view = GhosttySurfaceView(
       id: surfaceID,
       runtime: runtime,
@@ -2028,6 +2037,7 @@ final class WorktreeTerminalState {
       // not get Ghostty's shell integration injected into the host shell.
       disableShellIntegration: bypassZmx,
       fontSize: inherited.fontSize ?? rememberedZoomFontSize,
+      initialGeometry: geometry,
       context: context
     )
     wireSurfaceCallbacks(view: view, tabId: tabId)

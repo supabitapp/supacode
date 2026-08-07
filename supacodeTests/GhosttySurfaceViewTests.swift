@@ -510,6 +510,7 @@ struct GhosttySurfaceViewTests {
       id: UUID(),
       runtime: GhosttyRuntime(),
       workingDirectory: nil,
+      initialGeometry: .fallback,
       context: GHOSTTY_SURFACE_CONTEXT_TAB
     )
     let wrapper = GhosttySurfaceScrollView(surfaceView: surfaceView)
