@@ -1,5 +1,8 @@
 import Foundation
 import IdentifiedCollections
+import SupacodeSettingsShared
+
+nonisolated private let migrationLogger = SupaLogger("Layouts")
 
 /// One worktree's persisted layout plus the write-once pre-migration original.
 nonisolated struct LayoutRecord: Equatable, Codable, Sendable {
@@ -50,6 +53,12 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
     // Element-wise so one rotten worktree entry drops that entry, not the file.
     let raw = try container.decode([String: FailableDecodable<LayoutRecord>].self, forKey: .worktrees)
     worktrees = raw.compactMapValues(\.value)
+    // A dropped entry loses its session references to the orphan reaper; the
+    // loss must at least be diagnosable.
+    let dropped = raw.keys.filter { worktrees[$0] == nil }
+    if !dropped.isEmpty {
+      migrationLogger.error("Dropped unreadable layout entries: \(dropped.sorted())")
+    }
   }
 }
 
@@ -72,6 +81,9 @@ nonisolated enum LayoutsMigrator {
     }
     let selectedIndex = max(0, min(snapshot.selectedTabIndex, tabs.count - 1))
     let selected = tabs[selectedIndex]
+    // Old tab IDs commonly equal their initial leaf's surface UUID; reserve
+    // them so a fanned sibling cannot claim an identity leaf's ID first.
+    builder.reservedTabIDs = Set(tabs.compactMap(\.id))
 
     // The selected tab's split tree becomes the pane arrangement.
     let tree = builder.buildTree(from: selected.layout)
@@ -85,7 +97,7 @@ nonisolated enum LayoutsMigrator {
           from: leaf,
           tab: selected,
           carriesTabIdentity: carriesTabIdentity,
-          usedTabIDs: &builder.usedTabIDs
+          builder: &builder
         )
       )
     }
@@ -104,7 +116,7 @@ nonisolated enum LayoutsMigrator {
             from: leaf,
             tab: tab,
             carriesTabIdentity: leafIndex == tabFocusedIndex,
-            usedTabIDs: &builder.usedTabIDs
+            builder: &builder
           )
         )
       }
@@ -129,7 +141,12 @@ nonisolated enum LayoutsMigrator {
   }
 
   /// Builds the v2 file from a v1 dictionary; every worktree keeps every
-  /// content ID (asserted by the caller via `isConsistent` plus fixtures).
+  /// content ID.
+  ///
+  /// Runner contract: gate each record on `layout.isConsistent` before serving
+  /// it; compute the orphan reaper's known set as the union of
+  /// `layout.allContentIDs` and `origin.allSurfaceIDs`; treat a file whose
+  /// `schemaVersion` exceeds `currentSchemaVersion` as read-only.
   static func migrate(_ legacy: [String: TerminalLayoutSnapshot]) -> LayoutsFile {
     LayoutsFile(worktrees: legacy.mapValues { migrate($0) })
   }
@@ -138,7 +155,7 @@ nonisolated enum LayoutsMigrator {
     from leaf: TerminalLayoutSnapshot.SurfaceSnapshot,
     tab: TerminalLayoutSnapshot.TabSnapshot,
     carriesTabIdentity: Bool,
-    usedTabIDs: inout Set<UUID>
+    builder: inout Builder
   ) -> TabItem {
     let contentUUID = leaf.id ?? UUID()
     let content = ContentSnapshot(
@@ -151,11 +168,21 @@ nonisolated enum LayoutsMigrator {
       )
     )
     // The identity-carrying tab keeps the old tab's ID and full metadata;
-    // fanned siblings mint their content UUID (kept collision-free) and
-    // inherit only presentation, never the custom title.
+    // fanned siblings mint their content UUID and inherit only presentation,
+    // never the custom title. A sibling may not claim a reserved old tab ID:
+    // tab IDs commonly equal the initial leaf's surface UUID, and identity
+    // must not be stolen by leaf order.
     let requestedID = carriesTabIdentity ? (tab.id ?? contentUUID) : contentUUID
-    let tabID = usedTabIDs.contains(requestedID) ? UUID() : requestedID
-    usedTabIDs.insert(tabID)
+    let isTaken =
+      builder.usedTabIDs.contains(requestedID)
+      || (!carriesTabIdentity && builder.reservedTabIDs.contains(requestedID))
+    let tabID = isTaken ? UUID() : requestedID
+    if isTaken {
+      migrationLogger.warning(
+        "Reminted migrated tab ID \(requestedID) -> \(tabID) (identity: \(carriesTabIdentity))"
+      )
+    }
+    builder.usedTabIDs.insert(tabID)
     return TabItem(
       id: TerminalTabID(rawValue: tabID),
       title: tab.title,
@@ -171,6 +198,7 @@ nonisolated enum LayoutsMigrator {
     var paneIDs: [PaneID] = []
     var tabsByPane: [Int: [TabItem]] = [:]
     var usedTabIDs: Set<UUID> = []
+    var reservedTabIDs: Set<UUID> = []
 
     mutating func appendTab(toPaneAt index: Int, _ tab: TabItem) {
       tabsByPane[index, default: []].append(tab)

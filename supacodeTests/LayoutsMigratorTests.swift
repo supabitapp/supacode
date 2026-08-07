@@ -197,6 +197,42 @@ struct LayoutsMigratorTests {
     #expect(layout.pane(containingTab: TerminalTabID(rawValue: legacySurface!)) != nil)
   }
 
+  @Test func identityLeafKeepsTheOldTabIDEvenWhenASiblingSharesIt() throws {
+    // The normal CLI shape: the tab ID equals the initial leaf's surface UUID,
+    // and focus moved to the second leaf. The sibling must not steal the ID.
+    let tabID = UUID()
+    let secondSurface = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        Self.tab(
+          id: tabID,
+          customTitle: "mine",
+          layout: .split(
+            TerminalLayoutSnapshot.SplitSnapshot(
+              direction: .horizontal,
+              ratio: 0.5,
+              left: Self.leaf(tabID),
+              right: Self.leaf(secondSurface)
+            )
+          ),
+          focusedLeafIndex: 1
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let layout = LayoutsMigrator.migrate(snapshot).layout
+    #expect(layout.isConsistent)
+    let identityPane = try #require(layout.pane(containingTab: TerminalTabID(rawValue: tabID)))
+    let identityTab = try #require(identityPane.tabs[id: TerminalTabID(rawValue: tabID)])
+    #expect(identityTab.customTitle == "mine")
+    #expect(identityTab.content.id.rawValue == secondSurface)
+    // The sibling holding the old tab's surface reminted its tab ID; its
+    // content is untouched.
+    let sibling = try #require(layout.tab(containingContent: ContentID(rawValue: tabID)))
+    #expect(sibling.tab.id.rawValue != tabID)
+    #expect(sibling.tab.customTitle == nil)
+  }
+
   @Test func selectedIndexOutOfRangeClampsInsteadOfTrapping() {
     let snapshot = TerminalLayoutSnapshot(
       tabs: [Self.tab(id: UUID(), layout: Self.leaf(UUID()))],
