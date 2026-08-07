@@ -48,22 +48,18 @@ struct LayoutFeatureTests {
     }
   }
 
-  /// Factory stand-in recording every created content and its seed state.
+  /// Factory stand-in recording every created content and its request.
   @MainActor
   private final class ContentRecorder {
     private(set) var contents: [ContentID: MockTabContent] = [:]
-    private(set) var madeStates: [TerminalContentState] = []
-    private(set) var madeWorktreeIDs: [Worktree.ID] = []
+    private(set) var requests: [ContentRequest] = []
 
-    func make(
-      _ worktreeID: Worktree.ID,
-      _ contentID: ContentID,
-      _ initialState: TerminalContentState
-    ) -> any TabContent {
-      let content = MockTabContent(id: contentID, initialState: initialState)
-      contents[contentID] = content
-      madeStates.append(initialState)
-      madeWorktreeIDs.append(worktreeID)
+    var madeStates: [TerminalContentState] { requests.map(\.initialState) }
+
+    func make(_ request: ContentRequest) -> any TabContent {
+      let content = MockTabContent(id: request.contentID, initialState: request.initialState)
+      contents[request.contentID] = content
+      requests.append(request)
       return content
     }
   }
@@ -131,7 +127,7 @@ struct LayoutFeatureTests {
       $0.contentRuntime = runtime
       $0[SplitZoomPolicy.self] = SplitZoomPolicy(preservesZoomOnNavigation: { preserveZoom })
       $0.layoutContentFactory = LayoutContentFactory(
-        make: { worktreeID, contentID, initialState in recorder.make(worktreeID, contentID, initialState) }
+        make: { request in recorder.make(request) }
       )
       // The registered testValue is loud on purpose; the harness always
       // installs a real (if inert) killer so close paths stay exercisable.
@@ -238,6 +234,8 @@ struct LayoutFeatureTests {
     let mock = try #require(harness.recorder.contents[contentID])
     #expect(mock.startGeometries == [geometry])
     #expect(mock.startCalls == 1)
+    #expect(harness.recorder.requests.last?.origin == .tab)
+    #expect(harness.recorder.requests.last?.tabID == tabID)
     #expect(harness.runtime.content(for: contentID) === mock)
     #expect(harness.store.state.layout.isConsistent)
   }
@@ -326,6 +324,7 @@ struct LayoutFeatureTests {
       )
     }
     #expect(bundle.runtime.content(for: contentID) != nil)
+    #expect(bundle.recorder.requests.last?.origin == .first)
     #expect(bundle.store.state.layout.isConsistent)
   }
 
@@ -384,6 +383,7 @@ struct LayoutFeatureTests {
     let second = await splitPane(harness, anchor: split.paneID, direction: .down, mintIndex: 1, title: "Third")
     #expect(harness.store.state.layout.tree.zoomed == nil)
     #expect(harness.store.state.layout.focusedPaneID == second.paneID)
+    #expect(harness.recorder.requests.last?.origin == .split)
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -833,6 +833,8 @@ struct LayoutFeatureTests {
     let revived = try #require(harness.recorder.contents[harness.contentID])
     #expect(revived !== original)
     #expect(harness.recorder.madeStates.last == marker)
+    #expect(harness.recorder.requests.last?.origin == .restored)
+    #expect(harness.recorder.requests.last?.tabID == harness.tabID)
     let restored = try #require(ContentGeometry.restored(grid))
     #expect(revived.startGeometries == [restored])
     #expect(harness.runtime.content(for: harness.contentID) === revived)

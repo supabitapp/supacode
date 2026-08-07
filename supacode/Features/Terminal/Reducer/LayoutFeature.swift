@@ -34,16 +34,16 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
 /// Creates live content for a tab; the real surface-backed factory is wired
 /// by the integration layer.
 nonisolated struct LayoutContentFactory: Sendable {
-  var make: @MainActor @Sendable (Worktree.ID, ContentID, TerminalContentState) -> any TabContent
+  var make: @MainActor @Sendable (ContentRequest) -> any TabContent
 }
 
 extension LayoutContentFactory: DependencyKey {
   // `unimplemented(_:placeholder:)` cannot mint the id-bound placeholder, so
   // this hand-rolls the same report-and-return contract.
   static let liveValue = LayoutContentFactory(
-    make: { _, contentID, initialState in
+    make: { request in
       reportIssue("LayoutContentFactory.make is unimplemented")
-      return UnimplementedTabContent(id: contentID, state: initialState)
+      return UnimplementedTabContent(id: request.contentID, state: request.initialState)
     }
   )
 
@@ -231,9 +231,14 @@ extension LayoutFeature {
       return .none
     }
     guard let identity = mintedIdentity(in: state.layout, for: spec, operation: "newTab") else { return .none }
-    guard provisionContent(id: identity.contentID, from: spec, in: state.id, operation: "newTab") else {
-      return .none
-    }
+    let request = ContentRequest(
+      worktreeID: state.id,
+      tabID: identity.tabID,
+      contentID: identity.contentID,
+      initialState: spec.initialState,
+      origin: bootstraps ? .first : .tab
+    )
+    guard provisionContent(request, at: spec.geometry, operation: "newTab") else { return .none }
     if bootstraps {
       state.layout.tree = SplitTree(view: paneID)
       state.layout.panes.append(Pane(id: paneID))
@@ -370,7 +375,15 @@ extension LayoutFeature {
       Self.logger.warning("wakeTab has no terminal payload for \(snapshot.id.rawValue)")
       return .none
     }
-    let content = layoutContentFactory.make(state.id, snapshot.id, terminalState)
+    let content = layoutContentFactory.make(
+      ContentRequest(
+        worktreeID: state.id,
+        tabID: tabID,
+        contentID: snapshot.id,
+        initialState: terminalState,
+        origin: .restored
+      )
+    )
     guard contentRuntime.provision(content, at: geometry) else {
       Self.logger.warning("wakeTab provision refused for \(snapshot.id.rawValue)")
       return .none
@@ -403,9 +416,14 @@ extension LayoutFeature {
       return .none
     }
     guard let identity = mintedIdentity(in: state.layout, for: spec, operation: "splitPane") else { return .none }
-    guard provisionContent(id: identity.contentID, from: spec, in: state.id, operation: "splitPane") else {
-      return .none
-    }
+    let request = ContentRequest(
+      worktreeID: state.id,
+      tabID: identity.tabID,
+      contentID: identity.contentID,
+      initialState: spec.initialState,
+      origin: .split
+    )
+    guard provisionContent(request, at: spec.geometry, operation: "splitPane") else { return .none }
     let paneID = PaneID(rawValue: uuid())
     do {
       // `inserting` clears zoom by design: the new pane must be visible.
@@ -580,14 +598,13 @@ extension LayoutFeature {
   /// (tombstoned or already registered), dropping the freshly made content
   /// unprovisioned.
   private func provisionContent(
-    id contentID: ContentID,
-    from spec: NewTabSpec,
-    in worktreeID: Worktree.ID,
+    _ request: ContentRequest,
+    at geometry: ContentGeometry,
     operation: StaticString
   ) -> Bool {
-    let content = layoutContentFactory.make(worktreeID, contentID, spec.initialState)
-    guard contentRuntime.provision(content, at: spec.geometry) else {
-      Self.logger.warning("\(operation) provision refused for content \(contentID.rawValue)")
+    let content = layoutContentFactory.make(request)
+    guard contentRuntime.provision(content, at: geometry) else {
+      Self.logger.warning("\(operation) provision refused for content \(request.contentID.rawValue)")
       return false
     }
     return true

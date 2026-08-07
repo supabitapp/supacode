@@ -18,6 +18,28 @@ protocol TabContent: AnyObject {
   func snapshot() -> ContentSnapshot
 }
 
+/// Where in the layout a content is being created; a runtime hint for the
+/// factory (terminals map it to Ghostty's surface context), never persisted.
+nonisolated enum ContentOrigin: Equatable, Sendable {
+  /// The first content of an empty layout.
+  case first
+  /// A tab added to an existing pane.
+  case tab
+  /// The initial tab of a freshly split pane.
+  case split
+  /// Content rebuilt from persisted state after a relaunch.
+  case restored
+}
+
+/// Everything the factory needs to build one tab's content.
+nonisolated struct ContentRequest: Equatable, Sendable {
+  var worktreeID: Worktree.ID
+  var tabID: TerminalTabID
+  var contentID: ContentID
+  var initialState: TerminalContentState
+  var origin: ContentOrigin
+}
+
 /// Terminal content backed by a Ghostty surface. The process itself lives in
 /// zmx, so hibernation only drops the renderer, never the session.
 @MainActor
