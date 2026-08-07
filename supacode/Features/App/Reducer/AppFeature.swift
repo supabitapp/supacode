@@ -3349,6 +3349,12 @@ struct AppFeature {
     surfaceID: UUID,
     state: inout State
   ) -> Bool {
+    // Surface-first: the tab segment is a hint. Migration moves surfaces
+    // between tabs and long-running shells hold stale pairs by design, so a
+    // resolvable surface is valid wherever it lives now.
+    if terminalClient.surfaceExistsInWorktree(worktreeID, surfaceID) {
+      return true
+    }
     guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return false }
     guard terminalClient.surfaceExists(worktreeID, TerminalTabID(rawValue: tabID), surfaceID) else {
       deeplinkLogger.warning("Surface \(surfaceID) not found in tab \(tabID) of worktree \(worktreeID)")

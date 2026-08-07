@@ -353,10 +353,14 @@ final class WorktreeTerminalManager {
       stateIfExists(for: worktree.id)?.selectTabAtIndex(index)
     case .focusSurface(let worktree, let tabID, let surfaceID, let input):
       let terminal = state(for: worktree)
+      // Surface-first: the tab ID is a hint. Migration moves surfaces between
+      // tabs and reattached shells hold stale pairs by design, so the surface's
+      // actual owner wins.
+      let owningTab = terminal.tabID(containing: surfaceID) ?? tabID
       // Wake explicitly for parity with the split and destroy handlers; selectTab
       // would wake a dormant tab anyway.
-      terminal.wakeTab(tabID)
-      terminal.selectTab(tabID)
+      terminal.wakeTab(owningTab)
+      terminal.selectTab(owningTab)
       guard terminal.focusSurface(id: surfaceID) else {
         terminalLogger.warning("focusSurface: surface \(surfaceID) not found in worktree \(worktree.id).")
         break
@@ -368,12 +372,14 @@ final class WorktreeTerminalManager {
       let worktree, let tabID, let surfaceID, let direction, let input, let id, let focusing
     ):
       let terminal = state(for: worktree)
+      // Surface-first: the surface's actual owner wins over the tab hint.
+      let owningTab = terminal.tabID(containing: surfaceID) ?? tabID
       // Wake explicitly for parity with the focus and destroy handlers; selectTab
       // would wake a dormant tab anyway. The wake runs even when not focusing,
       // since splitting a dormant tab would otherwise land in a frozen layout.
-      terminal.wakeTab(tabID)
+      terminal.wakeTab(owningTab)
       if focusing {
-        terminal.selectTab(tabID)
+        terminal.selectTab(owningTab)
       }
       let ghosttyDirection: GhosttySplitAction.NewDirection = direction == .vertical ? .down : .right
       let resolvedInput = BlockingScriptRunner.makeCommandInput(script: input ?? "")
@@ -405,12 +411,14 @@ final class WorktreeTerminalManager {
       terminal.closeTab(tabID, focusing: focusing)
     case .destroySurface(let worktree, let tabID, let surfaceID, let focusing):
       let terminal = state(for: worktree)
+      // Surface-first: the surface's actual owner wins over the tab hint.
+      let owningTab = terminal.tabID(containing: surfaceID) ?? tabID
       // Wake explicitly for parity with the focus and split handlers. The wake
       // runs even when not focusing, since closing inside a dormant tab would
       // otherwise operate on a frozen layout.
-      terminal.wakeTab(tabID)
+      terminal.wakeTab(owningTab)
       if focusing {
-        terminal.selectTab(tabID)
+        terminal.selectTab(owningTab)
       }
       if !terminal.closeSurface(id: surfaceID) {
         terminalLogger.warning("destroySurface: surface \(surfaceID) not found in worktree \(worktree.id).")

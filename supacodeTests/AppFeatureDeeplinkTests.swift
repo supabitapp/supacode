@@ -1426,6 +1426,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1487,6 +1488,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1529,6 +1531,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -2814,6 +2817,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -2863,6 +2867,7 @@ struct AppFeatureDeeplinkTests {
     } withDependencies: {
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in false }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in false }
     }
     store.exhaustivity = .off
 
@@ -2886,6 +2891,7 @@ struct AppFeatureDeeplinkTests {
     } withDependencies: {
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in false }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in false }
     }
     store.exhaustivity = .off
 
@@ -3297,6 +3303,7 @@ struct AppFeatureDeeplinkTests {
     } withDependencies: {
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
     return store
