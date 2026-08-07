@@ -1,4 +1,5 @@
 import Foundation
+import GhosttyKit
 import Sharing
 import SupacodeSettingsShared
 
@@ -136,4 +137,116 @@ nonisolated enum TerminalSurfaceRecipe {
     }
     return encoded
   }
+
+  /// Everything needed to construct one surface, resolved ahead of the view.
+  struct SurfacePlan {
+    var command: String?
+    var initialInput: String?
+    var commandWrapper: [String]
+    var environment: [String: String]
+    var workingDirectory: URL?
+    var fontSize: Float32?
+    var context: ghostty_surface_context_e
+  }
+
+  /// Resolves the full construction plan for a layout-managed surface.
+  @MainActor
+  static func plan(
+    for request: ContentRequest,
+    worktree: Worktree,
+    socketPath: String?,
+    zmxExecutablePath: String?
+  ) -> SurfacePlan {
+    let launch = launch(
+      LaunchIntent(),
+      for: worktree,
+      surfaceID: request.contentID.rawValue,
+      zmxExecutablePath: zmxExecutablePath
+    )
+    // Remote worktrees have no local working directory: the surface command is
+    // an `ssh` line and the cwd lives on the remote.
+    let workingDirectory: URL? =
+      worktree.host == nil
+      ? request.initialState.workingDirectory.map { URL(filePath: $0, directoryHint: .isDirectory) }
+        ?? worktree.workingDirectory
+      : nil
+    return SurfacePlan(
+      command: launch.command,
+      initialInput: launch.initialInput,
+      commandWrapper: launch.commandWrapper,
+      environment: environment(
+        for: worktree,
+        tabID: request.tabID,
+        surfaceID: request.contentID.rawValue,
+        socketPath: socketPath
+      ),
+      workingDirectory: workingDirectory,
+      // A woken surface keeps its frozen font: the frozen backing size only
+      // reproduces the grid when the font, and so the cell size, matches.
+      fontSize: request.initialState.frozenGrid?.fontSize,
+      context: context(for: request.origin)
+    )
+  }
+
+  private static func context(for origin: ContentOrigin) -> ghostty_surface_context_e {
+    switch origin {
+    case .first:
+      GHOSTTY_SURFACE_CONTEXT_WINDOW
+    case .tab, .restored:
+      GHOSTTY_SURFACE_CONTEXT_TAB
+    case .split:
+      GHOSTTY_SURFACE_CONTEXT_SPLIT
+    }
+  }
+}
+
+/// Live factory assembly: builds `TerminalContent` whose surface is created
+/// lazily from a freshly resolved plan at the geometry the runtime provides.
+@MainActor
+struct TerminalContentBuilder {
+  var runtime: GhosttyRuntime
+  var worktree: (Worktree.ID) -> Worktree?
+  var socketPath: () -> String?
+  var zmxExecutablePath: () -> String?
+
+  func factory() -> LayoutContentFactory {
+    LayoutContentFactory { request in
+      guard let worktree = worktree(request.worktreeID) else {
+        // A vanished worktree cannot host a session; inert content keeps the
+        // layout itself usable.
+        TerminalSurfaceRecipe.builderLogger.error(
+          "No worktree \(request.worktreeID.rawValue) for content \(request.contentID.rawValue)")
+        return InertTabContent(id: request.contentID, state: request.initialState)
+      }
+      return TerminalContent(
+        id: request.contentID,
+        makeSurface: { geometry in
+          let plan = TerminalSurfaceRecipe.plan(
+            for: request,
+            worktree: worktree,
+            socketPath: socketPath(),
+            zmxExecutablePath: zmxExecutablePath()
+          )
+          return GhosttySurfaceView(
+            id: request.contentID.rawValue,
+            runtime: runtime,
+            workingDirectory: plan.workingDirectory,
+            command: plan.command,
+            initialInput: plan.initialInput,
+            environmentVariables: plan.environment,
+            commandWrapper: plan.commandWrapper,
+            disableShellIntegration: false,
+            fontSize: plan.fontSize,
+            initialGeometry: geometry,
+            context: plan.context
+          )
+        },
+        initialState: request.initialState
+      )
+    }
+  }
+}
+
+nonisolated extension TerminalSurfaceRecipe {
+  fileprivate static let builderLogger = SupaLogger("TerminalContentBuilder")
 }

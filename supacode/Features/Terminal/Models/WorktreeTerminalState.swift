@@ -2375,8 +2375,6 @@ final class WorktreeTerminalState {
     return String(scalars).trimmingCharacters(in: .whitespaces)
   }
 
-  typealias ResolvedLaunch = TerminalSurfaceRecipe.Launch
-
   /// Routes a surface through zmx so the underlying shell survives app quit.
   ///
   /// Interactive surfaces (no explicit `command`) keep `command` nil and inject
@@ -2392,7 +2390,7 @@ final class WorktreeTerminalState {
     command: String?,
     initialInput: String?,
     bypassZmx: Bool
-  ) -> ResolvedLaunch {
+  ) -> TerminalSurfaceRecipe.Launch {
     TerminalSurfaceRecipe.launch(
       TerminalSurfaceRecipe.LaunchIntent(command: command, initialInput: initialInput, bypassZmx: bypassZmx),
       for: worktree,

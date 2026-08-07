@@ -40,6 +40,30 @@ nonisolated struct ContentRequest: Equatable, Sendable {
   var origin: ContentOrigin
 }
 
+/// Renderless content that never starts a session; the fallback when a
+/// factory cannot build the real thing.
+@MainActor
+final class InertTabContent: TabContent {
+  let id: ContentID
+  let kind: ContentKind = .terminal
+  private let state: TerminalContentState
+
+  init(id: ContentID, state: TerminalContentState) {
+    self.id = id
+    self.state = state
+  }
+
+  var renderer: NSView? { nil }
+
+  func startSession(at geometry: ContentGeometry) {}
+
+  func hibernate() {}
+
+  func snapshot() -> ContentSnapshot {
+    ContentSnapshot(id: id, state: .terminal(state))
+  }
+}
+
 /// Terminal content backed by a Ghostty surface. The process itself lives in
 /// zmx, so hibernation only drops the renderer, never the session.
 @MainActor

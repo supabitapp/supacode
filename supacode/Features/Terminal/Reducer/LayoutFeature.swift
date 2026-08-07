@@ -43,7 +43,7 @@ extension LayoutContentFactory: DependencyKey {
   static let liveValue = LayoutContentFactory(
     make: { request in
       reportIssue("LayoutContentFactory.make is unimplemented")
-      return UnimplementedTabContent(id: request.contentID, state: request.initialState)
+      return InertTabContent(id: request.contentID, state: request.initialState)
     }
   )
 
@@ -87,28 +87,6 @@ extension SplitZoomPolicy: DependencyKey {
   static let liveValue = SplitZoomPolicy(preservesZoomOnNavigation: { false })
 
   static let testValue = liveValue
-}
-
-/// Inert content returned by the unimplemented factory placeholder.
-private final class UnimplementedTabContent: TabContent {
-  let id: ContentID
-  let kind: ContentKind = .terminal
-  private let state: TerminalContentState
-
-  init(id: ContentID, state: TerminalContentState) {
-    self.id = id
-    self.state = state
-  }
-
-  var renderer: NSView? { nil }
-
-  func startSession(at geometry: ContentGeometry) {}
-
-  func hibernate() {}
-
-  func snapshot() -> ContentSnapshot {
-    ContentSnapshot(id: id, state: .terminal(state))
-  }
 }
 
 /// Owns one worktree's pane and tab topology: the split tree over panes, each
