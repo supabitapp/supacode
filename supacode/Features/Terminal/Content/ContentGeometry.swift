@@ -1,39 +1,40 @@
 import AppKit
 
-/// A terminal grid frozen at hibernation, with the cell metrics and font that
-/// produced it, so wake can reconstruct the exact pixel frame the session's zmx
+/// A terminal grid frozen at hibernation, with the exact backing size and font
+/// that produced it, so wake can reconstruct the pixel frame the session's zmx
 /// snapshot was serialized at.
 nonisolated struct FrozenGrid: Equatable, Codable, Sendable {
+  /// Real grid reported by the terminal core at freeze time (padding-aware);
+  /// diagnostics and persistence, not reconstruction.
   let columns: Int
   let rows: Int
-  /// Backing pixels per cell at freeze time.
-  let cellWidth: Double
-  let cellHeight: Double
+  /// Exact backing pixels the grid was computed from. Wake hands these back
+  /// verbatim: re-deriving pixels from columns would drop the padding
+  /// remainder and attach one cell short.
+  let backingWidth: Double
+  let backingHeight: Double
   let scale: Double
-  /// Per-surface font override at freeze time; nil means the config default.
+  /// Live font size at freeze time; nil means the config default.
   let fontSize: Float32?
 
-  /// Derives the grid from a surface's last applied backing size and cell
-  /// metrics; nil while either is still unknown.
+  /// Freezes a surface's applied backing size and core-reported grid; nil
+  /// while either is still unknown.
   static func from(
     backingSize: CGSize,
-    cellSize: CGSize,
+    columns: Int,
+    rows: Int,
     scale: CGFloat,
     fontSize: Float32?
   ) -> FrozenGrid? {
     guard
       backingSize.width > 0, backingSize.height > 0,
-      cellSize.width > 0, cellSize.height > 0,
-      scale > 0
+      columns >= 1, rows >= 1, scale > 0
     else { return nil }
-    let columns = Int(backingSize.width / cellSize.width)
-    let rows = Int(backingSize.height / cellSize.height)
-    guard columns >= 1, rows >= 1 else { return nil }
     return FrozenGrid(
       columns: columns,
       rows: rows,
-      cellWidth: cellSize.width,
-      cellHeight: cellSize.height,
+      backingWidth: backingSize.width,
+      backingHeight: backingSize.height,
       scale: scale,
       fontSize: fontSize
     )
@@ -50,8 +51,8 @@ nonisolated struct ContentGeometry: Equatable, Sendable {
   /// Display scale for rasterization until the view joins a window.
   let scale: CGFloat
 
-  // Only `candidate` and `fallback` may produce values, so every geometry in
-  // circulation satisfies the minimum-grid and positive-scale invariants.
+  // Only `candidate`, `restored`, and `fallback` may produce values, so every
+  // geometry in circulation satisfies its producer's validation.
   private init(pixelSize: CGSize, scale: CGFloat) {
     self.pixelSize = pixelSize
     self.scale = scale
@@ -114,14 +115,11 @@ extension ContentGeometry {
   static func restored(_ grid: FrozenGrid) -> ContentGeometry? {
     guard
       grid.columns > 0, grid.rows > 0,
-      grid.cellWidth > 0, grid.cellHeight > 0,
+      grid.backingWidth > 0, grid.backingHeight > 0,
       grid.scale > 0
     else { return nil }
     return ContentGeometry(
-      pixelSize: CGSize(
-        width: CGFloat(grid.columns) * grid.cellWidth,
-        height: CGFloat(grid.rows) * grid.cellHeight
-      ),
+      pixelSize: CGSize(width: grid.backingWidth, height: grid.backingHeight),
       scale: grid.scale
     )
   }

@@ -89,6 +89,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   // Display scale carried from creation-time geometry, authoritative until the
   // view joins a window.
   private let initialScale: CGFloat
+  // The scale last pushed to the terminal core; the frozen grid must record
+  // this one, since the cell metrics were computed under it.
+  private var appliedContentScale: CGFloat
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
   // Only ever holds sizes actually pushed to ghostty_surface_set_size; a rejected
@@ -233,6 +236,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0
     self.initialScale = initialGeometry.scale
+    self.appliedContentScale = initialGeometry.scale
     self.context = context
     self.environmentVariables = environmentVariables
     self.commandWrapper = commandWrapper
@@ -1008,13 +1012,18 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   /// The grid this surface last actually rendered at, for hibernation freeze;
-  /// nil while size or cell metrics are still unknown.
+  /// nil once the core is gone or while the size is still unknown.
   func captureFrozenGrid() -> FrozenGrid? {
-    FrozenGrid.from(
+    guard let surface else { return nil }
+    let size = ghostty_surface_size(surface)
+    // The stored fontSize is creation-time only; zoom lives in the core.
+    let liveFontSize = ghostty_surface_font_size(surface)
+    return FrozenGrid.from(
       backingSize: lastAppliedBackingSize,
-      cellSize: cellSize,
-      scale: backingScaleFactor(),
-      fontSize: fontSize == 0 ? nil : fontSize
+      columns: Int(size.columns),
+      rows: Int(size.rows),
+      scale: appliedContentScale,
+      fontSize: liveFontSize == 0 ? nil : liveFontSize
     )
   }
 
@@ -1115,6 +1124,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     // already applied; re-pushing the creation scale would churn the renderer.
     guard window != nil || !hasBeenInWindow else { return }
     let scale = backingScaleFactor()
+    appliedContentScale = scale
     ghostty_surface_set_content_scale(surface, scale, scale)
   }
 

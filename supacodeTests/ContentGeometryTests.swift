@@ -32,53 +32,51 @@ struct ContentGeometryTests {
     #expect(ContentGeometry.candidate(pointSize: CGSize(width: 800, height: 600), scale: 0) == nil)
   }
 
-  @Test func frozenGridDerivesFromAppliedSizeAndCellMetrics() {
+  @Test func frozenGridKeepsTheAppliedBackingSizeVerbatim() {
     let grid = FrozenGrid.from(
       backingSize: CGSize(width: 1608, height: 1206),
-      cellSize: CGSize(width: 17, height: 37),
+      columns: 91,
+      rows: 31,
       scale: 2,
       fontSize: 14
     )
-    #expect(grid?.columns == 94)
-    #expect(grid?.rows == 32)
-    #expect(grid?.cellWidth == 17)
-    #expect(grid?.cellHeight == 37)
+    #expect(grid?.columns == 91)
+    #expect(grid?.rows == 31)
+    #expect(grid?.backingWidth == 1608)
+    #expect(grid?.backingHeight == 1206)
     #expect(grid?.scale == 2)
     #expect(grid?.fontSize == 14)
   }
 
-  @Test func frozenGridIsNilWhileMetricsAreUnknown() {
+  @Test func frozenGridIsNilWhileSizeOrGridIsUnknown() {
     #expect(
-      FrozenGrid.from(
-        backingSize: .zero,
-        cellSize: CGSize(width: 17, height: 37),
-        scale: 2,
-        fontSize: nil
-      ) == nil
+      FrozenGrid.from(backingSize: .zero, columns: 91, rows: 31, scale: 2, fontSize: nil) == nil
     )
     #expect(
       FrozenGrid.from(
         backingSize: CGSize(width: 1608, height: 1206),
-        cellSize: .zero,
+        columns: 0,
+        rows: 31,
         scale: 2,
         fontSize: nil
       ) == nil
     )
   }
 
-  @Test func restoredGeometryReproducesTheFrozenGridExactly() throws {
+  @Test func restoredGeometryHandsTheFrozenBackingSizeBackVerbatim() throws {
+    // Re-deriving pixels from columns would drop the window-padding remainder
+    // and attach one cell short; the frame must be the frozen size itself.
     let grid = try #require(
       FrozenGrid.from(
         backingSize: CGSize(width: 1700, height: 1230),
-        cellSize: CGSize(width: 17, height: 37),
+        columns: 96,
+        rows: 32,
         scale: 2,
         fontSize: nil
       )
     )
     let geometry = try #require(ContentGeometry.restored(grid))
-    // The reconstructed pixel frame floors back to the same columns and rows.
-    #expect(Int(geometry.pixelSize.width / 17) == grid.columns)
-    #expect(Int(geometry.pixelSize.height / 37) == grid.rows)
+    #expect(geometry.pixelSize == CGSize(width: 1700, height: 1230))
     #expect(geometry.scale == 2)
   }
 
