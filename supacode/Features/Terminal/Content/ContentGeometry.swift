@@ -50,7 +50,9 @@ extension ContentGeometry {
         return anchored
       }
     }
-    if let window = NSApp.mainWindowCandidate(), window.isVisible,
+    // A closed main window still carries its restored frame, a better estimate
+    // than the whole screen, so no visibility gate here.
+    if let window = NSApp.mainWindowCandidate(),
       let geometry = candidate(
         pointSize: window.contentLayoutRect.size,
         scale: window.backingScaleFactor
