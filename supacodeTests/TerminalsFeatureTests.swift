@@ -7,6 +7,68 @@ import Testing
 
 @MainActor
 struct TerminalsFeatureTests {
+  private static func layout(paneID: PaneID, tabID: TerminalTabID, contentID: ContentID) -> PaneLayout {
+    PaneLayout(
+      tree: SplitTree(view: paneID),
+      panes: [
+        Pane(
+          id: paneID,
+          tabs: [
+            TabItem(
+              id: tabID,
+              title: "One",
+              content: ContentSnapshot(
+                id: contentID,
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            )
+          ],
+          selectedTabID: tabID
+        )
+      ],
+      focusedPaneID: paneID
+    )
+  }
+
+  @Test func layoutsHydrationServesConsistentRecordsOnly() async {
+    let paneID = PaneID()
+    let good = Self.layout(paneID: paneID, tabID: TerminalTabID(), contentID: ContentID())
+    // A tree leaf with no matching pane fails the consistency gate.
+    let bad = PaneLayout(tree: SplitTree(view: PaneID()), panes: [], focusedPaneID: nil)
+    let file = LayoutsFile(worktrees: [
+      "/tmp/good": LayoutRecord(layout: good),
+      "/tmp/bad": LayoutRecord(layout: bad),
+    ])
+    let store = TestStore(initialState: TerminalsFeature.State()) { TerminalsFeature() }
+    await store.send(.layoutsHydrated(file)) {
+      $0.layouts = [LayoutFeature.State(id: Worktree.ID("/tmp/good"), layout: good)]
+    }
+  }
+
+  @Test func layoutsHydrationNeverReplacesALiveLayout() async {
+    let live = Self.layout(paneID: PaneID(), tabID: TerminalTabID(), contentID: ContentID())
+    let persisted = Self.layout(paneID: PaneID(), tabID: TerminalTabID(), contentID: ContentID())
+    let worktreeID = Worktree.ID("/tmp/repo")
+    let store = TestStore(
+      initialState: TerminalsFeature.State(layouts: [LayoutFeature.State(id: worktreeID, layout: live)])
+    ) {
+      TerminalsFeature()
+    }
+    await store.send(.layoutsHydrated(LayoutsFile(worktrees: ["/tmp/repo": LayoutRecord(layout: persisted)])))
+  }
+
+  @Test func newerSchemaServesRecordsButMarksThemReadOnly() async {
+    let good = Self.layout(paneID: PaneID(), tabID: TerminalTabID(), contentID: ContentID())
+    let file = LayoutsFile(
+      schemaVersion: LayoutsFile.currentSchemaVersion + 1,
+      worktrees: ["/tmp/good": LayoutRecord(layout: good)]
+    )
+    let store = TestStore(initialState: TerminalsFeature.State()) { TerminalsFeature() }
+    await store.send(.layoutsHydrated(file)) {
+      $0.layoutsAreReadOnly = true
+      $0.layouts = [LayoutFeature.State(id: Worktree.ID("/tmp/good"), layout: good)]
+    }
+  }
   @Test func tabProjectionChangedInsertsNewTabThenForwards() async {
     let tabID = TerminalTabID(rawValue: UUID())
     let surface = UUID()

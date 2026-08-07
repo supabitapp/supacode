@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SupacodeSettingsShared
 
 /// Owns the collection of per-tab `TerminalTabFeature` states. Mirrors the
 /// sidebar's `RepositoriesFeature` ownership of `sidebarItems`. Views scope
@@ -23,6 +24,11 @@ struct TerminalsFeature {
 
   @ObservableState
   struct State: Equatable {
+    /// Per-worktree pane and tab topology, hydrated from `layouts.json` v2.
+    var layouts: IdentifiedArrayOf<LayoutFeature.State> = []
+    /// True when the persisted file was written by a newer schema; its records
+    /// are served but must never be written back.
+    var layoutsAreReadOnly = false
     /// Per-tab feature instances keyed by `TerminalTabID`. Tab-bar leaves
     /// scope through `\.terminalTabs[id:]` for per-tab observation isolation
     /// during agent storms.
@@ -33,6 +39,11 @@ struct TerminalsFeature {
   }
 
   enum Action {
+    case layouts(IdentifiedActionOf<LayoutFeature>)
+    /// The migrated layouts file finished loading. Consistent records become
+    /// `LayoutFeature` states; inconsistent ones fall back to a fresh layout
+    /// on first use.
+    case layoutsHydrated(LayoutsFile)
     case terminalTabs(IdentifiedActionOf<TerminalTabFeature>)
     /// Tab projection arrived from `WorktreeTerminalState`. Inserts a new
     /// per-tab state with its current agent snapshot if missing, then forwards
@@ -50,9 +61,27 @@ struct TerminalsFeature {
     case worktreeStateTornDown(worktreeID: Worktree.ID)
   }
 
+  private static let logger = SupaLogger("TerminalsFeature")
+
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
+      case .layouts:
+        return .none
+
+      case .layoutsHydrated(let file):
+        state.layoutsAreReadOnly = file.schemaVersion > LayoutsFile.currentSchemaVersion
+        for (key, record) in file.worktrees.sorted(by: { $0.key < $1.key }) {
+          guard record.layout.isConsistent else {
+            Self.logger.error("Dropping inconsistent persisted layout for \(key)")
+            continue
+          }
+          let worktreeID = Worktree.ID(key)
+          guard state.layouts[id: worktreeID] == nil else { continue }
+          state.layouts.append(LayoutFeature.State(id: worktreeID, layout: record.layout))
+        }
+        return .none
+
       case .terminalTabs:
         return .none
 
@@ -98,6 +127,9 @@ struct TerminalsFeature {
     }
     .forEach(\.terminalTabs, action: \.terminalTabs) {
       TerminalTabFeature()
+    }
+    .forEach(\.layouts, action: \.layouts) {
+      LayoutFeature()
     }
   }
 }
