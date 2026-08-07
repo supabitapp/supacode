@@ -180,6 +180,14 @@ struct SplitTreeTests {
 
   // MARK: - Codable.
 
+  @Test func insertingADuplicateLeafThrows() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)
+    #expect(throws: SplitTree<IDLeaf>.SplitError.duplicateLeaf) {
+      try tree.inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .down)
+    }
+  }
+
   @Test func codableRoundTripsLeafOnlyTree() throws {
     let tree = SplitTree(view: IDLeaf(id: 1))
 
@@ -278,6 +286,6 @@ private final class SplitTreeTestView: NSView, Identifiable {
   let id = UUID()
 }
 
-private struct IDLeaf: Identifiable, Hashable, Codable {
+nonisolated private struct IDLeaf: Identifiable, Hashable, Codable {
   let id: Int
 }

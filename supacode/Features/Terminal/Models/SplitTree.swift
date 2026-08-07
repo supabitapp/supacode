@@ -51,6 +51,7 @@ struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
 
   enum SplitError: Error {
     case viewNotFound
+    case duplicateLeaf
   }
 
   enum NewDirection {
@@ -100,6 +101,9 @@ struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
 
   func inserting(view: Leaf, at anchor: Leaf, direction: NewDirection, ratio: Double = 0.5) throws -> Self {
     guard let root else { throw SplitError.viewNotFound }
+    // Leaves are unique by contract; a duplicate would make every node lookup
+    // ambiguous and removal delete all equal copies.
+    guard root.node(view: view) == nil else { throw SplitError.duplicateLeaf }
     return .init(
       root: try root.inserting(view: view, at: anchor, direction: direction, ratio: ratio),
       zoomed: nil
