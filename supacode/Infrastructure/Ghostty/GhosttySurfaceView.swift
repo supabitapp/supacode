@@ -88,7 +88,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private let fontSize: Float32
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
-  private var lastBackingSize: CGSize = .zero
+  // Only ever holds sizes actually pushed to ghostty_surface_set_size; a rejected
+  // degenerate size must be re-evaluated on the next layout pass.
+  private var lastAppliedBackingSize: CGSize = .zero
   private var lastPerformKeyEvent: TimeInterval?
   private var currentCursor: NSCursor = .iBeam
   private var focused = false
@@ -944,21 +946,44 @@ final class GhosttySurfaceView: NSView, Identifiable {
   func updateSurfaceSize(contentSize: CGSize? = nil) {
     guard let surface else { return }
     let backingSize = convertToBacking(contentSize ?? bounds.size)
-    if backingSize == lastBackingSize {
-      return
-    }
-    lastBackingSize = backingSize
-    let width = UInt32(max(1, Int(backingSize.width.rounded(.down))))
-    let height = UInt32(max(1, Int(backingSize.height.rounded(.down))))
     let currentSize = ghostty_surface_size(surface)
-    guard currentSize.cell_width_px > 0, currentSize.cell_height_px > 0 else {
-      ghostty_surface_set_size(surface, width, height)
-      return
+    let decision = ResizePolicy.decision(
+      backingSize: backingSize,
+      lastAppliedBackingSize: lastAppliedBackingSize,
+      cellWidth: Int(currentSize.cell_width_px),
+      cellHeight: Int(currentSize.cell_height_px)
+    )
+    guard decision == .apply else { return }
+    lastAppliedBackingSize = backingSize
+    ghostty_surface_set_size(
+      surface,
+      UInt32(max(1, Int(backingSize.width.rounded(.down)))),
+      UInt32(max(1, Int(backingSize.height.rounded(.down))))
+    )
+  }
+
+  enum ResizePolicy {
+    enum Decision: Equatable {
+      case skipUnchanged
+      case apply
+      case rejectDegenerate
     }
-    let columns = Int(width) / Int(currentSize.cell_width_px)
-    let rows = Int(height) / Int(currentSize.cell_height_px)
-    guard columns >= 5, rows >= 2 else { return }
-    ghostty_surface_set_size(surface, width, height)
+
+    // Sizes too small for a usable grid are rejected, not remembered; unknown cell
+    // metrics (pre-first-render) always apply so Ghostty can derive them.
+    static func decision(
+      backingSize: CGSize,
+      lastAppliedBackingSize: CGSize,
+      cellWidth: Int,
+      cellHeight: Int
+    ) -> Decision {
+      guard backingSize != lastAppliedBackingSize else { return .skipUnchanged }
+      guard cellWidth > 0, cellHeight > 0 else { return .apply }
+      let columns = max(1, Int(backingSize.width.rounded(.down))) / cellWidth
+      let rows = max(1, Int(backingSize.height.rounded(.down))) / cellHeight
+      guard columns >= 5, rows >= 2 else { return .rejectDegenerate }
+      return .apply
+    }
   }
 
   func updateCellSize(width: UInt32, height: UInt32) {
