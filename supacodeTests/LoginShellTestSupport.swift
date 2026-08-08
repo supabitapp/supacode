@@ -52,12 +52,16 @@ nonisolated enum LoginShellProbe {
   /// A `-c` invocation of `shell` with an isolated config root and a fixed
   /// environment, so a developer's own rc files and `TERM` can't change which
   /// branch the command under test takes.
+  /// `trailingArguments` and `workingDirectory` mirror how `ShellClient` spawns
+  /// the snippet, so an rc has the same chance to relocate it (#776).
   static func run(
     _ shell: String,
     command: String,
     configRoot: URL,
     shellPathOverride: String? = nil,
-    extraEnvironment: [String: String] = [:]
+    extraEnvironment: [String: String] = [:],
+    workingDirectory: URL? = nil,
+    trailingArguments: [String] = []
   ) async throws -> Result {
     let executableURL = try executable(shell)
     try FileManager.default.createDirectory(
@@ -66,7 +70,9 @@ nonisolated enum LoginShellProbe {
     )
     let process = Process()
     process.executableURL = executableURL
-    process.arguments = (shell == "fish" ? ["--no-config"] : []) + ["-c", command]
+    process.arguments =
+      (shell == "fish" ? ["--no-config"] : []) + ["-c", command] + trailingArguments
+    process.currentDirectoryURL = workingDirectory
     process.environment = [
       "HOME": configRoot.path,
       "XDG_CONFIG_HOME": configRoot.path,

@@ -487,7 +487,8 @@ struct RemoteWorktreeInfoTests {
     // work, so an exhaustive TestStore send with no trailing closure passes.
     await store.send(
       .worktreeInfoEvent(
-        .repositoryPullRequestRefresh(repositoryRootURL: repository.rootURL, worktreeIDs: [worktree.id])
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: repository.rootURL, worktreeIDs: [worktree.id], trigger: .automatic)
       )
     )
   }

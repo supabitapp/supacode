@@ -33,7 +33,7 @@ struct CodexSettingsInstallerTests {
     #expect(fileManager.fileExists(atPath: CodexSettingsInstaller.settingsURL(homeDirectoryURL: homeURL).path))
   }
 
-  @Test func installAllHooksThrowsCodexUnavailable() async {
+  @Test func installAllHooksThrowsCodexUnavailable() async throws {
     let homeURL = makeTempHomeURL()
     let installer = CodexSettingsInstaller(
       homeDirectoryURL: homeURL,
@@ -53,7 +53,7 @@ struct CodexSettingsInstallerTests {
     }
   }
 
-  @Test func installAllHooksThrowsEnableHooksFailedForNonZeroExit() async {
+  @Test func installAllHooksThrowsEnableHooksFailedForNonZeroExit() async throws {
     let homeURL = makeTempHomeURL()
     let installer = CodexSettingsInstaller(
       homeDirectoryURL: homeURL,
@@ -73,7 +73,7 @@ struct CodexSettingsInstallerTests {
     }
   }
 
-  @Test func installPreservesEnableHooksTimeout() async {
+  @Test func installPreservesEnableHooksTimeout() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -111,7 +111,7 @@ struct CodexSettingsInstallerTests {
 
     let after = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
     #expect(!after.contains("hooks = true"))
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func featuresStateIgnoresCommentedLegacyFlag() async throws {
@@ -135,7 +135,7 @@ struct CodexSettingsInstallerTests {
     // After install, the state should be `.installed` — not `.outdated`
     // (which is what the old regex returned because the comment
     // false-matched as legacy).
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func featuresStateScansPastTomlArrayValues() async throws {
@@ -155,6 +155,29 @@ struct CodexSettingsInstallerTests {
       runEnableHooksCommand: { .init(status: 0, standardError: "") }
     )
     try await installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
+  }
+
+  @Test func unreadableConfigTomlDoesNotReadAsFeatureFlagAbsent() async throws {
+    // Reading the flag as unset would send the auto-update off to rewrite a
+    // config file we never managed to read.
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+    let configURL = homeURL.appendingPathComponent(".codex/config.toml", isDirectory: false)
+    try fileManager.createDirectory(
+      at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    let installer = CodexSettingsInstaller(
+      homeDirectoryURL: homeURL,
+      fileManager: fileManager,
+      runEnableHooksCommand: { .init(status: 0, standardError: "") }
+    )
+    try await installer.installAllHooks()
+    // The stubbed enable command doesn't write the file, so seed it here.
+    try "[features]\nhooks = true\n".write(to: configURL, atomically: true, encoding: .utf8)
+    try fileManager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: configURL.path)
+    defer { try? fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configURL.path) }
+
+    #expect(throws: AgentFileUnreadableError.self) { try installer.installState() }
   }
 }

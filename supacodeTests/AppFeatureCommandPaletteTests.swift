@@ -2,6 +2,7 @@ import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import SwiftUI
 import Testing
 
 @testable import SupacodeSettingsFeature
@@ -56,13 +57,61 @@ struct AppFeatureCommandPaletteTests {
   }
 
   @Test(.dependencies) func refreshWorktreesDispatchesRefresh() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
     }
     store.exhaustivity = .off
 
     await store.send(.commandPalette(.delegate(.refreshWorktrees)))
+    await store.receive(\.refreshWorktreesRequested)
     await store.receive(\.repositories.refreshWorktrees)
+    await store.receive(\.repositories.reloadRepositories)
+    await store.finish()
+
+    #expect(watcherCommands.value == [.refresh])
+  }
+
+  @Test(.dependencies) func scenePhaseChangesToggleWatcherActiveState() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
+    let store = TestStore(initialState: AppFeature.State()) {
+      AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    // `.inactive` cancels the periodic-refresh loop `.active` starts.
+    await store.send(.scenePhaseChanged(.active))
+    await store.send(.scenePhaseChanged(.inactive))
+    await store.finish()
+
+    #expect(watcherCommands.value.contains(.setActive(true)))
+    #expect(watcherCommands.value.contains(.setActive(false)))
+  }
+
+  @Test(.dependencies) func repositoryRefreshDoesNotForceWorktreeInfoRefresh() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
+    let store = TestStore(initialState: AppFeature.State()) {
+      AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.refreshWorktrees))
+    await store.receive(\.repositories.reloadRepositories)
+    await store.finish()
+
+    #expect(watcherCommands.value.isEmpty)
   }
 
   @Test(.dependencies) func viewArchivedWorktreesDispatchesSelectArchived() async {

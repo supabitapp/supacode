@@ -18,18 +18,19 @@ nonisolated struct CopilotHooksInstaller {
 
   /// Marker present but content differs → `.outdated`; no marker → `.notInstalled`
   /// (so auto-update never overwrites a user file that shares the name).
-  func installState() -> ComponentInstallState {
-    guard let contents = try? String(contentsOf: hookFileURL, encoding: .utf8) else {
-      return .notInstalled
-    }
-    if let source = try? CopilotHookSettings.source(), contents == source { return .installed }
+  func installState() throws -> ComponentInstallState {
+    guard let contents = try AgentFileProbe.text(at: hookFileURL) else { return .notInstalled }
+    // Let a broken bundle throw rather than silently downgrading a correct
+    // install to `.outdated`, which the auto-update would then act on.
+    if contents == (try CopilotHookSettings.source()) { return .installed }
     return contents.contains(CopilotHookSettings.ownershipMarker) ? .outdated : .notInstalled
   }
 
   func install() throws {
     let path = hookFileURL.path(percentEncoded: false)
-    if fileManager.fileExists(atPath: path) {
-      let contents = try String(contentsOf: hookFileURL, encoding: .utf8)
+    // Read through the probe: a swallowed read error would read as "no marker
+    // present" and let the unattended auto-update clobber a user's own file.
+    if let contents = try AgentFileProbe.text(at: hookFileURL) {
       guard contents.contains(CopilotHookSettings.ownershipMarker) else {
         throw CopilotHooksInstallerError.fileNotManaged
       }
@@ -41,9 +42,8 @@ nonisolated struct CopilotHooksInstaller {
 
   func uninstall() throws {
     let path = hookFileURL.path(percentEncoded: false)
-    guard fileManager.fileExists(atPath: path) else { return }
     // Never remove a user file that merely shares the name.
-    let contents = try String(contentsOf: hookFileURL, encoding: .utf8)
+    guard let contents = try AgentFileProbe.text(at: hookFileURL) else { return }
     guard contents.contains(CopilotHookSettings.ownershipMarker) else {
       throw CopilotHooksInstallerError.fileNotManaged
     }

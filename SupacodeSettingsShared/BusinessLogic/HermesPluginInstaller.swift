@@ -16,13 +16,12 @@ nonisolated struct HermesPluginInstaller {
     self.fileManager = fileManager
   }
 
-  func installState() -> ComponentInstallState {
-    guard
-      let manifest = try? String(contentsOf: manifestFileURL, encoding: .utf8),
-      let module = try? String(contentsOf: moduleFileURL, encoding: .utf8)
-    else {
-      return .notInstalled
-    }
+  func installState() throws -> ComponentInstallState {
+    // Both files are probed: either one being unreadable makes the state
+    // undeterminable, which is not the same as the plugin being absent.
+    let manifest = try AgentFileProbe.text(at: manifestFileURL)
+    let module = try AgentFileProbe.text(at: moduleFileURL)
+    guard let manifest, let module else { return .notInstalled }
     if manifest == HermesPluginContent.manifest(), module == HermesPluginContent.module() { return .installed }
     return module.contains(HermesPluginContent.ownershipMarker) ? .outdated : .notInstalled
   }
@@ -30,8 +29,9 @@ nonisolated struct HermesPluginInstaller {
   func install() throws {
     // Refuse to clobber a plugin Supacode doesn't own: auto-update calls this
     // unattended when the aggregate goes `.outdated`, and the path is a fixed
-    // name a user's own plugin could occupy.
-    if let module = try? String(contentsOf: moduleFileURL, encoding: .utf8),
+    // name a user's own plugin could occupy. Reading through the probe means an
+    // unreadable module aborts rather than reading as "no marker".
+    if let module = try AgentFileProbe.text(at: moduleFileURL),
       !module.contains(HermesPluginContent.ownershipMarker)
     {
       throw HermesPluginInstallerError.pluginNotManaged
@@ -48,12 +48,10 @@ nonisolated struct HermesPluginInstaller {
   }
 
   func uninstall() throws {
-    guard
-      let module = try? String(contentsOf: moduleFileURL, encoding: .utf8),
-      module.contains(HermesPluginContent.ownershipMarker)
-    else {
-      return
-    }
+    // An unreadable module throws instead of reporting a removal that never
+    // happened, leaving the row "not installed" with the plugin still loading.
+    guard let module = try AgentFileProbe.text(at: moduleFileURL) else { return }
+    guard module.contains(HermesPluginContent.ownershipMarker) else { return }
     try fileManager.removeItem(at: pluginDirectoryURL)
   }
 

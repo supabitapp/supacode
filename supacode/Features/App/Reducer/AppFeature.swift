@@ -284,6 +284,7 @@ struct AppFeature {
     case appLaunched
     case scenePhaseChanged(ScenePhase)
     case repositories(RepositoriesFeature.Action)
+    case refreshWorktreesRequested
     case settings(SettingsFeature.Action)
     case updates(UpdatesFeature.Action)
     case commandPalette(CommandPaletteFeature.Action)
@@ -428,6 +429,14 @@ struct AppFeature {
       case .agentPresence:
         return .none
 
+      case .refreshWorktreesRequested:
+        return .merge(
+          .send(.repositories(.refreshWorktrees)),
+          .run { _ in
+            await worktreeInfoWatcher.send(.refresh)
+          }
+        )
+
       case .scenePhaseChanged(let phase):
         switch phase {
         case .active:
@@ -440,10 +449,16 @@ struct AppFeature {
             // card reflects external installs (e.g. `claude install`)
             // for users who keep the app open across days.
             .send(.settings(.refreshAgentIntegrationStates)),
+            // Resume background git polling only while foreground-active so an
+            // idle / backgrounded app stays quiet.
+            .run { _ in await worktreeInfoWatcher.send(.setActive(true)) },
             .run { send in
               while !Task.isCancelled {
                 try? await ContinuousClock().sleep(for: .seconds(30))
                 guard !Task.isCancelled else { return }
+                // Worktree discovery stays ungated so externally created /
+                // removed worktrees still sync; the setting gates status
+                // polling (line counts, branch, PR, remote SSH) in the watcher.
                 await send(.repositories(.refreshWorktrees))
                 await send(.refreshInstalledOpenActions)
               }
@@ -457,6 +472,7 @@ struct AppFeature {
           let agentsBySurface = state.agentPresence.agentsBySurface()
           return .merge(
             .cancel(id: CancelID.periodicRefresh),
+            .run { _ in await worktreeInfoWatcher.send(.setActive(false)) },
             .run { [clock] _ in
               try await clock.sleep(for: .seconds(1))
               await MainActor.run {
@@ -466,9 +482,15 @@ struct AppFeature {
             .cancellable(id: CancelID.backgroundPersist, cancelInFlight: true)
           )
         case .inactive:
-          return .cancel(id: CancelID.periodicRefresh)
+          return .merge(
+            .cancel(id: CancelID.periodicRefresh),
+            .run { _ in await worktreeInfoWatcher.send(.setActive(false)) }
+          )
         @unknown default:
-          return .cancel(id: CancelID.periodicRefresh)
+          return .merge(
+            .cancel(id: CancelID.periodicRefresh),
+            .run { _ in await worktreeInfoWatcher.send(.setActive(false)) }
+          )
         }
 
       case .repositories(.delegate(.selectedWorktreeChanged(let worktree))):
@@ -702,6 +724,11 @@ struct AppFeature {
           .run { _ in
             await worktreeInfoWatcher.send(
               .setPullRequestTrackingEnabled(settings.githubIntegrationEnabled)
+            )
+          },
+          .run { _ in
+            await worktreeInfoWatcher.send(
+              .setAutomaticRefreshEnabled(settings.automaticRepositoryRefreshEnabled)
             )
           },
           .run { send in
@@ -1489,7 +1516,7 @@ struct AppFeature {
         return .send(.repositories(.selectArchivedWorktrees))
 
       case .commandPalette(.delegate(.refreshWorktrees)):
-        return .send(.repositories(.refreshWorktrees))
+        return .send(.refreshWorktreesRequested)
 
       case .commandPalette(.delegate(.ghosttyCommand(let action))):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {

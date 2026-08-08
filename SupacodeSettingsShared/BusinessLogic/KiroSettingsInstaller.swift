@@ -59,7 +59,7 @@ nonisolated struct KiroSettingsInstaller {
 
   /// Install state for the unified hook map. See
   /// `ClaudeSettingsInstaller.installState()` for rationale.
-  func installState() -> ComponentInstallState {
+  func installState() throws -> ComponentInstallState {
     let entries: [String: [JSONValue]]
     do {
       entries = try KiroHookSettings.hooksByEvent()
@@ -67,7 +67,7 @@ nonisolated struct KiroSettingsInstaller {
       Self.reportInvalidHookConfiguration(error)
       return .notInstalled
     }
-    return fileInstaller.installState(settingsURL: settingsURL, hookEntriesByEvent: entries)
+    return try fileInstaller.installState(settingsURL: settingsURL, hookEntriesByEvent: entries)
   }
 
   func installAllHooks() async throws {
@@ -96,7 +96,9 @@ nonisolated struct KiroSettingsInstaller {
   /// config (not just hooks) — and we gate on `supportedVersionPrefix` so a future Kiro release
   /// that ships different defaults fails loudly instead of being silently stomped.
   private func ensureDefaultAgentConfig() async throws {
-    guard !fileManager.fileExists(atPath: settingsURL.path) else { return }
+    // Probe rather than stat: this write replaces the user's agent config
+    // wholesale, so a failed read must abort, not read as "no config yet".
+    guard try AgentFileProbe.data(at: settingsURL) == nil else { return }
     try await validateSupportedKiroVersion()
     try fileManager.createDirectory(
       at: settingsURL.deletingLastPathComponent(),
@@ -200,7 +202,7 @@ nonisolated struct KiroSettingsInstaller {
     let process = Process()
     // Source the user's rc so a version-manager kiro-cli on the interactive PATH is found (#504).
     let (shell, command) = ShellClient.loginShellCommandInvocation(
-      "kiro-cli --version", userShell: CodexSettingsInstaller.loginShellURL())
+      "kiro-cli --version", userShell: CodexSettingsInstaller.loginShellURL(), workingDirectory: nil)
     process.executableURL = shell
     process.arguments = ["-l", "-c", command]
     let outputPipe = Pipe()

@@ -4874,7 +4874,9 @@ struct RepositoriesFeatureTests {
     let worktree = makeWorktree(id: "/tmp/wt", name: "eagle", createdAt: createdAt)
     let renamedWorktree = makeWorktree(id: "/tmp/wt", name: "falcon", createdAt: createdAt)
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .disabled
+    let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
 
@@ -4891,6 +4893,7 @@ struct RepositoriesFeatureTests {
       $0.repositories[id: repository.id] = repository
       $0.reconcileSidebarForTesting()
     }
+    await store.receive(\.worktreeInfoEvent)
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.name == "falcon")
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.createdAt == createdAt)
   }
@@ -5957,7 +5960,8 @@ struct RepositoriesFeatureTests {
       .worktreeInfoEvent(
         .repositoryPullRequestRefresh(
           repositoryRootURL: URL(fileURLWithPath: repoRoot),
-          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
         )
       )
     )
@@ -5965,6 +5969,140 @@ struct RepositoriesFeatureTests {
     await store.finish()
 
     #expect(batchCalls.value == [GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")])
+  }
+
+  @Test(.dependencies) func automaticPullRequestRefreshSuppressedWhenBackgroundRefreshDisabled() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.automaticRepositoryRefreshEnabled = false }
+
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .available
+    let batchCalls = LockIsolated<[GithubRemoteInfo]>([])
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { host, owner, repo, _ in
+        batchCalls.withValue { $0.append(GithubRemoteInfo(host: host, owner: owner, repo: repo)) }
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    // An automatic refresh is dropped while background refresh is off, so `gh`
+    // never runs.
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
+        )
+      )
+    )
+    await store.finish()
+    #expect(batchCalls.value.isEmpty)
+
+    // A manual refresh bypasses the gate and still runs `gh`.
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .manual
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+    #expect(batchCalls.value.count == 1)
+  }
+
+  @Test(.dependencies) func manualRefreshQueuedWhileUnknownStillRunsWhenBackgroundRefreshDisabled() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.automaticRepositoryRefreshEnabled = false }
+
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    let batchCalls = LockIsolated<[GithubRemoteInfo]>([])
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.githubIntegration.isAvailable = { true }
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { host, owner, repo, _ in
+        batchCalls.withValue { $0.append(GithubRemoteInfo(host: host, owner: owner, repo: repo)) }
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    // A manual refresh defers while availability is unknown; once it resolves,
+    // the queued replay preserves the manual trigger and bypasses the gate.
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .manual
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+    #expect(batchCalls.value.count == 1)
+  }
+
+  @Test(.dependencies) func userPrMergeRefreshesEvenWhenBackgroundRefreshDisabled() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.automaticRepositoryRefreshEnabled = false }
+
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 12)
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .available
+    state.reconcileSidebarForTesting()
+    state.setWorktreeInfoForTesting(
+      id: featureWorktree.id, addedLines: nil, removedLines: nil, pullRequest: openPullRequest)
+    let batchCalls = LockIsolated<[Int]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.githubIntegration.isAvailable = { true }
+      $0.githubCLI.mergePullRequest = { _, _, _, _ in }
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        batchCalls.withValue { $0.append(1) }
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    // The post-merge refresh is a manual trigger, so it runs gh despite the
+    // background-refresh opt-out.
+    await store.send(.pullRequestAction(featureWorktree.id, .merge))
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+    #expect(!batchCalls.value.isEmpty)
   }
 
   @Test func worktreeInfoEventRepositoryPullRequestRefreshFallsBackToGitRemote() async {
@@ -5997,7 +6135,8 @@ struct RepositoriesFeatureTests {
       .worktreeInfoEvent(
         .repositoryPullRequestRefresh(
           repositoryRootURL: URL(fileURLWithPath: repoRoot),
-          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
         )
       )
     )
@@ -6005,6 +6144,42 @@ struct RepositoriesFeatureTests {
     await store.finish()
 
     #expect(batchCalls.value == [GithubRemoteInfo(host: "github.com", owner: "fork", repo: "project")])
+  }
+
+  @Test func worktreeBranchNameLoadedRefreshesPullRequestsWithUpdatedBranchName() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "old-feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .available
+    let queriedBranches = LockIsolated<[String]>([])
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "upstream", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { _, _, _, branches in
+        queriedBranches.withValue { $0 = branches }
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeBranchNameLoaded(worktreeID: featureWorktree.id, name: "new-feature")
+    )
+    await store.receive(\.worktreeInfoEvent)
+    await store.receive(\.repositoryPullRequestsLoaded)
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+
+    #expect(queriedBranches.value == ["main", "new-feature"])
   }
 
   @Test func pullRequestActionMergePassesResolvedRemoteToGh() async {
@@ -6118,7 +6293,8 @@ struct RepositoriesFeatureTests {
       .worktreeInfoEvent(
         .repositoryPullRequestRefresh(
           repositoryRootURL: URL(fileURLWithPath: repoRoot),
-          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
         )
       )
     ) {
@@ -6265,13 +6441,15 @@ struct RepositoriesFeatureTests {
       .worktreeInfoEvent(
         .repositoryPullRequestRefresh(
           repositoryRootURL: URL(fileURLWithPath: repoRoot),
-          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
         )
       )
     ) {
       $0.pendingPullRequestRefreshByRepositoryID[repository.id] = RepositoriesFeature.PendingPullRequestRefresh(
         repositoryRootURL: URL(fileURLWithPath: repoRoot),
-        worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        worktreeIDs: [mainWorktree.id, featureWorktree.id],
+        trigger: .automatic
       )
     }
     await store.receive(\.refreshGithubIntegrationAvailability) {
@@ -6365,13 +6543,15 @@ struct RepositoriesFeatureTests {
       .worktreeInfoEvent(
         .repositoryPullRequestRefresh(
           repositoryRootURL: URL(fileURLWithPath: repoRoot),
-          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
         )
       )
     ) {
       $0.pendingPullRequestRefreshByRepositoryID[repository.id] = RepositoriesFeature.PendingPullRequestRefresh(
         repositoryRootURL: URL(fileURLWithPath: repoRoot),
-        worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        worktreeIDs: [mainWorktree.id, featureWorktree.id],
+        trigger: .automatic
       )
     }
     await store.finish()
@@ -6390,7 +6570,8 @@ struct RepositoriesFeatureTests {
     initialState.githubIntegrationAvailability = .unavailable
     initialState.pendingPullRequestRefreshByRepositoryID[repository.id] = RepositoriesFeature.PendingPullRequestRefresh(
       repositoryRootURL: URL(fileURLWithPath: repoRoot),
-      worktreeIDs: [mainWorktree.id, featureWorktree.id]
+      worktreeIDs: [mainWorktree.id, featureWorktree.id],
+      trigger: .automatic
     )
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
@@ -6435,7 +6616,8 @@ struct RepositoriesFeatureTests {
     initialState.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
     initialState.queuedPullRequestRefreshByRepositoryID[repository.id] = RepositoriesFeature.PendingPullRequestRefresh(
       repositoryRootURL: URL(fileURLWithPath: repoRoot),
-      worktreeIDs: [mainWorktree.id, featureWorktree.id]
+      worktreeIDs: [mainWorktree.id, featureWorktree.id],
+      trigger: .automatic
     )
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
@@ -6447,7 +6629,8 @@ struct RepositoriesFeatureTests {
       $0.githubIntegrationAvailability = .unavailable
       $0.pendingPullRequestRefreshByRepositoryID[repository.id] = RepositoriesFeature.PendingPullRequestRefresh(
         repositoryRootURL: URL(fileURLWithPath: repoRoot),
-        worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        worktreeIDs: [mainWorktree.id, featureWorktree.id],
+        trigger: .automatic
       )
       $0.queuedPullRequestRefreshByRepositoryID = [:]
       $0.inFlightPullRequestRefreshRepositoryIDs = []
@@ -6466,7 +6649,8 @@ struct RepositoriesFeatureTests {
     state.githubIntegrationAvailability = .disabled
     state.pendingPullRequestRefreshByRepositoryID["repo"] = RepositoriesFeature.PendingPullRequestRefresh(
       repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
-      worktreeIDs: []
+      worktreeIDs: [],
+      trigger: .automatic
     )
     let expectedState = state
     state.reconcileSidebarForTesting()
@@ -6496,7 +6680,8 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature
       .PendingPullRequestRefresh(
         repositoryRootURL: URL(fileURLWithPath: repoRoot),
-        worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        worktreeIDs: [mainWorktree.id, featureWorktree.id],
+        trigger: .automatic
       )
     state.reconcileSidebarForTesting()
     let store = TestStore(initialState: state) {
@@ -6623,7 +6808,8 @@ struct RepositoriesFeatureTests {
       .worktreeInfoEvent(
         .repositoryPullRequestRefresh(
           repositoryRootURL: URL(fileURLWithPath: repoRoot),
-          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
         )
       )
     ) {

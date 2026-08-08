@@ -57,10 +57,10 @@ struct GrokSettingsInstallerTests {
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
-  @Test func installStateIsNotInstalledWhenFileIsUnreadableAsUTF8() throws {
+  @Test func installStateThrowsWhenFileIsUnreadableAsUTF8() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -69,12 +69,12 @@ struct GrokSettingsInstallerTests {
       at: settingsURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    // Lead bytes that are invalid UTF-8: an unreadable file resolves to
-    // not-installed rather than crashing or false-positiving as installed.
+    // Lead bytes that are invalid UTF-8: the file exists but yields no state,
+    // which must not be reported as "not installed".
     try Data([0xFF, 0xFE, 0xFD, 0x00]).write(to: settingsURL)
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(throws: (any Error).self) { try installer.installState() }
   }
 
   @Test func installStateReturnsOutdatedWhenEnvPassthroughMissing() throws {
@@ -83,14 +83,14 @@ struct GrokSettingsInstallerTests {
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // An older install carries the full canonical command set but no env
     // blocks. The command set still matches, so only the env check can flag it.
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     try rewriteManagedHookEnv(at: settingsURL) { _ in nil }
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateReturnsOutdatedWhenEnvPassthroughIncomplete() throws {
@@ -99,7 +99,7 @@ struct GrokSettingsInstallerTests {
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // Only the surface id survives: a partial env map is still outdated.
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
@@ -107,7 +107,7 @@ struct GrokSettingsInstallerTests {
       ["SUPACODE_SURFACE_ID": .string("${SUPACODE_SURFACE_ID}")]
     }
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateReturnsOutdatedWhenEnvPassthroughValueDrifted() throws {
@@ -116,7 +116,7 @@ struct GrokSettingsInstallerTests {
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // A stale literal value (not the `${VAR}` expansion) is outdated.
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
@@ -126,7 +126,7 @@ struct GrokSettingsInstallerTests {
       return env
     }
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateReturnsOutdatedWhenSingleEventEnvMissing() throws {
@@ -135,14 +135,14 @@ struct GrokSettingsInstallerTests {
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // One managed event without env among an otherwise complete map is still
     // outdated: the detector must not require every hook to be broken.
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     try rewriteManagedHookEnv(at: settingsURL, event: "Stop") { _ in nil }
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
     #expect(
       GrokHookSettings.managedHooksLackEnvPassthrough(in: try loadSettingsObject(at: settingsURL)))
   }
@@ -177,7 +177,7 @@ struct GrokSettingsInstallerTests {
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
     #expect(
       !GrokHookSettings.managedHooksLackEnvPassthrough(in: try loadSettingsObject(at: settingsURL)))
   }
@@ -191,7 +191,7 @@ struct GrokSettingsInstallerTests {
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     #expect(
       !GrokHookSettings.managedHooksLackEnvPassthrough(in: try loadSettingsObject(at: settingsURL)))
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func installStateReturnsOutdatedWhenManagedBodyDrifted() throws {
@@ -225,7 +225,7 @@ struct GrokSettingsInstallerTests {
     try JSONEncoder().encode(stale).write(to: settingsURL)
 
     let installer = GrokSettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installAllHooksWritesSupacodeManagedFile() throws {
@@ -247,7 +247,7 @@ struct GrokSettingsInstallerTests {
     )
     let env = try #require(sessionStartHook["env"]?.objectValue)
     #expect(env["SUPACODE_SURFACE_ID"]?.stringValue == "${SUPACODE_SURFACE_ID}")
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func uninstallRemovesManagedHooks() throws {
@@ -263,7 +263,7 @@ struct GrokSettingsInstallerTests {
     let root = try JSONDecoder().decode(JSONValue.self, from: data)
     let hooksObject = root.objectValue?["hooks"]?.objectValue ?? [:]
     #expect(hooksObject.isEmpty)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func installPreservesUserAuthoredHooksInSameFile() throws {
@@ -299,7 +299,7 @@ struct GrokSettingsInstallerTests {
     let text = try String(contentsOf: settingsURL, encoding: .utf8)
     #expect(text.contains("prettier --write"))
     #expect(text.contains(AgentHookSettingsCommand.ownershipMarker))
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func uninstallPreservesUserAuthoredHooksInSameFile() throws {
@@ -336,6 +336,6 @@ struct GrokSettingsInstallerTests {
     let text = try String(contentsOf: settingsURL, encoding: .utf8)
     #expect(text.contains("prettier --write"))
     #expect(!text.contains(AgentHookSettingsCommand.ownershipMarker))
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 }

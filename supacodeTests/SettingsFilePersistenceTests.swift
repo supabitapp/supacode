@@ -532,6 +532,29 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.terminalHibernationEnabled == true)
   }
 
+  @Test(.dependencies) func decodesMissingAutomaticRepositoryRefreshEnabledAsTrue() throws {
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // A pre-feature file omits the key; background refresh defaults on.
+    #expect(settings.global.automaticRepositoryRefreshEnabled == true)
+  }
+
   @Test(.dependencies) func decodesMissingAppVisibilityAsDefault() throws {
     // A file predating the menu bar feature falls through to the default, which
     // now shows the menu bar too.

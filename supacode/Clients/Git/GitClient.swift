@@ -1332,20 +1332,6 @@ struct GitClient {
     }
   }
 
-  nonisolated private func runLoginShellProcess(
-    operation: GitOperation,
-    executableURL: URL,
-    arguments: [String],
-    currentDirectoryURL: URL?
-  ) async throws -> String {
-    let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
-    do {
-      return try await shell.runLogin(executableURL, arguments, currentDirectoryURL).stdout
-    } catch {
-      throw wrapShellError(error, operation: operation, command: command)
-    }
-  }
-
   nonisolated private static func relativePath(from base: URL, to target: URL) -> String {
     let baseComponents = base.standardizedFileURL.pathComponents
     let targetComponents = target.standardizedFileURL.pathComponents

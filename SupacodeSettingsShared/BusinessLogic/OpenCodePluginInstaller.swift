@@ -29,10 +29,8 @@ nonisolated struct OpenCodePluginInstaller {
   /// symmetric with `uninstall`. That alone does not stop an unattended
   /// overwrite (the aggregate can still be `.outdated` via another component),
   /// so `install` also refuses to clobber an unowned file.
-  func installState() -> ComponentInstallState {
-    guard let contents = try? String(contentsOf: pluginFileURL, encoding: .utf8) else {
-      return .notInstalled
-    }
+  func installState() throws -> ComponentInstallState {
+    guard let contents = try AgentFileProbe.text(at: pluginFileURL) else { return .notInstalled }
     if contents == OpenCodePluginContent.source() { return .installed }
     return contents.contains(OpenCodePluginContent.ownershipMarker) ? .outdated : .notInstalled
   }
@@ -40,8 +38,9 @@ nonisolated struct OpenCodePluginInstaller {
   func install() throws {
     // Refuse to clobber a plugin Supacode doesn't own: auto-update calls this
     // unattended when the aggregate integration goes `.outdated`, which the
-    // per-component `.notInstalled` alone does not prevent.
-    if let contents = try? String(contentsOf: pluginFileURL, encoding: .utf8),
+    // per-component `.notInstalled` alone does not prevent. Reading through the
+    // probe means an unreadable file aborts rather than reading as "no marker".
+    if let contents = try AgentFileProbe.text(at: pluginFileURL),
       !contents.contains(OpenCodePluginContent.ownershipMarker)
     {
       throw OpenCodePluginInstallerError.pluginNotManaged
@@ -52,12 +51,10 @@ nonisolated struct OpenCodePluginInstaller {
 
   func uninstall() throws {
     // Only remove a file Supacode owns — never clobber a user plugin that
-    // happens to share the name.
-    guard let contents = try? String(contentsOf: pluginFileURL, encoding: .utf8),
-      contents.contains(OpenCodePluginContent.ownershipMarker)
-    else {
-      return
-    }
+    // happens to share the name. An unreadable plugin throws instead of
+    // reporting a removal that never happened.
+    guard let contents = try AgentFileProbe.text(at: pluginFileURL) else { return }
+    guard contents.contains(OpenCodePluginContent.ownershipMarker) else { return }
     try fileManager.removeItem(at: pluginFileURL)
   }
 

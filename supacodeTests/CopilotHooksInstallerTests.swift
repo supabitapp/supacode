@@ -74,7 +74,7 @@ struct CopilotHooksInstallerTests {
     try installer.uninstall()
 
     #expect(!fileManager.fileExists(atPath: installer.hookFileURL.path))
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func uninstallThrowsForUnownedFileWithSameName() throws {
@@ -94,7 +94,7 @@ struct CopilotHooksInstallerTests {
     #expect(after == userFile)
   }
 
-  @Test func uninstallIsNoOpWhenMissing() {
+  @Test func uninstallIsNoOpWhenMissing() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -125,10 +125,10 @@ struct CopilotHooksInstallerTests {
 
   // MARK: - Install state.
 
-  @Test func installStateNotInstalledBeforeInstall() {
+  @Test func installStateNotInstalledBeforeInstall() throws {
     let homeURL = makeTempHomeURL()
     let installer = CopilotHooksInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func installStateInstalledAfterInstall() throws {
@@ -137,7 +137,7 @@ struct CopilotHooksInstallerTests {
 
     let installer = CopilotHooksInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.install()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func installStateOutdatedWhenContentDiffers() throws {
@@ -151,7 +151,7 @@ struct CopilotHooksInstallerTests {
     try #"{ "hooks": { "stop": [ { "bash": "old \#(CopilotHookSettings.ownershipMarker)" } ] } }"#
       .write(to: installer.hookFileURL, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateNotInstalledForUnownedFileWithSameName() throws {
@@ -165,7 +165,7 @@ struct CopilotHooksInstallerTests {
     try #"{ "version": 1, "hooks": { "stop": [] } }"#
       .write(to: installer.hookFileURL, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func hookFilePointsToExpectedPath() {
@@ -239,7 +239,7 @@ struct CopilotHooksInstallerTests {
     #expect(commands.allSatisfy { ManagedHookCommandVariables.unexpected(in: $0).isEmpty })
   }
 
-  @Test func installStateNotInstalledForNonUTF8File() throws {
+  @Test func installStateThrowsForNonUTF8File() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -248,6 +248,7 @@ struct CopilotHooksInstallerTests {
       at: installer.hookFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data([0xFF, 0xFE, 0xFD]).write(to: installer.hookFileURL)
 
-    #expect(installer.installState() == .notInstalled)
+    // The file is there but yields no state, which is not the same as absent.
+    #expect(throws: AgentFileUnreadableError.self) { try installer.installState() }
   }
 }

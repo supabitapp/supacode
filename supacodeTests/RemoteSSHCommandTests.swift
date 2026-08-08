@@ -153,7 +153,7 @@ struct SSHCommandTests {
       arguments: ["git", "status"],
       workingDirectory: URL(fileURLWithPath: "/tmp/repo")
     )
-    #expect(command == "cd -- '/tmp/repo' && exec '/usr/bin/env' 'git' 'status'")
+    #expect(command == "cd -- '/tmp/repo' >/dev/null && exec '/usr/bin/env' 'git' 'status'")
   }
 
   /// The adversarial tokens the quoting contract has to survive. Every one is a

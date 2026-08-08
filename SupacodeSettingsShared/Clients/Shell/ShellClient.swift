@@ -114,21 +114,17 @@ extension ShellClient: DependencyKey {
       )
     },
     runLoginImpl: { executableURL, arguments, currentDirectoryURL, log in
-      let (shellURL, execCommand) = ShellClient.loginShellInvocation(
-        userShell: URL(fileURLWithPath: defaultShellPath()))
-      let shellArguments =
-        ["-l", "-c", execCommand, "--", executableURL.path(percentEncoded: false)] + arguments
-      if log {
-        let cwd = currentDirectoryURL?.path(percentEncoded: false) ?? "nil"
-        let cmd = shellArguments.joined(separator: " ")
-        shellLogger.debug("runLogin cwd=\(cwd) cmd=\(shellURL.path) \(cmd)")
-      }
-      let result = try await runProcess(
-        executableURL: shellURL,
-        arguments: shellArguments,
+      let invocation = ShellClient.loginShellProcessInvocation(
+        executableURL: executableURL,
+        arguments: arguments,
+        currentDirectoryURL: currentDirectoryURL,
+        log: log
+      )
+      return try await runProcess(
+        executableURL: invocation.shell,
+        arguments: invocation.arguments,
         currentDirectoryURL: currentDirectoryURL
       )
-      return result
     },
     runStream: { executableURL, arguments, currentDirectoryURL in
       runProcessStream(
@@ -210,27 +206,22 @@ nonisolated private func runProcessStream(
   ).events
 }
 
-/// Wrap `executableURL` in a login shell and run it as a terminable process. Both
-/// runLogin streaming entry points share this so the invocation, argv, and debug
-/// log stay identical.
+/// Wrap `executableURL` in a login shell and run it as a terminable process.
 nonisolated private func runLoginProcessHandle(
   executableURL: URL,
   arguments: [String],
   currentDirectoryURL: URL?,
   log: Bool
 ) -> StreamingShellProcess {
-  let (shellURL, execCommand) = ShellClient.loginShellInvocation(
-    userShell: URL(fileURLWithPath: defaultShellPath()))
-  let shellArguments =
-    ["-l", "-c", execCommand, "--", executableURL.path(percentEncoded: false)] + arguments
-  if log {
-    let cwd = currentDirectoryURL?.path(percentEncoded: false) ?? "nil"
-    let cmd = shellArguments.joined(separator: " ")
-    shellLogger.debug("runLogin cwd=\(cwd) cmd=\(shellURL.path) \(cmd)")
-  }
+  let invocation = ShellClient.loginShellProcessInvocation(
+    executableURL: executableURL,
+    arguments: arguments,
+    currentDirectoryURL: currentDirectoryURL,
+    log: log
+  )
   return runProcessHandle(
-    executableURL: shellURL,
-    arguments: shellArguments,
+    executableURL: invocation.shell,
+    arguments: invocation.arguments,
     currentDirectoryURL: currentDirectoryURL
   )
 }
@@ -391,18 +382,29 @@ nonisolated private func collectOutput(
 }
 
 extension ShellClient {
+  /// Exit status when the working directory could not be entered.
+  nonisolated static let workingDirectoryExitCode = 125
+
   /// Builds the `(shell, -c command)` pair for a one-shot login-shell command
   /// that execs the target executable from `$@` (see `ShellClient.live`).
-  nonisolated static func loginShellInvocation(userShell: URL) -> (shell: URL, command: String) {
+  nonisolated static func loginShellInvocation(
+    userShell: URL, workingDirectory: URL?
+  ) -> (shell: URL, command: String) {
     let shell = drivableLoginShell(userShell: userShell)
+    let enterWorkingDirectory = workingDirectoryExpression(workingDirectory, for: shell)
     let command: String
     switch shell.lastPathComponent {
     case "fish":
-      command = "\(rcSourceExpression(for: shell)); exec $argv"
+      command = shellSequence(rcSourceExpression(for: shell), enterWorkingDirectory, "exec $argv")
     default:
-      command = posixLoginCommand(shell: shell)
+      command = posixLoginCommand(shell: shell, enterWorkingDirectory: enterWorkingDirectory)
     }
     return (shell, command)
+  }
+
+  /// Joins snippet segments with `; `, dropping the ones that don't apply.
+  nonisolated private static func shellSequence(_ segments: String?...) -> String {
+    segments.compactMap { $0 }.joined(separator: "; ")
   }
 
   /// Sources the user's rc then execs `command` in a login shell so version-manager
@@ -410,10 +412,29 @@ extension ShellClient {
   /// lets a caller's timeout kill the probe, not an orphan. Caveat: an rc that gates
   /// PATH behind an interactivity check won't load under `-c`.
   nonisolated static func loginShellCommandInvocation(
-    _ command: String, userShell: URL
+    _ command: String, userShell: URL, workingDirectory: URL?
   ) -> (shell: URL, command: String) {
     let shell = drivableLoginShell(userShell: userShell)
-    return (shell, "\(rcSourceExpression(for: shell)); exec \(command)")
+    let enterWorkingDirectory = workingDirectoryExpression(workingDirectory, for: shell)
+    return (
+      shell, shellSequence(rcSourceExpression(for: shell), enterWorkingDirectory, "exec \(command)")
+    )
+  }
+
+  /// Re-enters the working directory after the rc, so an rc that changes directory
+  /// can't relocate a cwd-resolved command (#776). `builtin` skips a redefined `cd`
+  /// and the redirect keeps a `cd` hook off stdout; a hook that cds itself wins.
+  nonisolated private static func workingDirectoryExpression(
+    _ workingDirectory: URL?, for shell: URL
+  ) -> String? {
+    guard let workingDirectory else { return nil }
+    let directory = SSHCommand.loginShellQuote(workingDirectory.path(percentEncoded: false))
+    let enter = "builtin cd -- \(directory) >/dev/null"
+    // 125 so "never reached the command" stays distinct from the exit 1 that `wt`
+    // and `git` use for their own failures. The shells report the cause on stderr.
+    let fail = workingDirectoryExitCode
+    return shell.lastPathComponent == "fish"
+      ? "\(enter); or exit \(fail)" : "\(enter) || exit \(fail)"
   }
 
   /// The shell we can actually drive with our rc-sourcing snippets: zsh, bash,
@@ -447,10 +468,38 @@ extension ShellClient {
   /// a dual-mode script dispatching on `$1` (e.g. `fzf-git.sh`) would otherwise see the probe's
   /// arguments, hit its own `exit`, and kill the probe shell before `exec` ran (#477). The exec reads
   /// from the saved array, so clearing the live positionals is safe.
-  nonisolated private static func posixLoginCommand(shell: URL) -> String {
-    let capture = "__supacode_login_argv=(\"$@\")"
-    let clear = "set --"
-    return "\(capture); \(clear); \(rcSourceExpression(for: shell)); exec \"${__supacode_login_argv[@]}\""
+  nonisolated private static func posixLoginCommand(
+    shell: URL, enterWorkingDirectory: String?
+  ) -> String {
+    shellSequence(
+      "__supacode_login_argv=(\"$@\")",
+      "set --",
+      rcSourceExpression(for: shell),
+      enterWorkingDirectory,
+      "exec \"${__supacode_login_argv[@]}\""
+    )
+  }
+
+  /// The login-shell `(shell, argv)` pair for `runLogin`, logging the spawn when
+  /// `log` is set.
+  nonisolated static func loginShellProcessInvocation(
+    executableURL: URL,
+    arguments: [String],
+    currentDirectoryURL: URL?,
+    log: Bool
+  ) -> (shell: URL, arguments: [String]) {
+    let (shellURL, execCommand) = loginShellInvocation(
+      userShell: URL(fileURLWithPath: defaultShellPath()),
+      workingDirectory: currentDirectoryURL
+    )
+    let shellArguments =
+      ["-l", "-c", execCommand, "--", executableURL.path(percentEncoded: false)] + arguments
+    if log {
+      let cwd = currentDirectoryURL?.path(percentEncoded: false) ?? "nil"
+      let cmd = shellArguments.joined(separator: " ")
+      shellLogger.debug("runLogin cwd=\(cwd) cmd=\(shellURL.path) \(cmd)")
+    }
+    return (shellURL, shellArguments)
   }
 
   /// Drains `handle` to EOF, returning whatever accumulated once `deadlineSeconds`

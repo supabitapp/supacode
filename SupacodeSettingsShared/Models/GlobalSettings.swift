@@ -105,6 +105,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// Beta: hidden terminal tabs release their renderer after a few minutes of
   /// inactivity and reconnect when viewed. On by default.
   public var terminalHibernationEnabled: Bool
+  /// Gates all background repository polling (remote SSH, PR checks, reconcile).
+  /// On by default; disable to stop SSH passphrase prompts or GitHub rate limiting.
+  public var automaticRepositoryRefreshEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -180,7 +183,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
     appVisibility: AppVisibility = .dockAndMenuBar,
-    terminalHibernationEnabled: Bool = true
+    terminalHibernationEnabled: Bool = true,
+    automaticRepositoryRefreshEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -218,6 +222,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
     self.appVisibility = appVisibility
     self.terminalHibernationEnabled = terminalHibernationEnabled
+    self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -398,5 +403,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalHibernationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalHibernationEnabled)
       ?? Self.default.terminalHibernationEnabled
+    // Pre-feature files omit this key; background refresh defaults on.
+    automaticRepositoryRefreshEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .automaticRepositoryRefreshEnabled)
+      ?? Self.default.automaticRepositoryRefreshEnabled
   }
 }

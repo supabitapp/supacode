@@ -39,7 +39,7 @@ struct KimiSettingsInstallerTests {
   @Test func freshInstallStateIsNotInstalledWhenFileMissing() throws {
     let url = makeTempURL()
     let installer = makeInstaller()
-    #expect(installer.installState(settingsURL: url, canonicalEntries: canonicalEntries()) == .notInstalled)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: canonicalEntries()) == .notInstalled)
   }
 
   // MARK: - Canonical config path.
@@ -136,7 +136,7 @@ struct KimiSettingsInstallerTests {
     let secondPass = try String(contentsOf: url, encoding: .utf8)
 
     #expect(firstPass == secondPass)
-    #expect(installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
   }
 
   // MARK: - Uninstall.
@@ -191,7 +191,7 @@ struct KimiSettingsInstallerTests {
     try partial.write(to: url, atomically: true, encoding: .utf8)
 
     let installer = makeInstaller()
-    #expect(installer.installState(settingsURL: url, canonicalEntries: canonicalEntries()) == .outdated)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: canonicalEntries()) == .outdated)
   }
 
   @Test func installStateReportsInstalledWhenSetMatches() throws {
@@ -201,7 +201,7 @@ struct KimiSettingsInstallerTests {
     let installer = makeInstaller()
     let entries = canonicalEntries()
     try installer.install(settingsURL: url, canonicalEntries: entries)
-    #expect(installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
   }
 
   // MARK: - TOML block rendering.
@@ -260,13 +260,13 @@ struct KimiSettingsInstallerTests {
     try crlf.write(to: url, atomically: true, encoding: .utf8)
 
     // The managed blocks must still be recognized despite CRLF.
-    #expect(installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
 
     // A reinstall must prune and replace, not append duplicates.
     try installer.install(settingsURL: url, canonicalEntries: entries)
     let text = try String(contentsOf: url, encoding: .utf8)
     #expect(text.components(separatedBy: "[[hooks]]").count - 1 == entries.count)
-    #expect(installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
   }
 
   // MARK: - Section-header preservation.
@@ -346,13 +346,13 @@ struct KimiSettingsInstallerTests {
     let entry = KimiHookEntry(event: "Stop", command: command, timeout: 5)
 
     try installer.install(settingsURL: url, canonicalEntries: [entry])
-    #expect(installer.installState(settingsURL: url, canonicalEntries: [entry]) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: [entry]) == .installed)
 
     // Re-detection after read-back must prune the prior block, not duplicate it.
     try installer.install(settingsURL: url, canonicalEntries: [entry])
     let text = try String(contentsOf: url, encoding: .utf8)
     #expect(text.components(separatedBy: "[[hooks]]").count - 1 == 1)
-    #expect(installer.installState(settingsURL: url, canonicalEntries: [entry]) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: [entry]) == .installed)
   }
 
   @Test func uninstallRemovesManagedBlockWrittenAsLiteralString() throws {
@@ -379,7 +379,7 @@ struct KimiSettingsInstallerTests {
 
   // MARK: - Corrupt-file handling.
 
-  @Test func installStateReportsNotInstalledAndLogsOnInvalidUTF8() throws {
+  @Test func installStateThrowsAndLogsOnInvalidUTF8() throws {
     let url = makeTempURL()
     defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
     try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -389,7 +389,9 @@ struct KimiSettingsInstallerTests {
     let installer = KimiHookSettingsFileInstaller(
       fileManager: fileManager, logWarning: { warnings.append($0) })
 
-    #expect(installer.installState(settingsURL: url, canonicalEntries: canonicalEntries()) == .notInstalled)
+    #expect(throws: KimiHookSettingsFileError.invalidUTF8) {
+      try installer.installState(settingsURL: url, canonicalEntries: canonicalEntries())
+    }
     #expect(!warnings.messages.isEmpty)
     #expect(throws: KimiHookSettingsFileError.invalidUTF8) {
       try installer.install(settingsURL: url, canonicalEntries: canonicalEntries())
@@ -415,13 +417,13 @@ struct KimiSettingsInstallerTests {
       .replacing("[[hooks]]", with: "[[ hooks ]]  # supacode")
     try edited.write(to: url, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
 
     // Reinstall must recognize and replace the padded headers, not duplicate.
     try installer.install(settingsURL: url, canonicalEntries: entries)
     let text = try String(contentsOf: url, encoding: .utf8)
     #expect(text.components(separatedBy: "[[hooks]]").count - 1 == entries.count)
-    #expect(installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
   }
 
   @Test func crOnlyLineEndingsAreDetectedAndNotDuplicated() throws {
@@ -436,7 +438,7 @@ struct KimiSettingsInstallerTests {
     let crText = try String(contentsOf: url, encoding: .utf8).replacing("\n", with: "\r")
     try crText.write(to: url, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, canonicalEntries: entries) == .installed)
     try installer.install(settingsURL: url, canonicalEntries: entries)
     let text = try String(contentsOf: url, encoding: .utf8)
     #expect(text.components(separatedBy: "[[hooks]]").count - 1 == entries.count)

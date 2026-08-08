@@ -253,6 +253,30 @@ struct AppFeatureSettingsChangedTests {
     #expect(store.state.lastKnownTerminalHibernationEnabled == false)
   }
 
+  @Test(.dependencies) func settingsChangedFansOutAutomaticRefreshToWatcher() async {
+    let commands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        commands.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    var settings = GlobalSettings.default
+    settings.automaticRepositoryRefreshEnabled = false
+
+    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.finish()
+    #expect(commands.value.contains(.setAutomaticRefreshEnabled(false)))
+  }
+
   @Test(.dependencies) func focusingASurfaceClearsTheStatesParkedOnIt() async {
     let rootURL = URL(fileURLWithPath: "/tmp/repo")
     let worktree = Worktree(

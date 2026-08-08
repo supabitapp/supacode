@@ -5,12 +5,14 @@ import Foundation
 /// reducers don't have to construct one per call. Tests stub this directly
 /// instead of the underlying per-component clients.
 public nonisolated struct AgentIntegrationClient: Sendable {
-  public var state: @Sendable (SkillAgent) async -> AgentIntegrationState
+  /// Throws when the on-disk state can't be determined (see `AgentFileProbe`).
+  /// Callers must not treat that as "not installed".
+  public var state: @Sendable (SkillAgent) async throws -> AgentIntegrationState
   public var install: @Sendable (SkillAgent) async throws -> Void
   public var uninstall: @Sendable (SkillAgent) async throws -> Void
 
   public init(
-    state: @escaping @Sendable (SkillAgent) async -> AgentIntegrationState,
+    state: @escaping @Sendable (SkillAgent) async throws -> AgentIntegrationState,
     install: @escaping @Sendable (SkillAgent) async throws -> Void,
     uninstall: @escaping @Sendable (SkillAgent) async throws -> Void
   ) {
@@ -23,7 +25,7 @@ public nonisolated struct AgentIntegrationClient: Sendable {
 extension AgentIntegrationClient: DependencyKey {
   public static let liveValue = Self(
     state: { agent in
-      AgentIntegrationFactory.make(for: agent).state()
+      try AgentIntegrationFactory.make(for: agent).state()
     },
     install: { agent in
       try await AgentIntegrationFactory.make(for: agent).install()
