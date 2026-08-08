@@ -311,8 +311,15 @@ private enum PaneTabDrag {
   ) -> Bool {
     guard let raw = items.first, let uuid = UUID(uuidString: raw) else { return false }
     let tabID = TabID(rawValue: uuid)
-    guard store.layout.pane(containingTab: tabID) != nil else { return false }
-    store.send(.moveTab(id: tabID, toPane: pane.id, index: index))
+    guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
+    var target = index
+    if sourcePane.id == pane.id,
+      let sourceIndex = sourcePane.tabs.index(id: tabID), sourceIndex < index {
+      // The reducer removes the source before inserting; compensate so a
+      // rightward drag still inserts before the tab it was dropped on.
+      target -= 1
+    }
+    store.send(.moveTab(id: tabID, toPane: pane.id, index: target))
     return true
   }
 }

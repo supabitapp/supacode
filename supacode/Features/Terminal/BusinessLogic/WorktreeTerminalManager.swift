@@ -679,6 +679,10 @@ final class WorktreeTerminalManager {
       self?.emit(.tabProgressDisplayChanged(worktreeID: worktree.id, tabID: tabID, display: display))
     }
     hosts[worktree.id] = host
+    // Seed the lifecycle baseline from the hydrated layout, or the first
+    // close would diff against an empty set and skip its cleanup; this also
+    // starts the dormant watchers for restored contents.
+    host.reconcileContentLifecycle()
     terminalLogger.info("Created content host for worktree \(worktree.id)")
     return host
   }
